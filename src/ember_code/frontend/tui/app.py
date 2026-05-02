@@ -111,7 +111,7 @@ class EmberApp(App):
     #capabilities {
         height: auto;
         width: 1fr;
-        margin: 0 4;
+        margin: 0 2;
         color: $text-muted;
     }
 
@@ -302,16 +302,24 @@ class EmberApp(App):
 
     @staticmethod
     def _build_capabilities_text() -> str:
-        """Short capabilities summary shown below the welcome box."""
+        """Capabilities pitch shown below the welcome box.
+
+        Curated to surface the *differentiating* features users won't
+        find in a vanilla coding assistant. Each bullet is one short
+        line so it doesn't wrap on an 80-col terminal — the previous
+        "feature — long description (/cmd)" form orphaned the slash
+        command on the next line whenever the description had a comma.
+        """
         lines = [
             "",
-            "  [bold]What I can do:[/bold]",
+            "  [bold]Why Ember Code:[/bold]",
             "",
-            "    [dim]●[/dim]  Understand your entire project and how parts connect",
-            "    [dim]●[/dim]  Read, search, and reason across your codebase",
-            "    [dim]●[/dim]  Edit files and fix bugs — with your approval",
-            "    [dim]●[/dim]  Run commands, tests, and multi-step workflows",
-            "    [dim]●[/dim]  Semantic code search via CodeIndex — install with [bold]/codeindex install[/bold]",
+            "    [dim]●[/dim]  [bold]/agents[/bold] — dispatch to a specialist (architect, debugger, ...)",
+            "    [dim]●[/dim]  [bold]/skills[/bold] — slash-command workflows (/commit, /review-pr, ...)",
+            "    [dim]●[/dim]  [bold]/codeindex[/bold] — semantic search across your repo",
+            "    [dim]●[/dim]  [bold]/schedule[/bold] — background tasks that report back",
+            "    [dim]●[/dim]  [bold]/evals[/bold] — benchmark agents on scripted scenarios",
+            "    [dim]●[/dim]  [bold]/mcp[/bold] — plug in external tools and data sources",
             "",
             "  [dim]Enter to send · \\ + Enter for new line · /help for commands[/dim]",
             "",

@@ -289,6 +289,65 @@ async def _run(
     _queue: list[str] = []
     backend.wire_queue_hook(_queue)
 
+    # Background-process completion notifications. When the agent
+    # backgrounds a long-running shell command (e.g. ``npm run build``)
+    # and moves on, we push a formatted notice onto the same queue
+    # used by user-typed messages — the QueueInjectorHook will splice
+    # it into the next tool result so the agent reacts naturally
+    # ("oh, the build I started 4 minutes ago just finished, exit
+    # code 0; let me check the output"). FE also gets a
+    # PushNotification so the user sees a status indicator.
+    from ember_code.core.tools.shell import subscribe_to_process_completion
+
+    def _on_process_done(info: dict) -> None:
+        pid = info.get("pid")
+        cmd = info.get("cmd", "")
+        rc = info.get("exit_code")
+        dur = info.get("duration_seconds", 0.0)
+        tail = info.get("output_tail", "")
+        status = "succeeded" if rc == 0 else f"failed (exit {rc})"
+        # Include a one-line hint pointing at ``read_process_output``
+        # so the agent knows it can pull more than the 40-line tail.
+        # ``read_process_output`` is now idempotent — the agent can
+        # call it repeatedly with different ``tail`` values for as
+        # long as the BE is alive (output is held in a ~1MB-capped
+        # in-memory buffer per process).
+        hint = f"For more output: read_process_output({pid}, tail=N)"
+        if tail:
+            msg_text = (
+                f"BACKGROUND PROCESS COMPLETED\n"
+                f"PID {pid}: {cmd}\n"
+                f"Status: {status}  ·  Duration: {dur:.1f}s\n\n"
+                f"Last output (tail):\n{tail}\n\n{hint}"
+            )
+        else:
+            msg_text = (
+                f"BACKGROUND PROCESS COMPLETED\n"
+                f"PID {pid}: {cmd}\n"
+                f"Status: {status}  ·  Duration: {dur:.1f}s\n\n{hint}"
+            )
+        _queue.append(msg_text)
+        # Best-effort UI ping. Schedule onto the loop because the shell
+        # callback runs in the reader thread.
+        with contextlib.suppress(Exception):
+            loop.call_soon_threadsafe(
+                lambda: asyncio.ensure_future(
+                    transport.send(
+                        msg.PushNotification(
+                            channel="background_process_done",
+                            payload={
+                                "pid": pid,
+                                "cmd": cmd,
+                                "exit_code": rc,
+                                "duration_seconds": dur,
+                            },
+                        )
+                    )
+                )
+            )
+
+    subscribe_to_process_completion(_on_process_done)
+
     # Orchestrate progress → push notification
     def _on_progress(line: str) -> None:
         asyncio.ensure_future(

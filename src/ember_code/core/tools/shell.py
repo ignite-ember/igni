@@ -1,19 +1,31 @@
 """Non-blocking shell tool with process management.
 
 Replaces Agno's ShellTools with an async-aware implementation that:
-- Runs commands with a configurable timeout (default 120s)
+- Runs commands with a configurable timeout (default 7s)
 - Supports background/long-running processes (servers, watchers)
 - Lets the AI read output incrementally and stop processes
 - Kills subprocesses on cancellation instead of hanging forever
+
+The public tool methods are ``async def`` so Agno's async tool
+dispatcher (``Function.aexecute``) can ``await`` them. An earlier
+sync implementation looked correct but actually blocked the event
+loop for up to ``timeout`` seconds (and a hard 3s on every
+``background=True`` call) — the loop sat there frozen, the HITL
+multiplexer drain stalled, FE messages stopped flowing. Pure async
+fixes that: every wait is cooperative.
 """
 
+from __future__ import annotations
+
+import asyncio
+import contextlib
 import logging
 import os
 import signal
-import subprocess
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 from agno.tools import Toolkit
 
@@ -25,12 +37,13 @@ _MAX_BUFFER = 1_048_576
 _MAX_RESULT_CHARS = 30_000
 
 
-def _normalize_shell_args(args: "list[str] | str") -> tuple[list[str], str]:
+def _normalize_shell_args(args: list[str] | str) -> tuple[list[str], str]:
     """Accept any of the shapes the model tends to emit and return ``(argv, cmd_str)``.
 
     Models routinely send one of three shapes when asked to run a shell
     command. We normalize all three to a proper argv list (suitable for
-    ``subprocess.Popen(argv)``) plus a printable command string.
+    ``asyncio.create_subprocess_exec(*argv)``) plus a printable
+    command string.
 
     Shapes handled:
       1. ``["ls", "-la"]`` — proper argv. Pass through.
@@ -39,10 +52,6 @@ def _normalize_shell_args(args: "list[str] | str") -> tuple[list[str], str]:
          whole shell command. Same as (2) — split it.
       4. ``["ls -la", "cat foo"]`` — list of shell commands to run in
          sequence. We join them with ``&&`` and run via ``sh -c``.
-
-    Shape (4) is the easiest case to misclassify as (1); we detect it by
-    checking whether ANY element contains whitespace and is not a valid
-    standalone path/option. When detected, we fall back to ``sh -c``.
     """
     import shlex
 
@@ -83,35 +92,76 @@ def _truncate(text: str, limit: int = _MAX_RESULT_CHARS) -> str:
 
 
 class _ManagedProcess:
-    """Tracks a running subprocess and its output."""
+    """Tracks a running asyncio subprocess and its output."""
 
-    __slots__ = ("proc", "output", "lock", "started_at", "cmd", "finished", "_read_cursor")
+    __slots__ = (
+        "proc",
+        "output",
+        "lock",
+        "started_at",
+        "cmd",
+        "finished",
+        "_read_cursor",
+        "was_backgrounded",
+        "_eviction_task",
+        "_reader_task",
+    )
 
-    def __init__(self, proc: subprocess.Popen, cmd: str):
+    def __init__(self, proc: asyncio.subprocess.Process, cmd: str):
         self.proc = proc
         self.cmd = cmd
         self.output: list[str] = []
+        # Buffer is mutated by the reader task and by ``read``/``read_new``;
+        # both run on the event loop so a regular lock would be enough,
+        # but ``threading.Lock`` is also safe to call from
+        # ``cancel_foreground`` (which runs on the sync path) without
+        # any extra ceremony.
         self.lock = threading.Lock()
         self.started_at = time.monotonic()
         self.finished = False
         self._read_cursor: int = 0  # tracks position for read_new()
+        self.was_backgrounded: bool = False
+        # Eviction task armed by ``read_process_output`` on the first
+        # post-completion read. Each subsequent read cancels and
+        # re-arms it, giving us "10 min after the most recent read".
+        self._eviction_task: asyncio.Task | None = None
+        # Reader task draining stdout into ``self.output``. Held so we
+        # can ``await`` it on stop/finish to make sure trailing output
+        # is captured before we report.
+        self._reader_task: asyncio.Task | None = None
 
-    def _reader(self) -> None:
-        """Background thread that drains stdout+stderr."""
+    async def _reader(self) -> None:
+        """Async task that drains stdout+stderr.
+
+        When the read loop terminates (process exited and stdout
+        closed) AND this process was backgrounded, fire registered
+        completion subscribers so the agent gets notified that work
+        it kicked off in the background has finished.
+        """
         assert self.proc.stdout is not None
         try:
-            for raw_line in self.proc.stdout:
-                line = raw_line.rstrip("\n")
+            while True:
+                raw_line = await self.proc.stdout.readline()
+                if not raw_line:
+                    break
+                line = raw_line.decode("utf-8", errors="replace").rstrip("\n")
                 with self.lock:
                     self.output.append(line)
                     # Trim if buffer is too large (keep last half)
                     total = sum(len(line) for line in self.output)
                     if total > _MAX_BUFFER:
                         self.output = self.output[len(self.output) // 2 :]
-        except ValueError:
-            pass  # stream closed
+        except (asyncio.CancelledError, ValueError):
+            # CancelledError: stop_process cancelled us; the kill+wait
+            # path takes over from here.
+            # ValueError: stream closed mid-read.
+            raise
+        except Exception as exc:
+            logger.warning("reader task for pid=%s errored: %s", self.proc.pid, exc)
         finally:
             self.finished = True
+            if self.was_backgrounded:
+                _emit_completion(self)
 
     def read(self, tail: int = 100) -> str:
         """Return the last `tail` lines of output."""
@@ -127,15 +177,19 @@ class _ManagedProcess:
         return "\n".join(new)
 
     def is_running(self) -> bool:
-        return self.proc.poll() is None
+        return self.proc.returncode is None
 
     def returncode(self) -> int | None:
-        return self.proc.poll()
+        return self.proc.returncode
 
     def kill(self) -> None:
-        """Kill the process tree."""
-        import contextlib
+        """Kill the process tree.
 
+        ``proc.kill()`` and ``os.killpg`` are both sync syscalls, so
+        this is safe to call from the sync ``cancel_foreground`` path
+        as well as from async code. Use ``await proc.wait()`` after
+        if you need to confirm the process is reaped.
+        """
         with contextlib.suppress(ProcessLookupError, OSError):
             os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
         with contextlib.suppress(ProcessLookupError, OSError):
@@ -143,7 +197,12 @@ class _ManagedProcess:
 
 
 class _ProcessRegistry:
-    """Global registry of managed background processes."""
+    """Global registry of managed background processes.
+
+    Stays sync (``threading.Lock`` + dict). All operations are O(1)
+    and don't await; using a sync lock means the registry is callable
+    from both async tools and the sync ``cancel_foreground`` path.
+    """
 
     def __init__(self) -> None:
         self._processes: dict[int, _ManagedProcess] = {}
@@ -174,7 +233,12 @@ class _ProcessRegistry:
             return result
 
     def kill_all(self) -> int:
-        """Kill all tracked processes. Returns count killed."""
+        """Kill all tracked processes synchronously. Returns count killed.
+
+        Used at BE shutdown — we just send SIGKILL and don't wait for
+        the processes to fully reap. The async event loop is already
+        torn down by this point, so we can't ``await proc.wait()``.
+        """
         with self._lock:
             count = 0
             for mp in self._processes.values():
@@ -192,9 +256,85 @@ _registry = _ProcessRegistry()
 _foreground_lock = threading.Lock()
 _foreground_process: _ManagedProcess | None = None
 
+# ── Background-process completion notifications ──────────────────────
+
+_completion_subscribers_lock = threading.Lock()
+_completion_subscribers: list[Any] = []  # list[Callable[[dict], None]]
+
+
+def subscribe_to_process_completion(callback: Any) -> None:
+    """Register ``callback(info)`` to be called when a backgrounded
+    process exits. ``info`` is a dict with ``pid``, ``cmd``,
+    ``exit_code``, ``duration_seconds``, ``output_tail`` (last ~40
+    lines)."""
+    with _completion_subscribers_lock:
+        if callback not in _completion_subscribers:
+            _completion_subscribers.append(callback)
+
+
+def unsubscribe_from_process_completion(callback: Any) -> None:
+    with _completion_subscribers_lock, contextlib.suppress(ValueError):
+        _completion_subscribers.remove(callback)
+
+
+# Default eviction delay (seconds) — 10 minutes after the most recent
+# read of a finished process. Module-level so tests can monkeypatch.
+_FINISHED_PROCESS_TTL_SECONDS = 600
+
+
+def _arm_eviction_task(mp: _ManagedProcess, pid: int) -> None:
+    """Arm/refresh the async eviction task for a finished process.
+
+    Called from ``read_process_output`` whenever the agent reads a
+    finished process. Cancels any existing task first so the TTL
+    resets — i.e. "10 min after the *most recent* read", not 10 min
+    after the first.
+    """
+    if mp._eviction_task is not None and not mp._eviction_task.done():
+        mp._eviction_task.cancel()
+
+    async def _evict() -> None:
+        try:
+            await asyncio.sleep(_FINISHED_PROCESS_TTL_SECONDS)
+        except asyncio.CancelledError:
+            return
+        if _registry.get(pid) is mp:
+            _registry.remove(pid)
+            logger.debug("evicted process pid=%d after TTL", pid)
+
+    mp._eviction_task = asyncio.create_task(_evict())
+
+
+def _emit_completion(mp: _ManagedProcess) -> None:
+    """Notify subscribers that ``mp`` has exited.
+
+    Called from the reader task once stdout closes. Runs on the event
+    loop, but each subscriber is a plain callable — they're expected
+    to be cheap and non-blocking (push onto a queue, schedule a
+    coroutine via ``loop.call_soon_threadsafe``, etc.).
+    """
+    info = {
+        "pid": mp.proc.pid,
+        "cmd": mp.cmd,
+        "exit_code": mp.proc.returncode,
+        "duration_seconds": time.monotonic() - mp.started_at,
+        "output_tail": mp.read(tail=40),
+    }
+    with _completion_subscribers_lock:
+        subscribers = list(_completion_subscribers)
+    for cb in subscribers:
+        try:
+            cb(info)
+        except Exception as exc:  # don't let one bad subscriber kill the rest
+            logger.warning("process completion subscriber raised: %s", exc)
+
 
 def cancel_foreground() -> bool:
     """Kill the active foreground process. Called on Escape/cancel.
+
+    Stays sync because the cancel path (``BackendServer.cancel_run``)
+    is sync. ``proc.kill()`` itself is a sync syscall, so this works
+    even though the process is owned by an async task.
 
     Returns True if a process was killed.
     """
@@ -209,12 +349,15 @@ def cancel_foreground() -> bool:
 
 
 class EmberShellTools(Toolkit):
-    """Non-blocking shell tool with process management.
+    """Non-blocking async shell tool with process management.
 
-    Provides three tools:
-    - run_shell_command: Execute a command (blocks up to timeout, then backgrounds it)
-    - read_process_output: Read output from a backgrounded process
+    Provides five tools (all ``async def`` so they don't block Agno's
+    event loop):
+    - run_shell_command: Execute a command (waits up to timeout, then backgrounds)
+    - read_process_output: Read output from a backgrounded process (idempotent)
+    - watch_process: Watch a process for new output for a window
     - stop_process: Stop a running process
+    - list_processes: List running background processes
     """
 
     def __init__(self, base_dir: str | None = None, **kwargs):
@@ -234,9 +377,9 @@ class EmberShellTools(Toolkit):
                 if name in confirm_tools:
                     func.requires_confirmation = True
 
-    def run_shell_command(
+    async def run_shell_command(
         self,
-        args: "list[str] | str",
+        args: list[str] | str,
         timeout: int = 7,
         background: bool = False,
         tail: int = 100,
@@ -272,18 +415,14 @@ class EmberShellTools(Toolkit):
         Returns:
             Command output, or a message with the PID for background processes.
         """
-        # Normalize the input shape. The model wants to write shell-style
-        # ("ls -la") but the underlying subprocess.Popen needs argv. Accept
-        # either and dispatch accordingly.
         argv, cmd_str = _normalize_shell_args(args)
         logger.info("Shell: running %s (timeout=%d, bg=%s)", cmd_str, timeout, background)
 
         try:
-            proc = subprocess.Popen(
-                argv,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
                 cwd=str(self.base_dir) if self.base_dir else None,
                 start_new_session=True,  # new process group for clean kills
             )
@@ -291,16 +430,16 @@ class EmberShellTools(Toolkit):
             return f"Error starting command: {e}"
 
         mp = _ManagedProcess(proc, cmd_str)
-
-        # Start output reader thread
-        reader = threading.Thread(target=mp._reader, daemon=True)
-        reader.start()
-
+        mp._reader_task = asyncio.create_task(mp._reader())
         pid = _registry.add(mp)
 
         if background:
-            # Auto-watch for a few seconds to capture startup output or crash
-            time.sleep(3)
+            mp.was_backgrounded = True
+            # Auto-watch for a few seconds to capture startup output or crash.
+            # ``asyncio.sleep`` instead of ``time.sleep`` so the event loop
+            # can keep servicing other work (HITL drain, FE stream) during
+            # the wait — that was the headline reason for going async.
+            await asyncio.sleep(3)
             output = mp.read_new()
             if not mp.is_running():
                 rc = mp.returncode()
@@ -319,18 +458,20 @@ class EmberShellTools(Toolkit):
         with _foreground_lock:
             _foreground_process = mp
 
-        # Poll instead of proc.wait() so the process can be killed mid-wait
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if proc.poll() is not None:
-                break
-            time.sleep(0.25)
+        # Wait for the process up to ``timeout`` seconds. ``wait_for``
+        # raises ``TimeoutError`` if exceeded — that's the auto-
+        # background path.
+        timed_out = False
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            timed_out = True
 
         with _foreground_lock:
             _foreground_process = None
 
-        if proc.poll() is None:
-            # Command is still running — treat it as backgrounded
+        if timed_out:
+            mp.was_backgrounded = True
             output = mp.read(tail=tail)
             return _truncate(
                 f"Command still running after {timeout}s — backgrounded as PID {pid}.\n"
@@ -339,8 +480,11 @@ class EmberShellTools(Toolkit):
                 f"Output so far:\n{output}"
             )
 
-        # Command finished — collect remaining output
-        reader.join(timeout=2)
+        # Command finished — wait briefly for the reader task to
+        # capture any trailing output buffered after proc.wait().
+        if mp._reader_task is not None:
+            with contextlib.suppress(asyncio.TimeoutError, asyncio.CancelledError):
+                await asyncio.wait_for(mp._reader_task, timeout=2.0)
         output = mp.read(tail=tail)
         rc = proc.returncode
         _registry.remove(pid)
@@ -349,8 +493,19 @@ class EmberShellTools(Toolkit):
             return _truncate(f"Command exited with code {rc}:\n{output}")
         return _truncate(output)
 
-    def read_process_output(self, pid: int, tail: int = 100) -> str:
+    async def read_process_output(self, pid: int, tail: int = 100) -> str:
         """Read recent output from a running or finished background process.
+
+        The agent can call this repeatedly — both before and after the
+        process has finished — and pass different ``tail`` values
+        (e.g. ``tail=50`` to peek, then ``tail=500`` to dig deeper if
+        the peek looked off). The buffer is in-memory, capped at
+        ~1MB per process. After the first read of a finished
+        process, an eviction task (default 10 min) is armed; each
+        subsequent read resets it, so as long as the agent is
+        actively engaging with the output the entry sticks around.
+        Use ``stop_process(pid)`` to free it explicitly while it's
+        still running.
 
         Args:
             pid: Process ID returned by run_shell_command.
@@ -367,12 +522,13 @@ class EmberShellTools(Toolkit):
         if mp.is_running():
             elapsed = time.monotonic() - mp.started_at
             return _truncate(f"[Running for {elapsed:.0f}s — PID {pid}]\n{output}")
-        else:
-            rc = mp.returncode()
-            _registry.remove(pid)
-            return _truncate(f"[Finished — exit code {rc}]\n{output}")
 
-    def watch_process(self, pid: int, seconds: int = 10) -> str:
+        # Process is finished — arm (or refresh) the eviction task.
+        _arm_eviction_task(mp, pid)
+        rc = mp.returncode()
+        return _truncate(f"[Finished — exit code {rc}]\n{output}")
+
+    async def watch_process(self, pid: int, seconds: int = 10) -> str:
         """Watch a background process for a period, then return new output.
 
         Collects output for `seconds` seconds (or until the process exits),
@@ -393,12 +549,12 @@ class EmberShellTools(Toolkit):
 
         seconds = max(1, min(seconds, 30))
 
-        # Wait for output or process exit
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            if not mp.is_running():
-                break
-            time.sleep(0.5)
+        # Wait for output or process exit. ``asyncio.wait_for`` on
+        # ``proc.wait()`` is the cleanest way — if the process exits
+        # before the timeout, we return early; otherwise we sleep
+        # exactly ``seconds`` seconds.
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(mp.proc.wait(), timeout=seconds)
 
         new_output = mp.read_new()
         elapsed = time.monotonic() - mp.started_at
@@ -409,14 +565,13 @@ class EmberShellTools(Toolkit):
             return (
                 f"[Running for {elapsed:.0f}s — PID {pid}]\nNo new output in the last {seconds}s."
             )
-        else:
-            rc = mp.returncode()
-            _registry.remove(pid)
-            if new_output:
-                return f"[Exited with code {rc} after {elapsed:.0f}s]\nOutput:\n{new_output}"
-            return f"[Exited with code {rc} after {elapsed:.0f}s]\nNo new output before exit."
+        rc = mp.returncode()
+        _registry.remove(pid)
+        if new_output:
+            return f"[Exited with code {rc} after {elapsed:.0f}s]\nOutput:\n{new_output}"
+        return f"[Exited with code {rc} after {elapsed:.0f}s]\nNo new output before exit."
 
-    def stop_process(self, pid: int) -> str:
+    async def stop_process(self, pid: int) -> str:
         """Stop a running background process.
 
         Args:
@@ -436,12 +591,14 @@ class EmberShellTools(Toolkit):
             return f"Process {pid} already finished (exit code {rc}).\nLast output:\n{output}"
 
         mp.kill()
-        mp.proc.wait(timeout=5)
+        # Wait up to 5s for the process to actually exit.
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(mp.proc.wait(), timeout=5.0)
         output = mp.read(tail=20)
         _registry.remove(pid)
         return f"Process {pid} stopped.\nLast output:\n{output}"
 
-    def list_processes(self) -> str:
+    async def list_processes(self) -> str:
         """List all running background processes.
 
         Returns:

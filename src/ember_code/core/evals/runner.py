@@ -36,6 +36,14 @@ _TOOL_NAME_EXPANSIONS: dict[str, list[str]] = {
     "LS": ["list_files"],
     "WebSearch": ["web_search", "search_news"],
     "WebFetch": ["ember_web"],
+    # All ScheduleTools functions — without this, ``Schedule`` falls
+    # through unchanged and the matcher looks for a literal function
+    # name "Schedule" that never exists, so positive cases that
+    # *correctly* call ``schedule_task`` fail with "missing tool
+    # calls: schedule_task" and anti-cases pass for the wrong reason
+    # (no function literally named "Schedule" was ever going to
+    # match, so the "unexpected" check was always trivially clean).
+    "Schedule": ["schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"],
 }
 
 

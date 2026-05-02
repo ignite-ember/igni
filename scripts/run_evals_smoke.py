@@ -541,6 +541,44 @@ async def main():
             from ember_code.core.config.settings import load_settings
             from ember_code.core.session.core import Session
 
+            # Write a permissive settings.local.json into the session
+            # dir BEFORE Session() reads it. Default permissions ask
+            # for confirmation on Bash/Edit/Write, and the main agent
+            # uses non-streaming arun so an "ask" tool pauses the run
+            # and returns ``status=PAUSED`` to the eval runner — the
+            # agent never reaches its scheduling step. The sub-agent
+            # auto-approve drain only covers spawn_agent pauses, not
+            # the main agent's own. Allowing everything in the eval
+            # session keeps the agent's flow comparable to a user who
+            # has clicked "Allow always" for these tools.
+            import json as _json
+
+            ember_dir = session_dir / ".ember"
+            ember_dir.mkdir(parents=True, exist_ok=True)
+            (ember_dir / "settings.local.json").write_text(
+                _json.dumps(
+                    {
+                        "permissions": {
+                            "allow": [
+                                "Glob",
+                                "Grep",
+                                "LS",
+                                "Read",
+                                "WebSearch",
+                                "WebFetch",
+                                "Bash",
+                                "BashOutput",
+                                "Write",
+                                "Edit",
+                                "Python",
+                                "Schedule",
+                            ],
+                            "ask": [],
+                        }
+                    }
+                )
+            )
+
             settings = load_settings(project_dir=session_dir)
             test_model_id = os.getenv("EMBER_TEST_LLM_MODEL") or "gpt-4o-mini"
             test_base_url = os.getenv("EMBER_TEST_LLM_BASE_URL") or "https://api.openai.com/v1"
@@ -582,18 +620,47 @@ async def main():
 
     import copy as _copy
 
-    def _factory_for(agent_name: str):
-        """Return a (yaml_path, factory) pair for the given suite name."""
-        if agent_name == "editor":
-            yaml_path = Path("evals/editor.yaml")
+    def _factory_for(suite_name: str):
+        """Return a (yaml_path, factory) pair for the given suite name.
+
+        The suite *name* is just the YAML filename stem; the actual
+        target *agent* is whatever the YAML's ``agent:`` field says.
+        That lets cross-cutting suites (e.g. ``schedule.yaml``,
+        ``agent: main``) live alongside per-specialist suites without
+        renaming gymnastics.
+        """
+        # Suite filename: ``main`` aliases to the legacy file name,
+        # everything else is just ``<name>.yaml``.
+        if suite_name == "main":
+            yaml_path = Path("evals/main_agent.yaml")
+        else:
+            yaml_path = Path("evals") / f"{suite_name}.yaml"
+        if not yaml_path.is_file():
+            print(f"  ! suite '{suite_name}' not found at {yaml_path} — skipping")
+            return None, None
+
+        # Read the YAML's ``agent:`` to know which specialist (or the
+        # main team) to instantiate. Avoids hard-coding suite→agent
+        # mappings as the suite list grows.
+        try:
+            import yaml as _yaml
+
+            with open(yaml_path) as _f:
+                _doc = _yaml.safe_load(_f) or {}
+            target_agent = str(_doc.get("agent", suite_name))
+        except Exception as exc:
+            print(f"  ! could not read agent from {yaml_path} ({exc}) — skipping")
+            return None, None
+
+        # Editor has its own bypass factory (no Session, faster).
+        if target_agent == "editor":
 
             def editor_factory(base_dir: Path):
                 return _build_editor_agent(_build_live_model(), base_dir)
 
             return yaml_path, editor_factory
 
-        if agent_name == "main":
-            yaml_path = Path("evals/main_agent.yaml")
+        if target_agent == "main":
             sess = _ensure_session()
             shared_main = sess.main_team
 
@@ -603,16 +670,11 @@ async def main():
             return yaml_path, main_factory
 
         # Specialist agent — pull from session pool
-        yaml_path = Path("evals") / f"{agent_name}.yaml"
-        if not yaml_path.is_file():
-            print(f"  ! suite for '{agent_name}' not found at {yaml_path} — skipping")
-            return None, None
-
         sess = _ensure_session()
         try:
-            shared_specialist = sess.pool.get(agent_name)
+            shared_specialist = sess.pool.get(target_agent)
         except (KeyError, ValueError) as exc:
-            print(f"  ! agent '{agent_name}' not in pool ({exc}) — skipping")
+            print(f"  ! agent '{target_agent}' not in pool ({exc}) — skipping")
             return None, None
 
         def specialist_factory(_base_dir: Path):
