@@ -72,10 +72,11 @@ class RunController:
         self._run_output_tokens = 0
         self._streamed = False
 
-        # Learning extraction runs every N turns (or before compaction)
+        # Turn counter — kept for status-bar / logging only.
+        # Memory is now agent-driven (Agno's ``update_user_memory``
+        # tool, exposed in AGENTIC mode). The previous every-10-turn
+        # blind extraction is gone.
         self._turn_count = 0
-        self._learning_interval = 10
-        self._pending_learn_messages: list = []  # accumulated since last extraction
 
         # Hook system messages queued for injection into next AI turn
         self._pending_hook_context: list[str] = []
@@ -204,9 +205,6 @@ class RunController:
             message = f"{message}\n<hook-context>{hook_ctx}</hook-context>"
             self._pending_hook_context.clear()
 
-        # Save original for learning
-        original_message = message
-
         # ── FE: prepare UI ──
         self._spinner = AgentActivityWidget(label="Thinking")
         self._stream_widget = None
@@ -304,10 +302,14 @@ class RunController:
 
         # ── Background post-run work (non-blocking) ──
         self._turn_count += 1
-        assistant_text = "".join(self._run_output_text) if self._run_output_text else ""
-        self._pending_learn_messages.append((original_message, assistant_text))
-        if self._turn_count % self._learning_interval == 0:
-            self._flush_learnings()
+        # Note: we no longer auto-extract learnings every N turns. The
+        # agent now drives memory itself via the ``update_user_memory``
+        # tool that Agno's LearningMachine exposes when configured in
+        # AGENTIC mode (see ``core/learn.py``). Periodic blind
+        # extraction was firing model calls on every 10th turn even
+        # when nothing memorable had been said. Turn count is still
+        # tracked because ``_post_run_compaction`` references it
+        # indirectly via the status bar.
 
         asyncio.create_task(self._post_run_compaction())
         await self._drain_queue()
@@ -320,7 +322,6 @@ class RunController:
             backend = self._app.backend
             result = await backend.compact_if_needed(ctx_tokens, max_ctx)
             if result:
-                self._flush_learnings()
                 self._conversation.append_info(
                     "Context auto-compacted — older messages summarized."
                 )
@@ -333,21 +334,6 @@ class RunController:
                     bar.set_run_tokens(0, 0)
         except Exception as e:
             logger.debug("Post-run compaction failed: %s", e)
-
-    def _flush_learnings(self) -> None:
-        """Send accumulated messages to learning extraction via backend."""
-        if not self._pending_learn_messages:
-            return
-        pairs = self._pending_learn_messages[:]
-        self._pending_learn_messages.clear()
-        backend = self._app.backend
-
-        async def _extract():
-            for user_msg, assistant_msg in pairs:
-                await backend.extract_learnings(user_msg, assistant_msg)
-
-        task = asyncio.create_task(_extract())
-        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
 
     async def _drain_queue(self) -> None:
         if self._queue:

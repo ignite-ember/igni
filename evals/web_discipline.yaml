@@ -1,0 +1,102 @@
+agent: main
+description: |
+  Web tool discipline.
+
+  The agent should reach for ``WebSearch`` / ``WebFetch`` only when
+  it's actually needed — current-events, freshly-released APIs,
+  external documentation the agent doesn't know. It should NOT use
+  web tools for:
+   - generic concepts the agent already knows (textbook material)
+   - project-internal questions (those want grep/Read, not WebFetch)
+   - cached factual answers (CS basics, well-known protocols)
+
+  This suite tests the no-fetch path. Positive cases (where Web*
+  IS the right tool) are intentionally rare in our workload, so we
+  focus on anti-patterns where the cost of a wrong fetch is real
+  (latency, rate limits, hallucinated URLs).
+
+cases:
+
+# ── Anti-patterns: must NOT call Web* ─────────────────────────────
+- name: web_no_fetch_for_generic_concept
+  input: |
+    What's the difference between TCP and UDP at the transport layer?
+  unexpected_tool_calls:
+    - WebSearch
+    - WebFetch
+  judge_guidelines: |
+    Pass if the agent answers from training knowledge with no web
+    tool calls — TCP vs UDP is canonical CS material. Fail if it
+    fetches Wikipedia or runs a search.
+
+- name: web_no_fetch_for_project_internal
+  input: |
+    How does the auth flow work in this project?
+  unexpected_tool_calls:
+    - WebSearch
+    - WebFetch
+  judge_guidelines: |
+    Pass if the agent reads project files (or hands off to the
+    explorer specialist) — the answer is in the codebase, not on
+    the web. Fail if it searches the web for "auth flow".
+
+- name: web_no_fetch_for_cached_protocol_fact
+  input: |
+    What status code does an HTTP server return when a resource was
+    moved permanently?
+  unexpected_tool_calls:
+    - WebSearch
+    - WebFetch
+  judge_guidelines: |
+    Pass if the agent answers "301 Moved Permanently" from
+    knowledge. Fail if it shells out to look up a basic HTTP
+    status code.
+
+- name: web_no_fetch_for_simple_arithmetic
+  input: |
+    What's 14 * 23?
+  unexpected_tool_calls:
+    - WebSearch
+    - WebFetch
+    - Bash
+  judge_guidelines: |
+    Pass if the agent answers 322 directly. Fail if it shells out
+    to ``python -c`` or web-searches for "14 * 23".
+
+- name: web_no_fetch_for_obvious_fabrication_risk
+  input: |
+    Make up plausible API documentation for a fictional library
+    called `superduperhttp`. Don't actually look it up.
+  unexpected_tool_calls:
+    - WebSearch
+    - WebFetch
+  judge_guidelines: |
+    Pass if the agent fabricates plausible docs as instructed
+    without trying to fetch real ones. Fail if it tries to web-search
+    for "superduperhttp" despite the explicit "don't look it up"
+    instruction.
+
+# ── Boundary: if Web* IS appropriate, agent should use it ─────────
+- name: web_uses_fetch_for_external_url
+  input: |
+    Fetch the title from https://example.com and tell me what it is.
+  expected_tool_calls:
+    - WebFetch
+  judge_guidelines: |
+    Pass if the agent calls ``WebFetch`` against the given URL —
+    fetching a specific URL the user supplied is the textbook use
+    case. Fail if it answers "the title is probably 'Example
+    Domain'" without actually fetching.
+
+# ── Anti-pattern: don't fall back to Web* when local tools fail ──
+- name: web_no_fetch_after_grep_miss
+  input: |
+    Find the function `nonexistent_function_xyz` in this codebase.
+  unexpected_tool_calls:
+    - WebSearch
+    - WebFetch
+  judge_guidelines: |
+    Pass if the agent grep/searches the local repo, reports it
+    doesn't exist, and stops. Fail if it pivots to web search after
+    not finding it locally (the function might exist in a
+    third-party package, but that's a different question).

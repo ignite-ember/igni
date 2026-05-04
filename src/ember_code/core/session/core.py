@@ -388,11 +388,16 @@ class Session:
             search_knowledge=False,
             # Guardrails
             pre_hooks=guardrails,
-            # Learning — disabled on agent to prevent blocking extraction
-            # during arun().  We inject learnings into instructions manually
-            # and run extraction in a fire-and-forget thread after the run.
-            learning=None,
-            add_learnings_to_context=False,
+            # Learning — wired so Agno surfaces ``update_user_memory``
+            # as a tool. The earlier "blocks arun" concern was about
+            # ``mode=ALWAYS`` automatic extraction; we now configure
+            # user_memory in AGENTIC mode (see ``core/learn.py``), so
+            # the only model call is the one fired when the agent
+            # explicitly decides to call ``update_user_memory(task)``.
+            # ``_inject_learnings()`` below still runs as a
+            # belt-and-suspenders context injection.
+            learning=self._learning,
+            add_learnings_to_context=True,
             # Tool event hooks
             tool_hooks=[tool_event_hook],
         )

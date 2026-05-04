@@ -24,11 +24,14 @@ cases:
   input: In 30 minutes, check whether the build on this branch went green.
   expected_tool_calls:
   - Schedule
+  - Bash
   judge_guidelines: |
     Pass if the agent calls Schedule (schedule_task) with a description
     referencing the build check and a ``when`` of "in 30 minutes" (or
-    equivalent). Fail if it answers "I'll check later" without
-    actually scheduling, or if it tries to check immediately.
+    equivalent). A quick ``git status`` / ``gh pr view`` before
+    scheduling is fine context-gathering. Fail if it answers "I'll
+    check later" without actually scheduling, or if it tries to
+    check the build immediately.
 
 - name: schedule_one_shot_at_clock_time
   input: Remind me to redeploy at 5pm if the staging tests are still passing.

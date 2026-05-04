@@ -140,6 +140,7 @@ cases:
 
     '
 - name: single_specialist_architecture_design
+  case_timeout: 480
   input: 'Design the architecture for a new background-job system: Redis-backed
 
     queue, retry/backoff, idempotency keys. I want one architect''s
@@ -197,6 +198,7 @@ cases:
 
     '
 - name: single_specialist_qa_test_plan
+  case_timeout: 480
   input: 'I have a Stripe-based payments module at `src/payments/charges.py` that handles charges, refunds, and webhooks. Get one qa specialist to draft a comprehensive test plan covering happy paths, edge cases, and webhook signature verification — no implementation, just the plan.
 
     '
@@ -422,6 +424,7 @@ cases:
 
     '
 - name: tasks_implement_feature_end_to_end
+  case_timeout: 600
   input: 'Implement a new "API key revocation" feature end-to-end: schema
 
     migration, repository, service, route, tests, docs. You decide the
@@ -470,6 +473,7 @@ cases:
 
     '
 - name: tasks_migrate_database_layer
+  case_timeout: 600
   input: 'Migrate the database layer from raw psycopg2 to SQLAlchemy core.
 
     Touch whatever needs touching. Tests must still pass.
@@ -490,6 +494,7 @@ cases:
 
     '
 - name: tasks_audit_and_fix
+  case_timeout: 600
   input: 'Audit the security of the entire authentication subsystem and FIX
 
     what you find. Don''t stop at a report.

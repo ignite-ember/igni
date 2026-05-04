@@ -10,7 +10,16 @@ logger = logging.getLogger(__name__)
 
 
 class EvalCase(BaseModel):
-    """A single test case within an eval suite."""
+    """A single test case within an eval suite.
+
+    For multi-turn cases, set ``prior_messages`` — those are sent
+    sequentially on the same session_id BEFORE ``input``. The eval
+    judges only the agent's response to ``input`` (the last turn),
+    but tool/accuracy checks run against that final response. Use
+    this to verify the agent actually carries context across turns
+    (e.g. user states a preference in turn 1, the case fails if the
+    agent ignores it in turn 3).
+    """
 
     name: str
     input: str
@@ -22,6 +31,20 @@ class EvalCase(BaseModel):
     judge_guidelines: str | None = None
     num_iterations: int = 1
     file_assertions: list[dict] | None = None
+    # Prior turns — sent in order on the same session before ``input``.
+    # Empty/missing means the case is single-shot (the common case).
+    prior_messages: list[str] = Field(default_factory=list)
+    # Optional per-case timeout override (seconds). Use for long
+    # tasks-mode / multi-specialist orchestration cases that legitimately
+    # take longer than the suite default. ``None`` means use the runner's
+    # default ``--case-timeout``.
+    case_timeout: float | None = None
+    # Per-tool argument assertions. Each entry: {tool, args_must_contain}.
+    # Passes when at least ONE call to ``tool`` has args containing every
+    # ``args_must_contain`` key/value pair. Use for verifying that the
+    # agent picked the right enum value (e.g. ``spawn_team`` with
+    # ``mode: coordinate`` rather than ``broadcast``).
+    tool_arg_assertions: list[dict] | None = None
 
 
 class EvalSuite(BaseModel):
@@ -74,6 +97,9 @@ def _parse_case(data: dict) -> EvalCase:
         judge_guidelines=data.get("judge_guidelines"),
         num_iterations=data.get("num_iterations", 1),
         file_assertions=data.get("file_assertions"),
+        prior_messages=data.get("prior_messages") or [],
+        case_timeout=data.get("case_timeout"),
+        tool_arg_assertions=data.get("tool_arg_assertions"),
     )
 
 

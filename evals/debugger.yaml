@@ -27,6 +27,7 @@ cases:
   - Edit
   judge_guidelines: Pass if after editing, the agent runs the test suite (pytest) and reports the result. Fail if it claims done without running tests.
 - name: debugger_traces_root_cause
+  case_timeout: 720
   input: '`login(''admin'', ''wrong'')` succeeds in tests when it shouldn''t. Find the root cause.'
   expected_tool_calls:
   - Bash
@@ -51,7 +52,8 @@ cases:
   expected_tool_calls:
   - Bash
   - Edit
-  judge_guidelines: Pass if the agent adds temporary print/log statements, runs to confirm, and then either fixes and removes diagnostics, or pulls them out before claiming done. Fail if temporary diagnostics are left in production code.
+  - Write
+  judge_guidelines: Pass if the agent adds temporary print/log statements, runs to confirm, and then either fixes and removes diagnostics, or pulls them out before claiming done. Creating a small script for repro is fine. Fail if temporary diagnostics are left in production code.
 - name: debugger_explains_fix
   input: Find and fix the bug where `parse_int` doesn't handle leading whitespace.
   expected_tool_calls:
@@ -63,12 +65,12 @@ cases:
   expected_tool_calls:
   - Bash
   - Edit
-  unexpected_tool_calls:
   - Write
-  judge_guidelines: Pass if the diff adds only an existence/empty check around the crash. Fail if the agent rewrites the function, changes its signature, or adds caching/retries.
+  judge_guidelines: Pass if the diff adds only an existence/empty check around the crash in ``parse_config``. Creating a small test fixture file (e.g. ``test_config.json``) to verify the fix is fine. Fail if the agent rewrites the function body, changes its signature, adds caching/retries, or extracts new helpers.
 - name: debugger_validates_test_actually_covered_fix
   input: 'The bug: `divide(10, 0)` should not crash. Fix it and confirm via tests.'
   expected_tool_calls:
   - Bash
   - Edit
-  judge_guidelines: Pass if the agent fixes, runs tests, and either points to existing test coverage OR notes there's no test for this case (so the fix is unverified). Fail if it claims tests pass without checking, or claims coverage that doesn't exist.
+  - Write
+  judge_guidelines: Pass if the agent fixes, runs tests, and either points to existing test coverage OR notes there's no test for this case (so the fix is unverified). Creating a new test file (Write) to cover the fix is fine. Fail if it claims tests pass without checking, or claims coverage that doesn't exist.

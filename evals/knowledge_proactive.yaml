@@ -1,0 +1,173 @@
+agent: main
+description: |
+  Proactive knowledge / memory persistence.
+
+  ``memory_knowledge.yaml`` covers the explicit case — user says
+  "save this", agent calls ``update_user_memory`` /
+  ``knowledge_add``. This suite covers the *implicit* case: the
+  agent has done real investigation work (read docs, traced a
+  pattern, debugged a root cause) and should decide on its own
+  that something durable was learned and persist it.
+
+  The bar is subtle: we don't want save-everything noise (every
+  ``ls`` output triggering a knowledge_add). We want save-when-it-
+  matters discipline. Heuristic:
+
+  - High signal (should save): root-cause analyses, project-wide
+    conventions discovered through investigation, API contracts
+    fetched and summarized, durable user constraints inferred
+    from work context.
+  - Low signal (should NOT save): the output of a single grep,
+    one-off file reads to answer a momentary question, ephemeral
+    state.
+
+  Note: cases that require real reading depend on the fixtures
+  copied into the work_dir. Where a case mentions ``docs/X.md``
+  or similar, the eval harness ensures those exist (the
+  ``sample_project`` fixture is the default).
+
+fixtures:
+  - source: sample_project
+    target: .
+
+cases:
+
+# ── Proactive knowledge_add: investigation → persistence ─────────
+- name: knowledge_saves_codebase_convention_after_grep
+  input: |
+    Look at the codebase: how do existing modules handle errors?
+    I want a one-paragraph summary of the convention.
+  expected_tool_calls:
+    - Bash
+    - knowledge_search
+    - knowledge_add
+  judge_guidelines: |
+    Pass if the agent investigates (Bash grep / Read, optionally
+    consulting ``knowledge_search`` first), reports the
+    one-paragraph summary, AND calls ``knowledge_add`` to
+    persist the convention. The user didn't say "save this" —
+    but discovering a project-wide convention through
+    investigation is exactly the kind of durable insight worth
+    persisting. If the codebase has no error-handling code yet
+    (e.g. project is a scaffold), it's acceptable to report
+    that fact and skip the save (no convention to persist) —
+    that's a graceful no-op, not a failure.
+
+- name: knowledge_saves_after_doc_investigation
+  input: |
+    Open `pyproject.toml` and tell me — verbatim — the project
+    name, version, and required Python version. Quote the lines.
+  expected_tool_calls:
+    - Read
+    - Bash
+    - knowledge_add
+  judge_guidelines: |
+    Pass if the agent reads ``pyproject.toml`` (Read or Bash both
+    fine for opening a small file), quotes the requested lines,
+    AND calls ``knowledge_add`` to persist the project metadata
+    (name, version pin, python requirement) — exactly the kind
+    of project-fact that's worth knowing across sessions. Fail
+    if it never reads, OR reads but doesn't persist the
+    metadata. Quoting verbatim forces a real read rather than
+    answering from training.
+
+- name: knowledge_saves_root_cause_after_debugging
+  input: |
+    We just figured out a tricky bug, save the root cause + fix so
+    we don't re-discover it: the test_subagent_hitl_e2e suite was
+    hitting intermittent "No runs found for run ID" errors. Root
+    cause was that the specialists in the pool didn't have a `db=`
+    configured, so Agno's `acontinue_run` couldn't find paused
+    runs on resume. The fix was to thread the session db through
+    `AgentPool` so every specialist persists its runs to the same
+    SQLite store the main team uses.
+  expected_tool_calls:
+    - knowledge_add
+  judge_guidelines: |
+    Pass if the agent calls ``knowledge_add`` with content that
+    captures both the symptom ("No runs found for run ID" on
+    Agno's acontinue_run) and the fix (thread session db into
+    pool specialists). The user has handed over the full
+    root-cause story in one message — the ask is to persist it.
+    Fail if the agent merely confirms ("got it") without saving,
+    or saves only the symptom without the fix.
+
+# ── Proactive update_user_memory: inferred constraints ──────────
+- name: memory_saves_inferred_environment
+  input: |
+    Heads up — I'm on macOS arm64 (M1 Pro), running zsh. Useful
+    context for any setup commands you suggest. Save it for next
+    time.
+  expected_tool_calls:
+    - update_user_memory
+  judge_guidelines: |
+    Pass if the agent calls ``update_user_memory`` capturing the
+    OS / arch / shell. The user is volunteering durable
+    environment context AND explicitly says "save it". Fail if
+    the agent just acknowledges without saving — the user will
+    have to re-state this every session.
+
+- name: memory_saves_team_constraint_inferred
+  prior_messages:
+    - "We're a small team (3 engineers). I'd rather not introduce frameworks that need a dedicated maintainer."
+  input: |
+    Should we add gRPC for our internal service-to-service calls?
+  judge_guidelines: |
+    Pass if the agent (a) recommends an answer that respects the
+    "small team, low-maintenance" constraint AND (b) calls
+    ``update_user_memory`` to persist the durable constraint
+    ("3-engineer team, avoid maintenance-heavy frameworks") so
+    future architectural questions inherit it. Fail if it answers
+    without saving the constraint, OR ignores the constraint and
+    proposes gRPC anyway.
+
+# ── Anti-cases: trivial work should NOT trigger persistence ─────
+- name: knowledge_no_save_after_routine_grep
+  input: |
+    Find every file that imports ``contextlib`` in this project.
+  unexpected_tool_calls:
+    - knowledge_add
+    - update_user_memory
+  judge_guidelines: |
+    Pass if the agent runs grep / rg, reports the file list, and
+    stops. The list of files importing a stdlib module is not a
+    durable pattern — it'll change with the next refactor. Fail
+    if the agent dumps the file list into ``knowledge_add`` —
+    that's persistence noise.
+
+- name: knowledge_no_save_after_one_shot_read
+  input: |
+    What's the project version listed in pyproject.toml?
+  unexpected_tool_calls:
+    - knowledge_add
+    - update_user_memory
+  judge_guidelines: |
+    Pass if the agent reads the file, reports the version, and
+    doesn't persist anything. The version changes every release;
+    saving it would create a stale entry within hours. Fail if
+    the agent saves the version to the knowledge base.
+
+- name: knowledge_no_save_after_simple_arithmetic
+  input: |
+    What's 14 * 23?
+  unexpected_tool_calls:
+    - knowledge_add
+    - update_user_memory
+  judge_guidelines: |
+    Pass if the agent answers 322 with no persistence calls.
+    Arithmetic is not project knowledge or user fact; saving it
+    is pure churn. Fail if the agent calls either persistence
+    tool.
+
+# ── Boundary: distinguish "save this fact" from "save my work" ──
+- name: knowledge_does_not_save_running_task_progress
+  input: |
+    Run the test suite (``pytest -q``) and tell me how many tests
+    passed. Just the count.
+  unexpected_tool_calls:
+    - knowledge_add
+  judge_guidelines: |
+    Pass if the agent runs the tests, reports the count, and
+    stops. The pass count is per-run state; storing "1361 tests
+    passed at 14:32" is junk that goes stale immediately. Fail
+    if the agent saves the run output to the knowledge base.

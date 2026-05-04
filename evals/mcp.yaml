@@ -1,0 +1,146 @@
+agent: mcp-test
+description: |
+  MCP routing discipline.
+
+  When an agent has MCP-surfaced tools (e.g. ``mcp__linear__create_issue``,
+  ``mcp__slack__post_message``) alongside standard shell / edit tools, it
+  should pick the *right* tool for the job:
+
+  - User asks for an action against a service that has an MCP tool →
+    use the MCP tool, not ``Bash`` (``gh issue create``, ``curl``, etc.)
+    and not a local file write.
+  - User asks for code work (fix a bug, edit a file, run a test) →
+    use the standard tools, *not* MCP. MCP tools don't touch the
+    codebase.
+
+  The fake MCP tools live in ``evals/_mcp_stubs.py`` and return canned
+  success strings. We're testing the model's tool-routing decision,
+  not real integration behavior.
+
+cases:
+
+# ── Positive: use MCP when the task matches a service ────────────
+- name: mcp_creates_linear_issue_for_bug_report
+  input: |
+    Open a Linear ticket: "API returns 500 on /users when limit > 100".
+    Tag it as a bug.
+  expected_tool_calls:
+    - mcp__linear__create_issue
+  unexpected_tool_calls:
+    - Bash
+    - Write
+    - Edit
+  judge_guidelines: |
+    Pass if the agent calls ``mcp__linear__create_issue`` with the
+    title (and optionally a description). Fail if it shells out to
+    ``gh issue create`` / ``curl``, writes a local file, or claims it
+    can't create tickets — the MCP tool is right there.
+
+- name: mcp_posts_to_slack
+  input: |
+    Post to #engineering: "Deploy to prod completed at 14:30 UTC, all
+    services healthy."
+  expected_tool_calls:
+    - mcp__slack__post_message
+  unexpected_tool_calls:
+    - Bash
+    - Write
+    - Edit
+  judge_guidelines: |
+    Pass if the agent calls ``mcp__slack__post_message`` with channel
+    "engineering" and the message text. Fail if it shells out
+    (``curl`` to a webhook) or asks the user to post manually.
+
+- name: mcp_saves_to_notion
+  input: |
+    Save these auth design notes to our Notion workspace as a new page
+    titled "Auth v2 design": "We'll use JWT with 15-min access tokens
+    and 7-day refresh tokens. Refresh tokens rotate on use."
+  expected_tool_calls:
+    - mcp__notion__create_page
+  unexpected_tool_calls:
+    - Bash
+    - Write
+    - Edit
+  judge_guidelines: |
+    Pass if the agent calls ``mcp__notion__create_page`` with the
+    title and content. Fail if it writes a local ``.md`` file (the
+    user explicitly said "Notion workspace") or shells out.
+
+- name: mcp_creates_github_issue
+  input: |
+    File a GitHub issue in acme-co/api: title "Pagination bug", body
+    "limit > 100 causes 500. See logs from 2026-04-30."
+  expected_tool_calls:
+    - mcp__github__create_issue
+  unexpected_tool_calls:
+    - Bash
+  judge_guidelines: |
+    Pass if the agent calls ``mcp__github__create_issue`` with repo,
+    title, and body. Fail if it falls back to ``gh issue create`` via
+    Bash — the MCP tool replaces the CLI when available.
+
+# ── Negative: don't use MCP for code work ────────────────────────
+- name: mcp_no_use_for_code_edit
+  input: |
+    Fix the bug in `src/auth.py`: line 42 passes the password as the
+    second argument to `verify()`, but it expects the hash there.
+  unexpected_tool_calls:
+    - mcp__linear__create_issue
+    - mcp__notion__create_page
+    - mcp__slack__post_message
+    - mcp__github__create_issue
+  judge_guidelines: |
+    Pass if the agent uses ``Read`` / ``Bash`` / ``edit_file`` to fix
+    the code. Fail if it reaches for any ``mcp__*`` tool — they don't
+    edit code, they're integration endpoints. Filing a Linear issue
+    instead of fixing the bug is wrong; posting to Slack about the
+    bug instead of fixing it is wrong.
+
+- name: mcp_no_use_for_definitional_question
+  input: |
+    What's the difference between TCP and UDP at the transport layer?
+  unexpected_tool_calls:
+    - mcp__linear__create_issue
+    - mcp__notion__create_page
+    - mcp__slack__post_message
+    - mcp__github__create_issue
+    - Bash
+    - Write
+    - Edit
+  judge_guidelines: |
+    Pass if the agent answers from training knowledge with no tool
+    calls. Fail if it reaches for any MCP tool ("let me file a
+    ticket about this") or shells out — pure Q&A, no integrations
+    needed.
+
+# ── Boundary: pick the right MCP service ─────────────────────────
+- name: mcp_picks_right_service_linear_not_github
+  input: |
+    Our team uses Linear (not GitHub Issues) for bug tracking. Open a
+    ticket: "Login form crashes on Safari 16.5".
+  expected_tool_calls:
+    - mcp__linear__create_issue
+  unexpected_tool_calls:
+    - mcp__github__create_issue
+  judge_guidelines: |
+    Pass if the agent calls ``mcp__linear__create_issue``. Fail if it
+    calls ``mcp__github__create_issue`` despite the user saying "we
+    use Linear, not GitHub". Tests that the agent honors the explicit
+    service preference rather than picking the first MCP tool that
+    looks vaguely right.
+
+# ── Anti-fall-back: when shell would also work, prefer MCP ────────
+- name: mcp_prefers_mcp_over_shell_fallback
+  input: |
+    Open a GitHub issue in acme-co/api titled "Add request ID
+    propagation". You can use whatever method is available.
+  expected_tool_calls:
+    - mcp__github__create_issue
+  unexpected_tool_calls:
+    - Bash
+  judge_guidelines: |
+    Pass if the agent uses ``mcp__github__create_issue``. The user
+    said "whatever method is available" — when an MCP tool exists,
+    it's the right choice over ``gh issue create`` via shell. Fail if
+    the agent shells out anyway.

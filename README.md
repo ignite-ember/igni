@@ -56,6 +56,14 @@ models:
 
 See [Quickstart](QUICKSTART.md) for the full setup guide.
 
+### Quickstart (new setup)
+
+1. **Install** — `brew install ignite-ember/tap/ignite-ember` (or `pip install ignite-ember`)
+2. **Authenticate** — `ignite-ember /login` for hosted models, or set `OPENAI_API_KEY` + add model to `.ember/config.yaml` for your own
+3. **Run** — `ignite-ember`
+
+See [Quickstart](QUICKSTART.md) for the full guide.
+
 ## Upgrading
 
 **v0.3.8** includes the following changes:

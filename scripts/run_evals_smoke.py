@@ -166,6 +166,53 @@ def _build_editor_agent(model, project_dir: Path):
     )
 
 
+def _build_mcp_test_agent(model, project_dir: Path):
+    """Build a small agent exposing fake MCP-shaped tools alongside
+    standard tools, for routing-decision evals.
+
+    See ``evals/_mcp_stubs.py`` for the fake tools. We give the agent a
+    minimal, mode-neutral system prompt so the test measures *the
+    model's own tool-routing instincts*, not specialized prompt
+    coaching.
+    """
+    import sys
+
+    from agno.agent import Agent
+
+    from ember_code.core.config.tool_permissions import ToolPermissions
+    from ember_code.core.tools.registry import ToolRegistry
+
+    sys.path.insert(0, str(Path("evals").resolve()))
+    from _mcp_stubs import MCPStubTools  # type: ignore[import-not-found]
+
+    registry = ToolRegistry(
+        base_dir=str(project_dir),
+        permissions=ToolPermissions(project_dir=project_dir),
+    )
+    tools = registry.resolve(["Write", "Edit", "Bash", "Read"])
+    tools.append(MCPStubTools())
+
+    instructions = (
+        "You are a coding assistant with both standard file/shell tools "
+        "and several MCP-surfaced integration tools "
+        "(``mcp__linear__create_issue``, ``mcp__notion__create_page``, "
+        "``mcp__slack__post_message``, ``mcp__github__create_issue``).\n\n"
+        "Pick the tool that *fits the task*. Use MCP tools when the user "
+        "asks for an action against the corresponding service (Linear, "
+        "Notion, Slack, GitHub). Use shell / edit_file / save_file for "
+        "code work. Don't use MCP tools for code edits, and don't shell "
+        "out to ``gh`` / ``curl`` when an MCP tool exists for the same "
+        "operation."
+    )
+    return Agent(
+        name="mcp-test",
+        model=model,
+        instructions=instructions,
+        tools=tools,
+        markdown=True,
+    )
+
+
 def _build_main_agent(model, project_dir: Path):
     """Build the main orchestrator agent.
 
@@ -205,6 +252,7 @@ async def _run_case(
     judge_model,
     case_timeout: float = 60.0,
     case_retries: int = 2,
+    work_dir: Path | None = None,
 ):
     """Run a single case with a fresh session_id so history doesn't leak.
 
@@ -228,17 +276,25 @@ async def _run_case(
 
     last_error: str | None = None
     attempts = 1 + max(0, case_retries)
+    # Per-case override wins. Tasks-mode / multi-specialist cases need
+    # more wall-clock than the suite default; pinning a longer timeout
+    # in the YAML beats globally inflating the default.
+    effective_timeout = case.case_timeout or case_timeout
 
     for attempt in range(1, attempts + 1):
         try:
             return await asyncio.wait_for(
                 run_eval_case(
-                    case, agent, judge_model, session_id=f"eval-{_uuid.uuid4().hex[:8]}"
+                    case,
+                    agent,
+                    judge_model,
+                    session_id=f"eval-{_uuid.uuid4().hex[:8]}",
+                    work_dir=work_dir,
                 ),
-                timeout=case_timeout,
+                timeout=effective_timeout,
             )
         except asyncio.TimeoutError:
-            last_error = f"case_timeout: exceeded {case_timeout:.0f}s"
+            last_error = f"case_timeout: exceeded {effective_timeout:.0f}s"
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -251,7 +307,7 @@ async def _run_case(
 
     result = CaseResult(case=case)
     result.error = f"{last_error} (after {attempts} attempts)"
-    result.elapsed = case_timeout if last_error and "case_timeout" in last_error else 0.0
+    result.elapsed = effective_timeout if last_error and "case_timeout" in last_error else 0.0
     return result
 
 
@@ -316,6 +372,7 @@ async def _run_suite(
                         judge_model,
                         case_timeout=case_timeout,
                         case_retries=case_retries,
+                        work_dir=case_work,
                     )
                     return idx, case, r, None
                 except Exception as exc:
@@ -359,6 +416,8 @@ async def _run_suite(
                         print(f"          rel: {rr.reliability_detail}")
                     if rr.unexpected_detail and rr.unexpected_passed is False:
                         print(f"          unexp: {rr.unexpected_detail}")
+                    if rr.tool_arg_detail and rr.tool_arg_passed is False:
+                        print(f"          arg: {rr.tool_arg_detail}")
                     if rr.accuracy_score is not None and rr.accuracy_passed is False:
                         print(f"          acc: {rr.accuracy_score:.1f}/{rr.case.accuracy_threshold}")
                     if rr.error:
@@ -528,97 +587,83 @@ async def main():
     else:
         requested = [s.strip() for s in args.suite.split(",") if s.strip()]
 
-    # The Session is heavy (loads 13 specialists, knowledge index, etc.) —
-    # build ONCE and reuse for every specialist suite. Editor still has
-    # its own bypass factory for speed (it doesn't need the pool).
-    session_dir = Path(tempfile.mkdtemp(prefix="ember-eval-session-"))
-    session_built = False
-    shared_session = None
+    # Per-case Session build: every case gets a fresh Session rooted at
+    # its own work_dir. The earlier "build once, reuse" pattern shared
+    # one project_dir across all cases — that meant case N saw artifacts
+    # from cases 1..N-1, which broke isolation for any test that did
+    # ``ls`` / ``find`` to discover the project shape. Slower (~5-10s
+    # per case for the Session build), but every test now starts from
+    # the fixture's clean state.
+    spawn_timeout_override = args.spawn_timeout
 
-    def _ensure_session():
-        nonlocal shared_session, session_built
-        if not session_built:
-            from ember_code.core.config.settings import load_settings
-            from ember_code.core.session.core import Session
+    def _build_session_for(project_dir: Path):
+        """Build a fresh Session rooted at ``project_dir``.
 
-            # Write a permissive settings.local.json into the session
-            # dir BEFORE Session() reads it. Default permissions ask
-            # for confirmation on Bash/Edit/Write, and the main agent
-            # uses non-streaming arun so an "ask" tool pauses the run
-            # and returns ``status=PAUSED`` to the eval runner — the
-            # agent never reaches its scheduling step. The sub-agent
-            # auto-approve drain only covers spawn_agent pauses, not
-            # the main agent's own. Allowing everything in the eval
-            # session keeps the agent's flow comparable to a user who
-            # has clicked "Allow always" for these tools.
-            import json as _json
+        Writes a permissive ``.ember/settings.local.json`` under
+        ``project_dir`` so the agent can use Bash/Edit/Write without
+        HITL confirmation (evals are headless), wires the test model,
+        disables Agno's exception retries, and starts an auto-approve
+        loop on the sub-agent HITL coordinator. Returns the live
+        Session — caller decides whether to use ``main_team`` or
+        ``pool.get(name)``.
+        """
+        from ember_code.core.config.settings import load_settings
+        from ember_code.core.session.core import Session
 
-            ember_dir = session_dir / ".ember"
-            ember_dir.mkdir(parents=True, exist_ok=True)
-            (ember_dir / "settings.local.json").write_text(
-                _json.dumps(
-                    {
-                        "permissions": {
-                            "allow": [
-                                "Glob",
-                                "Grep",
-                                "LS",
-                                "Read",
-                                "WebSearch",
-                                "WebFetch",
-                                "Bash",
-                                "BashOutput",
-                                "Write",
-                                "Edit",
-                                "Python",
-                                "Schedule",
-                            ],
-                            "ask": [],
-                        }
+        import json as _json
+
+        ember_dir = project_dir / ".ember"
+        ember_dir.mkdir(parents=True, exist_ok=True)
+        (ember_dir / "settings.local.json").write_text(
+            _json.dumps(
+                {
+                    "permissions": {
+                        "allow": [
+                            "Glob",
+                            "Grep",
+                            "LS",
+                            "Read",
+                            "WebSearch",
+                            "WebFetch",
+                            "Bash",
+                            "BashOutput",
+                            "Write",
+                            "Edit",
+                            "Python",
+                            "Schedule",
+                        ],
+                        "ask": [],
                     }
-                )
+                }
             )
+        )
 
-            settings = load_settings(project_dir=session_dir)
-            test_model_id = os.getenv("EMBER_TEST_LLM_MODEL") or "gpt-4o-mini"
-            test_base_url = os.getenv("EMBER_TEST_LLM_BASE_URL") or "https://api.openai.com/v1"
-            test_api_key = os.environ["EMBER_TEST_LLM_API_KEY"]
-            settings.models.registry["MiniMax-M2.5"] = {
-                "provider": "openai_like",
-                "model_id": test_model_id,
-                "url": test_base_url,
-                "api_key": test_api_key,
-                "context_window": 128_000,
-                "vision": False,
-            }
-            settings.models.default = "MiniMax-M2.5"
-            if args.spawn_timeout is not None:
-                # Tighten the spawn deadline for evals so a hung specialist
-                # frees the slot in seconds, not in the project default
-                # (600s) which lets one bad case wedge the whole suite.
-                settings.orchestration.sub_team_timeout = args.spawn_timeout
-                print(f"  spawn timeout overridden: {args.spawn_timeout}s")
-            # Disable Agno's retry-on-exception. For benchmarks we want
-            # deterministic single-shot results — retry amplification is
-            # what turned a 60s httpx timeout into a 981s case wedge in
-            # earlier runs (3 attempts on the specialist × 3 attempts on
-            # the main team × per-attempt 60s ≈ 540s minimum).
-            settings.models.retries = 0
-            shared_session = Session(settings=settings, project_dir=session_dir)
-            # Auto-approve every sub-agent HITL request. Evals run
-            # headless — no TUI to surface a confirmation dialog — and
-            # without this drain a specialist hitting any
-            # ``requires_confirmation`` tool (Bash, Edit, Write) blocks
-            # forever on ``coord.wait_resolved`` and the whole case
-            # wedges. We start one background task that pulls every new
-            # entry from the coordinator and confirms it. This was the
-            # actual cause of "smoke hangs even at concurrency=1" —
-            # not the model API, not the orchestration code.
-            asyncio.create_task(_auto_approve_loop(shared_session.sub_agent_hitl))
-            session_built = True
-        return shared_session
-
-    import copy as _copy
+        settings = load_settings(project_dir=project_dir)
+        test_model_id = os.getenv("EMBER_TEST_LLM_MODEL") or "gpt-4o-mini"
+        test_base_url = os.getenv("EMBER_TEST_LLM_BASE_URL") or "https://api.openai.com/v1"
+        test_api_key = os.environ["EMBER_TEST_LLM_API_KEY"]
+        settings.models.registry["MiniMax-M2.5"] = {
+            "provider": "openai_like",
+            "model_id": test_model_id,
+            "url": test_base_url,
+            "api_key": test_api_key,
+            "context_window": 128_000,
+            "vision": False,
+        }
+        settings.models.default = "MiniMax-M2.5"
+        if spawn_timeout_override is not None:
+            settings.orchestration.sub_team_timeout = spawn_timeout_override
+        # Disable Agno's retry-on-exception so we get deterministic
+        # single-shot results (retry amplification turned a 60s timeout
+        # into ~540s case wedges).
+        settings.models.retries = 0
+        sess = Session(settings=settings, project_dir=project_dir)
+        # Auto-approve every sub-agent HITL request. Evals are headless
+        # — without this drain, a specialist hitting any
+        # ``requires_confirmation`` tool blocks forever on
+        # ``coord.wait_resolved``.
+        asyncio.create_task(_auto_approve_loop(sess.sub_agent_hitl))
+        return sess
 
     def _factory_for(suite_name: str):
         """Return a (yaml_path, factory) pair for the given suite name.
@@ -660,25 +705,43 @@ async def main():
 
             return yaml_path, editor_factory
 
-        if target_agent == "main":
-            sess = _ensure_session()
-            shared_main = sess.main_team
+        # MCP suite: bypass-style factory with stub MCP tools attached.
+        # Avoids depending on real out-of-process MCP servers.
+        if target_agent == "mcp-test":
 
-            def main_factory(_base_dir: Path):
-                return _copy.copy(shared_main)
+            def mcp_factory(base_dir: Path):
+                return _build_mcp_test_agent(_build_live_model(), base_dir)
+
+            return yaml_path, mcp_factory
+
+        if target_agent == "main":
+
+            def main_factory(base_dir: Path):
+                # Fresh Session per case → main_team's tools resolve
+                # paths against the per-case work_dir, not a shared
+                # project_dir polluted by prior cases.
+                sess = _build_session_for(base_dir)
+                return sess.main_team
 
             return yaml_path, main_factory
 
-        # Specialist agent — pull from session pool
-        sess = _ensure_session()
+        # Specialist agent — build a fresh Session per case and pull
+        # the named specialist out of its pool. Same isolation reason
+        # as the main agent: avoid cross-case state leakage.
         try:
-            shared_specialist = sess.pool.get(target_agent)
+            # Probe once with a throwaway session_dir to confirm the
+            # specialist exists in the pool before the suite runs;
+            # gives a clean error message instead of a per-case crash.
+            probe_dir = Path(tempfile.mkdtemp(prefix="ember-eval-probe-"))
+            probe_sess = _build_session_for(probe_dir)
+            probe_sess.pool.get(target_agent)
         except (KeyError, ValueError) as exc:
             print(f"  ! agent '{target_agent}' not in pool ({exc}) — skipping")
             return None, None
 
-        def specialist_factory(_base_dir: Path):
-            return _copy.copy(shared_specialist)
+        def specialist_factory(base_dir: Path):
+            sess = _build_session_for(base_dir)
+            return sess.pool.get(target_agent)
 
         return yaml_path, specialist_factory
 

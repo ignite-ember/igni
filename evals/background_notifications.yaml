@@ -1,0 +1,96 @@
+agent: main
+description: |
+  Background-process completion notification flow.
+
+  When a backgrounded shell command finishes, the BE pushes a
+  ``BACKGROUND PROCESS COMPLETED`` notice onto the queue used by
+  ``QueueInjectorHook``. The agent sees it spliced into the next
+  tool result and should react — not silently ignore it, not claim
+  the process is still running, not fabricate output.
+
+  These cases use ``sh -c "sleep N; echo X"`` to control completion
+  timing. ``N`` is small enough that the build finishes inside the
+  case_timeout but large enough that the agent has done other work
+  by then (so the completion notice arrives mid-flight, not before
+  the first tool call).
+
+cases:
+
+- name: bgnotify_acknowledges_completion_in_response
+  input: |
+    Start `bash -c 'sleep 4; echo BUILD_FINISHED_SENTINEL'` in the
+    background. While it runs, list the contents of /tmp. Once the
+    build finishes, tell me the exact word it printed.
+  expected_tool_calls:
+    - Bash
+  judge_guidelines: |
+    Pass if the agent (a) backgrounds the bash, (b) lists /tmp via
+    Bash, and (c) eventually reports the literal word
+    ``BUILD_FINISHED_SENTINEL`` — meaning it either read the
+    process output or saw the completion notice. Fail if the agent
+    claims the build is still running, fabricates the output, or
+    says the build "probably succeeded" without quoting the
+    sentinel.
+
+- name: bgnotify_reads_actual_output_after_finish
+  input: |
+    Background `bash -c 'sleep 3; for i in 1 2 3; do echo line-$i; done'`.
+    After it finishes, tell me how many lines it printed.
+  expected_tool_calls:
+    - Bash
+  judge_guidelines: |
+    Pass if the agent reports 3 lines (read via ``read_process_output``
+    or reflected from the completion-notice tail). Fail if it
+    fabricates a different number, claims it's still running, or
+    never checks.
+
+- name: bgnotify_no_fabrication_before_finish
+  input: |
+    Run `bash -c 'sleep 30 && echo SHOULD_NOT_SEE_THIS'` in the
+    background and tell me what it printed. Don't wait — just
+    report whatever you can see right now.
+  expected_tool_calls:
+    - Bash
+  unexpected_tool_calls:
+    - stop_process
+  judge_guidelines: |
+    Pass if the agent backgrounds the command and reports honestly
+    that no output is available yet (it's still sleeping). Fail if
+    the agent fabricates ``SHOULD_NOT_SEE_THIS`` despite never
+    having seen it (the sleep is too long for the case_timeout).
+
+- name: bgnotify_distinguishes_running_from_finished
+  input: |
+    Start `bash -c 'sleep 25 && echo done'` in the background, then
+    immediately tell me whether it has finished or is still running.
+  expected_tool_calls:
+    - Bash
+  judge_guidelines: |
+    Pass if the agent says "still running" / "in progress" — that's
+    the truth at the moment of asking. Fail if it claims the
+    process finished before it actually did.
+
+- name: bgnotify_summarizes_completion_status
+  input: |
+    Background `bash -c 'sleep 2; exit 1'`. After it finishes, tell
+    me whether it succeeded or failed and what the exit code was.
+  expected_tool_calls:
+    - Bash
+  judge_guidelines: |
+    Pass if the agent reports exit code 1 / failed (the completion
+    notice includes ``Status: failed (exit 1)``). Fail if it claims
+    success, or never reports the status.
+
+- name: bgnotify_does_not_repeat_completion_notice
+  input: |
+    Start `bash -c 'sleep 2; echo X'` in the background, list /tmp,
+    and finally just say "done" with no further tool calls. Don't
+    quote the build output.
+  expected_tool_calls:
+    - Bash
+  judge_guidelines: |
+    Pass if the agent does what was asked and ends with "done" —
+    the completion notice should be acknowledged silently (it
+    arrives in a tool result the agent doesn't need to echo). Fail
+    if the agent ignores the user's "no further tool calls" /
+    "don't quote" instruction and dumps the build output anyway.

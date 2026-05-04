@@ -35,7 +35,7 @@ _TOOL_NAME_EXPANSIONS: dict[str, list[str]] = {
     "Glob": ["glob_files"],
     "LS": ["list_files"],
     "WebSearch": ["web_search", "search_news"],
-    "WebFetch": ["ember_web"],
+    "WebFetch": ["ember_web", "fetch_url"],
     # All ScheduleTools functions — without this, ``Schedule`` falls
     # through unchanged and the matcher looks for a literal function
     # name "Schedule" that never exists, so positive cases that
@@ -44,7 +44,26 @@ _TOOL_NAME_EXPANSIONS: dict[str, list[str]] = {
     # (no function literally named "Schedule" was ever going to
     # match, so the "unexpected" check was always trivially clean).
     "Schedule": ["schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"],
+    # KnowledgeTools — pass through individual function names. Listed
+    # here so eval YAMLs can also use the umbrella name "Knowledge"
+    # if a case wants to allow any of the three operations.
+    "Knowledge": ["knowledge_search", "knowledge_add", "knowledge_delete", "knowledge_status"],
 }
+
+
+# Tools that Agno may auto-invoke regardless of what the case asked
+# for — they belong to the learning / memory subsystem and aren't
+# part of the agent's deliberate plan. Including them in every
+# expanded allowlist keeps the reliability check from false-failing
+# when, e.g., ``update_user_memory`` fires during a tasks-mode run.
+# Don't add tools here that the case is meant to *test* (file ops,
+# spawn_*, etc.) — those should be explicit in the case YAML.
+_ALWAYS_ALLOWED_SYSTEM_TOOLS: tuple[str, ...] = (
+    "update_user_memory",
+    "knowledge_add",
+    "knowledge_search",
+    "knowledge_status",
+)
 
 
 def _expand_tool_names(names: list[str]) -> list[str]:
@@ -54,6 +73,20 @@ def _expand_tool_names(names: list[str]) -> list[str]:
         for fn in _TOOL_NAME_EXPANSIONS.get(n, [n]):
             if fn not in out:
                 out.append(fn)
+    return out
+
+
+def _expand_expected_tool_names(names: list[str]) -> list[str]:
+    """Like ``_expand_tool_names`` but extends with always-allowed system tools.
+
+    Use this for the allowlist (``expected_tool_calls``), NOT for the
+    blocklist (``unexpected_tool_calls``). Adding system tools to a
+    blocklist would unintentionally forbid them everywhere.
+    """
+    out = _expand_tool_names(names)
+    for fn in _ALWAYS_ALLOWED_SYSTEM_TOOLS:
+        if fn not in out:
+            out.append(fn)
     return out
 
 
@@ -83,6 +116,8 @@ class CaseResult(BaseModel):
     accuracy_reason: str = ""
     """The LLM judge's free-text reasoning. Empty when no judge ran."""
     file_results: list[tuple[str, bool, str]] = Field(default_factory=list)
+    tool_arg_passed: bool | None = None
+    tool_arg_detail: str = ""
 
     error: str | None = None
     elapsed: float = 0.0
@@ -182,6 +217,38 @@ class SuiteResult(BaseModel):
         return results
 
 
+def _check_tool_arg_assertions(
+    tool_trace: list[dict],
+    assertions: list[dict],
+) -> tuple[bool, str]:
+    """Verify each assertion matches at least one call in the trace.
+
+    An assertion is ``{tool: <name>, args_must_contain: {<key>: <val>, ...}}``.
+    It passes when *some* call to ``tool`` has every key/value present in
+    its ``args`` dict. Used for "did spawn_team get called with
+    mode='coordinate'?"-style checks.
+    """
+    failures: list[str] = []
+    for a in assertions:
+        target_tool = a.get("tool")
+        required = a.get("args_must_contain") or {}
+        if not target_tool:
+            continue
+        matched = False
+        for call in tool_trace:
+            if call.get("name") != target_tool:
+                continue
+            args = call.get("args") or {}
+            if all(args.get(k) == v for k, v in required.items()):
+                matched = True
+                break
+        if not matched:
+            failures.append(f"{target_tool}({required})")
+    if failures:
+        return False, "missing tool-arg matches: " + ", ".join(failures)
+    return True, "all tool-arg assertions matched"
+
+
 def _setup_fixtures(
     fixtures: list[dict] | None,
     fixtures_root: Path,
@@ -201,11 +268,11 @@ def _setup_fixtures(
 
     for fix in fixtures:
         src = fixtures_root / fix.get("source", "")
-        target_rel = Path(fix.get("target", ""))
-        if not src.exists() or not target_rel.parts:
-            logger.debug("fixture skip: src=%s exists=%s target=%s", src, src.exists(), target_rel)
+        target_str = fix.get("target", "")
+        if not src.exists() or not target_str:
+            logger.debug("fixture skip: src=%s exists=%s target=%r", src, src.exists(), target_str)
             continue
-        target = work_dir / target_rel
+        target = work_dir / target_str
         target.parent.mkdir(parents=True, exist_ok=True)
         if src.is_dir():
             shutil.copytree(src, target, dirs_exist_ok=True)
@@ -244,6 +311,9 @@ async def _run_reliability(
     if response is None or getattr(response, "messages", None) is None:
         return False, "agent run produced no response (likely API error / rate limit)"
     try:
+        # The from_history filter is applied upstream in
+        # ``run_eval_case`` so every check sees the same scrubbed
+        # ``response.messages``. No additional filtering needed here.
         from agno.eval.reliability import ReliabilityEval
 
         rel = ReliabilityEval(
@@ -270,7 +340,7 @@ async def _run_reliability(
                 expected[:4]
             ) + (", ..." if len(expected) > 4 else "") + ")"
         failed = ", ".join(result.failed_tool_calls) if result.failed_tool_calls else "unknown"
-        return False, f"missing tool calls: {failed}"
+        return False, f"unexpected tool calls (outside allowlist): {failed}"
     except Exception as exc:
         return False, f"reliability eval error: {exc}"
 
@@ -391,6 +461,7 @@ async def run_eval_case(
     agent: Any,
     judge_model: Any | None,
     session_id: str | None = None,
+    work_dir: Path | None = None,
 ) -> CaseResult:
     """Run a single eval case against a built agent.
 
@@ -412,11 +483,32 @@ async def run_eval_case(
         if session_id is not None:
             run_kwargs["session_id"] = session_id
         try:
+            # Multi-turn: send each prior message first on the same
+            # session, then send the actual input. We only judge the
+            # response to the last turn — prior turns are setup. We
+            # don't sleep between turns; the model produces a complete
+            # response per arun, and Agno persists it before returning.
+            for prior in case.prior_messages:
+                await agent.arun(prior, **run_kwargs)
             response = await agent.arun(case.input, **run_kwargs)
         except Exception as run_exc:
             result.error = f"agent.arun failed: {run_exc}"
             result.elapsed = time.monotonic() - start
             return result
+        # Strip ``from_history=True`` messages so every downstream check
+        # — tool_trace extraction, unexpected_tool_calls, ReliabilityEval
+        # — sees only the final turn's tool calls. Prior_messages are
+        # sent on the same session_id, and Agno reloads them into
+        # ``response.messages`` with ``from_history=True``. Without
+        # this filter, multi-turn cases get false-fails on tools the
+        # agent called in turn 1.
+        msgs = list(getattr(response, "messages", None) or [])
+        current_only = [m for m in msgs if not getattr(m, "from_history", False)]
+        if len(current_only) != len(msgs):
+            from copy import copy as _shallow_copy
+            response = _shallow_copy(response)
+            response.messages = current_only
+
         output_text = ""
         content = getattr(response, "content", None)
         if isinstance(content, str):
@@ -451,7 +543,7 @@ async def run_eval_case(
 
         # 1. ReliabilityEval — expected tool calls (allowlist)
         if case.expected_tool_calls:
-            expanded = _expand_tool_names(case.expected_tool_calls)
+            expanded = _expand_expected_tool_names(case.expected_tool_calls)
             passed, detail = await _run_reliability(response, expanded)
             result.reliability_passed = passed
             result.reliability_detail = detail
@@ -481,10 +573,20 @@ async def run_eval_case(
             if not passed:
                 all_passed = False
 
+        # 3b. Tool-arg assertions (e.g. "spawn_team called with mode=coordinate")
+        if case.tool_arg_assertions:
+            passed, detail = _check_tool_arg_assertions(
+                result.tool_trace, case.tool_arg_assertions
+            )
+            result.tool_arg_passed = passed
+            result.tool_arg_detail = detail
+            if not passed:
+                all_passed = False
+
         # 4. File assertions
         if case.file_assertions:
             for assertion in case.file_assertions:
-                passed, detail = check_file_assertion(assertion)
+                passed, detail = check_file_assertion(assertion, work_dir=work_dir)
                 result.file_results.append((assertion.get("type", ""), passed, detail))
                 if not passed:
                     all_passed = False

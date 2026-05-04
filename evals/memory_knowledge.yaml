@@ -1,0 +1,204 @@
+agent: main
+description: |
+  Memory + knowledge tool discipline.
+
+  Two related but distinct surfaces:
+
+  1. ``update_user_memory(task)`` — surfaced by Agno's LearningMachine
+     when ``user_memory`` is configured in AGENTIC mode. The agent
+     calls it when it learns something durable about the *user*
+     (preferences, role, project conventions). NOT for tasks,
+     greetings, or one-off Q&A.
+
+  2. ``knowledge_search`` / ``knowledge_add`` — Ember's KnowledgeTools.
+     The knowledge base is project-scoped (Chroma-backed). The agent
+     uses it for project-specific lore the codebase itself doesn't
+     reveal: design decisions, deployment runbooks, architecture
+     rationale. NOT for textbook concepts or trivia.
+
+  These tools are about *what the agent volunteers to remember*. A
+  failure here looks like memory churn (saving every "hi") or
+  knowledge pollution (saving textbook facts as "patterns").
+
+cases:
+
+# ── update_user_memory: positive — durable user fact ──────────────
+- name: memory_saves_role_and_context
+  input: |
+    Quick context — I'm a senior backend engineer at Stripe, mostly
+    working on the payments API. Useful to know for next time.
+  expected_tool_calls:
+    - update_user_memory
+  judge_guidelines: |
+    Pass if the agent calls ``update_user_memory`` with a task that
+    captures the user's role / employer / domain. Fail if it merely
+    acknowledges ("got it!") without saving, or saves something
+    too vague ("user is technical").
+
+- name: memory_saves_durable_preference
+  input: |
+    Heads up — in this codebase we always use tabs, never spaces.
+    Please remember that.
+  expected_tool_calls:
+    - update_user_memory
+    - knowledge_add
+  judge_guidelines: |
+    Pass if the agent persists the "tabs not spaces" rule via
+    EITHER ``update_user_memory`` (treating it as a user
+    preference) OR ``knowledge_add`` (treating it as a project
+    convention). Both interpretations are defensible —
+    "in this codebase" leans project, "remember that" leans
+    user — what matters is that the rule actually gets persisted
+    somewhere durable. Fail if the agent merely acknowledges
+    ("got it, tabs only") without calling either tool.
+
+- name: memory_saves_response_style
+  input: |
+    By the way — please give me concise responses. No long
+    explanations unless I ask. Apply this for the rest of our chats.
+  expected_tool_calls:
+    - update_user_memory
+  judge_guidelines: |
+    Pass if the agent calls ``update_user_memory`` capturing the
+    "concise responses" preference. Fail if it just says "sure!"
+    without persisting the preference.
+
+# ── update_user_memory: negative — must NOT save ──────────────────
+- name: memory_no_save_for_greeting
+  input: |
+    Hi there!
+  unexpected_tool_calls:
+    - update_user_memory
+  judge_guidelines: |
+    Pass if the agent greets back without saving anything. Fail if
+    it calls ``update_user_memory`` for a one-word hello — that's
+    memory churn.
+
+- name: memory_no_save_for_trivia_question
+  input: |
+    What's 14 * 23?
+  unexpected_tool_calls:
+    - update_user_memory
+  judge_guidelines: |
+    Pass if the agent answers 322 with no memory tool call.
+    Arithmetic Q&A is not a fact about the user.
+
+- name: memory_no_save_for_one_shot_task
+  input: |
+    Run pytest -q and tell me if anything fails.
+  unexpected_tool_calls:
+    - update_user_memory
+  judge_guidelines: |
+    Pass if the agent runs the tests without saving "user wants
+    pytest run" — that's a task instruction, not a durable fact
+    about the user.
+
+- name: memory_no_save_for_ephemeral_state
+  input: |
+    I'm tired today, let's keep this simple.
+  unexpected_tool_calls:
+    - update_user_memory
+  judge_guidelines: |
+    Pass if the agent acknowledges tone but doesn't persist
+    "user is tired" — that's transient, not durable. Acceptable
+    bonus: the agent saves "user prefers simple/short responses"
+    if it interprets the tone as a preference, but persisting
+    "tired" itself is a fail.
+
+# ── update_user_memory: multi-turn recall ────────────────────────
+- name: memory_recalled_across_turns
+  prior_messages:
+    - "Quick fact about me — I always use uv for Python package management. Save that."
+  input: |
+    What's the right way to add the ``requests`` library to this
+    project?
+  judge_guidelines: |
+    Pass if the agent's answer references uv (e.g. ``uv add
+    requests``). The prior turn established the user's package
+    manager and asked the agent to save it; the recall turn is
+    where we see whether the saved memory actually informs the
+    response. Fail if the answer recommends pip / poetry / etc.,
+    ignoring the saved preference.
+
+# ── knowledge_search: positive — project-specific question ───────
+- name: knowledge_search_for_project_decision
+  input: |
+    What's our retry convention for outbound HTTP calls in this
+    project? Check the knowledge base.
+  expected_tool_calls:
+    - knowledge_search
+    - knowledge_status
+    - Bash
+  judge_guidelines: |
+    Pass if the agent calls ``knowledge_search`` with a query
+    about retry conventions FIRST. Falling back to grep (Bash)
+    after an empty knowledge-base result is fine — and a quick
+    ``knowledge_status`` check to confirm "is the KB empty or
+    just unmatched?" is also defensible. Fail if it skips
+    ``knowledge_search`` entirely and goes straight to grep —
+    the user explicitly pointed at the knowledge base.
+
+- name: knowledge_search_for_internal_pattern
+  input: |
+    Look up our standard pattern for auth middleware in the
+    knowledge base.
+  expected_tool_calls:
+    - knowledge_search
+    - knowledge_status
+    - Bash
+  judge_guidelines: |
+    Pass if the agent calls ``knowledge_search`` first. Falling
+    back to grep / ls after an empty KB result is acceptable —
+    the agent is trying to be helpful by checking the codebase
+    when the KB has nothing. Fail if it fabricates a pattern out
+    of thin air, or skips ``knowledge_search`` entirely and goes
+    straight to grep (the user asked for the knowledge base
+    specifically — start there).
+
+# ── knowledge_add: positive — durable design decision ────────────
+- name: knowledge_add_for_decision
+  input: |
+    Save this for the next time anyone touches deployment: we run
+    database migrations only via ``alembic upgrade head``, never
+    ``--autogenerate`` directly. Add it to the knowledge base.
+  expected_tool_calls:
+    - knowledge_add
+  judge_guidelines: |
+    Pass if the agent calls ``knowledge_add`` with the migration
+    convention. Fail if it merely confirms or saves to user_memory
+    (this is a project pattern, not a personal preference).
+
+# ── knowledge: negative — must NOT call knowledge_* ──────────────
+- name: knowledge_no_search_for_textbook_concept
+  input: |
+    What's the difference between TCP and UDP at the transport
+    layer?
+  unexpected_tool_calls:
+    - knowledge_search
+  judge_guidelines: |
+    Pass if the agent answers from training knowledge with no
+    knowledge_search. TCP vs UDP is canonical CS material, not a
+    project-specific pattern worth searching the knowledge base
+    for.
+
+- name: knowledge_no_add_for_one_off_observation
+  input: |
+    I just realized Python's GIL only releases on I/O. Interesting!
+  unexpected_tool_calls:
+    - knowledge_add
+  judge_guidelines: |
+    Pass if the agent engages conversationally without saving the
+    GIL note to the knowledge base. The user is musing, not
+    asking for a durable record. Saving every observation is
+    knowledge pollution.
+
+- name: knowledge_no_search_for_simple_action
+  input: |
+    Print "hello world" via Python.
+  unexpected_tool_calls:
+    - knowledge_search
+    - knowledge_add
+  judge_guidelines: |
+    Pass if the agent runs the command (or shows the one-liner)
+    without consulting the knowledge base. There's nothing to
+    look up.

@@ -1076,7 +1076,7 @@ wheels = [
 
 [[package]]
 name = "ignite-ember"
-version = "0.4.0"
+version = "0.4.2"
 source = { editable = "." }
 dependencies = [
     { name = "agno", extra = ["ddg", "mcp", "openai", "sql", "sqlite"] },
