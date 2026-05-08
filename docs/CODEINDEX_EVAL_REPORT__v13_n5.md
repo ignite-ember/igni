@@ -55,6 +55,8 @@ the report's analysis). Examples:
 | ⚠ | 13 / 60 | 22 / 60 |
 | ❌ | **6 / 60** | 7 / 60 |
 | ✅-rate | **68 %** | 52 % |
+| ⚠-rate | 22 % | 37 % |
+| ❌-rate | **10 %** | 12 % |
 | Wall time mean | 2 267 s (σ 294) | **1 548 s (σ 143)** |
 | Wall time range | 2 044 – 2 781 s | 1 359 – 1 757 s |
 | Cost / run | ~$0.05 | $4.01 |
@@ -65,6 +67,30 @@ the report's analysis). Examples:
 the variance window we saw at N=2. **Claude Code wins on wall
 time** by ~32 % consistently. The cost difference is two orders
 of magnitude.
+
+## Visual comparison
+
+### 60-trial verdict mix (each character = 1 trial)
+
+```
+              ┌── 41 mergeable (68 %) ───────────────┐┌─   13    ─┐┌─ 6 ┐
+Ember-code   ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░██████
+              ┌── 31 mergeable (52 %) ─────┐┌──── 22 partial ────┐┌─ 7 ─┐
+Claude Code  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░███████
+                                          ▓ = mergeable  ░ = partial  █ = fail
+```
+
+### Wall time and cost per run
+
+```
+Wall time (lower is better)
+Ember-code   ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ 2 267 s
+Claude Code  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓                     1 548 s
+
+Cost per run (lower is better)
+Ember-code   ▏ ~$0.05
+Claude Code  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ $4.01
+```
 
 ## Per-case ✅ frequency (out of 5)
 

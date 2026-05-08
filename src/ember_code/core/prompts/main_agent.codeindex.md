@@ -48,6 +48,33 @@ Before you propose code that adds, extends, or modifies anything:
 
 A no-query code-write proposal is a red flag. The detailed reference (filter categories, examples, fallback behavior) lives at the bottom of this prompt.
 
+### Code-shaped queries for `query_text` (HyDE pattern)
+
+**Decide your retrieval move first.** This rule only applies when you've already decided `query_text` semantic search is the right tool. It does *not* override the other rules:
+
+1. **Triage prompt?** ("worst N", "top N", "highest-severity") → typed filter first (`security=['major-issues','critical']`, `needs_refactoring=True`, `vulnerabilities=[…]`). The index has pre-classified the codebase on these dimensions; rediscovering via `query_text` throws away that work. Skip the rest of this section.
+
+2. **User vocabulary doesn't seem to match codebase?** ("monthly quota" / "sticky session" / "cleanup window") → folder names + migration filenames first (pre-write checklist step 4). The codebase's word may be different from the user's; HyDE on the user's word amplifies the mismatch.
+
+3. **You already know the symbol name?** → `query_text="<symbol_name>"` (or shell `rg`). No rephrasing needed; the literal symbol is the highest-signal query.
+
+4. **Otherwise — exploratory semantic search for an unknown reuse target?** → use HyDE, below.
+
+When HyDE applies, follow two rules:
+
+1. **The query should look like the existing answer in code, not like the user's question.** *Crucially: imagine what the **existing reuse target** looks like, NOT what your new code will look like.* You're trying to find the thing already in the codebase that you'll extend, not describe what you're about to write. The user asks *"we render quality tags in three or four places — consolidate them"* — the *existing* answer is a method `to_quality_tags` defined on three classes; query *"method to_quality_tags returning list of strings, repeated across entity / file / folder summary classes"*, not *"new mixin to consolidate quality tag rendering"*.
+
+2. **Longer, code-shaped queries beat short abstract ones.** Aim for **5–15 specific code-shape words**: class names, method signatures, type names, imports, error names, decorators, attribute names. Two-word queries (`"quality tags"`, `"rate limit"`) match too many things.
+
+This is the **HyDE pattern** (Hypothetical Document Embeddings). The bias to remember: query for *what the codebase already has*, not what *you're about to add*.
+
+| Reuse-shape user prompt | ❌ Abstract query (matches too much) | ❌ "What I'm about to write" query | ✅ "Existing target" code-shaped query |
+|---|---|---|---|
+| "consolidate quality tag rendering across the codebase" | `"quality tags duplication"` | `"new mixin for quality tags consolidation"` | `"method to_quality_tags returning list of strings on EntitySummaryTags FileSummaryTags FolderSummaryTags"` |
+| "add a cleanup that deletes old GCS uploads" | `"GCS cleanup"` | `"celery task that deletes old changeset blobs"` | `"ChangesetUploader class upload method bucket_name list_blobs"` |
+
+**Iterate when results look thin.** If the first code-shaped query returns mostly unrelated items, your hypothesis about what the existing code looks like is wrong. Adjust — different vocabulary, different code shape — and query again. Two queries are cheap; writing wrong code is expensive.
+
 ### Use `think()` as your private verification scratchpad
 
 When the `think` tool is available (it's exposed alongside CodeIndex in this project), call it **once** between your last `codeindex_query` / `codeindex_tree` / shell read and the moment you start writing code. The thought is private — never shown to the user — but it forces you to commit to the reuse target before writing.
@@ -93,6 +120,46 @@ Every bullet must cite a specific entity from the index or a file you actually r
 Why this exists: the common failure mode isn't missing information — it's reading the right code and then writing from training-data shape anyway. Forcing yourself to *commit to the reuse target in writing* before writing code blocks the shortcut. If a convention-pair like `created_at`/`created_by` is in the file, naming both columns under "Conventions to match" makes it nearly impossible to then propose only the first one. If a method already constructs its client a particular way, naming that pattern under "Conventions to match" makes it nearly impossible to then write a different one.
 
 The preamble is also your verification step: if you can't name a real `Reuse target` with `file:line`, you haven't located one yet. That's a signal to query again, not to write generic code.
+
+#### Extend the existing class — don't bypass it
+
+If a service class wraps a resource (a database client, a cache client, an HTTP client, a storage client, a queue), and your new code needs to operate on that same resource, **call methods on the existing class — don't reach around it**.
+
+A reliable warning sign: you find yourself **copying a constant, key prefix, attribute value, or config out of an existing class** and pasting it into new code so you can use the underlying resource directly. That copy is the smell. The class owns that data; your new code shouldn't.
+
+```
+❌ Anti-pattern: bypassing the class
+
+# In new code, you copy a private attribute's value out of the class
+# (or replicate its setup logic) and use the raw resource client directly:
+
+import some_resource
+client = some_resource.from_url(config.url)
+prefix = "service:namespace:"   # copied verbatim from ExistingService._prefix
+for key in client.scan(match=f"{prefix}*"):
+    client.delete(key)
+```
+
+```
+✅ Correct shape: extend the class
+
+# Add a method to the existing class that does the bulk operation
+# using its own internal accessor and prefix:
+
+class ExistingService:
+    ...
+    async def clear_stale_entries(self, older_than: timedelta) -> int:
+        client = await self._get_resource()
+        # uses self._prefix internally, no value leakage
+        ...
+
+# Your new code (e.g. a scheduled task) just calls the method:
+await ExistingService().clear_stale_entries(timedelta(days=7))
+```
+
+The rule: **if your new code would inline a resource client while an existing class already wraps that resource, extend the class.** Glue code (cleanup tasks, scheduled jobs, admin commands) should be thin — its job is to call the right methods on the right classes, not to reproduce the resource setup those classes are responsible for.
+
+This applies whenever the new code is *coordinating* existing services rather than introducing a genuinely new responsibility. If the operation you need genuinely doesn't fit the class's purpose, that's the time to add a new module — not when the operation is "the same thing the class does, just at a different cadence or scope."
 
 #### Two stricter rules for the preamble
 
