@@ -632,6 +632,11 @@ class EmberApp(App):
                     submitted = f"/{submitted}"
                     self._exit_command_mode()
 
+                # Auto-expand a partial slash command when exactly one
+                # built-in or skill matches (e.g. `/codei` → `/codeindex`).
+                if submitted.startswith("/") and not submitted.startswith("//"):
+                    submitted = self._input_handler.expand_unique_command(submitted)
+
                 # Shell mode — run as command, stay in shell mode
                 if self._shell_mode:
                     self._shell_task = asyncio.create_task(self._run_shell_inline(submitted))

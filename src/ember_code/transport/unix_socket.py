@@ -21,6 +21,13 @@ from ember_code.transport.base import Transport
 
 logger = logging.getLogger(__name__)
 
+# StreamReader buffer cap. asyncio's default is 64 KiB, which a single
+# NDJSON message can blow past (e.g. MCP tool descriptions across several
+# servers). Hitting the cap raises LimitOverrunError, killing the reader
+# loop — after which every subsequent command hangs until its 60 s
+# wait_for fires. 64 MiB is well clear of any realistic message.
+_STREAM_LIMIT = 64 * 1024 * 1024
+
 # Registry of message types for deserialization
 _MESSAGE_TYPES: dict[str, type[Message]] = {}
 
@@ -79,7 +86,7 @@ class UnixSocketServerTransport(Transport):
             self._socket_path.unlink()
 
         self._server = await asyncio.start_unix_server(
-            self._on_connect, path=str(self._socket_path)
+            self._on_connect, path=str(self._socket_path), limit=_STREAM_LIMIT
         )
         logger.info("BE listening on %s", self._socket_path)
 
@@ -146,7 +153,7 @@ class UnixSocketClientTransport(Transport):
     async def connect(self, timeout: float = 10.0) -> None:
         """Connect to the BE socket."""
         self._reader, self._writer = await asyncio.wait_for(
-            asyncio.open_unix_connection(str(self._socket_path)),
+            asyncio.open_unix_connection(str(self._socket_path), limit=_STREAM_LIMIT),
             timeout=timeout,
         )
         logger.info("Connected to BE at %s", self._socket_path)

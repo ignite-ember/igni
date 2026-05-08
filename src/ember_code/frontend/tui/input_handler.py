@@ -91,6 +91,7 @@ class AutocompleteProvider:
         "/config",
         "/model",
         "/mcp",
+        "/codeindex",
         "/compact",
         "/schedule",
         "/login",
@@ -135,6 +136,32 @@ class AutocompleteProvider:
             for s in self._skill_pool.list_skills():
                 all_commands.append(f"/{s.name}")
         return cmd in all_commands
+
+    def expand_unique(self, text: str) -> str:
+        """Expand a partial slash command if exactly one command matches.
+
+        ``/codei`` → ``/codeindex``; ``/codei sync`` → ``/codeindex sync``.
+        Leaves the text alone when there is no match, multiple matches, or
+        an exact match for an existing command.
+        """
+        if not text.startswith("/") or text.startswith("//"):
+            return text
+        parts = text.split(None, 1)
+        cmd_part = parts[0]
+        rest = parts[1] if len(parts) > 1 else ""
+
+        all_commands = list(self.BUILTIN_COMMANDS)
+        if self._skill_pool:
+            for s in self._skill_pool.list_skills():
+                all_commands.append(f"/{s.name}")
+
+        if cmd_part in all_commands:
+            return text
+
+        matches = [c for c in all_commands if c.startswith(cmd_part)]
+        if len(matches) != 1:
+            return text
+        return f"{matches[0]} {rest}" if rest else matches[0]
 
 
 def extract_at_mention(
@@ -206,6 +233,10 @@ class InputHandler:
     def get_completions(self, text: str) -> list[str]:
         """Get autocomplete suggestions for the current input."""
         return self.autocomplete.complete(text)
+
+    def expand_unique_command(self, text: str) -> str:
+        """Resolve a partial slash command when exactly one match exists."""
+        return self.autocomplete.expand_unique(text)
 
     def get_file_completions(self, query: str) -> list[str]:
         """Get file path completions for an @-mention query."""
