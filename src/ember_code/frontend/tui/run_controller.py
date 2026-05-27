@@ -130,6 +130,18 @@ class RunController:
 
     async def process_message(self, message: str) -> None:
         """Entry point — queue or execute a message."""
+        # User input pre-empts any active /loop. The /loop subcommands
+        # themselves go through, so the user can /loop stop or check
+        # /loop status without killing the loop they just configured.
+        # Loop iterations bypass this method (they call _run directly
+        # via _check_loop_continuation), so anything landing here is
+        # by definition fresh user input.
+        if not message.startswith("/loop"):
+            cancelled = await self._app.backend.cancel_pending_loop()
+            if cancelled:
+                self._conversation.append_info(
+                    "Loop interrupted by user input."
+                )
         # Slash commands always run immediately (they don't use the agent)
         if message.startswith("/"):
             await self._run(message)
@@ -340,6 +352,46 @@ class RunController:
             next_msg = self._queue.pop(0)
             self._sync_queue_panel()
             await self._run(next_msg)
+            return
+        # Queue empty — check whether a /loop wants the next turn.
+        await self._check_loop_continuation()
+
+    async def _check_loop_continuation(self) -> None:
+        """If a ``/loop`` is active, fire its next iteration.
+
+        The backend owns the iteration counter — we ask it for the next
+        prompt and it returns ``None`` when the loop is exhausted or
+        was cancelled. Iterations call ``_run`` directly, bypassing the
+        ``process_message`` entry point so they don't trigger the
+        user-input cancellation guard.
+        """
+        try:
+            descriptor = await self._app.backend.pop_pending_loop_iteration()
+        except Exception:
+            logger.debug("pop_pending_loop_iteration failed", exc_info=True)
+            return
+        if not descriptor:
+            return
+        # Completion marker — one-shot signal that the loop just hit
+        # its cap and was cleared on the backend. Render a summary so
+        # the user knows the loop ended naturally; don't recurse.
+        if descriptor.get("completed"):
+            total = descriptor.get("total_iterations", 0)
+            self._conversation.append_info(
+                f"✓ Loop completed after {total} iteration"
+                f"{'s' if total != 1 else ''}."
+            )
+            return
+        prompt = descriptor["prompt"]
+        iteration = descriptor.get("iteration", 0)
+        remaining = descriptor.get("remaining", 0)
+        # Visible iteration banner so the user has an anchor between
+        # iterations. "0 remaining" means "this is the last one."
+        self._conversation.append_info(
+            f"↻ Loop iteration {iteration} "
+            f"({remaining} remaining after this one)"
+        )
+        await self._run(prompt)
 
     # ── Render protocol messages ─────────────────────────────────
 

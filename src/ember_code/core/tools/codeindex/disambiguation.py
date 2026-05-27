@@ -34,7 +34,6 @@ import logging
 from ember_code.core.code_index.enums import Relation
 from ember_code.core.code_index.index import CodeIndex
 from ember_code.core.code_index.schema.items import CodeIndexResult
-
 from ember_code.core.tools.codeindex.filters import (
     DISAMBIGUATION_REFS_PER_DIRECTION,
 )
@@ -133,8 +132,14 @@ class DisambiguationService:
                     )
                     if group.called_by or group.calls:
                         info = parent_info.get(parent_id)
+                        # Fall back to the full parent_id (not a prefix)
+                        # so the agent can still call codeindex_tree(id=…)
+                        # on it. The "info is None" branch is the cold
+                        # path (metadata fetch returned nothing); when we
+                        # do hit it, the LLM consumer would prefer a
+                        # usable UUID over a truncated-but-tidy stub.
                         group.via_parent = (
-                            f"{info.name} ({info.path})" if info else parent_id[:8]
+                            f"{info.name} ({info.path})" if info else parent_id
                         )
                         result[child_id] = group
 
@@ -281,23 +286,75 @@ class DisambiguationService:
                 # Self-loops aren't useful for disambiguation.
                 continue
 
-            # Outgoing (CALLS, IMPORTS, EXTENDS, IMPLEMENTS, DECORATES,
-            # TYPES_AS): source uses target.
-            if relation in self._OUTGOING_RELATIONS and from_uuid in per_item:
-                per_item[from_uuid]["calls"].append(to_uuid)
-                target_meta.setdefault(to_uuid, to_meta)
-            # Incoming (CALLED_BY, IMPORTED_BY, EXTENDED_BY, IMPLEMENTED_BY,
-            # DECORATED_BY, TYPED_BY): source is used by target.
-            elif relation in self._INCOMING_RELATIONS and to_uuid in per_item:
-                per_item[to_uuid]["called_by"].append(from_uuid)
-                target_meta.setdefault(from_uuid, from_meta)
-            # Symmetric inverses — same edges stored from the other side.
-            elif relation in self._INCOMING_RELATIONS and from_uuid in per_item:
-                per_item[from_uuid]["called_by"].append(to_uuid)
-                target_meta.setdefault(to_uuid, to_meta)
-            elif relation in self._OUTGOING_RELATIONS and to_uuid in per_item:
-                per_item[to_uuid]["calls"].append(from_uuid)
-                target_meta.setdefault(from_uuid, from_meta)
+            # Edge-direction convention (mirrored by the indexer):
+            #   CALLS  edge stored as ``(from=caller, to=callee)``
+            #   CALLED_BY edge stored as ``(from=callee, to=caller)``
+            # So for any OUTGOING relation, ``from_uuid`` is the source
+            # of the dependency and ``to_uuid`` is the target; the
+            # source's ``calls`` list should gain the target. For any
+            # INCOMING relation it's the opposite: ``from_uuid`` is the
+            # depended-on entity, ``to_uuid`` is the caller, and the
+            # depended-on entity's ``called_by`` list should gain the
+            # caller.
+            #
+            # ``get_by_uuids`` returns edges where EITHER endpoint is
+            # in our batch (see file_reference.py:get_by_uuids), so the
+            # same edge can be observed from either side. We handle
+            # both — typically the indexer's mirrored pair means we
+            # see the same logical relationship twice (once from each
+            # side); ``_build_group`` dedupes the resulting duplicates.
+            # The historical bug here was that the "to_uuid in per_item"
+            # branches wrote into the WRONG bucket (CALLS into called_by
+            # and vice versa), silently inverting direction whenever
+            # the mirrored pair was incomplete.
+            if relation in self._OUTGOING_RELATIONS:
+                # ``A --calls--> B``
+                if from_uuid in per_item:
+                    # A is in batch: A's calls gains B.
+                    per_item[from_uuid]["calls"].append(to_uuid)
+                    target_meta.setdefault(to_uuid, to_meta)
+                if to_uuid in per_item and to_uuid != from_uuid:
+                    # B is in batch: B's called_by gains A. (NOT calls
+                    # — B doesn't call A; A calls B.)
+                    per_item[to_uuid]["called_by"].append(from_uuid)
+                    target_meta.setdefault(from_uuid, from_meta)
+            elif relation in self._INCOMING_RELATIONS:
+                # ``A --called_by--> B``  (semantically: A is called by B)
+                if from_uuid in per_item:
+                    # A is in batch: A's called_by gains B.
+                    per_item[from_uuid]["called_by"].append(to_uuid)
+                    target_meta.setdefault(to_uuid, to_meta)
+                if to_uuid in per_item and to_uuid != from_uuid:
+                    # B is in batch: B's calls gains A. (NOT called_by
+                    # — A is called by B, so B is the caller.)
+                    per_item[to_uuid]["calls"].append(from_uuid)
+                    target_meta.setdefault(from_uuid, from_meta)
+            else:
+                # Unknown relation — almost always means a new value
+                # was added to the ``Relation`` enum without updating
+                # the OUTGOING/INCOMING constants here. Log so we
+                # notice rather than silently dropping the edge.
+                logger.warning(
+                    "disambiguation: unknown relation %r (edge "
+                    "%s → %s), dropping. Update _OUTGOING_RELATIONS "
+                    "/ _INCOMING_RELATIONS in disambiguation.py.",
+                    relation, from_uuid, to_uuid,
+                )
+
+        # Each direction-list may now contain duplicates because the
+        # mirrored pair was observed from both sides (e.g. ``(A,B,CALLS)``
+        # AND ``(B,A,CALLED_BY)`` both wrote ``B`` into A's ``calls``
+        # via different branches). Dedupe while preserving order so
+        # ``_rank_direction`` doesn't double-count downstream.
+        for buckets in per_item.values():
+            for direction in ("calls", "called_by"):
+                seen: set[str] = set()
+                deduped: list[str] = []
+                for uuid_ in buckets[direction]:
+                    if uuid_ not in seen:
+                        seen.add(uuid_)
+                        deduped.append(uuid_)
+                buckets[direction] = deduped
 
         return per_item, target_meta
 

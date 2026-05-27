@@ -25,12 +25,10 @@ import re
 from typing import Any
 
 from ember_code.core.code_index.enums import Section
-
 from ember_code.core.tools.codeindex.schemas import (
     _CATEGORICAL_QUALITY_FIELDS,
     _CategoricalFilters,
 )
-
 
 # ── Section regexes / aliases ────────────────────────────────────────
 #
@@ -181,6 +179,21 @@ def filter_sections(content: str, sections: tuple[Section, ...]) -> str:
     wanted: set[str] = set()
     for s in sections:
         wanted |= SECTION_ALIASES.get(s, frozenset())
+    # If every requested Section value resolved to an empty alias set,
+    # the caller hit a gap in ``SECTION_ALIASES`` (typically a new
+    # Section enum member added without updating the alias map). Pass
+    # the content through unchanged and warn so the gap surfaces —
+    # silently returning "" used to make whole entity summaries
+    # disappear at the agent's eyes for what is purely an internal
+    # configuration bug.
+    if not wanted:
+        import logging
+        logging.getLogger(__name__).warning(
+            "filter_sections: no concrete names resolved for %r — "
+            "check SECTION_ALIASES coverage. Passing content through.",
+            sections,
+        )
+        return content
     matches = list(SECTION_RE.finditer(content))
     if not matches:
         return content

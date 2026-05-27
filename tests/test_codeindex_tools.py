@@ -209,6 +209,73 @@ class TestFilterFetch:
         assert {i["name"] for i in result["items"]} == {"hot.py"}
 
 
+# ── `truncated` flag semantics ──────────────────────────────────────
+
+
+class TestTruncatedFlag:
+    """The ``truncated`` field on ``ItemsResponse`` tells the agent
+    whether more candidates existed upstream than what we returned.
+
+    Pre-fix: the flag was computed AFTER post-filtering and AFTER
+    slicing to ``limit`` — so a query that fetched a full batch and
+    then had filters discard most rows reported ``truncated=False``,
+    making the agent think it had exhausted the search space when in
+    fact several matches were silently dropped. The fix computes the
+    flag on the pre-filter row count.
+    """
+
+    @pytest.mark.asyncio
+    async def test_truncated_false_when_within_limit(self, tools, index):
+        # Two items, agent asks for limit=10 → no truncation.
+        await index.add_item("c1", _make_item("a.py", "alpha", quality="good"))
+        await index.add_item("c1", _make_item("b.py", "beta", quality="good"))
+        result = json.loads(await tools.codeindex_query(quality=QualityLevel.GOOD, limit=10))
+        assert result["truncated"] is False
+
+    @pytest.mark.asyncio
+    async def test_truncated_true_when_pre_filter_hits_fetch_cap(self, tools, index):
+        """Pre-fix bug: post-filtering down to 1 row reported
+        truncated=False even when chroma returned a full batch.
+
+        Set up: 9 items all with quality=GOOD but only 1 with
+        domain=['auth']. fetch_limit = limit * 4 = 12 when list_filters
+        are in play. Chroma returns all 9 → after list_filter, 1 row
+        remains. The agent must learn there were more pre-filter hits,
+        not assume the result set was tiny.
+        """
+        for i in range(9):
+            await index.add_item(
+                "c1",
+                _make_item(
+                    f"f{i}.py", "x",
+                    quality="good",
+                    domain=["auth"] if i == 0 else ["other"],
+                ),
+            )
+        # limit=2 → fetch_limit=8. Pre-filter rows = 8 (matches
+        # fetch_limit), post-filter = 1 (only one has domain=['auth']).
+        # Truncated must be True because chroma returned the full batch.
+        result = json.loads(
+            await tools.codeindex_query(quality=QualityLevel.GOOD, domain=["auth"], limit=2)
+        )
+        assert result["truncated"] is True, (
+            f"expected truncated=True; got {result['truncated']} with "
+            f"{len(result['items'])} items"
+        )
+
+    @pytest.mark.asyncio
+    async def test_truncated_false_when_pre_filter_under_fetch_cap(self, tools, index):
+        """When chroma didn't return a full batch, the result is
+        comprehensive even if filters dropped some rows."""
+        # 3 items total, limit=10 → fetch_limit=40, chroma returns 3
+        # which is well under fetch_limit → not truncated.
+        await index.add_item("c1", _make_item("a.py", "x", domain=["auth"]))
+        await index.add_item("c1", _make_item("b.py", "x", domain=["billing"]))
+        await index.add_item("c1", _make_item("c.py", "x", domain=["auth"]))
+        result = json.loads(await tools.codeindex_query(domain=["auth"], limit=10))
+        assert result["truncated"] is False
+
+
 # ── codeindex_tree (single-item drill-down) ─────────────────────────
 
 
@@ -218,12 +285,19 @@ class TestTree:
         item = _make_item("a.py", "x")
         await index.add_item("c1", item)
         file_refs = index._file_reference_service()
+        # ``item --imports--> b``: outgoing edge, item is on the FROM
+        # side → b lands under references["imports"].
         await file_refs.create(
             from_uuid=item.item_id,
             to_uuid="b",
             relation="imports",
             meta={"to_entity_name": "B", "to_entity_path": "src/b.py"},
         )
+        # ``x --called_by--> item``: edge stored as "x is called by item"
+        # — from item's POV, item is the caller. Tree service flips the
+        # to-side relation so x lands under references["calls"] (NOT
+        # called_by — the relation key reflects item's perspective).
+        # Pre-fix bug: bucketed x under "called_by", inverting direction.
         await file_refs.create(
             from_uuid="x",
             to_uuid=item.item_id,
@@ -235,7 +309,10 @@ class TestTree:
         assert result["total"] == 1
         refs = result["items"][0]["references"]
         assert {t["id"] for t in refs["imports"]} == {"b"}
-        assert {t["id"] for t in refs["called_by"]} == {"x"}
+        assert {t["id"] for t in refs["calls"]} == {"x"}, (
+            "x should land under item's 'calls' (item calls x), "
+            "not under 'called_by'"
+        )
 
     @pytest.mark.asyncio
     async def test_relations_filter(self, tools, index):

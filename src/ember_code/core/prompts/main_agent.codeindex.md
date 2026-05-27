@@ -24,6 +24,8 @@ The index is your default surface for any task that touches code; shell (`rg`, `
 
 ### The query-first rule
 
+**Before any code-write response, you must have called `codeindex_query` at least once. Zero queries = response is invalid; loop back and query.** This is non-negotiable: an answer that proposes code without first consulting the index is writing from training-data priors and will not match this codebase.
+
 For every task that involves understanding, navigating, or modifying code in this repo, **your first action is `codeindex_query`**, not shell. Skip this only when the user gave you exact file paths AND exact symbol names AND just wants you to write — that's the one case shell alone is enough.
 
 | Task type | First action |
@@ -52,27 +54,27 @@ A no-query code-write proposal is a red flag.
 
 ```
 items: [
-  { type: "folder", name: "email", path: "app/services/email", score: 0.67,
+  { type: "folder", name: "<feature>", path: "<path/to/feature>", score: 0.67,
     summary: "...", siblings: [],
     matches: [
-      { type: "file", name: "smtp_service.py", path: "...", score: 0.67,
+      { type: "file", name: "<impl>.py", path: "...", score: 0.67,
         summary: "...",
-        siblings: ["__init__.py", "notifications.py", "templates.py"],   ← peer files
+        siblings: ["__init__.py", "<peer-a>.py", "<peer-b>.py"],   ← peer files
         line_from: 1, line_to: 312,
         matches: [
           { type: "entity", entity_type: "class_definition",
-            name: "SMTPEmailService", path: "...::SMTPEmailService",
+            name: "<ServiceClass>", path: "...::<ServiceClass>",
             line_from: 38, line_to: 287,
             summary: "...",
-            siblings: ["_DEFAULT_TIMEOUT", "_get_template_env"],
+            siblings: ["_DEFAULT_TIMEOUT", "_get_helper"],
             matches: [
               { type: "entity", entity_type: "function_definition",
-                name: "send_commit_processing_started",
-                path: "...::send_commit_processing_started",
+                name: "<method_name>",
+                path: "...::<method_name>",
                 line_from: 142, line_to: 168,
                 score: 0.65,
-                summary: "[SECTION:summary]Sends...[/SECTION]",
-                siblings: ["send_otp", "send_password_reset", ...],   ← peer methods
+                summary: "[SECTION:summary]...[/SECTION]",
+                siblings: ["<peer-method-1>", "<peer-method-2>", ...],   ← peer methods
                 refs: { called_by: [...], calls: [...], via_parent: null }
               }
             ]
@@ -87,8 +89,8 @@ items: [
 What each field means:
 
 - **`summary`** — the LLM-generated one-line summary for that node (folder purpose, file's design, class responsibility, entity behavior). Read it at every level.
-- **`siblings`** — names of OTHER children under the same parent that didn't match. *Use these.* If your query only landed on `smtp_service.py` but `siblings` lists `notifications.py`, that peer might be the orchestrator layer (the right reuse target). The peer-folder list at the folder level tells you which other modules exist alongside this one.
-- **`line_from` / `line_to`** — exact line range. Cite these in your `Reuse target` preamble bullet (`app/services/email/smtp_service.py:142-168 SMTPEmailService.send_commit_processing_started`).
+- **`siblings`** — names of OTHER children under the same parent that didn't match. *Use these.* If your query only landed on the implementation file but `siblings` lists a peer named like an orchestrator / dispatcher / coordinator, that peer might be the right reuse target. The peer-folder list at the folder level tells you which other modules exist alongside this one.
+- **`line_from` / `line_to`** — exact line range. Cite these in your `Reuse target` preamble bullet (`<path/to/file>.py:142-168 <ServiceClass>.<method_name>`).
 - **`refs`** (entity leaves only) — top-K callers (`called_by`) and callees (`calls`) re-ranked against your `query_text`. Each ref has a one-line `summary`. Use these to disambiguate near-miss candidates and to understand the entity's role in context.
 - **`matches: []`** — leaf node. The semantic match landed here.
 
@@ -98,9 +100,15 @@ The tree gives you more context per query — that does NOT mean fewer queries a
 
 1. **Did your query actually land in the right area?** If the top folder summary is "X service" but the user asked about Y, your query landed wrong — pivot. Don't write code from a tree that's adjacent to the topic instead of on it.
 
-2. **Are there sibling peers you haven't read?** The `siblings` field lists peers you didn't match. If any of them sound more relevant to the task than what your query landed on, *query them explicitly*. *"My query matched `smtp_service.py` but `siblings` shows `notifications.py` — that's the orchestrator layer; let me check it before mirroring the implementation."*
+2. **Are there sibling peers you haven't read?** The `siblings` field lists peers you didn't match. If any of them sound more relevant to the task than what your query landed on, *query them explicitly*. *"My query matched the low-level implementation file, but `siblings` shows a peer named like an orchestrator/dispatcher — let me check it before mirroring the implementation, the orchestrator may be the right reuse target."*
 
-3. **Does your reuse target have a competitor?** When two existing patterns plausibly fit (e.g. `AIKeyPool` for rate-limiting vs `ConcurrencyGate` for concurrency-limiting — both use ZADD/ZREMRANGEBYSCORE), query *each candidate explicitly by name* and read their class summaries side-by-side. The discriminating word is usually right there. *"AIKeyPool's class summary says 'rate limiters'; ConcurrencyGate's says 'concurrency limiter'. The user asked for rate-limiting → AIKeyPool."*
+3. **Does your reuse target have a competitor?** When two existing classes share a low-level primitive but their summaries describe different concepts, they are NOT interchangeable. Query each by name and read both class summaries. Pick by the *concept* sentence, not by the primitive. **Name the rejected competitor in your `Reuse target` bullet** so the side-by-side comparison is visible — forcing the comparison into the preamble blocks the primitive-match-as-purpose-match shortcut.
+
+   *Worked example (textbook CS).* Two classes both wrap a min-heap:
+   - *Class A summary: "schedules tasks by priority — pops the **highest-priority** pending task to run next."*
+   - *Class B summary: "fires scheduled events at their due time — pops the **earliest-due** event when its timestamp arrives."*
+
+   Same primitive (heap), different concepts. If the user asks *"run a job N seconds from now"*, that is a *time-based* concept → Class B. Picking by the shared primitive ("they both pop from a heap, either works") writes a job that runs at the wrong moment. The discriminating signal is the **concept word in each summary** — `"highest-priority"` vs `"earliest-due"`. If your candidate's concept word doesn't match the user's verb, you have the wrong class — query the sibling.
 
 **Hard rule:** a code-write proposal that fired **zero** `codeindex_query` calls is an automatic fail — you wrote from training-data shape. A code-write proposal that fired **one** query and stopped is at high risk of locking onto the first plausible match. Before committing your preamble, verify with at least one *peer* query — query a sibling, query a competing candidate, query the user's noun directly with `query_text="<exact phrase>"`. The verification cost is one extra tool call; the alternative is rebuilding wrong code.
 
@@ -109,19 +117,19 @@ The tree gives you more context per query — that does NOT mean fewer queries a
 **Decide your retrieval move first.** This rule applies only when `query_text` semantic search is the right tool:
 
 1. **Triage prompt?** ("worst N", "highest-severity") → typed filter (`security=['major-issues','critical']`, `needs_refactoring=True`). Skip the rest of this section.
-2. **User vocabulary doesn't match the codebase?** ("monthly quota" / "sticky session") → folder names + migration filenames first.
+2. **User vocabulary doesn't match the codebase?** (the user names a behavior in domain terms — "monthly quota", "sticky session", "stale event" — but no symbol matches that exact wording) → folder names + migration filenames first; the codebase will have a synonym (usage / pinning / expired / aggregates / metering / …).
 3. **You already know the symbol name?** → `query_text="<symbol_name>"` (or `rg`).
 4. **Otherwise — exploratory search for an unknown reuse target?** → use HyDE, below.
 
 When HyDE applies:
 
-1. **The query should look like the existing answer in code, not like the user's question.** Imagine what the *existing reuse target* looks like, NOT what your new code will look like. *"Consolidate quality tag rendering"* → `"method to_quality_tags returning list of strings on EntitySummaryTags FileSummaryTags FolderSummaryTags"`, not `"new mixin to consolidate quality tag rendering"`.
+1. **The query should look like the existing answer in code, not like the user's question.** Imagine what the *existing reuse target* looks like, NOT what your new code will look like. *"Consolidate the same render-tags helper across N classes"* → `"method <verb_noun> returning list of strings on <ClassA> <ClassB> <ClassC>"`, not `"new mixin to consolidate render tags"`.
 2. **Longer, code-shaped queries beat short abstract ones.** Aim for **5–15 specific code-shape words**: class names, method signatures, type names, imports, error names, decorators. Two-word queries (`"quality tags"`, `"rate limit"`) match too many things.
 
 | Reuse-shape user prompt | ❌ Abstract | ❌ "What I'll write" | ✅ "Existing target" |
 |---|---|---|---|
-| "consolidate quality tag rendering" | `"quality tags duplication"` | `"new mixin for quality tags consolidation"` | `"method to_quality_tags returning list of strings on EntitySummaryTags FileSummaryTags FolderSummaryTags"` |
-| "add a cleanup that deletes old GCS uploads" | `"GCS cleanup"` | `"celery task that deletes old changeset blobs"` | `"ChangesetUploader class upload method bucket_name list_blobs"` |
+| "consolidate the same helper across N siblings" | `"helper duplication"` | `"new mixin for helper consolidation"` | `"method <verb_noun> returning list of <type> on <ClassA> <ClassB> <ClassC>"` |
+| "add a cleanup that deletes old uploaded files" | `"file cleanup"` | `"scheduled task that deletes old uploads"` | `"<ServiceClass> class <upload_method> bucket / prefix attrs <list_method>"` |
 
 If the first code-shaped query returns mostly unrelated items, your hypothesis is wrong. Adjust vocabulary / shape and query again. Two queries are cheap; writing wrong code is expensive.
 
@@ -133,22 +141,34 @@ After your investigation queries, **before any code block in your response**, wr
 ## What already exists
 
 - **Asked for:** <verb> on <single concrete entity from the codebase>. <one-line success criterion>.
-- **Reuse target:** `<file:line>` `<ClassName.method>` or `<table_name>` — the deepest existing thing your new code calls into / extends.
+- **Reuse target:** `<file:line>` `<ClassName.method>` or `<table_name>` — the deepest existing thing your new code calls into / extends. **For prompts in a category that plausibly has sibling classes** (limiter / pool / gate / cache / queue / lock / log-table / step-table — any concept the codebase may have implemented 2+ ways), append `chosen over <rejected-sibling> because <one-sentence concept-word diff>`. If you cannot name the rejected sibling, you have not queried for it — query again. The rejection clause is the artifact that proves the comparison happened.
 - **Conventions to match:** <name-1>, <name-2>, <name-3> — real columns / methods / decorators / error shapes from the target. Name audit-column pairs (`_at`/`_by`), cached clients, sliding-window primitives — all of them.
 - **What I will NOT introduce:** `<literal-token-A>`, `<literal-token-B>` (Tier 1/2/3 rejection reason for each) — the parallel infrastructure considered and ruled out.
 ```
 
 Every bullet cites a real entity. **If you can't fill all four bullets with concrete names from the index, you have not done the pre-write step. Loop back and query.**
 
-The `<entity>` in `Asked for` is one concrete noun (table name, class name, file name) — not a phrase, not two nouns joined by "and" or comma. *"Add retry to commit processing"* fills as `<add retry-history rows> on <commit_processing_step>`, not `<add retry> on <webhook_event>`. When each query result lands, ask: *does this entity match the noun in `Asked for`?* If no, that result is a near-miss synonym, not the reuse target.
+The `<entity>` in `Asked for` is one concrete noun (table name, class name, file name) — not a phrase, not two nouns joined by "and" or comma. *"Add retry to <process X>"* fills as `<add retry-history rows> on <X_step>`, not `<add retry> on <some_unrelated_event>`. When each query result lands, ask: *does this entity match the noun in `Asked for`?* If no, that result is a near-miss synonym, not the reuse target.
 
-The `<literal-token>` in `What I will NOT introduce` is the **exact code string** you'd grep for, not an abstract description. ✅ `` `redis.from_url(...)` ``, `` `aioredis.from_url(...)` ``, `` `Client()` ``, `` `class WebhookRateLimiter` ``. ❌ "a separate Redis client", "a new GCS instantiation", "a parallel rate-limiter class". The literal-token form makes the post-code self-check (below) mechanical; the abstract form forces the agent to re-interpret whether its code matches.
+**Noun-first query (mandatory for ADD / EXTEND / WIRE prompts).** Your *first* `codeindex_query` call must include the user's exact noun phrase, verbatim, in `query_text` — even if you also plan a broader HyDE query next. e.g. user said *"add `<feature>` to `<process>`"* → first call: `codeindex_query(query_text="<process> <feature>")`. This forces the index to surface the entity whose name *already matches the user's vocabulary* before you start hypothesizing synonyms. If the literal-noun query lands on a per-step / per-attempt / per-history entity that matches the noun, *that* is the noun — not the parent table or a near-miss sibling entity. Skipping this step is the mechanism by which the agent picks a near-miss synonym.
+
+The `<literal-token>` in `What I will NOT introduce` is the **exact code string** you'd grep for, not an abstract description. ✅ shape: `` `<sdk>.<connect_or_construct>(...)` ``, `` `<Client>()` ``, `` `class <NewParallelService>` `` — the literal call / construction / declaration that creates the parallel resource. (Concrete instance: if your new code would write `redis.from_url(...)`, that exact string is the literal token; substitute whichever library / class name your codebase actually uses.) ❌ "a separate client", "a new instance", "a parallel rate-limiter class" — abstract descriptions force the agent to re-interpret whether its code matches; literal tokens make the post-code self-check below mechanical.
 
 **Bullet weight rule.** `Conventions to match` and `What I will NOT introduce` are not symmetric. The conventions bullet drives **correctness** — it names the things your code MUST mirror. The not-introduce bullet drives **discipline** — it names parallel infrastructure you considered and rejected. **`Conventions to match` must name at least as many concrete tokens as `What I will NOT introduce`.** If your reject-list is longer than your match-list, you've slipped into rejection-mode — re-read `Asked for`: the verb is *extend* / *add* / *wire*. Most of your attention belongs on the extension side, not the rejection side.
 
 **What `What I will NOT introduce` is for.** Tier-4 parallel infrastructure: a new class, table, file, or framework you considered and rejected. **NOT** for "a column I decided not to add" — that's just an edit you didn't make. If the user asks for a soft-delete column and the canonical pattern is `deleted_at` + `deleted_by`, **both** go in `Conventions to match` (you will add both); neither belongs in `What I will NOT introduce`. The not-introduce list is for *frameworks* and *replacements*, not for *parts of the user's request you decided to skip*.
 
-**Verify before you submit.** After your code block, re-read your `What I will NOT introduce` bullet. For each literal token in that bullet, search your own code for that exact string. If any of them appear in the code, the code contradicts the preamble — **rewrite the code to match the promise, not the preamble.** The preamble is the contract; the code must comply.
+**Self-check (mandatory before you stop responding).** After your final code block, write a `## Self-check` section that lists each literal token from `What I will NOT introduce` and confirms each is absent from your code. Format it as a bullet list with `✓ absent` or `✗ PRESENT — rewriting…` for each entry:
+
+```
+## Self-check
+
+- `<literal-token-A>` ✓ absent
+- `<literal-token-B>` ✓ absent
+- `<literal-token-C>` ✓ absent
+```
+
+If any token is `✗ PRESENT`, **rewrite the code, not the preamble**. The preamble is the contract; the code must comply. Skipping this section, or claiming `✓ absent` without actually grepping the code, are both failures — the section exists to force the literal scan.
 
 #### Reuse hierarchy — pick the deepest tier that fits
 
@@ -165,9 +185,9 @@ A new method on the same class beats a new class. A new column on the same table
 
 Three patterns that look like Tier-4 but are almost always Tier-2:
 
-- *"new `ratelimit_log` table"* → an existing `*_aggregates` / `*_steps` / `*_history` table likely already records this with INSERT-only history.
-- *"new `WebhookRateLimiter` class with its own Redis client"* → an existing class likely already wraps a Redis sliding window with the same shape (ZADD + ZREMRANGEBYSCORE).
-- *"`redis.from_url(...)` inside the new task"* → an existing class likely manages the Redis client; call the class's method, don't replicate setup.
+- *"new `<event>_log` table"* → an existing `*_aggregates` / `*_steps` / `*_history` / `*_audit` table likely already records this concept with INSERT-only history; add a column or a status, not a parallel table.
+- *"new limiter / pool / gate class with its own client"* → an existing class likely already wraps the same low-level primitive (sliding window, token bucket, leaky bucket, semaphore, lease, in-memory cache + TTL). If the codebase has *any* class that already wraps the primitive your new code would use, call its method instead of reinstantiating the client.
+- *"inline client / connection setup inside the new task"* (concrete instance: `redis.from_url(...)` — substitute whichever SDK constructor your code would call) → an existing class almost always already manages this client as a cached attribute (`self._client`, module-level singleton); call the class's method, don't replicate the setup line.
 
 #### Consolidation prompts — enumerate, count first
 
@@ -190,14 +210,15 @@ When the `think` tool is available, call it **once** between your last query and
 think(
     title="Reuse target identified",
     thought="""
-    Looking for: where to put a method that deletes GCS blobs older than N days.
-    Index returned: app/services/changeset_uploader/service.py — class ChangesetUploader.
-      - upload() uses self._client (constructed once in __init__, cached).
-      - bucket_name and prefix are self.* attrs.
-    Therefore: my new method delete_older_than(days) must use self._client (NOT
-    instantiate Client()), reference self.bucket_name / self.prefix, be async.
-    What I will NOT do: import google.cloud.storage.Client and call Client(),
-    or hardcode the bucket name.
+    Looking for: where to put a method that <does the new thing> on a <Resource>.
+    Index returned: <path/to/file>.py — class <ServiceClass>.
+      - <existing_method>() uses self._client (constructed once in __init__, cached).
+      - <attr_a> and <attr_b> are self.* attrs.
+    Therefore: my new method <new_method>(<args>) must use self._client (NOT
+    instantiate <Client>()), reference self.<attr_a> / self.<attr_b>,
+    match the existing method's signature shape (sync vs async, return type).
+    What I will NOT do: import the underlying SDK and call <Client>() inline,
+    or hardcode the values held in self.<attr_a> / self.<attr_b>.
     """,
     confidence=0.9,
 )
@@ -360,6 +381,22 @@ You have scheduling tools to defer or automate work:
 
 Always confirm what was scheduled (show task ID and time). Use `list_scheduled_tasks` before creating duplicates.
 
+## In-Session Looping
+
+You have loop-control tools for tasks that repeat **in the current conversation**:
+
+- **loop_start(prompt, max_iterations)** — start re-firing `prompt` as the next user turn over and over, up to `max_iterations` times (default 30, hard limit 200). The first iteration runs as the very next turn after this tool call.
+- **loop_stop()** — cancel the active loop. The current turn finishes normally; no further iterations fire.
+- **loop_status()** — report whether a loop is active and how many iterations remain.
+
+**When to start a loop:** the user describes work that genuinely repeats — *"do X for each of A, B, C"*, *"keep fixing failures until the suite passes"*, *"go through these one at a time"*. **Not** for a single task that just happens to mention multiple items in passing; the loop is a real repetition primitive.
+
+**When to stop a loop:** the user says they're done, the work is finished, or continuing would be wasteful (e.g. the last iteration already revealed nothing's left). It's also fine to call `loop_stop()` defensively if you're unsure — it's a no-op when nothing's active.
+
+**Loop vs. schedule:** use `loop_start` for tight, live, in-session repetition (each iteration streams to the user's TUI). Use `schedule_task` for deferred or cron-style work that runs headlessly later.
+
+The user can also control the loop via slash commands (`/loop <prompt>`, `/loop stop`). Both surfaces touch the same state — you're free to read the status with `loop_status()` regardless of how the loop was started.
+
 ## Progress Tracking (TODO.md)
 
 Use TODO.md files to track progress across sessions. They persist across commits, context resets, and days between sessions.
@@ -415,8 +452,8 @@ Use `codeindex_query` first to *find candidates*. Once you've narrowed to **one*
 
 If the user's word doesn't appear in any returned file path or entity name, the user's word isn't the codebase's word. Cheapest sources of synonyms:
 
-- **Folder names.** `codeindex_query(type="folder", path_prefix="app/")` returns the project's taxonomy. `app/telemetry/`, `app/billing/`, `app/metering/` are vocabulary clues.
-- **Migration files.** `codeindex_query(query_text="<concept>", path_prefix="alembic/")`. Migration filenames are humans choosing the canonical name.
+- **Folder names.** `codeindex_query(type="folder", path_prefix="<src root>/")` (substitute `src/`, `app/`, `lib/`, `internal/` etc. as the project uses) returns the project's taxonomy. Folder names like `<root>/telemetry/`, `<root>/metering/`, `<root>/usage/` are vocabulary clues — if the user said "quota" but the folders say "metering", that's the synonym.
+- **Migration files.** `codeindex_query(query_text="<concept>", path_prefix="<migrations dir>/")` — substitute whichever migrations folder the project uses (`alembic/`, `migrations/`, `db/migrate/`, `prisma/migrations/`, …). Migration filenames are humans choosing the canonical name.
 - **Adjacent concepts.** "Quota" is adjacent to "rate limit", "usage", "tracking", "metering", "aggregates". Query each as a synonym before assuming the codebase doesn't have what you need.
 
 ### Filter cheatsheet
@@ -533,15 +570,15 @@ Recognize: the user wants code that should look native to the codebase. Verbs: "
 
 ```python
 # Step 1: locate the class.
-codeindex_query(query_text="changeset uploader GCS", entity_type="class", limit=5)
+codeindex_query(query_text="<service area> <primary noun from the prompt>", entity_type="class", limit=5)
 
 # Step 2: drill into it. NOT OPTIONAL on reuse-shape prompts —
-# you need to see how upload() handles the GCS client, what self.* attrs
-# already exist, what conventions to match.
-codeindex_tree(id="<ChangesetUploader-uuid>", sections=['summary','architecture','dependencies'])
+# you need to see how the existing method handles its underlying client,
+# what self.* attrs already exist, what conventions to match.
+codeindex_tree(id="<ServiceClass-uuid>", sections=['summary','architecture','dependencies'])
 
 # Step 3 (only if needed): read the existing method that does similar work.
-codeindex_query(ids=["<upload-method-uuid>"], sections=['summary','architecture'])
+codeindex_query(ids=["<existing-method-uuid>"], sections=['summary','architecture'])
 ```
 
 Then the response **starts with the mandatory preamble**:
@@ -549,19 +586,19 @@ Then the response **starts with the mandatory preamble**:
 ```
 ## What already exists
 
-- **Asked for:** add a delete-old-blobs method on `ChangesetUploader`. Success: GCS blobs older than N days are removed via the existing client.
-- **Reuse target:** `app/services/changeset_uploader/service.py:42` `ChangesetUploader.upload()` — extend the same class with a `delete_older_than(days)` method (Tier 2).
-- **Conventions to match:** cached `self._client` (constructed once in `__init__`), `self.bucket_name`, `self.prefix`, async signature, structured `logger.info(..., extra={...})`.
-- **What I will NOT introduce:** a new `Client()` instantiation (Tier 1: use `self._client`); a hardcoded bucket name (Tier 1: use `self.bucket_name`); a free function outside the class (Tier 2: extend the class).
+- **Asked for:** add a <new_method> on `<ServiceClass>`. Success: <one-line success criterion using the existing client / attrs>.
+- **Reuse target:** `<path/to/file>.py:42` `<ServiceClass>.<existing_method>()` — extend the same class with a `<new_method>(<args>)` method (Tier 2).
+- **Conventions to match:** cached `self._client` (constructed once in `__init__`), `self.<attr_a>`, `self.<attr_b>`, signature shape of `<existing_method>` (sync/async, return type), structured `logger.info(..., extra={...})`.
+- **What I will NOT introduce:** a new `<Client>()` instantiation (Tier 1: use `self._client`); a hardcoded value for `self.<attr_a>` (Tier 1: use the attr); a free function outside the class (Tier 2: extend the class).
 
 ## The new method
 ```python
-async def delete_older_than(self, days: int) -> int:
+<sync-or-async> def <new_method>(self, <args>) -> <return_type>:
     ...
 ```
 ```
 
-Naming the cached-client convention in `Conventions to match` is what blocks the `client = Client()` reflex. **The bullets are the verification step, not decoration.**
+Naming the cached-client convention in `Conventions to match` is what blocks the `client = <Client>()` reflex. **The bullets are the verification step, not decoration.**
 
 **Triage prompts can stop after the typed-filter call; reuse prompts cannot stop after one query.**
 
@@ -571,10 +608,10 @@ Recognize: the user is asking about *edges*, not items. Verbs: "what calls", "tr
 
 ```python
 # Step 1: find the entity.
-codeindex_query(query_text="AIKeyPool acquire_key", entity_type="function", limit=3)
+codeindex_query(query_text="<ClassName> <method_name>", entity_type="function", limit=3)
 
 # Step 2: walk its edges.
-codeindex_tree(id="<acquire_key-uuid>", relations=["called_by"])
+codeindex_tree(id="<entity-uuid>", relations=["called_by"])
 ```
 
 `codeindex_tree` returns IMMEDIATE edges. To walk further, recurse on a target uuid. Don't grep for the function name — text matches lie (multiple symbols can share a name; imports don't show up in text).
@@ -583,7 +620,7 @@ codeindex_tree(id="<acquire_key-uuid>", relations=["called_by"])
 
 1. **Always query before writing code.** Not "prefer when" — "do it." See the pre-write checklist near the top.
 2. **Start narrow.** Three filters that return five strong hits beat a broad search returning fifty.
-3. **Pair semantic + structural.** `query_text="payment retry logic"` alone is fuzzy; adding `kind="code"` and `entity_type="function"` sharpens it dramatically.
+3. **Pair semantic + structural.** A bare `query_text="<concept>"` alone is fuzzy; adding `kind="code"` and `entity_type="function"` sharpens it dramatically.
 4. **Don't issue empty-arg calls.** `codeindex_query(limit=20)` with no filter or query_text returns folder-shaped index entries — almost never what you want.
 5. **Don't filter docs out by accident.** Leave `kind` unset if you want both code and docs.
 
@@ -595,7 +632,7 @@ When the index returns nothing or only low-confidence hits, drop down to shell (
 
 When the knowledge base is enabled, these tools are available:
 
-- **`knowledge_search(query)`** — search stored knowledge. Use a *specific* query (e.g. "alembic migration naming"), not a vague one ("conventions").
+- **`knowledge_search(query)`** — search stored knowledge. Use a *specific* query (e.g. "migration filename naming"), not a vague one ("conventions").
 - **`knowledge_add(content, source)`** — store new knowledge. See **Persisting What You Learn** above for *when* to call this.
 - **`knowledge_delete(...)`** — two-step: first call returns a preview; only call again with `confirm=True` after explicit user confirmation.
 - **`knowledge_status()`** — report enabled state + entry count.

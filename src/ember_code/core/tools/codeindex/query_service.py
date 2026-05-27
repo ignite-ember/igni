@@ -37,9 +37,7 @@ from ember_code.core.code_index.enums import (
     TestingLevel,
 )
 from ember_code.core.code_index.index import CodeIndex
-
 from ember_code.core.code_index.schema.items import CodeIndexResult
-
 from ember_code.core.tools.codeindex.disambiguation import DisambiguationService
 from ember_code.core.tools.codeindex.empty_guard import is_empty_call
 from ember_code.core.tools.codeindex.filters import (
@@ -129,9 +127,7 @@ class QueryService:
         """
         # ── precondition checks ──
         if query_text and ids:
-            return json_dumps(
-                ErrorResponse(error="pass either query_text or ids, not both")
-            )
+            return json_dumps(ErrorResponse(error="pass either query_text or ids, not both"))
 
         if is_empty_call(
             query_text=query_text,
@@ -256,10 +252,7 @@ class QueryService:
         # Direct-id fetches (``ids=[…]``) skip the test filter — the
         # caller asked for these specific items.
         excluding_tests = (not include_tests) and not ids
-        if list_filters.has_any or excluding_tests:
-            fetch_limit = limit * 4
-        else:
-            fetch_limit = limit
+        fetch_limit = limit * 4 if list_filters.has_any or excluding_tests else limit
 
         if query_text:
             rows = await self._idx.search(
@@ -270,11 +263,24 @@ class QueryService:
                 where=where or None, ids=ids, limit=fetch_limit, commit=sha
             )
 
+        # Snapshot the pre-filter count BEFORE list/test filters and
+        # the ``[:limit]`` slice. ``truncated`` needs to mean "chroma
+        # would have returned more if we hadn't capped"; computing it
+        # post-filter answers a different and useless question
+        # ("did the filters happen to leave exactly ``limit`` items"),
+        # making the agent think it had exhausted the search space
+        # when in fact several hits were quietly filtered out.
+        pre_filter_count = len(rows)
+
         if list_filters.has_any:
             rows = [r for r in rows if list_filters.matches(r)]
         if excluding_tests:
             rows = [r for r in rows if not is_test_path(r.path)]
         rows = rows[:limit]
+        # We're truncated iff chroma actually returned a full fetch
+        # batch — the post-filter / post-slice length tells us nothing
+        # about whether more candidates existed upstream.
+        truncated = pre_filter_count >= fetch_limit
 
         # Disambiguation refs (only when query_text was used and we have
         # multiple rows). Best-effort — never blocks the response.
@@ -290,10 +296,17 @@ class QueryService:
                 logger.exception("disambiguation refs failed")
                 refs_map = None
 
-        # Apply section filtering to the matched rows' content. Intermediate
-        # ancestor nodes (folders / files / classes that weren't directly
-        # matched) get their own short summary via ``shorten_summary``.
+        # Stash each row's raw content under a sidecar attribute so the
+        # tree builder can fall back to it when generating ``shorten_summary``
+        # for intermediate ancestor nodes. Naive section-filtering at this
+        # point used to mutate ``r.content`` in place, which then broke
+        # ``shorten_summary`` for ancestor nodes whenever the agent
+        # requested non-``summary`` sections (e.g. ``sections=['security']``):
+        # the SUMMARY section was already stripped, so intermediate nodes
+        # came back with empty ``summary`` fields — and the agent lost the
+        # "what does this folder do" framing entirely.
         for r in rows:
+            r._raw_content = r.content  # type: ignore[attr-defined]
             r.content = filter_sections(r.content, sections)
 
         tree_items = await self._build_tree(rows, sha, refs_map or {})
@@ -302,7 +315,7 @@ class QueryService:
             commit=sha,
             items=tree_items,
             total=len(rows),
-            truncated=len(rows) >= limit,
+            truncated=truncated,
         ).model_dump_json(indent=2, exclude_none=True)
 
     # ── Tree assembly ───────────────────────────────────────────────────
@@ -327,8 +340,7 @@ class QueryService:
         #    BFS level — typically depth 3-4 in practice.
         nodes_by_id: dict[str, CodeIndexResult] = {r.item_id: r for r in ranked_rows}
         to_fetch: set[str] = {
-            r.parent_id for r in ranked_rows
-            if r.parent_id and r.parent_id not in nodes_by_id
+            r.parent_id for r in ranked_rows if r.parent_id and r.parent_id not in nodes_by_id
         }
         while to_fetch:
             ancestors = await self._idx.filter_items(
@@ -374,9 +386,7 @@ class QueryService:
         # 4. Recursively assemble: group rows by their root, build
         #    that subtree, recurse on remaining chain.
         is_matched: set[str] = {r.item_id for r in ranked_rows}
-        score_by_id: dict[str, float] = {
-            r.item_id: r.score or 0.0 for r in ranked_rows
-        }
+        score_by_id: dict[str, float] = {r.item_id: r.score or 0.0 for r in ranked_rows}
 
         return self._assemble(
             row_ids=[r.item_id for r in ranked_rows],
@@ -395,7 +405,16 @@ class QueryService:
         parent_ids: set[str],
         sha: str,
     ) -> dict[str, list[str]]:
-        """For each parent id, return ALL child names (no cap)."""
+        """For each parent id, return its child names.
+
+        Capped at ``_SIBLINGS_FETCH_LIMIT`` (10k) per parent — far above
+        any normal folder/file/class size, but cheap to surface when
+        it does happen. If the cap is hit we log a warning so the
+        truncation isn't invisible; the agent still gets a useful
+        subset, just incomplete. Earlier the docstring claimed "no
+        cap" but the code did cap — silent + dishonest. Now both
+        line up.
+        """
         result: dict[str, list[str]] = {}
         for pid in parent_ids:
             try:
@@ -407,6 +426,13 @@ class QueryService:
             except Exception:  # pragma: no cover — defensive
                 logger.exception("sibling fetch failed for parent_id=%s", pid)
                 continue
+            if len(children) >= _SIBLINGS_FETCH_LIMIT:
+                logger.warning(
+                    "sibling fetch hit cap for parent_id=%s (%d items returned, "
+                    "additional children silently dropped). Bump "
+                    "_SIBLINGS_FETCH_LIMIT in query_service.py if this is real.",
+                    pid, len(children),
+                )
             result[pid] = [c.name for c in children if c.name]
         return result
 
@@ -457,14 +483,23 @@ class QueryService:
                 score = score_by_id.get(parent_id)
             descendant_scores = [c.score for c in children if c.score is not None]
             if descendant_scores:
-                score = max(descendant_scores) if score is None else max(score, max(descendant_scores))
+                score = (
+                    max(descendant_scores) if score is None else max(score, max(descendant_scores))
+                )
 
-            # Summary: full content for matched leaves, short summary for
-            # intermediate nodes. ``content`` was already section-filtered.
+            # Summary: full (section-filtered) content for matched leaves;
+            # short summary derived from the UNFILTERED content for
+            # intermediate nodes. Using the unfiltered content here is
+            # what gives the agent the "what is this folder" framing
+            # even when the matched leaves only requested a non-summary
+            # section like ``security`` — otherwise the ancestor
+            # summary field comes back empty because the SUMMARY marker
+            # was already stripped.
+            raw_content = getattr(parent, "_raw_content", parent.content) or ""
             if parent_id in is_matched and not children:
-                summary_text = parent.content or shorten_summary(parent.content)
+                summary_text = parent.content or shorten_summary(raw_content)
             else:
-                summary_text = shorten_summary(parent.content)
+                summary_text = shorten_summary(raw_content)
 
             # Siblings: names of OTHER children under this node's parent
             # that aren't on this branch. Exclude the node itself.
@@ -483,20 +518,22 @@ class QueryService:
             ):
                 node_refs = refs_map[parent_id]
 
-            out.append(_TreeNode(
-                item_id=parent.item_id,
-                type=parent.type,
-                entity_type=parent.entity_type,
-                name=parent.name,
-                path=parent.path,
-                line_from=parent.line_from,
-                line_to=parent.line_to,
-                score=score,
-                summary=summary_text,
-                siblings=sibling_names,
-                matches=children,
-                refs=node_refs,
-            ))
+            out.append(
+                _TreeNode(
+                    item_id=parent.item_id,
+                    type=parent.type,
+                    entity_type=parent.entity_type,
+                    name=parent.name,
+                    path=parent.path,
+                    line_from=parent.line_from,
+                    line_to=parent.line_to,
+                    score=score,
+                    summary=summary_text,
+                    siblings=sibling_names,
+                    matches=children,
+                    refs=node_refs,
+                )
+            )
 
-        out.sort(key=lambda n: (n.score or 0.0), reverse=True)
+        out.sort(key=lambda n: n.score or 0.0, reverse=True)
         return out

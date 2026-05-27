@@ -40,7 +40,6 @@ from ember_code.core.code_index.enums import (
 )
 from ember_code.core.code_index.schema.items import CodeIndexResult
 
-
 # ── Disambiguation refs ──────────────────────────────────────────────
 
 
@@ -113,7 +112,7 @@ class _TreeNode(BaseModel):
     siblings: list[str] = Field(default_factory=list)
     # Recursive: the next-level matches under this node. ``[]`` means
     # this node is a leaf in the tree (no deeper match).
-    matches: list["_TreeNode"] = Field(default_factory=list)
+    matches: list[_TreeNode] = Field(default_factory=list)
     # Disambiguation refs (callers + callees re-ranked vs ``query_text``).
     # Only populated on entity-level leaves; ``None`` everywhere else
     # because folders/files/classes don't have call-graph edges.

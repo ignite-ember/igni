@@ -134,12 +134,29 @@ class DeleteReferenceOp(BaseModel):
     to_id: str
 
 
+class CommitSummaryOp(BaseModel):
+    """Server-emitted commit-level project map.
+
+    Carries the LLM-rendered markdown for the project map; the applier
+    writes it to ``<chroma_dir>/../<sha>.project_map.md`` so the agent
+    loads it at session start. Emitted by the server once per
+    changeset, after all per-entity summaries are available — that
+    way the server's summarizer model is a single source of truth
+    rather than each client generating their own version.
+    """
+
+    op: Literal["commit_summary"]
+    sha: str
+    markdown: str
+
+
 _OP_MODELS: dict[str, type[BaseModel]] = {
     "commit": CommitOp,
     "upsert_item": UpsertItemOp,
     "delete_item": DeleteItemOp,
     "upsert_reference": UpsertReferenceOp,
     "delete_reference": DeleteReferenceOp,
+    "commit_summary": CommitSummaryOp,
 }
 
 
@@ -150,6 +167,7 @@ class DeltaStats:
     references_upserted: int = 0
     references_deleted: int = 0
     skipped_lines: int = 0
+    commit_summary_written: bool = False
 
 
 class DeltaError(Exception):
@@ -235,6 +253,21 @@ async def apply_delta(
         elif isinstance(op, DeleteReferenceOp):
             await file_refs.delete(from_uuid=op.from_id, to_uuid=op.to_id)
             stats.references_deleted += 1
+        elif isinstance(op, CommitSummaryOp):
+            # The server pre-rendered the project map for this commit;
+            # write it to disk next to the chroma so the session
+            # loader can read it without making any LLM calls of its
+            # own. All map generation is now server-side; the client
+            # only persists what arrives in the changeset.
+            from ember_code.core.code_index.project_map import write_server_supplied_map
+
+            write_server_supplied_map(
+                project=index.project,
+                data_dir=index.data_dir,
+                commit_sha=op.sha,
+                markdown=op.markdown,
+            )
+            stats.commit_summary_written = True
         else:  # pragma: no cover — exhaustive over registered ops
             stats.skipped_lines += 1
 

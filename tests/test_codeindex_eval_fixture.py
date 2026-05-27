@@ -197,10 +197,7 @@ async def test_callers_of_run_raw(populated_index):
     # Find the run_raw entity id first.
     raw = await tools.codeindex_query(type="entity")
     items = json.loads(raw)["items"]
-    matches = [
-        i for i in _flatten(items)
-        if i.get("path", "").endswith("queries.py::run_raw")
-    ]
+    matches = [i for i in _flatten(items) if i.get("path", "").endswith("queries.py::run_raw")]
     assert matches, "run_raw entity not found in any leaf"
     run_raw_id = matches[0]["item_id"]
 
@@ -221,7 +218,8 @@ async def test_docs_section_retrieval(populated_index):
     # Hierarchical sections — yield every node (incl. ancestors), then
     # keep entries that are actually section entities.
     names = {
-        item["name"] for item in _flatten(result["items"], leaves_only=False)
+        item["name"]
+        for item in _flatten(result["items"], leaves_only=False)
         if item.get("entity_type") == "section"
     }
     # All 6 sections of AUTH.md present.

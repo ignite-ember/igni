@@ -45,7 +45,6 @@ from ember_code.core.code_index.enums import (
     TestingLevel,
 )
 from ember_code.core.code_index.index import CodeIndex
-
 from ember_code.core.tools.codeindex.query_service import QueryService
 from ember_code.core.tools.codeindex.schemas import ErrorResponse
 from ember_code.core.tools.codeindex.tree_service import TreeService
@@ -366,9 +365,7 @@ class CodeIndexTools(Toolkit):
         Lazy so tests can construct the toolkit without touching disk.
         """
         if self._explicit_index is None:
-            self._explicit_index = CodeIndex(
-                project=self._project_dir, data_dir=self._data_dir
-            )
+            self._explicit_index = CodeIndex(project=self._project_dir, data_dir=self._data_dir)
         if self._query_service is None:
             self._query_service = QueryService(self._explicit_index)
         if self._tree_service is None:

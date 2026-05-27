@@ -154,63 +154,83 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
             for s in pool.list_skills()
         ]
 
-    return {
-        # Async methods
-        "ensure_mcp": lambda args: backend.ensure_mcp(),
-        "mcp_connect": lambda args: backend.mcp_connect(args["server_name"]),
-        "mcp_disconnect": lambda args: backend.mcp_disconnect(args["server_name"]),
-        "compact_if_needed": lambda args: backend.compact_if_needed(
+    from ember_code.protocol.rpc import RpcMethod, validate_rpc_table
+
+    table: dict[str, Any] = {
+        # ── MCP ────────────────────────────────────────────────────
+        RpcMethod.ENSURE_MCP: lambda args: backend.ensure_mcp(),
+        RpcMethod.MCP_CONNECT: lambda args: backend.mcp_connect(args["server_name"]),
+        RpcMethod.MCP_DISCONNECT: lambda args: backend.mcp_disconnect(args["server_name"]),
+        RpcMethod.GET_MCP_STATUS: lambda args: backend.get_mcp_status(),
+        RpcMethod.GET_MCP_SERVER_DETAILS: lambda args: backend.get_mcp_server_details(),
+        RpcMethod.GET_MCP_SERVERS: lambda args: backend.get_mcp_servers(),
+        # ── Compaction / learning ─────────────────────────────────
+        RpcMethod.COMPACT_IF_NEEDED: lambda args: backend.compact_if_needed(
             args["ctx_tokens"], args["max_ctx"]
         ),
-        "extract_learnings": lambda args: backend.extract_learnings(
+        RpcMethod.EXTRACT_LEARNINGS: lambda args: backend.extract_learnings(
             args["user_msg"], args["assistant_msg"]
         ),
-        "login": _login,
-        "fire_session_start_hook": lambda args: backend.fire_session_start_hook(),
-        "auto_sync_knowledge": lambda args: backend.auto_sync_knowledge(),
-        "shutdown": lambda args: backend.shutdown(),
-        "get_chat_history": lambda args: backend.get_chat_history(args["session_id"]),
-        "execute_scheduled_task": lambda args: backend.execute_scheduled_task(args["description"]),
-        "cancel_scheduled_task": lambda args: backend.cancel_scheduled_task(args["task_id"]),
-        "get_scheduled_tasks": lambda args: backend.get_scheduled_tasks(
+        # ── /loop continuation ────────────────────────────────────
+        RpcMethod.POP_PENDING_LOOP_ITERATION: lambda args: backend.pop_pending_loop_iteration(),
+        RpcMethod.CANCEL_PENDING_LOOP: lambda args: backend.cancel_pending_loop(),
+        # ── Auth ───────────────────────────────────────────────────
+        RpcMethod.LOGIN: _login,
+        RpcMethod.RELOAD_CLOUD_CREDENTIALS: lambda args: backend.reload_cloud_credentials(),
+        RpcMethod.CLEAR_CLOUD_CREDENTIALS: lambda args: backend.clear_cloud_credentials(),
+        # ── Hooks / knowledge ─────────────────────────────────────
+        RpcMethod.FIRE_SESSION_START_HOOK: lambda args: backend.fire_session_start_hook(),
+        RpcMethod.AUTO_SYNC_KNOWLEDGE: lambda args: backend.auto_sync_knowledge(),
+        # ── Session / status ──────────────────────────────────────
+        RpcMethod.SHUTDOWN: lambda args: backend.shutdown(),
+        RpcMethod.GET_CHAT_HISTORY: lambda args: backend.get_chat_history(args["session_id"]),
+        RpcMethod.LIST_SESSIONS: lambda args: backend.list_sessions(),
+        RpcMethod.SWITCH_SESSION: lambda args: backend.switch_session(args["session_id"]),
+        RpcMethod.GET_PROCESSING: lambda args: backend.processing,
+        RpcMethod.GET_SESSION_ID: lambda args: backend.session_id,
+        RpcMethod.GET_RUN_TIMEOUT: lambda args: backend.run_timeout,
+        RpcMethod.GET_STATUS: lambda args: backend.get_status(),
+        RpcMethod.CANCEL_RUN: lambda args: backend.cancel_run(),
+        # ── Scheduler ─────────────────────────────────────────────
+        RpcMethod.EXECUTE_SCHEDULED_TASK: lambda args: backend.execute_scheduled_task(
+            args["description"]
+        ),
+        RpcMethod.CANCEL_SCHEDULED_TASK: lambda args: backend.cancel_scheduled_task(
+            args["task_id"]
+        ),
+        RpcMethod.GET_SCHEDULED_TASKS: lambda args: backend.get_scheduled_tasks(
             args.get("include_done", True)
         ),
-        "list_sessions": lambda args: backend.list_sessions(),
-        "switch_session": lambda args: backend.switch_session(args["session_id"]),
-        # Sync accessors
-        "get_processing": lambda args: backend.processing,
-        "get_session_id": lambda args: backend.session_id,
-        "get_run_timeout": lambda args: backend.run_timeout,
-        "get_skill_names": lambda args: backend.skill_names,
-        "get_mcp_status": lambda args: backend.get_mcp_status(),
-        "get_mcp_server_details": lambda args: backend.get_mcp_server_details(),
-        "get_mcp_servers": lambda args: backend.get_mcp_servers(),
-        "get_status": lambda args: backend.get_status(),
-        "switch_model": lambda args: backend.switch_model(args["model_name"]),
-        "reload_cloud_credentials": lambda args: backend.reload_cloud_credentials(),
-        "clear_cloud_credentials": lambda args: backend.clear_cloud_credentials(),
-        "toggle_verbose": lambda args: backend.toggle_verbose(),
-        "cancel_run": lambda args: backend.cancel_run(),
-        "check_permission": lambda args: backend.check_permission(
+        RpcMethod.START_SCHEDULER: lambda args: _start_scheduler_with_push(backend, transport),
+        # ── Skills ─────────────────────────────────────────────────
+        RpcMethod.GET_SKILL_NAMES: lambda args: backend.skill_names,
+        RpcMethod.GET_SKILL_DEFINITIONS: _get_skill_definitions,
+        # ── Models / config / permissions ─────────────────────────
+        RpcMethod.SWITCH_MODEL: lambda args: backend.switch_model(args["model_name"]),
+        RpcMethod.TOGGLE_VERBOSE: lambda args: backend.toggle_verbose(),
+        RpcMethod.CHECK_PERMISSION: lambda args: backend.check_permission(
             args["tool_name"], args["func_name"], args["tool_args"]
         ),
-        "save_permission_rule": lambda args: backend.save_permission_rule(
+        RpcMethod.SAVE_PERMISSION_RULE: lambda args: backend.save_permission_rule(
             args["rule"], args["level"]
         ),
-        "get_display_config": lambda args: (
+        RpcMethod.GET_DISPLAY_CONFIG: lambda args: (
             backend.settings.display.model_dump()
             if hasattr(backend.settings.display, "model_dump")
             else {}
         ),
-        "get_model_registry": lambda args: {
+        RpcMethod.GET_MODEL_REGISTRY: lambda args: {
             "default": backend.settings.models.default,
             "max_context_window": backend.settings.models.max_context_window,
-            "registry": {k: v for k, v in backend.settings.models.registry.items()},
+            "registry": dict(backend.settings.models.registry.items()),
         },
-        "check_for_update": lambda args: _check_update(),
-        "get_skill_definitions": _get_skill_definitions,
-        "start_scheduler": lambda args: _start_scheduler_with_push(backend, transport),
+        RpcMethod.CHECK_FOR_UPDATE: lambda args: _check_update(),
     }
+    # Fail fast if any enum member is missing a handler. Catches the
+    # "added a new RpcMethod, forgot to wire the dispatch entry" bug
+    # before the FE ever issues a call.
+    validate_rpc_table(table.keys())
+    return table
 
 
 def _start_scheduler_with_push(backend: Any, transport: Any) -> None:

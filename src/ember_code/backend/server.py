@@ -592,6 +592,61 @@ class BackendServer:
             cloud_org=self._session.cloud_org_name or "",
         )
 
+    # ── /loop continuation ────────────────────────────────────────
+
+    async def pop_pending_loop_iteration(self) -> dict | None:
+        """Pop the next ``/loop`` iteration descriptor (or completion).
+
+        Three return shapes the FE distinguishes:
+
+        - ``None`` → no loop is or was active. The FE renders nothing.
+        - ``{"prompt", "iteration", "remaining"}`` → fire ``prompt`` as
+          the next turn. ``iteration`` is the 1-based number of THIS
+          iteration; ``remaining`` is how many MORE will follow if the
+          cap isn't shortened.
+        - ``{"completed": True, "total_iterations": N}`` → the loop just
+          hit its cap and was cleared. The FE renders a one-shot
+          "loop completed" summary so the user knows the loop ended
+          naturally rather than being slow. State is cleared as part
+          of this call, so subsequent calls return ``None``.
+
+        Called by the FE's run controller after every ``_drain_queue``
+        returns to idle. Keeping the truth on the backend means there's
+        one source of state and any cancellation (``/loop stop``, user
+        interrupt) is naturally consistent across iterations.
+        """
+        sess = self._session
+        if sess.pending_loop_prompt is None:
+            return None
+        if sess.loop_iterations_remaining <= 0:
+            # Cap exhausted — emit a one-shot completion marker so the
+            # FE can render "Loop completed after N iterations", then
+            # clear so the next call returns None (no double-render).
+            total = sess.loop_iteration_index
+            sess.pending_loop_prompt = None
+            sess.loop_iteration_index = 0
+            return {"completed": True, "total_iterations": total}
+        sess.loop_iterations_remaining -= 1
+        sess.loop_iteration_index += 1
+        return {
+            "prompt": sess.pending_loop_prompt,
+            "iteration": sess.loop_iteration_index,
+            "remaining": sess.loop_iterations_remaining,
+        }
+
+    async def cancel_pending_loop(self) -> bool:
+        """Clear ``/loop`` state. Returns whether anything was active.
+
+        Called by the FE when the user types a non-``/loop`` message —
+        user input always takes precedence over the loop.
+        """
+        sess = self._session
+        if sess.pending_loop_prompt is None:
+            return False
+        sess.pending_loop_prompt = None
+        sess.loop_iterations_remaining = 0
+        return True
+
     # ── Compaction ────────────────────────────────────────────────
 
     async def compact_if_needed(self, ctx_tokens: int, max_ctx: int) -> msg.SessionCleared | None:

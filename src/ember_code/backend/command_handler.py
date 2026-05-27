@@ -134,6 +134,31 @@ class CommandHandler:
             "/schedule add run linter every 2 hours\n"
             "```"
         ),
+        "loop": (
+            "## Loop\n\n"
+            "Repeat a prompt over and over in the current session. The "
+            "next iteration starts immediately after the previous one "
+            "ends — no gap. Useful for *\"do X for each of A, B, C\"*, "
+            "*\"keep fixing failures until the tests pass\"*, *\"go "
+            "through these one at a time\"*.\n\n"
+            "**Commands:**\n"
+            "- `/loop <prompt>` — start (default cap: 30 iterations)\n"
+            "- `/loop <N> <prompt>` — start with explicit cap N\n"
+            "- `/loop stop` — cancel the active loop\n"
+            "- `/loop` — show status (active loop, iterations done/remaining)\n\n"
+            "**Stops on:**\n"
+            "- `/loop stop` from the user\n"
+            "- Any non-`/loop` user input (treated as an interrupt)\n"
+            "- The iteration cap (default 30, hard limit 200)\n"
+            "- The agent calling `loop_stop()` mid-conversation\n\n"
+            "**Plain-language control:** the agent has `loop_start` / "
+            "`loop_stop` tools, so you can say *\"loop this 5 times\"* "
+            "or *\"stop the loop\"* in normal chat and the agent will "
+            "translate to the right call.\n\n"
+            "**Differs from `/schedule`:** schedule fires on a cron clock "
+            "and runs headlessly. `/loop` fires immediately and streams "
+            "every iteration live in your TUI."
+        ),
         "agents": (
             "## Agents\n\n"
             "Agents are specialist roles with tools and system prompts.\n\n"
@@ -809,6 +834,114 @@ class CommandHandler:
         status, summary = await self._session.force_compact()
         return CommandResult(kind="action", action="compact", content=summary or status)
 
+    # ── /loop ─────────────────────────────────────────────────────────
+    # In-session loop primitive. After the user invokes ``/loop <prompt>``,
+    # the same prompt is automatically re-fired as the next user turn
+    # once the previous one completes. Stops on ``/loop stop``, any
+    # non-``/loop`` user input, or when the iteration cap is hit.
+    # Mirrors ``/schedule``'s shape but with a zero-gap continuation
+    # instead of a cron schedule — runs live in the user's TUI so each
+    # iteration streams normally.
+
+    _LOOP_DEFAULT_MAX_ITERATIONS = 30
+    _LOOP_HARD_CAP = 200  # Refuses values above this to prevent runaway.
+
+    async def _cmd_loop(self, args: str) -> "CommandResult":
+        """Drive a prompt in a loop within the current session.
+
+        Subcommands:
+          - ``/loop`` → show status / help.
+          - ``/loop stop`` → cancel the active loop.
+          - ``/loop <prompt>`` → start, with default cap (30 iterations).
+          - ``/loop <N> <prompt>`` → start with explicit cap N.
+        """
+        text = args.strip()
+
+        # Status / help — no args.
+        if not text:
+            return self._loop_status()
+
+        # Stop.
+        if text.lower() in {"stop", "cancel", "off", "end"}:
+            return self._loop_stop()
+
+        # Parse leading "<N>" or "<N>x" as the iteration cap.
+        max_iter = self._LOOP_DEFAULT_MAX_ITERATIONS
+        first, _, rest = text.partition(" ")
+        first_num = first.rstrip("x")
+        if first_num.isdigit():
+            n = int(first_num)
+            if n <= 0:
+                return CommandResult.error(
+                    "Iteration cap must be positive. Try `/loop 5 your prompt`."
+                )
+            if n > self._LOOP_HARD_CAP:
+                return CommandResult.error(
+                    f"Iteration cap {n} exceeds the hard cap of "
+                    f"{self._LOOP_HARD_CAP}. Pick a smaller number."
+                )
+            max_iter = n
+            prompt = rest.strip()
+        else:
+            prompt = text
+
+        if not prompt:
+            return CommandResult.error(
+                "Loop needs a prompt. Try `/loop fix the typo in foo.py, bar.py`."
+            )
+
+        # Refuse to start a second loop on top of an active one — the
+        # user almost certainly wants to /loop stop first.
+        sess = self._session
+        if sess.pending_loop_prompt is not None:
+            return CommandResult.error(
+                f"A loop is already running ({sess.loop_iteration_index} done, "
+                f"{sess.loop_iterations_remaining} remaining). "
+                "Run `/loop stop` first, then start a new one."
+            )
+
+        sess.pending_loop_prompt = prompt
+        sess.loop_iteration_index = 0
+        sess.loop_iterations_remaining = max_iter
+
+        # Returning ``run_prompt`` makes the FE call
+        # ``process_message(prompt)`` so iteration 1 starts immediately.
+        # Subsequent iterations are driven by ``_check_loop_continuation``
+        # in the run controller, which fires the same prompt whenever
+        # ``_drain_queue`` returns to idle.
+        return CommandResult(
+            kind="info",
+            content=prompt,
+            action="run_prompt",
+        )
+
+    def _loop_status(self) -> "CommandResult":
+        sess = self._session
+        if sess.pending_loop_prompt is None:
+            return CommandResult.info(
+                "No loop is running.\n\n"
+                "Usage:\n"
+                "  /loop <prompt>          start (default cap: 30 iterations)\n"
+                "  /loop <N> <prompt>      start with explicit cap N\n"
+                "  /loop stop              cancel the active loop"
+            )
+        return CommandResult.info(
+            f"Loop active: {sess.loop_iteration_index} done, "
+            f"{sess.loop_iterations_remaining} remaining.\n"
+            f"Prompt: {sess.pending_loop_prompt!r}"
+        )
+
+    def _loop_stop(self) -> "CommandResult":
+        sess = self._session
+        if sess.pending_loop_prompt is None:
+            return CommandResult.info("No loop is running.")
+        done = sess.loop_iteration_index
+        sess.pending_loop_prompt = None
+        sess.loop_iterations_remaining = 0
+        return CommandResult.info(
+            f"Loop stopped after {done} iteration{'s' if done != 1 else ''}."
+        )
+
     async def _cmd_bug(self, _args: str) -> "CommandResult":
         import webbrowser
 
@@ -852,6 +985,7 @@ class CommandHandler:
         "/logout": _cmd_logout,
         "/whoami": _cmd_whoami,
         "/schedule": _cmd_schedule,
+        "/loop": _cmd_loop,
         "/compact": _cmd_compact,
         "/bug": _cmd_bug,
         "/evals": _cmd_evals,
