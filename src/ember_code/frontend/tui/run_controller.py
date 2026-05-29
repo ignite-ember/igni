@@ -139,9 +139,7 @@ class RunController:
         if not message.startswith("/loop"):
             cancelled = await self._app.backend.cancel_pending_loop()
             if cancelled:
-                self._conversation.append_info(
-                    "Loop interrupted by user input."
-                )
+                self._conversation.append_info("Loop interrupted by user input.")
         # Slash commands always run immediately (they don't use the agent)
         if message.startswith("/"):
             await self._run(message)
@@ -378,8 +376,7 @@ class RunController:
         if descriptor.get("completed"):
             total = descriptor.get("total_iterations", 0)
             self._conversation.append_info(
-                f"✓ Loop completed after {total} iteration"
-                f"{'s' if total != 1 else ''}."
+                f"✓ Loop completed after {total} iteration{'s' if total != 1 else ''}."
             )
             return
         prompt = descriptor["prompt"]
@@ -388,8 +385,7 @@ class RunController:
         # Visible iteration banner so the user has an anchor between
         # iterations. "0 remaining" means "this is the last one."
         self._conversation.append_info(
-            f"↻ Loop iteration {iteration} "
-            f"({remaining} remaining after this one)"
+            f"↻ Loop iteration {iteration} ({remaining} remaining after this one)"
         )
         await self._run(prompt)
 

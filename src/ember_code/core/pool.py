@@ -35,6 +35,31 @@ class AgentDefinition(BaseModel):
     source_path: Path | None = None
 
 
+class AgentInfo(BaseModel):
+    """Wire format for one agent — emitted by
+    :meth:`BackendServer.get_agent_details`, consumed by the
+    agents panel.
+
+    Sub-set of :class:`AgentDefinition` adapted for JSON transport:
+    ``source_path`` is widened to ``str`` (Path doesn't serialize),
+    and ``is_ephemeral`` is computed at the backend (cheaper there
+    than reconstructing the directory match on every frontend
+    render).
+    """
+
+    name: str
+    description: str = ""
+    tools: list[str] = Field(default_factory=list)
+    model: str = ""
+    color: str = ""
+    can_orchestrate: bool = True
+    mcp_servers: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    system_prompt: str = ""
+    source_path: str = ""
+    is_ephemeral: bool = False
+
+
 # ── Parsing ──────────────────────────────────────────────────────────
 
 
@@ -271,7 +296,12 @@ class AgentPool:
         for directory, priority in dirs:
             self._load_directory(directory, priority)
 
-    def _load_directory(self, path: Path, priority: int) -> None:
+    def _load_directory(
+        self,
+        path: Path,
+        priority: int,
+        namespace: str | None = None,
+    ) -> None:
         """Parse .md files from a directory, keeping highest-priority wins.
 
         Skips the wrong CodeIndex variant per
@@ -279,6 +309,12 @@ class AgentPool:
         skip every ``*.codeindex.md`` file; when it's available we skip
         any plain ``*.md`` whose sibling ``*.codeindex.md`` is also
         present in this directory.
+
+        ``namespace`` prefixes every loaded agent's ``name`` as
+        ``<namespace>:<name>``. Used by the plugin loader so each
+        plugin's agents land under their own namespace and can't
+        collide with same-named agents from other plugins or the
+        user's own ``.ember/agents/``.
         """
         if not path.exists():
             return
@@ -300,6 +336,10 @@ class AgentPool:
                 continue
             try:
                 definition = parse_agent_file(md_file)
+                if namespace:
+                    definition = definition.model_copy(
+                        update={"name": f"{namespace}:{definition.name}"}
+                    )
                 name = definition.name
                 existing = self._definitions.get(name)
 

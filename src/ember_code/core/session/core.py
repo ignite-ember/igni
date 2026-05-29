@@ -108,11 +108,31 @@ class Session:
         # ── Audit Logger ─────────────────────────────────────────────
         self.audit = AuditLogger(settings)
 
+        # ── Plugin discovery (before hooks — plugins contribute hooks) ─
+        # Scans ~/.claude/plugins, ~/.ember/plugins, <project>/.claude/plugins,
+        # <project>/.ember/plugins. Plugins disabled in plugins.json are
+        # discovered (so the panel can show them) but their bundled
+        # contents are skipped at apply time.
+        from ember_code.core.plugins import PluginLoader, load_state
+
+        self.plugin_state = load_state(settings.storage.data_dir)
+        self.plugin_loader = PluginLoader()
+        self.plugin_loader.load_all(self.project_dir)
+        self._disabled_plugins = set(self.plugin_state.disabled)
+
         # ── Hooks ────────────────────────────────────────────────────
         self._hook_loader = HookLoader(
             self.project_dir, cross_tool_support=settings.hooks.cross_tool_support
         )
         self.hooks_map = self._hook_loader.load()
+        # Plugin hooks merge in *before* the executor is constructed
+        # so plugin behavior is in effect from the very first event.
+        # Plugins prepend per event so project hooks still run last.
+        self.plugin_loader.apply_to_hooks(
+            self._hook_loader,
+            self.hooks_map,
+            disabled=self._disabled_plugins,
+        )
         self.hook_executor = HookExecutor(self.hooks_map)
 
         # ── Project Context ──────────────────────────────────────────
@@ -148,6 +168,7 @@ class Session:
         self.pool.load_definitions(
             settings, self.project_dir, codeindex_available=self._codeindex_available
         )
+        self.plugin_loader.apply_to_agents(self.pool, disabled=self._disabled_plugins)
         if settings.orchestration.generate_ephemeral:
             self.pool.init_ephemeral(
                 self.project_dir, settings.orchestration.max_ephemeral_per_session
@@ -157,6 +178,7 @@ class Session:
         # ── Skill Pool ───────────────────────────────────────────────
         self.skill_pool = SkillPool()
         self.skill_pool.load_all(self.project_dir, settings.skills.cross_tool_support)
+        self.plugin_loader.apply_to_skills(self.skill_pool, disabled=self._disabled_plugins)
 
         # ── Context window (for compaction threshold, capped by setting) ──
         self._context_window = min(
@@ -173,6 +195,17 @@ class Session:
 
         # ── MCP Client Manager (user-configured servers only) ────────
         self.mcp_manager = MCPClientManager(self.project_dir)
+        # Plugin-bundled servers merge into ``mcp_manager.configs`` with
+        # names prefixed ``<plugin>:<server>``. They're available for
+        # ``connect()`` like any other server; the panel surfaces them
+        # under the plugin's name.
+        from ember_code.core.mcp.config import MCPConfigLoader as _MCPConfigLoader
+
+        self.plugin_loader.apply_to_mcp(
+            _MCPConfigLoader(self.project_dir),
+            self.mcp_manager.configs,
+            disabled=self._disabled_plugins,
+        )
         self._mcp_initialized = False
 
         # ── Guardrails ───────────────────────────────────────────────
@@ -322,7 +355,13 @@ class Session:
                 tools.append(client)
 
         # Custom tools from .ember/tools/
-        custom_toolkits = registry.load_custom_tools(self.project_dir)
+        plugin_tool_dirs = self.plugin_loader.collect_tool_dirs(
+            disabled=self._disabled_plugins,
+        )
+        custom_toolkits = registry.load_custom_tools(
+            self.project_dir,
+            plugin_tool_dirs=plugin_tool_dirs,
+        )
         if custom_toolkits:
             tools.extend(custom_toolkits)
 
@@ -539,6 +578,47 @@ class Session:
         except RuntimeError:
             return  # No running loop yet — caller will trigger us once one exists.
         loop.create_task(_bootstrap())
+
+    def start_marketplace_refresh_background(self) -> None:
+        """Refresh every registered plugin marketplace catalog in the
+        background.
+
+        Mirrors :meth:`start_codeindex_background` — fire-and-forget on
+        the running loop, no throttle, per-marketplace timeout, all
+        failures logged and swallowed. Net effect: by the time the
+        user reaches for ``/plugin install @foo/bar`` (seconds to
+        minutes later) the catalog is current. Session start is
+        unaffected even if every marketplace is unreachable.
+        """
+        from ember_code.core.plugins.marketplaces import (
+            load_registry,
+            refresh_marketplace,
+        )
+
+        async def _refresh_all() -> None:
+            registry = load_registry(self.settings.storage.data_dir)
+            for entry in registry.marketplaces:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(
+                            refresh_marketplace,
+                            entry.name,
+                            data_dir=self.settings.storage.data_dir,
+                        ),
+                        timeout=10.0,
+                    )
+                except Exception as e:  # noqa: BLE001 — best-effort
+                    logger.warning(
+                        "Marketplace refresh for '%s' failed: %s",
+                        entry.name,
+                        e,
+                    )
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(_refresh_all())
 
     # ── MCP initialization (async, runs once) ──────────────────────
 

@@ -431,7 +431,8 @@ class QueryService:
                     "sibling fetch hit cap for parent_id=%s (%d items returned, "
                     "additional children silently dropped). Bump "
                     "_SIBLINGS_FETCH_LIMIT in query_service.py if this is real.",
-                    pid, len(children),
+                    pid,
+                    len(children),
                 )
             result[pid] = [c.name for c in children if c.name]
         return result

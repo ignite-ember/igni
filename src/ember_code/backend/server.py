@@ -23,6 +23,9 @@ from ember_code.protocol.serializer import serialize_event
 
 if TYPE_CHECKING:
     from ember_code.core.config.settings import Settings
+    from ember_code.core.plugins.models import MarketplaceInfo, PluginInfo
+    from ember_code.core.pool import AgentInfo
+    from ember_code.core.skills.parser import SkillInfo
 
 logger = logging.getLogger(__name__)
 
@@ -882,6 +885,377 @@ class BackendServer:
         await self._session.mcp_manager.disconnect_one(server_name)
         self._session.rebuild_mcp()
         return msg.Info(text=f"Disconnected MCP: {server_name}")
+
+    # ── Agents ─────────────────────────────────────────────────────
+
+    def get_agent_details(self) -> list[AgentInfo]:
+        """Snapshot of every loaded agent for the panel UI.
+
+        Combines :meth:`AgentPool.list_agents` with the ephemeral
+        directory check so the panel can render the "ephemeral" badge
+        + show the promote/discard actions without making a second
+        RPC call. Includes the full ``system_prompt`` since the panel
+        expands it inline on Enter.
+        """
+        from ember_code.core.pool import AgentInfo
+
+        pool = self._session.pool
+        ephemeral_dir = getattr(pool, "_ephemeral_dir", None)
+        results: list[AgentInfo] = []
+        for defn in pool.list_agents():
+            is_ephemeral = bool(
+                ephemeral_dir and defn.source_path and ephemeral_dir in defn.source_path.parents
+            )
+            results.append(
+                AgentInfo(
+                    name=defn.name,
+                    description=defn.description,
+                    tools=list(defn.tools),
+                    model=defn.model or "",
+                    color=defn.color or "",
+                    can_orchestrate=defn.can_orchestrate,
+                    mcp_servers=list(defn.mcp_servers),
+                    tags=list(defn.tags),
+                    system_prompt=defn.system_prompt,
+                    source_path=str(defn.source_path) if defn.source_path else "",
+                    is_ephemeral=is_ephemeral,
+                )
+            )
+        return results
+
+    def promote_ephemeral_agent(self, name: str) -> msg.Info:
+        """Save an ephemeral agent permanently (called from the panel)."""
+        try:
+            dest = self._session.pool.promote_ephemeral(name, self._session.project_dir)
+        except (KeyError, ValueError, RuntimeError) as e:
+            return msg.Info(text=str(e))
+        return msg.Info(text=f"Promoted '{name}' to {dest}")
+
+    def discard_ephemeral_agent(self, name: str) -> msg.Info:
+        """Delete an ephemeral agent (called from the panel)."""
+        try:
+            self._session.pool.discard_ephemeral(name)
+        except (KeyError, ValueError, RuntimeError) as e:
+            return msg.Info(text=str(e))
+        return msg.Info(text=f"Discarded ephemeral agent '{name}'.")
+
+    # ── Skills ─────────────────────────────────────────────────────
+
+    # ── Knowledge ──────────────────────────────────────────────────
+
+    async def get_knowledge_status(self) -> dict:
+        """Status snapshot for the knowledge panel header.
+
+        Returns a plain dict (vs a typed model) because
+        ``KnowledgeStatus`` already serializes cleanly and this is a
+        read-only display payload — no behavior depends on the type."""
+        status = await self._session.knowledge_mgr.status()
+        return {
+            "enabled": status.enabled,
+            "collection_name": status.collection_name,
+            "document_count": status.document_count,
+            "embedder": status.embedder,
+        }
+
+    async def knowledge_search(self, query: str) -> list[dict]:
+        """Search the knowledge base. Returns one dict per hit with
+        ``name``, ``content``, ``score``, ``metadata`` — same shape
+        the panel reconstructs into ``KnowledgeSearchHit``."""
+        response = await self._session.knowledge_mgr.search(query)
+        return [
+            {
+                "name": r.name,
+                "content": r.content,
+                "score": r.score,
+                "metadata": dict(r.metadata),
+            }
+            for r in response.results
+        ]
+
+    async def knowledge_add(self, source: str) -> msg.Info:
+        """Add content to the knowledge base from the panel. Dispatch
+        rules mirror ``/knowledge add <source>``: HTTP URLs → URL
+        ingest, path-shaped strings → file/dir ingest, anything else
+        → inline text."""
+        mgr = self._session.knowledge_mgr
+        if source.startswith(("http://", "https://")):
+            result = await mgr.add_url(source)
+        elif "/" in source or source.startswith("."):
+            result = await mgr.add_path(source)
+        else:
+            result = await mgr.add(text=source)
+        if not result.success:
+            return msg.Info(text=result.error or "Add failed.")
+        return msg.Info(text=result.message)
+
+    # ── Skills ─────────────────────────────────────────────────────
+
+    def get_skill_details(self) -> list[SkillInfo]:
+        """Snapshot of every loaded skill for the panel UI.
+
+        Sends the full ``body`` (which the panel head-clips for the
+        expanded view) so toggling expansion doesn't need an extra
+        RPC round trip per row.
+        """
+        from ember_code.core.skills.parser import SkillInfo
+
+        return [
+            SkillInfo(
+                name=skill.name,
+                description=skill.description,
+                version=skill.version,
+                category=skill.category,
+                argument_hint=skill.argument_hint,
+                context=skill.context,
+                agent=skill.agent or "",
+                user_invocable=skill.user_invocable,
+                body=skill.body,
+                source_dir=str(skill.source_dir) if skill.source_dir else "",
+            )
+            for skill in self._session.skill_pool.list_skills()
+        ]
+
+    # ── Plugins ────────────────────────────────────────────────────
+
+    def get_plugin_details(self) -> list[PluginInfo]:
+        """Snapshot of every discovered plugin for the panel UI.
+
+        Combines :class:`PluginLoader` discovery state with the
+        persisted enable/disable list and pinned-SHA map so the panel
+        can render counts, version, source root, and toggle status
+        without any further RPC chatter. Returns typed
+        :class:`PluginInfo` models — the wire format is defined in
+        :mod:`core.plugins.models` so backend and frontend share the
+        same shape.
+        """
+        from ember_code.core.plugins.models import PluginInfo
+
+        loader = self._session.plugin_loader
+        state = self._session.plugin_state
+        disabled = set(state.disabled)
+        return [
+            PluginInfo(
+                name=p.name,
+                version=p.manifest.version or "",
+                description=p.manifest.description or "",
+                source_root=p.source.root,
+                path=str(p.root_path),
+                enabled=p.name not in disabled,
+                has_skills=p.has_skills,
+                has_agents=p.has_agents,
+                has_hooks=p.has_hooks,
+                has_mcp=p.has_mcp,
+                has_tools=p.has_tools,
+                pin=state.pins.get(p.name, ""),
+            )
+            for p in loader.list_plugins()
+        ]
+
+    def set_plugin_enabled(self, name: str, enabled: bool) -> msg.Info:
+        """Toggle a plugin's enabled flag and persist. Restart hint
+        included in the return text — the change takes effect on next
+        session start since hot-reload across all five extension types
+        is non-trivial."""
+        from ember_code.core.plugins.state import save_state
+
+        loader = self._session.plugin_loader
+        state = self._session.plugin_state
+        if loader.get(name) is None:
+            return msg.Info(text=f"No plugin named '{name}'.")
+
+        disabled_set = set(state.disabled)
+        if enabled:
+            disabled_set.discard(name)
+        else:
+            disabled_set.add(name)
+        state.disabled = sorted(disabled_set)
+        save_state(state, data_dir=self._session.settings.storage.data_dir)
+
+        verb = "enabled" if enabled else "disabled"
+        return msg.Info(text=f"Plugin '{name}' {verb}. Restart the session to apply.")
+
+    def install_plugin(self, ref: str, install_ref: str | None = None) -> msg.Info:
+        """Install a plugin by git URL or ``@<marketplace>/<plugin>`` ref.
+
+        ``install_ref`` (the ``--ref`` flag in the slash command — a
+        branch / tag / SHA) is forwarded to the installer. Marketplace
+        refs may carry a default ``branch`` in the catalog; honored
+        only when ``install_ref`` is omitted so explicit user choice
+        wins.
+        """
+        from ember_code.core.plugins.git import GitError
+        from ember_code.core.plugins.installer import (
+            PluginError,
+            PluginInstaller,
+        )
+        from ember_code.core.plugins.marketplaces import resolve_install_ref
+
+        data_dir = self._session.settings.storage.data_dir
+        installer = PluginInstaller(data_dir=data_dir)
+        if not installer.is_git_available():
+            return msg.Info(text="git not found on PATH. Install git and retry.")
+
+        url = ref
+        if ref.startswith("@"):
+            resolved = resolve_install_ref(ref, data_dir=data_dir)
+            if resolved is None:
+                return msg.Info(
+                    text=f"Could not resolve '{ref}'. Run "
+                    "/plugin marketplace list to see registered "
+                    "marketplaces, or use a git URL."
+                )
+            url, mkt_entry = resolved
+            if install_ref is None and mkt_entry.branch:
+                install_ref = mkt_entry.branch
+
+        try:
+            manifest = installer.install(url, ref=install_ref)
+        except GitError as e:
+            return msg.Info(text=f"git error: {e}")
+        except PluginError as e:
+            return msg.Info(text=str(e))
+
+        version = f" v{manifest.version}" if manifest.version else ""
+        return msg.Info(
+            text=f"Installed plugin '{manifest.name}'{version}. Restart the session to activate."
+        )
+
+    def update_plugin(self, name: str, install_ref: str | None = None) -> msg.Info:
+        """Fetch + reset to ``install_ref`` (default: origin's HEAD)."""
+        from ember_code.core.plugins.git import GitError
+        from ember_code.core.plugins.installer import (
+            PluginError,
+            PluginInstaller,
+        )
+
+        installer = PluginInstaller(
+            data_dir=self._session.settings.storage.data_dir,
+        )
+        if not installer.is_git_available():
+            return msg.Info(text="git not found on PATH.")
+        try:
+            new_sha = installer.update(name, ref=install_ref)
+        except GitError as e:
+            return msg.Info(text=f"git error: {e}")
+        except PluginError as e:
+            return msg.Info(text=str(e))
+        return msg.Info(text=f"Updated '{name}' to {new_sha[:12]}. Restart to apply.")
+
+    def remove_plugin(self, name: str) -> msg.Info:
+        """Delete the plugin directory and clear its pin."""
+        from ember_code.core.plugins.installer import (
+            PluginError,
+            PluginInstaller,
+        )
+
+        installer = PluginInstaller(
+            data_dir=self._session.settings.storage.data_dir,
+        )
+        try:
+            installer.remove(name)
+        except PluginError as e:
+            return msg.Info(text=str(e))
+        return msg.Info(
+            text=f"Removed '{name}'. Restart the session to drop its skills/agents/hooks/MCP/tools."
+        )
+
+    def get_marketplaces(self) -> list[MarketplaceInfo]:
+        """Snapshot of every registered marketplace for the panel.
+
+        Returns typed :class:`MarketplaceInfo` models (nesting
+        :class:`MarketplacePluginInfo` per catalog entry). Same wire
+        contract as ``get_plugin_details`` — source-of-truth shape
+        lives in :mod:`core.plugins.models`.
+        """
+        from ember_code.core.plugins.marketplaces import load_registry
+        from ember_code.core.plugins.models import (
+            MarketplaceInfo,
+            MarketplacePluginInfo,
+        )
+
+        registry = load_registry(
+            data_dir=self._session.settings.storage.data_dir,
+        )
+        return [
+            MarketplaceInfo(
+                name=m.name,
+                url=m.url,
+                last_fetched=m.last_fetched or "",
+                plugins=[
+                    MarketplacePluginInfo(
+                        name=p.name,
+                        source=p.source,
+                        description=p.description or "",
+                        version=p.version or "",
+                        branch=p.branch or "",
+                    )
+                    for p in (m.cached.plugins if m.cached else [])
+                ],
+            )
+            for m in registry.marketplaces
+        ]
+
+    def add_marketplace(self, url: str) -> msg.Info:
+        from ember_code.core.plugins.git import GitError
+        from ember_code.core.plugins.marketplaces import (
+            add_marketplace as _add,
+        )
+
+        try:
+            entry = _add(url, data_dir=self._session.settings.storage.data_dir)
+        except GitError as e:
+            return msg.Info(text=f"git error: {e}")
+        except Exception as e:  # noqa: BLE001 — surface verbatim
+            return msg.Info(text=f"Failed to add marketplace: {e}")
+        count = len(entry.cached.plugins) if entry.cached else 0
+        return msg.Info(text=f"Added '{entry.name}' ({count} plugin(s) catalogued).")
+
+    def remove_marketplace(self, name: str) -> msg.Info:
+        from ember_code.core.plugins.marketplaces import (
+            remove_marketplace as _remove,
+        )
+
+        if not _remove(name, data_dir=self._session.settings.storage.data_dir):
+            return msg.Info(text=f"No marketplace named '{name}'.")
+        return msg.Info(text=f"Unregistered '{name}'. Installed plugins from it remain.")
+
+    def refresh_marketplaces(self, name: str | None = None) -> msg.Info:
+        """Re-fetch one marketplace or all. Errors per-marketplace are
+        collected and reported together so a single bad URL doesn't
+        abort the whole refresh."""
+        from ember_code.core.plugins.marketplaces import (
+            load_registry,
+        )
+        from ember_code.core.plugins.marketplaces import (
+            refresh_marketplace as _refresh,
+        )
+
+        data_dir = self._session.settings.storage.data_dir
+        if name:
+            try:
+                entry = _refresh(name, data_dir=data_dir)
+            except Exception as e:  # noqa: BLE001
+                return msg.Info(text=f"Refresh failed for '{name}': {e}")
+            if entry is None:
+                return msg.Info(text=f"No marketplace named '{name}'.")
+            count = len(entry.cached.plugins) if entry.cached else 0
+            return msg.Info(text=f"Refreshed '{entry.name}' ({count} plugins).")
+
+        registry = load_registry(data_dir=data_dir)
+        ok: list[str] = []
+        failed: list[str] = []
+        for m in registry.marketplaces:
+            try:
+                _refresh(m.name, data_dir=data_dir)
+                ok.append(m.name)
+            except Exception as e:  # noqa: BLE001
+                failed.append(f"{m.name} ({e})")
+        if not ok and not failed:
+            return msg.Info(text="No marketplaces to refresh.")
+        line = f"Refreshed {len(ok)} ok"
+        if failed:
+            line += f"; {len(failed)} failed: {', '.join(failed)}"
+        return msg.Info(text=line)
 
     async def fire_session_start_hook(self) -> None:
         """Fire the SessionStart hook."""

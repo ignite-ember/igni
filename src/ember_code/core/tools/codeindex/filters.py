@@ -188,6 +188,7 @@ def filter_sections(content: str, sections: tuple[Section, ...]) -> str:
     # configuration bug.
     if not wanted:
         import logging
+
         logging.getLogger(__name__).warning(
             "filter_sections: no concrete names resolved for %r — "
             "check SECTION_ALIASES coverage. Passing content through.",

@@ -385,6 +385,26 @@ Place custom tools in `~/.ember/tools/` or `.ember/tools/` for project-level too
 
 ---
 
+## Plugins — Claude-Code-compatible bundles
+
+A **plugin** is a directory that bundles skills, agents, hooks, MCP servers, and custom tools into a single distributable unit. Plugins built for Claude Code work in Ember Code unchanged.
+
+```text
+my-plugin/
+├── .claude-plugin/plugin.json    # required manifest
+├── skills/<name>/SKILL.md        # → SkillPool, namespaced <plugin>:<name>
+├── agents/<name>.md              # → AgentPool, namespaced <plugin>:<name>
+├── hooks/hooks.json              # → HookLoader, prepended (project hooks run last)
+├── .mcp.json                     # → MCPConfigLoader, servers prefixed <plugin>:<server>
+└── tools/<name>.py               # → CustomToolkit, named custom_<plugin>_<name>
+```
+
+Discovery roots: `~/.claude/plugins/`, `~/.ember/plugins/`, `<project>/.claude/plugins/`, `<project>/.ember/plugins/`. Install via `/plugin install <git-url>` or `/plugin install @<marketplace>/<plugin>`. The `/plugins` slash command opens the Textual panel for browsing, toggling, updating, and installing from registered marketplaces.
+
+See [Plugins](PLUGINS.md) for the full guide.
+
+---
+
 ## Tool Access by Built-in Agent
 
 Each built-in agent's tools are declared in its `.md` file. This table shows the defaults:

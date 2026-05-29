@@ -261,6 +261,101 @@ class BackendClient:
             pass
         return []
 
+    # ── Agents ─────────────────────────────────────────────────────
+
+    async def get_agent_details(self) -> list[dict]:
+        result = await self._rpc(RpcMethod.GET_AGENT_DETAILS)
+        return result or []
+
+    async def promote_ephemeral_agent(self, name: str) -> msg.Info:
+        result = await self._rpc(RpcMethod.PROMOTE_EPHEMERAL_AGENT, name=name)
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    async def discard_ephemeral_agent(self, name: str) -> msg.Info:
+        result = await self._rpc(RpcMethod.DISCARD_EPHEMERAL_AGENT, name=name)
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    # ── Skills ─────────────────────────────────────────────────────
+
+    async def get_skill_details(self) -> list[dict]:
+        result = await self._rpc(RpcMethod.GET_SKILL_DETAILS)
+        return result or []
+
+    # ── Knowledge ──────────────────────────────────────────────────
+
+    async def get_knowledge_status(self) -> dict:
+        result = await self._rpc(RpcMethod.GET_KNOWLEDGE_STATUS)
+        return result or {}
+
+    async def knowledge_search(self, query: str) -> list[dict]:
+        result = await self._rpc(RpcMethod.KNOWLEDGE_SEARCH, query=query)
+        return result or []
+
+    async def knowledge_add(self, source: str) -> msg.Info:
+        result = await self._rpc(RpcMethod.KNOWLEDGE_ADD, source=source)
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    # ── Plugins ─────────────────────────────────────────────────────
+
+    async def get_plugin_details(self) -> list[dict]:
+        result = await self._rpc(RpcMethod.GET_PLUGIN_DETAILS)
+        return result or []
+
+    async def set_plugin_enabled(self, name: str, enabled: bool) -> msg.Info:
+        result = await self._rpc(
+            RpcMethod.SET_PLUGIN_ENABLED,
+            name=name,
+            enabled=enabled,
+        )
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    async def install_plugin(
+        self,
+        ref: str,
+        install_ref: str | None = None,
+    ) -> msg.Info:
+        result = await self._rpc(
+            RpcMethod.INSTALL_PLUGIN,
+            ref=ref,
+            install_ref=install_ref,
+        )
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    async def update_plugin(
+        self,
+        name: str,
+        install_ref: str | None = None,
+    ) -> msg.Info:
+        result = await self._rpc(
+            RpcMethod.UPDATE_PLUGIN,
+            name=name,
+            install_ref=install_ref,
+        )
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    async def remove_plugin(self, name: str) -> msg.Info:
+        result = await self._rpc(RpcMethod.REMOVE_PLUGIN, name=name)
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    async def get_marketplaces(self) -> list[dict]:
+        result = await self._rpc(RpcMethod.GET_MARKETPLACES)
+        return result or []
+
+    async def add_marketplace(self, url: str) -> msg.Info:
+        result = await self._rpc(RpcMethod.ADD_MARKETPLACE, url=url)
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    async def remove_marketplace(self, name: str) -> msg.Info:
+        result = await self._rpc(RpcMethod.REMOVE_MARKETPLACE, name=name)
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    async def refresh_marketplaces(
+        self,
+        name: str | None = None,
+    ) -> msg.Info:
+        result = await self._rpc(RpcMethod.REFRESH_MARKETPLACES, name=name)
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
     def get_mcp_servers(self) -> list[dict]:
         fut = asyncio.ensure_future(self._rpc(RpcMethod.GET_MCP_SERVERS))
         try:
@@ -341,7 +436,9 @@ class BackendClient:
     # ── Compaction / Learning ────────────────────────────────────
 
     async def compact_if_needed(self, ctx_tokens: int, max_ctx: int) -> msg.SessionCleared | None:
-        result = await self._rpc(RpcMethod.COMPACT_IF_NEEDED, ctx_tokens=ctx_tokens, max_ctx=max_ctx)
+        result = await self._rpc(
+            RpcMethod.COMPACT_IF_NEEDED, ctx_tokens=ctx_tokens, max_ctx=max_ctx
+        )
         if result is None or result is False:
             return None
         if isinstance(result, msg.SessionCleared):

@@ -240,16 +240,25 @@ class ToolRegistry:
             ]
         return CodeIndexTools(**kwargs)
 
-    def load_custom_tools(self, project_dir: Path | None = None) -> list:
+    def load_custom_tools(
+        self,
+        project_dir: Path | None = None,
+        *,
+        plugin_tool_dirs: list[tuple[str, Path]] | None = None,
+    ) -> list:
         """Discover custom tools from .ember/tools/ and return as toolkit list.
 
         Scans directories in priority order:
         1. ~/.ember/tools/ (global user tools)
         2. <project>/.ember/tools/ (project tools)
+        3. Plugin tools (``plugin_tool_dirs``, namespaced ``custom_<plugin>_<file>``)
         """
         from ember_code.core.tools.custom_loader import load_custom_tools as _load
 
-        return _load(project_dir or self.base_dir)
+        return _load(
+            project_dir or self.base_dir,
+            plugin_tool_dirs=plugin_tool_dirs,
+        )
 
     @property
     def cloud_connected(self) -> bool:

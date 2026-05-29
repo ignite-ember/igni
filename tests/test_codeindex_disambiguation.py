@@ -49,11 +49,19 @@ def _make_service(edges: list) -> DisambiguationService:
 async def test_collect_edges_outgoing_buckets_into_calls() -> None:
     """A CALLS edge ``(from=A, to=B)`` with A in batch buckets B into
     A's calls list."""
-    service = _make_service([
-        _edge("A", "B", str(Relation.CALLS),
-              from_entity_name="A_name", from_entity_path="A/path",
-              to_entity_name="B_name", to_entity_path="B/path"),
-    ])
+    service = _make_service(
+        [
+            _edge(
+                "A",
+                "B",
+                str(Relation.CALLS),
+                from_entity_name="A_name",
+                from_entity_path="A/path",
+                to_entity_name="B_name",
+                to_entity_path="B/path",
+            ),
+        ]
+    )
     per_item, target_meta = await service._collect_edges(["A"])
     assert per_item["A"]["calls"] == ["B"]
     assert per_item["A"]["called_by"] == []
@@ -64,11 +72,19 @@ async def test_collect_edges_outgoing_buckets_into_calls() -> None:
 async def test_collect_edges_incoming_buckets_into_called_by() -> None:
     """A CALLED_BY edge ``(from=A, to=B)`` (semantics: A is called by B)
     with A in batch buckets B into A's called_by list."""
-    service = _make_service([
-        _edge("A", "B", str(Relation.CALLED_BY),
-              from_entity_name="A_name", from_entity_path="A/path",
-              to_entity_name="B_name", to_entity_path="B/path"),
-    ])
+    service = _make_service(
+        [
+            _edge(
+                "A",
+                "B",
+                str(Relation.CALLED_BY),
+                from_entity_name="A_name",
+                from_entity_path="A/path",
+                to_entity_name="B_name",
+                to_entity_path="B/path",
+            ),
+        ]
+    )
     per_item, target_meta = await service._collect_edges(["A"])
     assert per_item["A"]["called_by"] == ["B"]
     assert per_item["A"]["calls"] == []
@@ -83,10 +99,12 @@ async def test_collect_edges_mirrored_pair_dedupes_naturally() -> None:
     used to *also* fire on the wrong side and mis-bucket — leading to
     the same edge appearing in both calls AND called_by for one
     item."""
-    service = _make_service([
-        _edge("A", "B", str(Relation.CALLS)),
-        _edge("B", "A", str(Relation.CALLED_BY)),
-    ])
+    service = _make_service(
+        [
+            _edge("A", "B", str(Relation.CALLS)),
+            _edge("B", "A", str(Relation.CALLED_BY)),
+        ]
+    )
     per_item, _ = await service._collect_edges(["A"])
     # A is the caller in both edges; only its calls list should mention B.
     assert per_item["A"]["calls"] == ["B"]
@@ -98,10 +116,12 @@ async def test_collect_edges_mirrored_pair_dedupes_naturally() -> None:
 async def test_collect_edges_skips_self_loops() -> None:
     """Self-loops aren't useful for disambiguation — they shouldn't
     show up in any bucket."""
-    service = _make_service([
-        _edge("A", "A", str(Relation.CALLS)),
-        _edge("A", "A", str(Relation.CALLED_BY)),
-    ])
+    service = _make_service(
+        [
+            _edge("A", "A", str(Relation.CALLS)),
+            _edge("A", "A", str(Relation.CALLED_BY)),
+        ]
+    )
     per_item, _ = await service._collect_edges(["A"])
     assert per_item["A"]["calls"] == []
     assert per_item["A"]["called_by"] == []
@@ -117,10 +137,13 @@ async def test_collect_edges_to_side_in_batch_calls_edge() -> None:
     the wrong bucket, silently inverting the direction whenever the
     indexer's mirrored CALLED_BY edge wasn't also present.
     """
-    service = _make_service([
-        _edge("A", "B", str(Relation.CALLS),
-              from_entity_name="A_name", from_entity_path="A/path"),
-    ])
+    service = _make_service(
+        [
+            _edge(
+                "A", "B", str(Relation.CALLS), from_entity_name="A_name", from_entity_path="A/path"
+            ),
+        ]
+    )
     per_item, target_meta = await service._collect_edges(["B"])
     assert per_item["B"]["called_by"] == ["A"], (
         "B should have A in called_by (A calls B), not in calls"
@@ -134,14 +157,20 @@ async def test_collect_edges_to_side_in_batch_called_by_edge() -> None:
     """Symmetric counterpart: an edge ``(A, B, CALLED_BY)`` (A is
     called by B) with only B in the batch must bucket A into B's
     ``calls`` list — NOT into B's ``called_by`` (B is the caller)."""
-    service = _make_service([
-        _edge("A", "B", str(Relation.CALLED_BY),
-              from_entity_name="A_name", from_entity_path="A/path"),
-    ])
+    service = _make_service(
+        [
+            _edge(
+                "A",
+                "B",
+                str(Relation.CALLED_BY),
+                from_entity_name="A_name",
+                from_entity_path="A/path",
+            ),
+        ]
+    )
     per_item, target_meta = await service._collect_edges(["B"])
     assert per_item["B"]["calls"] == ["A"], (
-        "B should have A in calls (A is called by B → B calls A), "
-        "not in called_by"
+        "B should have A in calls (A is called by B → B calls A), not in called_by"
     )
     assert per_item["B"]["called_by"] == []
     assert target_meta["A"]["name"] == "A_name"
@@ -153,10 +182,12 @@ async def test_collect_edges_dedupes_mirrored_observations() -> None:
     CALLED_BY pair is observed from both sides — A's perspective on
     CALLS, B's perspective on CALLED_BY, plus the to-side branches
     on each. Dedup must collapse the duplicates."""
-    service = _make_service([
-        _edge("A", "B", str(Relation.CALLS)),
-        _edge("B", "A", str(Relation.CALLED_BY)),
-    ])
+    service = _make_service(
+        [
+            _edge("A", "B", str(Relation.CALLS)),
+            _edge("B", "A", str(Relation.CALLED_BY)),
+        ]
+    )
     per_item, _ = await service._collect_edges(["A", "B"])
     # A's calls list contains B once (not twice).
     assert per_item["A"]["calls"] == ["B"]
@@ -172,9 +203,11 @@ async def test_collect_edges_drops_edge_with_neither_endpoint_in_batch() -> None
     """An edge whose neither endpoint is in our query batch is legitimate
     to drop — the agent didn't ask about either entity. We just confirm
     the drop doesn't crash and doesn't pollute per_item."""
-    service = _make_service([
-        _edge("X", "Y", str(Relation.CALLS)),  # X, Y not in batch
-    ])
+    service = _make_service(
+        [
+            _edge("X", "Y", str(Relation.CALLS)),  # X, Y not in batch
+        ]
+    )
     per_item, target_meta = await service._collect_edges(["A"])
     assert per_item == {"A": {"calls": [], "called_by": []}}
     assert target_meta == {}
@@ -194,12 +227,12 @@ async def test_collect_edges_unknown_relation_logs_warning() -> None:
     """
     from unittest.mock import patch
 
-    service = _make_service([
-        _edge("A", "B", "totally_invented_relation"),
-    ])
-    with patch(
-        "ember_code.core.tools.codeindex.disambiguation.logger.warning"
-    ) as warn:
+    service = _make_service(
+        [
+            _edge("A", "B", "totally_invented_relation"),
+        ]
+    )
+    with patch("ember_code.core.tools.codeindex.disambiguation.logger.warning") as warn:
         per_item, _ = await service._collect_edges(["A"])
     assert per_item == {"A": {"calls": [], "called_by": []}}
     assert warn.called
@@ -210,11 +243,13 @@ async def test_collect_edges_unknown_relation_logs_warning() -> None:
 @pytest.mark.asyncio
 async def test_collect_edges_multiple_targets_in_calls_list() -> None:
     """A single source can call many targets — each goes into the calls list."""
-    service = _make_service([
-        _edge("A", "B", str(Relation.CALLS)),
-        _edge("A", "C", str(Relation.CALLS)),
-        _edge("A", "D", str(Relation.CALLS)),
-    ])
+    service = _make_service(
+        [
+            _edge("A", "B", str(Relation.CALLS)),
+            _edge("A", "C", str(Relation.CALLS)),
+            _edge("A", "D", str(Relation.CALLS)),
+        ]
+    )
     per_item, _ = await service._collect_edges(["A"])
     assert sorted(per_item["A"]["calls"]) == ["B", "C", "D"]
 
@@ -225,11 +260,13 @@ async def test_collect_edges_mixed_relation_types_per_item() -> None:
     (CALLS, IMPORTS, EXTENDS) — all bucket into the same calls list,
     since for disambiguation purposes the direction matters more than
     the specific relation flavor."""
-    service = _make_service([
-        _edge("A", "B", str(Relation.CALLS)),
-        _edge("A", "C", str(Relation.IMPORTS)),
-        _edge("A", "D", str(Relation.EXTENDS)),
-    ])
+    service = _make_service(
+        [
+            _edge("A", "B", str(Relation.CALLS)),
+            _edge("A", "C", str(Relation.IMPORTS)),
+            _edge("A", "D", str(Relation.EXTENDS)),
+        ]
+    )
     per_item, _ = await service._collect_edges(["A"])
     assert sorted(per_item["A"]["calls"]) == ["B", "C", "D"]
 
@@ -273,8 +310,11 @@ async def test_build_group_dedupes_self_loops_between_directions() -> None:
 
         return [
             CodeIndexResult(
-                item_id=cid, name=f"{cid}_n", path=f"{cid}.py",
-                content="", commit="c1",
+                item_id=cid,
+                name=f"{cid}_n",
+                path=f"{cid}.py",
+                content="",
+                commit="c1",
             )
             for cid in candidate_ids
         ]
@@ -305,9 +345,7 @@ async def test_rank_direction_returns_empty_when_no_candidates() -> None:
     idx = MagicMock()
     idx.search_among = AsyncMock(return_value=[])
     service = DisambiguationService(idx)
-    refs = await service._rank_direction(
-        target_ids=[], query_text="x", sha="c1", target_meta={}
-    )
+    refs = await service._rank_direction(target_ids=[], query_text="x", sha="c1", target_meta={})
     assert refs == []
 
 
@@ -335,13 +373,17 @@ async def test_rank_direction_falls_back_to_target_meta_for_name_path() -> None:
     from ember_code.core.code_index.schema.items import CodeIndexResult
 
     idx = MagicMock()
-    idx.search_among = AsyncMock(return_value=[
-        # Result row has empty name/path but a valid item_id.
-        CodeIndexResult(item_id="A", name="", path="", content="", commit="c1"),
-    ])
+    idx.search_among = AsyncMock(
+        return_value=[
+            # Result row has empty name/path but a valid item_id.
+            CodeIndexResult(item_id="A", name="", path="", content="", commit="c1"),
+        ]
+    )
     service = DisambiguationService(idx)
     refs = await service._rank_direction(
-        target_ids=["A"], query_text="x", sha="c1",
+        target_ids=["A"],
+        query_text="x",
+        sha="c1",
         target_meta={"A": {"name": "fallback_name", "path": "fallback/path"}},
     )
     assert len(refs) == 1
@@ -361,8 +403,7 @@ async def test_rank_direction_dedupes_target_ids() -> None:
     async def _search_among_stub(*, query, candidate_ids, **_):
         captured.append(list(candidate_ids))
         return [
-            CodeIndexResult(item_id=cid, name=cid, path=f"{cid}.py",
-                             content="", commit="c1")
+            CodeIndexResult(item_id=cid, name=cid, path=f"{cid}.py", content="", commit="c1")
             for cid in candidate_ids
         ]
 
@@ -370,7 +411,9 @@ async def test_rank_direction_dedupes_target_ids() -> None:
     idx.search_among = _search_among_stub
     service = DisambiguationService(idx)
     await service._rank_direction(
-        target_ids=["A", "A", "B", "A"], query_text="x", sha="c1",
+        target_ids=["A", "A", "B", "A"],
+        query_text="x",
+        sha="c1",
         target_meta={},
     )
     # ``candidate_ids`` was deduped to {"A", "B"}.
@@ -384,12 +427,24 @@ async def test_collect_edges_caches_target_meta_for_each_target() -> None:
     """The target_meta dict accumulates name/path info for every UUID
     we surface, so refs whose chroma row no longer exists can still be
     rendered with a useful label."""
-    service = _make_service([
-        _edge("A", "B", str(Relation.CALLS),
-              to_entity_name="B_func", to_entity_path="src/foo.py::B_func"),
-        _edge("A", "C", str(Relation.IMPORTS),
-              to_entity_name="C_mod", to_entity_path="src/lib/c.py"),
-    ])
+    service = _make_service(
+        [
+            _edge(
+                "A",
+                "B",
+                str(Relation.CALLS),
+                to_entity_name="B_func",
+                to_entity_path="src/foo.py::B_func",
+            ),
+            _edge(
+                "A",
+                "C",
+                str(Relation.IMPORTS),
+                to_entity_name="C_mod",
+                to_entity_path="src/lib/c.py",
+            ),
+        ]
+    )
     _, target_meta = await service._collect_edges(["A"])
     assert target_meta["B"]["name"] == "B_func"
     assert target_meta["B"]["path"] == "src/foo.py::B_func"

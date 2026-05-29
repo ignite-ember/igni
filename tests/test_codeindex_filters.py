@@ -121,10 +121,7 @@ def test_shorten_summary_empty_body_returns_empty() -> None:
 
 
 def test_shorten_summary_first_sentence_only() -> None:
-    content = (
-        "[SECTION:summary]First sentence here. Second sentence. "
-        "Third sentence.[/SECTION]"
-    )
+    content = "[SECTION:summary]First sentence here. Second sentence. Third sentence.[/SECTION]"
     result = shorten_summary(content)
     assert "First sentence here" in result
     assert "Second sentence" not in result
@@ -143,11 +140,7 @@ def test_shorten_summary_no_sentence_boundary_uses_char_cap() -> None:
 def test_shorten_summary_file_section_name_resolves() -> None:
     """File summaries use ``purpose_and_functionality`` rather than
     ``summary`` — the alias set should cover both."""
-    content = (
-        "[SECTION:purpose_and_functionality]"
-        "This file orchestrates the auth flow."
-        "[/SECTION]"
-    )
+    content = "[SECTION:purpose_and_functionality]This file orchestrates the auth flow.[/SECTION]"
     result = shorten_summary(content)
     # Whether this resolves depends on _SUMMARY_NAMES coverage; just
     # assert it doesn't crash on a non-canonical name.
@@ -233,8 +226,8 @@ def test_filter_sections_unknown_section_logs_and_passes_through(
         with caplog.at_level(logging.WARNING):
             result = filter_sections(content, (Section.SUMMARY,))
         assert result == content  # passed through, no data loss
-        assert any(
-            "filter_sections" in r.message for r in caplog.records
-        ), "expected a warning log about empty resolution"
+        assert any("filter_sections" in r.message for r in caplog.records), (
+            "expected a warning log about empty resolution"
+        )
     finally:
         mod.SECTION_ALIASES = original

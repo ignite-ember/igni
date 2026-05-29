@@ -32,22 +32,34 @@ from ember_code.frontend.tui.run_controller import RunController
 from ember_code.frontend.tui.session_manager import SessionManager
 from ember_code.frontend.tui.status_tracker import StatusTracker
 from ember_code.frontend.tui.widgets import (
+    AgentInfo,
+    AgentsPanelWidget,
     FilePickerDropdown,
     HelpPanelWidget,
+    KnowledgePanelWidget,
+    KnowledgeSearchHit,
+    KnowledgeStatusInfo,
     LoginWidget,
+    MarketplaceInfo,
+    MarketplacePluginInfo,
     MCPPanelWidget,
     MCPServerInfo,
     MessageWidget,
     ModelPickerWidget,
+    PluginInfo,
+    PluginsPanelWidget,
     PromptInput,
     QueuePanel,
     SessionPickerWidget,
+    SkillInfo,
+    SkillsPanelWidget,
     StatusBar,
     TaskPanel,
     TipBar,
     UpdateBar,
 )
 from ember_code.protocol.messages import CommandResult
+from ember_code.protocol.rpc import RpcMethod
 
 logger = logging.getLogger(__name__)
 
@@ -446,7 +458,7 @@ class EmberApp(App):
         try:
             await self._backend.ensure_mcp()
             statuses = (
-                await self._backend._rpc("get_mcp_status")
+                await self._backend._rpc(RpcMethod.GET_MCP_STATUS)
                 if hasattr(self._backend, "_rpc")
                 else self._backend.get_mcp_status()
             )
@@ -885,6 +897,14 @@ class EmberApp(App):
             self._show_help_panel()
         elif result.action == "mcp":
             asyncio.create_task(self._show_mcp_panel())
+        elif result.action == "agents":
+            asyncio.create_task(self._show_agents_panel())
+        elif result.action == "skills":
+            asyncio.create_task(self._show_skills_panel())
+        elif result.action == "knowledge":
+            asyncio.create_task(self._show_knowledge_panel())
+        elif result.action == "plugins":
+            asyncio.create_task(self._show_plugins_panel())
         elif result.action == "schedule":
             asyncio.create_task(self.action_toggle_tasks())
         elif result.action == "run_prompt":
@@ -1017,7 +1037,7 @@ class EmberApp(App):
     async def _build_mcp_server_list(self) -> list[MCPServerInfo]:
         servers: list[MCPServerInfo] = []
         details = (
-            await self._backend._rpc("get_mcp_server_details")
+            await self._backend._rpc(RpcMethod.GET_MCP_SERVER_DETAILS)
             if hasattr(self._backend, "_rpc")
             else self._backend.get_mcp_server_details()
         )
@@ -1061,7 +1081,7 @@ class EmberApp(App):
         # Refresh status and panel
         try:
             statuses = (
-                await self._backend._rpc("get_mcp_status")
+                await self._backend._rpc(RpcMethod.GET_MCP_STATUS)
                 if hasattr(self._backend, "_rpc")
                 else self._backend.get_mcp_status()
             )
@@ -1074,6 +1094,234 @@ class EmberApp(App):
 
     @on(MCPPanelWidget.PanelClosed)
     def _on_mcp_panel_closed(self, _event: MCPPanelWidget.PanelClosed) -> None:
+        self.query_one("#user-input", PromptInput).focus()
+
+    # ── Agents panel ──────────────────────────────────────────────
+
+    async def _show_agents_panel(self) -> None:
+        """Fetch agent details and mount the panel."""
+        agents = await self._build_agent_list()
+        panel = AgentsPanelWidget(agents=agents)
+        self.mount(panel)
+        panel.focus()
+
+    async def _build_agent_list(self) -> list[AgentInfo]:
+        details = await self._backend.get_agent_details()
+        return [AgentInfo(**d) for d in details]
+
+    async def _refresh_agents_panel(self) -> None:
+        try:
+            panel = self.query_one(AgentsPanelWidget)
+        except Exception:
+            return
+        panel.refresh_agents(await self._build_agent_list())
+
+    @on(AgentsPanelWidget.PromoteRequested)
+    async def _on_agent_promote(
+        self,
+        event: AgentsPanelWidget.PromoteRequested,
+    ) -> None:
+        result = await self._backend.promote_ephemeral_agent(event.name)
+        self._conversation.append_info(result.text)
+        await self._refresh_agents_panel()
+
+    @on(AgentsPanelWidget.DiscardRequested)
+    async def _on_agent_discard(
+        self,
+        event: AgentsPanelWidget.DiscardRequested,
+    ) -> None:
+        result = await self._backend.discard_ephemeral_agent(event.name)
+        self._conversation.append_info(result.text)
+        await self._refresh_agents_panel()
+
+    @on(AgentsPanelWidget.PanelClosed)
+    def _on_agents_panel_closed(
+        self,
+        _event: AgentsPanelWidget.PanelClosed,
+    ) -> None:
+        self.query_one("#user-input", PromptInput).focus()
+
+    # ── Skills panel ──────────────────────────────────────────────
+
+    async def _show_skills_panel(self) -> None:
+        skills = await self._build_skill_list()
+        panel = SkillsPanelWidget(skills=skills)
+        self.mount(panel)
+        panel.focus()
+
+    async def _build_skill_list(self) -> list[SkillInfo]:
+        details = await self._backend.get_skill_details()
+        return [SkillInfo(**d) for d in details]
+
+    @on(SkillsPanelWidget.RunRequested)
+    async def _on_skill_run(
+        self,
+        event: SkillsPanelWidget.RunRequested,
+    ) -> None:
+        # Close the panel before firing the skill so its output streams
+        # into the conversation without being visually shadowed.
+        try:
+            panel = self.query_one(SkillsPanelWidget)
+            panel.remove()
+        except Exception:
+            pass
+        # Route through the controller so the skill renders the same
+        # way a typed ``/skill-name`` slash command would.
+        await self._controller.process_message(f"/{event.name}")
+
+    @on(SkillsPanelWidget.PanelClosed)
+    def _on_skills_panel_closed(
+        self,
+        _event: SkillsPanelWidget.PanelClosed,
+    ) -> None:
+        self.query_one("#user-input", PromptInput).focus()
+
+    # ── Knowledge panel ──────────────────────────────────────────
+
+    async def _show_knowledge_panel(self) -> None:
+        status_dict = await self._backend.get_knowledge_status()
+        status = KnowledgeStatusInfo(**status_dict)
+        panel = KnowledgePanelWidget(status=status)
+        self.mount(panel)
+        # Focus the search input so the user can type immediately —
+        # the panel IS the search UI; opening it puts the cursor where
+        # the next keystroke is meaningful.
+        try:
+            panel.query_one("#kb-input").focus()
+        except Exception:
+            panel.focus()
+
+    @on(KnowledgePanelWidget.SearchRequested)
+    async def _on_knowledge_search(
+        self,
+        event: KnowledgePanelWidget.SearchRequested,
+    ) -> None:
+        try:
+            panel = self.query_one(KnowledgePanelWidget)
+        except Exception:
+            return
+        raw = await self._backend.knowledge_search(event.query)
+        hits = [KnowledgeSearchHit(**r) for r in raw]
+        panel.set_results(hits)
+
+    @on(KnowledgePanelWidget.AddRequested)
+    async def _on_knowledge_add(
+        self,
+        event: KnowledgePanelWidget.AddRequested,
+    ) -> None:
+        result = await self._backend.knowledge_add(event.source)
+        self._conversation.append_info(result.text)
+        # Refresh status header — doc count likely changed.
+        try:
+            panel = self.query_one(KnowledgePanelWidget)
+            status_dict = await self._backend.get_knowledge_status()
+            panel.set_status(KnowledgeStatusInfo(**status_dict))
+            # Clear the input for the next add.
+            from textual.widgets import Input as _Input
+
+            panel.query_one("#kb-input", _Input).value = ""
+        except Exception:
+            pass
+
+    @on(KnowledgePanelWidget.PanelClosed)
+    def _on_knowledge_panel_closed(
+        self,
+        _event: KnowledgePanelWidget.PanelClosed,
+    ) -> None:
+        self.query_one("#user-input", PromptInput).focus()
+
+    # ── Plugins panel ─────────────────────────────────────────────
+
+    async def _show_plugins_panel(self) -> None:
+        """Build initial plugin + marketplace lists, mount the panel."""
+        installed, marketplaces = await self._build_plugin_state()
+        panel = PluginsPanelWidget(installed=installed, marketplaces=marketplaces)
+        self.mount(panel)
+        panel.focus()
+
+    async def _build_plugin_state(
+        self,
+    ) -> tuple[list[PluginInfo], list[MarketplaceInfo]]:
+        details = await self._backend.get_plugin_details()
+        installed = [PluginInfo(**d) for d in details]
+        mkt_payload = await self._backend.get_marketplaces()
+        marketplaces = [
+            MarketplaceInfo(
+                name=m["name"],
+                url=m["url"],
+                last_fetched=m["last_fetched"],
+                plugins=[MarketplacePluginInfo(**p) for p in m["plugins"]],
+            )
+            for m in mkt_payload
+        ]
+        return installed, marketplaces
+
+    async def _refresh_plugins_panel(self) -> None:
+        try:
+            panel = self.query_one(PluginsPanelWidget)
+        except Exception:
+            return
+        installed, marketplaces = await self._build_plugin_state()
+        panel.refresh_data(installed=installed, marketplaces=marketplaces)
+
+    @on(PluginsPanelWidget.PluginToggleRequested)
+    async def _on_plugin_toggle(
+        self,
+        event: PluginsPanelWidget.PluginToggleRequested,
+    ) -> None:
+        result = await self._backend.set_plugin_enabled(
+            event.name,
+            event.enable,
+        )
+        self._conversation.append_info(result.text)
+        await self._refresh_plugins_panel()
+
+    @on(PluginsPanelWidget.PluginInstallRequested)
+    async def _on_plugin_install(
+        self,
+        event: PluginsPanelWidget.PluginInstallRequested,
+    ) -> None:
+        self._conversation.append_info(f"Installing {event.ref}…")
+        result = await self._backend.install_plugin(
+            event.ref,
+            event.install_ref,
+        )
+        self._conversation.append_info(result.text)
+        await self._refresh_plugins_panel()
+
+    @on(PluginsPanelWidget.PluginUpdateRequested)
+    async def _on_plugin_update(
+        self,
+        event: PluginsPanelWidget.PluginUpdateRequested,
+    ) -> None:
+        self._conversation.append_info(f"Updating {event.name}…")
+        result = await self._backend.update_plugin(event.name)
+        self._conversation.append_info(result.text)
+        await self._refresh_plugins_panel()
+
+    @on(PluginsPanelWidget.PluginRemoveRequested)
+    async def _on_plugin_remove(
+        self,
+        event: PluginsPanelWidget.PluginRemoveRequested,
+    ) -> None:
+        result = await self._backend.remove_plugin(event.name)
+        self._conversation.append_info(result.text)
+        await self._refresh_plugins_panel()
+
+    @on(PluginsPanelWidget.MarketplaceRefreshRequested)
+    async def _on_marketplace_refresh(
+        self,
+        _event: PluginsPanelWidget.MarketplaceRefreshRequested,
+    ) -> None:
+        result = await self._backend.refresh_marketplaces()
+        self._conversation.append_info(result.text)
+        await self._refresh_plugins_panel()
+
+    @on(PluginsPanelWidget.PanelClosed)
+    def _on_plugins_panel_closed(
+        self,
+        _event: PluginsPanelWidget.PanelClosed,
+    ) -> None:
         self.query_one("#user-input", PromptInput).focus()
 
     # ── Queue panel events ─────────────────────────────────────────
@@ -1249,7 +1497,7 @@ class EmberApp(App):
     async def _check_for_update(self) -> None:
         """Check for a newer CLI version via BE RPC."""
         try:
-            result = await self._backend._rpc("check_for_update")
+            result = await self._backend._rpc(RpcMethod.CHECK_FOR_UPDATE)
             logger.debug("Update check result: %s", result)
             if result and result.get("available"):
                 bar = self.query_one("#update-bar", UpdateBar)
@@ -1338,6 +1586,10 @@ class EmberApp(App):
             ModelPickerWidget,
             SessionPickerWidget,
             MCPPanelWidget,
+            AgentsPanelWidget,
+            SkillsPanelWidget,
+            KnowledgePanelWidget,
+            PluginsPanelWidget,
         )
         for widget_cls in _DIALOG_TYPES:
             try:

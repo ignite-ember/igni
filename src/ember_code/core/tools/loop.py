@@ -131,10 +131,7 @@ class LoopTools(Toolkit):
         done = sess.loop_iteration_index
         sess.pending_loop_prompt = None
         sess.loop_iterations_remaining = 0
-        return (
-            f"Loop stopped after {done} iteration"
-            f"{'s' if done != 1 else ''}."
-        )
+        return f"Loop stopped after {done} iteration{'s' if done != 1 else ''}."
 
     async def loop_status(self) -> str:
         """Report whether a loop is active and how many iterations

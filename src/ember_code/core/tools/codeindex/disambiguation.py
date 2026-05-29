@@ -138,9 +138,7 @@ class DisambiguationService:
                         # path (metadata fetch returned nothing); when we
                         # do hit it, the LLM consumer would prefer a
                         # usable UUID over a truncated-but-tidy stub.
-                        group.via_parent = (
-                            f"{info.name} ({info.path})" if info else parent_id
-                        )
+                        group.via_parent = f"{info.name} ({info.path})" if info else parent_id
                         result[child_id] = group
 
         return result or None
@@ -338,7 +336,9 @@ class DisambiguationService:
                     "disambiguation: unknown relation %r (edge "
                     "%s → %s), dropping. Update _OUTGOING_RELATIONS "
                     "/ _INCOMING_RELATIONS in disambiguation.py.",
-                    relation, from_uuid, to_uuid,
+                    relation,
+                    from_uuid,
+                    to_uuid,
                 )
 
         # Each direction-list may now contain duplicates because the

@@ -225,6 +225,40 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
             "registry": dict(backend.settings.models.registry.items()),
         },
         RpcMethod.CHECK_FOR_UPDATE: lambda args: _check_update(),
+        # ── Agents ────────────────────────────────────────────────
+        RpcMethod.GET_AGENT_DETAILS: lambda args: backend.get_agent_details(),
+        RpcMethod.PROMOTE_EPHEMERAL_AGENT: lambda args: backend.promote_ephemeral_agent(
+            args["name"]
+        ),
+        RpcMethod.DISCARD_EPHEMERAL_AGENT: lambda args: backend.discard_ephemeral_agent(
+            args["name"]
+        ),
+        # ── Skills ────────────────────────────────────────────────
+        RpcMethod.GET_SKILL_DETAILS: lambda args: backend.get_skill_details(),
+        # ── Knowledge ─────────────────────────────────────────────
+        RpcMethod.GET_KNOWLEDGE_STATUS: lambda args: backend.get_knowledge_status(),
+        RpcMethod.KNOWLEDGE_SEARCH: lambda args: backend.knowledge_search(args["query"]),
+        RpcMethod.KNOWLEDGE_ADD: lambda args: backend.knowledge_add(args["source"]),
+        # ── Plugins ───────────────────────────────────────────────
+        RpcMethod.GET_PLUGIN_DETAILS: lambda args: backend.get_plugin_details(),
+        RpcMethod.SET_PLUGIN_ENABLED: lambda args: backend.set_plugin_enabled(
+            args["name"], args["enabled"]
+        ),
+        RpcMethod.INSTALL_PLUGIN: lambda args: backend.install_plugin(
+            args["ref"],
+            args.get("install_ref"),
+        ),
+        RpcMethod.UPDATE_PLUGIN: lambda args: backend.update_plugin(
+            args["name"],
+            args.get("install_ref"),
+        ),
+        RpcMethod.REMOVE_PLUGIN: lambda args: backend.remove_plugin(args["name"]),
+        RpcMethod.GET_MARKETPLACES: lambda args: backend.get_marketplaces(),
+        RpcMethod.ADD_MARKETPLACE: lambda args: backend.add_marketplace(args["url"]),
+        RpcMethod.REMOVE_MARKETPLACE: lambda args: backend.remove_marketplace(args["name"]),
+        RpcMethod.REFRESH_MARKETPLACES: lambda args: backend.refresh_marketplaces(
+            args.get("name"),
+        ),
     }
     # Fail fast if any enum member is missing a handler. Catches the
     # "added a new RpcMethod, forgot to wire the dispatch entry" bug
@@ -394,6 +428,10 @@ async def _run(
 
     # Pull the latest code-index changeset for HEAD and watch for new commits.
     backend._session.start_codeindex_background()
+
+    # Refresh plugin marketplace catalogs in the background. Failures
+    # are logged but don't gate session readiness.
+    backend._session.start_marketplace_refresh_background()
 
     try:
         await transport.wait_for_connection()

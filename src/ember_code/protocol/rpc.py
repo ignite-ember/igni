@@ -115,6 +115,30 @@ class RpcMethod(StrEnum):
     # ── Misc ──────────────────────────────────────────────────────
     CHECK_FOR_UPDATE = "check_for_update"
 
+    # ── Agents ────────────────────────────────────────────────────
+    GET_AGENT_DETAILS = "get_agent_details"
+    PROMOTE_EPHEMERAL_AGENT = "promote_ephemeral_agent"
+    DISCARD_EPHEMERAL_AGENT = "discard_ephemeral_agent"
+
+    # ── Skills ────────────────────────────────────────────────────
+    GET_SKILL_DETAILS = "get_skill_details"
+
+    # ── Knowledge ─────────────────────────────────────────────────
+    GET_KNOWLEDGE_STATUS = "get_knowledge_status"
+    KNOWLEDGE_SEARCH = "knowledge_search"
+    KNOWLEDGE_ADD = "knowledge_add"
+
+    # ── Plugins ───────────────────────────────────────────────────
+    GET_PLUGIN_DETAILS = "get_plugin_details"
+    SET_PLUGIN_ENABLED = "set_plugin_enabled"
+    INSTALL_PLUGIN = "install_plugin"
+    UPDATE_PLUGIN = "update_plugin"
+    REMOVE_PLUGIN = "remove_plugin"
+    GET_MARKETPLACES = "get_marketplaces"
+    ADD_MARKETPLACE = "add_marketplace"
+    REMOVE_MARKETPLACE = "remove_marketplace"
+    REFRESH_MARKETPLACES = "refresh_marketplaces"
+
 
 def validate_rpc_table(registered_keys: Iterable[str]) -> None:
     """Raise if any :class:`RpcMethod` member is missing from the

@@ -81,6 +81,22 @@ class CommandResult:
     def mcp(cls) -> "CommandResult":
         return cls(kind="action", action="mcp")
 
+    @classmethod
+    def plugins(cls) -> "CommandResult":
+        return cls(kind="action", action="plugins")
+
+    @classmethod
+    def agents(cls) -> "CommandResult":
+        return cls(kind="action", action="agents")
+
+    @classmethod
+    def skills(cls) -> "CommandResult":
+        return cls(kind="action", action="skills")
+
+    @classmethod
+    def knowledge(cls) -> "CommandResult":
+        return cls(kind="action", action="knowledge")
+
 
 class CommandHandler:
     """Handles slash commands, decoupled from the TUI rendering.
@@ -138,9 +154,9 @@ class CommandHandler:
             "## Loop\n\n"
             "Repeat a prompt over and over in the current session. The "
             "next iteration starts immediately after the previous one "
-            "ends — no gap. Useful for *\"do X for each of A, B, C\"*, "
-            "*\"keep fixing failures until the tests pass\"*, *\"go "
-            "through these one at a time\"*.\n\n"
+            'ends — no gap. Useful for *"do X for each of A, B, C"*, '
+            '*"keep fixing failures until the tests pass"*, *"go '
+            'through these one at a time"*.\n\n'
             "**Commands:**\n"
             "- `/loop <prompt>` — start (default cap: 30 iterations)\n"
             "- `/loop <N> <prompt>` — start with explicit cap N\n"
@@ -152,12 +168,40 @@ class CommandHandler:
             "- The iteration cap (default 30, hard limit 200)\n"
             "- The agent calling `loop_stop()` mid-conversation\n\n"
             "**Plain-language control:** the agent has `loop_start` / "
-            "`loop_stop` tools, so you can say *\"loop this 5 times\"* "
-            "or *\"stop the loop\"* in normal chat and the agent will "
+            '`loop_stop` tools, so you can say *"loop this 5 times"* '
+            'or *"stop the loop"* in normal chat and the agent will '
             "translate to the right call.\n\n"
             "**Differs from `/schedule`:** schedule fires on a cron clock "
             "and runs headlessly. `/loop` fires immediately and streams "
             "every iteration live in your TUI."
+        ),
+        "plugins": (
+            "## Plugins\n\n"
+            "Claude-Code-compatible plugin support. A plugin is a "
+            "directory bundling skills, agents, hooks, MCP servers, "
+            "and/or custom tools that activate together. Plugins "
+            "built for Claude Code work in Ember unchanged.\n\n"
+            "**Discovery roots (highest priority last):**\n"
+            "- `~/.claude/plugins/` (Claude user-global)\n"
+            "- `~/.ember/plugins/` (ember user-global — where `/plugin install` lands)\n"
+            "- `<project>/.claude/plugins/`\n"
+            "- `<project>/.ember/plugins/`\n\n"
+            "**Daily commands:**\n"
+            "- `/plugins` — open the TUI panel (browse, toggle, install)\n"
+            "- `/plugins enable <name>` / `/plugins disable <name>` — toggle without opening the panel\n"
+            "- `/plugin install <git-url>` — install from a git URL into `~/.ember/plugins/`\n"
+            "- `/plugin install @<marketplace>/<plugin>` — install via marketplace\n"
+            "- `/plugin install <url> --ref <branch|tag|sha>` — pin at install time\n"
+            "- `/plugin update <name>` — fetch + reset to origin's HEAD\n"
+            "- `/plugin remove <name>` — uninstall (deletes the plugin dir)\n\n"
+            "**Marketplaces (Claude-Code-compatible catalogs):**\n"
+            "- `/plugin marketplace add <git-url>` — register a marketplace\n"
+            "- `/plugin marketplace list` — show registered marketplaces\n"
+            "- `/plugin marketplace remove <name>` — unregister (installed plugins remain)\n"
+            "- `/plugin marketplace refresh [<name>]` — re-fetch one or all\n\n"
+            "Enable / disable / install / update / remove all take effect "
+            "on next session start. See [Plugins](PLUGINS.md) for the "
+            "full guide."
         ),
         "agents": (
             "## Agents\n\n"
@@ -251,7 +295,14 @@ class CommandHandler:
         subcommand = parts[0].lower() if parts else ""
         sub_args = parts[1].strip() if len(parts) > 1 else ""
 
-        if subcommand == "promote" and sub_args:
+        if subcommand == "promote":
+            # Missing name is a user error — without this guard the
+            # call falls through to opening the panel, silently
+            # ignoring the user's intent.
+            if not sub_args:
+                return CommandResult.error(
+                    "Usage: /agents promote <name>"
+                )
             name = sub_args.strip()
             try:
                 dest = self._session.pool.promote_ephemeral(name, self._session.project_dir)
@@ -259,7 +310,11 @@ class CommandHandler:
             except (KeyError, ValueError, RuntimeError) as e:
                 return CommandResult.error(str(e))
 
-        if subcommand == "discard" and sub_args:
+        if subcommand == "discard":
+            if not sub_args:
+                return CommandResult.error(
+                    "Usage: /agents discard <name>"
+                )
             name = sub_args.strip()
             try:
                 self._session.pool.discard_ephemeral(name)
@@ -278,19 +333,312 @@ class CommandHandler:
             lines += "\n*`/agents promote <name>` to save · `/agents discard <name>` to remove*\n"
             return CommandResult.markdown(lines)
 
-        # Default: list all agents
-        lines = "## Agents\n"
-        for defn in self._session.pool.list_agents():
-            tools = ", ".join(defn.tools) if defn.tools else "none"
-            lines += f"- **{defn.name}** — {defn.description}\n  tools: {tools}\n"
-        return CommandResult.markdown(lines)
+        # Default (no subcommand): open the TUI panel.
+        return CommandResult.agents()
 
     async def _cmd_skills(self, _args: str) -> "CommandResult":
-        lines = "## Skills\n"
-        for skill in self._session.skill_pool.list_skills():
-            hint = f" {skill.argument_hint}" if skill.argument_hint else ""
-            lines += f"- **/{skill.name}**{hint} — {skill.description}\n"
-        return CommandResult.markdown(lines or "## Skills\n(no skills loaded)")
+        """Open the skills TUI panel.
+
+        The panel surfaces description, version, source dir, argument
+        hint, and an expandable preview of the skill body — strictly
+        more information than the old markdown listing. The legacy
+        markdown form is gone; consumers that want a text dump should
+        scrape the panel data via ``get_skill_details`` over RPC.
+        """
+        return CommandResult.skills()
+
+    async def _cmd_plugin(self, args: str) -> "CommandResult":
+        """Install, update, remove plugins; manage marketplaces.
+
+        Forms:
+          /plugin install <git-url>                 install directly from URL
+          /plugin install @<marketplace>/<plugin>   install via marketplace catalog
+          /plugin install <ref> --ref <branch|tag|sha>   pin at install time
+          /plugin update <name>                     fetch + reset to latest HEAD
+          /plugin update <name> --ref <ref>         retarget to branch/tag/SHA
+          /plugin remove <name>                     uninstall (deletes plugin dir)
+          /plugin marketplace add <git-url>         register a marketplace
+          /plugin marketplace list                  show registered marketplaces
+          /plugin marketplace remove <name>         unregister (plugins kept)
+          /plugin marketplace refresh [<name>]      re-fetch one or all catalogs
+
+        Most actions require ``git`` on PATH.
+        """
+        from ember_code.core.plugins.git import GitError as _GitError
+        from ember_code.core.plugins.installer import (
+            PluginError as _PluginError,
+        )
+        from ember_code.core.plugins.installer import (
+            PluginInstaller as _PluginInstaller,
+        )
+        from ember_code.core.plugins.marketplaces import (
+            resolve_install_ref as _resolve_install_ref,
+        )
+
+        parts = args.strip().split()
+        if not parts:
+            return CommandResult.error(
+                "Usage: /plugin install <git-url|@marketplace/plugin> | "
+                "/plugin update <name> | /plugin remove <name> | "
+                "/plugin marketplace add|list|remove|refresh"
+            )
+
+        subcommand = parts[0].lower()
+        rest = parts[1:]
+        data_dir = self._session.settings.storage.data_dir
+
+        # ── Marketplace management ────────────────────────────────
+        if subcommand == "marketplace":
+            return await self._cmd_plugin_marketplace(rest, data_dir)
+
+        # ── install / update / remove ────────────────────────────
+        # Extract --ref <value> from anywhere after the subcommand.
+        ref: str | None = None
+        positional: list[str] = []
+        i = 0
+        while i < len(rest):
+            if rest[i] == "--ref" and i + 1 < len(rest):
+                ref = rest[i + 1]
+                i += 2
+                continue
+            positional.append(rest[i])
+            i += 1
+
+        installer = _PluginInstaller(data_dir=data_dir)
+
+        if subcommand == "install":
+            if len(positional) != 1:
+                return CommandResult.error(
+                    "Usage: /plugin install <git-url|@marketplace/plugin> [--ref <ref>]"
+                )
+            target = positional[0]
+            if not installer.is_git_available():
+                return CommandResult.error("`git` is not on PATH. Install git, then retry.")
+
+            # Resolve marketplace ref to a git URL.
+            url = target
+            mkt_meta = None
+            if target.startswith("@"):
+                resolved = _resolve_install_ref(target, data_dir=data_dir)
+                if resolved is None:
+                    return CommandResult.error(
+                        f"Could not resolve '{target}'. Either no marketplace "
+                        "with that name is registered, or it doesn't contain a "
+                        "plugin by that name. Run `/plugin marketplace list` "
+                        "to see registered marketplaces."
+                    )
+                url, mkt_meta = resolved
+                # If the marketplace entry pins a default branch, prefer
+                # it when the user didn't pass --ref explicitly.
+                if ref is None and mkt_meta.branch:
+                    ref = mkt_meta.branch
+
+            try:
+                manifest = installer.install(url, ref=ref)
+            except _GitError as e:
+                return CommandResult.error(f"git error: {e}")
+            except _PluginError as e:
+                return CommandResult.error(str(e))
+            version = f" v{manifest.version}" if manifest.version else ""
+            via = f" via {target}" if target.startswith("@") else ""
+            return CommandResult.info(
+                f"Installed plugin '{manifest.name}'{version}{via}. "
+                "Restart the session to activate it."
+            )
+
+        if subcommand == "update":
+            if len(positional) != 1:
+                return CommandResult.error("Usage: /plugin update <name> [--ref <ref>]")
+            name = positional[0]
+            if not installer.is_git_available():
+                return CommandResult.error("`git` is not on PATH. Install git, then retry.")
+            try:
+                new_sha = installer.update(name, ref=ref)
+            except _GitError as e:
+                return CommandResult.error(f"git error: {e}")
+            except _PluginError as e:
+                return CommandResult.error(str(e))
+            return CommandResult.info(
+                f"Updated '{name}' to {new_sha[:12]}. Restart the session to pick up changes."
+            )
+
+        if subcommand == "remove":
+            if len(positional) != 1:
+                return CommandResult.error("Usage: /plugin remove <name>")
+            name = positional[0]
+            try:
+                installer.remove(name)
+            except _PluginError as e:
+                return CommandResult.error(str(e))
+            return CommandResult.info(
+                f"Removed '{name}'. Restart the session to drop its skills/agents/hooks/MCP/tools."
+            )
+
+        return CommandResult.error(
+            f"Unknown /plugin subcommand: '{subcommand}'. Use install / "
+            "update / remove / marketplace."
+        )
+
+    async def _cmd_plugin_marketplace(
+        self,
+        rest: list[str],
+        data_dir: str,
+    ) -> "CommandResult":
+        """Handle the ``/plugin marketplace …`` family of subcommands.
+
+        Split out from ``_cmd_plugin`` so the parent dispatch stays
+        legible and so test coverage for marketplace flows can target
+        this method directly.
+        """
+        from ember_code.core.plugins.git import GitError as _GitError
+        from ember_code.core.plugins.marketplaces import (
+            add_marketplace as _add,
+        )
+        from ember_code.core.plugins.marketplaces import (
+            load_registry as _load,
+        )
+        from ember_code.core.plugins.marketplaces import (
+            refresh_marketplace as _refresh,
+        )
+        from ember_code.core.plugins.marketplaces import (
+            remove_marketplace as _remove,
+        )
+
+        if not rest:
+            return CommandResult.error(
+                "Usage: /plugin marketplace add <url> | list | remove <name> | refresh [<name>]"
+            )
+        action = rest[0].lower()
+        action_rest = rest[1:]
+
+        if action == "add":
+            if len(action_rest) != 1:
+                return CommandResult.error("Usage: /plugin marketplace add <git-url>")
+            url = action_rest[0]
+            try:
+                entry = _add(url, data_dir=data_dir)
+            except _GitError as e:
+                return CommandResult.error(f"git error: {e}")
+            except (ValueError, Exception) as e:
+                return CommandResult.error(f"Failed to add marketplace: {e}")
+            count = len(entry.cached.plugins) if entry.cached else 0
+            return CommandResult.info(
+                f"Added marketplace '{entry.name}' from {url} ({count} plugin(s) catalogued)."
+            )
+
+        if action == "list":
+            registry = _load(data_dir=data_dir)
+            if not registry.marketplaces:
+                return CommandResult.markdown(
+                    "## Marketplaces\n(none registered — add one via "
+                    "`/plugin marketplace add <git-url>`)"
+                )
+            lines = ["## Marketplaces"]
+            for m in registry.marketplaces:
+                pcount = len(m.cached.plugins) if m.cached else 0
+                last = m.last_fetched or "never"
+                lines.append(
+                    f"- **{m.name}** · {pcount} plugin(s) · last fetched {last}\n  - {m.url}"
+                )
+            return CommandResult.markdown("\n".join(lines))
+
+        if action == "remove":
+            if len(action_rest) != 1:
+                return CommandResult.error("Usage: /plugin marketplace remove <name>")
+            name = action_rest[0]
+            if not _remove(name, data_dir=data_dir):
+                return CommandResult.error(f"No marketplace named '{name}' is registered.")
+            return CommandResult.info(
+                f"Unregistered marketplace '{name}'. Installed plugins from it remain installed."
+            )
+
+        if action == "refresh":
+            if len(action_rest) > 1:
+                return CommandResult.error("Usage: /plugin marketplace refresh [<name>]")
+            if action_rest:
+                name = action_rest[0]
+                try:
+                    entry = _refresh(name, data_dir=data_dir)
+                except _GitError as e:
+                    return CommandResult.error(f"git error: {e}")
+                except Exception as e:
+                    return CommandResult.error(f"Refresh failed: {e}")
+                if entry is None:
+                    return CommandResult.error(f"No marketplace named '{name}' is registered.")
+                count = len(entry.cached.plugins) if entry.cached else 0
+                return CommandResult.info(f"Refreshed '{entry.name}' ({count} plugin(s)).")
+
+            # Refresh all.
+            registry = _load(data_dir=data_dir)
+            results: list[str] = []
+            for m in registry.marketplaces:
+                try:
+                    _refresh(m.name, data_dir=data_dir)
+                    results.append(f"- {m.name}: ok")
+                except Exception as e:
+                    results.append(f"- {m.name}: failed ({e})")
+            if not results:
+                return CommandResult.info("No marketplaces to refresh.")
+            return CommandResult.markdown("## Marketplace refresh\n" + "\n".join(results))
+
+        return CommandResult.error(
+            f"Unknown /plugin marketplace action: '{action}'. Use add / list / remove / refresh."
+        )
+
+    async def _cmd_plugins(self, args: str) -> "CommandResult":
+        """Open the plugins panel, or toggle enable/disable directly.
+
+        Forms:
+          /plugins                    — open the plugins TUI panel
+          /plugins enable <name>      — enable a disabled plugin (no panel)
+          /plugins disable <name>     — disable an enabled plugin (no panel)
+
+        Enable/disable persist to ``~/.ember/plugins.json`` and take
+        effect on the next session start.
+        """
+        loader = getattr(self._session, "plugin_loader", None)
+        state = getattr(self._session, "plugin_state", None)
+        if loader is None or state is None:
+            return CommandResult.info("Plugins not initialized.")
+
+        parts = args.strip().split(None, 1)
+        subcommand = parts[0].lower() if parts else ""
+        name = parts[1].strip() if len(parts) > 1 else ""
+
+        # No subcommand → open the TUI panel.
+        if not subcommand:
+            return CommandResult.plugins()
+
+        if subcommand in ("enable", "disable"):
+            if not name:
+                return CommandResult.error(f"Usage: /plugins {subcommand} <plugin-name>")
+            if loader.get(name) is None:
+                return CommandResult.error(
+                    f"No plugin named '{name}' is installed. "
+                    "Run `/plugins` to list installed plugins."
+                )
+            from ember_code.core.plugins.state import save_state
+
+            disabled_set = set(state.disabled)
+            if subcommand == "enable":
+                if name not in disabled_set:
+                    return CommandResult.info(f"Plugin '{name}' is already enabled.")
+                disabled_set.discard(name)
+            else:  # disable
+                if name in disabled_set:
+                    return CommandResult.info(f"Plugin '{name}' is already disabled.")
+                disabled_set.add(name)
+            state.disabled = sorted(disabled_set)
+            save_state(state, data_dir=self._session.settings.storage.data_dir)
+            return CommandResult.info(
+                f"Plugin '{name}' {subcommand}d. Restart the session for the change to take effect."
+            )
+
+        return CommandResult.error(
+            f"Unknown /plugins subcommand: '{subcommand}'. "
+            "Use `enable` or `disable`, or run `/plugins` alone to open "
+            "the panel."
+        )
 
     async def _cmd_hooks(self, args: str) -> "CommandResult":
         subcommand = args.strip().lower()
@@ -417,17 +765,19 @@ class CommandHandler:
                 return CommandResult.error(result.error)
             return CommandResult.info(result.message)
 
-        if subcommand == "search" and sub_args:
-            response = await mgr.search(sub_args)
-            if not response.results:
-                return CommandResult.info("No results found.")
-            lines = f"## Knowledge Search ({response.total} results)\n"
-            for i, r in enumerate(response.results, 1):
-                name = r.name or "untitled"
-                lines += f"\n**{i}. {name}**\n{r.content}\n"
-            return CommandResult.markdown(lines)
+        if subcommand == "search":
+            # Open the panel — the input field there IS the search UI.
+            # Pre-populating from the slash command would defeat the
+            # purpose: the panel is where users type queries, iterate,
+            # and browse results interactively. ``sub_args`` (if any)
+            # is ignored on purpose; users continue typing in the panel.
+            return CommandResult.knowledge()
 
-        # Default: status
+        # No subcommand: open the TUI panel. (Status + commands hint
+        # were previously printed as markdown — the panel surfaces
+        # the same status header and lets the user search / add
+        # interactively.) The error path is preserved so users see a
+        # clear reason when the base failed to initialize.
         status = await mgr.status()
         if not status.enabled:
             if self._session.settings.knowledge.enabled:
@@ -439,18 +789,7 @@ class CommandHandler:
             return CommandResult.info(
                 "Knowledge base is disabled. Set knowledge.enabled=true in config."
             )
-        return CommandResult.markdown(
-            "## Knowledge Base\n"
-            f"- **Status:** enabled\n"
-            f"- **Collection:** {status.collection_name}\n"
-            f"- **Documents:** {status.document_count}\n"
-            f"- **Embedder:** {status.embedder}\n"
-            "\n**Commands:**\n"
-            "- `/knowledge add <url>` — fetch and ingest a URL (web, YouTube, Wikipedia, ArXiv, PDF)\n"
-            "- `/knowledge add <path>` — ingest a file or directory\n"
-            "- `/knowledge add <text>` — add inline text\n"
-            "- `/knowledge search <query>` — search the knowledge base\n"
-        )
+        return CommandResult.knowledge()
 
     async def _cmd_codeindex(self, args: str) -> "CommandResult":
         """Handle /codeindex commands: search, item, commits, prune, sync, status."""
@@ -938,9 +1277,7 @@ class CommandHandler:
         done = sess.loop_iteration_index
         sess.pending_loop_prompt = None
         sess.loop_iterations_remaining = 0
-        return CommandResult.info(
-            f"Loop stopped after {done} iteration{'s' if done != 1 else ''}."
-        )
+        return CommandResult.info(f"Loop stopped after {done} iteration{'s' if done != 1 else ''}.")
 
     async def _cmd_bug(self, _args: str) -> "CommandResult":
         import webbrowser
@@ -986,6 +1323,8 @@ class CommandHandler:
         "/whoami": _cmd_whoami,
         "/schedule": _cmd_schedule,
         "/loop": _cmd_loop,
+        "/plugin": _cmd_plugin,
+        "/plugins": _cmd_plugins,
         "/compact": _cmd_compact,
         "/bug": _cmd_bug,
         "/evals": _cmd_evals,

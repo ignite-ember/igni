@@ -157,6 +157,54 @@ HELP_SECTIONS = [
         "Transports: stdio and sse",
     ),
     HelpSection(
+        "Plugins",
+        "/plugins, /plugin — Claude-Code-compatible bundles",
+        "Plugins bundle skills, agents, hooks, MCP servers, and tools\n"
+        "into one installable unit. Bundles built for Claude Code work\n"
+        "in Ember Code unchanged.\n\n"
+        + "\n".join(
+            [
+                _row("/plugins", "open the panel"),
+                _row("  Space", "toggle enable / disable"),
+                _row("  u / r", "update / remove"),
+                _row("  Tab", "switch tabs"),
+                _row("  i", "install selected"),
+                _row("  R", "refresh catalogs"),
+                _row("  Escape", "close panel"),
+                _row("/plugins enable <name>", "enable (no panel)"),
+                _row("/plugins disable <name>", "disable (no panel)"),
+                _row("/plugin install <url>", "install from URL"),
+                _row("/plugin install @<m>/<p>", "install via marketplace"),
+                _row("/plugin … --ref X", "pin to branch / tag / sha"),
+                _row("/plugin update <name>", "fetch + reset to HEAD"),
+                _row("/plugin remove <name>", "uninstall"),
+                _row("/plugin marketplace add <url>", "register marketplace"),
+                _row("/plugin marketplace list", "show marketplaces"),
+                _row("/plugin marketplace remove <n>", "unregister"),
+                _row("/plugin marketplace refresh", "re-fetch catalogs"),
+            ]
+        )
+        + "\n\nRoots: ~/.ember/plugins, ~/.claude/plugins, and the project\n"
+        "equivalents. Toggles + install / update / remove take effect on\n"
+        "next session start.",
+    ),
+    HelpSection(
+        "Loop",
+        "/loop — re-fire a prompt across turns",
+        "Repeat a prompt as the next user turn. Useful for *do X for\n"
+        "each of A, B, C* or *keep fixing failures until tests pass*.\n\n"
+        + "\n".join(
+            [
+                _row("/loop", "show status"),
+                _row("/loop <prompt>", "start (cap: 30)"),
+                _row("/loop <N> <prompt>", "start with cap N"),
+                _row("/loop stop", "cancel"),
+            ]
+        )
+        + "\n\nStops on: /loop stop · any non-/loop input · iteration cap\n"
+        "(default 30, hard limit 200) · agent calling loop_stop().",
+    ),
+    HelpSection(
         "Sessions",
         "/sessions, /clear, /rename, /compact",
         "\n".join(

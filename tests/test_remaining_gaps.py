@@ -133,21 +133,22 @@ class TestOrchestrationLimits:
 
 class TestAgentsCommand:
     @pytest.mark.asyncio
-    async def test_agents_lists_all(self):
+    async def test_agents_opens_panel(self):
+        """`/agents` (bare) opens the TUI panel — the markdown listing
+        was replaced by the panel. Agent data flows through the
+        ``get_agent_details`` RPC + ``AgentsPanelWidget``, not the
+        slash result's ``content`` field."""
         from ember_code.backend.command_handler import CommandHandler
 
         session = MagicMock()
-        session.pool.list_agents.return_value = [
-            MagicMock(name="editor", description="Edit files", tools=["Read", "Edit"]),
-            MagicMock(name="reviewer", description="Review code", tools=["Read"]),
-        ]
+        session.pool.list_agents.return_value = []
         session.pool.list_ephemeral.return_value = []
         session.skill_pool.match_user_command.return_value = None
 
         handler = CommandHandler(session)
         result = await handler.handle("/agents")
-        assert "editor" in result.content
-        assert "reviewer" in result.content
+        assert result.kind == "action"
+        assert result.action == "agents"
 
 
 # ── P2: File resolution and media attachment ─────────────────────

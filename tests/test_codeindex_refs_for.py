@@ -73,6 +73,7 @@ def _build_service(
         edge_responses.append(parent_edges)
     file_ref_service.get_by_uuids = AsyncMock(side_effect=edge_responses)
     idx._file_reference_service = MagicMock(return_value=file_ref_service)
+
     # ``_rank_direction`` calls ``self._idx.search_among(candidate_ids=…)``
     # which returns ``CodeIndexResult``-shaped rows ranked against the
     # query. We stub it to echo back the candidates in order so the
@@ -80,10 +81,12 @@ def _build_service(
     # ``refs_for`` doesn't skip them.
     async def _search_among_stub(*, query: str, candidate_ids: list[str], **_):
         return [
-            CodeIndexResult(item_id=cid, name=f"{cid}_name",
-                             path=f"src/{cid}.py", content="", commit="c1")
+            CodeIndexResult(
+                item_id=cid, name=f"{cid}_name", path=f"src/{cid}.py", content="", commit="c1"
+            )
             for cid in candidate_ids
         ]
+
     idx.search_among = _search_among_stub
     # ``_fetch_parent_info`` calls ``self._idx.filter_items``.
     idx.filter_items = AsyncMock(return_value=parent_items or [])
@@ -102,9 +105,7 @@ async def test_refs_for_empty_items_returns_none() -> None:
 @pytest.mark.asyncio
 async def test_refs_for_items_without_ids_returns_none() -> None:
     service = _build_service(direct_edges=[])
-    result = await service.refs_for(
-        items=[_item("")], query_text="x", sha="c1"
-    )
+    result = await service.refs_for(items=[_item("")], query_text="x", sha="c1")
     assert result is None
 
 
@@ -115,9 +116,11 @@ async def test_refs_for_items_without_ids_returns_none() -> None:
 async def test_refs_for_direct_edge_returns_group() -> None:
     """An item with direct outgoing edges gets a group with calls
     populated; no via_parent tag."""
-    service = _build_service(direct_edges=[
-        _edge("A", "B", str(Relation.CALLS), to_entity_name="B_name"),
-    ])
+    service = _build_service(
+        direct_edges=[
+            _edge("A", "B", str(Relation.CALLS), to_entity_name="B_name"),
+        ]
+    )
     items = [_item("A", parent_id="P_A")]
     result = await service.refs_for(items=items, query_text="x", sha="c1")
     assert result is not None
@@ -137,7 +140,8 @@ async def test_refs_for_parent_fallback_when_no_direct_edges() -> None:
     """An item with no direct edges falls through to its parent's
     edges and tags the resulting group with ``via_parent``."""
     parent_meta = {
-        "to_entity_name": "ParentTarget", "to_entity_path": "src/p.py",
+        "to_entity_name": "ParentTarget",
+        "to_entity_path": "src/p.py",
     }
     # Direct-edge fetch returns nothing for item "A". Parent fetch
     # returns an edge for parent "P_A" → "X".
@@ -185,9 +189,11 @@ async def test_refs_for_no_fallback_when_item_has_direct_edges() -> None:
     """If an item already has direct edges, the parent fallback must
     NOT fire for it — otherwise the group's via_parent tag would
     incorrectly override a direct relationship."""
-    service = _build_service(direct_edges=[
-        _edge("A", "B", str(Relation.CALLS)),
-    ])
+    service = _build_service(
+        direct_edges=[
+            _edge("A", "B", str(Relation.CALLS)),
+        ]
+    )
     items = [_item("A", parent_id="P_A")]
     result = await service.refs_for(items=items, query_text="x", sha="c1")
     assert result is not None

@@ -57,10 +57,11 @@ def _item(uuid_: str = "X") -> CodeIndexResult:
 async def test_from_side_calls_buckets_target_into_calls() -> None:
     """Edge ``(X, Y, CALLS)`` with X as the item: X calls Y, so Y
     lands in X's ``calls`` list."""
-    service, _ = _make_service([
-        _edge("X", "Y", str(Relation.CALLS),
-              to_entity_name="Y_name", to_entity_path="Y/path"),
-    ])
+    service, _ = _make_service(
+        [
+            _edge("X", "Y", str(Relation.CALLS), to_entity_name="Y_name", to_entity_path="Y/path"),
+        ]
+    )
     item = _item("X")
     await service._attach_references(item, relations=None)
     assert item.references is not None
@@ -73,9 +74,11 @@ async def test_from_side_calls_buckets_target_into_calls() -> None:
 async def test_from_side_called_by_buckets_into_called_by() -> None:
     """Edge ``(X, Y, CALLED_BY)`` with X as the item: X is called by
     Y, so Y lands in X's ``called_by`` list."""
-    service, _ = _make_service([
-        _edge("X", "Y", str(Relation.CALLED_BY)),
-    ])
+    service, _ = _make_service(
+        [
+            _edge("X", "Y", str(Relation.CALLED_BY)),
+        ]
+    )
     item = _item("X")
     await service._attach_references(item, relations=None)
     assert item.references is not None
@@ -94,10 +97,13 @@ async def test_to_side_calls_inverts_to_called_by() -> None:
     Pre-fix bug: this bucketed Z under ``calls``, telling the agent
     "X calls Z" — exactly inverting the call graph.
     """
-    service, _ = _make_service([
-        _edge("Z", "X", str(Relation.CALLS),
-              from_entity_name="Z_name", from_entity_path="Z/path"),
-    ])
+    service, _ = _make_service(
+        [
+            _edge(
+                "Z", "X", str(Relation.CALLS), from_entity_name="Z_name", from_entity_path="Z/path"
+            ),
+        ]
+    )
     item = _item("X")
     await service._attach_references(item, relations=None)
     assert item.references is not None
@@ -113,9 +119,11 @@ async def test_to_side_calls_inverts_to_called_by() -> None:
 async def test_to_side_called_by_inverts_to_calls() -> None:
     """Edge ``(Z, X, CALLED_BY)`` with X as the item: Z is called by
     X, so from X's perspective X calls Z — Z is in ``calls``."""
-    service, _ = _make_service([
-        _edge("Z", "X", str(Relation.CALLED_BY)),
-    ])
+    service, _ = _make_service(
+        [
+            _edge("Z", "X", str(Relation.CALLED_BY)),
+        ]
+    )
     item = _item("X")
     await service._attach_references(item, relations=None)
     assert item.references is not None
@@ -127,9 +135,11 @@ async def test_to_side_called_by_inverts_to_calls() -> None:
 async def test_to_side_imports_inverts_to_imported_by() -> None:
     """Direction-inversion must work for every relation pair, not
     just CALLS/CALLED_BY. Covers the IMPORTS family."""
-    service, _ = _make_service([
-        _edge("Z", "X", str(Relation.IMPORTS)),
-    ])
+    service, _ = _make_service(
+        [
+            _edge("Z", "X", str(Relation.IMPORTS)),
+        ]
+    )
     item = _item("X")
     await service._attach_references(item, relations=None)
     assert item.references is not None
@@ -148,10 +158,12 @@ async def test_mirror_pair_dedupes_to_single_reference() -> None:
     twice — once under ``calls``, once under ``called_by`` — implying
     a mutual recursion. With the inverse-flip + dedupe both
     observations land in ``calls`` and collapse to one entry."""
-    service, _ = _make_service([
-        _edge("X", "Y", str(Relation.CALLS), to_entity_name="Y_name"),
-        _edge("Y", "X", str(Relation.CALLED_BY), from_entity_name="Y_name"),
-    ])
+    service, _ = _make_service(
+        [
+            _edge("X", "Y", str(Relation.CALLS), to_entity_name="Y_name"),
+            _edge("Y", "X", str(Relation.CALLED_BY), from_entity_name="Y_name"),
+        ]
+    )
     item = _item("X")
     await service._attach_references(item, relations=None)
     assert item.references is not None
@@ -166,14 +178,16 @@ async def test_mirror_pair_dedupes_to_single_reference() -> None:
 async def test_mixed_call_graph_routes_each_side_correctly() -> None:
     """Realistic mix: X calls Y AND Z calls X. Each direction lands
     in the right bucket and the mirror duplicates dedupe out."""
-    service, _ = _make_service([
-        # X calls Y — observed from both sides of the mirror.
-        _edge("X", "Y", str(Relation.CALLS)),
-        _edge("Y", "X", str(Relation.CALLED_BY)),
-        # Z calls X — observed from both sides.
-        _edge("Z", "X", str(Relation.CALLS)),
-        _edge("X", "Z", str(Relation.CALLED_BY)),
-    ])
+    service, _ = _make_service(
+        [
+            # X calls Y — observed from both sides of the mirror.
+            _edge("X", "Y", str(Relation.CALLS)),
+            _edge("Y", "X", str(Relation.CALLED_BY)),
+            # Z calls X — observed from both sides.
+            _edge("Z", "X", str(Relation.CALLS)),
+            _edge("X", "Z", str(Relation.CALLED_BY)),
+        ]
+    )
     item = _item("X")
     await service._attach_references(item, relations=None)
     assert item.references is not None
@@ -190,9 +204,11 @@ async def test_mixed_call_graph_routes_each_side_correctly() -> None:
 async def test_neither_endpoint_match_skips_edge() -> None:
     """If neither endpoint matches the item id, the edge is unrelated
     and skipped — not an error, just a no-op."""
-    service, _ = _make_service([
-        _edge("Q", "R", str(Relation.CALLS)),  # nothing to do with X
-    ])
+    service, _ = _make_service(
+        [
+            _edge("Q", "R", str(Relation.CALLS)),  # nothing to do with X
+        ]
+    )
     item = _item("X")
     await service._attach_references(item, relations=None)
     # No edges matched → references stays None (default).
@@ -220,13 +236,13 @@ async def test_unknown_relation_logs_and_passes_through() -> None:
     """
     from unittest.mock import patch
 
-    service, _ = _make_service([
-        _edge("Z", "X", "invented_relation"),
-    ])
+    service, _ = _make_service(
+        [
+            _edge("Z", "X", "invented_relation"),
+        ]
+    )
     item = _item("X")
-    with patch(
-        "ember_code.core.tools.codeindex.tree_service.logger.warning"
-    ) as warn:
+    with patch("ember_code.core.tools.codeindex.tree_service.logger.warning") as warn:
         await service._attach_references(item, relations=None)
 
     assert item.references is not None

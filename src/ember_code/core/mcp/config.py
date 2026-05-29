@@ -132,3 +132,67 @@ class MCPConfigLoader:
                 )
             except Exception as exc:
                 logger.warning("MCP server '%s' in %s has invalid config: %s", name, path, exc)
+
+    def load_plugin_servers(
+        self,
+        plugin_dir: Path,
+        plugin_name: str,
+        servers: dict[str, MCPServerConfig],
+    ) -> None:
+        """Merge a plugin's bundled ``.mcp.json`` into *servers*.
+
+        Reads ``<plugin_dir>/.mcp.json`` (falling back to ``mcp.json``)
+        and adds each bundled server with its name prefixed
+        ``<plugin>:<server>`` so plugin servers can't collide with the
+        user's own ``.mcp.json`` entries, and so the UI / status
+        commands can attribute each connection back to its plugin.
+
+        Collision policy: **first-wins**. If a server name already
+        exists in *servers* (which would only happen for cross-plugin
+        collisions on the prefixed name), the second occurrence is
+        skipped and a warning logged. The user can resolve by
+        disabling one of the plugins.
+        """
+        path = plugin_dir / ".mcp.json"
+        if not path.is_file():
+            path = plugin_dir / "mcp.json"
+            if not path.is_file():
+                return
+
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to parse plugin MCP config %s: %s", path, exc)
+            return
+
+        mcp_servers = data.get("mcpServers", {})
+        for raw_name, config in mcp_servers.items():
+            prefixed = f"{plugin_name}:{raw_name}"
+            if prefixed in servers:
+                logger.warning(
+                    "Plugin '%s' tried to register MCP server '%s' but the "
+                    "prefixed name '%s' is already in use — keeping the "
+                    "existing entry (first-wins).",
+                    plugin_name,
+                    raw_name,
+                    prefixed,
+                )
+                continue
+            try:
+                servers[prefixed] = MCPServerConfig(
+                    name=prefixed,
+                    type=config.get("type", "stdio"),
+                    command=config.get("command", ""),
+                    args=config.get("args", []),
+                    env=config.get("env", {}),
+                    url=config.get("url", ""),
+                    source_path=str(path),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Plugin '%s' MCP server '%s' has invalid config: %s",
+                    plugin_name,
+                    raw_name,
+                    exc,
+                )

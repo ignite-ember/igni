@@ -296,16 +296,23 @@ class TestCommandHandler:
 
     @pytest.mark.asyncio
     async def test_agents(self, mock_session):
+        """Bare ``/agents`` opens the TUI panel (action result) rather
+        than printing markdown. The markdown listing was replaced by
+        the panel — same data, richer surface."""
         handler = CommandHandler(mock_session)
         result = await handler.handle("/agents")
-        assert result.kind == "markdown"
-        assert "Agents" in result.content
+        assert result.kind == "action"
+        assert result.action == "agents"
 
     @pytest.mark.asyncio
     async def test_skills(self, mock_session):
+        """Bare ``/skills`` opens the TUI panel (action result).
+        Mirrors the ``/agents`` change — panel replaces markdown
+        listing."""
         handler = CommandHandler(mock_session)
         result = await handler.handle("/skills")
-        assert result.kind == "markdown"
+        assert result.kind == "action"
+        assert result.action == "skills"
 
     @pytest.mark.asyncio
     async def test_hooks_empty(self, mock_session):

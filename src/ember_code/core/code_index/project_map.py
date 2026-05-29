@@ -62,7 +62,8 @@ def write_server_supplied_map(
     path.write_text(markdown, encoding="utf-8")
     logger.info(
         "Project map persisted: %s (%d bytes, server-supplied)",
-        path, len(markdown.encode("utf-8")),
+        path,
+        len(markdown.encode("utf-8")),
     )
     return path
 

@@ -59,19 +59,73 @@ class HookLoader:
                 data = json.load(f)
 
             hooks_data = data.get("hooks", {})
-            for event_name, hook_list in hooks_data.items():
-                if not isinstance(hook_list, list):
-                    continue
-                for hook_data in hook_list:
-                    hook = HookDefinition(
-                        type=hook_data.get("type", "command"),
-                        command=hook_data.get("command", ""),
-                        url=hook_data.get("url", ""),
-                        headers=hook_data.get("headers", {}),
-                        matcher=hook_data.get("matcher", ""),
-                        timeout=hook_data.get("timeout", 10000),
-                        background=hook_data.get("background", False),
-                    )
-                    hooks.setdefault(event_name, []).append(hook)
+            self._merge_hooks_data(hooks_data, hooks, source=path)
         except (json.JSONDecodeError, OSError) as e:
             print(f"Warning: Failed to load hooks from {path}: {e}", file=sys.stderr)
+
+    def _merge_hooks_data(
+        self,
+        hooks_data: dict,
+        target: dict[str, list[HookDefinition]],
+        *,
+        source: Path,
+        prepend: bool = False,
+    ) -> None:
+        """Parse a ``{event: [hook, ...]}`` block and merge it into *target*.
+
+        Extracted so plugin hooks (which carry the same shape but live at
+        ``<plugin>/hooks/hooks.json`` instead of settings.json) can use
+        the same parser without re-stating the schema. ``prepend`` puts
+        new hooks at the front of each event's list — used for plugin
+        hooks so plugin-supplied behavior fires *before* project hooks,
+        letting the project still get the final word (e.g. a project
+        PreToolUse veto runs after the plugin's PreToolUse audit log).
+        """
+        for event_name, hook_list in hooks_data.items():
+            if not isinstance(hook_list, list):
+                continue
+            for hook_data in hook_list:
+                hook = HookDefinition(
+                    type=hook_data.get("type", "command"),
+                    command=hook_data.get("command", ""),
+                    url=hook_data.get("url", ""),
+                    headers=hook_data.get("headers", {}),
+                    matcher=hook_data.get("matcher", ""),
+                    timeout=hook_data.get("timeout", 10000),
+                    background=hook_data.get("background", False),
+                )
+                bucket = target.setdefault(event_name, [])
+                if prepend:
+                    bucket.insert(0, hook)
+                else:
+                    bucket.append(hook)
+
+    def load_plugin_hooks(
+        self,
+        plugin_dir: Path,
+        target: dict[str, list[HookDefinition]],
+    ) -> None:
+        """Merge ``<plugin_dir>/hooks/hooks.json`` into *target*.
+
+        Same schema as settings.json's ``hooks`` block — the file IS
+        the ``hooks`` block (no outer wrapping). Plugins are prepended
+        so project-level hooks still run last.
+
+        Failures (missing, malformed, OSError) are logged and swallowed
+        so one broken plugin can't take down the whole hooks pipeline.
+        """
+        path = plugin_dir / "hooks" / "hooks.json"
+        if not path.is_file():
+            return
+        try:
+            with open(path) as f:
+                hooks_data = json.load(f)
+            if not isinstance(hooks_data, dict):
+                print(
+                    f"Warning: plugin hooks at {path} is not a JSON object — skipping",
+                    file=sys.stderr,
+                )
+                return
+            self._merge_hooks_data(hooks_data, target, source=path, prepend=True)
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"Warning: Failed to load plugin hooks from {path}: {e}", file=sys.stderr)

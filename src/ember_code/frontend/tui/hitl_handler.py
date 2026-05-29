@@ -10,6 +10,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ember_code.frontend.tui.widgets import PermissionDialog
+from ember_code.protocol.rpc import RpcMethod
 
 if TYPE_CHECKING:
     from ember_code.frontend.tui.app import EmberApp
@@ -107,7 +108,7 @@ class HITLHandler:
             # Save deny rule via BE RPC
             rule = _build_rule(tool_name, tool_args)
             with contextlib.suppress(Exception):
-                await backend._rpc("save_permission_rule", rule=rule, level="deny")
+                await backend._rpc(RpcMethod.SAVE_PERMISSION_RULE, rule=rule, level="deny")
             self._conversation.append_info(f"Saved rule: deny {rule}")
             return "reject", "deny"
 
@@ -117,12 +118,12 @@ class HITLHandler:
         elif choice == "always":
             rule = _build_rule(tool_name, tool_args)
             with contextlib.suppress(Exception):
-                await backend._rpc("save_permission_rule", rule=rule, level="allow")
+                await backend._rpc(RpcMethod.SAVE_PERMISSION_RULE, rule=rule, level="allow")
             self._conversation.append_info(f"Saved rule: allow {rule}")
         elif choice == "similar":
             rule = _build_pattern_rule(tool_name, tool_args)
             with contextlib.suppress(Exception):
-                await backend._rpc("save_permission_rule", rule=rule, level="allow")
+                await backend._rpc(RpcMethod.SAVE_PERMISSION_RULE, rule=rule, level="allow")
             self._conversation.append_info(f"Saved rule: allow {rule}")
 
         return "confirm", choice

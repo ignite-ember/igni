@@ -39,6 +39,29 @@ class SkillDefinition(BaseModel):
         return text
 
 
+class SkillInfo(BaseModel):
+    """Wire format for one skill — emitted by
+    :meth:`BackendServer.get_skill_details`, consumed by the skills
+    panel.
+
+    JSON-friendly subset of :class:`SkillDefinition`: ``source_dir``
+    widened to ``str`` (Path doesn't round-trip), ``body`` is sent
+    in full so the panel can head-clip for preview without an extra
+    RPC. No ``render`` method — wire models are read-only.
+    """
+
+    name: str
+    description: str = ""
+    version: str = "0.1.0"
+    category: str = "development"
+    argument_hint: str = ""
+    context: str = "inline"
+    agent: str = ""
+    user_invocable: bool = True
+    body: str = ""
+    source_dir: str = ""
+
+
 def _as_str(value: object) -> str:
     """Coerce a value to string (YAML parses ``[hint]`` as a list)."""
     if isinstance(value, list):

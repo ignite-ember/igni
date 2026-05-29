@@ -24,11 +24,17 @@ import pytest
 
 from ember_code.core.code_index.delta import DeltaError, parse_op
 from ember_code.core.code_index.index import CodeIndex
+from ember_code.core.code_index.manifest import (
+    CommitInfo,
+    Manifest,
+    ManifestState,
+)
 from ember_code.core.code_index.project_map import (
     load_project_map,
     project_map_path,
     write_server_supplied_map,
 )
+from ember_code.core.config.settings import Settings
 
 COMMIT = "a" * 40
 
@@ -75,7 +81,10 @@ def test_load_project_map_returns_written_content(tmp_path: Path) -> None:
     data_dir = tmp_path / "ember"
     body = "## Project snapshot\n\nroundtrip content\n"
     write_server_supplied_map(
-        project=project, data_dir=data_dir, commit_sha=COMMIT, markdown=body,
+        project=project,
+        data_dir=data_dir,
+        commit_sha=COMMIT,
+        markdown=body,
     )
     assert load_project_map(project, COMMIT, data_dir=data_dir) == body
 
@@ -91,7 +100,10 @@ def test_write_creates_parent_dir(tmp_path: Path) -> None:
     data_dir = tmp_path / "ember"
     assert not (data_dir / "projects").exists()
     path = write_server_supplied_map(
-        project=project, data_dir=data_dir, commit_sha=COMMIT, markdown="ok",
+        project=project,
+        data_dir=data_dir,
+        commit_sha=COMMIT,
+        markdown="ok",
     )
     assert path.is_file()
 
@@ -103,11 +115,13 @@ def test_parse_commit_summary_op() -> None:
     """``parse_op`` recognises the new op kind and returns the right
     model — important so unknown-op handling doesn't accidentally
     swallow it as a skipped line."""
-    raw = json.dumps({
-        "op": "commit_summary",
-        "sha": COMMIT,
-        "markdown": "## Project snapshot\n\nbody\n",
-    })
+    raw = json.dumps(
+        {
+            "op": "commit_summary",
+            "sha": COMMIT,
+            "markdown": "## Project snapshot\n\nbody\n",
+        }
+    )
     op = parse_op(raw)
     assert op is not None
     assert op.op == "commit_summary"  # type: ignore[attr-defined]
@@ -144,7 +158,8 @@ async def populated_index(tmp_path):
 
 @pytest.mark.asyncio
 async def test_apply_delta_writes_commit_summary_to_disk(
-    populated_index, tmp_path: Path,
+    populated_index,
+    tmp_path: Path,
 ) -> None:
     """End-to-end: a JSONL changeset carrying a ``commit_summary`` op
     results in the markdown landing at the canonical path. The agent
@@ -156,11 +171,18 @@ async def test_apply_delta_writes_commit_summary_to_disk(
         "## Project snapshot\n5 folders · 0 files · 0 entities indexed.\n"
     )
     jsonl_path = tmp_path / "delta.jsonl"
-    jsonl_path.write_text(_jsonl(
-        {"op": "commit", "sha": COMMIT, "parent_sha": None,
-         "branches": [], "indexed_at": "2026-01-01T00:00:00Z"},
-        {"op": "commit_summary", "sha": COMMIT, "markdown": body},
-    ))
+    jsonl_path.write_text(
+        _jsonl(
+            {
+                "op": "commit",
+                "sha": COMMIT,
+                "parent_sha": None,
+                "branches": [],
+                "indexed_at": "2026-01-01T00:00:00Z",
+            },
+            {"op": "commit_summary", "sha": COMMIT, "markdown": body},
+        )
+    )
 
     stats = await idx.apply_delta(jsonl_path)
     assert stats.commit_summary_written is True
@@ -172,17 +194,25 @@ async def test_apply_delta_writes_commit_summary_to_disk(
 
 @pytest.mark.asyncio
 async def test_apply_delta_without_commit_summary_leaves_no_map(
-    populated_index, tmp_path: Path,
+    populated_index,
+    tmp_path: Path,
 ) -> None:
     """Older changesets (or commits where the server didn't generate
     a map) don't leave behind a stale or empty file. The map slot
     stays absent and the session loader degrades gracefully."""
     idx, project, data_dir = populated_index
     jsonl_path = tmp_path / "delta.jsonl"
-    jsonl_path.write_text(_jsonl(
-        {"op": "commit", "sha": COMMIT, "parent_sha": None,
-         "branches": [], "indexed_at": "2026-01-01T00:00:00Z"},
-    ))
+    jsonl_path.write_text(
+        _jsonl(
+            {
+                "op": "commit",
+                "sha": COMMIT,
+                "parent_sha": None,
+                "branches": [],
+                "indexed_at": "2026-01-01T00:00:00Z",
+            },
+        )
+    )
 
     stats = await idx.apply_delta(jsonl_path)
     assert stats.commit_summary_written is False
@@ -200,24 +230,12 @@ async def test_apply_delta_without_commit_summary_leaves_no_map(
 # tests are the safety net for that path.
 
 
-from ember_code.core.code_index.manifest import (
-    CommitInfo,
-    Manifest,
-    ManifestState,
-)
-from ember_code.core.config.settings import Settings
-
-
 def _write_head_manifest(project: Path, data_dir: Path, head_sha: str) -> None:
     """Plant a real manifest.json pointing ``head`` at *head_sha*."""
     Manifest(project=project, data_dir=data_dir).save(
         ManifestState(
             head=head_sha,
-            commits={
-                head_sha: CommitInfo(
-                    sha=head_sha, last_used_at="2026-01-01T00:00:00+00:00"
-                )
-            },
+            commits={head_sha: CommitInfo(sha=head_sha, last_used_at="2026-01-01T00:00:00+00:00")},
         )
     )
 
@@ -322,9 +340,7 @@ def test_session_prompt_omits_project_map_when_codeindex_unavailable(
         markdown="stale content from old commit\n",
     )
 
-    prompt = _build_session_capture_prompt(
-        project, data_dir, codeindex_available=False
-    )
+    prompt = _build_session_capture_prompt(project, data_dir, codeindex_available=False)
 
     assert "## Project Map" not in prompt
     assert "stale content" not in prompt

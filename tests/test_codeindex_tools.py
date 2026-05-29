@@ -247,7 +247,8 @@ class TestTruncatedFlag:
             await index.add_item(
                 "c1",
                 _make_item(
-                    f"f{i}.py", "x",
+                    f"f{i}.py",
+                    "x",
                     quality="good",
                     domain=["auth"] if i == 0 else ["other"],
                 ),
@@ -259,8 +260,7 @@ class TestTruncatedFlag:
             await tools.codeindex_query(quality=QualityLevel.GOOD, domain=["auth"], limit=2)
         )
         assert result["truncated"] is True, (
-            f"expected truncated=True; got {result['truncated']} with "
-            f"{len(result['items'])} items"
+            f"expected truncated=True; got {result['truncated']} with {len(result['items'])} items"
         )
 
     @pytest.mark.asyncio
@@ -310,8 +310,7 @@ class TestTree:
         refs = result["items"][0]["references"]
         assert {t["id"] for t in refs["imports"]} == {"b"}
         assert {t["id"] for t in refs["calls"]} == {"x"}, (
-            "x should land under item's 'calls' (item calls x), "
-            "not under 'called_by'"
+            "x should land under item's 'calls' (item calls x), not under 'called_by'"
         )
 
     @pytest.mark.asyncio

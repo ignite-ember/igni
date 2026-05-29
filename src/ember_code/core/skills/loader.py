@@ -22,13 +22,24 @@ class SkillPool:
         self._entries: dict[str, SkillEntry] = {}
         self._parser = SkillParser()
 
-    def load_directory(self, path: Path, priority: int = 0):
+    def load_directory(
+        self,
+        path: Path,
+        priority: int = 0,
+        namespace: str | None = None,
+    ):
         """Load all skills from a directory.
 
         Each skill lives in a named subdirectory containing a SKILL.md file,
         e.g. ``deploy/SKILL.md``. Supporting files (templates, references)
         can be placed alongside SKILL.md in the same directory.
         Higher priority wins on name conflicts.
+
+        ``namespace`` prefixes every loaded skill's ``name`` as
+        ``<namespace>:<name>``. Used by the plugin loader so each
+        plugin's skills land under their own namespace and can't
+        collide with same-named skills from other plugins or from the
+        user's own ``.ember/skills/``.
         """
         if not path.exists():
             return
@@ -42,6 +53,10 @@ class SkillPool:
 
             try:
                 definition = self._parser.parse(skill_file)
+                if namespace:
+                    definition = definition.model_copy(
+                        update={"name": f"{namespace}:{definition.name}"}
+                    )
                 name = definition.name
 
                 if name not in self._entries or priority > self._entries[name].priority:

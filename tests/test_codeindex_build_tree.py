@@ -76,14 +76,26 @@ async def test_cycle_in_parent_chain_does_not_hang(tools, index):
     """
     a_id = str(uuid.uuid4())
     b_id = str(uuid.uuid4())
-    await index.add_item("c1", _item(
-        name="A.py", path="src/A.py", item_id=a_id, parent_id=b_id,
-        content="alpha content with the marker",
-    ))
-    await index.add_item("c1", _item(
-        name="B.py", path="src/B.py", item_id=b_id, parent_id=a_id,
-        content="other content",
-    ))
+    await index.add_item(
+        "c1",
+        _item(
+            name="A.py",
+            path="src/A.py",
+            item_id=a_id,
+            parent_id=b_id,
+            content="alpha content with the marker",
+        ),
+    )
+    await index.add_item(
+        "c1",
+        _item(
+            name="B.py",
+            path="src/B.py",
+            item_id=b_id,
+            parent_id=a_id,
+            content="other content",
+        ),
+    )
 
     # Query for one of the items by id — the chain walker fires
     # during tree assembly. The cycle guard must short-circuit before
@@ -109,28 +121,48 @@ async def test_multi_level_chain_stops_at_folder(tools, index):
     class_id = str(uuid.uuid4())
     entity_id = str(uuid.uuid4())
 
-    await index.add_item("c1", _item(
-        name="services", path="src/services",
-        item_id=folder_id, fs_type=FileSystemType.FOLDER,
-        content="[SECTION:summary]Services folder.[/SECTION]",
-    ))
-    await index.add_item("c1", _item(
-        name="auth.py", path="src/services/auth.py",
-        item_id=file_id, parent_id=folder_id,
-        content="[SECTION:summary]Auth file summary.[/SECTION]",
-    ))
-    await index.add_item("c1", _item(
-        name="AuthService", path="src/services/auth.py::AuthService",
-        item_id=class_id, parent_id=file_id,
-        entity_type="class",
-        content="[SECTION:summary]Service class.[/SECTION]",
-    ))
-    await index.add_item("c1", _item(
-        name="login", path="src/services/auth.py::AuthService::login",
-        item_id=entity_id, parent_id=class_id,
-        entity_type="function",
-        content="[SECTION:summary]Login method.[/SECTION]",
-    ))
+    await index.add_item(
+        "c1",
+        _item(
+            name="services",
+            path="src/services",
+            item_id=folder_id,
+            fs_type=FileSystemType.FOLDER,
+            content="[SECTION:summary]Services folder.[/SECTION]",
+        ),
+    )
+    await index.add_item(
+        "c1",
+        _item(
+            name="auth.py",
+            path="src/services/auth.py",
+            item_id=file_id,
+            parent_id=folder_id,
+            content="[SECTION:summary]Auth file summary.[/SECTION]",
+        ),
+    )
+    await index.add_item(
+        "c1",
+        _item(
+            name="AuthService",
+            path="src/services/auth.py::AuthService",
+            item_id=class_id,
+            parent_id=file_id,
+            entity_type="class",
+            content="[SECTION:summary]Service class.[/SECTION]",
+        ),
+    )
+    await index.add_item(
+        "c1",
+        _item(
+            name="login",
+            path="src/services/auth.py::AuthService::login",
+            item_id=entity_id,
+            parent_id=class_id,
+            entity_type="function",
+            content="[SECTION:summary]Login method.[/SECTION]",
+        ),
+    )
 
     result = json.loads(await tools.codeindex_query(ids=[entity_id], limit=10))
     # Top-level should be the folder; the entity should be nested
@@ -172,26 +204,41 @@ async def test_intermediate_summary_preserved_when_filtering_non_summary(tools, 
     """
     folder_id = str(uuid.uuid4())
     file_id = str(uuid.uuid4())
-    await index.add_item("c1", _item(
-        name="services", path="src/services",
-        item_id=folder_id, fs_type=FileSystemType.FOLDER,
-        content="[SECTION:summary]Services folder summary.[/SECTION]",
-    ))
-    await index.add_item("c1", _item(
-        name="auth.py", path="src/services/auth.py",
-        item_id=file_id, parent_id=folder_id,
-        # Auth file has BOTH summary and security sections.
-        content=(
-            "[SECTION:summary]Auth file does authentication.[/SECTION]"
-            "[SECTION:security]Has known SQL injection issue.[/SECTION]"
+    await index.add_item(
+        "c1",
+        _item(
+            name="services",
+            path="src/services",
+            item_id=folder_id,
+            fs_type=FileSystemType.FOLDER,
+            content="[SECTION:summary]Services folder summary.[/SECTION]",
         ),
-    ))
+    )
+    await index.add_item(
+        "c1",
+        _item(
+            name="auth.py",
+            path="src/services/auth.py",
+            item_id=file_id,
+            parent_id=folder_id,
+            # Auth file has BOTH summary and security sections.
+            content=(
+                "[SECTION:summary]Auth file does authentication.[/SECTION]"
+                "[SECTION:security]Has known SQL injection issue.[/SECTION]"
+            ),
+        ),
+    )
 
     # Agent requests ONLY the security section.
-    result = json.loads(await tools.codeindex_query(
-        ids=[file_id], sections=[Section.SECURITY], limit=10,
-    ))
+    result = json.loads(
+        await tools.codeindex_query(
+            ids=[file_id],
+            sections=[Section.SECURITY],
+            limit=10,
+        )
+    )
     assert result["items"]
+
     # Find the matched file in the tree (may be nested under folder).
     def find(node, name):
         if node.get("name") == name:
