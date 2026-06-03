@@ -280,3 +280,165 @@ class TestApplyDelta:
         )
         with pytest.raises(DeltaError, match="second commit header"):
             await apply_delta(index=index, file_refs=file_refs, jsonl_path=path)
+
+
+class TestDeleteItemCascadesReferences:
+    """``delete_item`` must scrub every reference (in or out) involving the
+    deleted UUID. The cloud emitter does NOT send explicit
+    ``delete_reference`` ops for the edges around an item it kills via
+    ``delete_item`` — it relies on this client-side cascade. Without it
+    the local file-references table grows orphan rows pointing at
+    UUIDs that no longer exist in the index, which then show up in
+    ``codeindex_tree`` and reverse-lookup results."""
+
+    @pytest.mark.asyncio
+    async def test_outgoing_reference_removed(self, index, file_refs, tmp_path):
+        """``a → b`` edge, then ``a`` deleted → edge gone, ``b`` still alive."""
+        path = _write_jsonl(
+            tmp_path / "delta.jsonl",
+            [
+                {"op": "commit", "sha": "s1"},
+                {"op": "upsert_item", "id": "a", "type": "file", "name": "a.py", "path": "a.py", "content": "A"},
+                {"op": "upsert_item", "id": "b", "type": "file", "name": "b.py", "path": "b.py", "content": "B"},
+                {"op": "upsert_reference", "from_id": "a", "to_id": "b", "relation": "imports", "meta": {}},
+                {"op": "delete_item", "id": "a"},
+            ],
+        )
+        stats = await apply_delta(index=index, file_refs=file_refs, jsonl_path=path)
+
+        assert stats.items_deleted == 1
+        # The cascade reports the reference we wiped, on top of any
+        # explicit ``delete_reference`` ops in the file (none here).
+        assert stats.references_deleted >= 1
+        # Edge is gone (regardless of relation).
+        assert await file_refs.get(from_uuid="a", to_uuid="b", relation="imports") is None
+        # The OTHER endpoint isn't affected — it's a legitimate item
+        # that just lost an inbound reference.
+        assert await index.get_item("b") is not None
+
+    @pytest.mark.asyncio
+    async def test_incoming_reference_removed(self, index, file_refs, tmp_path):
+        """``a → b`` edge, then ``b`` deleted → edge gone, ``a`` still alive.
+
+        Incoming edges matter as much as outgoing — if ``b`` is removed
+        and ``a → b`` survives, every reverse-lookup of ``b``'s callers
+        still surfaces ``a`` as pointing at a phantom row."""
+        path = _write_jsonl(
+            tmp_path / "delta.jsonl",
+            [
+                {"op": "commit", "sha": "s1"},
+                {"op": "upsert_item", "id": "a", "type": "file", "name": "a.py", "path": "a.py", "content": "A"},
+                {"op": "upsert_item", "id": "b", "type": "file", "name": "b.py", "path": "b.py", "content": "B"},
+                {"op": "upsert_reference", "from_id": "a", "to_id": "b", "relation": "imports", "meta": {}},
+                {"op": "delete_item", "id": "b"},
+            ],
+        )
+        stats = await apply_delta(index=index, file_refs=file_refs, jsonl_path=path)
+
+        assert stats.items_deleted == 1
+        assert stats.references_deleted >= 1
+        assert await file_refs.get(from_uuid="a", to_uuid="b", relation="imports") is None
+        assert await index.get_item("a") is not None
+
+    @pytest.mark.asyncio
+    async def test_multiple_edges_around_deleted_item_all_removed(
+        self, index, file_refs, tmp_path
+    ):
+        """Hub item ``x`` with edges to ``y1`` and ``y2`` and incoming edges
+        from ``z1`` and ``z2``. Deleting ``x`` must remove all four edges."""
+        path = _write_jsonl(
+            tmp_path / "delta.jsonl",
+            [
+                {"op": "commit", "sha": "s1"},
+                # Items
+                *(
+                    {
+                        "op": "upsert_item",
+                        "id": iid,
+                        "type": "file",
+                        "name": f"{iid}.py",
+                        "path": f"{iid}.py",
+                        "content": iid,
+                    }
+                    for iid in ("x", "y1", "y2", "z1", "z2")
+                ),
+                # Edges centered on x
+                {"op": "upsert_reference", "from_id": "x", "to_id": "y1", "relation": "calls", "meta": {}},
+                {"op": "upsert_reference", "from_id": "x", "to_id": "y2", "relation": "calls", "meta": {}},
+                {"op": "upsert_reference", "from_id": "z1", "to_id": "x", "relation": "imports", "meta": {}},
+                {"op": "upsert_reference", "from_id": "z2", "to_id": "x", "relation": "imports", "meta": {}},
+                # An unrelated edge that should survive
+                {"op": "upsert_reference", "from_id": "z1", "to_id": "y1", "relation": "calls", "meta": {}},
+                {"op": "delete_item", "id": "x"},
+            ],
+        )
+        stats = await apply_delta(index=index, file_refs=file_refs, jsonl_path=path)
+
+        # 4 edges touched ``x``; the unrelated z1→y1 survives.
+        assert stats.references_deleted == 4
+
+        for from_uuid, to_uuid in (("x", "y1"), ("x", "y2"), ("z1", "x"), ("z2", "x")):
+            assert (
+                await file_refs.get(from_uuid=from_uuid, to_uuid=to_uuid, relation="calls")
+                is None
+            )
+            assert (
+                await file_refs.get(from_uuid=from_uuid, to_uuid=to_uuid, relation="imports")
+                is None
+            )
+
+        # The unrelated edge is untouched.
+        assert await file_refs.get(from_uuid="z1", to_uuid="y1", relation="calls") is not None
+
+    @pytest.mark.asyncio
+    async def test_unrelated_references_untouched(self, index, file_refs, tmp_path):
+        """Deleting one item must not touch references that don't involve it.
+
+        Regression guard: an over-broad cascade query (e.g. one that
+        accidentally drops references in the same *commit* as a deleted
+        item rather than references *involving* that item) would silently
+        delete unrelated edges."""
+        path = _write_jsonl(
+            tmp_path / "delta.jsonl",
+            [
+                {"op": "commit", "sha": "s1"},
+                *(
+                    {
+                        "op": "upsert_item",
+                        "id": iid,
+                        "type": "file",
+                        "name": f"{iid}.py",
+                        "path": f"{iid}.py",
+                        "content": iid,
+                    }
+                    for iid in ("doomed", "p", "q")
+                ),
+                {"op": "upsert_reference", "from_id": "p", "to_id": "q", "relation": "imports", "meta": {}},
+                {"op": "delete_item", "id": "doomed"},
+            ],
+        )
+        await apply_delta(index=index, file_refs=file_refs, jsonl_path=path)
+
+        # ``doomed`` is gone, ``p → q`` lives.
+        assert await index.get_item("doomed") is None
+        assert await file_refs.get(from_uuid="p", to_uuid="q", relation="imports") is not None
+
+    @pytest.mark.asyncio
+    async def test_delete_item_with_no_references_is_a_noop_for_refs(
+        self, index, file_refs, tmp_path
+    ):
+        """Most deleted items have no edges (entities in a freshly-added
+        and freshly-removed file). The cascade must report 0 in that case
+        and not raise."""
+        path = _write_jsonl(
+            tmp_path / "delta.jsonl",
+            [
+                {"op": "commit", "sha": "s1"},
+                {"op": "upsert_item", "id": "lonely", "type": "file", "name": "lonely.py", "path": "lonely.py", "content": "x"},
+                {"op": "delete_item", "id": "lonely"},
+            ],
+        )
+        stats = await apply_delta(index=index, file_refs=file_refs, jsonl_path=path)
+
+        assert stats.items_deleted == 1
+        assert stats.references_deleted == 0

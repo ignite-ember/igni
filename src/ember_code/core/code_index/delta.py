@@ -241,7 +241,16 @@ async def apply_delta(
             stats.items_upserted += 1
         elif isinstance(op, DeleteItemOp):
             await index.remove_item(sha, op.id)
+            # Cascade — every reference (in or out) involving this UUID
+            # is gone too. Without this the file_references table grows
+            # an orphan row per deleted entity, which then shows up in
+            # ``codeindex_tree`` / reverse-lookup results as edges
+            # pointing nowhere. The cloud emitter doesn't send explicit
+            # ``delete_reference`` ops for items it kills via
+            # ``delete_item`` — it relies on this cascade.
+            removed_refs = await file_refs.delete_by_uuid(op.id)
             stats.items_deleted += 1
+            stats.references_deleted += removed_refs
         elif isinstance(op, UpsertReferenceOp):
             await file_refs.create(
                 from_uuid=op.from_id,
