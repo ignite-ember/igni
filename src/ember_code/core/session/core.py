@@ -60,6 +60,14 @@ class Session:
         pre_knowledge: Any | None = None,
     ):
         self.settings = settings
+
+        # Merge models discovered in the Ember Cloud key pool into the
+        # local registry. Operator adds a key on the portal → next CLI
+        # invocation surfaces it under ``/model`` automatically.
+        # User-defined entries always win — see
+        # ``cloud_models.merge_into_registry``.
+        self._merge_cloud_models()
+
         self.project_dir = project_dir or Path.cwd()
         self.workspace = WorkspaceManager(self.project_dir, additional_dirs)
         self.session_id = resume_session_id or str(uuid.uuid4())[:8]
@@ -244,6 +252,30 @@ class Session:
     def cloud_org_name(self) -> str | None:
         """The organization display name from the Ember Cloud JWT."""
         return self._cloud.org_name
+
+    def _merge_cloud_models(self) -> None:
+        """Best-effort: fetch the cloud key pool's catalogue and merge
+        into ``settings.models.registry``. Silently no-ops when:
+        * the user isn't logged in (no cloud token),
+        * ``api_url`` is unreachable / times out / non-200,
+        * any other transport error.
+
+        Never blocks more than ``_FETCH_TIMEOUT_SECONDS`` on the
+        network — kept tight because this runs synchronously at every
+        session start.
+        """
+        from ember_code.core.auth.credentials import CloudCredentials
+        from ember_code.core.config.cloud_models import fetch_cloud_models, merge_into_registry
+
+        token = CloudCredentials(self.settings.auth.credentials_file).access_token
+        if not token:
+            return
+        models = fetch_cloud_models(self.settings.api_url, token)
+        if not models:
+            return
+        added = merge_into_registry(self.settings.models.registry, models)
+        if added:
+            logger.info("Merged %d cloud model(s) into the local registry", added)
 
     def reload_hooks(self) -> int:
         """Reload hooks from settings files. Returns the number of hooks loaded."""
