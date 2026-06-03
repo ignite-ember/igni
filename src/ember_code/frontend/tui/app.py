@@ -938,8 +938,21 @@ class EmberApp(App):
         # Show models that have credentials: explicit API key, env var,
         # key command, or Ember Cloud auth (for models hosted on ignite-ember.sh)
         from ember_code.core.auth.credentials import CloudCredentials
+        from ember_code.core.config.cloud_models import fetch_cloud_models, merge_into_registry
 
         cloud_token = CloudCredentials(self.settings.auth.credentials_file).access_token
+
+        # Refresh the cloud catalogue on open. Synchronous + bounded
+        # (3s) — opening the picker shouldn't hang the TUI even on a
+        # flaky network. ``merge_into_registry`` is no-op-on-duplicate
+        # so user-edited entries survive. The Session backend does the
+        # same refresh independently on its side; doing it here too
+        # keeps the TUI display fresh without an extra RPC round-trip.
+        if cloud_token:
+            cloud_entries = fetch_cloud_models(self.settings.api_url, cloud_token)
+            if cloud_entries:
+                merge_into_registry(self.settings.models.registry, cloud_entries)
+
         models = sorted(
             name
             for name, cfg in self.settings.models.registry.items()

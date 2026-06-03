@@ -72,7 +72,14 @@ async def _text_sessions(session: Session) -> None:
 
 
 def _text_model_picker(session: Session) -> None:
-    """List available models as text (no interactive picker)."""
+    """List available models as text (no interactive picker).
+
+    Refreshes the cloud-discovered entries first so a key added on the
+    portal shows up without restarting the CLI. The refresh is bounded
+    by ``cloud_models._FETCH_TIMEOUT_SECONDS`` and silently degrades
+    to whatever's already in the registry on any failure.
+    """
+    session.refresh_cloud_models()
     registry = session.settings.models.registry
     current = session.settings.models.default
     lines = ["## Models"]
