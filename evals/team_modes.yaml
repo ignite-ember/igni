@@ -1,0 +1,198 @@
+agent: main
+description: |
+  Team-execution-mode discipline.
+
+  Agno's ``Team`` supports four modes, exposed by ``spawn_team(...,
+  mode=...)``. Each one fits a different shape of work:
+
+  - **coordinate** — leader delegates to several members, each works
+    independently, leader synthesizes one final answer. Best for
+    *multi-perspective* output (security + style + tests on one
+    change, with a unified summary).
+  - **route** — leader inspects the task and delegates to ONE member.
+    Best for "this clearly belongs to one specialist but I want the
+    team to pick it" — usually you'd just use ``spawn_agent`` instead.
+  - **broadcast** — every member runs the *same* task in parallel; the
+    leader returns each member's findings. Best for *independent
+    parallel investigations* on the same target where you want each
+    voice intact (audit + perf + accessibility on the same module).
+  - **tasks** — leader breaks the work into ordered subtasks and
+    iterates. Best for *sequential, dependent* multi-step
+    orchestration (implement feature end-to-end: schema → repo →
+    service → tests → docs).
+
+  Each case below targets the right mode for the work-shape and asserts
+  the agent picked it. Anti-cases verify the agent doesn't pick a
+  conceptually-wrong mode (e.g. ``broadcast`` for sequential work).
+
+fixtures:
+  - source: sample_project
+    target: .
+
+cases:
+
+# ── coordinate: multi-perspective synthesis ──────────────────────
+- name: team_coordinate_for_multiperspective_review
+  case_timeout: 480
+  input: |
+    Review `src/auth/token.py` from three angles — security,
+    code-quality, and test coverage — and give me ONE consolidated
+    summary at the end. I don't want three separate reports; I want
+    a synthesized take.
+  expected_tool_calls:
+    - spawn_team
+    - spawn_agent
+  tool_arg_assertions:
+    - tool: spawn_team
+      args_must_contain:
+        mode: coordinate
+  judge_guidelines: |
+    Pass if the agent calls ``spawn_team`` with ``mode="coordinate"``
+    (multiple members, leader synthesizes one summary). Fail if it
+    picks ``broadcast`` (returns three separate reports — user
+    explicitly wanted a single synthesized output) or ``tasks``
+    (sequential breakdown is wrong; this is parallel review).
+
+# ── broadcast: independent parallel investigations ───────────────
+- name: team_broadcast_for_independent_audits
+  case_timeout: 480
+  input: |
+    On `src/auth/token.py`, run three independent audits in parallel:
+    a security review, a performance check, and a style check. I
+    want each finding kept distinct — don't merge them into one
+    summary. Each auditor should work independently.
+  expected_tool_calls:
+    - spawn_team
+    - spawn_agent
+  tool_arg_assertions:
+    - tool: spawn_team
+      args_must_contain:
+        mode: broadcast
+  judge_guidelines: |
+    Pass if the agent calls ``spawn_team`` with ``mode="broadcast"``
+    (parallel, each member produces their own output, no
+    synthesis). Fail if it picks ``coordinate`` (the user
+    explicitly said "don't merge" / "kept distinct").
+
+# ── tasks: sequential, dependent multi-step work ─────────────────
+# This is execution work, so it goes through the plan-and-align
+# workflow. We test turn 2 (after the user approves the plan).
+- name: team_tasks_for_sequential_feature
+  case_timeout: 900
+  input: |
+    Earlier we agreed on this plan for an "API key revocation"
+    feature, which I approve — please execute it now via a
+    tasks-mode team:
+
+      1. Schema migration to add the revoked_at column.
+      2. Repository layer (depends on schema).
+      3. Service layer (depends on repo).
+      4. Route (depends on service).
+      5. Tests (depend on all the above).
+
+    Each layer depends on the previous one. Approved — build it.
+  expected_tool_calls:
+    - spawn_team
+    - spawn_agent
+    - Bash
+    - Edit
+    - Write
+  tool_arg_assertions:
+    - tool: spawn_team
+      args_must_contain:
+        mode: tasks
+  judge_guidelines: |
+    Pass if the agent calls ``spawn_team`` with ``mode="tasks"``
+    (iterative breakdown, leader sequences subtasks) on the
+    approval turn. Fail if it picks ``broadcast`` (parallel work
+    doesn't fit because layers depend on each other) or
+    ``coordinate`` (no synthesis needed — each layer is its own
+    deliverable).
+
+# ── route: rare in practice — Ember prefers spawn_agent ─────────
+# We keep a degenerate test that confirms the agent picks the
+# lighter ``spawn_agent`` over ``spawn_team(mode=route)`` for
+# single-specialist work, since that matches what the prompt
+# tells the agent to do in this shape.
+- name: team_picks_spawn_agent_for_single_specialist_work
+  case_timeout: 240
+  input: |
+    Something is wrong with `src/auth/token.py` — could be a
+    security bug, could be a logic bug, could be a test issue.
+    Pick ONE specialist who's best suited and have them handle
+    it.
+  expected_tool_calls:
+    - spawn_agent
+  unexpected_tool_calls:
+    - spawn_team
+  judge_guidelines: |
+    Pass if the agent calls ``spawn_agent`` for the single-
+    specialist work (the prompt tells the agent to prefer
+    ``spawn_agent`` over ``spawn_team(mode="route")`` when only
+    one member is needed). Fail if it spins up a full team for
+    one-specialist work.
+
+# ── Anti-cases: don't pick the wrong mode ────────────────────────
+# Sequential execution work — also goes through plan-and-align.
+- name: team_no_broadcast_for_sequential_work
+  case_timeout: 600
+  input: |
+    Earlier we agreed on this plan, which I approve — please
+    execute it now via a tasks-mode team:
+
+      1. Add a new column to the users table.
+      2. Update the repository to use the new column.
+      3. Update the service that reads it.
+
+    Each step depends on the previous one (parallel execution
+    would race on dependencies). Approved — build it.
+  expected_tool_calls:
+    - spawn_team
+    - spawn_agent
+    - Bash
+    - Edit
+    - Write
+  tool_arg_assertions:
+    - tool: spawn_team
+      args_must_contain:
+        mode: tasks
+  judge_guidelines: |
+    Pass if the agent picks ``mode="tasks"`` on the approval turn
+    because the steps are sequential and dependent. Fail if it
+    picks ``broadcast`` — parallel execution would race on
+    dependencies (step 2 needs step 1's column to exist).
+
+- name: team_no_coordinate_when_user_wants_separate_outputs
+  case_timeout: 480
+  input: |
+    On `src/auth/token.py`, get me three separate, unmerged reports:
+    one from security, one from qa, one from reviewer. Each as its
+    own section. Don't synthesize them.
+  expected_tool_calls:
+    - spawn_team
+    - spawn_agent
+  tool_arg_assertions:
+    - tool: spawn_team
+      args_must_contain:
+        mode: broadcast
+  judge_guidelines: |
+    Pass if the agent picks ``mode="broadcast"`` — the user said
+    "separate, unmerged, three sections, don't synthesize". Fail if
+    it picks ``coordinate`` (which would synthesize against the
+    user's instruction).
+
+# ── Boundary: when spawn_agent (single specialist) fits better ───
+- name: team_no_team_for_single_specialist_work
+  case_timeout: 240
+  input: |
+    Run a security review of `src/auth/token.py`. Just security, no
+    other angles.
+  expected_tool_calls:
+    - spawn_agent
+  unexpected_tool_calls:
+    - spawn_team
+  judge_guidelines: |
+    Pass if the agent calls ``spawn_agent`` (single specialist,
+    direct delegation) — there's only one perspective requested.
+    Fail if it spins up a team for what's a single-specialist job;
+    a team for one member is overhead with no benefit.

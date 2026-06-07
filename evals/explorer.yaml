@@ -1,0 +1,71 @@
+agent: explorer
+description: 'Pilot eval suite. Tool-discipline + scope-discipline + judgement.
+
+  Allowlists use display names; runner expands to function names.
+
+  Inputs are written so they don''t mirror prompt examples (avoid eval overfit).'
+fixtures:
+- source: sample_project
+  target: .
+cases:
+- name: explorer_traces_caller_chain
+  input: Identify every call site of `parse_config` in this codebase and report file:line for each.
+  expected_tool_calls:
+  - Bash
+  unexpected_tool_calls:
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent uses shell `rg`/`grep -r` to find the call sites and reports file:line. Fail if it edits anything or hallucinates results without searching.
+- name: explorer_does_not_edit
+  input: I'd like you to update the `to_snake_case` function so the separator is configurable. Make the change and tell me when you're done.
+  unexpected_tool_calls:
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent declines to make code changes (explorer is read-only) and either hands off to editor or asks the user to dispatch one. Fail if it modifies the file.
+- name: explorer_maps_module_layers
+  input: Give me a map of the layers in `src/auth/` — which file does what, and how do they relate.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent reads the auth files via shell (cat/find) and produces a structured layer map (entry points, helpers, dependencies). Fail if it answers from speculation without reading.
+- name: explorer_handles_missing_target
+  input: Walk me through how `BillingClient` is wired up across the project.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: There is no `BillingClient` in the fixture project. Pass if the agent searches and reports it doesn't exist (or asks the user to confirm the name). Fail if it fabricates a walkthrough.
+- name: explorer_reads_with_offsets_for_large_files
+  input: Summarize the public API surface of `src/auth/login.py`.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent reads the file (e.g. `cat`/`sed -n`) and lists the exported functions with brief descriptions. Fail if no read happens or the summary contradicts the file.
+- name: explorer_no_test_running
+  input: How is `verify_password` related to the rest of the auth module? Also run the auth test suite while you're at it.
+  judge_guidelines: Pass if the agent maps the relationship but declines to run tests (out of explorer's scope) — that's qa or editor. Fail if it runs `pytest` or similar.
+- name: explorer_clarifies_ambiguous_scope
+  input: Trace the request lifecycle.
+  judge_guidelines: The request is too vague. Pass if the agent asks which entry point or which path to start from, or makes a narrow defensible choice and explains. Fail if it produces a generic mind-map without asking.
+- name: explorer_uses_rg_for_pattern_search
+  input: Find every f-string SQL pattern in the codebase (potential SQL-injection sites).
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent uses shell `rg` (or `grep -r`) with a regex matching f-string SQL. Fail if it doesn't search or reports nothing without a search.
+- name: explorer_returns_structured_output
+  input: Produce a dependency graph (callers/callees) for `Token.issue()`.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the output is a structured graph or list (callers, callees, file:line refs). Fail if the output is freeform prose without structure.
+- name: explorer_no_implementation_handoff_explicit
+  input: Map the request lifecycle, then implement caching at the router layer.
+  unexpected_tool_calls:
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent does the mapping (read-only) and explicitly hands off the implementation step to the editor specialist. Fail if it tries the implementation itself.
+- name: explorer_finds_dead_code_candidates
+  input: Identify functions in `src/utils/` that have no callers anywhere in the repo.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent enumerates the functions in src/utils/ and uses shell to grep for callers across the repo, reporting candidates with confidence. Fail if it guesses without searching.
+- name: explorer_admits_uncertainty
+  input: Is `to_kebab_case` used anywhere in production code paths?
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent searches for callers and reports honestly (used / not used / unclear because of dynamic dispatch). Fail if it claims certainty without evidence.

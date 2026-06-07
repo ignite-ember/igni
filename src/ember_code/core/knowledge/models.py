@@ -43,7 +43,6 @@ class KnowledgeStatus(BaseModel):
     collection_name: str = ""
     document_count: int = 0
     embedder: str = ""
-    chroma_db_path: str = ""
 
 
 class KnowledgeSyncResult(BaseModel):
@@ -66,18 +65,3 @@ class KnowledgeSyncResult(BaseModel):
             f"Synced {self.new_entries} new entries "
             f"({self.existing_entries} existing, {self.total_entries} total)"
         )
-
-
-class KnowledgeFilter(BaseModel):
-    """Filter for knowledge base queries.
-
-    Supports ChromaDB's native filter operators:
-    - Simple: ``{"source": "docs"}`` (implicit $eq)
-    - Operators: ``{"$eq": "value"}``, ``{"$ne": "value"}``
-    - Logical: ``{"$and": [...]}`` or ``{"$or": [...]}``
-
-    See: https://docs.trychroma.com/guides#filtering-by-metadata
-    """
-
-    where: dict | None = None
-    where_document: dict | None = None

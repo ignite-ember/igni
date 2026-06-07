@@ -1,0 +1,155 @@
+agent: main
+description: |
+  Tests the agent's ability to use the local CodeIndex effectively.
+
+  The fixture is a synthetic Python project with hand-engineered
+  cases (SQL injection in auth/login.py, N+1 in db/queries.py,
+  high-complexity legacy parser, well-tested utilities, etc.). The
+  setup hook applies a real LLM-generated JSONL snapshot — same
+  output the production server pipeline produces — so the index the
+  agent queries reflects realistic LLM noise: occasional off-vocab
+  tags, slightly downgraded severities, verbose section content.
+
+  Cases focus on outcomes, not strict tool allowlists. The agent may
+  call ``codeindex_query`` directly OR delegate via ``spawn_agent``;
+  either is fine if the answer is correct. We use ``expected_output``
+  + ``judge_guidelines`` so the LLM judge verifies the *answer*, and
+  ``unexpected_tool_calls`` to flag specific anti-patterns (e.g.
+  pure shell-only when the index was clearly the right tool).
+
+setup_module: evals.codeindex.setup
+
+fixtures:
+  - source: codeindex_repo
+    target: .
+
+cases:
+
+# ── 1. Categorical security filter ───────────────────────────────
+- name: codeindex_finds_critical_security_files
+  case_timeout: 240
+  input: |
+    Audit this project: which files have critical security issues
+    that I should look at first? Use the local code index — I want
+    a fast survey, not a from-scratch grep.
+  expected_output: |
+    The agent identifies src/auth/login.py as having a critical
+    SQL-injection vulnerability. Bonus credit if it also flags
+    src/web/upload.py for path traversal. The answer should be
+    concise and grounded in the index, not invented.
+  judge_guidelines: |
+    Pass if the answer names ``src/auth/login.py`` (SQL injection)
+    as a top critical security risk. Bonus if it also names
+    ``src/web/upload.py`` (path traversal). Fail if the agent
+    returns nothing, lists irrelevant files, or invents
+    vulnerabilities not in the index.
+
+# ── 2. Tag-list filter (clean vocabulary) ────────────────────────
+- name: codeindex_finds_sql_injection_via_vulnerability_filter
+  case_timeout: 240
+  input: |
+    We're worried about SQL injection. Use the code index to list
+    every function or file flagged for that specific risk.
+  expected_output: |
+    The agent identifies ``authenticate`` and/or ``is_admin`` in
+    src/auth/login.py as SQL-injection candidates. May also surface
+    ``run_raw`` or queries.py.
+  judge_guidelines: |
+    Pass if the answer names at least ``authenticate`` (in
+    src/auth/login.py) as a SQL-injection candidate. The fixture
+    has it tagged on three entities; finding at least one is a
+    pass. Fail if the agent claims there's no SQL injection in
+    the codebase, or names irrelevant code.
+
+# ── 3. Compound categorical filter ───────────────────────────────
+- name: codeindex_finds_refactor_candidates
+  case_timeout: 240
+  input: |
+    Give me the top refactor candidates in this repo. I want the
+    files that are flagged needs_refactoring=true so I can plan
+    next sprint.
+  expected_output: |
+    The agent surfaces ``src/legacy/parser.py`` as a top refactor
+    candidate (very-high complexity, untested), plus several
+    other refactor candidates from the index.
+  judge_guidelines: |
+    Pass if the answer lists ``src/legacy/parser.py`` AND at least
+    one other file marked needs_refactoring=true (e.g.
+    src/db/queries.py for the N+1 query). The index has 7 such
+    files; surfacing 2-3 of them is solid. Fail if only one file
+    or irrelevant files are listed.
+
+# ── 4. Reference-graph traversal ─────────────────────────────────
+- name: codeindex_traces_callers_of_run_raw
+  case_timeout: 240
+  input: |
+    I'm thinking about changing the signature of `run_raw` in
+    `src/db/queries.py`. Use the code index to show me everything
+    that calls it so I can estimate the blast radius.
+  expected_output: |
+    The agent lists callers of ``run_raw``: at minimum
+    ``authenticate`` and ``is_admin`` from src/auth/login.py,
+    plus ``list_users_with_orders`` and ``get_user`` from
+    src/db/queries.py.
+  judge_guidelines: |
+    Pass if the answer names at least 2 distinct callers of
+    ``run_raw``. The fixture has authenticate, is_admin,
+    list_users_with_orders, get_user calling it — any 2 is a
+    pass. The agent may use ``codeindex_tree(id=…)`` to walk the
+    reference graph, or fall back to grep; either path is fine. Fail if the answer
+    misses obvious callers or claims none exist.
+
+# ── 5. Semantic + categorical (the "real power" query) ──────────
+- name: codeindex_semantic_search_finds_token_leak
+  case_timeout: 240
+  input: |
+    I have a vague memory that we have a session-management bug
+    where a token leaks into an error message somewhere. Find it
+    using the code index — I don't remember the file name.
+  expected_output: |
+    The agent identifies ``src/auth/session.py`` (specifically the
+    ``resolve_session`` function) as the file where a session token
+    is echoed back in an error message.
+  judge_guidelines: |
+    Pass if the answer names ``src/auth/session.py`` and ideally
+    points at ``resolve_session``. The agent may use semantic
+    search (``codeindex_query(query_text=...)``) or grep for
+    "token" — either is fine if it lands on session.py. Fail if
+    the agent points at the wrong file or invents a leak that
+    doesn't exist.
+
+# ── 6. Doc retrieval (kind="docs") ──────────────────────────────
+- name: codeindex_pulls_auth_docs
+  case_timeout: 240
+  input: |
+    Is the SQL-safety issue in the auth flow documented anywhere
+    in this repo? Use the code index to find the relevant doc
+    section, not source code.
+  expected_output: |
+    The agent cites ``docs/AUTH.md`` (specifically the SQL safety
+    section) as the place where this is documented.
+  judge_guidelines: |
+    Pass if the answer cites ``docs/AUTH.md``. Bonus if it names
+    the "SQL safety" subsection. Fail if the agent says no docs
+    exist when the file is right there, or points at source code
+    instead of the doc.
+
+# ── 7. Graceful fallback when the index has nothing ─────────────
+- name: codeindex_falls_back_when_index_has_nothing
+  case_timeout: 240
+  input: |
+    Does this codebase have anything related to lighthouses or
+    maritime navigation? I want a quick yes/no — don't read every
+    file.
+  expected_output: |
+    The agent says no, this codebase has nothing about lighthouses
+    or maritime navigation. The answer is a clean negative without
+    confabulating any tenuous connection.
+  judge_guidelines: |
+    Pass if the answer is a clear NO — the repo doesn't cover
+    lighthouses or maritime navigation. Fail if the agent
+    confabulates a connection (e.g. "the LRU cache is like a
+    lighthouse beacon" — that's invented), or refuses to answer.
+  unexpected_tool_calls:
+    # No need to spawn a specialist for a yes/no on an unrelated topic.
+    - spawn_team

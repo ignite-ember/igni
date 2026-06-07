@@ -35,6 +35,7 @@ def _make_session():
     session.memory_mgr.get_memories = AsyncMock(return_value=[])
     session.mcp_manager.list_servers.return_value = []
     session.mcp_manager.list_connected.return_value = []
+    session.code_index_sync.sync_now = AsyncMock()
     return session
 
 
@@ -135,13 +136,14 @@ class TestExtraCommands:
     @pytest.mark.asyncio
     async def test_sync_knowledge_not_enabled(self):
         session = _make_session()
+        session.knowledge_mgr.share_enabled.return_value = False
         with patch("ember_code.core.session.commands.print_info") as mock_print:
             result = await dispatch(session, "/sync-knowledge")
         assert result is True
         assert "not enabled" in mock_print.call_args[0][0].lower()
 
     @pytest.mark.asyncio
-    async def test_sync_knowledge_enabled(self):
+    async def test_sync_knowledge_runs_bidirectional(self):
         session = _make_session()
         session.knowledge_mgr.share_enabled.return_value = True
         r = MagicMock(direction="file_to_db", summary="Loaded 3 entries")

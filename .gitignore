@@ -210,3 +210,6 @@ __marimo__/
 
 # Ember Code local data (user-specific, not shared)
 .ember/
+
+# Eval run artifacts — timestamped JSON dumps from scripts/run_evals_smoke.py
+evals/results/

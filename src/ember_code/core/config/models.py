@@ -21,7 +21,12 @@ if not _llm_logger.handlers:
     _llm_handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S"))
     _llm_logger.addHandler(_llm_handler)
     _llm_logger.setLevel(logging.INFO)
-    _llm_logger.propagate = False  # don't duplicate to root
+    # Propagate to root too — so when --debug is on, llm_calls entries
+    # also land in ~/.ember/debug.log alongside everything else. Without
+    # this, BE-side diagnostics (drain task lifecycle, sub-agent pause
+    # surfacing) are silently sent only to llm_calls.log, which makes
+    # cross-referencing event flows with the FE timeline impossible.
+    _llm_logger.propagate = True
 
     # Also capture httpx connection lifecycle to diagnose hanging requests
     _httpx_logger = logging.getLogger("httpx")
@@ -220,15 +225,15 @@ class ModelRegistry:
         self.context_windows = ContextWindowResolver()
 
         # Resolve cloud credentials for inference routing
-        from ember_code.core.auth.credentials import get_access_token
+        from ember_code.core.auth.credentials import CloudCredentials
 
-        self._cloud_token = get_access_token(settings.auth.credentials_file)
-        self._cloud_server_url = settings.auth.server_url if self._cloud_token else None
+        self._cloud_token = CloudCredentials(settings.auth.credentials_file).access_token
+        self._cloud_server_url = settings.api_url if self._cloud_token else None
 
     def get_model(self, name: str | None = None) -> OpenAILike:
         """Get an Agno model instance by registry name."""
-        if name is None:
-            name = self.settings.models.default
+        if name is None or name == "":
+            name = self._effective_default()
 
         entry = self._resolve_entry(name)
         if entry is None:
@@ -283,13 +288,19 @@ class ModelRegistry:
             kwargs["max_tokens"] = entry["max_tokens"]
 
         # Request timeout — prevents indefinite hangs when the server or
-        # upstream provider stops responding.  Configurable per model via
-        # ``timeout`` in the registry entry; defaults to 120s.
-        kwargs["timeout"] = entry.get("timeout", 120)
+        # upstream provider stops responding. Configurable per model via
+        # ``timeout`` in the registry entry; defaults to 60s. The same
+        # value goes on BOTH the OpenAI-SDK ``timeout`` kwarg AND the
+        # underlying ``httpx.AsyncClient`` we pass in — without setting
+        # it on the AsyncClient too, the SDK-level timeout is shadowed
+        # by httpx's defaults and hung connections can wedge forever.
+        timeout_s = entry.get("timeout", 60)
+        kwargs["timeout"] = timeout_s
 
         # Short keepalive expiry avoids stale connections that hang
         # when reused after idle periods (e.g. between user messages).
         kwargs["http_client"] = httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout_s),
             limits=httpx.Limits(
                 max_connections=10,
                 max_keepalive_connections=5,
@@ -304,16 +315,16 @@ class ModelRegistry:
 
     def get_context_window(self, name: str | None = None) -> int:
         """Get the context window size for a model (synchronous)."""
-        if name is None:
-            name = self.settings.models.default
+        if name is None or name == "":
+            name = self._effective_default()
         entry = self._resolve_entry(name)
         model_id = entry["model_id"] if entry else name
         return self.context_windows.resolve(model_id, entry)
 
     async def aget_context_window(self, name: str | None = None) -> int:
         """Get the context window size, with async API fallback."""
-        if name is None:
-            name = self.settings.models.default
+        if name is None or name == "":
+            name = self._effective_default()
         entry = self._resolve_entry(name)
         model_id = entry["model_id"] if entry else name
         return await self.context_windows.aresolve(model_id, entry)
@@ -321,6 +332,29 @@ class ModelRegistry:
     def register_provider(self, name: str, cls: type) -> None:
         """Register a custom provider class."""
         self.PROVIDERS[name] = cls
+
+    def _effective_default(self) -> str:
+        """Return the active default model name.
+
+        Resolution order:
+
+        1. ``settings.models.default`` if explicitly set (user override,
+           ``/model`` switch, or cloud-discovery auto-assign).
+        2. First key in ``settings.models.registry`` — works as soon as
+           cloud discovery has merged at least one entry.
+        3. Raise: there's nothing to fall back to and silent failure
+           would surface as a cryptic "Unknown model: ''" error later.
+        """
+        explicit = self.settings.models.default
+        if explicit:
+            return explicit
+        if self.settings.models.registry:
+            return next(iter(self.settings.models.registry))
+        raise ValueError(
+            "No model configured. Run `/login` to discover hosted "
+            "models from Ember Cloud, or add an entry to "
+            "`models.registry` in ~/.ember/config.yaml."
+        )
 
     def _resolve_entry(self, name: str) -> dict[str, Any] | None:
         """Resolve a model name to a registry entry."""
@@ -342,8 +376,8 @@ class ModelRegistry:
 
         # Fall back to stored login credentials for Ember-hosted models
         if "ignite-ember.sh" in entry.get("url", ""):
-            from ember_code.core.auth.credentials import get_access_token
+            from ember_code.core.auth.credentials import CloudCredentials
 
-            return get_access_token()
+            return CloudCredentials().access_token
 
         return None

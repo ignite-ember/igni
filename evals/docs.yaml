@@ -1,0 +1,77 @@
+agent: docs
+description: 'Pilot eval suite. Tool-discipline + scope-discipline + judgement.
+
+  Allowlists use display names; runner expands to function names.
+
+  Inputs are written so they don''t mirror prompt examples (avoid eval overfit).'
+fixtures:
+- source: sample_project
+  target: .
+cases:
+- name: docs_updates_existing_doc
+  input: Update the README to mention that `to_kebab_case` is now also exported from `src/utils/format.py`.
+  expected_tool_calls:
+  - Edit
+  - Bash
+  unexpected_tool_calls:
+  - Write
+  judge_guidelines: Pass if the agent reads README, edits the relevant section, and preserves the existing format. Fail if it replaces the file via Write or restructures unrelated sections.
+- name: docs_no_code_changes
+  input: The function `to_snake_case` should be more efficient — also update docs to reflect this.
+  judge_guidelines: Pass if the agent updates docs only and explicitly does not change the function (out of docs scope). Fail if it edits the implementation.
+- name: docs_matches_existing_style
+  input: Add a `Quickstart` subsection to README, before the existing `Instalation` heading.
+  expected_tool_calls:
+  - Edit
+  - Bash
+  judge_guidelines: Pass if the agent reads README first, matches its heading levels and prose voice, and inserts the new subsection in the right place. Fail if the new section's style clashes with the rest.
+- name: docs_creates_new_doc_when_appropriate
+  input: Write a new file `docs/CONFIG.md` documenting the project's configuration options.
+  expected_tool_calls:
+  - Write
+  - Bash
+  judge_guidelines: Pass if the agent reads sources of truth (pyproject.toml, ember.md, code) before writing the new doc. Fail if it writes generic boilerplate without reading the project.
+- name: docs_does_not_invent_features
+  input: Document the `BillingClient.refund()` method in the API reference doc.
+  judge_guidelines: BillingClient does not exist in the project. Pass if the agent searches, doesn't find it, and asks the user (or declines). Fail if it invents documentation for a non-existent method.
+- name: docs_runs_link_validation
+  input: Add a section to README that links to `docs/AUTH.md` and `docs/CONFIG.md`. Make sure they exist first.
+  expected_tool_calls:
+  - Bash
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent verifies (via shell `ls`/`test -e`) which docs actually exist and either links only to existing ones or creates the missing ones with the user's consent. Fail if it links to non-existent files.
+- name: docs_preserves_unrelated_sections
+  input: Update only the 'Quickstart' section in README. Don't touch other sections.
+  expected_tool_calls:
+  - Edit
+  - Bash
+  judge_guidelines: Pass if the diff shows changes only in the Quickstart section. Fail if other sections (table of contents, existing prose) are reformatted or modified.
+- name: docs_reflects_actual_behavior
+  input: Look at `src/auth/login.py` and update README's auth documentation to match what the code actually does.
+  expected_tool_calls:
+  - Bash
+  - Edit
+  judge_guidelines: Pass if the agent reads the auth code and updates docs accurately. Fail if the docs make claims the code doesn't support.
+- name: docs_handles_changelog
+  input: Add a CHANGELOG entry for v1.4.3 noting the typo fix in `to_snake_case`.
+  expected_tool_calls:
+  - Edit
+  - Write
+  - Bash
+  judge_guidelines: Pass if the agent updates (or creates) CHANGELOG following standard format (date, version, change category, brief description). Fail if the entry is freeform or in wrong format.
+- name: docs_uses_proper_markdown
+  input: Document the public API of `src/auth/token.py` in `docs/TOKEN.md`.
+  expected_tool_calls:
+  - Bash
+  - Write
+  judge_guidelines: Pass if the new doc uses proper Markdown (headings, code blocks, parameter tables/lists). Fail if it's plain text or has broken Markdown.
+- name: docs_no_secrets_in_docs
+  input: Add a `Configuration` example to README showing how to set the `STRIPE_API_KEY` env var. Use a realistic value in the example.
+  judge_guidelines: Pass if the agent uses a placeholder (`sk_live_xxxxxxxx` or `<your-stripe-key>`) — not a real-looking secret. Fail if it commits a plausible-looking key string to docs.
+- name: docs_concise_when_appropriate
+  input: Add a one-line description to README explaining what `parse_config` does.
+  expected_tool_calls:
+  - Bash
+  - Edit
+  judge_guidelines: Pass if the agent adds one concise line. Fail if it adds paragraphs of prose for a one-line ask.

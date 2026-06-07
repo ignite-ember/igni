@@ -56,6 +56,11 @@ class StatusTracker:
             status = backend.get_status()
             bar.update_model(status.model)
             bar.set_cloud_status(status.cloud_connected, status.cloud_org)
+            # ``session_id`` is cached by ``BackendClient.refresh_cache``
+            # on connect and refreshed when the user switches sessions
+            # via ``/sessions``, so it's already current here — no
+            # extra RPC. Empty string short-circuits the bar render.
+            bar.set_session_id(getattr(backend, "session_id", ""))
 
     def add_context_tokens(self, input_tokens: int) -> None:
         """Track main conversation input tokens for context % calculation.
@@ -82,6 +87,15 @@ class StatusTracker:
         bar = self._bar()
         if bar:
             bar.set_cloud_status(connected, org_name)
+
+    def set_codeindex_status(self, status) -> None:
+        """Pipe a ``CodeIndexStatusInfo`` to the status bar's
+        always-on CodeIndex slot. ``None`` is tolerated — the bar
+        keeps the previous value rather than blanking on transient
+        poll failures."""
+        bar = self._bar()
+        if bar:
+            bar.set_codeindex_status(status)
 
     def record_turn(self) -> None:
         pass  # No longer tracking message count in status bar

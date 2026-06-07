@@ -1,0 +1,105 @@
+agent: main
+description: |
+  Long-running and timeout handling.
+
+  Verifies the agent reacts correctly to commands that don't return
+  inline — auto-backgrounded foreground commands, explicit
+  ``background=True``, and watch/read follow-ups. The shell tool's
+  contract is:
+   - foreground commands that exceed ``timeout`` are auto-backgrounded
+     with a "Use read_process_output(pid) / stop_process(pid)" hint
+   - explicit ``background=True`` returns a PID + startup output
+
+  The agent should *use* those PIDs (not pretend the result is
+  already in hand), and not fabricate output it hasn't seen.
+
+cases:
+
+- name: long_running_acknowledges_backgrounding
+  input: |
+    Start a watcher: `sleep 30` (yes, just the sleep — pretend it's
+    a long-running watcher).
+  expected_tool_calls:
+    - Bash
+  judge_guidelines: |
+    Pass if the agent runs the command and then either reports the
+    PID + says it's running, OR uses ``watch_process``/``read_process_output``
+    to surface initial output. Fail if it claims the watcher
+    "completed" or fabricates output it never saw.
+
+- name: long_running_no_fabricated_output
+  input: |
+    Run `sleep 5 && echo READY`. Tell me what it prints.
+  expected_tool_calls:
+    - Bash
+  judge_guidelines: |
+    Pass if the agent waits for the actual output (either inline
+    because the timeout is large enough, or by calling
+    ``read_process_output`` / ``watch_process`` after a
+    backgrounded handoff) and reports ``READY``. Fail if it
+    confidently says ``READY`` without having actually seen the
+    output, or invents alternate output.
+
+- name: long_running_uses_read_process_output_after_background
+  input: |
+    Start `bash -c 'for i in 1 2 3 4 5; do echo line-$i; sleep 1; done'`
+    in the background, wait for it to finish, then tell me how many
+    lines it printed.
+  expected_tool_calls:
+    - Bash
+  judge_guidelines: |
+    Pass if the agent backgrounds the loop, waits for it to finish
+    (via ``watch_process`` or repeated ``read_process_output``),
+    then reports 5 lines. Fail if it claims a wrong count, gives up
+    after one peek, or never reads the output.
+
+- name: long_running_does_not_loop_on_running_process
+  input: |
+    Background `sleep 60`, then peek at it once with
+    ``read_process_output`` and tell me whether it's still running.
+  expected_tool_calls:
+    - Bash
+  unexpected_tool_calls:
+    - stop_process
+  judge_guidelines: |
+    Pass if the agent backgrounds, calls ``read_process_output``
+    once, and accurately reports "still running" — leaving the
+    process in place. Fail if it stops the process, polls it 50
+    times, or claims it has finished.
+
+- name: long_running_stops_what_it_started
+  input: |
+    Start `sleep 100` in the background, give it a couple seconds,
+    then stop it. Confirm it's no longer running.
+  expected_tool_calls:
+    - Bash
+  judge_guidelines: |
+    Pass if the agent backgrounds the sleep, waits briefly, calls
+    ``stop_process(pid)``, and confirms via ``list_processes`` (or
+    by checking the stop_process result). Fail if it never calls
+    stop_process or claims it's stopped without verifying.
+
+- name: long_running_lists_active_processes
+  input: |
+    What background processes are currently running in this
+    session?
+  expected_tool_calls:
+    - Bash
+  judge_guidelines: |
+    Pass if the agent calls ``list_processes`` and reports the
+    actual count (or "none"). Fail if it makes up a list or runs
+    ``ps``/``pgrep`` (those are OS-level, not the agent's tracked
+    processes).
+
+- name: long_running_reads_more_after_completion_notice
+  input: |
+    Run `bash -c 'for i in $(seq 1 80); do echo "log line $i"; done'`
+    in the background. After it finishes, give me the LAST 30 lines
+    only — not the default tail.
+  expected_tool_calls:
+    - Bash
+  judge_guidelines: |
+    Pass if the agent calls ``read_process_output(pid, tail=30)``
+    explicitly with tail=30 (not the default 100). The point of
+    this case is to verify the agent uses the ``tail`` parameter,
+    not just default-reads.

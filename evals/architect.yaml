@@ -1,0 +1,58 @@
+agent: architect
+description: 'Pilot eval suite. Tool-discipline + scope-discipline + judgement.
+
+  Allowlists use display names; runner expands to function names.
+
+  Inputs are written so they don''t mirror prompt examples (avoid eval overfit).'
+fixtures:
+- source: sample_project
+  target: .
+cases:
+- name: architect_produces_design_no_code
+  input: Design a queue-backed retry layer for outbound HTTP calls — exponential backoff, idempotency keys.
+  unexpected_tool_calls:
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent produces a design doc (components, data flow, contracts, sequencing) without writing any implementation file. Fail if it edits or creates source files.
+- name: architect_reads_existing_conventions
+  input: Propose where a new `RateLimiter` class should live in this codebase, and what its interface should look like.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent reads existing code (via shell) to learn naming/conventions before proposing placement and interface. Fail if it proposes without examining the project.
+- name: architect_acknowledges_tradeoffs
+  input: Should we put the new metrics emitter in a sidecar process or in-process? Recommend one.
+  judge_guidelines: Pass if the agent presents the tradeoffs (latency, isolation, complexity) and recommends one with explicit reasoning. Fail if it picks one without naming the tradeoff or presents both equally without choosing.
+- name: architect_no_implementation_when_asked_to_design
+  input: Design and implement a feature flag system. Start with the design.
+  unexpected_tool_calls:
+  - Edit
+  - Write
+  judge_guidelines: User said start with design. Pass if the agent produces only the design and explicitly hands off implementation. Fail if it goes ahead and writes code.
+- name: architect_asks_for_constraints
+  input: Design a notification system.
+  judge_guidelines: Way too vague (channels? scale? consistency?). Pass if the agent asks clarifying questions about the constraints (delivery guarantees, channels, scale) before proposing. Fail if it produces a generic design without any context-gathering.
+- name: architect_phased_build_sequence
+  input: Lay out a build sequence for migrating from the existing config loader to a typed Pydantic-based one.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent reads the current loader, then provides phases (parallel-existence → cutover → cleanup) with concrete steps per phase. Fail if it skips reading or provides one monolithic step.
+- name: architect_data_flow_diagram
+  input: I want a data-flow description for an event-driven payment-confirmation pipeline (incoming webhook → DB → downstream consumers).
+  judge_guidelines: Pass if the agent describes each stage with inputs, outputs, error paths, and idempotency story. Fail if it produces a one-paragraph summary without per-stage detail.
+- name: architect_rejects_anti_pattern_request
+  input: Design a global mutable singleton to share state across all request handlers.
+  judge_guidelines: Pass if the agent flags the anti-pattern (testability, concurrency, hidden coupling) and proposes alternatives (DI, request-scoped context, etc.) before designing further. Fail if it designs the singleton without pushback.
+- name: architect_calls_out_unknowns
+  input: Architect a multi-region active-active setup for our user store.
+  judge_guidelines: Pass if the agent explicitly names the unknowns (consistency model? conflict resolution? data residency?) and either asks or scopes the design with stated assumptions. Fail if it produces a confident design without naming what's unknown.
+- name: architect_uses_existing_patterns
+  input: Where should a new `WebhookVerifier` component go? Match the project's existing module organization.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent inspects the project layout via shell and proposes a placement consistent with the discovered pattern. Fail if it proposes ad-hoc placement without examining structure.
+- name: architect_test_strategy_in_design
+  input: Design a debounced event aggregator. Include the test strategy in your design.
+  judge_guidelines: Pass if the design includes a section on how to test (unit-level invariants, time-based test patterns, integration shape). Fail if test strategy is absent.
+- name: architect_does_not_run_tests
+  input: Design a circuit-breaker layer. Then run the existing test suite to make sure nothing's broken.
+  judge_guidelines: Pass if the agent designs but declines to run tests (no code changed, nothing to test) — and explains the design itself doesn't trigger a re-run. Fail if it runs tests pointlessly.

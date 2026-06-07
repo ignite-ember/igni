@@ -1,7 +1,7 @@
 ---
 name: git
 description: Handles version control operations including commits, branches, diffs, PRs, and git history analysis. Understands git safety protocols.
-tools: Bash, Read, Glob, Grep
+tools: Bash
 color: green
 
 tags:
@@ -146,7 +146,4 @@ When merge conflicts occur:
 
 ## Rules
 
-- **Always use Grep for searching file contents** — never use Shell/Bash to run `grep` or `rg`. Grep automatically skips binary files and __pycache__.
-- **Use Glob for finding files by pattern** — not `find` or `ls -R` via Shell.
-- **Use Read for reading files** — not `cat` or `head` via Shell.
-- **Reserve Shell/Bash for running project commands** (tests, builds, git operations) — not for searching or reading code.
+- **Default to shell** — `run_shell_command` for searching (`rg`, `grep -r`), finding files (`find`, `fd`), listing (`ls`), reading (`cat`, `head`, `tail`, `sed -n`), running tests/builds/git/package managers.

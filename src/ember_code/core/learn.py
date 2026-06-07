@@ -25,21 +25,38 @@ def create_learning_machine(settings: Settings, db: Any | None = None) -> Any | 
 
     try:
         from agno.learn import LearningMachine
+        from agno.learn.config import LearningMode, UserMemoryConfig
     except ImportError:
         logger.warning("agno.learn not available — learning disabled")
         return None
+
+    # User memory: agent-driven only. Default Agno behaviour is
+    # ``mode=ALWAYS`` which fires an extraction model call after
+    # *every* turn, even when nothing memorable was said. We want the
+    # agent to decide — when it learns something durable about the
+    # user (preferences, role, project conventions) it calls
+    # ``update_user_memory(task)`` itself; otherwise nothing extra
+    # happens. Single extraction call per agent decision, not
+    # periodic background activity.
+    user_memory_input: bool | UserMemoryConfig = False
+    if settings.learning.user_memory:
+        user_memory_input = UserMemoryConfig(
+            mode=LearningMode.AGENTIC,
+            enable_agent_tools=True,
+            agent_can_update_memories=True,
+        )
 
     try:
         lm = LearningMachine(
             db=db,
             user_profile=settings.learning.user_profile,
-            user_memory=settings.learning.user_memory,
+            user_memory=user_memory_input,
             session_context=settings.learning.session_context,
             entity_memory=settings.learning.entity_memory,
             learned_knowledge=settings.learning.learned_knowledge,
         )
         logger.info(
-            "LearningMachine created (profile=%s, memory=%s, context=%s, entity=%s)",
+            "LearningMachine created (profile=%s, memory=%s/agentic, context=%s, entity=%s)",
             settings.learning.user_profile,
             settings.learning.user_memory,
             settings.learning.session_context,

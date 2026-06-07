@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import signal
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,39 @@ from typing import Any
 import click
 
 logger = logging.getLogger(__name__)
+
+
+async def _watch_parent(parent_pid: int, shutdown_event: asyncio.Event) -> None:
+    """Self-terminate if the FE parent process dies.
+
+    Signals are the primary cleanup path (FE's process_manager kills the
+    BE process group on exit), but signals can be missed on hard crashes
+    or hangups. This watchdog is the belt to that suspenders — without
+    it we ended up with an 11-day-old runaway BE that had burned 117
+    hours of CPU after the FE died unexpectedly.
+    """
+    if parent_pid <= 0:
+        return
+    while not shutdown_event.is_set():
+        try:
+            os.kill(parent_pid, 0)  # signal 0 = liveness probe only
+        except ProcessLookupError:
+            logger.warning("Parent FE (pid=%s) died; BE shutting down", parent_pid)
+            shutdown_event.set()
+            # Nudge the receive loop: SIGTERM so ``transport.receive()``
+            # unblocks even if no more FE messages arrive.
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(os.getpid(), signal.SIGTERM)
+            # Last-resort escape hatch: if graceful shutdown stalls,
+            # hard-exit after a grace period so we never linger as a
+            # zombie burning CPU.
+            await asyncio.sleep(5)
+            logger.error("BE failed to shut down 5s after parent death; forcing exit")
+            os._exit(1)
+        except PermissionError:
+            # PID exists but isn't ours — treat as alive.
+            pass
+        await asyncio.sleep(2)
 
 
 @click.command()
@@ -120,63 +154,128 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
             for s in pool.list_skills()
         ]
 
-    return {
-        # Async methods
-        "ensure_mcp": lambda args: backend.ensure_mcp(),
-        "mcp_connect": lambda args: backend.mcp_connect(args["server_name"]),
-        "mcp_disconnect": lambda args: backend.mcp_disconnect(args["server_name"]),
-        "compact_if_needed": lambda args: backend.compact_if_needed(
+    from ember_code.protocol.rpc import RpcMethod, validate_rpc_table
+
+    table: dict[str, Any] = {
+        # ── MCP ────────────────────────────────────────────────────
+        RpcMethod.ENSURE_MCP: lambda args: backend.ensure_mcp(),
+        RpcMethod.MCP_CONNECT: lambda args: backend.mcp_connect(args["server_name"]),
+        RpcMethod.MCP_DISCONNECT: lambda args: backend.mcp_disconnect(args["server_name"]),
+        RpcMethod.GET_MCP_STATUS: lambda args: backend.get_mcp_status(),
+        RpcMethod.GET_MCP_SERVER_DETAILS: lambda args: backend.get_mcp_server_details(),
+        RpcMethod.GET_MCP_SERVERS: lambda args: backend.get_mcp_servers(),
+        # ── Compaction / learning ─────────────────────────────────
+        RpcMethod.COMPACT_IF_NEEDED: lambda args: backend.compact_if_needed(
             args["ctx_tokens"], args["max_ctx"]
         ),
-        "extract_learnings": lambda args: backend.extract_learnings(
+        RpcMethod.EXTRACT_LEARNINGS: lambda args: backend.extract_learnings(
             args["user_msg"], args["assistant_msg"]
         ),
-        "login": _login,
-        "fire_session_start_hook": lambda args: backend.fire_session_start_hook(),
-        "auto_sync_knowledge": lambda args: backend.auto_sync_knowledge(),
-        "shutdown": lambda args: backend.shutdown(),
-        "get_chat_history": lambda args: backend.get_chat_history(args["session_id"]),
-        "execute_scheduled_task": lambda args: backend.execute_scheduled_task(args["description"]),
-        "cancel_scheduled_task": lambda args: backend.cancel_scheduled_task(args["task_id"]),
-        "get_scheduled_tasks": lambda args: backend.get_scheduled_tasks(
+        # ── /loop continuation ────────────────────────────────────
+        RpcMethod.POP_PENDING_LOOP_ITERATION: lambda args: backend.pop_pending_loop_iteration(),
+        RpcMethod.CANCEL_PENDING_LOOP: lambda args: backend.cancel_pending_loop(),
+        RpcMethod.LOOP_STATUS: lambda args: backend.loop_status(),
+        RpcMethod.LOOP_RESUME: lambda args: backend.loop_resume(),
+        RpcMethod.LOOP_PAUSE: lambda args: backend.loop_pause(),
+        # ── Auth ───────────────────────────────────────────────────
+        RpcMethod.LOGIN: _login,
+        RpcMethod.RELOAD_CLOUD_CREDENTIALS: lambda args: backend.reload_cloud_credentials(),
+        RpcMethod.CLEAR_CLOUD_CREDENTIALS: lambda args: backend.clear_cloud_credentials(),
+        # ── Hooks / knowledge ─────────────────────────────────────
+        RpcMethod.FIRE_SESSION_START_HOOK: lambda args: backend.fire_session_start_hook(),
+        RpcMethod.AUTO_SYNC_KNOWLEDGE: lambda args: backend.auto_sync_knowledge(),
+        # ── Session / status ──────────────────────────────────────
+        RpcMethod.SHUTDOWN: lambda args: backend.shutdown(),
+        RpcMethod.GET_CHAT_HISTORY: lambda args: backend.get_chat_history(args["session_id"]),
+        RpcMethod.LIST_SESSIONS: lambda args: backend.list_sessions(),
+        RpcMethod.SWITCH_SESSION: lambda args: backend.switch_session(args["session_id"]),
+        RpcMethod.GET_PROCESSING: lambda args: backend.processing,
+        RpcMethod.GET_SESSION_ID: lambda args: backend.session_id,
+        RpcMethod.GET_RUN_TIMEOUT: lambda args: backend.run_timeout,
+        RpcMethod.GET_STATUS: lambda args: backend.get_status(),
+        RpcMethod.CANCEL_RUN: lambda args: backend.cancel_run(),
+        # ── Scheduler ─────────────────────────────────────────────
+        RpcMethod.EXECUTE_SCHEDULED_TASK: lambda args: backend.execute_scheduled_task(
+            args["description"]
+        ),
+        RpcMethod.CANCEL_SCHEDULED_TASK: lambda args: backend.cancel_scheduled_task(
+            args["task_id"]
+        ),
+        RpcMethod.GET_SCHEDULED_TASKS: lambda args: backend.get_scheduled_tasks(
             args.get("include_done", True)
         ),
-        "list_sessions": lambda args: backend.list_sessions(),
-        "switch_session": lambda args: backend.switch_session(args["session_id"]),
-        # Sync accessors
-        "get_processing": lambda args: backend.processing,
-        "get_session_id": lambda args: backend.session_id,
-        "get_run_timeout": lambda args: backend.run_timeout,
-        "get_skill_names": lambda args: backend.skill_names,
-        "get_mcp_status": lambda args: backend.get_mcp_status(),
-        "get_mcp_server_details": lambda args: backend.get_mcp_server_details(),
-        "get_mcp_servers": lambda args: backend.get_mcp_servers(),
-        "get_status": lambda args: backend.get_status(),
-        "switch_model": lambda args: backend.switch_model(args["model_name"]),
-        "reload_cloud_credentials": lambda args: backend.reload_cloud_credentials(),
-        "clear_cloud_credentials": lambda args: backend.clear_cloud_credentials(),
-        "toggle_verbose": lambda args: backend.toggle_verbose(),
-        "cancel_run": lambda args: backend.cancel_run(),
-        "check_permission": lambda args: backend.check_permission(
+        RpcMethod.START_SCHEDULER: lambda args: _start_scheduler_with_push(backend, transport),
+        # ── Skills ─────────────────────────────────────────────────
+        RpcMethod.GET_SKILL_NAMES: lambda args: backend.skill_names,
+        RpcMethod.GET_SKILL_DEFINITIONS: _get_skill_definitions,
+        # ── Models / config / permissions ─────────────────────────
+        RpcMethod.SWITCH_MODEL: lambda args: backend.switch_model(args["model_name"]),
+        RpcMethod.TOGGLE_VERBOSE: lambda args: backend.toggle_verbose(),
+        RpcMethod.CHECK_PERMISSION: lambda args: backend.check_permission(
             args["tool_name"], args["func_name"], args["tool_args"]
         ),
-        "save_permission_rule": lambda args: backend.save_permission_rule(
+        RpcMethod.SAVE_PERMISSION_RULE: lambda args: backend.save_permission_rule(
             args["rule"], args["level"]
         ),
-        "get_display_config": lambda args: (
+        RpcMethod.GET_DISPLAY_CONFIG: lambda args: (
             backend.settings.display.model_dump()
             if hasattr(backend.settings.display, "model_dump")
             else {}
         ),
-        "get_model_registry": lambda args: {
+        RpcMethod.GET_MODEL_REGISTRY: lambda args: {
             "default": backend.settings.models.default,
             "max_context_window": backend.settings.models.max_context_window,
-            "registry": {k: v for k, v in backend.settings.models.registry.items()},
+            "registry": dict(backend.settings.models.registry.items()),
         },
-        "check_for_update": lambda args: _check_update(),
-        "get_skill_definitions": _get_skill_definitions,
-        "start_scheduler": lambda args: _start_scheduler_with_push(backend, transport),
+        RpcMethod.CHECK_FOR_UPDATE: lambda args: _check_update(),
+        # ── Agents ────────────────────────────────────────────────
+        RpcMethod.GET_AGENT_DETAILS: lambda args: backend.get_agent_details(),
+        RpcMethod.PROMOTE_EPHEMERAL_AGENT: lambda args: backend.promote_ephemeral_agent(
+            args["name"]
+        ),
+        RpcMethod.DISCARD_EPHEMERAL_AGENT: lambda args: backend.discard_ephemeral_agent(
+            args["name"]
+        ),
+        # ── Hooks ─────────────────────────────────────────────────
+        RpcMethod.GET_HOOKS_DETAILS: lambda args: backend.get_hooks_details(),
+        RpcMethod.RELOAD_HOOKS: lambda args: backend.reload_hooks_rpc(),
+        # ── Skills ────────────────────────────────────────────────
+        RpcMethod.GET_SKILL_DETAILS: lambda args: backend.get_skill_details(),
+        # ── Knowledge ─────────────────────────────────────────────
+        RpcMethod.GET_KNOWLEDGE_STATUS: lambda args: backend.get_knowledge_status(),
+        RpcMethod.KNOWLEDGE_SEARCH: lambda args: backend.knowledge_search(args["query"]),
+        RpcMethod.KNOWLEDGE_ADD: lambda args: backend.knowledge_add(args["source"]),
+        # ── CodeIndex ─────────────────────────────────────────────
+        RpcMethod.CODEINDEX_STATUS: lambda args: backend.codeindex_status(),
+        RpcMethod.CODEINDEX_SYNC: lambda args: backend.codeindex_sync(args.get("sha")),
+        RpcMethod.CODEINDEX_CLEAN: lambda args: backend.codeindex_clean(),
+        RpcMethod.CODEINDEX_INSTALL: lambda args: backend.codeindex_install(),
+        # ── Plugins ───────────────────────────────────────────────
+        RpcMethod.GET_PLUGIN_DETAILS: lambda args: backend.get_plugin_details(),
+        RpcMethod.SET_PLUGIN_ENABLED: lambda args: backend.set_plugin_enabled(
+            args["name"], args["enabled"]
+        ),
+        RpcMethod.INSTALL_PLUGIN: lambda args: backend.install_plugin(
+            args["ref"],
+            args.get("install_ref"),
+        ),
+        RpcMethod.UPDATE_PLUGIN: lambda args: backend.update_plugin(
+            args["name"],
+            args.get("install_ref"),
+        ),
+        RpcMethod.REMOVE_PLUGIN: lambda args: backend.remove_plugin(args["name"]),
+        RpcMethod.GET_MARKETPLACES: lambda args: backend.get_marketplaces(),
+        RpcMethod.ADD_MARKETPLACE: lambda args: backend.add_marketplace(args["url"]),
+        RpcMethod.REMOVE_MARKETPLACE: lambda args: backend.remove_marketplace(args["name"]),
+        RpcMethod.REFRESH_MARKETPLACES: lambda args: backend.refresh_marketplaces(
+            args.get("name"),
+        ),
     }
+    # Fail fast if any enum member is missing a handler. Catches the
+    # "added a new RpcMethod, forgot to wire the dispatch entry" bug
+    # before the FE ever issues a call.
+    validate_rpc_table(table.keys())
+    return table
 
 
 def _start_scheduler_with_push(backend: Any, transport: Any) -> None:
@@ -231,6 +330,9 @@ async def _run(
         resume_session_id=resume_session_id,
         additional_dirs=additional_dirs,
     )
+    # Async post-construction wiring (currently: hydrate any
+    # persisted ``/loop`` state from the project's ``state.db``).
+    await backend.startup()
 
     # Handle SIGTERM/SIGINT
     shutdown_event = asyncio.Event()
@@ -242,9 +344,77 @@ async def _run(
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, _signal_handler)
 
+    # Watchdog: exit if the FE parent dies. ``EMBER_PARENT_PID`` is
+    # injected by ``process_manager.BackendProcess.start``.
+    parent_pid_str = os.environ.get("EMBER_PARENT_PID", "0") or "0"
+    try:
+        parent_pid = int(parent_pid_str)
+    except ValueError:
+        parent_pid = 0
+    parent_watch_task = asyncio.create_task(_watch_parent(parent_pid, shutdown_event))
+
     # Queue for message injection (replaces wire_queue_hook)
     _queue: list[str] = []
     backend.wire_queue_hook(_queue)
+
+    # Background-process completion notifications. When the agent
+    # backgrounds a long-running shell command (e.g. ``npm run build``)
+    # and moves on, we push a formatted notice onto the same queue
+    # used by user-typed messages — the QueueInjectorHook will splice
+    # it into the next tool result so the agent reacts naturally
+    # ("oh, the build I started 4 minutes ago just finished, exit
+    # code 0; let me check the output"). FE also gets a
+    # PushNotification so the user sees a status indicator.
+    from ember_code.core.tools.shell import subscribe_to_process_completion
+
+    def _on_process_done(info: dict) -> None:
+        pid = info.get("pid")
+        cmd = info.get("cmd", "")
+        rc = info.get("exit_code")
+        dur = info.get("duration_seconds", 0.0)
+        tail = info.get("output_tail", "")
+        status = "succeeded" if rc == 0 else f"failed (exit {rc})"
+        # Include a one-line hint pointing at ``read_process_output``
+        # so the agent knows it can pull more than the 40-line tail.
+        # ``read_process_output`` is now idempotent — the agent can
+        # call it repeatedly with different ``tail`` values for as
+        # long as the BE is alive (output is held in a ~1MB-capped
+        # in-memory buffer per process).
+        hint = f"For more output: read_process_output({pid}, tail=N)"
+        if tail:
+            msg_text = (
+                f"BACKGROUND PROCESS COMPLETED\n"
+                f"PID {pid}: {cmd}\n"
+                f"Status: {status}  ·  Duration: {dur:.1f}s\n\n"
+                f"Last output (tail):\n{tail}\n\n{hint}"
+            )
+        else:
+            msg_text = (
+                f"BACKGROUND PROCESS COMPLETED\n"
+                f"PID {pid}: {cmd}\n"
+                f"Status: {status}  ·  Duration: {dur:.1f}s\n\n{hint}"
+            )
+        _queue.append(msg_text)
+        # Best-effort UI ping. Schedule onto the loop because the shell
+        # callback runs in the reader thread.
+        with contextlib.suppress(Exception):
+            loop.call_soon_threadsafe(
+                lambda: asyncio.ensure_future(
+                    transport.send(
+                        msg.PushNotification(
+                            channel="background_process_done",
+                            payload={
+                                "pid": pid,
+                                "cmd": cmd,
+                                "exit_code": rc,
+                                "duration_seconds": dur,
+                            },
+                        )
+                    )
+                )
+            )
+
+    subscribe_to_process_completion(_on_process_done)
 
     # Orchestrate progress → push notification
     def _on_progress(line: str) -> None:
@@ -270,22 +440,53 @@ async def _run(
     # and would block the main thread if started during __init__.
     backend._session.start_knowledge_background()
 
+    # Pull the latest code-index changeset for HEAD and watch for new commits.
+    backend._session.start_codeindex_background()
+
+    # Refresh plugin marketplace catalogs in the background. Failures
+    # are logged but don't gate session readiness.
+    backend._session.start_marketplace_refresh_background()
+
     try:
         await transport.wait_for_connection()
         logger.info("FE connected, processing messages")
 
+        # Each FE message is dispatched as its own task so the main loop
+        # can keep reading. Without this, a long-running streaming handler
+        # (e.g. ``run_message`` while sub-agent is paused for HITL) blocks
+        # later RPCs (e.g. ``check_permission``) from ever being read,
+        # causing the FE to hang on the RPC future.
+        # ``backend.run_message`` already rejects concurrent runs by
+        # returning an Error early when ``_processing=True``, so racing
+        # UserMessages degrades gracefully.
+        in_flight: set[asyncio.Task] = set()
+
+        async def _dispatch(message: Any) -> None:
+            try:
+                await _handle_message(message, backend, transport, rpc_table, _queue, login_state)
+            except Exception as exc:
+                logger.error("message handler crashed: %s", exc, exc_info=True)
+
         async for message in transport.receive():
             if isinstance(message, msg.Shutdown):
                 break
-
             if shutdown_event.is_set():
                 break
+            task = asyncio.create_task(_dispatch(message))
+            in_flight.add(task)
+            task.add_done_callback(in_flight.discard)
 
-            await _handle_message(message, backend, transport, rpc_table, _queue, login_state)
+        # Drain in-flight tasks before shutting down so we don't drop
+        # mid-stream messages on graceful exit.
+        if in_flight:
+            await asyncio.gather(*in_flight, return_exceptions=True)
 
     except Exception as exc:
         logger.error("Backend error: %s", exc, exc_info=True)
     finally:
+        parent_watch_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await parent_watch_task
         await backend.shutdown()
         await transport.close()
         logger.info("Backend shut down")

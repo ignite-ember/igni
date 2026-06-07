@@ -21,6 +21,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches
 from textual.events import Resize
+from textual.timer import Timer
 from textual.widgets import Static
 
 from ember_code import __version__
@@ -32,22 +33,40 @@ from ember_code.frontend.tui.run_controller import RunController
 from ember_code.frontend.tui.session_manager import SessionManager
 from ember_code.frontend.tui.status_tracker import StatusTracker
 from ember_code.frontend.tui.widgets import (
+    AgentInfo,
+    AgentsPanelWidget,
+    CodeIndexPanelWidget,
+    CodeIndexStatusInfo,
     FilePickerDropdown,
     HelpPanelWidget,
+    HookInfo,
+    HooksPanelWidget,
+    KnowledgePanelWidget,
+    KnowledgeSearchHit,
+    KnowledgeStatusInfo,
     LoginWidget,
+    LoopPanelWidget,
+    LoopStatusInfo,
+    MarketplaceInfo,
+    MarketplacePluginInfo,
     MCPPanelWidget,
     MCPServerInfo,
     MessageWidget,
     ModelPickerWidget,
+    PluginInfo,
+    PluginsPanelWidget,
     PromptInput,
     QueuePanel,
     SessionPickerWidget,
+    SkillInfo,
+    SkillsPanelWidget,
     StatusBar,
     TaskPanel,
     TipBar,
     UpdateBar,
 )
 from ember_code.protocol.messages import CommandResult
+from ember_code.protocol.rpc import RpcMethod
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +130,7 @@ class EmberApp(App):
     #capabilities {
         height: auto;
         width: 1fr;
-        margin: 0 4;
+        margin: 0 2;
         color: $text-muted;
     }
 
@@ -151,7 +170,10 @@ class EmberApp(App):
     }
 
     #status-bar {
-        height: 2;
+        /* 3 rows = 1 row for ``border-top`` + 2 content rows. The
+           bar renders two lines (identity on top, live activity on
+           bottom) so any smaller height clips the second line. */
+        height: 3;
         width: 100%;
         border-top: solid ansi_bright_black;
         content-align: center middle;
@@ -232,6 +254,11 @@ class EmberApp(App):
         self._backend: Any = None
         self._process_mgr: Any = None
         self._task_refresh_timer: Any = None
+        # Panel status-poll intervals — set when the matching panel is
+        # opened, cleared back to None when it closes. Declared Optional
+        # so the close path's ``= None`` reset type-checks.
+        self._codeindex_status_poll: Timer | None = None
+        self._loop_status_poll: Timer | None = None
 
         self._conversation: ConversationView | None = None
         self._shell_context: list[str] = []  # accumulated shell results for AI context
@@ -302,15 +329,26 @@ class EmberApp(App):
 
     @staticmethod
     def _build_capabilities_text() -> str:
-        """Short capabilities summary shown below the welcome box."""
+        """Capabilities pitch shown below the welcome box.
+
+        Curated to surface the *differentiating* features users won't
+        find in a vanilla coding assistant. Each bullet is one short
+        line so it doesn't wrap on an 80-col terminal — the previous
+        "feature — long description (/cmd)" form orphaned the slash
+        command on the next line whenever the description had a comma.
+        """
         lines = [
             "",
-            "  [bold]What I can do:[/bold]",
+            "  [bold]Why Ember Code:[/bold]",
             "",
-            "    [dim]●[/dim]  Understand your entire project and how parts connect",
-            "    [dim]●[/dim]  Read, search, and reason across your codebase",
-            "    [dim]●[/dim]  Edit files and fix bugs — with your approval",
-            "    [dim]●[/dim]  Run commands, tests, and multi-step workflows",
+            "    [dim]●[/dim]  [bold]/agents[/bold] — dispatch to a specialist (architect, debugger, ...)",
+            "    [dim]●[/dim]  [bold]/skills[/bold] — slash-command workflows (/commit, /resolve-issues, ...)",
+            "    [dim]●[/dim]  [bold]/codeindex[/bold] — semantic search across your repo",
+            "    [dim]●[/dim]  [bold]/schedule[/bold] — background tasks that report back",
+            "    [dim]●[/dim]  [bold]/loop[/bold] — repeat a prompt across a batch until done",
+            "    [dim]●[/dim]  [bold]/evals[/bold] — benchmark agents on scripted scenarios",
+            "    [dim]●[/dim]  [bold]/mcp[/bold] — plug in external tools and data sources",
+            "    [dim]●[/dim]  [bold]/plugins[/bold] — install skills, agents, hooks from marketplaces",
             "",
             "  [dim]Enter to send · \\ + Enter for new line · /help for commands[/dim]",
             "",
@@ -426,6 +464,17 @@ class EmberApp(App):
         asyncio.create_task(self._file_index.ensure_loaded())
         asyncio.create_task(self._auto_sync_knowledge())
 
+        # CodeIndex status-bar slot — eager refresh + recurring
+        # poll so the badge reflects current state even before the
+        # user opens the ``/codeindex`` panel. Survives panel close
+        # (independent from the 2s panel poll which only runs while
+        # the panel is mounted).
+        asyncio.create_task(self._refresh_codeindex_badge())
+        self.set_interval(
+            self._CODEINDEX_STATUSBAR_POLL_SECONDS,
+            self._refresh_codeindex_badge,
+        )
+
         if self.initial_message:
             task = asyncio.create_task(
                 self._controller.process_message(self.initial_message),
@@ -434,18 +483,33 @@ class EmberApp(App):
 
     async def _init_mcp_background(self) -> None:
         """Connect user-configured MCP servers in the background."""
+        logger.info("FE: MCP background init starting")
         try:
             await self._backend.ensure_mcp()
             statuses = (
-                await self._backend._rpc("get_mcp_status")
+                await self._backend._rpc(RpcMethod.GET_MCP_STATUS)
                 if hasattr(self._backend, "_rpc")
                 else self._backend.get_mcp_status()
             )
             if statuses:
+                # Same per-server log as the BE side — gives a
+                # complete picture in ``debug.log`` of "connected
+                # at T1 (BE)" → "FE saw it at T2".
+                connected_names = [n for n, c in statuses if c]
+                logger.info(
+                    "FE: MCP background init done — %d/%d connected: %s",
+                    len(connected_names),
+                    len(statuses),
+                    connected_names,
+                )
                 for name, connected in statuses:
                     self._status.set_ide_status(name, connected)
+            else:
+                logger.info("FE: MCP background init done — no servers configured")
         except Exception as exc:
-            logger.debug("MCP background init failed: %s", exc)
+            # Upgraded from DEBUG to WARNING so this is visible
+            # without the user re-running with ``--debug``.
+            logger.warning("FE: MCP background init failed: %s", exc, exc_info=True)
 
     async def _auto_sync_knowledge(self) -> None:
         """Auto-sync knowledge file → DB on startup if enabled."""
@@ -622,6 +686,11 @@ class EmberApp(App):
                 if self._command_mode:
                     submitted = f"/{submitted}"
                     self._exit_command_mode()
+
+                # Auto-expand a partial slash command when exactly one
+                # built-in or skill matches (e.g. `/codei` → `/codeindex`).
+                if submitted.startswith("/") and not submitted.startswith("//"):
+                    submitted = self._input_handler.expand_unique_command(submitted)
 
                 # Shell mode — run as command, stay in shell mode
                 if self._shell_mode:
@@ -871,11 +940,38 @@ class EmberApp(App):
             self._show_help_panel()
         elif result.action == "mcp":
             asyncio.create_task(self._show_mcp_panel())
+        elif result.action == "agents":
+            asyncio.create_task(self._show_agents_panel())
+        elif result.action == "skills":
+            asyncio.create_task(self._show_skills_panel())
+        elif result.action == "knowledge":
+            asyncio.create_task(self._show_knowledge_panel())
+        elif result.action == "codeindex":
+            asyncio.create_task(self._show_codeindex_panel())
+        elif result.action == "loop":
+            asyncio.create_task(self._show_loop_panel())
+        elif result.action == "hooks":
+            asyncio.create_task(self._show_hooks_panel())
+        elif result.action == "plugins":
+            asyncio.create_task(self._show_plugins_panel())
         elif result.action == "schedule":
             asyncio.create_task(self.action_toggle_tasks())
         elif result.action == "run_prompt":
-            # Feed skill prompt into the main streaming run loop
-            asyncio.create_task(self._controller.process_message(result.content))
+            # Feed the prompt directly into the run loop, bypassing
+            # ``process_message``. We skip ``process_message`` because
+            # its cancel-on-non-/loop guard would kill an active
+            # ``/loop`` we just configured — the loop body itself
+            # doesn't start with ``/loop``. Loop iterations 2+
+            # already bypass via ``_check_loop_continuation``; iteration
+            # 1 (driven by this ``run_prompt`` dispatch) needs the
+            # same treatment. Skill-fired prompts are also internal
+            # work, not user input, so the same bypass is correct.
+            # ``display_content`` is the unwrapped prompt for chat
+            # rendering — the loop slash command sets it so the
+            # user sees the bare prompt rather than the
+            # ``<loop-iteration>`` wrapper.
+            display = getattr(result, "display_content", "") or None
+            asyncio.create_task(self._controller._run(result.content, display=display))
         elif result.action == "compact":
             self._status.reset()
             self._status.update_context_usage()
@@ -903,9 +999,24 @@ class EmberApp(App):
     def _show_model_picker(self) -> None:
         # Show models that have credentials: explicit API key, env var,
         # key command, or Ember Cloud auth (for models hosted on ignite-ember.sh)
-        from ember_code.core.auth.credentials import get_access_token
+        from ember_code.core.auth.credentials import CloudCredentials
+        from ember_code.core.config.cloud_models import fetch_cloud_models, merge_into_registry
 
-        cloud_token = get_access_token(self.settings.auth.credentials_file)
+        cloud_token = CloudCredentials(self.settings.auth.credentials_file).access_token
+
+        # Refresh the cloud catalogue on open. Synchronous + bounded
+        # (3s) — opening the picker shouldn't hang the TUI even on a
+        # flaky network. ``merge_into_registry`` is no-op-on-duplicate
+        # so user-edited entries survive. The Session backend does the
+        # same refresh independently on its side; doing it here too
+        # keeps the TUI display fresh without an extra RPC round-trip.
+        if cloud_token:
+            cloud_entries = fetch_cloud_models(self.settings.api_url, cloud_token)
+            if cloud_entries:
+                merge_into_registry(
+                    self.settings.models.registry, cloud_entries, self.settings.api_url
+                )
+
         models = sorted(
             name
             for name, cfg in self.settings.models.registry.items()
@@ -1003,7 +1114,7 @@ class EmberApp(App):
     async def _build_mcp_server_list(self) -> list[MCPServerInfo]:
         servers: list[MCPServerInfo] = []
         details = (
-            await self._backend._rpc("get_mcp_server_details")
+            await self._backend._rpc(RpcMethod.GET_MCP_SERVER_DETAILS)
             if hasattr(self._backend, "_rpc")
             else self._backend.get_mcp_server_details()
         )
@@ -1047,7 +1158,7 @@ class EmberApp(App):
         # Refresh status and panel
         try:
             statuses = (
-                await self._backend._rpc("get_mcp_status")
+                await self._backend._rpc(RpcMethod.GET_MCP_STATUS)
                 if hasattr(self._backend, "_rpc")
                 else self._backend.get_mcp_status()
             )
@@ -1060,6 +1171,642 @@ class EmberApp(App):
 
     @on(MCPPanelWidget.PanelClosed)
     def _on_mcp_panel_closed(self, _event: MCPPanelWidget.PanelClosed) -> None:
+        self.query_one("#user-input", PromptInput).focus()
+
+    # ── Agents panel ──────────────────────────────────────────────
+
+    async def _show_agents_panel(self) -> None:
+        """Fetch agent details and mount the panel."""
+        agents = await self._build_agent_list()
+        panel = AgentsPanelWidget(agents=agents)
+        self.mount(panel)
+        panel.focus()
+
+    async def _build_agent_list(self) -> list[AgentInfo]:
+        details = await self._backend.get_agent_details()
+        return [AgentInfo(**d) for d in details]
+
+    async def _refresh_agents_panel(self) -> None:
+        try:
+            panel = self.query_one(AgentsPanelWidget)
+        except Exception:
+            return
+        panel.refresh_agents(await self._build_agent_list())
+
+    @on(AgentsPanelWidget.PromoteRequested)
+    async def _on_agent_promote(
+        self,
+        event: AgentsPanelWidget.PromoteRequested,
+    ) -> None:
+        result = await self._backend.promote_ephemeral_agent(event.name)
+        self._conversation.append_info(result.text)
+        await self._refresh_agents_panel()
+
+    @on(AgentsPanelWidget.DiscardRequested)
+    async def _on_agent_discard(
+        self,
+        event: AgentsPanelWidget.DiscardRequested,
+    ) -> None:
+        result = await self._backend.discard_ephemeral_agent(event.name)
+        self._conversation.append_info(result.text)
+        await self._refresh_agents_panel()
+
+    @on(AgentsPanelWidget.PanelClosed)
+    def _on_agents_panel_closed(
+        self,
+        _event: AgentsPanelWidget.PanelClosed,
+    ) -> None:
+        self.query_one("#user-input", PromptInput).focus()
+
+    # ── Skills panel ──────────────────────────────────────────────
+
+    async def _show_skills_panel(self) -> None:
+        skills = await self._build_skill_list()
+        panel = SkillsPanelWidget(skills=skills)
+        self.mount(panel)
+        panel.focus()
+
+    async def _build_skill_list(self) -> list[SkillInfo]:
+        details = await self._backend.get_skill_details()
+        return [SkillInfo(**d) for d in details]
+
+    @on(SkillsPanelWidget.RunRequested)
+    async def _on_skill_run(
+        self,
+        event: SkillsPanelWidget.RunRequested,
+    ) -> None:
+        # Close the panel before firing the skill so its output streams
+        # into the conversation without being visually shadowed.
+        try:
+            panel = self.query_one(SkillsPanelWidget)
+            panel.remove()
+        except Exception:
+            pass
+        # Route through the controller so the skill renders the same
+        # way a typed ``/skill-name`` slash command would.
+        await self._controller.process_message(f"/{event.name}")
+
+    @on(SkillsPanelWidget.PanelClosed)
+    def _on_skills_panel_closed(
+        self,
+        _event: SkillsPanelWidget.PanelClosed,
+    ) -> None:
+        self.query_one("#user-input", PromptInput).focus()
+
+    # ── Knowledge panel ──────────────────────────────────────────
+
+    async def _show_knowledge_panel(self) -> None:
+        status_dict = await self._backend.get_knowledge_status()
+        status = KnowledgeStatusInfo(**status_dict)
+        panel = KnowledgePanelWidget(status=status)
+        self.mount(panel)
+        # Focus the search input so the user can type immediately —
+        # the panel IS the search UI; opening it puts the cursor where
+        # the next keystroke is meaningful.
+        try:
+            panel.query_one("#kb-input").focus()
+        except Exception:
+            panel.focus()
+
+    @on(KnowledgePanelWidget.SearchRequested)
+    async def _on_knowledge_search(
+        self,
+        event: KnowledgePanelWidget.SearchRequested,
+    ) -> None:
+        try:
+            panel = self.query_one(KnowledgePanelWidget)
+        except Exception:
+            return
+        # Flip the status line to "Searching…" so the panel doesn't
+        # look frozen during the embed+ANN round-trip. try/finally so
+        # an RPC failure still restores the static status.
+        preview = event.query if len(event.query) <= 40 else event.query[:40] + "…"
+        panel.set_busy(f"Searching for '{preview}'…")
+        try:
+            raw = await self._backend.knowledge_search(event.query)
+            hits = [KnowledgeSearchHit(**r) for r in raw]
+            panel.set_results(hits)
+        finally:
+            panel.set_busy(None)
+
+    @on(KnowledgePanelWidget.AddRequested)
+    async def _on_knowledge_add(
+        self,
+        event: KnowledgePanelWidget.AddRequested,
+    ) -> None:
+        try:
+            panel = self.query_one(KnowledgePanelWidget)
+        except Exception:
+            panel = None
+
+        # Ingest can take seconds (URL fetch + chunk + embed). Flip the
+        # status line so the user sees activity. URLs and long paths
+        # are trimmed in the label.
+        preview = event.source if len(event.source) <= 50 else event.source[:50] + "…"
+        if panel is not None:
+            panel.set_busy(f"Ingesting {preview}…")
+        try:
+            result = await self._backend.knowledge_add(event.source)
+            self._conversation.append_info(result.text)
+            # Refresh status header — doc count likely changed.
+            if panel is not None:
+                try:
+                    status_dict = await self._backend.get_knowledge_status()
+                    panel.set_status(KnowledgeStatusInfo(**status_dict))
+                    # Clear the input for the next add.
+                    from textual.widgets import Input as _Input
+
+                    panel.query_one("#kb-input", _Input).value = ""
+                except Exception:
+                    pass
+        finally:
+            if panel is not None:
+                panel.set_busy(None)
+
+    @on(KnowledgePanelWidget.PanelClosed)
+    def _on_knowledge_panel_closed(
+        self,
+        _event: KnowledgePanelWidget.PanelClosed,
+    ) -> None:
+        self.query_one("#user-input", PromptInput).focus()
+
+    # ── CodeIndex status bar (always-on) ─────────────────────────
+
+    # Cadence for the always-on CodeIndex status-bar refresh. Slower
+    # than the panel poll (2s) because the bar shows a coarse signal
+    # (indexed / syncing / uninstalled / error) — extra precision
+    # wouldn't change anything the user sees. Independent of the
+    # panel so the badge stays current even when the panel is shut.
+    _CODEINDEX_STATUSBAR_POLL_SECONDS = 5.0
+
+    async def _refresh_codeindex_badge(self) -> None:
+        """Refresh the CodeIndex status-bar slot.
+
+        Best-effort: a transport hiccup on a background poll
+        shouldn't surface anywhere — the next tick retries, and
+        ``set_codeindex_status(None)`` keeps the previous render
+        rather than blanking the badge. Also called eagerly after
+        sync/clean/install RPCs to avoid the user staring at a
+        stale badge until the next 5s tick.
+        """
+        backend = getattr(self, "_backend", None)
+        if backend is None:
+            return
+        try:
+            status_dict = await backend.codeindex_status()
+        except Exception:
+            logger.debug("codeindex status-bar refresh failed", exc_info=True)
+            return
+        try:
+            self._status.set_codeindex_status(CodeIndexStatusInfo(**status_dict))
+        except Exception:
+            logger.debug("codeindex status-bar update failed", exc_info=True)
+
+    # ── CodeIndex panel ──────────────────────────────────────────
+
+    # Period for the codeindex-panel status poll (seconds). Tight
+    # enough that a syncing-% indicator updates smoothly without
+    # blasting the backend with RPCs; loose enough that the poll
+    # doesn't drown out the user's own actions (which also refresh
+    # the status as a side-effect).
+    _CODEINDEX_STATUS_POLL_SECONDS = 2.0
+
+    async def _show_codeindex_panel(self) -> None:
+        """Open the CodeIndex panel. One status RPC populates the
+        header; the 2s background poll keeps the indexed-state /
+        sync-% display fresh while the panel is mounted. There is
+        no implicit search RPC on open — the panel is a status
+        display, not a query surface."""
+        status_dict = await self._backend.codeindex_status()
+        status = CodeIndexStatusInfo(**status_dict)
+        panel = CodeIndexPanelWidget(status=status)
+        self.mount(panel)
+        # The widget self-focuses in ``on_mount`` — it has no
+        # focusable children (no Input), so a parent-side
+        # ``panel.focus()`` here would race with the async mount.
+        # Start the live status poll. Stored on ``self`` so the
+        # ``PanelClosed`` handler can stop it — leaking the interval
+        # would keep pinging the backend after the panel disappears.
+        self._codeindex_status_poll = self.set_interval(
+            self._CODEINDEX_STATUS_POLL_SECONDS,
+            self._poll_codeindex_status,
+        )
+
+    async def _poll_codeindex_status(self) -> None:
+        """Live-refresh the panel header.
+
+        Skipped when a busy indicator is up — overwriting the busy
+        label mid-RPC would erase the spinner the user is watching.
+        Also skipped when the panel has been unmounted (race with
+        ``PanelClosed``).
+        """
+        try:
+            panel = self.query_one(CodeIndexPanelWidget)
+        except Exception:
+            return
+        if panel._busy_label:
+            return
+        try:
+            status_dict = await self._backend.codeindex_status()
+        except Exception:
+            # Transport hiccup mid-poll shouldn't kill the interval —
+            # next tick will retry. Logged at debug; not surfaced to
+            # the user since this is a background refresh.
+            logger.debug("codeindex status poll failed", exc_info=True)
+            return
+        status = CodeIndexStatusInfo(**status_dict)
+        panel.set_status(status)
+        # While the panel is open the panel-poll is tighter than
+        # the always-on status-bar poll (2s vs 5s) — feed the same
+        # snapshot through so the badge updates at the panel's
+        # cadence instead of waiting on its own slower tick.
+        self._status.set_codeindex_status(status)
+
+    @on(CodeIndexPanelWidget.SyncRequested)
+    async def _on_codeindex_sync(
+        self,
+        _event: CodeIndexPanelWidget.SyncRequested,
+    ) -> None:
+        try:
+            panel = self.query_one(CodeIndexPanelWidget)
+        except Exception:
+            return
+        panel.set_busy("Syncing changeset…")
+        try:
+            result = await self._backend.codeindex_sync(None)
+            # Surface outcome to the conversation so the user has a
+            # durable log line of every sync — the panel header
+            # refresh below only reflects the new state.
+            if result.get("link_start_url"):
+                import webbrowser as _wb
+
+                _wb.open(result["link_start_url"])
+                self._conversation.append_info(
+                    f"CodeIndex needs setup. Opened {result['link_start_url']} in your browser. "
+                    "Re-run sync after finishing the install."
+                )
+            elif result.get("error"):
+                self._conversation.append_error(f"Sync failed: {result['error']}")
+            elif result.get("skipped"):
+                self._conversation.append_info(
+                    f"Sync skipped: {result.get('reason', '')}".rstrip(": ")
+                )
+            else:
+                sha = (result.get("commit_sha") or "")[:8]
+                self._conversation.append_info(
+                    f"Synced {sha}: {result.get('items_upserted', 0)} upserts, "
+                    f"{result.get('items_deleted', 0)} deletes, "
+                    f"{result.get('references_upserted', 0)} refs."
+                )
+            # Refresh header — head + commit count likely moved.
+            status_dict = await self._backend.codeindex_status()
+            status = CodeIndexStatusInfo(**status_dict)
+            panel.set_status(status)
+            # Push the same snapshot through to the always-on
+            # status-bar slot so the user doesn't wait up to 5s for
+            # the next background tick to reflect the new state.
+            self._status.set_codeindex_status(status)
+        finally:
+            panel.set_busy(None)
+
+    @on(CodeIndexPanelWidget.CleanRequested)
+    async def _on_codeindex_clean(
+        self,
+        _event: CodeIndexPanelWidget.CleanRequested,
+    ) -> None:
+        try:
+            panel = self.query_one(CodeIndexPanelWidget)
+        except Exception:
+            return
+        panel.set_busy("Cleaning…")
+        try:
+            result = await self._backend.codeindex_clean()
+            dropped = result.get("dropped") or []
+            if dropped:
+                self._conversation.append_info(
+                    f"Dropped {len(dropped)} commit(s): {', '.join(dropped)}"
+                )
+            else:
+                self._conversation.append_info("Nothing to clean.")
+            status_dict = await self._backend.codeindex_status()
+            status = CodeIndexStatusInfo(**status_dict)
+            panel.set_status(status)
+            self._status.set_codeindex_status(status)
+        finally:
+            panel.set_busy(None)
+
+    @on(CodeIndexPanelWidget.InstallRequested)
+    async def _on_codeindex_install(
+        self,
+        _event: CodeIndexPanelWidget.InstallRequested,
+    ) -> None:
+        """Open the Ember portal's repositories page in the
+        browser.
+
+        The portal page is the canonical entry point for adding a
+        repo to CodeIndex — its ``Add repository`` button drives
+        the GitHub-App install flow. No status refresh after the
+        open; the 2s background poll picks up any state change
+        once the user finishes the portal flow.
+        """
+        try:
+            panel = self.query_one(CodeIndexPanelWidget)
+        except Exception:
+            return
+        result = await self._backend.codeindex_install()
+        url = result.get("install_url") or ""
+        if not url:
+            self._conversation.append_error("No portal URL available.")
+            return
+        import webbrowser as _wb
+
+        _wb.open(url)
+        self._conversation.append_info(f"Opening {url}")
+        # Best-effort refresh of the header — the poll would catch
+        # this in ~2s anyway, but doing it now keeps the install
+        # state column from looking stale right after the click.
+        try:
+            status_dict = await self._backend.codeindex_status()
+            status = CodeIndexStatusInfo(**status_dict)
+            panel.set_status(status)
+            self._status.set_codeindex_status(status)
+        except Exception:
+            pass
+
+    @on(CodeIndexPanelWidget.PanelClosed)
+    def _on_codeindex_panel_closed(
+        self,
+        _event: CodeIndexPanelWidget.PanelClosed,
+    ) -> None:
+        # Stop the background status poll started in ``_show_codeindex_panel``
+        # — otherwise it'd keep firing ``codeindex_status`` RPCs against a
+        # panel that's no longer mounted.
+        timer = getattr(self, "_codeindex_status_poll", None)
+        if timer is not None:
+            with contextlib.suppress(Exception):
+                timer.stop()
+            self._codeindex_status_poll = None
+        self.query_one("#user-input", PromptInput).focus()
+
+    # ── Loop panel ────────────────────────────────────────────────
+
+    # Tighter poll than the CodeIndex panel (2s) — ``/loop`` iterations
+    # fire on idle, and a counter that ticks within a second feels
+    # live; at 2s the user notices the lag.
+    _LOOP_STATUS_POLL_SECONDS = 1.0
+
+    async def _show_loop_panel(self) -> None:
+        """Open the Loop panel. One status RPC populates the header;
+        the 1s background poll keeps the iteration counter and
+        active/inactive state fresh while the panel is mounted."""
+        status_dict = await self._backend.loop_status()
+        status = LoopStatusInfo(**status_dict)
+        panel = LoopPanelWidget(status=status)
+        self.mount(panel)
+        # Widget self-focuses in ``on_mount`` — see LoopPanelWidget
+        # docstring for why a parent-side ``.focus()`` would race
+        # with the async mount.
+        self._loop_status_poll = self.set_interval(
+            self._LOOP_STATUS_POLL_SECONDS,
+            self._poll_loop_status,
+        )
+
+    async def _poll_loop_status(self) -> None:
+        """Live-refresh the panel header.
+
+        Skipped when a busy indicator is up (would overwrite the
+        spinner mid-RPC) or when the panel has been unmounted
+        (race with ``PanelClosed``). Transport hiccups are
+        swallowed silently — next tick will retry.
+        """
+        try:
+            panel = self.query_one(LoopPanelWidget)
+        except Exception:
+            return
+        if panel._busy_label:
+            return
+        try:
+            status_dict = await self._backend.loop_status()
+        except Exception:
+            logger.debug("loop status poll failed", exc_info=True)
+            return
+        panel.set_status(LoopStatusInfo(**status_dict))
+
+    @on(LoopPanelWidget.ResumeRequested)
+    async def _on_loop_resume(
+        self,
+        _event: LoopPanelWidget.ResumeRequested,
+    ) -> None:
+        """Panel ``R`` key — unpause and re-fire the interrupted
+        iteration. Mirrors what ``/loop resume`` does from chat:
+        flips the paused flag on the backend, then fires
+        ``_run(prompt)`` directly to bypass the cancel guard."""
+        try:
+            panel = self.query_one(LoopPanelWidget)
+        except Exception:
+            return
+        panel.set_busy("Resuming loop…")
+        try:
+            prompt = await self._backend.loop_resume()
+        finally:
+            panel.set_busy(None)
+        if not prompt:
+            self._conversation.append_info("Nothing to resume.")
+            return
+        # Refresh the header so the badge flips from paused→running
+        # before iteration K starts streaming.
+        try:
+            status_dict = await self._backend.loop_status()
+            panel.set_status(LoopStatusInfo(**status_dict))
+        except Exception:
+            pass
+        # Fire the interrupted iteration on the FE directly — same
+        # path the run_prompt action dispatch takes, so the cancel
+        # guard never sees the prompt and the loop continues
+        # naturally after this iteration completes.
+        asyncio.create_task(self._controller._run(prompt))
+
+    @on(LoopPanelWidget.CancelRequested)
+    async def _on_loop_cancel(
+        self,
+        _event: LoopPanelWidget.CancelRequested,
+    ) -> None:
+        try:
+            panel = self.query_one(LoopPanelWidget)
+        except Exception:
+            return
+        panel.set_busy("Cancelling loop…")
+        try:
+            cancelled = await self._backend.cancel_pending_loop()
+            if cancelled:
+                self._conversation.append_info("Loop cancelled.")
+            # Refresh the header — even when nothing was cancelled
+            # (race: loop completed between the user pressing X
+            # and the RPC reaching the backend), we want the
+            # post-cancel state visible.
+            status_dict = await self._backend.loop_status()
+            panel.set_status(LoopStatusInfo(**status_dict))
+        finally:
+            panel.set_busy(None)
+
+    # ── Hooks panel ──────────────────────────────────────────────
+
+    async def _show_hooks_panel(self) -> None:
+        """Open the hooks panel. One RPC pulls the flat hook list;
+        the widget groups by event on the client side."""
+        rows = await self._backend.get_hooks_details()
+        hooks = [HookInfo(**r) for r in rows]
+        panel = HooksPanelWidget(hooks=hooks)
+        self.mount(panel)
+        # Widget self-focuses in ``on_mount`` so we don't need a
+        # parent-side ``.focus()`` (which would race with the
+        # async mount).
+
+    @on(HooksPanelWidget.ReloadRequested)
+    async def _on_hooks_reload(
+        self,
+        _event: HooksPanelWidget.ReloadRequested,
+    ) -> None:
+        try:
+            panel = self.query_one(HooksPanelWidget)
+        except Exception:
+            return
+        panel.set_busy("Reloading hooks…")
+        try:
+            result = await self._backend.reload_hooks()
+            self._conversation.append_info(result.text)
+            rows = await self._backend.get_hooks_details()
+            panel.set_hooks([HookInfo(**r) for r in rows])
+        finally:
+            panel.set_busy(None)
+
+    @on(HooksPanelWidget.PanelClosed)
+    def _on_hooks_panel_closed(
+        self,
+        _event: HooksPanelWidget.PanelClosed,
+    ) -> None:
+        self.query_one("#user-input", PromptInput).focus()
+
+    @on(LoopPanelWidget.PanelClosed)
+    def _on_loop_panel_closed(
+        self,
+        _event: LoopPanelWidget.PanelClosed,
+    ) -> None:
+        # Stop the background status poll — same lifecycle as the
+        # CodeIndex panel. Without this the 1s interval keeps
+        # firing ``loop_status`` RPCs after the widget is gone.
+        timer = getattr(self, "_loop_status_poll", None)
+        if timer is not None:
+            with contextlib.suppress(Exception):
+                timer.stop()
+            self._loop_status_poll = None
+        self.query_one("#user-input", PromptInput).focus()
+
+    # ── Plugins panel ─────────────────────────────────────────────
+
+    async def _show_plugins_panel(self) -> None:
+        """Build initial plugin + marketplace lists, mount the panel.
+
+        Wrapped in ``try/except`` because the parent dispatch fires
+        this in an ``asyncio.create_task`` that swallows any error
+        — without the wrap a bad catalog row makes ``/plugins`` look
+        like nothing happens, which is exactly the bug a stricter
+        wire schema caused (the silent ValidationError that hid
+        for a session before we found it).
+        """
+        try:
+            installed, marketplaces = await self._build_plugin_state()
+        except Exception as e:
+            logger.exception("Failed to build plugin panel state")
+            self._conversation.append_error(f"Could not open the plugins panel: {e}")
+            return
+        panel = PluginsPanelWidget(installed=installed, marketplaces=marketplaces)
+        self.mount(panel)
+        panel.focus()
+
+    async def _build_plugin_state(
+        self,
+    ) -> tuple[list[PluginInfo], list[MarketplaceInfo]]:
+        details = await self._backend.get_plugin_details()
+        installed = [PluginInfo(**d) for d in details]
+        mkt_payload = await self._backend.get_marketplaces()
+        marketplaces = [
+            MarketplaceInfo(
+                name=m["name"],
+                url=m["url"],
+                last_fetched=m["last_fetched"],
+                plugins=[MarketplacePluginInfo(**p) for p in m["plugins"]],
+            )
+            for m in mkt_payload
+        ]
+        return installed, marketplaces
+
+    async def _refresh_plugins_panel(self) -> None:
+        try:
+            panel = self.query_one(PluginsPanelWidget)
+        except Exception:
+            return
+        installed, marketplaces = await self._build_plugin_state()
+        panel.refresh_data(installed=installed, marketplaces=marketplaces)
+
+    @on(PluginsPanelWidget.PluginToggleRequested)
+    async def _on_plugin_toggle(
+        self,
+        event: PluginsPanelWidget.PluginToggleRequested,
+    ) -> None:
+        result = await self._backend.set_plugin_enabled(
+            event.name,
+            event.enable,
+        )
+        self._conversation.append_info(result.text)
+        await self._refresh_plugins_panel()
+
+    @on(PluginsPanelWidget.PluginInstallRequested)
+    async def _on_plugin_install(
+        self,
+        event: PluginsPanelWidget.PluginInstallRequested,
+    ) -> None:
+        self._conversation.append_info(f"Installing {event.ref}…")
+        result = await self._backend.install_plugin(
+            event.ref,
+            event.install_ref,
+        )
+        self._conversation.append_info(result.text)
+        await self._refresh_plugins_panel()
+
+    @on(PluginsPanelWidget.PluginUpdateRequested)
+    async def _on_plugin_update(
+        self,
+        event: PluginsPanelWidget.PluginUpdateRequested,
+    ) -> None:
+        self._conversation.append_info(f"Updating {event.name}…")
+        result = await self._backend.update_plugin(event.name)
+        self._conversation.append_info(result.text)
+        await self._refresh_plugins_panel()
+
+    @on(PluginsPanelWidget.PluginRemoveRequested)
+    async def _on_plugin_remove(
+        self,
+        event: PluginsPanelWidget.PluginRemoveRequested,
+    ) -> None:
+        result = await self._backend.remove_plugin(event.name)
+        self._conversation.append_info(result.text)
+        await self._refresh_plugins_panel()
+
+    @on(PluginsPanelWidget.MarketplaceRefreshRequested)
+    async def _on_marketplace_refresh(
+        self,
+        _event: PluginsPanelWidget.MarketplaceRefreshRequested,
+    ) -> None:
+        result = await self._backend.refresh_marketplaces()
+        self._conversation.append_info(result.text)
+        await self._refresh_plugins_panel()
+
+    @on(PluginsPanelWidget.PanelClosed)
+    def _on_plugins_panel_closed(
+        self,
+        _event: PluginsPanelWidget.PanelClosed,
+    ) -> None:
         self.query_one("#user-input", PromptInput).focus()
 
     # ── Queue panel events ─────────────────────────────────────────
@@ -1235,7 +1982,7 @@ class EmberApp(App):
     async def _check_for_update(self) -> None:
         """Check for a newer CLI version via BE RPC."""
         try:
-            result = await self._backend._rpc("check_for_update")
+            result = await self._backend._rpc(RpcMethod.CHECK_FOR_UPDATE)
             logger.debug("Update check result: %s", result)
             if result and result.get("available"):
                 bar = self.query_one("#update-bar", UpdateBar)
@@ -1324,6 +2071,13 @@ class EmberApp(App):
             ModelPickerWidget,
             SessionPickerWidget,
             MCPPanelWidget,
+            AgentsPanelWidget,
+            SkillsPanelWidget,
+            KnowledgePanelWidget,
+            CodeIndexPanelWidget,
+            HooksPanelWidget,
+            LoopPanelWidget,
+            PluginsPanelWidget,
         )
         for widget_cls in _DIALOG_TYPES:
             try:

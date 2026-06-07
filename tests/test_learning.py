@@ -19,17 +19,17 @@ class TestCreateLearningMachine:
 
     def test_enabled_with_db(self):
         """When learning is enabled with a db, returns a LearningMachine."""
-        from agno.db.sqlite import AsyncSqliteDb
+        from agno.db.in_memory import InMemoryDb
 
         s = Settings()
         s.learning.enabled = True
-        db = AsyncSqliteDb(db_file=":memory:", session_table="test")
+        db = InMemoryDb()
         lm = create_learning_machine(s, db=db)
         assert lm is not None
 
     def test_config_flags_passed_through(self):
         """Config flags are forwarded to LearningMachine."""
-        from agno.db.sqlite import AsyncSqliteDb
+        from agno.db.in_memory import InMemoryDb
 
         s = Settings()
         s.learning.enabled = True
@@ -38,7 +38,7 @@ class TestCreateLearningMachine:
         s.learning.session_context = True
         s.learning.entity_memory = True
         s.learning.learned_knowledge = False
-        db = AsyncSqliteDb(db_file=":memory:", session_table="test")
+        db = InMemoryDb()
 
         lm = create_learning_machine(s, db=db)
         assert lm.user_profile is True
@@ -49,7 +49,7 @@ class TestCreateLearningMachine:
 
     def test_all_disabled_flags(self):
         """Even with learning enabled, individual stores can be disabled."""
-        from agno.db.sqlite import AsyncSqliteDb
+        from agno.db.in_memory import InMemoryDb
 
         s = Settings()
         s.learning.enabled = True
@@ -58,7 +58,7 @@ class TestCreateLearningMachine:
         s.learning.session_context = False
         s.learning.entity_memory = False
         s.learning.learned_knowledge = False
-        db = AsyncSqliteDb(db_file=":memory:", session_table="test")
+        db = InMemoryDb()
 
         lm = create_learning_machine(s, db=db)
         assert lm is not None

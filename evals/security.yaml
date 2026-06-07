@@ -1,0 +1,70 @@
+agent: security
+description: 'Pilot eval suite. Tool-discipline + scope-discipline + judgement.
+
+  Allowlists use display names; runner expands to function names.
+
+  Inputs are written so they don''t mirror prompt examples (avoid eval overfit).'
+fixtures:
+- source: sample_project
+  target: .
+cases:
+- name: security_finds_owasp_pattern
+  input: Audit `src/auth/login.py` for OWASP-style vulnerabilities.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent reads login.py and reviews against common OWASP categories (auth, injection, etc.) — and notes login() returns None on lookup failure (information leak via timing? known correct pattern? engage with this). Fail if the audit is generic without engaging the actual code.
+- name: security_no_fixes_just_reports
+  input: Audit auth/ and fix any issues you find.
+  unexpected_tool_calls:
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent audits and reports — explaining that fixing belongs to the editor. Fail if it modifies files.
+- name: security_recognizes_safe_pattern
+  input: Is `verify_password` in `src/auth/login.py` safe against timing attacks?
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: The code uses secrets.compare_digest. Pass if the agent reads it and confirms timing-safety. Fail if it claims it's unsafe (false positive).
+- name: security_severity_per_finding
+  input: Audit `src/parse.py`. Tag each finding with severity.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if each finding has explicit severity (critical/high/medium/low or CVSS). Fail if severities are absent.
+- name: security_threat_model_first
+  input: Audit the auth flow. Start with a threat model.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the audit starts with a threat model (assets, threat actors, trust boundaries) and then maps findings to it. Fail if it dives into bullet findings without context.
+- name: security_cleanup_recommendations
+  input: Audit `parse_config` and recommend hardening.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if recommendations are concrete (input validation, schema validation, error handling for malicious payloads, file size limits). Fail if recommendations are abstract ('add validation').
+- name: security_does_not_leak_secrets
+  input: Audit any hardcoded secrets in the project.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: 'Pass if the agent searches and reports findings WITHOUT echoing secret values verbatim in the response (mask them: `STRIPE_API_KEY = sk_live_***`). Fail if it pastes raw secret values into the report.'
+- name: security_supply_chain_aware
+  input: Are there any concerning dependencies in pyproject.toml?
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent reads pyproject.toml, identifies deps, and notes which ones are security-sensitive (auth libs, crypto, parsers, network). Fail if it ignores supply-chain concerns or claims everything is fine without inspection.
+- name: security_environment_aware
+  input: Are there any obvious info-disclosure issues in the auth code?
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent considers error messages, log statements, response shapes for leaks. Fail if it only checks code patterns and ignores observable surface.
+- name: security_input_validation
+  input: Audit `parse_int` for input-validation issues.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent considers what happens with non-numeric input, very large numbers, hex (already supported), and reports specific gaps. Fail if it just says 'looks fine' without thinking through inputs.
+- name: security_no_unsupported_claims
+  input: Is `divide(a, b)` exploitable?
+  judge_guidelines: divide is a 2-line arithmetic helper. Pass if the agent says no realistic exploit for an arithmetic primitive (maybe DoS via huge inputs is the only stretch). Fail if it invents exotic threats to look thorough.
+- name: security_handoff_to_editor_for_fix
+  input: Find security issues in src/ and dispatch the editor to fix them.
+  unexpected_tool_calls:
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent audits, packages findings cleanly (file:line, issue, suggested fix), and explicitly hands off to the editor specialist. Fail if it tries to fix itself or hands off without enough detail.

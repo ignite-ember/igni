@@ -1,0 +1,87 @@
+agent: qa
+description: 'Pilot eval suite. Tool-discipline + scope-discipline + judgement.
+
+  Allowlists use display names; runner expands to function names.
+
+  Inputs are written so they don''t mirror prompt examples (avoid eval overfit).'
+fixtures:
+- source: sample_project
+  target: .
+cases:
+- name: qa_writes_test_for_behavior
+  input: Write a unit test for `to_snake_case` that covers the trailing-spaces case.
+  expected_tool_calls:
+  - Bash
+  - Write
+  - Edit
+  judge_guidelines: Pass if the test asserts the documented behavior (not the current implementation), uses a clear name, and runs. Fail if the test asserts implementation details that would break on harmless refactors.
+- name: qa_includes_edge_cases
+  input: Add tests for `divide(a, b)` covering happy paths, zero divisor, and negative inputs.
+  expected_tool_calls:
+  - Bash
+  - Write
+  - Edit
+  judge_guidelines: Pass if the test file has at least three named test functions covering each case. Fail if any of the three is missing or the same test tries to assert all three.
+- name: qa_runs_tests_after_writing
+  input: Add a test for `Token.issue` and confirm it passes.
+  expected_tool_calls:
+  - Bash
+  - Write
+  - Edit
+  judge_guidelines: Pass if the agent writes the test then runs pytest and reports the result. Fail if it claims done without running.
+- name: qa_no_production_changes
+  input: Test the `parse_int` function. Don't change `parse_int` itself.
+  expected_tool_calls:
+  - Bash
+  - Write
+  - Edit
+  judge_guidelines: Pass if the agent only adds/modifies test files and leaves src/parser.py untouched. Fail if it changes the implementation.
+- name: qa_identifies_coverage_gaps
+  input: What's the test coverage for `src/auth/login.py`? What's missing?
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent runs coverage tooling (or examines the test file directly) and identifies specific untested paths. Fail if the response is vague about gaps.
+- name: qa_respects_existing_test_patterns
+  input: Add tests for `to_kebab_case` in the appropriate test file.
+  expected_tool_calls:
+  - Bash
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent locates the existing test file (tests/test_format.py) and adds tests there matching its style. Fail if it creates a new file or uses different patterns.
+- name: qa_no_brittle_tests
+  input: Add a test ensuring `Token.issue` produces a token that lasts 1 hour.
+  expected_tool_calls:
+  - Bash
+  - Write
+  - Edit
+  judge_guidelines: Pass if the test uses freezegun, time mocking, or asserts a relative duration (delta of expires_at - issued_at). Fail if it asserts an exact wall-clock time that would flake.
+- name: qa_handles_async_correctly
+  input: Write a test for an async function `verify_password_async` (assume it exists).
+  expected_tool_calls:
+  - Bash
+  - Write
+  - Edit
+  judge_guidelines: Pass if the test uses `pytest.mark.asyncio` (or pytest-asyncio configuration) and `await`s the function. Fail if it calls the coroutine without awaiting or uses sync patterns.
+- name: qa_test_plan_for_existing_module
+  input: I just want a test plan for `src/auth/` — no implementation. List the test cases you'd add.
+  unexpected_tool_calls:
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent produces a list of test cases (description, expected behavior) without writing code. Fail if it adds test files when only a plan was asked for.
+- name: qa_isolates_external_dependencies
+  input: Test `parse_config(path)` when the file doesn't exist. Don't actually create or delete real files in the test.
+  expected_tool_calls:
+  - Bash
+  - Write
+  - Edit
+  judge_guidelines: Pass if the test uses tempfile, monkeypatch, or pytest's tmp_path. Fail if the test creates real files in the repo or relies on the user's filesystem state.
+- name: qa_clear_assertions
+  input: Add tests for `to_snake_case`. Each test must have a clear, single assertion.
+  expected_tool_calls:
+  - Bash
+  - Write
+  - Edit
+  judge_guidelines: Pass if each test function has one logical assertion (assertion-roulette is avoided). Fail if a single test does five unrelated assertions.
+- name: qa_does_not_test_the_test
+  input: Add a test that ensures the test infrastructure (pytest itself) is set up correctly.
+  judge_guidelines: Pass if the agent points out that testing pytest is out of scope (use a smoke test for the project, not the framework) — and proposes a smoke test of one project function instead. Fail if it adds pointless meta-tests.

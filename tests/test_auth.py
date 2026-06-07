@@ -4,13 +4,11 @@ import json
 import time
 
 from ember_code.core.auth.credentials import (
+    CloudCredentials,
     Credentials,
     _credentials_path,
     clear_credentials,
     decode_jwt_claims,
-    get_access_token,
-    get_org_id,
-    get_org_name,
     is_token_expired,
     load_credentials,
     save_credentials,
@@ -119,16 +117,18 @@ class TestTokenExpiry:
         assert not is_token_expired(creds)
 
 
-class TestGetAccessToken:
+class TestCloudCredentialsAccessToken:
     def test_returns_token(self, tmp_path):
         creds_path = str(tmp_path / "creds.json")
         save_credentials("my_token", "a@b.com", path=creds_path)
-        token = get_access_token(path=creds_path)
-        assert token == "my_token"
+        creds = CloudCredentials(creds_path)
+        assert creds.access_token == "my_token"
+        assert creds.is_authenticated is True
 
     def test_returns_none_for_missing(self, tmp_path):
-        token = get_access_token(path=str(tmp_path / "nope.json"))
-        assert token is None
+        creds = CloudCredentials(str(tmp_path / "nope.json"))
+        assert creds.access_token is None
+        assert creds.is_authenticated is False
 
     def test_returns_none_for_expired(self, tmp_path):
         creds_path = tmp_path / "creds.json"
@@ -138,8 +138,8 @@ class TestGetAccessToken:
             "expires_at": time.time() - 100,
         }
         creds_path.write_text(json.dumps(data))
-        token = get_access_token(path=str(creds_path))
-        assert token is None
+        creds = CloudCredentials(str(creds_path))
+        assert creds.access_token is None
 
 
 class TestDecodeJwtClaims:
@@ -161,28 +161,27 @@ class TestDecodeJwtClaims:
         assert claims["org"] == "x"
 
 
-class TestGetOrgIdAndName:
-    def test_get_org_id(self, tmp_path):
+class TestCloudCredentialsOrg:
+    def test_org_id(self, tmp_path):
         token = _make_jwt({"org": "org_42", "org_name": "Acme"})
         creds_path = tmp_path / "creds.json"
         data = {"access_token": token, "email": "a@b.com"}
         creds_path.write_text(json.dumps(data))
 
-        org_id = get_org_id(path=str(creds_path))
-        assert org_id == "org_42"
+        assert CloudCredentials(str(creds_path)).org_id == "org_42"
 
-    def test_get_org_name(self, tmp_path):
+    def test_org_name(self, tmp_path):
         token = _make_jwt({"org": "org_42", "org_name": "Acme"})
         creds_path = tmp_path / "creds.json"
         data = {"access_token": token, "email": "a@b.com"}
         creds_path.write_text(json.dumps(data))
 
-        name = get_org_name(path=str(creds_path))
-        assert name == "Acme"
+        assert CloudCredentials(str(creds_path)).org_name == "Acme"
 
     def test_returns_none_when_no_token(self, tmp_path):
-        assert get_org_id(path=str(tmp_path / "missing.json")) is None
-        assert get_org_name(path=str(tmp_path / "missing.json")) is None
+        creds = CloudCredentials(str(tmp_path / "missing.json"))
+        assert creds.org_id is None
+        assert creds.org_name is None
 
     def test_returns_none_when_claim_missing(self, tmp_path):
         token = _make_jwt({"sub": "user1"})  # no org claims
@@ -190,5 +189,6 @@ class TestGetOrgIdAndName:
         data = {"access_token": token, "email": "a@b.com"}
         creds_path.write_text(json.dumps(data))
 
-        assert get_org_id(path=str(creds_path)) is None
-        assert get_org_name(path=str(creds_path)) is None
+        creds = CloudCredentials(str(creds_path))
+        assert creds.org_id is None
+        assert creds.org_name is None

@@ -19,6 +19,7 @@ Ember Code uses the **same tool names as Claude Code**. Each name maps to an Agn
 | `WebFetch` | `WebTools` (custom) | Fetch and extract URL content |
 | `Orchestrate` | `OrchestrateTools` (custom) | Spawn sub-teams from agent pool |
 | `Schedule` | `ScheduleTools` (custom) | Schedule tasks for later or recurring execution |
+| `Loop` | `LoopTools` (custom) | Drive the in-session `/loop` primitive (re-fire a prompt across turns) |
 | `CodeIndex` | `CodeIndexTools` (custom) | Semantic search over pre-processed code intelligence |
 | `NotebookEdit` | `NotebookTools` (custom) | Read and edit Jupyter notebook cells |
 | `Python` | `PythonTools` | Execute Python code |
@@ -309,6 +310,38 @@ Scheduled tasks run in the background via `SchedulerRunner` with bounded concurr
 
 ---
 
+## In-Session Loops
+
+### Loop (LoopTools)
+
+The in-session loop primitive: the same prompt re-fires as the next user turn over and over until a cap is reached, the user types non-`/loop` input (treated as an interrupt), or the loop is explicitly stopped. Useful when the user describes work that repeats across turns — *"keep fixing failures until the suite passes"*, *"go through these one at a time"*, *"do X for each of A, B, C"* — without the user having to re-paste the prompt each time.
+
+The same state (`session.pending_loop_prompt`) is reachable from two surfaces:
+
+- **User-facing slash command** — `/loop <prompt>`, `/loop <N> <prompt>` (explicit cap), `/loop stop`, `/loop` (status). See [DEVELOPMENT.md](DEVELOPMENT.md) for the slash-command listing.
+- **Agent-facing toolkit** — when the user describes the loop in plain language (*"keep going for each item"*), the agent calls `loop_start()` to arm the same state.
+
+**Agent functions:**
+
+- `loop_start(prompt, max_iterations=30)` — arm the loop. The first iteration fires automatically as the next agent turn. `max_iterations` is a safety cap; hard ceiling 200.
+- `loop_stop()` — clear the pending prompt. The current turn finishes normally; no further iterations fire. Idempotent — safe to call when no loop is active.
+- `loop_status()` — report whether a loop is active and how many iterations remain. Use when the user asks *"are we still looping?"*.
+
+**How a loop ends:**
+
+| Trigger | Behavior |
+|---|---|
+| `max_iterations` hit | Loop stops; final turn completes normally. |
+| `/loop stop` (user) | Pending prompt cleared at the next hook check. |
+| `loop_stop()` (agent) | Same effect from inside an iteration. |
+| Any non-`/loop` user input | Treated as an interrupt — the user took control back. |
+
+Loops never run in the background. Each iteration is a real conversation turn, so iteration outputs stream into the same session and the agent sees the cumulative history. If the user wants persistent, durable recurring execution that survives the session closing, `/schedule` is the right primitive instead.
+
+**Not to be confused with the in-turn `loop` skill.** Earlier versions of Ember Code shipped a `loop` skill (`bundled_skills/loop`) for the *different* pattern of "apply this task to a list of items within a single turn." That skill was removed in `0885ec0` because its name collided with `/loop` and the patterns are unrelated. The slash command and toolkit described above are the only loop primitive now.
+
+---
+
 ## Orchestration
 
 ### Orchestrate (OrchestrateTools)
@@ -349,6 +382,26 @@ def run_tests(test_path: str = "") -> str:
 ```
 
 Place custom tools in `~/.ember/tools/` or `.ember/tools/` for project-level tools. They're automatically discovered and available to agents.
+
+---
+
+## Plugins — Claude-Code-compatible bundles
+
+A **plugin** is a directory that bundles skills, agents, hooks, MCP servers, and custom tools into a single distributable unit. Plugins built for Claude Code work in Ember Code unchanged.
+
+```text
+my-plugin/
+├── .claude-plugin/plugin.json    # required manifest
+├── skills/<name>/SKILL.md        # → SkillPool, namespaced <plugin>:<name>
+├── agents/<name>.md              # → AgentPool, namespaced <plugin>:<name>
+├── hooks/hooks.json              # → HookLoader, prepended (project hooks run last)
+├── .mcp.json                     # → MCPConfigLoader, servers prefixed <plugin>:<server>
+└── tools/<name>.py               # → CustomToolkit, named custom_<plugin>_<name>
+```
+
+Discovery roots: `~/.claude/plugins/`, `~/.ember/plugins/`, `<project>/.claude/plugins/`, `<project>/.ember/plugins/`. Install via `/plugin install <git-url>` or `/plugin install @<marketplace>/<plugin>`. The `/plugins` slash command opens the Textual panel for browsing, toggling, updating, and installing from registered marketplaces.
+
+See [Plugins](PLUGINS.md) for the full guide.
 
 ---
 

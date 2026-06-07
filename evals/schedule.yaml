@@ -1,0 +1,148 @@
+agent: main
+description: |
+  Schedule-tool eval suite. Verifies the main agent reaches for the
+  Schedule toolkit when the user describes deferred or recurring work
+  (`schedule_task`), and crucially DOES NOT use it for asks that look
+  superficially time-shaped but are really immediate ("what time is
+  it", "how long does this take", "wait — keep going").
+
+  Schema reference:
+    expected_tool_calls   — ALLOWLIST. The runner expands display
+                            names to function names (Schedule →
+                            schedule_task / list_scheduled_tasks /
+                            cancel_scheduled_task).
+    unexpected_tool_calls — BLOCKLIST.
+    judge_guidelines      — rubric the LLM judge applies. The judge
+                            can read the agent's synthesis to confirm
+                            the right ``when`` argument was passed
+                            (e.g. recurrence vs one-shot).
+
+cases:
+
+# ── A. One-shot deferred ──────────────────────────────────────────
+- name: schedule_one_shot_in_minutes
+  input: In 30 minutes, check whether the build on this branch went green.
+  expected_tool_calls:
+  - Schedule
+  - Bash
+  judge_guidelines: |
+    Pass if the agent calls Schedule (schedule_task) with a description
+    referencing the build check and a ``when`` of "in 30 minutes" (or
+    equivalent). A quick ``git status`` / ``gh pr view`` before
+    scheduling is fine context-gathering. Fail if it answers "I'll
+    check later" without actually scheduling, or if it tries to
+    check the build immediately.
+
+- name: schedule_one_shot_at_clock_time
+  input: Remind me to redeploy at 5pm if the staging tests are still passing.
+  expected_tool_calls:
+  - Schedule
+  judge_guidelines: |
+    Pass if the agent calls Schedule with ``when="at 5pm"`` (or equivalent
+    absolute clock time) and a description that captures the conditional
+    redeploy. Fail if it merely answers "I'll remind you" without invoking
+    the tool, or schedules for an unrelated time.
+
+- name: schedule_tomorrow_followup
+  input: Tomorrow morning, verify the database migration ran cleanly overnight.
+  expected_tool_calls:
+  - Schedule
+  judge_guidelines: |
+    Pass if the agent schedules a one-shot task for tomorrow (``when``
+    includes "tomorrow" or a tomorrow-equivalent). Fail if it tries to
+    verify the migration immediately, or hand-waves with "I'll come back
+    later".
+
+# ── B. Recurring ──────────────────────────────────────────────────
+- name: schedule_recurring_hourly_health_check
+  input: |
+    Every hour, ping https://api.example.com/health and let me know if
+    the status code isn't 200.
+  expected_tool_calls:
+  - Schedule
+  judge_guidelines: |
+    Pass if the agent schedules a *recurring* task (``when="every hour"``
+    or "hourly") for the given URL. Fail if it schedules a one-shot,
+    polls immediately, asks for clarification (the URL is given), or
+    refuses citing "I can't do that on a schedule".
+
+- name: schedule_daily_at_time
+  input: Every day at 9am, summarize the open PRs touched in the last 24 hours.
+  expected_tool_calls:
+  - Schedule
+  judge_guidelines: |
+    Pass if the agent schedules a daily recurring task at 9am. The
+    description should mention summarizing PRs. Fail if the agent runs
+    it once or schedules with the wrong cadence/time.
+
+- name: schedule_recurring_every_n_minutes
+  input: Every 15 minutes, run the unit tests in this repo and report failures.
+  expected_tool_calls:
+  - Schedule
+  - Bash
+  judge_guidelines: |
+    Pass if the agent schedules a recurring task with cadence "every 15
+    minutes" (or equivalent). Brief Bash exploration to find the test
+    runner is acceptable. Fail if it runs the tests immediately
+    *instead* of scheduling, or schedules a one-shot.
+
+# ── C. Compound (action now + follow-up later) ───────────────────
+- name: schedule_now_and_later
+  input: |
+    Run the linter once now, and also schedule it to run every 30
+    minutes from here on out so we catch regressions.
+  expected_tool_calls:
+  - Schedule
+  - Bash
+  judge_guidelines: |
+    Pass if the agent runs the linter immediately (Bash) AND schedules
+    a recurring task every 30 minutes. Fail if it does only one of the
+    two, or schedules but never runs.
+
+# ── D. Cancel / list (other Schedule functions) ───────────────────
+- name: schedule_list_request
+  input: Show me the list of scheduled tasks I currently have.
+  expected_tool_calls:
+  - Schedule
+  judge_guidelines: |
+    Pass if the agent calls list_scheduled_tasks (Schedule). Fail if
+    it speculates from memory, runs ``ps``/``list_processes`` (those
+    are OS processes, not scheduled tasks), or answers "you don't
+    have any" without actually checking.
+
+- name: schedule_cancel_by_intent
+  input: |
+    Stop that recurring deployment check task. The id was 4f7a2b9c.
+  expected_tool_calls:
+  - Schedule
+  judge_guidelines: |
+    Pass if the agent calls cancel_scheduled_task with task_id="4f7a2b9c".
+    Fail if it confirms cancellation without actually invoking the tool,
+    or asks for the id again when it's clearly in the prompt.
+
+# ── E. Anti-cases — surface looks scheduley but isn't ─────────────
+- name: anti_clock_question_no_schedule
+  input: What time is it?
+  unexpected_tool_calls:
+  - Schedule
+  judge_guidelines: |
+    Pass if the agent answers with the current time (or says it doesn't
+    have a clock) without scheduling anything. Fail if it calls
+    schedule_task because the prompt mentions time.
+
+- name: anti_immediate_action_no_schedule
+  input: Run the test suite now and tell me what fails.
+  unexpected_tool_calls:
+  - Schedule
+  judge_guidelines: |
+    Pass if the agent runs the tests immediately (Bash) and reports
+    findings. Fail if it schedules a future task instead of acting now.
+
+- name: anti_estimation_no_schedule
+  input: How long does the full integration test suite usually take to run?
+  unexpected_tool_calls:
+  - Schedule
+  judge_guidelines: |
+    Pass if the agent answers with an estimate (from project history
+    or a quick check), without scheduling anything. Fail if it tries
+    to schedule a "let me time it" task instead of just answering.

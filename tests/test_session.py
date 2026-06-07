@@ -11,7 +11,7 @@ def _session_patches(**overrides):
     """Return a list of patch objects for all Session dependencies.
 
     *overrides* lets callers change specific return_values, e.g.
-    ``_session_patches(get_access_token="tok-123")``.
+    ``_session_patches(load_project_context="ctx")``.
     """
     defaults = {
         "initialize_project": None,
@@ -28,9 +28,9 @@ def _session_patches(**overrides):
         "SessionPersistence": None,
         "SessionMemoryManager": None,
         "SessionKnowledgeManager": None,
-        "get_access_token": None,
-        "get_org_id": None,
-        "get_org_name": None,
+        "CloudCredentials": None,
+        "CodeIndex": None,
+        "CodeIndexSyncManager": None,
         "ToolRegistry": None,
         "ToolPermissions": None,
         "create_learning_machine": None,
@@ -65,6 +65,14 @@ def _start_patches(patches):
     # ModelRegistry().get_context_window() must return an int for min()
     if "ModelRegistry" in mocks:
         mocks["ModelRegistry"].return_value.get_context_window.return_value = 128_000
+    # CloudCredentials() defaults to a logged-out instance
+    if "CloudCredentials" in mocks:
+        cc = mocks["CloudCredentials"].return_value
+        cc.is_authenticated = False
+        cc.access_token = None
+        cc.org_id = None
+        cc.org_name = None
+        cc.email = None
     return list(mocks.values())
 
 
@@ -119,13 +127,17 @@ class TestSessionConstruction:
         assert session.cloud_org_name is None
 
     def test_cloud_connected_true_with_token(self, tmp_path):
-        patches = _session_patches(
-            get_access_token="tok-123",
-            get_org_id="org_42",
-            get_org_name="Acme",
-        )
+        patches = _session_patches()
         _start_patches(patches)
         try:
+            from ember_code.core.session.core import CloudCredentials as cc_patched
+
+            cc = cc_patched.return_value
+            cc.is_authenticated = True
+            cc.access_token = "tok-123"
+            cc.org_id = "org_42"
+            cc.org_name = "Acme"
+
             from ember_code.core.session.core import Session
 
             session = Session(Settings(), project_dir=tmp_path)
@@ -252,6 +264,13 @@ class TestSessionLearning:
             _stop_patches(patches)
 
     def test_learning_passed_to_team(self, tmp_path):
+        """When learning is enabled the LM instance flows through to ``Agent(learning=...)``.
+
+        Agno surfaces ``update_user_memory`` as a tool when ``learning``
+        is set; ``add_learnings_to_context`` keeps the agent fed with
+        prior memories. Both stay on so the agent can reach for memory
+        without an extra plumbing round-trip.
+        """
         fake_lm = MagicMock()
         patches = _session_patches(create_learning_machine=fake_lm)
         mocks = {}
@@ -265,19 +284,19 @@ class TestSessionLearning:
 
             settings = Settings()
             settings.learning.enabled = True
-            Session(settings, project_dir=tmp_path)
+            session = Session(settings, project_dir=tmp_path)
 
-            # learning=None on Agent (extraction is fire-and-forget in run controller)
-            # learnings injected via _inject_learnings() before each run
             agent_cls = mocks["Agent"]
             assert agent_cls.called
             call_kwargs = agent_cls.call_args[1]
-            assert call_kwargs["learning"] is None
-            assert call_kwargs["add_learnings_to_context"] is False
+            assert call_kwargs["learning"] is session._learning
+            assert call_kwargs["add_learnings_to_context"] is True
         finally:
             _stop_patches(patches)
 
     def test_learning_not_passed_when_disabled(self, tmp_path):
+        """With learning disabled, ``self._learning`` stays ``None`` and the
+        Agent receives ``learning=None`` — no ``update_user_memory`` tool."""
         patches = _session_patches()
         mocks = {}
         for p in patches:
@@ -294,6 +313,5 @@ class TestSessionLearning:
             agent_cls = mocks["Agent"]
             call_kwargs = agent_cls.call_args[1]
             assert call_kwargs["learning"] is None
-            assert call_kwargs["add_learnings_to_context"] is False
         finally:
             _stop_patches(patches)

@@ -1,0 +1,175 @@
+agent: main
+description: "v6 combined eval — all 12 cases from the v4 codewrite suite (5)\nplus\
+  \ the v5 db_codewrite suite (7), run as one batch against\nember-server. The merged\
+  \ surface lets a single WITH/WITHOUT\ncomparison span both code-write (services\
+  \ / models) and\ndb-design (schema / reuse) shapes.\n\nEach case asks the agent\
+  \ to add code where reuse opportunities\nexist in ember-server's actual codebase.\
+  \ The judge scores three\nthings across all cases:\n\n1. **Located existing infrastructure\
+  \ first** — did the agent\n   search for what's already there before writing?\n\
+  2. **Reused vs duplicated** — does the proposed code call\n   existing helpers /\
+  \ extend existing classes / use the same\n   conventions?\n3. **Missed patterns**\
+  \ — what relevant existing code did the\n   agent miss when it should have known\
+  \ about it?\n\nIMPORTANT — prompt style: human-Slack-message, no class names\nor\
+  \ column names handed to the agent. The agent has to find the\nreuse target itself.\n\
+  \nIMPORTANT — output style: code sketch + (for db cases) migration\nsketch + a brief\
+  \ \"what already exists\" note. No file edits.\n"
+setup_module: evals.ember_server_codeindex.setup
+cases:
+- name: codewrite_webhook_ratelimit_reuse
+  case_timeout: 300
+  input: 'Our webhook endpoints get hammered when a repo pushes a large
+
+    batch of commits — sometimes hundreds in a minute from one
+
+    source. Add rate-limiting per source IP so a single noisy repo
+
+    can''t take down the analysis pipeline. Sketch the implementation.
+
+    '
+  expected_output: 'The agent locates the existing redis-backed sliding-window
+
+    rate-limit pattern in ``AIKeyPool`` (zadd timestamp, then
+
+    zremrangebyscore + zcard against ``window_seconds``) and adapts
+
+    it for webhook IPs. Proposes a small middleware or per-endpoint
+
+    helper that uses the same redis client + ZADD/ZREMRANGEBYSCORE
+
+    calls.
+
+    '
+  judge_guidelines: "A. LOCATED EXISTING INFRA: Did the agent find the rate-limit\n\
+    \   pattern in ``AIKeyPool`` (zadd / zremrangebyscore /\n   window_seconds)?\n\
+    \nB. REUSED PATTERN:\n   - Redis-based (NOT in-process dict)?\n   - Sliding-window\
+    \ via ZADD + ZREMRANGEBYSCORE?\n   - Same shape of \"key prefix : id : entry\"\
+    ?\n\nC. NOT DUPLICATED:\n   - Did the agent NOT propose a new in-memory dict /\
+    \ collections.deque?\n   - Did the agent NOT reach for an external library\n \
+    \    (slowapi, fastapi-limiter) when the codebase already has\n     the pattern\
+    \ internally?\n\nPASS if the agent located AIKeyPool's pattern and adapted it\n\
+    for webhook IPs using redis. FAIL if a new in-memory or\nexternal-library approach\
+    \ was proposed.\n"
+- name: db_monthly_ai_quota
+  case_timeout: 360
+  input: 'Billing wants to enforce monthly quotas on AI API usage per
+
+    user — different limits per pricing tier. Add tracking + the
+
+    enforcement so a user over their monthly cap gets a clear
+
+    error instead of silently getting throttled. Show the schema
+
+    sketch, the enforcement check, and where it''d be wired in.
+
+    '
+  expected_output: "The agent:\n1. Locates the existing ``telemetry_daily_aggregates``\
+    \ table\n   (added in migration ``9ba114af488a_add_telemetry_tables``)\n   which\
+    \ already tracks ``user_id``, ``date``, ``run_count``,\n   ``input_tokens``, ``output_tokens``,\
+    \ ``cost`` per user per\n   day.\n2. Either (a) extends the same table with a\
+    \ tier column +\n   per-tier monthly aggregation query, or (b) builds a\n   monthly-rollup\
+    \ view on top of the existing daily rows —\n   NOT a brand-new ``user_quota``\
+    \ table.\n3. Locates the existing ``AIKeyPool`` rate-limit hook in\n   ``app/services/ai/key_pool.py``\
+    \ and proposes calling the\n   quota check from there (or from the same call site\
+    \ as the\n   rate-limit check) — reusing the existing\n   request-acquisition\
+    \ path instead of adding a new\n   middleware.\n4. Proposes a clean error shape\
+    \ (HTTP 402 / 429 + body\n   indicating \"monthly quota exceeded\") consistent\
+    \ with how\n   AIKeyPool already signals exhaustion.\n"
+  judge_guidelines: "A. DISCOVERED EXISTING TRACKING:\n   - Did the agent find ``telemetry_daily_aggregates``\n\
+    \     (or its migration) BEFORE proposing schema?\n   - Did the agent find ``AIKeyPool``\
+    \ and its rate-limit\n     hook?\nB. REUSED INFRA:\n   - Quota state lives on\
+    \ or aggregates from the existing\n     telemetry table?\n   - Enforcement is\
+    \ wired into the existing\n     AIKeyPool acquisition path?\n   - Tier info comes\
+    \ from the existing ``org_memberships``\n     tier column (added in ``c3d4e5f6a7b8_add_tier_to_org_memberships``)?\n\
+    C. NOT DUPLICATED:\n   - Did the agent NOT propose a new ``user_quota`` /\n  \
+    \   ``api_usage`` table when telemetry already has\n     per-user-per-day token\
+    \ + cost rows?\n   - Did the agent NOT propose a new middleware when the\n   \
+    \  AIKeyPool path is the natural enforcement point?\n   - Did the agent NOT propose\
+    \ a separate Redis counter when\n     per-month rollups are easily derivable from\
+    \ the\n     existing daily aggregates?\n\nPASS if A + 2-of-3 of B + C. FAIL if\
+    \ the agent proposed a\nfresh ``user_quota`` table without acknowledging telemetry,\n\
+    or invented a separate enforcement middleware.\n"
+- name: db_commit_processing_retry
+  case_timeout: 360
+  input: 'Sometimes a commit fails to process due to transient errors —
+
+    upstream API timeouts, briefly unavailable LLM providers, etc.
+
+    We want it to automatically retry up to 3 times with
+
+    exponential backoff, and the retry attempts should be visible
+
+    in the processing history so support can debug. Sketch the
+
+    schema change (if any), the retry logic, and where it
+
+    integrates.
+
+    '
+  expected_output: "The agent:\n1. Locates ``app/db/sql/models/commit_processing_step.py``\n\
+    \   and notes the existing pattern: rows are INSERT-only;\n   status updates create\
+    \ a NEW row with a higher\n   ``step_order`` rather than mutating the existing\
+    \ row. The\n   full history is preserved by design.\n2. Proposes that retries\
+    \ follow the same INSERT-only pattern\n   — each retry attempt is a new ``commit_processing_steps``\n\
+    \   row with the same ``commit_processing_id`` and a higher\n   ``step_order``,\
+    \ optionally with an ``attempt_number``\n   column added to disambiguate.\n3.\
+    \ Locates ``app/tasks/process_git_event.py`` (the existing\n   Celery task path)\
+    \ and proposes adding the backoff + retry\n   cap there — Celery's native ``autoretry_for``\
+    \ /\n   ``retry_backoff`` parameters reuse what's already wired,\n   rather than\
+    \ reimplementing a retry loop.\n4. Picks 3 attempts with exponential backoff (2s,\
+    \ 4s, 8s or\n   similar) and stores the final FAILED status on the row of\n  \
+    \ the last attempt.\n"
+  judge_guidelines: "A. DISCOVERED EXISTING PATTERN:\n   - Did the agent find the\
+    \ INSERT-only history convention in\n     ``commit_processing_steps``?\n   - Did\
+    \ the agent find the Celery task in ``app/tasks/``?\nB. REUSED INFRA:\n   - Retry\
+    \ attempts written as new ``commit_processing_steps``\n     rows (preserving history)\
+    \ rather than a new\n     ``commit_processing_retries`` table?\n   - Retry mechanism\
+    \ uses Celery's built-in\n     ``autoretry_for`` / ``retry_backoff`` rather than\
+    \ a\n     hand-rolled loop?\nC. NOT DUPLICATED:\n   - Did the agent NOT propose\
+    \ a separate ``retry_log`` table\n     that parallels ``commit_processing_steps``?\n\
+    \   - Did the agent NOT propose mutating the existing row\n     (which would lose\
+    \ history — the convention is\n     explicitly INSERT-only)?\n   - Did the agent\
+    \ NOT introduce a new background-task\n     framework (APScheduler, custom asyncio\
+    \ loop) when\n     Celery is already there?\n\nPASS if A + B + 2-of-3 of C. FAIL\
+    \ if the agent introduced a\nparallel retry-tracking table or a non-Celery retry\
+    \ loop.\n"
+- name: db_daily_cleanup_job
+  case_timeout: 360
+  input: 'A few cleanup tasks should run automatically every night —
+
+    purging old changeset uploads, expiring stuck
+
+    commit-processing rows that have been ``RUNNING`` for over
+
+    an hour, and clearing sticky AI-key assignments older than 7
+
+    days. Wire it up so it runs daily without manual triggers.
+
+    Sketch the scheduler config and one of the cleanup tasks.
+
+    '
+  expected_output: "The agent:\n1. Locates the existing Celery setup in ``app/tasks/``\
+    \ (with\n   ``process_git_event.py`` and ``sync_github_installation.py``)\n  \
+    \ and proposes adding new tasks under the same module\n   structure.\n2. Picks\
+    \ Celery Beat (the canonical scheduler for Celery) for\n   daily firing — NOT\
+    \ APScheduler, NOT a fresh asyncio\n   loop, NOT cron-on-the-host.\n3. For the\
+    \ changeset cleanup, calls the\n   ``ChangesetUploader.delete_older_than`` helper\
+    \ (the one\n   sketched in the prior codewrite eval), or proposes adding\n   it\
+    \ if not present — does NOT reimplement GCS list+delete\n   inline.\n4. For the\
+    \ sticky-key cleanup, calls\n   ``AIKeyPool.revoke_sticky_assignment(...)`` (or\
+    \ its bulk\n   equivalent) — does NOT manipulate Redis keys directly\n   from\
+    \ the new task.\n5. Configures the schedule with explicit timing (e.g.\n   ``crontab(minute=0,\
+    \ hour=3)``) and wires the schedule\n   into the existing Celery app config.\n"
+  judge_guidelines: "A. DISCOVERED EXISTING INFRA:\n   - Did the agent find the Celery\
+    \ tasks in ``app/tasks/``?\n   - Did the agent acknowledge that ChangesetUploader\
+    \ and\n     AIKeyPool already exist as the natural call targets?\nB. REUSED INFRA:\n\
+    \   - Scheduler is Celery Beat (or another Celery-native\n     mechanism), not\
+    \ a parallel scheduler?\n   - Cleanup task delegates to existing service helpers\n\
+    \     (ChangesetUploader, AIKeyPool) rather than\n     reimplementing GCS / Redis\
+    \ operations?\n   - New tasks live under ``app/tasks/`` matching the\n     existing\
+    \ convention?\nC. NOT DUPLICATED:\n   - Did the agent NOT introduce APScheduler,\
+    \ schedule.py,\n     a custom asyncio loop, or a new \"scheduler\" service\n \
+    \    when Celery Beat is the obvious answer?\n   - Did the agent NOT inline GCS\
+    \ or Redis client calls when\n     the existing services wrap those?\n   - Did\
+    \ the agent NOT create a parallel\n     ``cleanup_jobs`` service hierarchy?\n\n\
+    PASS if A + 2-of-3 of B + C. FAIL if the agent introduced a\nsecond scheduler,\
+    \ or reimplemented GCS/Redis operations\ninside the new tasks.\n"

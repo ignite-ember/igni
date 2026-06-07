@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import contextlib
 import logging
+import os
+import signal
 import sys
 import uuid
 from pathlib import Path
@@ -12,6 +15,52 @@ from pathlib import Path
 from ember_code.frontend.tui.backend_client import BackendClient
 
 logger = logging.getLogger(__name__)
+
+
+# Track every live BackendProcess so the atexit hook can guarantee
+# cleanup even when the TUI exits abnormally (uncaught exception,
+# Ctrl+C, terminal hangup). Without this, the BE subprocess is orphaned
+# and can keep running indefinitely — we caught one such zombie that had
+# burned 117 hours of CPU over 11 days.
+_LIVE_PROCESSES: set[BackendProcess] = set()
+
+
+def _kill_all_live() -> None:
+    """atexit hook: send SIGKILL to any BE subprocess whose parent FE is
+    on its way out. SIGTERM was tried during normal shutdown; this is
+    the last-resort sweep."""
+    for bp in list(_LIVE_PROCESSES):
+        with contextlib.suppress(Exception):
+            bp._kill_now()
+
+
+atexit.register(_kill_all_live)
+
+
+def _install_signal_cleanup() -> None:
+    """Install SIGINT/SIGTERM/SIGHUP handlers that run the atexit sweep
+    before re-raising the default behaviour. Registered once at import.
+    """
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        try:
+            old_handler = signal.getsignal(sig)
+
+            def _handler(signum, frame, _old=old_handler, _sig=sig):
+                _kill_all_live()
+                if callable(_old) and _old not in (signal.SIG_IGN, signal.SIG_DFL):
+                    _old(signum, frame)
+                else:
+                    # Restore default and re-raise so the process actually exits.
+                    signal.signal(_sig, signal.SIG_DFL)
+                    os.kill(os.getpid(), _sig)
+
+            signal.signal(sig, _handler)
+        except (ValueError, OSError):
+            # ValueError: not in main thread. OSError: signal not supported.
+            pass
+
+
+_install_signal_cleanup()
 
 
 class BackendProcess:
@@ -59,11 +108,22 @@ class BackendProcess:
 
         logger.info("Spawning BE: %s", " ".join(cmd))
 
+        # ``start_new_session=True`` puts the BE in its own process group.
+        # That lets ``stop()`` kill BE + every child it spawned (shells,
+        # subprocesses, anything Agno forks) atomically via ``killpg``.
+        # Without this, killing the BE leaves its grandchildren orphaned —
+        # which is how we ended up with an 11-day-old runaway process.
+        # ``EMBER_PARENT_PID`` lets the BE detect parent death and self-
+        # terminate even if signals don't reach it (e.g. crash on macOS).
+        env = {**os.environ, "EMBER_PARENT_PID": str(os.getpid())}
         self._process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+            env=env,
         )
+        _LIVE_PROCESSES.add(self)
 
         # Wait for JSON ready signal on stdout (skip non-JSON lines like warnings)
         import json
@@ -106,7 +166,13 @@ class BackendProcess:
         return self._client
 
     async def stop(self) -> None:
-        """Send shutdown and wait for process to exit."""
+        """Send shutdown, wait for the process group to exit, then sweep.
+
+        Uses ``killpg`` so any subprocess the BE spawned (shells the
+        agents ran, etc.) dies with the BE. Without this, those children
+        are orphaned and reparented to launchd/init, where they can run
+        indefinitely.
+        """
         if self._client:
             with contextlib.suppress(Exception):
                 await self._client.shutdown()
@@ -115,13 +181,33 @@ class BackendProcess:
             try:
                 await asyncio.wait_for(self._process.wait(), timeout=5.0)
             except asyncio.TimeoutError:
-                logger.warning("BE did not exit gracefully, killing")
-                self._process.kill()
+                logger.warning("BE did not exit gracefully, killing process group")
+                self._kill_now()
 
         # Cleanup socket file
         socket_path = Path(self._socket_path)
         if socket_path.exists():
-            socket_path.unlink()
+            with contextlib.suppress(Exception):
+                socket_path.unlink()
+
+        _LIVE_PROCESSES.discard(self)
+
+    def _kill_now(self) -> None:
+        """Synchronously SIGKILL the entire BE process group.
+
+        Called from atexit / signal handlers (where async is unsafe) and
+        as the timeout escape hatch in ``stop()``.
+        """
+        proc = self._process
+        if proc is None or proc.returncode is not None:
+            return
+        pid = proc.pid
+        try:
+            # ``start_new_session=True`` made the BE its own pgid leader.
+            os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            with contextlib.suppress(Exception):
+                proc.kill()
 
     def is_alive(self) -> bool:
         """Check if the BE process is running."""

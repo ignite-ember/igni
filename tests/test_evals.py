@@ -300,6 +300,9 @@ class TestRunEvalCase:
 
     @pytest.mark.asyncio
     async def test_unexpected_tool_calls_fail(self):
+        # The runner expands display names ("Write") to actual Agno
+        # function names ("save_file", "create_file"). The test mocks a
+        # tool emitting "save_file" so the blocklist hit is genuine.
         case = EvalCase(
             name="unexpected",
             input="test",
@@ -310,7 +313,7 @@ class TestRunEvalCase:
         response = MagicMock()
         response.content = "Done"
         tool = MagicMock()
-        tool.tool_name = "Write"
+        tool.tool_name = "save_file"
         response.tools = [tool]
         agent.arun = AsyncMock(return_value=response)
 

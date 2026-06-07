@@ -35,6 +35,10 @@ def _make_session():
     session.settings.orchestration.max_total_agents = 20
     session.settings.orchestration.max_nesting_depth = 3
     session.knowledge_mgr.share_enabled.return_value = False
+    # status() is async — give the mock a proper AsyncMock for it.
+    from ember_code.core.knowledge.models import KnowledgeStatus
+
+    session.knowledge_mgr.status = AsyncMock(return_value=KnowledgeStatus(enabled=False))
     session.memory_mgr.get_memories = AsyncMock(return_value=[])
     session.mcp_manager.list_servers.return_value = []
     session.mcp_manager.list_connected.return_value = []

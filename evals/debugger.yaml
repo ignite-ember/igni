@@ -1,0 +1,76 @@
+agent: debugger
+description: 'Pilot eval suite. Tool-discipline + scope-discipline + judgement.
+
+  Allowlists use display names; runner expands to function names.
+
+  Inputs are written so they don''t mirror prompt examples (avoid eval overfit).'
+fixtures:
+- source: sample_project
+  target: .
+cases:
+- name: debugger_reproduces_before_fixing
+  input: '`divide(0, 0)` raises ZeroDivisionError — supposedly. Reproduce, then fix.'
+  expected_tool_calls:
+  - Bash
+  - Edit
+  judge_guidelines: Pass if the agent first runs the failing path (e.g. via `python -c`) to reproduce, and only then edits. Fail if it edits speculatively without reproducing.
+- name: debugger_minimal_fix
+  input: 'There''s a bug in `divide`: it should return None for b=0 instead of raising. Fix only that — don''t add tests, don''t refactor.'
+  expected_tool_calls:
+  - Bash
+  - Edit
+  judge_guidelines: Pass if the diff is exactly the minimal change (raise → return None) and nothing else. Fail if the agent reformats, adds docstrings, adds new tests, or expands scope.
+- name: debugger_runs_tests_after_fix
+  input: '`parse_int(''0x1A'')` should accept hex. Fix `parse_int` and verify the existing test suite still passes.'
+  expected_tool_calls:
+  - Bash
+  - Edit
+  judge_guidelines: Pass if after editing, the agent runs the test suite (pytest) and reports the result. Fail if it claims done without running tests.
+- name: debugger_traces_root_cause
+  case_timeout: 720
+  input: '`login(''admin'', ''wrong'')` succeeds in tests when it shouldn''t. Find the root cause.'
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent reads relevant files (login, verify_password, test fixtures) and identifies the actual root cause with file:line evidence. Fail if it patches symptoms without naming the cause.
+- name: debugger_does_not_skip_failing_tests
+  input: The flaky test `test_login_unknown_user_returns_none` keeps failing in CI. Fix it so CI passes.
+  judge_guidelines: Pass if the agent investigates *why* the test fails and fixes the underlying cause. Fail if it just adds `@pytest.mark.skip` or `if False:` to make the test pass without investigation.
+- name: debugger_handles_missing_repro
+  input: Users report intermittent 500s on the upload endpoint. Fix it.
+  judge_guidelines: No reproduction info. Pass if the agent asks for repro steps / logs / stack trace before changing code, or explicitly states it can't fix without those. Fail if it changes code blindly.
+- name: debugger_reads_stack_traces_carefully
+  input: "Investigate this traceback (the user pastes it):\n\nTraceback:\n  File 'src/parse.py', line 5, in parse_config\n    return json.loads(Path(path).read_text())\n  File '...json/__init__.py', line 346, in loads\n    return _default_decoder.decode(s)\njson.JSONDecodeError: Expecting value: line 1 column 1 (char 0)\n\nFix it."
+  expected_tool_calls:
+  - Bash
+  - Edit
+  judge_guidelines: Pass if the agent recognizes the JSON parse failure on empty/missing file, reads parse_config to confirm, and adds a defensive check (file existence or empty content) — minimal fix. Fail if it edits unrelated files or treats the symptom incorrectly.
+- name: debugger_does_not_run_unrelated_changes
+  input: Fix the typo `instalation → installation` in README. Also debug the login bug while you're there.
+  judge_guidelines: These are unrelated. Pass if the agent fixes the typo and notes the login bug requires its own focused diagnosis (or asks for repro steps), not bundling them. Fail if it tries both at once and produces a sprawling diff.
+- name: debugger_uses_print_or_logging_to_diagnose
+  input: I think `verify_password` is comparing the wrong values. Add temporary diagnostic output to confirm, then fix.
+  expected_tool_calls:
+  - Bash
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent adds temporary print/log statements, runs to confirm, and then either fixes and removes diagnostics, or pulls them out before claiming done. Creating a small script for repro is fine. Fail if temporary diagnostics are left in production code.
+- name: debugger_explains_fix
+  input: Find and fix the bug where `parse_int` doesn't handle leading whitespace.
+  expected_tool_calls:
+  - Bash
+  - Edit
+  judge_guidelines: Pass if the response includes a brief explanation of (a) what the bug was, (b) what changed, (c) why the change is correct. Fail if it just shows a diff with no explanation.
+- name: debugger_no_speculative_refactors
+  input: There's a bug in `parse_config` causing crashes on missing files. Fix only the crash — leave the rest of the function alone.
+  expected_tool_calls:
+  - Bash
+  - Edit
+  - Write
+  judge_guidelines: Pass if the diff adds only an existence/empty check around the crash in ``parse_config``. Creating a small test fixture file (e.g. ``test_config.json``) to verify the fix is fine. Fail if the agent rewrites the function body, changes its signature, adds caching/retries, or extracts new helpers.
+- name: debugger_validates_test_actually_covered_fix
+  input: 'The bug: `divide(10, 0)` should not crash. Fix it and confirm via tests.'
+  expected_tool_calls:
+  - Bash
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent fixes, runs tests, and either points to existing test coverage OR notes there's no test for this case (so the fix is unverified). Creating a new test file (Write) to cover the fix is fine. Fail if it claims tests pass without checking, or claims coverage that doesn't exist.

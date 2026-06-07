@@ -70,7 +70,13 @@ class TestLoadYaml:
 class TestSettings:
     def test_default_settings(self):
         s = Settings()
-        assert s.models.default == "MiniMax-M2.5"
+        # Hosted models are populated by cloud discovery on session
+        # start, not shipped in the package defaults — so a freshly-
+        # constructed ``Settings()`` carries an empty default and an
+        # empty registry. The resolver falls back to first-in-registry
+        # at lookup time once cloud discovery has merged its entries.
+        assert s.models.default == ""
+        assert s.models.registry == {}
         assert s.permissions.file_read == "allow"
         assert s.permissions.file_write == "ask"
         assert s.orchestration.max_nesting_depth == 5

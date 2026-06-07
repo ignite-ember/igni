@@ -261,6 +261,37 @@ Returns:
 
 ---
 
+## Project Map
+
+Beyond the per-entity summaries, the indexing pipeline also produces a **commit-level overview** — a single markdown digest that gives agents a factual high-level picture of the codebase *before they issue a single tool call*. Without it, an agent's first query often misfires because it hasn't yet learned the project's vocabulary; with it, the first query lands on the right area on the first try.
+
+The map is rendered **once per commit, server-side**, and shipped to the client as the final line of the JSONL changeset (`commit_summary` op). Ember Code persists the markdown alongside the per-commit chroma directory and, when a session starts, injects it into the agent's system prompt as a `## Project Map` section.
+
+### What's in the map
+
+| Section | Content |
+|---|---|
+| **Project snapshot** | Folder / file / entity counts. |
+| **Folder taxonomy** | Top-level packages with one-line role descriptions. Heavy subtrees auto-expand: a folder with no direct summary but many descendants (above the expansion threshold) still surfaces, so deep modules don't hide. |
+| **Tables** | Classes detected as SQL tables — via path heuristic (`db/sql/…`) or name suffix (`*Model`, `*DB`, `*Table`) — each with its summary so the agent picks the right table without grep-walking. |
+| **Migrations** | Most recent first, so schema-touching tasks anchor on current shape. |
+| **Cached-resource wrappers** | Classes that own a cached client / connection / session. Flagged explicitly: *call their accessors; never construct a new client of the same type.* This is the single biggest reuse foot-gun, and surfacing it up-front prevents duplicated SDK instantiations. |
+| **Category classes** | Classes grouped by concept-word suffix (`*Pool`, `*Gate`, `*Manager`, …). When a user's verb maps to a category, the agent reads every class in the group before picking a reuse target — instead of cloning the first hit it finds. |
+
+### Why server-side
+
+Pre-server, every developer's session rendered the map locally on first use. Moving the render to the indexing pipeline pays off three ways:
+
+- **Single source of truth.** Every developer indexing the same commit sees the same map, identical down to wording. No drift from per-developer LLM jitter or model selection.
+- **Cost amortization.** Rendered once per commit and reused for every session on every developer machine.
+- **No client credentials required.** Even users without their own model API key get the full overview — the render runs on the indexing pipeline's keypool.
+
+### Graceful degradation
+
+If the map isn't present (older changeset, server-side render failed, no AI key on the indexing pool, etc.), the session loader silently skips the `## Project Map` section. The agent runs without it — slower to route the first query, but otherwise unaffected.
+
+---
+
 ## The CodeIndex Tool
 
 Agents access CodeIndex through the `CodeIndex` tool (see [Tools](TOOLS.md)):

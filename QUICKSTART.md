@@ -306,7 +306,7 @@ In interactive mode, use `/` commands:
 | `/knowledge search <query>` | Search the knowledge base |
 | `/sync-knowledge` | Manually sync knowledge between git and vector DB |
 | `/commit` | Generate a commit (skill) |
-| `/review-pr` | Review a pull request (skill) |
+| `/resolve-issues [base]` | Fix issues CodeIndex flagged in your branch (skill) |
 
 ---
 

@@ -60,6 +60,10 @@ class AgentActivityWidget(Static):
         self._orchestrator_id: str | None = None
         self._timer: Timer | None = None
         self._stopped = False
+        # When an event last bumped the label — used to show "(idle Ns)" when
+        # the agent is silent for a while so the user can tell it's still
+        # waiting on the model rather than stuck.
+        self._label_set_at: float = time.monotonic()
         super().__init__(self._format())
 
     def on_mount(self) -> None:
@@ -75,6 +79,7 @@ class AgentActivityWidget(Static):
 
     def set_label(self, label: str) -> None:
         self._label = label
+        self._label_set_at = time.monotonic()
         if not self._stopped:
             self.update(self._format())
 
@@ -158,8 +163,19 @@ class AgentActivityWidget(Static):
                 f"{format_token_count(total_out)}\u2193[/dim]"
             )
         if agent.is_running:
+            # Surface the current activity label (Thinking / Streaming /
+            # Running <tool> / Reasoning / etc.) on the orchestrator line so
+            # the user can see what the agent is actually waiting on. After
+            # 5s without a label change we mark it "(idle Ns)" — that's the
+            # signal that the model is mid-decision with no streaming yet,
+            # the moment that previously looked indistinguishable from stuck.
+            silent_for = time.monotonic() - self._label_set_at
+            if silent_for >= 5.0:
+                label_suffix = f" · {self._label} ([dim]idle {int(silent_for)}s[/dim])"
+            else:
+                label_suffix = f" · [dim]{self._label}[/dim]"
             lines.append(
-                f"[bold $accent]{frame}[/bold $accent] [dim]{elapsed}[/dim]  {agent.name}{tokens}"
+                f"[bold $accent]{frame}[/bold $accent] [dim]{elapsed}[/dim]  {agent.name}{tokens}{label_suffix}"
             )
         else:
             lines.append(f"[dim]\u2713 {elapsed}  {agent.name}{tokens}[/dim]")

@@ -19,10 +19,10 @@ Each skill lives in a named directory containing a `SKILL.md` file:
 .ember/skills/
 ├── deploy/
 │   └── SKILL.md
-├── review-pr/
+├── resolve-issues/
 │   ├── SKILL.md
 │   └── templates/
-│       └── review-checklist.md
+│       └── issue-summary.md
 └── migrate-component/
     ├── SKILL.md
     └── examples/
@@ -102,12 +102,11 @@ description: This skill should be used when the user asks to "deploy", "push to 
 
 Example:
 ```markdown
-Review pull request $1.
-Fetch the diff: `gh pr diff $1`
-Read the description: `gh pr view $1`
+Deploy to environment $1.
+Run the deploy script: `./scripts/deploy.sh $1`
 ```
 
-Invoked as `/review-pr 123` → `$1` becomes `123`, `$ARGUMENTS` becomes `123`.
+Invoked as `/deploy staging` → `$1` becomes `staging`, `$ARGUMENTS` becomes `staging`.
 
 ---
 
@@ -145,7 +144,7 @@ Within the same scope, Ember Code directories take precedence over Claude Code.
 
 ```
 /deploy staging
-/review-pr 123
+/resolve-issues main
 /migrate-component SearchBar React Vue
 ```
 
@@ -208,11 +207,11 @@ Use `disable-model-invocation: true` for skills that should only run when explic
 Skill instructions are injected into the current conversation context. The Orchestrator assembles a team that follows the skill's steps.
 
 ```
-User: "/review-pr 456"
-  → Orchestrator loads review-pr SKILL.md
-  → Assembles team: [explorer, reviewer] in coordinate mode
-  → Explorer reads the diff and files
-  → Reviewer analyzes for issues
+User: "/resolve-issues main"
+  → Orchestrator loads resolve-issues SKILL.md
+  → Assembles team: [explorer, fixer] in coordinate mode
+  → Explorer lists changed paths and queries CodeIndex for flagged issues
+  → Fixer applies the fixes file by file
   → Team follows the skill's output format
 ```
 
@@ -288,7 +287,7 @@ Ember Code ships with built-in skills in `<install>/skills/`:
 | Skill | Description |
 |---|---|
 | `/commit` | Create a well-formatted git commit with conventional message |
-| `/review-pr [number]` | Review a pull request for quality, security, and correctness |
+| `/resolve-issues [base-branch]` | Fix issues CodeIndex flagged on files changed in your branch |
 | `/explain [path]` | Deep-dive explanation of a file or module using CodeIndex |
 | `/simplify` | Review changed code for reuse, quality, and efficiency |
 | `/update-docs` | Update documentation to reflect code changes |
@@ -300,39 +299,30 @@ Override any built-in skill by creating a skill with the same name in `.ember/sk
 
 ## Examples
 
-### PR Review with CodeIndex
+### Resolve issues flagged by CodeIndex
 
 ```markdown
 ---
-name: review-pr
-description: This skill should be used when the user asks to "review a PR", "review pull request", "check this PR", or mentions PR numbers. Performs comprehensive code review with security and performance analysis.
-argument-hint: [pr-number]
-allowed-tools: Read, Grep, Glob, Bash, CodeIndex
+name: resolve-issues
+description: This skill should be used when the user asks to "resolve issues", "fix what CodeIndex flagged", "fix the issues in my branch", or otherwise wants CodeIndex-detected issues on their recent changes to be applied. Pulls issues from CodeIndex (no GitHub/GitLab API).
+argument-hint: [base-branch]
+allowed-tools: Read, Edit, Bash, CodeIndex
 ---
 
-Review pull request $1.
+Resolve issues CodeIndex has already flagged on the files changed in the current branch.
 
 ## Steps
-1. Fetch the PR diff: `gh pr diff $1`
-2. Read the PR description: `gh pr view $1`
-3. For each changed file:
-   a. Read the full file for context
-   b. Search CodeIndex for the security and architecture category summaries
-   c. Identify potential issues
-4. Check for:
-   - Bugs and logic errors
-   - Security vulnerabilities (use CodeIndex security category)
-   - Performance concerns
-   - Missing tests
-   - Style/convention violations
-5. Summarize findings with severity levels
+1. Determine the base branch ($ARGUMENTS or default `main`/`master`).
+2. List changed paths: `git diff --name-only "$BASE...HEAD"`.
+3. For each changed path, query CodeIndex:
+   `codeindex_query(path_prefix=<path>, issues=["moderate","severe"], sections=["issues"])`
+4. Plan the fixes (severe first), then apply them file by file.
+5. Re-run the project's lint / format / test commands to verify.
 
 ## Output Format
-For each finding:
-- **Severity**: Critical / High / Medium / Low / Nit
-- **File**: path:line
-- **Issue**: What's wrong
-- **Suggestion**: How to fix it
+- **Resolved**: list of `path:line — short description`.
+- **Skipped**: anything you couldn't safely fix, with a one-line reason.
+- **Verification**: which commands you ran and whether they passed.
 ```
 
 ### Database Migration
@@ -415,14 +405,14 @@ Run the project's test suite and report results:
 | Concept | What It Is | Example |
 |---|---|---|
 | **Agent** | A persistent identity with tools and a system prompt | "I am a code reviewer" |
-| **Skill** | A reusable task recipe invoked on demand | "/review-pr 123" |
+| **Skill** | A reusable task recipe invoked on demand | "/resolve-issues main" |
 | **Hook** | A shell command that fires on tool events | "Run prettier after every Edit" |
 
 - **Agents** do the work. They have tools, models, and specialized knowledge.
 - **Skills** describe the work. They provide step-by-step instructions that agents follow.
 - **Hooks** automate around the work. They fire before/after tool calls for validation and side effects.
 
-Skills are executed **by** agents. When you invoke `/review-pr 123`, the Orchestrator reads the skill, picks the right agents (explorer + reviewer), assembles a team, and the agents follow the skill's instructions.
+Skills are executed **by** agents. When you invoke `/resolve-issues main`, the Orchestrator reads the skill, picks the right agents (explorer + fixer), assembles a team, and the agents follow the skill's instructions.
 
 ---
 

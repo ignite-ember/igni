@@ -10,16 +10,33 @@ from ember_code.core.tools.orchestrate import OrchestrateTools
 async def _mock_stream(content="agent response"):
     from agno.run import agent as ae
 
+    # Real Agno streams open with RunStartedEvent — the orchestrate
+    # code captures run_id/session_id from it so it can later look up
+    # the canonical RunOutput via ``aget_run_output``. Without this the
+    # final-answer fetch is skipped.
+    started = MagicMock(spec=ae.RunStartedEvent)
+    started.run_id = "fake-run-1"
+    started.session_id = "fake-session"
+    started.__class__ = ae.RunStartedEvent
+    yield started
+
     event = MagicMock(spec=ae.RunContentEvent)
     event.content = content
     event.__class__ = ae.RunContentEvent
     yield event
 
 
-def _mock_pool():
+def _mock_pool(content: str = "agent response"):
     pool = MagicMock()
     agent = MagicMock()
-    agent.arun = MagicMock(return_value=_mock_stream())
+    agent.arun = MagicMock(return_value=_mock_stream(content))
+    # Mirror Agno: after the run completes, the final answer is
+    # available via ``aget_last_run_output`` / ``aget_run_output``
+    # backed by the session DB.
+    run_output = MagicMock()
+    run_output.content = content
+    agent.aget_run_output = AsyncMock(return_value=run_output)
+    agent.aget_last_run_output = AsyncMock(return_value=run_output)
     defn = MagicMock()
     defn.description = "Test agent"
     defn.tools = ["Read", "Write"]

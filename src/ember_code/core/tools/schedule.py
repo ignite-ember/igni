@@ -12,12 +12,21 @@ from ember_code.core.scheduler.store import TaskStore
 class ScheduleTools(Toolkit):
     """Toolkit for managing scheduled tasks from within agent conversations."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, store: TaskStore | None = None, **kwargs):
         super().__init__(name="schedule_tools", **kwargs)
-        self._store = TaskStore()
+        # Lazy: ``TaskStore()`` runs alembic migrations against the
+        # per-project state.db on construction. Defer that until the
+        # first tool call so cheap toolkit-creation paths (mocks, agent
+        # registration) don't open a database.
+        self._store: TaskStore | None = store
         self.register(self.schedule_task)
         self.register(self.list_scheduled_tasks)
         self.register(self.cancel_scheduled_task)
+
+    def _ensure_store(self) -> TaskStore:
+        if self._store is None:
+            self._store = TaskStore()
+        return self._store
 
     async def schedule_task(self, description: str, when: str) -> str:
         """Schedule a task for deferred or recurring execution.
@@ -41,7 +50,7 @@ class ScheduleTools(Toolkit):
                 scheduled_at=scheduled_at,
                 recurrence=recurrence,
             )
-            await self._store.add(task)
+            await self._ensure_store().add(task)
             return (
                 f'Scheduled recurring task `{task.id}`: "{description}" '
                 f"({recurrence}, first run at {scheduled_at.strftime('%Y-%m-%d %H:%M')})."
@@ -61,7 +70,7 @@ class ScheduleTools(Toolkit):
             description=description,
             scheduled_at=scheduled_at,
         )
-        await self._store.add(task)
+        await self._ensure_store().add(task)
         return f'Scheduled task `{task.id}`: "{description}" at {scheduled_at.strftime("%Y-%m-%d %H:%M")}.'
 
     async def list_scheduled_tasks(self, include_done: bool = False) -> str:
@@ -73,7 +82,7 @@ class ScheduleTools(Toolkit):
         Returns:
             Formatted list of tasks.
         """
-        tasks = await self._store.get_all(include_done=include_done)
+        tasks = await self._ensure_store().get_all(include_done=include_done)
         if not tasks:
             return "No scheduled tasks."
 
@@ -93,11 +102,11 @@ class ScheduleTools(Toolkit):
         Returns:
             Confirmation or error message.
         """
-        task = await self._store.get(task_id)
+        task = await self._ensure_store().get(task_id)
         if not task:
             return f"Task not found: {task_id}"
         if task.status not in (TaskStatus.pending, TaskStatus.running):
             return f"Task {task_id} is already {task.status.value}."
-        await self._store.update_status(task_id, TaskStatus.cancelled)
+        await self._ensure_store().update_status(task_id, TaskStatus.cancelled)
         recur_note = " (recurring schedule stopped)" if task.recurrence else ""
         return f'Cancelled task {task_id}: "{task.description}"{recur_note}.'

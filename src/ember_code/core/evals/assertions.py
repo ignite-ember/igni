@@ -42,10 +42,17 @@ def check_unexpected_tool_calls(
     return True, "no unexpected tool calls"
 
 
-def check_file_assertion(assertion: dict) -> tuple[bool, str]:
-    """Run a single file assertion. Returns (passed, detail)."""
+def check_file_assertion(assertion: dict, work_dir: Path | None = None) -> tuple[bool, str]:
+    """Run a single file assertion. Returns (passed, detail).
+
+    Relative ``path`` entries are resolved against ``work_dir`` so the
+    assertion checks the *case's* sandbox, not the script's cwd. Absolute
+    paths are honored as-is.
+    """
     atype = assertion.get("type", "")
-    path = Path(assertion.get("path", ""))
+    raw = assertion.get("path", "")
+    p = Path(raw)
+    path = p if p.is_absolute() or work_dir is None else (work_dir / p)
     pattern = assertion.get("pattern", "")
 
     if atype == "file_exists":

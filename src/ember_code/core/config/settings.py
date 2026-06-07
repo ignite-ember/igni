@@ -10,9 +10,18 @@ from ember_code.core.config.defaults import DEFAULT_CONFIG
 
 
 class ModelsConfig(BaseModel):
-    default: str = "MiniMax-M2.5"
+    # Empty means "auto" — the resolver falls back to the first key
+    # in ``registry`` at lookup time. Cloud discovery sets this at
+    # session start once the cloud catalogue is merged in. Users
+    # explicitly pinning a model via ``/model`` or config override
+    # set it directly.
+    default: str = ""
     max_context_window: int = 200_000
     max_run_timeout: int = 300  # total timeout for a single arun() call (seconds)
+    # Retry count for transient model-API failures (timeouts, 5xx). Applied
+    # to both the main team agent and pool specialists. Surfaced here so
+    # users can tune it from settings without touching code.
+    retries: int = 2
     registry: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
@@ -60,9 +69,7 @@ class SafetyConfig(BaseModel):
 
 
 class StorageConfig(BaseModel):
-    backend: str = "sqlite"
-    session_db: str = "~/.ember/sessions.db"
-    memory_db: str = "~/.ember/memory.db"
+    data_dir: str = "~/.ember"
     audit_log: str = "~/.ember/audit.log"
     max_history_runs: int = 10000
 
@@ -114,19 +121,10 @@ class MemoryConfig(BaseModel):
     add_memories_to_context: bool = True
 
 
-class EmbeddingsConfig(BaseModel):
-    """Embeddings provider configuration with BYOM registry."""
-
-    default: str = "local"
-    registry: dict[str, dict[str, Any]] = Field(default_factory=dict)
-
-
 class KnowledgeConfig(BaseModel):
     enabled: bool = True
     collection_name: str = "ember_knowledge"
-    chroma_db_path: str = "~/.ember/chromadb"
     max_results: int = 10
-    embedder: str = "local"  # "local" for SentenceTransformer, or registry name
     # ── Git-shared knowledge ──────────────────────────────────────
     share: bool = True  # enable git-synced knowledge sharing
     share_file: str = ".ember/knowledge.yaml"  # path relative to project root
@@ -169,7 +167,17 @@ class SchedulerConfig(BaseModel):
 
 class AuthConfig(BaseModel):
     credentials_file: str = "~/.ember/credentials.json"
-    server_url: str = "https://api.ignite-ember.sh"
+
+
+class CodeIndexConfig(BaseModel):
+    """Tunables for the local code-index sync.
+
+    ``repository_id`` and the GCS bucket are auto-discovered from
+    ``settings.api_url`` using the local git remote — users don't
+    configure either.
+    """
+
+    fetch_timeout: float = 60.0
 
 
 class DisplayConfig(BaseModel):
@@ -186,10 +194,8 @@ class Settings(BaseModel):
     """Complete Ember Code settings."""
 
     api_url: str = "https://api.ignite-ember.sh"
-    version_endpoint: str = "/v1/cli/version"
     update_check_ttl: int = 86400
     models: ModelsConfig = Field(default_factory=ModelsConfig)
-    embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
@@ -207,6 +213,7 @@ class Settings(BaseModel):
     evals: EvalsConfig = Field(default_factory=EvalsConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
+    code_index: CodeIndexConfig = Field(default_factory=CodeIndexConfig)
     display: DisplayConfig = Field(default_factory=DisplayConfig)
 
     # TODO: Add telemetry config so users can wire their own Agno server or
@@ -234,15 +241,31 @@ def _load_yaml(path: Path) -> dict:
     return {}
 
 
-_EMBER_CLOUD_URL = "api.ignite-ember.sh"
+_EMBER_CLOUD_HOST = "api.ignite-ember.sh"
+
+
+def _is_ember_cloud_url(url: str) -> bool:
+    """True only when the URL points at the production cloud host.
+
+    Hostname-exact (not substring) so dev/staging overrides like
+    ``dev-api.ignite-ember.sh`` are treated as user-managed and survive
+    the migration step. Without the exact match, a substring check would
+    flag dev URLs as cloud and clobber them back to prod.
+    """
+    from urllib.parse import urlparse
+
+    try:
+        return urlparse(url).hostname == _EMBER_CLOUD_HOST
+    except Exception:
+        return False
 
 
 def _migrate_cloud_models(config: dict[str, Any]) -> None:
     """Override Ember Cloud models in user config with latest defaults.
 
-    Any model whose url points to api.ignite-ember.sh is managed by us,
-    so we replace it with the current default to ensure users always get
-    the latest model after upgrading.
+    Any model whose url points at the production cloud host is managed
+    by us, so we replace it with the current default to ensure users
+    always get the latest model after upgrading.
     """
     default_registry = DEFAULT_CONFIG.get("models", {}).get("registry", {})
     user_registry = config.get("models", {}).get("registry", {})
@@ -253,13 +276,13 @@ def _migrate_cloud_models(config: dict[str, Any]) -> None:
     # Build a lookup of default cloud models by url
     default_cloud = {}
     for name, entry in default_registry.items():
-        if _EMBER_CLOUD_URL in entry.get("url", ""):
+        if _is_ember_cloud_url(entry.get("url", "")):
             default_cloud[name] = entry
 
     # Replace user's cloud models with latest defaults
     for name in list(user_registry):
         entry = user_registry[name]
-        if _EMBER_CLOUD_URL in entry.get("url", ""):
+        if _is_ember_cloud_url(entry.get("url", "")):
             if name in default_cloud:
                 # Update existing entry with latest defaults
                 user_registry[name] = {**default_cloud[name]}

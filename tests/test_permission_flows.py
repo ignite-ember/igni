@@ -207,6 +207,9 @@ class TestBackendHITLResolution:
             server._session.hook_executor.execute = AsyncMock(
                 return_value=MagicMock(should_continue=True, message="")
             )
+            # Force the sub-agent coordinator to NOT claim this requirement,
+            # so the main-team resolve path runs and we can assert on it.
+            server._session.sub_agent_hitl.resolve = MagicMock(return_value=False)
             server._pending_requirements = {}
             server._processing = False
 
@@ -235,6 +238,7 @@ class TestBackendHITLResolution:
             server._session.hook_executor.execute = AsyncMock(
                 return_value=MagicMock(should_continue=True, message="")
             )
+            server._session.sub_agent_hitl.resolve = MagicMock(return_value=False)
             server._pending_requirements = {}
 
             req = MagicMock()
@@ -254,6 +258,8 @@ class TestBackendHITLResolution:
 
         with patch("ember_code.backend.server.BackendServer.__init__", return_value=None):
             server = BackendServer.__new__(BackendServer)
+            server._session = MagicMock()
+            server._session.sub_agent_hitl.resolve = MagicMock(return_value=False)
             server._pending_requirements = {}
 
             results = []

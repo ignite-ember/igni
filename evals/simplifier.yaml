@@ -1,0 +1,78 @@
+agent: simplifier
+description: 'Pilot eval suite. Tool-discipline + scope-discipline + judgement.
+
+  Allowlists use display names; runner expands to function names.
+
+  Inputs are written so they don''t mirror prompt examples (avoid eval overfit).'
+fixtures:
+- source: sample_project
+  target: .
+cases:
+- name: simplifier_preserves_behavior
+  input: Simplify `to_snake_case` in src/utils/format.py while preserving all current behavior.
+  expected_tool_calls:
+  - Bash
+  - Edit
+  judge_guidelines: Pass if the simplified version produces identical output for all inputs the original handles, AND the agent verifies via tests. Fail if behavior changes silently.
+- name: simplifier_runs_tests_after
+  input: Refactor `parse_int` for clarity. Confirm tests still pass.
+  expected_tool_calls:
+  - Bash
+  - Edit
+  judge_guidelines: Pass if the agent runs pytest after editing and reports results. Fail if it claims done without running tests.
+- name: simplifier_conservative_when_unsure
+  input: Refactor `verify_password` to be more readable.
+  expected_tool_calls:
+  - Bash
+  - Edit
+  judge_guidelines: verify_password uses secrets.compare_digest for timing safety — that's a deliberate pattern. Pass if the agent recognizes this and either makes a non-invasive change (variable names, comments) OR explicitly leaves it alone. Fail if it 'simplifies' compare_digest into `==` (timing leak).
+- name: simplifier_does_not_rewrite_when_already_simple
+  input: Simplify `src/version.py`.
+  judge_guidelines: src/version.py is one line. Pass if the agent reports there's nothing to simplify. Fail if it makes a change anyway just to seem productive.
+- name: simplifier_minimal_diff
+  input: Make `to_snake_case` simpler. Don't change anything else in format.py.
+  expected_tool_calls:
+  - Bash
+  - Edit
+  judge_guidelines: Pass if the diff is scoped to to_snake_case only. Fail if to_kebab_case (also in the file) is touched.
+- name: simplifier_explains_change
+  input: Refactor `parse_config` in src/parse.py for clarity.
+  expected_tool_calls:
+  - Bash
+  - Edit
+  judge_guidelines: Pass if the response includes a brief explanation of what was simpler (less indirection, better naming, etc.). Fail if it shows a diff with no rationale.
+- name: simplifier_no_unrelated_cleanups
+  input: Just simplify the variable names inside `format_log` in src/format.py — nothing else.
+  expected_tool_calls:
+  - Bash
+  - Edit
+  judge_guidelines: Pass if the diff is scoped to variable names within format_log. Fail if the function structure changes or other functions are touched.
+- name: simplifier_handles_no_change_case
+  input: Simplify `Token.issue` in src/auth/token.py if you can.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Token.issue is a 4-line classmethod. Pass if the agent reports it's already simple (or proposes a minor change with rationale). Fail if it makes a substantive change without value.
+- name: simplifier_keeps_imports_clean
+  input: Simplify the imports in `src/app.py`.
+  expected_tool_calls:
+  - Bash
+  - Edit
+  judge_guidelines: Pass if the agent removes unused imports and groups remaining ones in a sensible order. Fail if it removes imports that ARE used (would break the code).
+- name: simplifier_does_not_change_public_api
+  input: Simplify `to_snake_case` but keep its public signature unchanged.
+  expected_tool_calls:
+  - Bash
+  - Edit
+  judge_guidelines: Pass if the function signature and return type are unchanged. Fail if the parameter list or return shape changes.
+- name: simplifier_avoids_clever_tricks
+  input: Simplify `parse_int` in src/parser.py.
+  expected_tool_calls:
+  - Bash
+  - Edit
+  judge_guidelines: Pass if the result is straightforward and obviously-correct (not a clever one-liner). Fail if the simplification introduces clever tricks that future readers will struggle with.
+- name: simplifier_no_premature_abstractions
+  input: Simplify `to_snake_case` and `to_kebab_case` — they look similar.
+  expected_tool_calls:
+  - Bash
+  - Edit
+  judge_guidelines: Pass if the agent either leaves them as twin one-liners (clear is better than DRY here) or makes a tiny shared helper with strong rationale. Fail if it introduces a base class, registry, or framework for two simple functions.

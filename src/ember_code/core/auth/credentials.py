@@ -123,29 +123,16 @@ def save_model_credentials(api_key: str, url: str, model_name: str = "MiniMax-M2
     logger.debug("Model credentials for %s saved to %s", model_name, config_path)
 
 
-def get_access_token(path: str | None = None) -> str | None:
-    """Load credentials and return the token if still valid, else None."""
-    creds = load_credentials(path)
-    if creds is None:
-        return None
-    if is_token_expired(creds):
-        logger.debug("Token expired for %s", creds.email)
-        return None
-    return creds.access_token
-
-
 def decode_jwt_claims(token: str) -> dict:
     """Decode JWT payload without verifying the signature.
 
-    This is safe for reading claims client-side — the server still
-    validates the signature on every API call.
+    Safe for reading claims client-side — the server still validates
+    the signature on every API call.
     """
     import base64
 
     try:
-        # JWT format: header.payload.signature
         payload = token.split(".")[1]
-        # Add padding if needed
         padding = 4 - len(payload) % 4
         if padding != 4:
             payload += "=" * padding
@@ -156,19 +143,56 @@ def decode_jwt_claims(token: str) -> dict:
         return {}
 
 
-def get_org_id(path: str | None = None) -> str | None:
-    """Extract the organization ID from the stored JWT token ('org' claim)."""
-    token = get_access_token(path)
-    if token is None:
-        return None
-    claims = decode_jwt_claims(token)
-    return claims.get("org")
+class CloudCredentials:
+    """Read-only view of the user's Ember Cloud credentials.
 
+    One file read + one JWT decode per instance, cached for the
+    instance's lifetime.
 
-def get_org_name(path: str | None = None) -> str | None:
-    """Extract the organization display name from the stored JWT token ('org_name' claim)."""
-    token = get_access_token(path)
-    if token is None:
-        return None
-    claims = decode_jwt_claims(token)
-    return claims.get("org_name")
+    Args:
+        path: optional override; defaults to ``~/.ember/credentials.json``.
+    """
+
+    def __init__(self, path: str | None = None):
+        self._path = path
+        self._claims: dict | None = None
+        self._loaded = False
+        self._creds: Credentials | None = None
+
+    def _load(self) -> None:
+        if self._loaded:
+            return
+        self._loaded = True
+        creds = load_credentials(self._path)
+        if creds is None or is_token_expired(creds):
+            return
+        self._creds = creds
+        self._claims = decode_jwt_claims(creds.access_token) if creds.access_token else {}
+
+    @property
+    def access_token(self) -> str | None:
+        self._load()
+        return self._creds.access_token if self._creds else None
+
+    @property
+    def is_authenticated(self) -> bool:
+        return self.access_token is not None
+
+    @property
+    def email(self) -> str | None:
+        self._load()
+        return self._creds.email if self._creds else None
+
+    @property
+    def org_id(self) -> str | None:
+        self._load()
+        if self._claims is None:
+            return None
+        return self._claims.get("org")
+
+    @property
+    def org_name(self) -> str | None:
+        self._load()
+        if self._claims is None:
+            return None
+        return self._claims.get("org_name")

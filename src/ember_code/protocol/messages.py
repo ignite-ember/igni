@@ -113,6 +113,12 @@ class HITLRequest(Message):
     friendly_name: str = ""
     tool_args: dict[str, Any] = Field(default_factory=dict)
     details: str = ""
+    # Chain of agents that produced this request, parent → leaf.
+    # Empty / single-entry means it's from the main agent. For sub-agent
+    # HITL it's the dispatch path, e.g. ["architect"] when the main agent
+    # spawned the architect, or ["architect", "reviewer"] if the architect
+    # then spawned a reviewer that asked for shell access.
+    agent_path: list[str] = Field(default_factory=list)
 
 
 class TaskCreated(Message):
@@ -156,6 +162,13 @@ class CommandResult(Message):
     kind: str = "info"  # "markdown", "info", "error"
     content: str = ""
     action: str = ""  # "quit", "clear", "login", "schedule", etc.
+    # Optional override for what to render in chat when ``action ==
+    # "run_prompt"``. The loop slash command sets this to the
+    # unwrapped prompt while ``content`` carries the wrapped form
+    # (with the ``<loop-iteration>`` meta tag) for the agent. When
+    # empty, the FE displays ``content`` directly — the normal
+    # case for skill prompts and any other ``run_prompt`` action.
+    display_content: str = ""
 
 
 class StatusUpdate(Message):

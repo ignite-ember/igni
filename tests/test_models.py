@@ -12,19 +12,37 @@ from ember_code.core.config.settings import ModelsConfig, Settings, load_setting
 
 @pytest.fixture
 def registry():
-    return ModelRegistry(load_settings())
+    """Registry pre-loaded with a synthetic M2.7 entry.
+
+    The package no longer ships hardcoded model entries — hosted
+    models come from cloud discovery on session start. The fixture
+    simulates that discovery step by injecting a known entry so
+    tests can exercise the resolver without a real cloud
+    connection."""
+    settings = load_settings()
+    settings.models.registry["MiniMax-M2.7"] = {
+        "provider": "openai_like",
+        "model_id": "MiniMaxAI/MiniMax-M2.7",
+        "url": "https://api.ignite-ember.sh/v1",
+        "api_key": "cloud_token",
+        "context_window": 204_800,
+        "vision": False,
+    }
+    settings.models.default = "MiniMax-M2.7"
+    return ModelRegistry(settings)
 
 
 class TestModelRegistry:
-    def test_default_models_in_config_registry(self, registry):
-        # Defaults come from defaults.py -> Settings.models.registry
-        assert "MiniMax-M2.5" in registry.settings.models.registry
+    def test_default_model_in_registry(self, registry):
+        # The fixture seeds the entry; without cloud discovery the
+        # registry would be empty.
+        assert "MiniMax-M2.7" in registry.settings.models.registry
 
     def test_resolve_default_entry(self, registry):
-        entry = registry._resolve_entry("MiniMax-M2.5")
+        entry = registry._resolve_entry("MiniMax-M2.7")
         assert entry is not None
         assert entry["provider"] == "openai_like"
-        assert entry["model_id"] == "MiniMaxAI/MiniMax-M2.5"
+        assert entry["model_id"] == "MiniMaxAI/MiniMax-M2.7"
         assert entry["context_window"] == 204_800
 
     def test_resolve_provider_colon_format(self, registry):
@@ -39,7 +57,7 @@ class TestModelRegistry:
         settings = Settings(
             models=ModelsConfig(
                 registry={
-                    "MiniMax-M2.5": {
+                    "MiniMax-M2.7": {
                         "provider": "openai_like",
                         "model_id": "custom-override",
                         "url": "https://example.com/v1",
@@ -48,7 +66,7 @@ class TestModelRegistry:
             )
         )
         reg = ModelRegistry(settings)
-        entry = reg._resolve_entry("MiniMax-M2.5")
+        entry = reg._resolve_entry("MiniMax-M2.7")
         assert entry["model_id"] == "custom-override"
 
     def test_resolve_custom_model(self):
@@ -84,11 +102,13 @@ class TestModelRegistry:
         key = ModelRegistry._resolve_api_key({})
         assert key is None
 
-    def test_env_model_override(self, monkeypatch):
-        monkeypatch.setenv("EMBER_MODEL", "MiniMax-M2.5")
-        reg = ModelRegistry(load_settings())
-        entry = reg._resolve_entry("MiniMax-M2.5")
-        assert entry["model_id"] == "MiniMaxAI/MiniMax-M2.5"
+    def test_env_model_override(self, monkeypatch, registry):
+        """``EMBER_MODEL`` selects an entry from the registry. The
+        fixture has already seeded the M2.7 entry that cloud
+        discovery would normally populate."""
+        monkeypatch.setenv("EMBER_MODEL", "MiniMax-M2.7")
+        entry = registry._resolve_entry("MiniMax-M2.7")
+        assert entry["model_id"] == "MiniMaxAI/MiniMax-M2.7"
 
     def test_register_provider(self, registry):
         class FakeProvider:
@@ -104,12 +124,79 @@ class TestModelRegistry:
         assert PermissionGuard._generate_pattern("pytest tests/") == "pytest *"
 
     def test_get_context_window_from_registry(self, registry):
-        ctx = registry.get_context_window("MiniMax-M2.5")
+        ctx = registry.get_context_window("MiniMax-M2.7")
         assert ctx == 204_800
 
     def test_get_context_window_unknown_fallback(self, registry):
         ctx = registry.get_context_window("openai_like:unknown-model-xyz")
         assert ctx == DEFAULT_CONTEXT_WINDOW
+
+
+class TestEffectiveDefault:
+    """``ModelRegistry._effective_default`` resolves the active model
+    name when callers don't pass one. After dropping the hardcoded
+    bundled default, the fallback chain is:
+
+      1. ``settings.models.default`` if explicitly set
+      2. First key in the registry (cloud discovery populates this)
+      3. Raise with an actionable message if both are empty
+    """
+
+    def _settings_with(self, default: str, registry: dict[str, dict] | None = None) -> Settings:
+        return Settings(models=ModelsConfig(default=default, registry=registry or {}))
+
+    def test_explicit_default_wins(self):
+        s = self._settings_with(
+            "alpha",
+            {
+                "alpha": {"provider": "openai_like", "model_id": "a"},
+                "beta": {"provider": "openai_like", "model_id": "b"},
+            },
+        )
+        assert ModelRegistry(s)._effective_default() == "alpha"
+
+    def test_empty_default_falls_back_to_first_registry_key(self):
+        """Cloud discovery merges entries in response order. When the
+        user hasn't pinned a default, the first merged entry wins —
+        no hardcoded fallback name needed in the package."""
+        s = self._settings_with(
+            "",
+            {
+                "alpha": {"provider": "openai_like", "model_id": "a"},
+                "beta": {"provider": "openai_like", "model_id": "b"},
+            },
+        )
+        assert ModelRegistry(s)._effective_default() == "alpha"
+
+    def test_empty_default_and_empty_registry_raises(self):
+        """Brand-new install with no login + no user override → can't
+        resolve. The error names the next step (login, or add an
+        entry) instead of failing later as a cryptic "Unknown model"."""
+        s = self._settings_with("", {})
+        with pytest.raises(ValueError, match="No model configured"):
+            ModelRegistry(s)._effective_default()
+
+    def test_get_model_uses_effective_default(self):
+        """``get_model(None)`` and ``get_model("")`` both flow through
+        ``_effective_default`` so callers don't need to special-case
+        the empty string."""
+        s = self._settings_with(
+            "",
+            {
+                "alpha": {
+                    "provider": "openai_like",
+                    "model_id": "a",
+                    "url": "https://example.com/v1",
+                    "api_key": "dummy",
+                }
+            },
+        )
+        reg = ModelRegistry(s)
+        # Don't actually construct the Agno client — just check
+        # entry resolution under the same fallback path.
+        entry = reg._resolve_entry(reg._effective_default())
+        assert entry is not None
+        assert entry["model_id"] == "a"
 
 
 class TestContextWindowResolver:

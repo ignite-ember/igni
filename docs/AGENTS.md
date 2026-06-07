@@ -841,7 +841,7 @@ Skills are reusable prompted workflows — task recipes invoked via `/skill-name
 
 ```
 /deploy staging              — invoke the deploy skill
-/review-pr 123               — invoke the PR review skill
+/resolve-issues main         — fix issues CodeIndex flagged on your branch
 /explain src/auth/           — deep-dive explanation using CodeIndex
 ```
 

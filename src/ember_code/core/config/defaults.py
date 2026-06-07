@@ -2,20 +2,15 @@
 
 DEFAULT_CONFIG = {
     "api_url": "https://api.ignite-ember.sh",
-    "version_endpoint": "/v1/cli/version",
     "update_check_ttl": 0,
+    # Empty by design. Hosted models come from cloud discovery
+    # (``GET /v1/chat/models`` — see ``cloud_models.py``), and the
+    # active model defaults to the first entry in the merged registry.
+    # Users add their own overrides in ``~/.ember/config.yaml``; we
+    # never ship hardcoded cloud entries so a model bump on the
+    # server doesn't require a client release or a migration.
     "models": {
-        "default": "MiniMax-M2.5",
-        "registry": {
-            "MiniMax-M2.5": {
-                "provider": "openai_like",
-                "model_id": "MiniMaxAI/MiniMax-M2.5",
-                "url": "https://api.ignite-ember.sh/v1",
-                "api_key": "cloud_token",
-                "context_window": 204_800,
-                "vision": False,
-            },
-        },
+        "registry": {},
     },
     "permissions": {
         "file_read": "allow",
@@ -53,9 +48,7 @@ DEFAULT_CONFIG = {
         ],
     },
     "storage": {
-        "backend": "sqlite",
-        "session_db": "~/.ember/sessions.db",
-        "memory_db": "~/.ember/memory.db",
+        "data_dir": "~/.ember",
         "audit_log": "~/.ember/audit.log",
         "max_history_runs": 10000,
     },
@@ -104,23 +97,10 @@ DEFAULT_CONFIG = {
         "prompt_injection": False,
         "moderation": False,
     },
-    "embeddings": {
-        "default": "ember",
-        "registry": {
-            "ember": {
-                "provider": "openai_compatible",
-                "model_id": "text2vec-transformers",
-                "url": "https://api.ignite-ember.sh",
-                "dimensions": 384,
-            },
-        },
-    },
     "knowledge": {
         "enabled": True,
         "collection_name": "ember_knowledge",
-        "chroma_db_path": "~/.ember/chromadb",
         "max_results": 10,
-        "embedder": "local",
     },
     "agents": {
         "cross_tool_support": True,

@@ -1,0 +1,225 @@
+agent: main
+description: |
+  CEO comparison eval — phase 2: code-write tasks designed to surface
+  duplication risk.
+
+  Each case asks the agent to add code where reuse opportunities exist
+  in ember-server's actual codebase. The judge scores three things:
+
+  1. **Located existing infrastructure first** — did the agent search
+     for what's already there before writing?
+  2. **Reused vs duplicated** — does the proposed code call existing
+     helpers / extend existing classes / use the same conventions?
+  3. **Missed patterns** — what relevant existing code did the agent
+     miss when it should have known about it?
+
+  The same 5 cases run WITH and WITHOUT codeindex_query exposed.
+  The hypothesis: codeindex makes the agent better at *discovering*
+  existing code, which directly reduces duplication.
+
+  IMPORTANT — prompt style: the inputs read like something a teammate
+  would Slack you. They describe **intent in domain terms** and never
+  name the target class, file, or method. The agent has to find the
+  right place itself; that's the discovery step we're trying to
+  measure. The ``expected_output`` and ``judge_guidelines`` *do* know
+  the answer, so the judge can score, but the agent does not.
+
+  IMPORTANT — output style: the agent should propose code (file diff
+  or code block) — do NOT have it write to disk. We're measuring
+  intent + awareness, not editor mechanics.
+
+setup_module: evals.ember_server_codeindex.setup
+
+cases:
+
+# ── 1. Extend AIKeyPool with sticky-revocation ──────────────────
+- name: codewrite_aikeypool_revoke_sticky
+  case_timeout: 300
+  input: |
+    A user reported that their AI key assignment got "stuck" on a
+    specific tier and they want a clean way to release it so the next
+    request picks a fresh key. Add a way for an admin to revoke a
+    single user's sticky key assignment for a given tier. Sketch the
+    code — don't edit anything. Use whatever conventions the
+    surrounding code already uses; I want it to feel native.
+  expected_output: |
+    The agent's proposed method:
+    1. Lives on the ``AIKeyPool`` class in ``app/services/ai/key_pool.py``.
+    2. Uses ``self._sticky_prefix`` to construct the redis key (NOT a
+       new hardcoded prefix).
+    3. Uses ``await self._get_redis()`` to obtain the redis client
+       (NOT a new ``aioredis.from_url(...)`` call).
+    4. Calls ``r.delete(sticky_key)`` or equivalent ``r.unlink``.
+    5. Has the same async-method docstring style as the rest of the
+       class.
+  judge_guidelines: |
+    Score on three axes:
+
+    A. LOCATED EXISTING INFRA: Did the agent inspect ``key_pool.py``
+       (or query for it) before writing? Look at the tool trace.
+
+    B. REUSED CONVENTIONS:
+       - Does the new method use ``self._sticky_prefix`` for the
+         redis key? (+1 if yes)
+       - Does it use ``await self._get_redis()``? (+1 if yes)
+       - Is it a method on ``AIKeyPool`` (not a free function)? (+1 if yes)
+
+    C. NOT DUPLICATED INFRA:
+       - Did the agent NOT create a new redis client / new prefix
+         constant? (+1 if clean)
+
+    PASS if A + 2-of-3 of B + C. FAIL if the agent invented a new
+    prefix, instantiated a fresh redis client, or wrote a free
+    function.
+
+# ── 2. Slack notifications using existing email pattern ────────
+- name: codewrite_slack_notifications_reuse_pattern
+  case_timeout: 300
+  input: |
+    Right now we email people when their commit gets analyzed —
+    started, completed, failed. The team wants the same updates in
+    Slack so they can react in the channel without checking inbox.
+    Sketch how you'd add it and where it'd live. Don't edit anything,
+    just show me the shape.
+  expected_output: |
+    The agent identifies ``app/services/email/notifications.py`` as
+    the existing pattern and proposes a parallel
+    ``app/services/slack/notifications.py`` with three functions
+    matching the existing shape:
+    ``notify_commit_started(...)``, ``notify_commit_completed(...)``,
+    ``notify_commit_failed(...)``.
+    The proposed functions follow the same async signature, accept
+    the same ``CommitData``-shaped argument, and would be invoked
+    at the same trigger points the email versions are.
+  judge_guidelines: |
+    A. LOCATED EXISTING INFRA: Did the agent find / query for
+       ``services/email/notifications.py`` before sketching?
+
+    B. REUSED PATTERN:
+       - 3 functions matching the email shape (started/completed/failed)?
+       - Same async signature (``async def notify_X``)?
+       - Same parameter shape (commit_id, repository_id, etc.)?
+       - File location parallels: ``services/slack/notifications.py``?
+
+    C. NOT DUPLICATED:
+       - Did the agent NOT inline Slack code into a workflow phase?
+       - Did the agent NOT propose making the email functions
+         "also send Slack" (which would conflate concerns)?
+
+    PASS if the agent named the email pattern AND mirrored the
+    function shape in a parallel file. FAIL if the agent built
+    something disconnected from the existing pattern.
+
+# ── 3. ChangesetUploader extension reusing GCS plumbing ─────────
+- name: codewrite_changeset_delete_older_than
+  case_timeout: 300
+  input: |
+    Our changeset bucket in GCS is filling up with old uploads from
+    repos we no longer index. Add a cleanup that deletes any
+    changeset blob older than N days. Sketch how you'd wire it —
+    no file edits, just the code.
+  expected_output: |
+    The proposed method:
+    1. Lives on the ``ChangesetUploader`` class in
+       ``app/services/changeset_uploader/service.py``.
+    2. Reuses the existing ``google.cloud.storage.Client``
+       initialization pattern that ``upload()`` already uses
+       (NOT a new client construction).
+    3. Uses ``self.bucket_name`` / ``self.prefix`` (same attrs the
+       class already exposes).
+    4. Uses ``bucket.list_blobs(prefix=...)`` then filters by
+       ``blob.time_created`` against a ``timezone.utcnow() -
+       timedelta(days=days)`` threshold.
+  judge_guidelines: |
+    A. LOCATED EXISTING INFRA: Did the agent read the existing
+       ``service.py`` (or query for it) before writing?
+
+    B. REUSED CLIENT / BUCKET:
+       - Does the new method use the same client-construction
+         pattern as ``upload()``?
+       - Does it reference the same ``self.bucket_name`` / ``self.prefix``?
+       - Is it a method on ``ChangesetUploader`` (not a module
+         function)?
+
+    C. NOT DUPLICATED:
+       - Did the agent NOT instantiate a fresh ``Client()`` in the
+         new method when ``upload()`` already cached one (or had a
+         pattern for getting it)?
+       - Did the agent NOT hardcode the bucket name?
+
+    PASS if A + same-client-pattern + on-class. FAIL if the agent
+    re-built the GCS plumbing from scratch.
+
+# ── 4. Dedupe to_quality_tags across three classes ──────────────
+- name: codewrite_dedupe_to_quality_tags
+  case_timeout: 360
+  input: |
+    Code review flagged that we render quality tags in three or four
+    places with nearly the same logic — every time someone adds a new
+    field, they have to remember to update each one. Find where this
+    duplication lives and sketch a consolidation. Don't edit files,
+    just show the shape of the refactor.
+  expected_output: |
+    The agent identifies all three classes that define ``to_quality_tags``
+    in ``app/dataset/dataset_creation/schemas/quality/tags.py``:
+    ``EntitySummaryTags``, ``FileSummaryTags``, ``FolderSummaryTags``.
+    Proposes a refactor that:
+    - Extracts the common shape (e.g. a base ``QualityTagsMixin``,
+      or a free function that accepts a model_dump dict).
+    - Removes the per-class duplication.
+    - Preserves the per-class differences (each class has slightly
+      different fields).
+  judge_guidelines: |
+    A. LOCATED ALL THREE: Did the agent identify ALL THREE classes
+       that define ``to_quality_tags``? (CRITICAL — missing one
+       is a real bug; the consolidation would silently drift.)
+
+    B. PROPOSED CONSOLIDATION:
+       - Single source-of-truth for the common formatting?
+       - Per-class differences preserved?
+       - Same callers (both internal and external) keep working?
+
+    C. NOT MISSED:
+       - Did the agent NOT propose to delete two of three (which
+         would break the third)?
+       - Did the agent NOT collapse all three into one class
+         (losing the per-shape distinctions)?
+
+    PASS if all three classes named AND a non-destructive
+    consolidation proposed. FAIL if one class was missed (the
+    most likely failure mode without codeindex).
+
+# ── 5. Rate-limit webhook handler using existing pattern ────────
+- name: codewrite_webhook_ratelimit_reuse
+  case_timeout: 300
+  input: |
+    Our webhook endpoints get hammered when a repo pushes a large
+    batch of commits — sometimes hundreds in a minute from one
+    source. Add rate-limiting per source IP so a single noisy repo
+    can't take down the analysis pipeline. Sketch the implementation.
+  expected_output: |
+    The agent locates the existing redis-backed sliding-window
+    rate-limit pattern in ``AIKeyPool`` (zadd timestamp, then
+    zremrangebyscore + zcard against ``window_seconds``) and adapts
+    it for webhook IPs. Proposes a small middleware or per-endpoint
+    helper that uses the same redis client + ZADD/ZREMRANGEBYSCORE
+    calls.
+  judge_guidelines: |
+    A. LOCATED EXISTING INFRA: Did the agent find the rate-limit
+       pattern in ``AIKeyPool`` (zadd / zremrangebyscore /
+       window_seconds)?
+
+    B. REUSED PATTERN:
+       - Redis-based (NOT in-process dict)?
+       - Sliding-window via ZADD + ZREMRANGEBYSCORE?
+       - Same shape of "key prefix : id : entry"?
+
+    C. NOT DUPLICATED:
+       - Did the agent NOT propose a new in-memory dict / collections.deque?
+       - Did the agent NOT reach for an external library
+         (slowapi, fastapi-limiter) when the codebase already has
+         the pattern internally?
+
+    PASS if the agent located AIKeyPool's pattern and adapted it
+    for webhook IPs using redis. FAIL if a new in-memory or
+    external-library approach was proposed.

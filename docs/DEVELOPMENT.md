@@ -37,7 +37,7 @@ ember-code/
 │   └── docs.md
 ├── skills/                            # Built-in skills (SKILL.md)
 │   ├── commit/SKILL.md
-│   ├── review-pr/SKILL.md
+│   ├── resolve-issues/SKILL.md
 │   ├── explain/SKILL.md
 │   ├── simplify/SKILL.md
 │   └── update-docs/SKILL.md
@@ -354,7 +354,21 @@ Built-in commands available in interactive mode:
 | `/evals [agent]` | Run agent evals (optionally filter by agent name) |
 | `/sync-knowledge` | Sync knowledge between git file and vector DB |
 | `/login` | Authenticate via device-flow (opens browser) |
-| `/<skill-name> [args]` | Invoke a skill (e.g., `/commit`, `/review-pr`) |
+| `/schedule add <when> <prompt>` | Schedule a one-off or recurring prompt (e.g. `/schedule add review code at 5pm`, `/schedule add run linter every 2 hours`) |
+| `/loop <prompt>` | Re-fire the same prompt as the next user turn until cap, `/loop stop`, or any non-`/loop` input (default cap 30, hard cap 200). Forms: `/loop` (status), `/loop <N> <prompt>` (explicit cap), `/loop stop` (cancel) |
+| `/plugins` | Open the Textual plugins panel (browse, toggle enable/disable, update/remove, browse marketplaces, install). See [Plugins](PLUGINS.md). |
+| `/plugins enable <name>` / `/plugins disable <name>` | Toggle a plugin without opening the panel — takes effect on next session start. |
+| `/plugin install <git-url\|@marketplace/plugin>` | Install a Claude-Code-compatible plugin into `~/.ember/plugins/`. Optional `--ref <branch\|tag\|sha>`. |
+| `/plugin update <name>` / `/plugin remove <name>` | Update (fetch + reset to origin's HEAD or `--ref`) or uninstall. |
+| `/plugin marketplace add\|list\|remove\|refresh` | Manage registered marketplaces — Claude-Code-compatible catalogs at the root of any git repo. |
+| `/compact` | Manually compact session history (otherwise triggers at 80% of the context window) |
+| `/bug` | Capture a bug report with session context |
+| `/codeindex` | Show CodeIndex sync status for the current project |
+| `/mcp` | List configured MCP servers and their connection status |
+| `/model` | Switch the active model (or show current) |
+| `/whoami` | Show the active Ember Cloud login |
+| `/logout` | Clear cached Ember Cloud credentials |
+| `/<skill-name> [args]` | Invoke a skill (e.g., `/commit`, `/resolve-issues`) |
 
 ## Architecture Decisions
 

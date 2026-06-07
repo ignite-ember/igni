@@ -1,0 +1,123 @@
+agent: main
+description: |
+  Knowledge tool corner cases beyond the basic search/add coverage
+  in ``memory_knowledge.yaml``.
+
+  Targets:
+  - delete (with the two-step confirm preview)
+  - status (when the user asks "is the knowledge base set up?")
+  - empty-result handling (don't fabricate when search returns nothing)
+  - duplicate-add discipline (don't re-add the same fact twice in a row)
+
+cases:
+
+# ── Status query ──────────────────────────────────────────────────
+- name: knowledge_status_when_asked_about_kb
+  input: |
+    Is the knowledge base set up for this project? How many entries
+    does it have?
+  expected_tool_calls:
+    - knowledge_status
+  judge_guidelines: |
+    Pass if the agent calls ``knowledge_status`` and reports the
+    enabled state + document count from the result. Fail if it
+    invents an answer ("looks empty") without checking, or calls
+    ``knowledge_search`` (different operation — that returns
+    matches, not stats).
+
+# ── Empty results ────────────────────────────────────────────────
+- name: knowledge_no_fabrication_on_empty_search
+  input: |
+    Search the knowledge base for "quantum tunneling deployment
+    pattern" — see if we have any notes on it.
+  expected_tool_calls:
+    - knowledge_search
+  judge_guidelines: |
+    Pass if the agent calls ``knowledge_search``, sees no results,
+    and reports honestly that nothing matches. Fail if it
+    fabricates a "quantum tunneling deployment pattern" from
+    thin air after the empty search.
+
+# ── Delete: two-step confirmation ────────────────────────────────
+- name: knowledge_delete_uses_preview_first
+  input: |
+    Delete the knowledge entries about "old auth flow" — those are
+    outdated.
+  expected_tool_calls:
+    - knowledge_delete
+  judge_guidelines: |
+    Pass if the agent calls ``knowledge_delete`` (without
+    ``confirm=True`` initially is OK — the tool returns a
+    preview, the agent should report it and ask the user before
+    confirming). Fail if it deletes immediately with
+    ``confirm=True`` on the first call without showing the user
+    what would be deleted.
+
+- name: knowledge_delete_proceeds_after_user_confirms
+  input: |
+    Earlier I asked you to delete the knowledge entries about the
+    deprecated v1 API. You showed me the preview. I've now
+    confirmed: yes, those are definitely outdated, go ahead and
+    delete them. Confirmed. Do it.
+  expected_tool_calls:
+    - knowledge_delete
+    - knowledge_search
+    - knowledge_status
+  judge_guidelines: |
+    Pass if the agent calls ``knowledge_delete`` with
+    ``confirm=True`` — the user has explicitly confirmed deletion
+    in this single message (referencing prior preview + saying
+    "confirmed, do it"). A follow-up ``knowledge_search`` /
+    ``knowledge_status`` to verify the result is fine. Fail if
+    it asks for confirmation again, treating the explicit
+    "confirmed, do it" as if the prior preview never happened.
+
+# ── Duplicate-add discipline ─────────────────────────────────────
+- name: knowledge_does_not_re_add_existing_pattern
+  input: |
+    Search the knowledge base for any entry about our migration
+    tooling. I just want to *check* — please don't add anything
+    new, regardless of what the search returns. Just report what
+    you find (or don't find).
+  expected_tool_calls:
+    - knowledge_search
+  unexpected_tool_calls:
+    - knowledge_add
+  judge_guidelines: |
+    Pass if the agent calls ``knowledge_search`` and reports the
+    result (empty or otherwise) WITHOUT calling
+    ``knowledge_add``. The user has explicitly opted out of any
+    write — "don't add anything new, regardless of what the
+    search returns." Fail if the agent ignores the explicit
+    "don't add" instruction and calls ``knowledge_add`` anyway.
+
+# ── Search query specificity ──────────────────────────────────────
+- name: knowledge_search_uses_specific_query
+  input: |
+    What's our convention for naming database migrations? Look it
+    up in the knowledge base.
+  expected_tool_calls:
+    - knowledge_search
+    - knowledge_status
+    - Bash
+    - Read
+    - WebFetch
+  judge_guidelines: |
+    Pass if the agent calls ``knowledge_search`` with a query
+    related to "migration naming" / "alembic naming" — something
+    targeted. Falling back to grep / ls / reading project files
+    after an empty or partial KB result is fine. Fail if it
+    calls knowledge_search with a vague query like "conventions"
+    or just "naming" — too broad to return useful results.
+
+# ── No knowledge_search for clearly-grep questions ──────────────
+- name: knowledge_no_search_for_codebase_grep
+  input: |
+    Find every file in this codebase that imports `pandas`.
+  unexpected_tool_calls:
+    - knowledge_search
+  judge_guidelines: |
+    Pass if the agent uses ``Bash`` (grep / rg) — finding import
+    sites is structural code search, not knowledge-base territory.
+    Fail if it calls ``knowledge_search`` for a "what files import
+    pandas?" question.

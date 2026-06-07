@@ -1,0 +1,114 @@
+agent: main
+description: |
+  Multi-turn memory / context carry-over.
+
+  Verifies the agent actually remembers what was said in earlier turns
+  on the same session. Each case sends one or more setup messages via
+  ``prior_messages`` before the assertion turn (``input``); the eval
+  judges only the response to ``input``, but the agent should be
+  honoring constraints set up earlier.
+
+  The runner uses one session_id per case (so prior turns persist
+  within the case) and a *different* session_id per case (so cases
+  don't bleed into each other).
+
+cases:
+
+# ── Preferences set in turn 1 must influence later behaviour ──────
+- name: multiturn_respects_indentation_preference
+  prior_messages:
+    - "Heads up — in this codebase we use tabs, not spaces. Please always indent with tabs."
+  input: |
+    Add a tiny helper function `add(a, b)` to a fresh file
+    `tmp_helper.py`. Just the function, no docstring, no extra
+    imports.
+  expected_tool_calls:
+    - Write
+  judge_guidelines: |
+    Pass if the file content uses TAB indentation for the function
+    body, honoring the preference set in the prior turn. Fail if it
+    uses spaces, or asks "tabs or spaces?" again as if the prior
+    turn never happened.
+
+- name: multiturn_does_not_reread_known_constraint
+  prior_messages:
+    - "I've already told you the test runner here is `pytest -q`. Remember that."
+  input: |
+    Quickly run the project tests and tell me how many pass.
+  expected_tool_calls:
+    - Bash
+  unexpected_tool_calls:
+    - Read
+  judge_guidelines: |
+    Pass if the agent runs ``pytest -q`` (or equivalent) directly
+    without re-discovering the test runner. Fail if it reads
+    ``pyproject.toml`` / ``Makefile`` / etc. to "figure out how to
+    run tests" — that information was already given in the prior
+    turn.
+
+- name: multiturn_recalls_user_role_for_explanation_depth
+  prior_messages:
+    - "Quick context: I'm a senior backend engineer, very familiar with async Python."
+  input: |
+    Briefly: how does asyncio.gather differ from asyncio.wait?
+  judge_guidelines: |
+    Pass if the explanation is concise and skips entry-level
+    background ("asyncio is for concurrent I/O...") because the
+    prior turn established the user is a senior engineer. Fail if
+    the response over-explains basics that the user said they
+    already know.
+
+# ── Constraints (negatives) set earlier must stick ────────────────
+- name: multiturn_respects_dont_touch_directive
+  prior_messages:
+    - "Important: don't modify anything under `legacy/`. That code is being deprecated and edits there are wasted work."
+  input: |
+    There's a small typo in `legacy/utils.py` line 1 — the comment
+    says "verison" instead of "version". Fix it.
+  unexpected_tool_calls:
+    - Edit
+    - Write
+  judge_guidelines: |
+    Pass if the agent declines to edit ``legacy/`` files, citing the
+    earlier directive (and offers to do it elsewhere if relevant).
+    Fail if it edits the file anyway, treating the prior turn as
+    forgotten.
+
+- name: multiturn_remembers_disabled_tool
+  prior_messages:
+    - "FYI we're offline today — please don't make any web requests this session."
+  input: |
+    What's the latest stable version of Python?
+  unexpected_tool_calls:
+    - WebFetch
+    - WebSearch
+  judge_guidelines: |
+    Pass if the agent answers from its training knowledge (it's a
+    common fact) without web tools. Fail if it tries WebSearch /
+    WebFetch despite the earlier "we're offline" directive.
+
+# ── Multi-turn references / pronouns ──────────────────────────────
+- name: multiturn_resolves_anaphora
+  prior_messages:
+    - "I'm planning to add a retry decorator for outbound HTTP calls."
+    - "It should support exponential backoff and a configurable max attempts."
+  input: |
+    Where should it live?
+  judge_guidelines: |
+    Pass if the agent understands "it" refers to the retry decorator
+    discussed earlier and proposes a sensible location (e.g.
+    ``utils/retry.py``, with reasoning tied to the project's
+    structure). Fail if it asks "what does 'it' refer to?" or
+    proposes locations for an unrelated thing.
+
+- name: multiturn_remembers_correction
+  prior_messages:
+    - "Quick check — what's 2 + 2?"
+    - "Wait, I changed my mind. Pretend I asked: what's 5 * 6?"
+  input: |
+    What was the LAST math question I asked you?
+  judge_guidelines: |
+    Pass if the agent says "5 * 6" (or equivalent — that the user
+    redirected from the addition to the multiplication). Fail if it
+    says "2 + 2" (forgot the correction) or invents a third
+    question.

@@ -136,7 +136,14 @@ class MessageWidget(Widget):
                     if self._role == "assistant":
                         yield Markdown(content, classes="message-content")
                     else:
-                        yield Static(content, classes="message-content")
+                        # ``markup=False`` for user content: it's raw
+                        # input (could contain ``[/loop ...]``, code
+                        # snippets, BBCode-shaped strings, etc.) that
+                        # Textual would otherwise parse as markup and
+                        # crash with ``MarkupError`` on the first
+                        # unbalanced bracket. Plain-text rendering is
+                        # what we want for human input anyway.
+                        yield Static(content, classes="message-content", markup=False)
                 else:
                     truncated = "\n".join(content.splitlines()[: self._truncate_lines])
 
@@ -144,8 +151,8 @@ class MessageWidget(Widget):
                         yield Markdown(truncated, classes="message-content")
                         yield Markdown(content, classes="message-content-full")
                     else:
-                        yield Static(truncated, classes="message-content")
-                        yield Static(content, classes="message-content-full")
+                        yield Static(truncated, classes="message-content", markup=False)
+                        yield Static(content, classes="message-content-full", markup=False)
 
                     lines_hidden = len(self._content.splitlines()) - self._truncate_lines
                     yield Static(
@@ -384,9 +391,12 @@ class ToolCallLiveWidget(Static):
                         for line in lines[-4:]:
                             sections.append(f"[dim]{line}[/dim]")
                     else:
-                        # Agent header + last 3 tool calls
+                        # Agent header + recent activity. Show up to 8
+                        # trailing lines so the rolling 5-line ``✎``
+                        # streaming preview is visible alongside the
+                        # last few tool-call entries (``├─`` / ``└─``).
                         sections.append(f"[bold]  ├─ \\[{agent_key}\\][/bold]")
-                        for line in lines[-3:]:
+                        for line in lines[-8:]:
                             sections.append(f"[dim]{line}[/dim]")
                 header += "\n" + "\n".join(sections)
             return header
@@ -491,9 +501,19 @@ class ToolCallLiveWidget(Static):
                 self._progress_current_agent = agent
         elif self._progress_current_agent:
             agent_lines = self._progress_agents.setdefault(self._progress_current_agent, [])
-            # Streaming content previews (✎): replace last one instead of appending
-            if "✎" in line and agent_lines and "✎" in agent_lines[-1]:
-                agent_lines[-1] = escaped
+            # Streaming content previews (✎): keep a rolling window of
+            # the last few so the user gets ~paragraph context as the
+            # agent thinks, not just one line that flickers and
+            # disappears. Tool-call lifecycle lines (├─, └─) append
+            # unconditionally — those are the structural skeleton of
+            # what the agent did and shouldn't be evicted.
+            if "✎" in line:
+                agent_lines.append(escaped)
+                _MAX_PREVIEW = 5
+                preview_indices = [i for i, ln in enumerate(agent_lines) if "✎" in ln]
+                while len(preview_indices) > _MAX_PREVIEW:
+                    agent_lines.pop(preview_indices[0])
+                    preview_indices = [i for i, ln in enumerate(agent_lines) if "✎" in ln]
             else:
                 agent_lines.append(escaped)
         # Task-level lines (not under an agent)

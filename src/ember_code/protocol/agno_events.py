@@ -95,16 +95,24 @@ def format_tool_args(tool_args: dict | None, tool_name: str = "") -> str:
     if not tool_args or not isinstance(tool_args, dict):
         return ""
 
-    # Special formatting for orchestration tools — show full task
+    # Orchestration tools — the model often passes a multi-paragraph
+    # markdown brief as the task. Showing it verbatim in the tool-call
+    # header drowns the activity log and leaks raw markdown into the
+    # rendered terminal. Trim to the first non-empty line, capped at
+    # 80 chars; the full task is still available in the agent's
+    # session — the header is just a glanceable label.
     if tool_name in ("spawn_agent", "spawn_team"):
         agent = tool_args.get("agent_name", tool_args.get("agent_names", ""))
         task = str(tool_args.get("task", ""))
         mode = tool_args.get("mode", "")
+        first_line = next((ln.strip() for ln in task.splitlines() if ln.strip()), "")
+        if len(first_line) > 80:
+            first_line = first_line[:77] + "..."
         parts = [agent]
         if mode:
             parts.append(f"mode={mode}")
-        if task:
-            parts.append(f'"{task}"')
+        if first_line:
+            parts.append(f'"{first_line}"')
         return ", ".join(parts)
 
     parts = []

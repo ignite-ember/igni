@@ -16,6 +16,21 @@ from textual.widgets import Static
 logger = logging.getLogger(__name__)
 
 
+def _is_inside(target: Widget, container: Widget) -> bool:
+    """True if ``target`` is a descendant of ``container``.
+
+    Textual's ``Widget`` doesn't expose ``is_descendant_of``, so we walk
+    the parent chain ourselves. The previous code called the missing
+    method, swallowed the AttributeError, and silently dropped clicks.
+    """
+    node = getattr(target, "parent", None)
+    while node is not None:
+        if node is container:
+            return True
+        node = getattr(node, "parent", None)
+    return False
+
+
 class SessionInfo(BaseModel):
     """Lightweight session metadata for the picker UI."""
 
@@ -144,7 +159,13 @@ class PermissionDialog(Widget):
         self._tool_name = tool_name
         self._full_details = details or description
         self._details_expanded = False
-        self._decision: asyncio.Future | None = None
+        # Create the future eagerly so a click that lands BEFORE
+        # ``wait_for_decision`` runs still records its result. Previously
+        # ``self._decision`` was None until ``wait_for_decision`` was
+        # awaited, so a fast click between mount() and the await silently
+        # dropped the user's choice — the future was created later, no
+        # one set it, and the await hung forever.
+        self._decision: asyncio.Future = asyncio.get_event_loop().create_future()
         self.last_choice: str = "deny"
 
     def _render_details(self) -> str:
@@ -219,7 +240,9 @@ class PermissionDialog(Widget):
         for i in range(len(self._OPTIONS)):
             try:
                 widget = self.query_one(f"#opt-{i}", Static)
-                if target is widget or target.is_descendant_of(widget):
+                # ``Widget`` doesn't expose ``is_descendant_of`` —
+                # walk the target's ancestor chain manually instead.
+                if target is widget or _is_inside(target, widget):
                     self.selected_index = i
                     self._confirm_selection()
                     return
@@ -240,8 +263,13 @@ class PermissionDialog(Widget):
         self.remove()
 
     async def wait_for_decision(self) -> bool:
-        """Block until the user makes a choice. Returns True if approved."""
-        self._decision = asyncio.get_event_loop().create_future()
+        """Block until the user makes a choice. Returns True if approved.
+
+        The future is created in ``__init__`` (not here) so a click that
+        races ahead of ``wait_for_decision`` still resolves correctly.
+        If the future has already been resolved by an early click, this
+        returns immediately.
+        """
         return await self._decision
 
 
@@ -343,6 +371,10 @@ class SessionPickerWidget(Widget):
             old_widget.remove_class("-selected")
             new_widget = self.query_one(f"#sess-{new}", Static)
             new_widget.add_class("-selected")
+            # Keep the highlighted row visible — arrow nav past the
+            # viewport would otherwise hide the selection.
+            with contextlib.suppress(Exception):
+                new_widget.scroll_visible(animate=False)
         except Exception:
             pass
 
@@ -375,7 +407,7 @@ class SessionPickerWidget(Widget):
         for i in range(len(self._sessions)):
             try:
                 widget = self.query_one(f"#sess-{i}", Static)
-                if target is widget or target.is_descendant_of(widget):
+                if target is widget or _is_inside(target, widget):
                     self.selected_index = i
                     session = self._sessions[i]
                     self.post_message(self.Selected(session.session_id))
@@ -479,6 +511,10 @@ class ModelPickerWidget(Widget):
             old_widget.remove_class("-selected")
             new_widget = self.query_one(f"#model-{new}", Static)
             new_widget.add_class("-selected")
+            # Keep the highlighted row visible — arrow nav past the
+            # viewport would otherwise hide the selection.
+            with contextlib.suppress(Exception):
+                new_widget.scroll_visible(animate=False)
         except Exception:
             pass
 
@@ -505,7 +541,7 @@ class ModelPickerWidget(Widget):
         for i in range(len(self._models)):
             try:
                 widget = self.query_one(f"#model-{i}", Static)
-                if target is widget or target.is_descendant_of(widget):
+                if target is widget or _is_inside(target, widget):
                     self.selected_index = i
                     self.post_message(self.Selected(self._models[i]))
                     self.remove()

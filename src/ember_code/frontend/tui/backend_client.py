@@ -15,6 +15,7 @@ from typing import Any
 
 from ember_code.protocol import messages as msg
 from ember_code.protocol.messages import Message
+from ember_code.protocol.rpc import RpcMethod
 from ember_code.transport.unix_socket import UnixSocketClientTransport
 
 logger = logging.getLogger(__name__)
@@ -112,12 +113,21 @@ class BackendClient:
             for queue in self._pending_streams.values():
                 await queue.put(None)
 
-    async def _rpc(self, method: str, **args: Any) -> Any:
-        """Send an RPC request and wait for the response."""
+    async def _rpc(self, method: RpcMethod, **args: Any) -> Any:
+        """Send an RPC request and wait for the response.
+
+        ``method`` is the :class:`RpcMethod` enum member — its string
+        value goes on the wire. Typing it as the enum (not ``str``)
+        means typos and renames surface at the call site, not as a
+        runtime ``Unknown RPC method`` error.
+        """
         req_id = uuid.uuid4().hex[:8]
         future: asyncio.Future = asyncio.get_event_loop().create_future()
         self._pending[req_id] = future
-        await self._transport.send(msg.RPCRequest(id=req_id, method=method, args=args))
+        # ``method.value`` is the wire string; ``RPCRequest.method`` is
+        # typed ``str`` on the protocol so we pass the .value explicitly
+        # rather than relying on StrEnum's str-ness.
+        await self._transport.send(msg.RPCRequest(id=req_id, method=method.value, args=args))
         response = await asyncio.wait_for(future, timeout=60.0)
         if isinstance(response, msg.RPCResponse):
             if response.error:
@@ -152,13 +162,13 @@ class BackendClient:
 
     async def refresh_cache(self) -> None:
         """Fetch initial state from BE after connecting."""
-        self._cached_session_id = await self._rpc("get_session_id")
-        self._cached_run_timeout = await self._rpc("get_run_timeout")
-        self._cached_skill_names = await self._rpc("get_skill_names") or []
-        skill_defs = await self._rpc("get_skill_definitions")
+        self._cached_session_id = await self._rpc(RpcMethod.GET_SESSION_ID)
+        self._cached_run_timeout = await self._rpc(RpcMethod.GET_RUN_TIMEOUT)
+        self._cached_skill_names = await self._rpc(RpcMethod.GET_SKILL_NAMES) or []
+        skill_defs = await self._rpc(RpcMethod.GET_SKILL_DEFINITIONS)
         self._cached_skill_pool = RemoteSkillPool(skill_defs or [])
         # Cache status for sync get_status() calls
-        status_data = await self._rpc("get_status")
+        status_data = await self._rpc(RpcMethod.GET_STATUS)
         if isinstance(status_data, dict):
             self._cached_status = msg.StatusUpdate(**status_data)
         elif isinstance(status_data, msg.StatusUpdate):
@@ -206,7 +216,7 @@ class BackendClient:
         return result
 
     async def get_chat_history(self, session_id: str) -> list[dict]:
-        return await self._rpc("get_chat_history", session_id=session_id) or []
+        return await self._rpc(RpcMethod.GET_CHAT_HISTORY, session_id=session_id) or []
 
     # ── Model ────────────────────────────────────────────────────
 
@@ -218,23 +228,23 @@ class BackendClient:
     # ── MCP ──────────────────────────────────────────────────────
 
     async def ensure_mcp(self) -> None:
-        await self._rpc("ensure_mcp")
+        await self._rpc(RpcMethod.ENSURE_MCP)
 
     async def toggle_mcp(self, server_name: str, connect: bool) -> msg.Info:
         result = await self._send_and_wait(msg.MCPToggle(server_name=server_name, connect=connect))
         return result
 
     async def mcp_connect(self, server_name: str) -> msg.Info:
-        result = await self._rpc("mcp_connect", server_name=server_name)
+        result = await self._rpc(RpcMethod.MCP_CONNECT, server_name=server_name)
         return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
 
     async def mcp_disconnect(self, server_name: str) -> msg.Info:
-        result = await self._rpc("mcp_disconnect", server_name=server_name)
+        result = await self._rpc(RpcMethod.MCP_DISCONNECT, server_name=server_name)
         return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
 
     def get_mcp_status(self) -> list[tuple[str, bool]]:
         # Sync call — use cached or fire async
-        fut = asyncio.ensure_future(self._rpc("get_mcp_status"))
+        fut = asyncio.ensure_future(self._rpc(RpcMethod.GET_MCP_STATUS))
         try:
             if fut.done():
                 return fut.result() or []
@@ -243,7 +253,7 @@ class BackendClient:
         return []
 
     def get_mcp_server_details(self) -> list[dict]:
-        fut = asyncio.ensure_future(self._rpc("get_mcp_server_details"))
+        fut = asyncio.ensure_future(self._rpc(RpcMethod.GET_MCP_SERVER_DETAILS))
         try:
             if fut.done():
                 return fut.result() or []
@@ -251,8 +261,131 @@ class BackendClient:
             pass
         return []
 
+    # ── Agents ─────────────────────────────────────────────────────
+
+    async def get_agent_details(self) -> list[dict]:
+        result = await self._rpc(RpcMethod.GET_AGENT_DETAILS)
+        return result or []
+
+    async def promote_ephemeral_agent(self, name: str) -> msg.Info:
+        result = await self._rpc(RpcMethod.PROMOTE_EPHEMERAL_AGENT, name=name)
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    async def discard_ephemeral_agent(self, name: str) -> msg.Info:
+        result = await self._rpc(RpcMethod.DISCARD_EPHEMERAL_AGENT, name=name)
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    # ── Skills ─────────────────────────────────────────────────────
+
+    async def get_skill_details(self) -> list[dict]:
+        result = await self._rpc(RpcMethod.GET_SKILL_DETAILS)
+        return result or []
+
+    # ── Hooks ──────────────────────────────────────────────────────
+
+    async def get_hooks_details(self) -> list[dict]:
+        result = await self._rpc(RpcMethod.GET_HOOKS_DETAILS)
+        return result or []
+
+    async def reload_hooks(self) -> msg.Info:
+        result = await self._rpc(RpcMethod.RELOAD_HOOKS)
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    # ── Knowledge ──────────────────────────────────────────────────
+
+    async def get_knowledge_status(self) -> dict:
+        result = await self._rpc(RpcMethod.GET_KNOWLEDGE_STATUS)
+        return result or {}
+
+    async def knowledge_search(self, query: str) -> list[dict]:
+        result = await self._rpc(RpcMethod.KNOWLEDGE_SEARCH, query=query)
+        return result or []
+
+    async def knowledge_add(self, source: str) -> msg.Info:
+        result = await self._rpc(RpcMethod.KNOWLEDGE_ADD, source=source)
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    # ── CodeIndex ──────────────────────────────────────────────────
+
+    async def codeindex_status(self) -> dict:
+        result = await self._rpc(RpcMethod.CODEINDEX_STATUS)
+        return result or {}
+
+    async def codeindex_sync(self, sha: str | None = None) -> dict:
+        result = await self._rpc(RpcMethod.CODEINDEX_SYNC, sha=sha)
+        return result or {}
+
+    async def codeindex_clean(self) -> dict:
+        result = await self._rpc(RpcMethod.CODEINDEX_CLEAN)
+        return result or {}
+
+    async def codeindex_install(self) -> dict:
+        result = await self._rpc(RpcMethod.CODEINDEX_INSTALL)
+        return result or {}
+
+    # ── Plugins ─────────────────────────────────────────────────────
+
+    async def get_plugin_details(self) -> list[dict]:
+        result = await self._rpc(RpcMethod.GET_PLUGIN_DETAILS)
+        return result or []
+
+    async def set_plugin_enabled(self, name: str, enabled: bool) -> msg.Info:
+        result = await self._rpc(
+            RpcMethod.SET_PLUGIN_ENABLED,
+            name=name,
+            enabled=enabled,
+        )
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    async def install_plugin(
+        self,
+        ref: str,
+        install_ref: str | None = None,
+    ) -> msg.Info:
+        result = await self._rpc(
+            RpcMethod.INSTALL_PLUGIN,
+            ref=ref,
+            install_ref=install_ref,
+        )
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    async def update_plugin(
+        self,
+        name: str,
+        install_ref: str | None = None,
+    ) -> msg.Info:
+        result = await self._rpc(
+            RpcMethod.UPDATE_PLUGIN,
+            name=name,
+            install_ref=install_ref,
+        )
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    async def remove_plugin(self, name: str) -> msg.Info:
+        result = await self._rpc(RpcMethod.REMOVE_PLUGIN, name=name)
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    async def get_marketplaces(self) -> list[dict]:
+        result = await self._rpc(RpcMethod.GET_MARKETPLACES)
+        return result or []
+
+    async def add_marketplace(self, url: str) -> msg.Info:
+        result = await self._rpc(RpcMethod.ADD_MARKETPLACE, url=url)
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    async def remove_marketplace(self, name: str) -> msg.Info:
+        result = await self._rpc(RpcMethod.REMOVE_MARKETPLACE, name=name)
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    async def refresh_marketplaces(
+        self,
+        name: str | None = None,
+    ) -> msg.Info:
+        result = await self._rpc(RpcMethod.REFRESH_MARKETPLACES, name=name)
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
     def get_mcp_servers(self) -> list[dict]:
-        fut = asyncio.ensure_future(self._rpc("get_mcp_servers"))
+        fut = asyncio.ensure_future(self._rpc(RpcMethod.GET_MCP_SERVERS))
         try:
             if fut.done():
                 return fut.result() or []
@@ -273,7 +406,7 @@ class BackendClient:
         Status and results arrive via push notifications (login_status,
         login_result) — handled by app-level push handlers.
         """
-        await self._rpc("login")
+        await self._rpc(RpcMethod.LOGIN)
 
     def cancel_login(self) -> None:
         """Tell the BE to cancel the in-progress login flow."""
@@ -282,7 +415,7 @@ class BackendClient:
         asyncio.ensure_future(self._transport.send(msg.CancelLogin()))
 
     def reload_cloud_credentials(self) -> msg.StatusUpdate:
-        fut = asyncio.ensure_future(self._rpc("reload_cloud_credentials"))
+        fut = asyncio.ensure_future(self._rpc(RpcMethod.RELOAD_CLOUD_CREDENTIALS))
         try:
             if fut.done():
                 result = fut.result()
@@ -295,7 +428,7 @@ class BackendClient:
         return msg.StatusUpdate()
 
     def clear_cloud_credentials(self) -> msg.StatusUpdate:
-        fut = asyncio.ensure_future(self._rpc("clear_cloud_credentials"))
+        fut = asyncio.ensure_future(self._rpc(RpcMethod.CLEAR_CLOUD_CREDENTIALS))
         try:
             if fut.done():
                 result = fut.result()
@@ -307,10 +440,56 @@ class BackendClient:
             pass
         return msg.StatusUpdate()
 
+    # ── /loop continuation ───────────────────────────────────────
+
+    async def pop_pending_loop_iteration(self) -> dict | None:
+        """RPC: pop the next ``/loop`` iteration's descriptor.
+
+        Returns ``{"prompt": str, "iteration": int, "remaining": int}``
+        when an iteration is queued, ``None`` when no loop is active.
+        The backend decrements its iteration counter as part of this
+        call so consecutive callers can't double-fire.
+        """
+        result = await self._rpc(RpcMethod.POP_PENDING_LOOP_ITERATION)
+        if isinstance(result, dict) and isinstance(result.get("prompt"), str):
+            return result
+        return None
+
+    async def cancel_pending_loop(self) -> bool:
+        """RPC: clear ``/loop`` state on the backend. Returns ``True``
+        if a loop was actually cancelled."""
+        result = await self._rpc(RpcMethod.CANCEL_PENDING_LOOP)
+        return bool(result)
+
+    async def loop_status(self) -> dict:
+        """RPC: snapshot the active ``/loop`` state for the panel
+        header. Cheap (just three session fields); safe to poll."""
+        result = await self._rpc(RpcMethod.LOOP_STATUS)
+        return result or {}
+
+    async def loop_resume(self) -> str:
+        """RPC: flip a paused loop to pumping. Returns the prompt
+        verbatim so the caller can fire it via ``_run`` directly
+        (bypassing the cancel guard). Empty string when nothing to
+        resume."""
+        result = await self._rpc(RpcMethod.LOOP_RESUME)
+        return result or ""
+
+    async def loop_pause(self) -> bool:
+        """RPC: pause the active loop without advancing the counter.
+
+        Called by ``_check_loop_continuation`` when an iteration's
+        ``_run`` raised — the failed iteration stays at its
+        current index so a subsequent resume retries it."""
+        result = await self._rpc(RpcMethod.LOOP_PAUSE)
+        return bool(result)
+
     # ── Compaction / Learning ────────────────────────────────────
 
     async def compact_if_needed(self, ctx_tokens: int, max_ctx: int) -> msg.SessionCleared | None:
-        result = await self._rpc("compact_if_needed", ctx_tokens=ctx_tokens, max_ctx=max_ctx)
+        result = await self._rpc(
+            RpcMethod.COMPACT_IF_NEEDED, ctx_tokens=ctx_tokens, max_ctx=max_ctx
+        )
         if result is None or result is False:
             return None
         if isinstance(result, msg.SessionCleared):
@@ -320,17 +499,17 @@ class BackendClient:
         return None
 
     async def extract_learnings(self, user_msg: str, assistant_msg: str) -> None:
-        await self._rpc("extract_learnings", user_msg=user_msg, assistant_msg=assistant_msg)
+        await self._rpc(RpcMethod.EXTRACT_LEARNINGS, user_msg=user_msg, assistant_msg=assistant_msg)
 
     # ── Knowledge ────────────────────────────────────────────────
 
     async def auto_sync_knowledge(self) -> str | None:
-        return await self._rpc("auto_sync_knowledge")
+        return await self._rpc(RpcMethod.AUTO_SYNC_KNOWLEDGE)
 
     # ── Hooks ────────────────────────────────────────────────────
 
     async def fire_session_start_hook(self) -> None:
-        await self._rpc("fire_session_start_hook")
+        await self._rpc(RpcMethod.FIRE_SESSION_START_HOOK)
 
     # ── Scheduler ────────────────────────────────────────────────
 
@@ -347,19 +526,19 @@ class BackendClient:
             self._push_handlers["scheduler_completed"] = lambda p: on_task_completed(
                 p.get("task_id", ""), p.get("description", ""), p.get("result", "")
             )
-        asyncio.ensure_future(self._rpc("start_scheduler"))
+        asyncio.ensure_future(self._rpc(RpcMethod.START_SCHEDULER))
 
     async def execute_scheduled_task(self, description: str) -> str:
-        return await self._rpc("execute_scheduled_task", description=description) or ""
+        return await self._rpc(RpcMethod.EXECUTE_SCHEDULED_TASK, description=description) or ""
 
     async def cancel_scheduled_task(self, task_id: str) -> msg.Info:
-        result = await self._rpc("cancel_scheduled_task", task_id=task_id)
+        result = await self._rpc(RpcMethod.CANCEL_SCHEDULED_TASK, task_id=task_id)
         return result if isinstance(result, msg.Info) else msg.Info(text=str(result or ""))
 
     async def get_scheduled_tasks(self, include_done: bool = True) -> list:
         from types import SimpleNamespace
 
-        tasks = await self._rpc("get_scheduled_tasks", include_done=include_done) or []
+        tasks = await self._rpc(RpcMethod.GET_SCHEDULED_TASKS, include_done=include_done) or []
         return [SimpleNamespace(**t) if isinstance(t, dict) else t for t in tasks]
 
     # ── Sync properties (cached) ─────────────────────────────────
@@ -393,7 +572,7 @@ class BackendClient:
         asyncio.ensure_future(self._transport.send(msg.Cancel()))
 
     def toggle_verbose(self) -> bool:
-        asyncio.ensure_future(self._rpc("toggle_verbose"))
+        asyncio.ensure_future(self._rpc(RpcMethod.TOGGLE_VERBOSE))
         return True
 
     def wire_queue_hook(self, queue: list) -> None:

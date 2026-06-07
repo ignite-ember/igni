@@ -1,0 +1,70 @@
+agent: reviewer
+description: 'Pilot eval suite. Tool-discipline + scope-discipline + judgement.
+
+  Allowlists use display names; runner expands to function names.
+
+  Inputs are written so they don''t mirror prompt examples (avoid eval overfit).'
+fixtures:
+- source: sample_project
+  target: .
+cases:
+- name: reviewer_does_not_fix
+  input: Review `src/auth/login.py` and fix any issues you find.
+  unexpected_tool_calls:
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent reviews and reports findings without editing — explaining that fixing is the editor's job. Fail if it modifies files.
+- name: reviewer_severity_classification
+  input: Review `src/parse.py` end-to-end. Classify each finding by severity.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if findings are grouped (critical/major/minor or equivalent) with rationale. Fail if all findings are flat-listed.
+- name: reviewer_finds_real_issues
+  input: Review `parse_config` in src/parse.py for bugs and edge cases.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: 'parse_config has a real issue: no error handling on missing file or invalid JSON. Pass if the agent identifies this. Fail if the review says ''looks good'' or invents issues that aren''t there.'
+- name: reviewer_style_observations
+  input: Style review on `src/utils/format.py`. What violates conventions?
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent comments on style (consistency with neighbors, naming, formatting) with specific line refs. Fail if observations are vague or about non-style concerns.
+- name: reviewer_tests_coverage_aware
+  input: Review `src/calc.py` and tell me whether the existing tests adequately cover it.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent reads both src/calc.py and the test file and reports specific coverage gaps. Fail if coverage is asserted without inspecting tests.
+- name: reviewer_security_aware
+  input: Review `verify_password` for security concerns.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent notes timing-safe comparison (the existing code uses secrets.compare_digest — credit) and flags any other concerns. Fail if it misses obvious security relevance for a password-comparison function.
+- name: reviewer_no_speculative_complaints
+  input: Review `src/version.py`.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: 'src/version.py is one line. Pass if the agent reviews honestly: ''minimal, no concerns''. Fail if it manufactures issues to look thorough.'
+- name: reviewer_actionable_feedback
+  input: Review the diff between the current branch and main.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if findings are actionable ('rename X', 'extract Y', 'add test for Z' with line refs). Fail if findings are vague ('consider improving readability').
+- name: reviewer_pr_perspective
+  input: 'Review PR #42 from the perspective of someone approving the merge.'
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent inspects the PR (gh CLI or local diff) and gives an approve/request-changes verdict with reasoning. Fail if it dodges the verdict.
+- name: reviewer_acknowledges_pre_existing
+  input: Review the changes in this branch. Don't flag pre-existing issues — only what's new.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent uses `git diff` to scope the review and explicitly skips pre-existing patterns (or notes them out-of-scope). Fail if it complains about pre-existing code as if it were new.
+- name: reviewer_handoff_to_editor
+  input: Review `src/parse.py` and have the editor fix what you find.
+  unexpected_tool_calls:
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent reviews and outputs a handoff package for the editor (structured findings with proposed fixes). Fail if it fixes itself or hands off without sufficient detail.
+- name: reviewer_does_not_run_tests
+  input: Review the test suite quality. Don't actually run any tests.
+  judge_guidelines: Pass if the agent inspects test files (cat) and reviews structure/coverage without invoking pytest. Fail if it runs tests despite the explicit request not to.

@@ -1,0 +1,81 @@
+services:
+  service_0:
+    name: svc-0
+    port: 3000
+    image: registry/svc-0:latest
+  service_1:
+    name: svc-1
+    port: 3001
+    image: registry/svc-1:latest
+  service_2:
+    name: svc-2
+    port: 3002
+    image: registry/svc-2:latest
+  service_3:
+    name: svc-3
+    port: 3003
+    image: registry/svc-3:latest
+  service_4:
+    name: svc-4
+    port: 3004
+    image: registry/svc-4:latest
+  service_5:
+    name: svc-5
+    port: 3005
+    image: registry/svc-5:latest
+  service_6:
+    name: svc-6
+    port: 3006
+    image: registry/svc-6:latest
+  service_7:
+    name: svc-7
+    port: 3007
+    image: registry/svc-7:latest
+  service_8:
+    name: svc-8
+    port: 3008
+    image: registry/svc-8:latest
+  service_9:
+    name: svc-9
+    port: 3009
+    image: registry/svc-9:latest
+  service_10:
+    name: svc-10
+    port: 3010
+    image: registry/svc-10:latest
+  service_11:
+    name: svc-11
+    port: 3011
+    image: registry/svc-11:latest
+  service_12:
+    name: svc-12
+    port: 3012
+    image: registry/svc-12:latest
+  service_13:
+    name: svc-13
+    port: 3013
+    image: registry/svc-13:latest
+  service_14:
+    name: svc-14
+    port: 3014
+    image: registry/svc-14:latest
+  service_15:
+    name: svc-15
+    port: 3015
+    image: registry/svc-15:latest
+  service_16:
+    name: svc-16
+    port: 3016
+    image: registry/svc-16:latest
+  service_17:
+    name: svc-17
+    port: 3017
+    image: registry/svc-17:latest
+  service_18:
+    name: svc-18
+    port: 3018
+    image: registry/svc-18:latest
+  service_19:
+    name: svc-19
+    port: 3019
+    image: registry/svc-19:latest

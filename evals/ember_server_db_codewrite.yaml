@@ -1,0 +1,437 @@
+agent: main
+description: |
+  CEO comparison eval — phase 3: complex DB tasks where existing
+  schema, models, or infrastructure are the right reuse target.
+
+  Each case asks the agent for a feature that *would naturally
+  duplicate* an existing piece of DB infrastructure if the agent
+  doesn't first discover it. The cases pick reuse targets that
+  actually exist in ember-server today:
+
+  1. Soft-delete repositories — reuse the existing
+     ``created_at``/``created_by``/``updated_at``/``updated_by``
+     audit-column convention.
+  2. Per-user monthly AI quota — reuse the existing
+     ``telemetry_daily_aggregates`` table (tokens/cost per user
+     per day) instead of building a new tracker.
+  3. Retry transient commit-processing failures — extend the
+     existing INSERT-only ``commit_processing_steps`` history,
+     don't build a parallel retry table.
+  4. Replay failed webhooks — extend the existing ``webhook_events``
+     table (already has ``status``, designed for retry logic per
+     its own docstring), don't build a parallel queue.
+  5. Daily cleanup job — reuse the existing Celery setup
+     (``app/tasks/``); don't introduce APScheduler / cron / a
+     new scheduler.
+  6. Triage security issues — agent should query codeindex for
+     items with ``security != 'secure'`` / non-empty
+     ``vulnerabilities``, then propose fixes for the worst.
+     Tests the typed-filter surface of ``codeindex_query``.
+  7. Triage refactor candidates — agent should query codeindex
+     for ``needs_refactoring=true`` filtered by ``priority`` or
+     low ``quality``, then propose refactors. Same typed-filter
+     test from a quality angle.
+
+  IMPORTANT — prompt style: human-Slack-message, no table names,
+  no class names, no column names handed to the agent. The agent
+  has to query / grep its way to the right reuse target.
+
+  IMPORTANT — output style: code sketch + migration sketch + a
+  brief "what already exists" note. No file edits.
+
+  The expected_output and judge_guidelines DO know the right
+  answer so the judge can score; the input prompt does not.
+
+setup_module: evals.ember_server_codeindex.setup
+
+cases:
+
+# ── 1. Soft-delete for repositories ─────────────────────────────
+- name: db_soft_delete_repository
+  case_timeout: 360
+  input: |
+    Support requested undo for repository removal — when a user
+    deletes a repo from our system, we want to keep the data for
+    30 days in case they want to restore it. Add soft-delete
+    support so a repo can be hidden from normal queries but the
+    data stays around. Sketch the migration, the model change,
+    and the query change. Don't edit files.
+  expected_output: |
+    The agent:
+    1. Locates ``app/db/sql/models/repository.py`` and notes that
+       the existing audit columns are ``created_at`` /
+       ``created_by`` / ``updated_at`` / ``updated_by`` (NOT
+       ``created`` / ``creator`` etc.).
+    2. Adds ``deleted_at`` and ``deleted_by`` columns following
+       the same naming + nullable + ``TIMESTAMP(timezone=True)``
+       convention.
+    3. Writes a new alembic migration under ``alembic/versions/``
+       that adds the two columns, matching the existing migration
+       style (revision-id naming, ``op.add_column`` calls,
+       downgrade defined).
+    4. Notes that all existing repository queries need a
+       ``WHERE deleted_at IS NULL`` filter — and proposes either
+       a query helper or a partial index to make this enforceable.
+    5. Optionally proposes a periodic purge for rows where
+       ``deleted_at`` is older than 30 days, deferring it to the
+       case-5 cleanup-job pattern.
+  judge_guidelines: |
+    A. DISCOVERED EXISTING CONVENTION:
+       - Did the agent inspect ``app/db/sql/models/repository.py``
+         (or query ``codeindex_query``) BEFORE writing the schema?
+       - Did the agent name the real audit-column convention
+         (``_at``/``_by`` suffix, timezone-aware timestamps)?
+    B. REUSED CONVENTION:
+       - New columns named ``deleted_at`` / ``deleted_by``
+         (matching the existing ``created_at`` / ``created_by``
+         shape)?
+       - ``TIMESTAMP(timezone=True)`` matching existing columns?
+       - Nullable ``True`` (matches the absent-by-default semantic)?
+    C. NOT DUPLICATED INFRA:
+       - Did the agent NOT propose a new ``deleted`` boolean +
+         a separate ``deletion_log`` table when ``deleted_at`` /
+         ``deleted_by`` cleanly cover both presence and audit?
+       - Did the agent NOT propose copying the row to a separate
+         ``deleted_repositories`` archive table?
+       - Did the agent acknowledge the query-filter consequence
+         and propose a single source-of-truth for "active repos"?
+
+    PASS if A + 3-of-4 of B + C. FAIL if the agent built a new
+    table or used a non-matching column convention.
+
+# ── 2. Per-user monthly AI quota ────────────────────────────────
+- name: db_monthly_ai_quota
+  case_timeout: 360
+  input: |
+    Billing wants to enforce monthly quotas on AI API usage per
+    user — different limits per pricing tier. Add tracking + the
+    enforcement so a user over their monthly cap gets a clear
+    error instead of silently getting throttled. Show the schema
+    sketch, the enforcement check, and where it'd be wired in.
+  expected_output: |
+    The agent:
+    1. Locates the existing ``telemetry_daily_aggregates`` table
+       (added in migration ``9ba114af488a_add_telemetry_tables``)
+       which already tracks ``user_id``, ``date``, ``run_count``,
+       ``input_tokens``, ``output_tokens``, ``cost`` per user per
+       day.
+    2. Either (a) extends the same table with a tier column +
+       per-tier monthly aggregation query, or (b) builds a
+       monthly-rollup view on top of the existing daily rows —
+       NOT a brand-new ``user_quota`` table.
+    3. Locates the existing ``AIKeyPool`` rate-limit hook in
+       ``app/services/ai/key_pool.py`` and proposes calling the
+       quota check from there (or from the same call site as the
+       rate-limit check) — reusing the existing
+       request-acquisition path instead of adding a new
+       middleware.
+    4. Proposes a clean error shape (HTTP 402 / 429 + body
+       indicating "monthly quota exceeded") consistent with how
+       AIKeyPool already signals exhaustion.
+  judge_guidelines: |
+    A. DISCOVERED EXISTING TRACKING:
+       - Did the agent find ``telemetry_daily_aggregates``
+         (or its migration) BEFORE proposing schema?
+       - Did the agent find ``AIKeyPool`` and its rate-limit
+         hook?
+    B. REUSED INFRA:
+       - Quota state lives on or aggregates from the existing
+         telemetry table?
+       - Enforcement is wired into the existing
+         AIKeyPool acquisition path?
+       - Tier info comes from the existing ``org_memberships``
+         tier column (added in ``c3d4e5f6a7b8_add_tier_to_org_memberships``)?
+    C. NOT DUPLICATED:
+       - Did the agent NOT propose a new ``user_quota`` /
+         ``api_usage`` table when telemetry already has
+         per-user-per-day token + cost rows?
+       - Did the agent NOT propose a new middleware when the
+         AIKeyPool path is the natural enforcement point?
+       - Did the agent NOT propose a separate Redis counter when
+         per-month rollups are easily derivable from the
+         existing daily aggregates?
+
+    PASS if A + 2-of-3 of B + C. FAIL if the agent proposed a
+    fresh ``user_quota`` table without acknowledging telemetry,
+    or invented a separate enforcement middleware.
+
+# ── 3. Retry transient commit-processing failures ──────────────
+- name: db_commit_processing_retry
+  case_timeout: 360
+  input: |
+    Sometimes a commit fails to process due to transient errors —
+    upstream API timeouts, briefly unavailable LLM providers, etc.
+    We want it to automatically retry up to 3 times with
+    exponential backoff, and the retry attempts should be visible
+    in the processing history so support can debug. Sketch the
+    schema change (if any), the retry logic, and where it
+    integrates.
+  expected_output: |
+    The agent:
+    1. Locates ``app/db/sql/models/commit_processing_step.py``
+       and notes the existing pattern: rows are INSERT-only;
+       status updates create a NEW row with a higher
+       ``step_order`` rather than mutating the existing row. The
+       full history is preserved by design.
+    2. Proposes that retries follow the same INSERT-only pattern
+       — each retry attempt is a new ``commit_processing_steps``
+       row with the same ``commit_processing_id`` and a higher
+       ``step_order``, optionally with an ``attempt_number``
+       column added to disambiguate.
+    3. Locates ``app/tasks/process_git_event.py`` (the existing
+       Celery task path) and proposes adding the backoff + retry
+       cap there — Celery's native ``autoretry_for`` /
+       ``retry_backoff`` parameters reuse what's already wired,
+       rather than reimplementing a retry loop.
+    4. Picks 3 attempts with exponential backoff (2s, 4s, 8s or
+       similar) and stores the final FAILED status on the row of
+       the last attempt.
+  judge_guidelines: |
+    A. DISCOVERED EXISTING PATTERN:
+       - Did the agent find the INSERT-only history convention in
+         ``commit_processing_steps``?
+       - Did the agent find the Celery task in ``app/tasks/``?
+    B. REUSED INFRA:
+       - Retry attempts written as new ``commit_processing_steps``
+         rows (preserving history) rather than a new
+         ``commit_processing_retries`` table?
+       - Retry mechanism uses Celery's built-in
+         ``autoretry_for`` / ``retry_backoff`` rather than a
+         hand-rolled loop?
+    C. NOT DUPLICATED:
+       - Did the agent NOT propose a separate ``retry_log`` table
+         that parallels ``commit_processing_steps``?
+       - Did the agent NOT propose mutating the existing row
+         (which would lose history — the convention is
+         explicitly INSERT-only)?
+       - Did the agent NOT introduce a new background-task
+         framework (APScheduler, custom asyncio loop) when
+         Celery is already there?
+
+    PASS if A + B + 2-of-3 of C. FAIL if the agent introduced a
+    parallel retry-tracking table or a non-Celery retry loop.
+
+# ── 4. Replay failed webhooks ───────────────────────────────────
+- name: db_webhook_replay
+  case_timeout: 360
+  input: |
+    Operations needs the ability to replay webhooks that failed
+    to process — sometimes a downstream is down for a few minutes
+    and we lose events. Add a way to find recent failed deliveries
+    and re-run them through the normal processing path. Sketch
+    the data model, the replay action, and the operator entry
+    point.
+  expected_output: |
+    The agent:
+    1. Locates ``app/db/sql/models/webhook_event.py`` and notes
+       its docstring already states "Store incoming webhook
+       events for audit trail and retry logic." It already has
+       a ``WebhookEventStatus`` enum (``RECEIVED`` /
+       ``PROCESSING`` / ...) and a ``status`` column.
+    2. Proposes the replay flow: query
+       ``webhook_events WHERE status = 'failed' AND created_at >
+       now() - <window>``, then re-dispatch each event to the
+       same Celery task that processed it originally
+       (``app/tasks/process_git_event.py``) — NOT a new queue
+       table.
+    3. Proposes adding a ``last_attempt_at`` /
+       ``attempt_count`` to the existing table if needed for
+       backoff, or storing those in the ``payload`` JSONB blob
+       that's likely already there.
+    4. Proposes the operator entry point as either a CLI command
+       (``app/cli/...``) or an admin API endpoint, NOT a new
+       portal feature requiring auth/UI work.
+  judge_guidelines: |
+    A. DISCOVERED EXISTING TABLE:
+       - Did the agent find ``webhook_events`` and its status
+         enum BEFORE proposing a schema?
+       - Did the agent quote / reference the table's docstring
+         intent ("retry logic")?
+    B. REUSED INFRA:
+       - Replay queries the existing ``webhook_events`` rows
+         filtered by status?
+       - Replay re-dispatches to the existing Celery task path,
+         not a new ``webhook_replay_queue`` table?
+       - Adds at most a couple columns to the existing table
+         (``attempt_count``, ``last_attempt_at``) rather than a
+         new table?
+    C. NOT DUPLICATED:
+       - Did the agent NOT propose a parallel
+         ``failed_webhooks`` or ``webhook_dlq`` table?
+       - Did the agent NOT propose a new background-task
+         framework for replay?
+       - Did the agent NOT propose duplicating the GitHub/GitLab
+         webhook validation logic in the replay path (it should
+         re-dispatch, not re-parse)?
+
+    PASS if A + B + C. FAIL if the agent proposed a brand-new
+    DLQ table when the existing webhook_events row already
+    carries the necessary state.
+
+# ── 5. Daily cleanup job ────────────────────────────────────────
+- name: db_daily_cleanup_job
+  case_timeout: 360
+  input: |
+    A few cleanup tasks should run automatically every night —
+    purging old changeset uploads, expiring stuck
+    commit-processing rows that have been ``RUNNING`` for over
+    an hour, and clearing sticky AI-key assignments older than 7
+    days. Wire it up so it runs daily without manual triggers.
+    Sketch the scheduler config and one of the cleanup tasks.
+  expected_output: |
+    The agent:
+    1. Locates the existing Celery setup in ``app/tasks/`` (with
+       ``process_git_event.py`` and ``sync_github_installation.py``)
+       and proposes adding new tasks under the same module
+       structure.
+    2. Picks Celery Beat (the canonical scheduler for Celery) for
+       daily firing — NOT APScheduler, NOT a fresh asyncio
+       loop, NOT cron-on-the-host.
+    3. For the changeset cleanup, calls the
+       ``ChangesetUploader.delete_older_than`` helper (the one
+       sketched in the prior codewrite eval), or proposes adding
+       it if not present — does NOT reimplement GCS list+delete
+       inline.
+    4. For the sticky-key cleanup, calls
+       ``AIKeyPool.revoke_sticky_assignment(...)`` (or its bulk
+       equivalent) — does NOT manipulate Redis keys directly
+       from the new task.
+    5. Configures the schedule with explicit timing (e.g.
+       ``crontab(minute=0, hour=3)``) and wires the schedule
+       into the existing Celery app config.
+  judge_guidelines: |
+    A. DISCOVERED EXISTING INFRA:
+       - Did the agent find the Celery tasks in ``app/tasks/``?
+       - Did the agent acknowledge that ChangesetUploader and
+         AIKeyPool already exist as the natural call targets?
+    B. REUSED INFRA:
+       - Scheduler is Celery Beat (or another Celery-native
+         mechanism), not a parallel scheduler?
+       - Cleanup task delegates to existing service helpers
+         (ChangesetUploader, AIKeyPool) rather than
+         reimplementing GCS / Redis operations?
+       - New tasks live under ``app/tasks/`` matching the
+         existing convention?
+    C. NOT DUPLICATED:
+       - Did the agent NOT introduce APScheduler, schedule.py,
+         a custom asyncio loop, or a new "scheduler" service
+         when Celery Beat is the obvious answer?
+       - Did the agent NOT inline GCS or Redis client calls when
+         the existing services wrap those?
+       - Did the agent NOT create a parallel
+         ``cleanup_jobs`` service hierarchy?
+
+    PASS if A + 2-of-3 of B + C. FAIL if the agent introduced a
+    second scheduler, or reimplemented GCS/Redis operations
+    inside the new tasks.
+
+# ── 6. Triage security issues from chroma metadata ─────────────
+- name: db_security_triage
+  case_timeout: 360
+  input: |
+    Security review wants the worst three offenders fixed first —
+    we know there are some hardcoded secrets, command-injection
+    risks, and other ugly stuff lurking. Find the highest-severity
+    security problems in this codebase, pick the top three, and
+    sketch a fix for each. For each one I want the file, the
+    actual issue, and what the patch would look like.
+  expected_output: |
+    The agent:
+    1. Uses ``codeindex_query`` with the ``security`` typed filter
+       (``security=['minor-issues', 'major-issues']``) and/or the
+       ``vulnerabilities`` list filter (e.g.
+       ``vulnerabilities=['hardcoded-secret', 'command-injection',
+       'injection']``) to narrow the candidate set down to the
+       real flagged items. Does NOT grep the whole repo for
+       "password" / "secret" — that would be an order of
+       magnitude slower and miss semantic matches.
+    2. Sorts/picks by severity — items with ``security='major-issues'``
+       (e.g. ``app/config.py`` flagged with ``hardcoded_secret``,
+       or test files flagged with ``command-injection``) go to the
+       top. The codebase has 670+ flagged items at last index;
+       picking 3 from a ranked list is the right move.
+    3. For each chosen item: opens / cats the file, identifies the
+       actual offending code (not the symptom name), and proposes
+       a concrete patch — secret moved to env / settings, injected
+       command parameterized, etc.
+    4. Acknowledges the index has done the triage work — the agent
+       should reference the typed filters by name and explain
+       what it queried.
+  judge_guidelines: |
+    A. USED THE TYPED INDEX FILTERS:
+       - At least one ``codeindex_query`` call with
+         ``security`` or ``vulnerabilities`` filter set?
+       - Did the agent's response mention the filter / category
+         names rather than just file names from grep?
+    B. RESULTS GROUNDED IN REAL ITEMS:
+       - The 3 chosen files exist (e.g. ``app/config.py``,
+         ``conftest.py``, an ``index.html``, etc.)?
+       - Each chosen item is genuinely flagged
+         ``minor-issues`` / ``major-issues`` (not invented)?
+       - The proposed fix is concrete code, not handwave?
+    C. NOT THE WRONG TOOL FOR THE JOB:
+       - Did the agent NOT iterate full-repo `rg "password|secret"`
+         when typed filters would converge in one query?
+       - Did the agent NOT confabulate vulnerabilities that
+         aren't in the index?
+       - Did the agent NOT ignore severity (i.e., picking 3
+         random items rather than the worst 3)?
+
+    PASS if A + B + 2-of-3 of C. FAIL if no typed-filter use,
+    or if any chosen file isn't actually flagged in the index.
+
+# ── 7. Triage refactor candidates from chroma metadata ─────────
+- name: db_refactor_triage
+  case_timeout: 360
+  input: |
+    Tech-debt sprint starts Monday and we need three refactor
+    candidates. Find the worst-quality code in this repo — stuff
+    that's flagged for refactoring, with low maintainability or
+    high technical debt — pick three and show me what's wrong and
+    how you'd improve it. Don't pick test files; I want real
+    application code.
+  expected_output: |
+    The agent:
+    1. Uses ``codeindex_query`` with ``needs_refactoring=True``
+       and either ``priority`` (e.g.
+       ``priority=['high', 'critical']``), ``maintainability``
+       (e.g. ``maintainability='poor'``), or ``technical_debt``
+       (``technical_debt='high'``) typed filters to narrow the
+       candidate set. Does NOT pick by reading a few random
+       files.
+    2. Filters out test files — either via a ``path_prefix``
+       negation or by excluding items whose path starts with
+       ``tests/`` in the post-processing.
+    3. For each of the 3 chosen items: states the actual
+       quality / maintainability / technical-debt classification,
+       shows the offending code or its shape, and proposes a
+       concrete refactor (extract a helper, replace a god-class,
+       collapse duplicated branches, etc.).
+    4. Does NOT confabulate quality scores that aren't in the
+       index — every "quality=poor" claim should match a real
+       chroma record.
+  judge_guidelines: |
+    A. USED THE TYPED INDEX FILTERS:
+       - At least one ``codeindex_query`` call with
+         ``needs_refactoring=True`` or a quality / maintainability /
+         technical_debt filter?
+       - Did the agent reference the filter names in its
+         response rather than just naming files?
+    B. RESULTS GROUNDED IN REAL ITEMS:
+       - The 3 chosen files exist in the codebase?
+       - Each is genuinely flagged ``needs_refactoring=True`` /
+         low quality / high tech-debt (not invented)?
+       - None of the 3 are under ``tests/`` (the prompt
+         explicitly excluded them)?
+       - The proposed refactor is concrete (extract X into Y,
+         collapse Z) — not just "consider improving this"?
+    C. NOT THE WRONG TOOL FOR THE JOB:
+       - Did the agent NOT pick files arbitrarily without
+         querying the index?
+       - Did the agent NOT confabulate quality classifications?
+       - Did the agent NOT refactor code that doesn't actually
+         need it (i.e., picking from items the index says are
+         fine)?
+
+    PASS if A + 3-of-4 of B + C. FAIL if no typed-filter use,
+    or if any chosen item wasn't actually flagged for refactor.

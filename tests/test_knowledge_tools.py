@@ -1,4 +1,6 @@
-"""Tests for KnowledgeTools — agent-facing knowledge base operations."""
+"""Tests for ``KnowledgeTools`` — agent toolkit over ``SessionKnowledgeManager``."""
+
+from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -15,10 +17,11 @@ from ember_code.core.tools.knowledge import KnowledgeTools
 
 def _make_mgr():
     mgr = MagicMock()
-    mgr.knowledge = MagicMock()
+    mgr.knowledge = AsyncMock()
+    mgr.knowledge.delete_by_query = AsyncMock(return_value=0)
     mgr.search = AsyncMock(return_value=KnowledgeSearchResponse(query="test"))
     mgr.add = AsyncMock(return_value=KnowledgeAddResult.ok("Added."))
-    mgr.status = MagicMock(
+    mgr.status = AsyncMock(
         return_value=KnowledgeStatus(
             enabled=True, collection_name="proj", document_count=42, embedder="ember"
         )
@@ -52,15 +55,6 @@ class TestKnowledgeSearch:
         result = await tools.knowledge_search("nonexistent")
         assert "No knowledge found" in result
 
-    @pytest.mark.asyncio
-    async def test_search_passes_limit(self):
-        mgr = _make_mgr()
-        tools = KnowledgeTools(knowledge_mgr=mgr)
-        await tools.knowledge_search("q", limit=3)
-        mgr.search.assert_called_once()
-        _, kwargs = mgr.search.call_args
-        assert kwargs["limit"] == 3
-
 
 class TestKnowledgeAdd:
     @pytest.mark.asyncio
@@ -76,36 +70,41 @@ class TestKnowledgeAdd:
         mgr.add = AsyncMock(return_value=KnowledgeAddResult.fail("DB error"))
         tools = KnowledgeTools(knowledge_mgr=mgr)
         result = await tools.knowledge_add("content")
-        assert "Error" in result
-        assert "DB error" in result
+        assert "Error" in result and "DB error" in result
 
 
 class TestKnowledgeDelete:
-    def test_delete_preview(self):
-        mgr = _make_mgr()
-        tools = KnowledgeTools(knowledge_mgr=mgr)
-        result = tools.knowledge_delete("old", confirm=False)
+    @pytest.mark.asyncio
+    async def test_delete_preview(self):
+        tools = KnowledgeTools(knowledge_mgr=_make_mgr())
+        result = await tools.knowledge_delete("old", confirm=False)
         assert "confirm=True" in result
 
-    def test_delete_no_knowledge(self):
+    @pytest.mark.asyncio
+    async def test_delete_no_knowledge(self):
         mgr = _make_mgr()
         mgr.knowledge = None
-        tools = KnowledgeTools(knowledge_mgr=mgr)
-        result = tools.knowledge_delete("q", confirm=True)
+        result = await KnowledgeTools(knowledge_mgr=mgr).knowledge_delete("q", confirm=True)
         assert "not available" in result
+
+    @pytest.mark.asyncio
+    async def test_delete_dispatches_to_facade(self):
+        mgr = _make_mgr()
+        mgr.knowledge.delete_by_query.return_value = 3
+        result = await KnowledgeTools(knowledge_mgr=mgr).knowledge_delete("old", confirm=True)
+        assert "3" in result
+        mgr.knowledge.delete_by_query.assert_awaited_once_with("old")
 
 
 class TestKnowledgeStatus:
-    def test_status_enabled(self):
-        mgr = _make_mgr()
-        tools = KnowledgeTools(knowledge_mgr=mgr)
-        result = tools.knowledge_status()
-        assert "proj" in result
-        assert "42" in result
+    @pytest.mark.asyncio
+    async def test_status_enabled(self):
+        result = await KnowledgeTools(knowledge_mgr=_make_mgr()).knowledge_status()
+        assert "proj" in result and "42" in result
 
-    def test_status_disabled(self):
+    @pytest.mark.asyncio
+    async def test_status_disabled(self):
         mgr = _make_mgr()
-        mgr.status = MagicMock(return_value=KnowledgeStatus(enabled=False))
-        tools = KnowledgeTools(knowledge_mgr=mgr)
-        result = tools.knowledge_status()
+        mgr.status = AsyncMock(return_value=KnowledgeStatus(enabled=False))
+        result = await KnowledgeTools(knowledge_mgr=mgr).knowledge_status()
         assert "disabled" in result

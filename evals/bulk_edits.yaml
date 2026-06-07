@@ -1,0 +1,158 @@
+agent: editor
+description: |
+  Tool-choice discipline for bulk / structural edits.
+
+  Two failure modes this suite catches:
+
+  1. **Death by a thousand `edit_file` calls.** When the change is
+     wide (rename across 30 files, replace a deprecated API in 200
+     call sites), the right move is a single ``run_shell_command``
+     with ``sed -i`` / ``find … -exec`` / ``rg --replace``, not 100+
+     ``edit_file`` round-trips. ``edit_file`` is for surgical work;
+     ``sed`` is for sweeping work.
+
+  2. **Editing structured data by hand.** When the file is JSON /
+     YAML / CSV / TOML, ``edit_file`` is fragile — comma placement,
+     indentation, quoting all break silently. The right move is a
+     short Python (or ``jq``) script via shell that *parses, mutates,
+     re-serializes*. The model never has to count brackets.
+
+  Each case below is shaped so the wrong tool produces 50+ lines of
+  brittle edits, while the right tool is one shell call. We assert
+  on tool *count* and on whether ``edit_file`` shows up where it
+  shouldn't.
+
+fixtures:
+  - source: bulk_edits
+    target: .
+
+cases:
+
+# ── Bulk text replacement: prefer sed/rg over many edit_file ─────
+- name: bulk_replace_use_sed_not_many_edits
+  case_timeout: 240
+  input: |
+    In every Python file under `src/`, replace the deprecated import
+    `from old_lib import legacy_call` with
+    `from new_lib import modern_call`. There are dozens of call sites.
+  expected_tool_calls:
+    - Bash
+    - Write
+  unexpected_tool_calls:
+    - Edit
+  judge_guidelines: |
+    Pass if the agent uses one ``run_shell_command`` (``sed -i``,
+    ``rg --replace``, or ``find … -exec sed …``) to do the
+    sweep. Fail if the agent calls ``edit_file`` more than 2-3
+    times — 30+ surgical edits where one shell substitution suffices
+    is the anti-pattern this case is built to catch.
+
+- name: bulk_rename_symbol_use_one_command
+  case_timeout: 240
+  input: |
+    Rename the function `compute_legacy_total` to `compute_total`
+    everywhere in the project — definitions and call sites. Use a
+    single command, not file-by-file edits.
+  expected_tool_calls:
+    - Bash
+    - Write
+  unexpected_tool_calls:
+    - Edit
+  judge_guidelines: |
+    Pass if the agent uses one shell call (``sed`` / ``rg
+    --replace``) for the rename. Writing a tiny shell or python
+    script via ``Write`` first and then running it counts. Fail if
+    the agent reads each file and ``edit_file``s them one by one —
+    the user explicitly said "single command, not file-by-file".
+
+# ── Structured data: prefer Python script over edit_file ─────────
+- name: structured_json_use_python_not_edit
+  case_timeout: 240
+  input: |
+    `data/users.json` is a list of ~50 user objects. Add a new
+    field `"status": "active"` to every object, preserving the
+    existing structure and field order otherwise. Don't break the
+    JSON.
+  expected_tool_calls:
+    - Bash
+    - Write
+  unexpected_tool_calls:
+    - Edit
+  judge_guidelines: |
+    Pass if the agent writes a short Python (or ``jq``) script via
+    ``run_shell_command`` that loads / mutates / dumps the JSON
+    properly. Fail if the agent tries to ``edit_file`` 50 times to
+    insert ``"status": "active",`` per record — easy to break the
+    JSON (trailing commas, missing quotes), and 50 round-trips when
+    one parse-and-dump suffices.
+
+- name: structured_yaml_use_python_not_edit
+  case_timeout: 240
+  input: |
+    `config/services.yaml` defines ~20 services. Add a new
+    `health_check_path: /health` field to every service block.
+    Preserve YAML formatting and the existing ordering.
+  expected_tool_calls:
+    - Bash
+    - Write
+  unexpected_tool_calls:
+    - Edit
+  judge_guidelines: |
+    Pass if the agent uses Python's ``ruamel.yaml`` / ``yaml`` (or a
+    careful ``yq``) via shell to parse / mutate / serialize. Fail if
+    the agent uses ``edit_file`` per service block — YAML
+    indentation is delicate; a Python round-trip is safer and
+    cheaper.
+
+- name: structured_csv_use_python_not_edit
+  case_timeout: 240
+  input: |
+    `data/products.csv` has ~100 rows. Add a new column `discount`
+    after the `price` column, default value `0`. The CSV has a
+    header row.
+  expected_tool_calls:
+    - Bash
+    - Write
+  unexpected_tool_calls:
+    - Edit
+  judge_guidelines: |
+    Pass if the agent writes a Python script (``csv`` module or
+    ``pandas``) via shell, OR uses ``awk`` to inject the column.
+    Fail if the agent ``edit_file``s 100 rows by hand — almost
+    guaranteed to break.
+
+# ── Boundary: surgical edits SHOULD use edit_file ────────────────
+- name: single_typo_uses_edit_file_not_sed
+  case_timeout: 120
+  input: |
+    In `src/utils/format.py`, function `to_snake_case` has a typo:
+    `value.lower().replace(' ', '__')` should use a single
+    underscore. Just fix that one line.
+  expected_tool_calls:
+    - Edit
+    - Bash
+  unexpected_tool_calls: []
+  judge_guidelines: |
+    Pass if the agent uses ``edit_file`` (one surgical replacement
+    in one file). Reading the file via ``cat`` first is fine. Fail
+    if the agent reaches for ``sed`` for a one-character fix in one
+    file — that's over-engineering; ``edit_file`` is the
+    appropriate tool here. (This is the *boundary* case — sed
+    isn't always wrong, but it's wrong when the edit is single and
+    surgical.)
+
+- name: small_edits_use_edit_file_under_three_files
+  case_timeout: 120
+  input: |
+    Two files have a hardcoded port `8080` that should be `9090`:
+    `src/server.py` line 12, and `src/health.py` line 8. Fix both.
+  expected_tool_calls:
+    - Edit
+    - Bash
+  unexpected_tool_calls: []
+  judge_guidelines: |
+    Pass if the agent uses ``edit_file`` on each of the two files
+    (two surgical edits is fine). ``sed`` is also acceptable here —
+    either tool works. Fail if the agent does something
+    over-engineered like writing a Python script for two one-line
+    changes.

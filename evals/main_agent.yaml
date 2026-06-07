@@ -1,0 +1,736 @@
+agent: main
+description: "Pilot eval suite for the main (orchestrator) agent. Verifies the model\npicks the correct mode of operation on every turn:\n\n  - Direct mode: simple/single-concern requests handled with own tools,\n    NO delegation.\n  - spawn_agent: exactly one specialty applies.\n  - spawn_team(mode='broadcast'): 2+ independent concerns, parallel.\n  - spawn_team(mode='tasks'): large autonomous goal, team plans + iterates.\n  - spawn_team(mode='coordinate'): sequential dependencies (rare).\n\nSchema reference:\n  expected_tool_calls   — ALLOWLIST (Agno reliability: agent must only\n                          call tools in this list).\n  unexpected_tool_calls — BLOCKLIST (Ember custom: agent must NOT call\n                          these — e.g. spawn_team for simple chat).\n  judge_guidelines      — rubric the LLM judge applies to the final\n                          response; the judge can verify which\n                          specialists were named in spawn_team's\n                          agent_names argument by reading the synthesis\n                          that the main agent produces.\n\nKnown limitation: ReliabilityEval matches tool NAMES only, not args.\nTo verify \"spawn_team was called with agent_names='security,reviewer'\"\nwe rely on the judge reading the synthesis. A future tool-args\nassertion would tighten this.\n"
+cases:
+- name: direct_simple_chat_no_spawn
+  input: 'Hi! Just curious — what can you help me with?
+
+    '
+  unexpected_tool_calls:
+  - spawn_team
+  - spawn_agent
+  judge_guidelines: 'Pass if the agent answers the meta-question directly with a brief
+
+    capability summary. Fail if it spawns any specialist for a
+
+    conversational greeting.
+
+    '
+- name: direct_trivial_question_no_spawn
+  input: 'What does HTTP status 418 mean?
+
+    '
+  unexpected_tool_calls:
+  - spawn_team
+  - spawn_agent
+  - Edit
+  - Write
+  judge_guidelines: 'Pass if the agent answers from its own knowledge ("I''m a teapot")
+
+    with no tool calls at all. Fail if it spawns a specialist or runs
+
+    a web search for a textbook fact.
+
+    '
+- name: direct_single_file_read_no_spawn
+  input: 'Show me what''s in `src/utils/format.py`.
+
+    '
+  expected_tool_calls:
+  - Bash
+  unexpected_tool_calls:
+  - spawn_team
+  - spawn_agent
+  judge_guidelines: 'Pass if the agent uses Read directly. Fail if it dispatches to the
+
+    explorer agent for a single-file display.
+
+    '
+- name: direct_single_grep_no_spawn
+  input: 'Find every place we import `requests` in this repo.
+
+    '
+  expected_tool_calls:
+  - Bash
+  unexpected_tool_calls:
+  - spawn_team
+  - spawn_agent
+  judge_guidelines: 'Pass if the agent runs a Grep itself. Fail if it spawns explorer
+
+    for a single-pattern search.
+
+    '
+- name: direct_one_line_typo_fix_no_spawn
+  input: 'In `README.md`, fix the typo "instalation" → "installation".
+
+    '
+  expected_tool_calls:
+  - Edit
+  - Bash
+  unexpected_tool_calls:
+  - spawn_team
+  - spawn_agent
+  - Write
+  judge_guidelines: 'Pass if the agent does the fix itself with Read+Edit. Fail if it
+
+    delegates to editor for a one-character typo.
+
+    '
+- name: direct_run_tests_no_spawn
+  input: 'Run the test suite and tell me if anything fails.
+
+    '
+  expected_tool_calls:
+  - Bash
+  unexpected_tool_calls:
+  - spawn_team
+  - spawn_agent
+  judge_guidelines: 'Pass if the agent runs Bash with pytest/equivalent itself. Fail if
+
+    it spawns qa for a one-shot test run.
+
+    '
+- name: direct_status_followup_no_spawn
+  input: 'Anything else I should know about that?
+
+    '
+  unexpected_tool_calls:
+  - spawn_team
+  - spawn_agent
+  judge_guidelines: 'A pure conversational follow-up. Pass if the agent answers from
+
+    conversation context without spawning. Fail if it dispatches a
+
+    specialist for a status check.
+
+    '
+- name: direct_ambiguous_clarify_no_spawn
+  input: 'Clean up the code.
+
+    '
+  unexpected_tool_calls:
+  - spawn_team
+  - spawn_agent
+  - Edit
+  - Write
+  judge_guidelines: 'Pass if the agent asks a clarifying question (which file? what
+
+    kind of cleanup?) before doing anything. Fail if it spawns a
+
+    specialist or starts editing on a vague directive.
+
+    '
+- name: single_specialist_security_review
+  input: 'Run a deep security review of `src/auth/login.py` only — I just want
+
+    one expert''s perspective on this single file. Authentication issues,
+
+    token handling, timing attacks, the works.
+
+    '
+  expected_tool_calls:
+  - spawn_agent
+  - Bash
+  - spawn_team
+  - create_agent
+  judge_guidelines: 'Pass if the agent uses spawn_agent with the security specialist.
+
+    Fail if it spawns a multi-agent team or handles the deep review
+
+    itself.
+
+    '
+- name: single_specialist_architecture_design
+  case_timeout: 480
+  input: 'Design the architecture for a new background-job system: Redis-backed
+
+    queue, retry/backoff, idempotency keys. I want one architect''s
+
+    opinion before any implementation.
+
+    '
+  expected_tool_calls:
+  - spawn_agent
+  - Bash
+  - spawn_team
+  - create_agent
+  unexpected_tool_calls:
+  - Write
+  - Edit
+  judge_guidelines: 'Pass if the agent uses spawn_agent with the architect specialist
+
+    and does NOT proceed to implementation. Fail if it broadcasts or
+
+    writes code itself before getting the design.
+
+    '
+- name: single_specialist_pr_review
+  input: 'Review PR #142 — give me one thorough reviewer pass on the diff.
+
+    '
+  expected_tool_calls:
+  - spawn_agent
+  - Bash
+  - spawn_team
+  - create_agent
+  judge_guidelines: 'Pass if the agent uses spawn_agent with the reviewer specialist.
+
+    Fail if it uses spawn_team or does the review itself for a "one
+
+    pass" request.
+
+    '
+- name: single_specialist_explorer_codebase_walk
+  input: 'Explain how the request lifecycle works in this codebase end-to-end.
+
+    I want a structured map from one explorer.
+
+    '
+  expected_tool_calls:
+  - spawn_agent
+  - Bash
+  - spawn_team
+  - create_agent
+  judge_guidelines: 'Pass if the agent dispatches to the explorer via spawn_agent. Fail
+
+    if it does the codebase walk itself or fans out to multiple
+
+    specialists.
+
+    '
+- name: single_specialist_qa_test_plan
+  case_timeout: 480
+  input: 'I have a Stripe-based payments module at `src/payments/charges.py` that handles charges, refunds, and webhooks. Get one qa specialist to draft a comprehensive test plan covering happy paths, edge cases, and webhook signature verification — no implementation, just the plan.
+
+    '
+  expected_tool_calls:
+  - spawn_agent
+  - Bash
+  - spawn_team
+  - create_agent
+  unexpected_tool_calls:
+  - Write
+  - Edit
+  judge_guidelines: 'Pass if the agent dispatches qa via spawn_agent for a plan. Fail
+
+    if it writes test code itself or broadcasts.
+
+    '
+- name: single_specialist_git_commit
+  input: 'Stage everything and write a proper commit message for the changes
+
+    I just made.
+
+    '
+  expected_tool_calls:
+  - spawn_agent
+  - Bash
+  - spawn_team
+  - create_agent
+  judge_guidelines: 'Pass if the agent dispatches to git via spawn_agent (or runs the
+
+    commit itself with Bash if direct mode is also acceptable). Fail
+
+    if it spawns a multi-agent team for a single commit.
+
+    '
+- name: broadcast_security_and_quality
+  input: 'Review `src/api/uploads.py` for both security issues AND code-quality
+
+    problems. I want both perspectives.
+
+    '
+  expected_tool_calls:
+  - spawn_team
+  - Bash
+  - spawn_agent
+  - create_agent
+  judge_guidelines: 'Pass if the agent uses spawn_team with mode=''broadcast'' and
+
+    includes BOTH security and reviewer (or simplifier) specialists in
+
+    agent_names. The synthesis should mention both perspectives. Fail
+
+    if only one specialist is dispatched, or if mode is not broadcast.
+
+    '
+- name: broadcast_audit_three_dimensions
+  input: 'Audit the auth module for security issues, dead code, AND test
+
+    coverage gaps.
+
+    '
+  expected_tool_calls:
+  - spawn_team
+  - Bash
+  - spawn_agent
+  - create_agent
+  judge_guidelines: 'Pass if the agent uses spawn_team(mode=''broadcast'') with at least
+
+    three specialists covering security + dead-code (explorer or
+
+    simplifier) + coverage (qa). Fail if the dispatch is sequential or
+
+    misses a dimension.
+
+    '
+- name: broadcast_explore_and_review_in_parallel
+  input: 'How does the auth module work end-to-end, and is the test suite
+
+    good enough for it?
+
+    '
+  expected_tool_calls:
+  - spawn_team
+  - Bash
+  - spawn_agent
+  - create_agent
+  judge_guidelines: 'Pass if the agent broadcasts to explorer (architecture walk) AND
+
+    qa or reviewer (test coverage). Two independent perspectives,
+
+    parallel. Fail if it serially explores then reviews or if it does
+
+    everything itself.
+
+    '
+- name: broadcast_tests_plus_docs
+  input: 'For the new `BillingClient` class: add tests AND user-facing
+
+    documentation.
+
+    '
+  expected_tool_calls:
+  - spawn_team
+  - Bash
+  - spawn_agent
+  - create_agent
+  judge_guidelines: 'Pass if the agent broadcasts to qa + docs concurrently. Tests and
+
+    docs are independent — they should run in parallel. Fail if it
+
+    sequences them or only handles one.
+
+    '
+- name: broadcast_refactor_plus_test_update
+  input: 'Refactor the data-access layer in `src/repo/` to use async, AND
+
+    update the tests in `tests/repo/` to match.
+
+    '
+  expected_tool_calls:
+  - spawn_team
+  - Edit
+  - Write
+  - Bash
+  - spawn_agent
+  - create_agent
+  judge_guidelines: 'Pass if the agent dispatches editor + qa via spawn_team
+
+    (broadcast or tasks both acceptable). Fail if it does only one
+
+    side or runs strictly serially when broadcast would work.
+
+    '
+- name: broadcast_security_and_performance
+  input: 'Review the new `RateLimiter` for both security holes AND
+
+    performance issues (hot path, memory).
+
+    '
+  expected_tool_calls:
+  - spawn_team
+  - Bash
+  - spawn_agent
+  - create_agent
+  judge_guidelines: 'Pass if the agent broadcasts to security + a performance-aware
+
+    reviewer (reviewer or simplifier). Fail if only one perspective
+
+    is gathered.
+
+    '
+- name: broadcast_three_specialists_same_target
+  input: 'Look at `src/payments/`: I want a security review, a code-quality
+
+    review, and a test-coverage report — all together.
+
+    '
+  expected_tool_calls:
+  - spawn_team
+  - Bash
+  - spawn_agent
+  - create_agent
+  judge_guidelines: 'Pass if the agent fires spawn_team(mode=''broadcast'') with three
+
+    specialists: security + reviewer (or simplifier) + qa. All three
+
+    should appear in the synthesis. Fail otherwise.
+
+    '
+- name: broadcast_two_independent_modules
+  input: 'Add a `--verbose` flag to the CLI in `cli.py`, AND add request-id
+
+    logging in `middleware.py`. The two changes are independent.
+
+    '
+  expected_tool_calls:
+  - spawn_team
+  - Edit
+  - Write
+  - Bash
+  - spawn_agent
+  - create_agent
+  judge_guidelines: 'Pass if the agent dispatches editor twice in parallel via
+
+    spawn_team(broadcast or tasks). Fail if it sequences both edits
+
+    itself when they''re explicitly independent.
+
+    '
+- name: broadcast_design_review_and_security_review
+  input: 'Take a look at the proposed design in `docs/RFC-OAUTH.md`. I want
+
+    both an architecture review AND a security review of the design.
+
+    '
+  expected_tool_calls:
+  - spawn_team
+  - Bash
+  - spawn_agent
+  - create_agent
+  judge_guidelines: 'Pass if the agent broadcasts to architect + security in parallel.
+
+    Both perspectives are independent. Fail if it consults only one
+
+    or sequences them.
+
+    '
+- name: broadcast_explore_plus_diagnose
+  input: 'The CI pipeline keeps timing out around the database tests. Can you
+
+    figure out what''s going on AND map out the relevant code paths?
+
+    '
+  expected_tool_calls:
+  - spawn_team
+  - Bash
+  - spawn_agent
+  - create_agent
+  judge_guidelines: 'Pass if the agent broadcasts to debugger (or diagnostician) +
+
+    explorer in parallel. Fail if it picks only one or runs them
+
+    strictly sequentially.
+
+    '
+- name: tasks_implement_feature_end_to_end
+  case_timeout: 600
+  input: 'Implement a new "API key revocation" feature end-to-end: schema
+
+    migration, repository, service, route, tests, docs. You decide the
+
+    breakdown.
+
+    '
+  expected_tool_calls:
+  - spawn_team
+  - Edit
+  - Write
+  - Bash
+  - spawn_agent
+  - create_agent
+  judge_guidelines: 'Pass if the agent uses spawn_team with mode=''tasks'' (or
+
+    ''coordinate'' if ''tasks'' is unavailable) — the work is too large
+
+    to enumerate up-front and the team should plan + iterate. Fail if
+
+    it tries to do every layer itself with one giant plan, or if it
+
+    uses broadcast for layered work that has dependencies.
+
+    '
+- name: tasks_refactor_module
+  input: 'Refactor the entire `src/billing/` module from class-based services
+
+    to dataclass-based + functional. Plan and execute the migration.
+
+    '
+  expected_tool_calls:
+  - spawn_team
+  - Edit
+  - Write
+  - Bash
+  - spawn_agent
+  - create_agent
+  judge_guidelines: 'Pass if the agent uses spawn_team(mode=''tasks'') for an autonomous,
+
+    iterative refactor. Fail if it tries to touch every file from a
+
+    flat upfront plan (won''t fit) or uses broadcast where there are
+
+    cross-file dependencies.
+
+    '
+- name: tasks_migrate_database_layer
+  case_timeout: 600
+  input: 'Migrate the database layer from raw psycopg2 to SQLAlchemy core.
+
+    Touch whatever needs touching. Tests must still pass.
+
+    '
+  expected_tool_calls:
+  - spawn_team
+  - Edit
+  - Write
+  - Bash
+  - spawn_agent
+  - create_agent
+  judge_guidelines: 'Pass if the agent uses spawn_team(mode=''tasks'') for autonomous
+
+    migration. Fail if it broadcasts (concerns aren''t independent —
+
+    every file change can break tests) or does it inline.
+
+    '
+- name: tasks_audit_and_fix
+  case_timeout: 600
+  input: 'Audit the security of the entire authentication subsystem and FIX
+
+    what you find. Don''t stop at a report.
+
+    '
+  expected_tool_calls:
+  - spawn_team
+  - Edit
+  - Bash
+  - spawn_agent
+  - create_agent
+  judge_guidelines: 'Pass if the agent uses spawn_team(mode=''tasks'') — find + fix is a
+
+    multi-step autonomous loop. Fail if it broadcasts (the fix step
+
+    depends on the audit findings, not independent) or runs only the
+
+    audit half.
+
+    '
+- name: anti_no_spawn_for_simple_question
+  input: 'What''s the difference between a Promise and a Future?
+
+    '
+  unexpected_tool_calls:
+  - spawn_team
+  - spawn_agent
+  - Edit
+  - Write
+  judge_guidelines: 'Pure knowledge question. Pass if the agent answers from its own
+
+    knowledge with no tool calls. Fail for any spawn or shell out.
+
+    '
+- name: anti_no_spawn_team_with_one_specialist
+  input: 'Run a single comprehensive security review of `src/api/`. I just
+
+    want one expert pass.
+
+    '
+  expected_tool_calls:
+  - spawn_agent
+  - Bash
+  - create_agent
+  unexpected_tool_calls:
+  - spawn_team
+  judge_guidelines: 'The user explicitly asked for one specialist. Pass if the agent
+
+    uses spawn_agent. Fail if it uses spawn_team for a single-name
+
+    list — wasted overhead.
+
+    '
+- name: anti_dont_pick_wrong_specialist_for_bug
+  input: '`parse_int("0x1A")` is throwing ValueError. Fix the bug in
+
+    `src/parser.py`.
+
+    '
+  expected_tool_calls:
+  - Edit
+  - Bash
+  - spawn_agent
+  - create_agent
+  judge_guidelines: 'Pass if the agent fixes it directly (Read+Edit) OR dispatches to
+
+    editor (or debugger). Fail if it spawns architect, qa, or docs
+
+    for a localized bug fix — those are wrong specialists.
+
+    '
+- name: anti_dont_broadcast_when_dependent
+  input: 'First, design the new caching layer. Then, after the design is
+
+    approved, implement it.
+
+    '
+  expected_tool_calls:
+  - spawn_agent
+  - Bash
+  - create_agent
+  unexpected_tool_calls:
+  - spawn_team
+  judge_guidelines: 'The user explicitly sequenced design THEN implement. Pass if the
+
+    agent dispatches the architect first via spawn_agent and waits on
+
+    approval before any editor work. Fail if it broadcasts both
+
+    concurrently — that violates the user''s stated dependency.
+
+    '
+- name: anti_dont_overuse_tools_when_memory_suffices
+  input: 'Remind me — what''s my preferred test framework?
+
+    '
+  unexpected_tool_calls:
+  - spawn_team
+  - spawn_agent
+  judge_guidelines: 'Pass if the agent answers from memory (or asks if memory is
+
+    empty) without searching the codebase. Read on a config file is
+
+    acceptable as a fallback. Fail if it dispatches a specialist or
+
+    runs a search for what should be in memory.
+
+    '
+- name: anti_dont_skip_delegation_for_obvious_multi_concern
+  input: 'Audit the entire `src/payments/` directory for security holes,
+
+    dead code, AND missing tests.
+
+    '
+  expected_tool_calls:
+  - spawn_team
+  - Bash
+  - spawn_agent
+  - create_agent
+  unexpected_tool_calls:
+  - Edit
+  judge_guidelines: 'The request is textbook multi-concern. Pass if the agent uses
+
+    spawn_team(mode=''broadcast''). Fail if it tries to do all three
+
+    audits itself in serial — the prompt explicitly says broadcast
+
+    is the workhorse for 2+ independent concerns.
+
+    '
+- name: routing_bug_fix_to_editor_or_debugger
+  input: '`divide(0, 0)` returns NaN instead of raising. Trace the bug and
+
+    fix it.
+
+    '
+  expected_tool_calls:
+  - Edit
+  - Bash
+  - spawn_agent
+  - spawn_team
+  - create_agent
+  judge_guidelines: 'Pass if the agent either fixes it directly (Read+Edit+Bash) OR
+
+    dispatches editor / debugger via spawn_agent. Fail if it routes
+
+    to architect, qa, or docs.
+
+    '
+- name: routing_pr_review_to_reviewer
+  input: 'Look over PR #88 for me — does it look good to merge?
+
+    '
+  expected_tool_calls:
+  - spawn_agent
+  - Bash
+  - spawn_team
+  - create_agent
+  judge_guidelines: 'Pass if the agent dispatches to the reviewer specialist. Direct
+
+    handling with Read+Bash is also acceptable. Fail if it routes to
+
+    editor, architect, or qa for a PR-look-over.
+
+    '
+- name: routing_security_audit_to_security
+  input: 'Audit `auth/jwt.py` for cryptographic and token-handling issues.
+
+    '
+  expected_tool_calls:
+  - spawn_agent
+  - Bash
+  - spawn_team
+  - create_agent
+  judge_guidelines: 'Pass if the agent dispatches to the security specialist
+
+    specifically. Fail if it routes to a generic reviewer for a
+
+    domain-specific cryptographic review.
+
+    '
+- name: routing_codebase_map_to_explorer
+  input: 'Map every file that touches the user-creation flow.
+
+    '
+  expected_tool_calls:
+  - spawn_agent
+  - Bash
+  - spawn_team
+  - create_agent
+  judge_guidelines: 'Pass if the agent dispatches the explorer (or does the trace
+
+    itself with Grep+Glob+Read for a small number of files). Fail if
+
+    it routes to editor, qa, or architect for a pure mapping task.
+
+    '
+- name: routing_test_plan_to_qa
+  input: 'Generate a test plan for the existing `Cache` class — happy paths,
+
+    edge cases, concurrency.
+
+    '
+  expected_tool_calls:
+  - spawn_agent
+  - Bash
+  - spawn_team
+  - create_agent
+  unexpected_tool_calls:
+  - Edit
+  - Write
+  judge_guidelines: 'Pass if the agent dispatches qa for a plan (no implementation).
+
+    Fail if it routes to editor (which would write tests instead of
+
+    planning them) or to architect.
+
+    '
+- name: routing_docs_update_to_docs
+  input: 'Update `docs/CONFIGURATION.md` to reflect the new `api_url`
+
+    override we added.
+
+    '
+  expected_tool_calls:
+  - Edit
+  - spawn_agent
+  - Bash
+  - spawn_team
+  - create_agent
+  unexpected_tool_calls:
+  - Write
+  judge_guidelines: 'Pass if the agent edits the docs file directly OR dispatches the
+
+    docs specialist via spawn_agent. Fail if it routes to editor for
+
+    a documentation-only change (docs is the dedicated specialty).
+
+    '

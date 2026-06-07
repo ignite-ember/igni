@@ -1,27 +1,26 @@
-"""Knowledge management — ChromaDB-backed vector knowledge for agents."""
+"""Project knowledge — Chroma-backed per-project index with YAML sync."""
 
-from ember_code.core.knowledge.embedder_registry import EmbedderRegistry
+from ember_code.core.knowledge.index import KnowledgeIndex
+from ember_code.core.knowledge.ingest import Ingester, IngestError
 from ember_code.core.knowledge.manager import KnowledgeManager
 from ember_code.core.knowledge.models import (
     KnowledgeAddResult,
-    KnowledgeFilter,
     KnowledgeSearchResponse,
     KnowledgeSearchResult,
     KnowledgeStatus,
     KnowledgeSyncResult,
 )
 from ember_code.core.knowledge.sync import KnowledgeSyncer
-from ember_code.core.knowledge.vector_store import VectorStoreAdapter
 
 __all__ = [
-    "EmbedderRegistry",
+    "KnowledgeIndex",
     "KnowledgeManager",
+    "KnowledgeSyncer",
+    "Ingester",
+    "IngestError",
     "KnowledgeAddResult",
-    "KnowledgeFilter",
     "KnowledgeSearchResponse",
     "KnowledgeSearchResult",
     "KnowledgeStatus",
     "KnowledgeSyncResult",
-    "KnowledgeSyncer",
-    "VectorStoreAdapter",
 ]

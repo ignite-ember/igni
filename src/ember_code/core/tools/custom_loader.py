@@ -56,12 +56,19 @@ def _load_tools_from_file(file_path: Path) -> list:
 
 def load_custom_tools(
     project_dir: Path | None = None,
+    *,
+    plugin_tool_dirs: list[tuple[str, Path]] | None = None,
 ) -> list[Toolkit]:
     """Discover and load custom tools from .ember/tools/ directories.
 
     Scans directories in priority order (higher priority wins on conflicts):
     1. ~/.ember/tools/ (global user tools)
     2. <project>/.ember/tools/ (project tools)
+
+    Plugins contribute additional tool directories via ``plugin_tool_dirs``
+    as ``(plugin_name, tools_dir)`` tuples. Plugin toolkits are named
+    ``custom_<plugin>_<file>`` so a plugin's tool file can never shadow
+    or be shadowed by a same-named file in the user's own ``.ember/tools/``.
 
     Returns a list of Agno Toolkit instances, one per Python file.
     """
@@ -95,6 +102,29 @@ def load_custom_tools(
             logger.info(
                 "Loaded %d custom tool(s) from %s",
                 len(functions),
+                py_file,
+            )
+
+    for plugin_name, tools_dir in plugin_tool_dirs or []:
+        if not tools_dir.is_dir():
+            continue
+        for py_file in sorted(tools_dir.glob("*.py")):
+            if py_file.name.startswith("_"):
+                continue
+
+            functions = _load_tools_from_file(py_file)
+            if not functions:
+                continue
+
+            toolkit = CustomToolkit(
+                name=f"custom_{plugin_name}_{py_file.stem}",
+                functions=functions,
+            )
+            toolkits.append(toolkit)
+            logger.info(
+                "Loaded %d custom tool(s) from plugin '%s' file %s",
+                len(functions),
+                plugin_name,
                 py_file,
             )
 

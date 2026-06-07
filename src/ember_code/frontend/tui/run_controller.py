@@ -72,10 +72,11 @@ class RunController:
         self._run_output_tokens = 0
         self._streamed = False
 
-        # Learning extraction runs every N turns (or before compaction)
+        # Turn counter — kept for status-bar / logging only.
+        # Memory is now agent-driven (Agno's ``update_user_memory``
+        # tool, exposed in AGENTIC mode). The previous every-10-turn
+        # blind extraction is gone.
         self._turn_count = 0
-        self._learning_interval = 10
-        self._pending_learn_messages: list = []  # accumulated since last extraction
 
         # Hook system messages queued for injection into next AI turn
         self._pending_hook_context: list[str] = []
@@ -113,10 +114,10 @@ class RunController:
 
     def _has_usable_model(self) -> bool:
         """Check if there's at least one model with valid credentials."""
-        from ember_code.core.auth.credentials import get_access_token
+        from ember_code.core.auth.credentials import CloudCredentials
 
         settings = self._app.settings
-        cloud_token = get_access_token(settings.auth.credentials_file)
+        cloud_token = CloudCredentials(settings.auth.credentials_file).access_token
         for cfg in settings.models.registry.values():
             key = cfg.get("api_key", "")
             if key == "cloud_token" and cloud_token:
@@ -129,6 +130,16 @@ class RunController:
 
     async def process_message(self, message: str) -> None:
         """Entry point — queue or execute a message."""
+        # User input pre-empts any active /loop. The /loop subcommands
+        # themselves go through, so the user can /loop stop or check
+        # /loop status without killing the loop they just configured.
+        # Loop iterations bypass this method (they call _run directly
+        # via _check_loop_continuation), so anything landing here is
+        # by definition fresh user input.
+        if not message.startswith("/loop"):
+            cancelled = await self._app.backend.cancel_pending_loop()
+            if cancelled:
+                self._conversation.append_info("Loop interrupted by user input.")
         # Slash commands always run immediately (they don't use the agent)
         if message.startswith("/"):
             await self._run(message)
@@ -159,8 +170,14 @@ class RunController:
 
     # ── Main run loop ─────────────────────────────────────────────
 
-    async def _run(self, message: str) -> None:
-        self._conversation.append_user(message)
+    async def _run(self, message: str, *, display: str | None = None) -> None:
+        # ``display`` lets callers show one string in chat while
+        # sending a different one to the agent. The loop machinery
+        # uses this so the user sees the bare prompt while the
+        # agent gets the ``<loop-iteration>`` wrapper that tells it
+        # not to ask questions between iterations. When unset,
+        # display IS the message (the normal case).
+        self._conversation.append_user(display if display is not None else message)
 
         # Inject accumulated shell context (from ! commands) into the message
         # after displaying — the user sees clean text, the AI gets the context
@@ -178,7 +195,12 @@ class RunController:
                 logger.debug("Command result: kind=%s action=%s", proto.kind, proto.action)
                 from ember_code.protocol.messages import CommandResult
 
-                result = CommandResult(kind=proto.kind, content=proto.content, action=proto.action)
+                result = CommandResult(
+                    kind=proto.kind,
+                    content=proto.content,
+                    action=proto.action,
+                    display_content=getattr(proto, "display_content", "") or "",
+                )
                 self._app.render_command_result(result)
             except Exception as e:
                 logger.error("Command failed: %s", e, exc_info=True)
@@ -203,9 +225,6 @@ class RunController:
             hook_ctx = "\n".join(self._pending_hook_context)
             message = f"{message}\n<hook-context>{hook_ctx}</hook-context>"
             self._pending_hook_context.clear()
-
-        # Save original for learning
-        original_message = message
 
         # ── FE: prepare UI ──
         self._spinner = AgentActivityWidget(label="Thinking")
@@ -304,10 +323,14 @@ class RunController:
 
         # ── Background post-run work (non-blocking) ──
         self._turn_count += 1
-        assistant_text = "".join(self._run_output_text) if self._run_output_text else ""
-        self._pending_learn_messages.append((original_message, assistant_text))
-        if self._turn_count % self._learning_interval == 0:
-            self._flush_learnings()
+        # Note: we no longer auto-extract learnings every N turns. The
+        # agent now drives memory itself via the ``update_user_memory``
+        # tool that Agno's LearningMachine exposes when configured in
+        # AGENTIC mode (see ``core/learn.py``). Periodic blind
+        # extraction was firing model calls on every 10th turn even
+        # when nothing memorable had been said. Turn count is still
+        # tracked because ``_post_run_compaction`` references it
+        # indirectly via the status bar.
 
         asyncio.create_task(self._post_run_compaction())
         await self._drain_queue()
@@ -320,7 +343,6 @@ class RunController:
             backend = self._app.backend
             result = await backend.compact_if_needed(ctx_tokens, max_ctx)
             if result:
-                self._flush_learnings()
                 self._conversation.append_info(
                     "Context auto-compacted — older messages summarized."
                 )
@@ -334,26 +356,99 @@ class RunController:
         except Exception as e:
             logger.debug("Post-run compaction failed: %s", e)
 
-    def _flush_learnings(self) -> None:
-        """Send accumulated messages to learning extraction via backend."""
-        if not self._pending_learn_messages:
-            return
-        pairs = self._pending_learn_messages[:]
-        self._pending_learn_messages.clear()
-        backend = self._app.backend
-
-        async def _extract():
-            for user_msg, assistant_msg in pairs:
-                await backend.extract_learnings(user_msg, assistant_msg)
-
-        task = asyncio.create_task(_extract())
-        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
-
     async def _drain_queue(self) -> None:
         if self._queue:
             next_msg = self._queue.pop(0)
             self._sync_queue_panel()
             await self._run(next_msg)
+            return
+        # Queue empty — check whether a /loop wants the next turn.
+        await self._check_loop_continuation()
+
+    async def _check_loop_continuation(self) -> None:
+        """If a ``/loop`` is active, fire its next iteration.
+
+        The backend owns the iteration counter — we ask it for the next
+        prompt and it returns ``None`` when the loop is exhausted or
+        was cancelled. Iterations call ``_run`` directly, bypassing the
+        ``process_message`` entry point so they don't trigger the
+        user-input cancellation guard.
+        """
+        try:
+            descriptor = await self._app.backend.pop_pending_loop_iteration()
+        except Exception:
+            logger.debug("pop_pending_loop_iteration failed", exc_info=True)
+            return
+        if not descriptor:
+            return
+        # Completion marker — one-shot signal that the loop just hit
+        # its cap and was cleared on the backend. Render a summary so
+        # the user knows the loop ended naturally; don't recurse.
+        if descriptor.get("completed"):
+            total = descriptor.get("total_iterations", 0)
+            self._conversation.append_info(
+                f"✓ Loop completed after {total} iteration{'s' if total != 1 else ''}."
+            )
+            return
+        # Safety-cap pause marker — implicit loop hit
+        # ``LOOP_HARD_CAP``. The backend has already flipped the
+        # loop to paused; the user decides whether to continue
+        # (``/loop resume``) or terminate (``/loop stop``). Don't
+        # recurse — paused loops short-circuit ``advance_loop``.
+        if descriptor.get("safety_cap_paused"):
+            n = descriptor.get("iteration", 0)
+            self._conversation.append_info(
+                f"⏸ Loop paused at iteration {n} — safety ceiling reached. "
+                f"Run /loop resume to continue, or /loop stop to terminate."
+            )
+            return
+        prompt = descriptor["prompt"]
+        iteration = descriptor.get("iteration", 0)
+        remaining = descriptor.get("remaining", 0)
+        # The descriptor's ``prompt`` is wrapped with the autonomous-
+        # loop ``<loop-iteration>`` meta tag so the agent doesn't ask
+        # the user between iterations. ``display_prompt`` is the
+        # original (unwrapped) string — what the user sees in chat.
+        display = descriptor.get("display_prompt") or prompt
+        # When the implicit safety cap just expanded itself for
+        # another batch, surface a one-shot info line so the user
+        # knows the loop hasn't been silently retrofitted with a
+        # new ceiling — they can still ``/loop stop`` if they
+        # think it should end.
+        if descriptor.get("auto_extended"):
+            self._conversation.append_info(
+                "↻ Safety cap reached — auto-extending the loop. Run `/loop stop` to terminate."
+            )
+        # Visible iteration banner so the user has an anchor between
+        # iterations. The "N remaining" half is only meaningful when
+        # the run is explicitly capped — for an implicit safety
+        # net "X remaining" is misleading since the cap auto-extends.
+        if descriptor.get("cap_explicit"):
+            banner = f"↻ Loop iteration {iteration} ({remaining} remaining after this one)"
+        else:
+            banner = f"↻ Loop iteration {iteration}"
+        self._conversation.append_info(banner)
+        # Wrap the iteration's ``_run`` so any unhandled error
+        # (429 from the model API past Agno's retries, network
+        # failure, tool exception, etc.) *pauses* the loop instead
+        # of advancing. The counter stays at the failing iteration
+        # N, so a subsequent ``/loop resume`` retries N rather
+        # than skipping to N+1.
+        try:
+            await self._run(prompt, display=display)
+        except Exception as e:
+            logger.exception("Loop iteration %d failed", iteration)
+            try:
+                await self._app.backend.loop_pause()
+            except Exception:
+                # If even pausing fails, fall through — the loop
+                # is in a degraded state but we've at least logged
+                # the original error.
+                logger.debug("loop_pause RPC also failed", exc_info=True)
+            self._conversation.append_error(
+                f"⏸ Loop paused after iteration {iteration} failed: {e}. "
+                f"Run /loop resume to retry, or /loop stop to terminate."
+            )
 
     # ── Render protocol messages ─────────────────────────────────
 
@@ -422,6 +517,12 @@ class RunController:
                 self._finalize_spinner()
                 self._status.end_run()
                 self._status.update_context_usage()
+            elif self._spinner:
+                # Mid-run iteration finished. The next model call hasn't
+                # started yet — flip the label back to "Thinking" so the
+                # idle counter in the activity widget resets and the user
+                # sees a fresh signal rather than a stale "Streaming".
+                self._spinner.set_label("Thinking")
 
         elif isinstance(proto, msg.RunStarted):
             await self._on_agent_started(

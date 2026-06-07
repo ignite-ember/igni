@@ -1,0 +1,147 @@
+agent: main
+description: |
+  CEO comparison eval: same shape as ``codeindex.yaml`` but targeting
+  ember-server (a real ~290-file Python codebase with a server-side
+  AST + LLM pipeline, FastAPI endpoints, alembic migrations, GCP
+  integrations, and webhook handlers).
+
+  Cases ask about real code: AIKeyPool, the JSONL emitter, the
+  CodeAnalysisWorkflow, the changeset uploader, the codeindex API
+  endpoints, etc. The same suite runs WITH and WITHOUT codeindex —
+  the comparison data feeds the CEO onboarding report.
+
+setup_module: evals.ember_server_codeindex.setup
+
+cases:
+
+# ── 1. "Where do we manage AI API keys?" ─────────────────────────
+- name: server_finds_aikeypool
+  case_timeout: 240
+  input: |
+    Where in this codebase do we manage the pool of AI API keys for
+    upstream LLM calls? I want the file and the main class. Use the
+    code index — don't grep the whole repo.
+  expected_output: |
+    The agent identifies ``app/services/ai/key_pool.py`` and the
+    ``AIKeyPool`` class as the place where AI API keys are pooled,
+    rotated, and rate-limited.
+  judge_guidelines: |
+    Pass if the answer names ``app/services/ai/key_pool.py`` (or
+    just ``key_pool.py`` under the AI services area) and either
+    ``AIKeyPool`` or "the pool class". Fail if the agent invents a
+    file name, points at the wrong place, or returns no concrete
+    file.
+
+# ── 2. "Find the JSONL emitter" ──────────────────────────────────
+- name: server_finds_jsonl_emitter
+  case_timeout: 240
+  input: |
+    The server emits a JSONL changeset for every commit and uploads
+    it to GCS. Find the emitter and the uploader — what file/class
+    drives each? I want concrete paths.
+  expected_output: |
+    The agent identifies ``app/services/jsonl_changeset/emitter.py``
+    (with the ``JSONLChangesetEmitter`` class) as the emitter and
+    ``app/services/changeset_uploader/`` (with ``ChangesetUploader``)
+    as the uploader.
+  judge_guidelines: |
+    Pass if the answer names the emitter file (jsonl_changeset/emitter.py
+    or similar) AND the uploader file (changeset_uploader). Naming
+    the classes (JSONLChangesetEmitter, ChangesetUploader) is a
+    bonus. Fail if either the emitter or uploader path is wrong or
+    missing.
+
+# ── 3. "What runs the per-commit pipeline?" ──────────────────────
+- name: server_finds_workflow_phases
+  case_timeout: 240
+  input: |
+    What's the orchestration class that runs the per-commit code
+    analysis (AST extraction → LLM summaries → folder rollups →
+    JSONL emission)? List the phases it runs in order.
+  expected_output: |
+    The agent identifies ``CodeAnalysisWorkflow`` in
+    ``app/workflows/code_analysis_workflow.py`` and lists 5 phases:
+    initial file summaries, entity summaries, final file summaries,
+    folder summaries, JSONL emission.
+  judge_guidelines: |
+    Pass if the answer names ``CodeAnalysisWorkflow`` (or just
+    "code_analysis_workflow") and lists at least 4 of the 5 phases.
+    The 5 phases are: InitialFileSummariesPhase, EntitySummariesPhase,
+    FinalFileSummariesPhase, FolderSummariesPhase, JSONLEmissionPhase.
+    Order matters slightly. Fail if the agent gets the orchestrator
+    name wrong or lists fewer than 4 phases.
+
+# ── 4. "Trace callers of a specific function" ───────────────────
+- name: server_traces_callers_of_acquire_key
+  case_timeout: 240
+  input: |
+    I want to change the signature of ``AIKeyPool.acquire_key`` in
+    ``app/services/ai/key_pool.py``. Use the code index reference
+    graph to show me everything that calls it so I can estimate
+    blast radius.
+  expected_output: |
+    The agent uses the reference graph (codeindex_tree on the
+    acquire_key entity) to list call sites of ``acquire_key`` — at
+    minimum it should surface ``app/dataset/dataset_creation/file_summarizer.py``
+    and ``app/dataset/dataset_creation/entity_summarizer.py`` (the
+    two LLM-summarizer modules).
+  judge_guidelines: |
+    Pass if the answer names at least one real caller of
+    ``acquire_key`` in the LLM summarizer code path (file_summarizer
+    or entity_summarizer). Bonus if the agent uses ``codeindex_tree``
+    rather than grepping. Fail if the agent invents callers or claims
+    acquire_key isn't called.
+
+# ── 5. "Semantic search for the auth flow" ───────────────────────
+- name: server_semantic_search_auth_flow
+  case_timeout: 240
+  input: |
+    Where is the JWT-based authentication for client API endpoints
+    handled? I'm looking for the file that issues / verifies tokens
+    for the client-facing API (not the internal portal). Use the
+    code index to find it.
+  expected_output: |
+    The agent identifies ``app/services/auth/jwt_service.py`` (or
+    the auth services dir) as the place where JWTs are signed and
+    verified. Bonus if it also identifies the middleware that
+    enforces auth on client endpoints.
+  judge_guidelines: |
+    Pass if the answer names ``app/services/auth/jwt_service.py``
+    (or close: ``app/services/auth/`` + JWT). Fail if the agent
+    points at portal auth (different system) or invents a file.
+
+# ── 6. "Find the alembic migration that added X" ────────────────
+- name: server_finds_alembic_migration
+  case_timeout: 240
+  input: |
+    Find the alembic migration file that creates the
+    ``commit_processing`` table. Show me its filename and the
+    ``CREATE TABLE`` statement.
+  expected_output: |
+    The agent locates the alembic migration that creates the
+    commit_processing table under ``alembic/versions/`` and shows
+    the CREATE TABLE for it.
+  judge_guidelines: |
+    Pass if the answer names a migration file under
+    ``alembic/versions/`` and shows the commit_processing table's
+    creation (CREATE TABLE statement or the model fields).
+    Fail if the agent points at a non-alembic file or invents a
+    migration name.
+
+# ── 7. Negative case: what's NOT in this codebase ───────────────
+- name: server_lighthouse_negative
+  case_timeout: 180
+  input: |
+    Does this codebase have any code related to lighthouses or
+    maritime navigation? Quick yes/no — don't read every file.
+  expected_output: |
+    The agent says no, ember-server has nothing about lighthouses
+    or maritime navigation, without confabulating any tenuous
+    connection.
+  judge_guidelines: |
+    Pass if the answer is a clear NO — nothing about lighthouses
+    or maritime navigation. Fail if the agent invents connections
+    (e.g. "the rate-limiter is like a lighthouse beacon"), reads
+    every file, or refuses to answer.
+  unexpected_tool_calls:
+    - spawn_team

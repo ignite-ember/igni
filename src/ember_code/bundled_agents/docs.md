@@ -1,7 +1,7 @@
 ---
 name: docs
 description: Maintains and updates project documentation — README, TODO, CHANGELOG, and docs/.
-tools: Read, Write, Edit, Bash, Glob, Grep
+tools: Write, Edit, Bash
 color: green
 
 tags:
@@ -60,7 +60,7 @@ Check for an `ember.md` file at the project root. It contains project-specific c
 Determine what triggered the documentation update:
 
 - **Code changes**: Run `git diff HEAD~1` or `git log --oneline -10` to understand recent changes. Read the modified source files to understand what actually changed.
-- **New features**: Use Glob and Grep to find new modules, agents, skills, or configuration options that need documenting.
+- **New features**: Use shell `find` / `fd` and `rg` to find new modules, agents, skills, or configuration options that need documenting.
 - **Full audit**: When asked to update all docs, systematically compare each documentation file against the current codebase state.
 
 ### Step 3: Read before writing
@@ -95,7 +95,7 @@ After updating, verify that:
 ### TODO.md
 
 Generate by combining:
-1. **Code TODOs**: Scan the codebase with `Grep` for `TODO`, `FIXME`, `HACK`, `XXX` comments. Group by module.
+1. **Code TODOs**: Scan the codebase with shell `rg` for `TODO`, `FIXME`, `HACK`, `XXX` comments. Group by module.
 2. **Planned features**: Check git issues, project memory, and any roadmap references.
 3. **Known issues**: Check for documented bugs or limitations.
 
@@ -290,10 +290,9 @@ Prioritize the most user-facing documentation first (README, QUICKSTART, CONFIGU
 
 ## Rules
 
-- **Always read code before documenting it** — never write documentation based on assumptions or other documentation alone.
-- **Use Grep for searching file contents** — never use Bash to run `grep` or `rg`.
-- **Use Glob for finding files by pattern** — not `find` or `ls -R` via Bash.
-- **Use Read for reading files** — not `cat` or `head` via Bash.
-- **Reserve Bash for git commands and build tools** — not for searching or reading code.
+- **Always read existing docs and source before editing** — never write documentation based on assumptions. Use shell `cat` to read both the source code being documented AND the doc file you're about to modify.
+- **Default to shell** for all reads, searches, and lookups (`cat`, `rg`, `find`, `ls`, etc.).
+- **Use `edit_file` to make changes to existing docs** — not shell heredocs, not `sed`, not `tee >`. The structured edit tool produces minimal, reliable diffs.
+- **Use `save_file` / `create_file`** for brand-new doc files only.
 - **Never invent features** — only document what exists in the code.
 - **Keep cross-references current** — if you rename or move a section, update all links to it.

@@ -247,6 +247,10 @@ class TestCommandHandler:
                     "message": "Not enough memories to optimize",
                 }
 
+        class MockCodeIndexSync:
+            async def sync_now(self, *, sha=None):
+                return None
+
         class MockSession:
             skill_pool = MockSkillPool()
             pool = MockPool()
@@ -255,6 +259,7 @@ class TestCommandHandler:
             hooks_map = {}
             persistence = MockPersistence()
             memory_mgr = MockMemoryMgr()
+            code_index_sync = MockCodeIndexSync()
 
         return MockSession()
 
@@ -291,23 +296,32 @@ class TestCommandHandler:
 
     @pytest.mark.asyncio
     async def test_agents(self, mock_session):
+        """Bare ``/agents`` opens the TUI panel (action result) rather
+        than printing markdown. The markdown listing was replaced by
+        the panel — same data, richer surface."""
         handler = CommandHandler(mock_session)
         result = await handler.handle("/agents")
-        assert result.kind == "markdown"
-        assert "Agents" in result.content
+        assert result.kind == "action"
+        assert result.action == "agents"
 
     @pytest.mark.asyncio
     async def test_skills(self, mock_session):
+        """Bare ``/skills`` opens the TUI panel (action result).
+        Mirrors the ``/agents`` change — panel replaces markdown
+        listing."""
         handler = CommandHandler(mock_session)
         result = await handler.handle("/skills")
-        assert result.kind == "markdown"
+        assert result.kind == "action"
+        assert result.action == "skills"
 
     @pytest.mark.asyncio
     async def test_hooks_empty(self, mock_session):
+        """``/hooks`` opens the hooks panel — returns an action
+        result, not an inline info message. The panel itself
+        surfaces the "no hooks active" empty state."""
         handler = CommandHandler(mock_session)
         result = await handler.handle("/hooks")
-        assert result.kind == "info"
-        assert "No hooks" in result.content
+        assert result.action == "hooks"
 
     @pytest.mark.asyncio
     async def test_clear(self, mock_session):
@@ -521,47 +535,31 @@ class TestQueueInjectorHook:
         assert result == "sync_result"
 
     @pytest.mark.asyncio
-    async def test_injects_queued_messages(self):
+    async def test_appends_queued_messages_to_result(self):
         queue = ["hello from user"]
-
-        class FakeAgent:
-            additional_input = None
-
-        agent = FakeAgent()
         hook = self._make_hook(queue=queue)
-        await hook(name="tool", func=lambda **kw: "ok", args={}, agent=agent)
-
-        assert agent.additional_input is not None
-        assert len(agent.additional_input) == 1
-        assert "hello from user" in agent.additional_input[0].content
+        result = await hook(name="tool", func=lambda **kw: "ok", args={})
+        assert result.startswith("ok")
+        assert "hello from user" in result
         assert queue == []
 
     @pytest.mark.asyncio
-    async def test_clears_previous_injection_on_next_call(self):
+    async def test_no_persistent_state_between_calls(self):
+        # Each call drains its own queue snapshot — no leakage between calls.
         queue = ["msg1"]
-
-        class FakeAgent:
-            additional_input = None
-
-        agent = FakeAgent()
         hook = self._make_hook(queue=queue)
+        first = await hook(name="tool", func=lambda **kw: "first", args={})
+        assert "msg1" in first
 
-        await hook(name="tool", func=lambda **kw: "ok", args={}, agent=agent)
-        assert agent.additional_input is not None
-
-        await hook(name="tool", func=lambda **kw: "ok", args={}, agent=agent)
-        assert agent.additional_input is None
+        second = await hook(name="tool", func=lambda **kw: "second", args={})
+        assert second == "second"  # nothing left in queue, no augmentation
 
     @pytest.mark.asyncio
     async def test_on_inject_callback(self):
         injected = []
         queue = ["a", "b"]
         hook = self._make_hook(queue=queue, on_inject=lambda msg: injected.append(msg))
-
-        class FakeAgent:
-            additional_input = None
-
-        await hook(name="tool", func=lambda **kw: "ok", args={}, agent=FakeAgent())
+        await hook(name="tool", func=lambda **kw: "ok", args={})
         assert injected == ["a", "b"]
 
     @pytest.mark.asyncio
@@ -569,33 +567,37 @@ class TestQueueInjectorHook:
         changed_count = []
         queue = ["x"]
         hook = self._make_hook(queue=queue, on_queue_changed=lambda: changed_count.append(1))
-
-        class FakeAgent:
-            additional_input = None
-
-        await hook(name="tool", func=lambda **kw: "ok", args={}, agent=FakeAgent())
+        await hook(name="tool", func=lambda **kw: "ok", args={})
         assert len(changed_count) == 1
 
     @pytest.mark.asyncio
-    async def test_no_agent_skips_injection(self):
+    async def test_drains_queue_without_agent(self):
+        # Tool result is what flows through to the model — agent kwarg is optional.
         queue = ["msg"]
         hook = self._make_hook(queue=queue)
         result = await hook(name="tool", func=lambda **kw: "ok", args={}, agent=None)
-        assert result == "ok"
-        assert queue == ["msg"]
+        assert "msg" in result
+        assert queue == []
 
-    def test_reset(self):
+    def test_reset_is_a_noop(self):
+        # Kept for API compatibility; should not raise.
         hook = self._make_hook()
-        hook._has_injected = True
         hook.reset()
-        assert hook._has_injected is False
+        hook.reset()
 
     def test_create_queue_hook_factory(self):
-        from ember_code.core.queue_hook import create_queue_hook
+        from ember_code.core.queue_hook import (
+            QueueInjectorHook,
+            QueuePersisterHook,
+            create_queue_hook,
+        )
 
         queue = []
-        hook = create_queue_hook(queue)
-        assert hook._queue is queue
+        injector, persister = create_queue_hook(queue)
+        assert isinstance(injector, QueueInjectorHook)
+        assert isinstance(persister, QueuePersisterHook)
+        assert injector._queue is queue
+        assert persister._injector is injector
 
 
 # ── extract_at_mention ───────────────────────────────────────────

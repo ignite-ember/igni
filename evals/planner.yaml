@@ -1,0 +1,53 @@
+agent: planner
+description: 'Pilot eval suite. Tool-discipline + scope-discipline + judgement.
+
+  Allowlists use display names; runner expands to function names.
+
+  Inputs are written so they don''t mirror prompt examples (avoid eval overfit).'
+fixtures:
+- source: sample_project
+  target: .
+cases:
+- name: planner_produces_structured_plan
+  input: I need to add multi-tenancy support to our user model. Plan the work.
+  judge_guidelines: Pass if the plan has phases/steps, dependencies, and risks. Fail if it's a flat to-do list with no structure.
+- name: planner_does_not_execute
+  input: Plan and start implementing a rate limiter.
+  unexpected_tool_calls:
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent produces only the plan and explicitly hands off implementation to the editor. Fail if it modifies files.
+- name: planner_acknowledges_dependencies
+  input: Plan migrating our config loader from JSON to typed Pydantic models.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the plan identifies dependencies (existing call sites, test fixtures, downstream consumers) and orders steps so they don't break each other. Fail if dependencies are ignored.
+- name: planner_reads_existing_code
+  input: Plan adding a caching layer to `parse_config`.
+  expected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent reads parse_config and its callers via shell before planning. Fail if it plans without inspecting the code.
+- name: planner_estimates_effort
+  input: Plan migrating from psycopg2 to SQLAlchemy core.
+  judge_guidelines: Pass if the plan includes effort estimates per phase (rough size or risk levels). Fail if it doesn't acknowledge effort/risk variance across phases.
+- name: planner_asks_for_constraints
+  input: Plan a logging refactor.
+  judge_guidelines: Way too vague. Pass if the agent asks about scope (which modules?), goals (centralization? structured?), and constraints (downtime tolerance) before producing the plan. Fail if it produces a generic plan.
+- name: planner_calls_out_unknowns
+  input: Plan a zero-downtime migration of our auth schema.
+  judge_guidelines: Pass if the plan explicitly names what's unknown (current schema layout, current load, deploy infrastructure) and gates phases on resolving them. Fail if the plan presents confidence it can't have.
+- name: planner_no_implementation_details
+  input: Plan adding a `--verbose` flag to the CLI.
+  judge_guidelines: Pass if the plan stays at the level of steps (locate CLI entry, identify logging points, add flag, propagate, test) without writing code. Fail if it embeds full code snippets that look like implementation.
+- name: planner_test_strategy_per_phase
+  input: Plan refactoring `Token` to support refresh tokens.
+  judge_guidelines: Pass if each phase notes what should be tested before moving on. Fail if testing is treated as a single end-of-plan checkbox.
+- name: planner_reversibility_considered
+  input: Plan migrating our DB primary key from int to UUID.
+  judge_guidelines: Pass if the plan considers reversibility (rollback strategy, dual-write windows) and addresses how to abandon mid-flight. Fail if it's a one-way march with no rollback story.
+- name: planner_handoff_clear
+  input: Plan adding observability to the request lifecycle, then I'll dispatch the editor.
+  judge_guidelines: Pass if the plan ends with a clean handoff package (specific files to touch, specific changes per phase). Fail if the plan is too abstract for the editor to act on directly.
+- name: planner_does_not_rerun_tests
+  input: Plan refactoring auth — don't run anything, just plan.
+  judge_guidelines: Pass if the agent reads code (Bash) but doesn't run tests/builds. Fail if it executes test/build commands when explicitly asked to only plan.

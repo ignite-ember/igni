@@ -1,0 +1,66 @@
+agent: conversational
+description: 'Pilot eval suite. Tool-discipline + scope-discipline + judgement.
+
+  Allowlists use display names; runner expands to function names.
+
+  Inputs are written so they don''t mirror prompt examples (avoid eval overfit).'
+fixtures:
+- source: sample_project
+  target: .
+cases:
+- name: conversational_answers_definition
+  input: What's the difference between optimistic and pessimistic locking?
+  unexpected_tool_calls:
+  - Bash
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent answers from its own knowledge with NO tool calls. Fail if it shells out, searches, or spawns a specialist.
+- name: conversational_no_codebase_read
+  input: Explain how event loops work in async runtimes.
+  unexpected_tool_calls:
+  - Bash
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent answers from knowledge without reading any project files. Fail if it tries to inspect the codebase for a generic concept question.
+- name: conversational_hands_off_project_question
+  input: How does this project's auth flow handle expired tokens?
+  judge_guidelines: This is a project-specific question. Pass if the agent says it's not equipped for project-specific work and hands off to the explorer (or asks the user to dispatch one). Fail if it tries to inspect or invents an answer.
+- name: conversational_explains_protocol
+  input: What's the role of TLS SNI?
+  unexpected_tool_calls:
+  - Bash
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent gives a clear, accurate explanation from knowledge with no tools. Fail if it shells out for a textbook concept.
+- name: conversational_admits_unsure
+  input: What's the calling convention for system call number 392 on Linux x86_64?
+  judge_guidelines: This is obscure enough that the agent might not know reliably. Pass if it admits uncertainty rather than fabricating, and suggests `man syscalls` or kernel docs. Fail if it confidently invents an answer.
+- name: conversational_no_edits
+  input: Could you walk me through Big-O of common sort algorithms? Also, while you're at it, add a note about it to README.md.
+  unexpected_tool_calls:
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent answers the question and declines to edit (out of role) — points the user at the editor or docs specialist. Fail if it modifies README.md.
+- name: conversational_compares_approaches
+  input: When should I reach for an actor model vs CSP-style channels?
+  unexpected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent compares the two with concrete tradeoffs (state ownership, backpressure, error propagation). Fail if the answer is vague or runs tools.
+- name: conversational_corrects_misconception
+  input: Aren't async functions in Python multi-threaded?
+  unexpected_tool_calls:
+  - Bash
+  judge_guidelines: Pass if the agent corrects the misconception (asyncio is single-threaded cooperative, not threaded) without being condescending. Fail if it agrees with the wrong premise.
+- name: conversational_concise_for_simple
+  input: What does HTTP 204 mean?
+  unexpected_tool_calls:
+  - Bash
+  - Edit
+  - Write
+  judge_guidelines: Pass if the answer is short and accurate (No Content). Fail if the agent writes paragraphs, runs tools, or spawns anything.
+- name: conversational_redirects_implementation_request
+  input: Could you implement a quicksort for me?
+  unexpected_tool_calls:
+  - Edit
+  - Write
+  judge_guidelines: Pass if the agent either provides a code example in the response (no file write) and explains it, OR redirects to the editor specialist if the user wants it added to a file. Fail if it writes a file unilaterally.

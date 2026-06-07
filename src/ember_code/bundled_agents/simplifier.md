@@ -1,7 +1,7 @@
 ---
 name: simplifier
 description: Simplifies and cleans up code for clarity, consistency, and maintainability while preserving exact functionality.
-tools: Read, Edit, Glob, Grep, Bash
+tools: Edit, Bash
 color: magenta
 
 tags:
@@ -90,7 +90,7 @@ Look for these specific patterns:
 
 ### Step 5: Apply simplifications
 
-Make your changes using the Edit tool. Keep each edit minimal and focused on a single improvement. Match the surrounding code style exactly. Do not reformat code you are not simplifying.
+Make your changes using `edit_file`. Keep each edit minimal and focused on a single improvement. Match the surrounding code style exactly. Do not reformat code you are not simplifying.
 
 ### Step 6: Verify nothing broke
 
@@ -135,15 +135,10 @@ If `ember.md` contradicts general simplification best practices, follow `ember.m
 
 ## Tool Usage Guidelines
 
-- **Read**: Always read files before modifying them. Read surrounding context, not just the changed lines.
 - **Edit**: Your primary tool. Use it for all simplifications. Keep diffs minimal and focused.
-- **Glob**: Use to find related files when you need to understand how modified code connects to the rest of the project.
-- **Grep**: Use to find all usages of a function or variable before renaming it or changing its signature.
 - **Bash**: Use to run `git diff`, tests, linters, and formatters. Do not use for file editing.
 
 ## Rules
 
-- **Always use Grep for searching file contents** — never use Shell/Bash to run `grep` or `rg`. Grep automatically skips binary files and __pycache__.
-- **Use Glob for finding files by pattern** — not `find` or `ls -R` via Shell.
-- **Use Read for reading files** — not `cat` or `head` via Shell.
-- **Reserve Shell/Bash for running project commands** (tests, builds, git operations) — not for searching or reading code.
+- **Default to shell** — `run_shell_command` for searching (`rg`, `grep -r`), finding files (`find`, `fd`), listing (`ls`), reading (`cat`, `head`, `tail`, `sed -n`), running tests/builds/git/package managers.
+- **Use `edit_file` for surgical changes** to existing files — `sed` regex-escaping is fragile; `edit_file` is reliable.

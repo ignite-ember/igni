@@ -138,9 +138,11 @@ class TestNextOccurrence:
 
 
 class TestTaskStore:
+    """Each test gets its own SQLite tmp file. No cross-test interference."""
+
     @pytest.fixture
     def store(self, tmp_path):
-        return TaskStore(db_path=tmp_path / "test_scheduler.db")
+        return TaskStore(db_path=tmp_path / "state.db")
 
     def _make_task(self, **kwargs):
         defaults = {
@@ -189,8 +191,8 @@ class TestTaskStore:
         )
 
         due = await store.get_due_tasks()
-        assert len(due) == 1
-        assert due[0].id == "past"
+        ids = [t.id for t in due]
+        assert ids == ["past"]
 
     @pytest.mark.asyncio
     async def test_get_all_excludes_done(self, store):
@@ -199,11 +201,29 @@ class TestTaskStore:
         await store.update_status("b", TaskStatus.completed)
 
         active = await store.get_all(include_done=False)
-        assert len(active) == 1
-        assert active[0].id == "a"
+        assert [t.id for t in active] == ["a"]
 
         all_tasks = await store.get_all(include_done=True)
-        assert len(all_tasks) == 2
+        assert {t.id for t in all_tasks} == {"a", "b"}
+
+    @pytest.mark.asyncio
+    async def test_get_all_orders_by_scheduled_at_desc(self, store):
+        """Tasks scheduled furthest in the future surface first.
+
+        Both the TUI tasks panel and ``list_scheduled_tasks`` render
+        the store's order verbatim — flipping the underlying ORDER BY
+        here is the only place this contract is enforced, so a
+        regression that drops ``.desc()`` (the historical default was
+        ``scheduled_at`` ascending) would silently flip the user's
+        view back to next-to-run-first.
+        """
+        now = datetime.now()
+        await store.add(self._make_task(id="soonest", scheduled_at=now + timedelta(hours=1)))
+        await store.add(self._make_task(id="latest", scheduled_at=now + timedelta(hours=3)))
+        await store.add(self._make_task(id="middle", scheduled_at=now + timedelta(hours=2)))
+
+        tasks = await store.get_all(include_done=False)
+        assert [t.id for t in tasks] == ["latest", "middle", "soonest"]
 
     @pytest.mark.asyncio
     async def test_recurrence_persisted(self, store):

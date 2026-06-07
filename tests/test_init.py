@@ -63,6 +63,135 @@ class TestInitializeProject:
             assert (ember_dir / "custom.txt").read_text() == "keep me"
 
 
+class TestHomeModelMigration:
+    """Older versions wrote a bundled Ember Cloud model entry into
+    every home config. Hosted models now come from cloud discovery
+    on session start, so those bundled rows are stale and get
+    stripped on upgrade. User-customised entries are left alone."""
+
+    def _write_home_config(self, tmp_path: Path, body: str) -> Path:
+        home_ember = tmp_path / "home" / ".ember"
+        home_ember.mkdir(parents=True, exist_ok=True)
+        # ``.initialized`` marker simulates a prior install so the
+        # migration branch runs (not the first-run bootstrap).
+        (home_ember / ".initialized").touch()
+        (home_ember / "config.yaml").write_text(body)
+        return home_ember / "config.yaml"
+
+    def test_legacy_m25_bundle_is_removed(self, tmp_path):
+        """Old M2.5 bundled cloud entry is fully stripped. The
+        ``default`` field, which named the now-deleted entry, is
+        cleared so cloud discovery (or the resolver's first-in-
+        registry fallback) picks something current."""
+        import yaml
+
+        path = self._write_home_config(
+            tmp_path,
+            "models:\n"
+            "  default: MiniMax-M2.5\n"
+            "  registry:\n"
+            "    MiniMax-M2.5:\n"
+            "      provider: openai_like\n"
+            "      model_id: MiniMaxAI/MiniMax-M2.5\n"
+            "      url: https://api.ignite-ember.sh/v1\n"
+            "      api_key: cloud_token\n"
+            "      context_window: 204800\n"
+            "      vision: false\n",
+        )
+        with _patch_home(tmp_path):
+            initialize_project(tmp_path)
+        data = yaml.safe_load(path.read_text()) or {}
+        # The whole models block tidied away — no leftover empty
+        # registry or empty default.
+        assert "models" not in data
+
+    def test_legacy_m27_bundle_is_also_removed(self, tmp_path):
+        """The M2.7 bundled entry from the intermediate release is
+        recognised the same way (Ember Cloud URL + ``cloud_token``)
+        and stripped — we never want a shadowed copy of a
+        cloud-discovered entry sitting in home config."""
+        import yaml
+
+        path = self._write_home_config(
+            tmp_path,
+            "models:\n"
+            "  default: MiniMax-M2.7\n"
+            "  registry:\n"
+            "    MiniMax-M2.7:\n"
+            "      provider: openai_like\n"
+            "      model_id: MiniMaxAI/MiniMax-M2.7\n"
+            "      url: https://api.ignite-ember.sh/v1\n"
+            "      api_key: cloud_token\n"
+            "      context_window: 204800\n"
+            "      vision: false\n",
+        )
+        with _patch_home(tmp_path):
+            initialize_project(tmp_path)
+        data = yaml.safe_load(path.read_text()) or {}
+        assert "models" not in data
+
+    def test_customised_entry_is_kept(self, tmp_path):
+        """User pointed an entry at their own endpoint — migration
+        must not touch it. The customised URL (not
+        ``ignite-ember.sh``) is the signal."""
+        path = self._write_home_config(
+            tmp_path,
+            "models:\n"
+            "  default: my-corp-model\n"
+            "  registry:\n"
+            "    my-corp-model:\n"
+            "      provider: openai_like\n"
+            "      model_id: my-corp/model-v1\n"
+            "      url: https://my-corp-proxy.internal/v1\n"
+            "      api_key: my_custom_token\n",
+        )
+        before = path.read_text()
+        with _patch_home(tmp_path):
+            initialize_project(tmp_path)
+        assert path.read_text() == before
+
+    def test_mixed_config_keeps_only_custom(self, tmp_path):
+        """Home config with both a bundled cloud entry and a custom
+        one: bundled is dropped, custom is kept, ``default`` stays
+        because it pointed at the custom entry."""
+        import yaml
+
+        path = self._write_home_config(
+            tmp_path,
+            "models:\n"
+            "  default: my-model\n"
+            "  registry:\n"
+            "    MiniMax-M2.5:\n"
+            "      provider: openai_like\n"
+            "      model_id: MiniMaxAI/MiniMax-M2.5\n"
+            "      url: https://api.ignite-ember.sh/v1\n"
+            "      api_key: cloud_token\n"
+            "    my-model:\n"
+            "      provider: openai_like\n"
+            "      model_id: my/model\n"
+            "      url: https://my.example/v1\n"
+            "      api_key: my_token\n",
+        )
+        with _patch_home(tmp_path):
+            initialize_project(tmp_path)
+        data = yaml.safe_load(path.read_text()) or {}
+        assert "MiniMax-M2.5" not in data["models"]["registry"]
+        assert "my-model" in data["models"]["registry"]
+        assert data["models"]["default"] == "my-model"
+
+    def test_no_op_when_no_bundled_entries(self, tmp_path):
+        """Config without any bundled cloud entries is byte-stable
+        across restarts — migration is idempotent."""
+        path = self._write_home_config(
+            tmp_path,
+            "models:\n  default: gpt-4o\n  registry:\n    gpt-4o:\n      provider: openai_like\n",
+        )
+        before = path.read_text()
+        with _patch_home(tmp_path):
+            initialize_project(tmp_path)
+        assert path.read_text() == before
+
+
 class TestAgentCopy:
     def test_copies_builtin_agents(self, tmp_path):
         import ember_code.core.init as init_mod

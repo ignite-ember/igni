@@ -28,8 +28,8 @@ class ToolRegistry:
     - Skip denied tools entirely
     - Pass requires_confirmation_tools for "ask" tools
 
-    CodeIndex tools (CodeIndexSearch, CodeIndexEntity, CodeIndexDeps) are
-    only available when an Ember Cloud access token is provided.
+    The ``CodeIndex`` toolkit lazy-builds the per-project index on first
+    call so registration stays cheap.
     """
 
     def __init__(
@@ -57,10 +57,8 @@ class ToolRegistry:
             "Python": self._make_python,
             "Schedule": self._make_schedule,
             "NotebookEdit": self._make_notebook,
+            "CodeIndex": self._make_codeindex,
         }
-        # Register CodeIndex tools only when authenticated with Ember Cloud
-        if self._cloud_token:
-            self._factories["CodeIndex"] = self._make_codeindex
 
     @property
     def available_tools(self) -> list[str]:
@@ -229,36 +227,38 @@ class ToolRegistry:
             ]
         return NotebookTools(**kwargs)
 
-    # ── CodeIndex (Ember Cloud) ───────────────────────────────────
-
     def _make_codeindex(self, confirm: bool = False):
         from ember_code.core.tools.codeindex import CodeIndexTools
 
-        kwargs: dict = dict(
-            server_url=self._cloud_server_url,
-            access_token=self._cloud_token,
-            project_dir=str(self.base_dir),
-        )
+        kwargs: dict = dict(project_dir=str(self.base_dir))
         if confirm:
             kwargs["requires_confirmation_tools"] = [
                 "codeindex_search",
-                "codeindex_similar",
                 "codeindex_item",
                 "codeindex_references",
-                "codeindex_tree",
+                "codeindex_commits",
             ]
         return CodeIndexTools(**kwargs)
 
-    def load_custom_tools(self, project_dir: Path | None = None) -> list:
+    def load_custom_tools(
+        self,
+        project_dir: Path | None = None,
+        *,
+        plugin_tool_dirs: list[tuple[str, Path]] | None = None,
+    ) -> list:
         """Discover custom tools from .ember/tools/ and return as toolkit list.
 
         Scans directories in priority order:
         1. ~/.ember/tools/ (global user tools)
         2. <project>/.ember/tools/ (project tools)
+        3. Plugin tools (``plugin_tool_dirs``, namespaced ``custom_<plugin>_<file>``)
         """
         from ember_code.core.tools.custom_loader import load_custom_tools as _load
 
-        return _load(project_dir or self.base_dir)
+        return _load(
+            project_dir or self.base_dir,
+            plugin_tool_dirs=plugin_tool_dirs,
+        )
 
     @property
     def cloud_connected(self) -> bool:

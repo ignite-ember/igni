@@ -159,7 +159,7 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 | **Invocation** | `/skill-name [args]` | `/skill-name [args]` |
 | **Auto-trigger** | No | Yes — Orchestrator recognizes intent and loads matching skill |
 | **Execution modes** | Inline only | Inline (default) or forked (`context: fork` runs isolated sub-agent) |
-| **Built-in skills** | N/A | `/commit`, `/explain`, `/review-pr`, `/simplify`, `/update-docs` |
+| **Built-in skills** | N/A | `/commit`, `/explain`, `/resolve-issues`, `/simplify`, `/update-docs` |
 | **Progressive disclosure** | Full load | Metadata always loaded (~100 words), body loaded on invoke |
 | **Cross-compat** | N/A | Scans `.claude/skills/` by default (cross-tool support on) |
 

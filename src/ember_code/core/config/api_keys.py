@@ -1,7 +1,7 @@
 """Shared API key resolution logic.
 
 Centralises the ``api_key`` / ``api_key_env`` / ``api_key_cmd`` look-up
-so that ``ModelRegistry`` and ``EmbedderRegistry`` don't duplicate it.
+used by ``ModelRegistry``.
 """
 
 import os

@@ -10,6 +10,25 @@ Inspired by [Claude Code](https://github.com/anthropics/claude-code), Ember Code
 
 Claude Code uses a single agent loop — powerful but monolithic. Ember Code takes a different approach: **dynamic multi-agent orchestration**. Instead of one agent doing everything, Agno's team system decomposes tasks, routes them to specialized agents, and synthesizes results — all automatically.
 
+### The numbers
+
+Head-to-head benchmark on a 12-case software-engineering suite, 5 runs per system, deterministic grading. See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for the full breakdown.
+
+| | Ember Code (MiniMax-M2.7) + CodeIndex | Claude Code (Opus-4.7) |
+|---|---:|---:|
+| Directly mergeable (✅) | **49 / 60 (82 %)** | 31 / 60 (52 %) |
+| Needs clarification (⚠) | **4 / 60 (7 %)** | 22 / 60 (37 %) |
+| Wrong target (❌) | 7 / 60 (12 %) | 7 / 60 (12 %) |
+| Reproducibly correct cases (5/5 ✅) | **8 of 12** | 3 of 12 |
+| Cost per run | **~$0.05** | $4.01 |
+| Wall time mean | 2 331 s | **1 548 s** |
+
+**Ember Code wins by +18 ✅ trials at 1/80th the cost.** The gap is concentrated in the ⚠ band — Ember Code commits to a concrete answer where Claude Code stays in design-conversation mode. Both systems hit the same hard-wrong rate (12 %), so the win comes from converting partial/clarifying responses into directly-mergeable ones.
+
+The architectural choices that drive the gap: (1) **CodeIndex queried first, not files** — a pre-built semantic + metadata index lets the agent locate reuse targets and conventions by typed filter or HyDE-style code-shaped query, instead of grep-walking the repo. (2) **A mandatory "What already exists" preamble** — agent must name the reuse target, the closest near-miss it rejected, and the conventions to match before writing any code. (3) **A small, focused model with structured tools** — MiniMax-M2.7 + index access matches Opus-4.7 quality at 1/80th the price.
+
+### Feature comparison
+
 | Feature | Claude Code | Ember Code |
 |---|---|---|
 | Architecture | Single agent loop | Multi-agent teams (Agno) |
@@ -56,7 +75,51 @@ models:
 
 See [Quickstart](QUICKSTART.md) for the full setup guide.
 
+### Quickstart (new setup)
+
+1. **Install** — `brew install ignite-ember/tap/ignite-ember` (or `pip install ignite-ember`)
+2. **Authenticate** — `ignite-ember /login` for hosted models, or set `OPENAI_API_KEY` + add model to `.ember/config.yaml` for your own
+3. **Run** — `ignite-ember`
+
+See [Quickstart](QUICKSTART.md) for the full guide.
+
 ## Upgrading
+
+**v0.5.0** is the "Beat Claude Code" release. Cumulative changes since v0.3.8:
+
+### Benchmarks vs Claude Code (new in v0.5.0)
+
+- **Head-to-head benchmark suite.** 12 cases × 5 runs vs Claude Code on the same target codebase. Programmatic deterministic grading. Ember Code wins **49 / 60 ✅** vs **31 / 60 ✅** at one-eightieth of the per-run cost. Full breakdown in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+- **CodeIndex-first specialist agents.** New `*.codeindex.md` variants for `architect`, `debugger`, `explorer`, `reviewer`, `security`, `simplifier` — each with prompts tuned to query the index first instead of grepping. Auto-selected when a populated CodeIndex exists for the current commit.
+- **Mandatory "What already exists" preamble.** The main-agent prompt now requires every code-write response to start with a four-bullet section naming (a) the reuse target, (b) the closest near-miss it considered and rejected, (c) the conventions to match, (d) the parallel infrastructure it will *not* introduce. Forces contrastive reasoning before code is written.
+- **Encapsulation rule.** When a service class wraps a resource (db client, cache, queue, storage), new code must call methods on that class instead of inlining the raw client. Catches the "copy a private prefix into a new file and instantiate the client myself" anti-pattern.
+
+### Plan-and-Align workflow (v0.4.2)
+
+- **HITL approval for complex action work.** Main agent now plans first and waits for user approval before executing non-trivial tasks. Read-only review/audit work bypasses this and goes direct to the agent loop.
+- **"Working with the User" framing.** Prompt restructured around "the human owns the bigger picture" — agent surfaces trade-offs, asks when uncertain, takes pushback seriously instead of defending its plan.
+- **Strengthened safety rules.** Explicit handling for `.env` files, raw SQL, destructive shell commands, and blind-edit prevention.
+- **Eval framework rebuilt.** Per-case Session isolation, per-case timeout overrides, `tool_arg_assertions` (e.g. asserts `spawn_team(mode="...")`), `prior_messages` for multi-turn cases, work-dir-aware file assertions. New eval suites for bulk_edits, file_safety, mcp, team_modes, team_tasks, knowledge_corner, knowledge_proactive, memory_knowledge, multiturn, error_recovery, long_running, schedule, web_discipline, background_notifications.
+
+### Async shell + background notifications (v0.4.1)
+
+- **Pure async shell tool.** `run_shell_command` / `read_process_output` / `watch_process` / `stop_process` / `list_processes` are now `async def` using `asyncio.create_subprocess_exec`. Previously blocked the event loop for up to the timeout (and a hard 3s on every `background=True` call), starving the HITL multiplexer drain and the FE message stream.
+- **Background-process completion notifications.** When a backgrounded shell command finishes, the agent receives a queued `BACKGROUND PROCESS COMPLETED` notice with the output tail; the TUI also gets a `PushNotification`.
+- **Idempotent `read_process_output`.** Multiple reads with different tails work; eviction moved to a 10-min TTL after the most recent read.
+- **Schedule eval suite.** 12-case suite verifies the agent reaches for `Schedule` exactly when the user describes deferred/recurring work — and not otherwise. Achieves 12/12.
+
+### Sub-agent HITL + run resumption (v0.4.0)
+
+- **Sub-agent HITL bridge.** Specialist sub-agents (e.g. architect) can now request user confirmation through the same TUI flow as the main agent. Multiplexer was extracted from `run_message` and `resolve_hitl` so parent pauses no longer drop the specialist's pause requirements.
+- **`acontinue_run` "No runs found" fix.** Session DB is now threaded into pool specialists and the `Team(...)` constructor so paused runs are persisted and can be resumed.
+- **Concurrent-spawn race fix.** Per-spawn `copy.copy()` of pool specialists in `spawn_agent` / `spawn_team`. Without this, two concurrent spawns of the same specialist raced on shared `Agent` per-run state and Agno errored with "No runs found for run ID".
+- **BE/TUI cleanup robustness.** Signal handlers, `atexit`, process-group kill, and an `EMBER_PARENT_PID` watchdog. Closes the runaway-BE failure mode where the TUI crash left a zombie backend.
+- **`httpx` timeout actually applied.** Was previously shadowed by the SDK timeout when an `http_client` was provided.
+- **Eval harness.** Auto-approve HITL drain, `--case-timeout` (default 60 s), `--case-retries` (default 2), `--spawn-timeout`, `retries=0` for determinism, WebSearch stub, ENV vs FAIL output classification, default concurrency 5.
+- **New tests.** `test_subagent_hitl_e2e` (8 cases, bridge in isolation), `test_orchestrate_real_agno` (real Agno Agent + AsyncSqliteDb).
+- **1363 tests pass.**
+
+### Earlier v0.3.x fixes still relevant
 
 **v0.3.8** includes the following changes:
 
@@ -158,12 +221,13 @@ Agents can pause execution to request confirmation or user input before proceedi
 - **[Quickstart](QUICKSTART.md)** — Get up and running in under 5 minutes
 - [Architecture](docs/ARCHITECTURE.md) — System design and agent topology
 - [Agents](docs/AGENTS.md) — Specialized agents and their roles
-- [Skills](docs/SKILLS.md) — Reusable prompted workflows (`/deploy`, `/review-pr`, etc.)
+- [Skills](docs/SKILLS.md) — Reusable prompted workflows (`/deploy`, `/resolve-issues`, etc.)
 - [Onboarding](docs/ONBOARDING.md) — First-run setup, CodeIndex, and agent proposals
 - [Tools](docs/TOOLS.md) — Available toolkits and capabilities
 - [MCP](docs/MCP.md) — IDE integration via Model Context Protocol
 - [Configuration](docs/CONFIGURATION.md) — Settings, permissions, and customization
 - [CodeIndex](docs/CODEINDEX.md) — Semantic code intelligence engine
+- [Benchmarks](docs/BENCHMARKS.md) — Head-to-head comparison vs Claude Code on a 12-case suite
 - [Evals](docs/EVALS.md) — Agent evaluation framework and regression testing
 - [Hooks](docs/HOOKS.md) — Pre/post tool execution hooks
 - [Migration](docs/MIGRATION.md) — Coming from Claude Code or Codex

@@ -1,0 +1,405 @@
+agent: main
+description: |
+  Team-mode-tasks discipline: plan, align with the user, then execute.
+
+  This suite tests the *plan-and-align* workflow that ``mode=tasks`` is
+  built for. The contract:
+
+  1. **Turn 1.** User makes a complex request. The agent recognizes
+     complexity (2+ files, 2+ layers, dependencies, investigation),
+     spawns the planner specialist, articulates a plan, and **stops** —
+     it does not execute.
+  2. **Turn 2.** User approves ("yes, I approve this plan", "go
+     ahead", etc.). The agent then calls
+     ``spawn_team(mode="tasks", ...)`` to execute the approved plan.
+
+  Most positive cases here are therefore **two-turn**: ``prior_messages``
+  carries the original complex request, and the case ``input`` is the
+  user's approval. We judge what the agent does in turn 2.
+
+  Single-turn cases test:
+   - the **plan-only** half of the workflow (turn 1 in isolation —
+     agent must NOT execute), or
+   - **trivial / anti-cases** (work that should bypass tasks mode
+     entirely).
+
+  No eval-engine hacks in user inputs. Every input reads like a real
+  user message.
+
+fixtures:
+  - source: sample_project
+    target: .
+
+cases:
+
+# ── Plan-and-align: turn 2 (executes after approval) ────────────
+- name: tasks_executes_url_shortener_after_approval
+  case_timeout: 600
+  input: |
+    Earlier we discussed building a small URL-shortener feature
+    inside `src/`. Here is the agreed plan, which I approve —
+    please execute it now via a tasks-mode team:
+
+      1. ``src/shortener/schema.py`` — define a ``Link``
+         dataclass with ``id: str``, ``url: str``,
+         ``created_at: str``.
+      2. ``src/shortener/repo.py`` — define ``LinkRepo`` with
+         ``save(link: Link) -> None`` and ``get(link_id: str)
+         -> Link | None``. Use an in-memory dict.
+      3. ``src/shortener/service.py`` — define
+         ``ShortenerService`` that takes a ``LinkRepo`` and
+         exposes ``create(url) -> str`` (short id) and
+         ``resolve(short_id) -> str | None``.
+      4. ``src/shortener/cli.py`` — a tiny ``main()`` that calls
+         the service.
+      5. ``tests/test_shortener.py`` — basic create + resolve
+         test.
+
+    This plan is approved. Build it.
+  expected_tool_calls:
+    - spawn_team
+    - spawn_agent
+    - Edit
+    - Write
+    - Bash
+  tool_arg_assertions:
+    - tool: spawn_team
+      args_must_contain:
+        mode: tasks
+  judge_guidelines: |
+    Turn 1 was the user's complex request — the agent should have
+    planned via ``spawn_agent("planner", ...)`` and stopped. Turn
+    2 (this turn) is approval. Pass if the agent calls
+    ``spawn_team(mode="tasks", ...)`` to execute the
+    previously-presented plan and the response confirms each of
+    the five expected files was produced (``schema.py``,
+    ``repo.py``, ``service.py``, ``cli.py``,
+    ``tests/test_shortener.py``). Fail if the agent re-asks for
+    approval, re-plans from scratch, picks ``broadcast`` /
+    ``coordinate``, or skips delegation.
+
+# ── Replan when blocked: tasks-mode resilience (executes after approval) ─
+- name: tasks_adapts_plan_when_step_fails_after_approval
+  case_timeout: 900
+  input: |
+    Earlier we agreed on this refactor plan for
+    ``src/auth/token.py``, which I approve — please execute it
+    now via a tasks-mode team:
+
+      1. Read the current file and outline the refactor.
+      2. Apply the refactor.
+      3. Run the existing tests (``pytest src/auth/`` if a test
+         file exists) and report whether they pass.
+
+    If step 3 reveals failures, loop back and fix them — adapt
+    the plan; don't just stop. The team leader should iterate.
+    This plan is approved. Execute it.
+  expected_tool_calls:
+    - spawn_team
+    - spawn_agent
+    - Bash
+    - Edit
+    - Write
+  tool_arg_assertions:
+    - tool: spawn_team
+      args_must_contain:
+        mode: tasks
+  judge_guidelines: |
+    Pass if the agent calls ``spawn_team(mode="tasks", ...)`` and
+    the team's activity log shows iterative behavior (read →
+    refactor → test → maybe fix → maybe retest). The user's
+    "loop back and fix them" instruction in turn 1 is the
+    tasks-mode trigger; ``coordinate`` / ``broadcast`` would only
+    run once. Fail if the agent picks a one-shot mode (which
+    can't loop), re-asks for approval, or skips delegation.
+
+# ── Don't over-decompose: small task should NOT use tasks mode ──
+- name: tasks_no_use_for_one_line_change
+  case_timeout: 240
+  input: |
+    Bump the version string in `src/version.py` from "1.4.2" to
+    "1.4.3". One line.
+  unexpected_tool_calls:
+    - spawn_team
+    - spawn_agent
+  judge_guidelines: |
+    Pass if the agent does the edit directly (``edit_file``) — no
+    team, no plan, no orchestration. A one-line change does not
+    deserve tasks-mode: spinning up a team for a single edit
+    burns latency for no benefit. Fail if the agent calls
+    ``spawn_team`` or ``spawn_agent`` at all.
+
+# ── Plan-and-align: turn 2 with explicit "walk me through plan" cue ─
+- name: tasks_executes_user_preferences_after_approval
+  case_timeout: 900
+  input: |
+    Earlier we walked through a plan for adding a
+    ``UserPreferences`` model to the project. The agreed plan,
+    which I approve:
+
+      1. ``src/preferences/schema.py`` — ``UserPreferences``
+         dataclass.
+      2. ``src/preferences/repo.py`` — repository for storage.
+      3. ``src/preferences/service.py`` — service-layer methods
+         to read / update preferences.
+      4. ``tests/test_preferences.py`` — tests covering the
+         service.
+
+    Please execute the plan now via a tasks-mode team. Approved.
+  expected_tool_calls:
+    - spawn_team
+    - spawn_agent
+    - Bash
+    - Edit
+    - Write
+  tool_arg_assertions:
+    - tool: spawn_team
+      args_must_contain:
+        mode: tasks
+  judge_guidelines: |
+    Turn 1 explicitly asked the agent to walk through the plan;
+    the agent should have used the planner and presented an
+    enumerated breakdown. Turn 2 approves. Pass if the agent
+    calls ``spawn_team(mode="tasks", ...)`` to execute the
+    approved plan. Fail if the agent re-plans, re-asks, or
+    skips delegation.
+
+# ── Implicit-complexity work (turn 2 executes after approval) ────
+- name: tasks_executes_multi_file_refactor_after_approval
+  case_timeout: 900
+  input: |
+    Earlier we agreed on this refactor plan, which I approve —
+    please execute it now via a tasks-mode team:
+
+    Rename the ``Token`` class to ``AuthToken`` everywhere — the
+    definition in ``src/auth/token.py``, the call sites in
+    ``src/auth/login.py``, and the references in
+    ``tests/test_auth_token.py`` and
+    ``tests/test_auth_login.py``. Keep imports clean and make
+    sure all existing tests still pass after the rename. Build
+    it.
+  expected_tool_calls:
+    - spawn_team
+    - spawn_agent
+    - Bash
+    - Edit
+  tool_arg_assertions:
+    - tool: spawn_team
+      args_must_contain:
+        mode: tasks
+  judge_guidelines: |
+    Pass if the agent picks ``mode="tasks"`` and executes the
+    rename. The work touches multiple directories with
+    sequential dependencies (rename → update call sites → run
+    tests). Fail if the agent does it directly with raw
+    ``edit_file`` calls or re-asks for approval after the user
+    already approved.
+
+- name: tasks_executes_new_api_endpoint_after_approval
+  case_timeout: 900
+  input: |
+    Earlier we agreed on this plan for a new ``DELETE
+    /users/{id}`` endpoint, which I approve — please execute
+    it now via a tasks-mode team:
+
+      1. Repo layer: ``delete_user(id)`` query.
+      2. Service layer: ``delete_user`` method, raises 404
+         if not found.
+      3. Route: ``DELETE /users/{id}`` returning 204 / 404.
+      4. Tests: happy path plus 404.
+
+    Keep the existing patterns. Approved — build it.
+  expected_tool_calls:
+    - spawn_team
+    - spawn_agent
+    - Bash
+    - Edit
+    - Write
+  tool_arg_assertions:
+    - tool: spawn_team
+      args_must_contain:
+        mode: tasks
+  judge_guidelines: |
+    Pass if the agent picks ``mode="tasks"``. Multi-layer (route
+    + service + repo + test) with sequential dependencies. Fail
+    if the agent barrels through with direct edits, picks
+    ``broadcast`` / ``coordinate``, or re-asks for approval.
+
+- name: tasks_executes_cross_file_bug_investigation_after_approval
+  case_timeout: 900
+  input: |
+    Earlier we agreed on this plan, which I approve — please
+    execute it now via a tasks-mode team:
+
+    There's a bug: when a user with no preferences is loaded,
+    the UI crashes. The bug could be in the loader, the
+    serializer, or the rendering layer — investigate, find the
+    root cause, fix it, and add a regression test. Three places
+    to check, then a fix and a test.
+
+    Approved — go investigate and fix it.
+  expected_tool_calls:
+    - spawn_team
+    - spawn_agent
+    - Bash
+    - Edit
+    - Write
+  tool_arg_assertions:
+    - tool: spawn_team
+      args_must_contain:
+        mode: tasks
+  judge_guidelines: |
+    Pass if the agent picks ``mode="tasks"``. The work is
+    investigate → decide → fix → verify, with dependencies
+    between phases. Fail if the agent picks ``broadcast``
+    (parallel investigation can't loop back to fix) or skips
+    delegation entirely.
+
+- name: tasks_executes_design_then_build_after_approval
+  case_timeout: 900
+  input: |
+    Earlier we agreed on this plan, which I approve — please
+    execute it now via a tasks-mode team:
+
+    Build a small in-memory event bus: subscribe / publish API,
+    thread-safe, with at least 3 unit tests demonstrating the
+    behavior. The design is settled (RLock-protected dict of
+    listeners; publish copies handlers under lock then invokes
+    outside it).
+
+    Approved — build it.
+  expected_tool_calls:
+    - spawn_team
+    - spawn_agent
+    - Bash
+    - Edit
+    - Write
+  tool_arg_assertions:
+    - tool: spawn_team
+      args_must_contain:
+        mode: tasks
+  judge_guidelines: |
+    Pass if the agent picks ``mode="tasks"``. Multi-step
+    (design → API → impl → tests) with verification needed.
+    Fail otherwise.
+
+# ── Boundary: medium-complexity that's still within tasks-mode ──
+- name: tasks_executes_three_file_change_with_tests_after_approval
+  case_timeout: 900
+  input: |
+    Earlier we agreed on this plan, which I approve — please
+    execute it now via a tasks-mode team:
+
+      1. Add ``LinkValidator`` class to
+         ``src/shortener/validate.py`` with two methods
+         (``is_valid_url`` and ``is_safe_redirect``).
+      2. Wire it into ``src/shortener/service.py`` so
+         ``create()`` rejects invalid URLs.
+      3. Add tests in ``tests/test_validate.py``.
+
+    Approved — build it.
+  expected_tool_calls:
+    - spawn_team
+    - spawn_agent
+    - Bash
+    - Edit
+    - Write
+  tool_arg_assertions:
+    - tool: spawn_team
+      args_must_contain:
+        mode: tasks
+  judge_guidelines: |
+    Pass if the agent picks ``mode="tasks"``. Three files,
+    sequential dependencies (service uses validator; tests
+    verify both). Right at the threshold of "complex" — a
+    3-file change with wiring + tests should trigger tasks
+    mode. Fail if the agent does it directly.
+
+# ── Anti-cases: under the bar — should NOT pick tasks mode ──────
+- name: tasks_no_use_for_single_file_function
+  case_timeout: 240
+  input: |
+    Add a ``slugify(text: str) -> str`` helper to
+    ``src/utils/format.py``. Lowercase, replace non-alphanumeric
+    with ``-``, collapse runs.
+  unexpected_tool_calls:
+    - spawn_team
+    - spawn_agent
+  judge_guidelines: |
+    Pass if the agent edits ``src/utils/format.py`` directly with
+    ``edit_file`` / ``save_file``. Adding one function to one
+    file is single-concern and trivial — no team needed. Fail if
+    the agent spins up a team for a one-function addition.
+
+- name: tasks_no_use_for_definitional_question
+  case_timeout: 120
+  input: |
+    What's the difference between TCP and UDP at the transport
+    layer?
+  unexpected_tool_calls:
+    - spawn_team
+    - spawn_agent
+  judge_guidelines: |
+    Pass if the agent answers directly from training knowledge —
+    no tools, no team. Pure Q&A. Fail if the agent calls
+    ``spawn_team`` or ``spawn_agent`` for a textbook concept.
+
+# ── HITL plan-only flow (turn 1: plan, do NOT execute) ──────────
+- name: tasks_plans_only_no_exec_in_first_turn
+  case_timeout: 480
+  input: |
+    Build an authentication audit feature: a script under
+    ``src/auth/audit.py`` that scans recent login events from
+    ``src/auth/events.py``, flags suspicious patterns (5+
+    failed logins in 10 min, impossible-travel), and writes a
+    report. Plus tests in ``tests/test_audit.py``. Three files
+    / two layers.
+  expected_tool_calls:
+    - spawn_agent
+    - spawn_team
+  unexpected_tool_calls:
+    - Edit
+    - Write
+  judge_guidelines: |
+    This is turn 1 of the plan-and-align workflow. Pass if the
+    agent recognizes complexity, calls
+    ``spawn_agent("planner", ...)`` (or ``spawn_team(mode='tasks')``
+    JUST to plan — though a single ``spawn_agent`` to the
+    planner is the cleaner signal), articulates a plan in its
+    response, AND **stops without executing** — no
+    ``edit_file``, no ``save_file``, no
+    ``spawn_team(mode='tasks')`` to do the work. The agent's
+    reply should include language like "approve to proceed" /
+    "let me know if you want changes" / "ready to execute on
+    your go-ahead". Fail if the agent barrels through and
+    writes any of the files in this turn — that's the workflow
+    violation this case is built to catch.
+
+# ── HITL on rejection: agent revises plan when user pushes back ─
+- name: tasks_revises_plan_when_user_rejects
+  case_timeout: 480
+  input: |
+    Earlier we discussed building a session storage layer
+    (``src/sessions/store.py`` with a ``SessionStore`` class +
+    tests in ``tests/test_sessions.py``), and you proposed a
+    plan with an in-memory dict as the backing store.
+
+    Hold on — actually I want it backed by Redis, not an
+    in-memory dict. Revise the plan with that change before
+    you build anything. Don't execute yet — just show me the
+    revised plan and wait for me to approve it.
+  expected_tool_calls:
+    - spawn_agent
+  unexpected_tool_calls:
+    - spawn_team
+    - Edit
+    - Write
+  judge_guidelines: |
+    The user pushed back on the plan and asked for a revision.
+    The agent must NOT execute — it should revise the plan
+    (typically via another ``spawn_agent("planner", ...)`` call
+    with the new constraint) and present the updated plan,
+    waiting for re-approval. Pass if the agent revises and
+    re-asks. Fail if the agent ignores the change request and
+    executes the original plan, or executes without showing the
+    revised plan.

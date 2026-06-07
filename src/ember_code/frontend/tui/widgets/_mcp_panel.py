@@ -1,5 +1,6 @@
 """MCP panel widget — browse and toggle MCP server connections."""
 
+import contextlib
 import logging
 
 from pydantic import BaseModel, Field
@@ -227,6 +228,11 @@ class MCPPanelWidget(Widget):
         try:
             new_widget = self.query_one(f"#mcp-{new}", Static)
             new_widget.add_class("-selected")
+            # Keep the highlighted row visible — arrow nav past the
+            # viewport would otherwise hide the selection. No
+            # animation: rapid down-presses would stack jitters.
+            with contextlib.suppress(Exception):
+                new_widget.scroll_visible(animate=False)
         except Exception:
             pass
 

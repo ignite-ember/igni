@@ -35,6 +35,31 @@ class AgentDefinition(BaseModel):
     source_path: Path | None = None
 
 
+class AgentInfo(BaseModel):
+    """Wire format for one agent — emitted by
+    :meth:`BackendServer.get_agent_details`, consumed by the
+    agents panel.
+
+    Sub-set of :class:`AgentDefinition` adapted for JSON transport:
+    ``source_path`` is widened to ``str`` (Path doesn't serialize),
+    and ``is_ephemeral`` is computed at the backend (cheaper there
+    than reconstructing the directory match on every frontend
+    render).
+    """
+
+    name: str
+    description: str = ""
+    tools: list[str] = Field(default_factory=list)
+    model: str = ""
+    color: str = ""
+    can_orchestrate: bool = True
+    mcp_servers: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    system_prompt: str = ""
+    source_path: str = ""
+    is_ephemeral: bool = False
+
+
 # ── Parsing ──────────────────────────────────────────────────────────
 
 
@@ -97,6 +122,7 @@ def build_agent(
     base_dir: str | None = None,
     mcp_clients: dict[str, Any] | None = None,
     knowledge_mgr: Any | None = None,
+    db: Any | None = None,
 ) -> Agent:
     """Build an Agno Agent from an AgentDefinition.
 
@@ -127,7 +153,7 @@ def build_agent(
 
         tools.append(ScheduleTools())
 
-    # ── Knowledge tools (shared across all agents) ────────────
+    # ── Knowledge tools (shared across all agents) ────────────────
     if tools and knowledge_mgr is not None:
         from ember_code.core.tools.knowledge import KnowledgeTools
 
@@ -175,7 +201,19 @@ def build_agent(
         "tools": tools if tools else None,
         "markdown": True,
         "num_history_runs": settings.storage.max_history_runs,
+        # Retry transient model-API failures rather than failing the
+        # whole spawn. Hung connections still need the per-request
+        # timeout in models.py to surface as an exception first;
+        # ``retries`` only kicks in when the model call raises.
+        "retries": getattr(settings.models, "retries", 2),
     }
+
+    # Share the session's SQLite DB so HITL-paused runs can be resumed
+    # via ``acontinue_run(run_id, session_id)``. Without a db Agno has
+    # nowhere to look up the paused run and resume fails with
+    # ``RuntimeError: No runs found for run ID …``.
+    if db is not None:
+        kwargs["db"] = db
 
     if definition.reasoning:
         kwargs["reasoning"] = True
@@ -201,7 +239,7 @@ class AgentPool:
     to force eager construction (e.g. after MCP servers connect).
     """
 
-    def __init__(self):
+    def __init__(self, db: Any | None = None):
         self._definitions: dict[str, tuple[AgentDefinition, int]] = {}
         self._agents: dict[str, Agent] = {}
         self._settings: Settings | None = None
@@ -211,6 +249,10 @@ class AgentPool:
         self._ephemeral_count: int = 0
         self._ephemeral_dir: Path | None = None
         self._max_ephemeral: int = 5
+        # Shared with the main session so paused sub-agent runs are
+        # persisted alongside the team's runs and Agno can find them on
+        # ``acontinue_run``.
+        self._db: Any | None = db
 
     # ── Phase 1: Load definitions ─────────────────────────────────
 
@@ -218,16 +260,28 @@ class AgentPool:
         self,
         settings: Settings,
         project_dir: Path | None = None,
+        codeindex_available: bool = False,
     ) -> None:
         """Parse all agent .md files and resolve priorities.
 
         No Agent objects are created — just AgentDefinition data.
+
+        ``codeindex_available`` selects which variant of an agent's
+        prompt to load when both ``<name>.md`` and
+        ``<name>.codeindex.md`` exist on disk:
+
+        - ``True``  → load the ``.codeindex.md`` variant (CodeIndex-first
+                      prompt) and ignore the plain sibling.
+        - ``False`` → load the plain ``.md`` and ignore the
+                      ``.codeindex.md`` sibling (otherwise the agent
+                      would be told to call a tool it doesn't have).
         """
         if project_dir is None:
             project_dir = Path.cwd()
 
         self._settings = settings
         self._base_dir = str(project_dir)
+        self._codeindex_available = codeindex_available
 
         dirs = [
             (Path.home() / ".ember" / "agents", 1),
@@ -242,14 +296,50 @@ class AgentPool:
         for directory, priority in dirs:
             self._load_directory(directory, priority)
 
-    def _load_directory(self, path: Path, priority: int) -> None:
-        """Parse .md files from a directory, keeping highest-priority wins."""
+    def _load_directory(
+        self,
+        path: Path,
+        priority: int,
+        namespace: str | None = None,
+    ) -> None:
+        """Parse .md files from a directory, keeping highest-priority wins.
+
+        Skips the wrong CodeIndex variant per
+        ``self._codeindex_available``: when CodeIndex is unavailable we
+        skip every ``*.codeindex.md`` file; when it's available we skip
+        any plain ``*.md`` whose sibling ``*.codeindex.md`` is also
+        present in this directory.
+
+        ``namespace`` prefixes every loaded agent's ``name`` as
+        ``<namespace>:<name>``. Used by the plugin loader so each
+        plugin's agents land under their own namespace and can't
+        collide with same-named agents from other plugins or the
+        user's own ``.ember/agents/``.
+        """
         if not path.exists():
             return
 
-        for md_file in sorted(path.glob("*.md")):
+        use_codeindex = getattr(self, "_codeindex_available", False)
+        all_files = sorted(path.glob("*.md"))
+        codeindex_stems = {
+            f.name[: -len(".codeindex.md")] for f in all_files if f.name.endswith(".codeindex.md")
+        }
+
+        for md_file in all_files:
+            is_codeindex_variant = md_file.name.endswith(".codeindex.md")
+            # Skip variants we don't want for this session.
+            if is_codeindex_variant and not use_codeindex:
+                continue
+            if not is_codeindex_variant and use_codeindex and md_file.stem in codeindex_stems:
+                # Plain variant has a .codeindex.md sibling in this
+                # directory; the codeindex sibling wins.
+                continue
             try:
                 definition = parse_agent_file(md_file)
+                if namespace:
+                    definition = definition.model_copy(
+                        update={"name": f"{namespace}:{definition.name}"}
+                    )
                 name = definition.name
                 existing = self._definitions.get(name)
 
@@ -280,6 +370,7 @@ class AgentPool:
             self._base_dir,
             mcp_clients=self._mcp_clients,
             knowledge_mgr=self._knowledge_mgr,
+            db=self._db,
         )
 
     # ── Convenience: load + build in one call ─────────────────────

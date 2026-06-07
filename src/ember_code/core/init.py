@@ -191,7 +191,7 @@ guardrails:
   # prompt_injection: false       # Warn on prompt injection patterns
 
 knowledge:
-  enabled: true                   # ChromaDB knowledge base
+  enabled: true                   # Weaviate-backed knowledge base
   collection_name: ember_knowledge
 
 learning:
@@ -229,6 +229,10 @@ def initialize_project(project_dir: Path) -> bool:
     if not home_marker.exists():
         _write_default_config(home_ember)
         home_marker.touch()
+
+    # Migrate stale defaults from older versions — runs every startup.
+    # Cheap and idempotent (a no-op once migrated).
+    _migrate_home_model_default(home_ember)
 
     # First-time project init: create starter files
     first_run = not project_marker.exists()
@@ -361,22 +365,130 @@ def _sync_file(src: Path, dst: Path, key: str, checksums: dict[str, str]) -> str
 # ── Internal helpers ──────────────────────────────────────────────────
 
 
+_HOME_CONFIG_BOOTSTRAP = """\
+# Personal overrides — only what differs from package defaults belongs
+# here. Hosted models come from cloud discovery on session start (see
+# https://docs.ignite-ember.sh/configuration) so you don't need to
+# declare them; this file is for your own additions:
+#
+# models:
+#   # Pin a different default than the first cloud model:
+#   # default: gpt-4o
+#   registry:
+#     # Your own provider — uses an env-var-resolved API key:
+#     # gpt-4o:
+#     #   provider: openai_like
+#     #   model_id: gpt-4o
+#     #   api_key_env: OPENAI_API_KEY
+"""
+
+
 def _write_default_config(home_ember: Path) -> None:
-    """Write a starter config.yaml from DEFAULT_CONFIG if one doesn't exist."""
+    """Write a minimal starter config.yaml if one doesn't exist.
+
+    Earlier versions dumped the whole ``DEFAULT_CONFIG`` here, which
+    duplicated the bundled cloud model entry into every client's home
+    file and made model rollouts a per-user migration headache. The
+    bootstrap is now intentionally empty — users fill it in with
+    overrides as they go, and cloud discovery handles the hosted
+    catalogue automatically.
+    """
     config_path = home_ember / "config.yaml"
     if not config_path.exists():
-        import yaml
+        config_path.write_text(CONFIG_YAML_HEADER + _HOME_CONFIG_BOOTSTRAP)
 
-        from ember_code.core.config.defaults import DEFAULT_CONFIG
 
+def _migrate_home_model_default(home_ember: Path) -> None:
+    """Remove legacy bundled cloud entries from ``~/.ember/config.yaml``.
+
+    Older versions wrote a copy of the bundled Ember Cloud model into
+    every client's home config. The cloud catalogue is now fetched on
+    each session start (see :py:func:`fetch_cloud_models`), so the
+    home file should only carry the user's own overrides. This pass
+    strips any registry entry that looks like a bundled cloud entry
+    (Ember Cloud URL + ``cloud_token`` api_key) and clears the
+    ``default`` field when it names one of those entries. User-edited
+    entries — different URL, custom api_key, custom model_id — are
+    left untouched.
+
+    Idempotent: once the bundled rows are gone, subsequent runs are
+    no-ops.
+    """
+    import yaml
+
+    config_path = home_ember / "config.yaml"
+    if not config_path.exists():
+        return
+    try:
+        data = yaml.safe_load(config_path.read_text()) or {}
+    except Exception:
+        logger.debug("Skipping model migration: home config unreadable.")
+        return
+    if not isinstance(data, dict):
+        return
+
+    models = data.get("models")
+    if not isinstance(models, dict):
+        return
+    registry = models.get("registry")
+    if not isinstance(registry, dict):
+        registry = {}
+
+    removed: list[str] = []
+    for name in list(registry.keys()):
+        entry = registry[name]
+        if isinstance(entry, dict) and _looks_like_bundled_cloud_entry(entry):
+            del registry[name]
+            removed.append(name)
+
+    # If the active default named one of the just-removed entries,
+    # clear it so cloud discovery (or the resolver fallback) picks
+    # something current.
+    if models.get("default") in removed:
+        models["default"] = ""
+
+    if not removed:
+        return
+
+    # Tidy: empty registry → omit the key entirely; empty default
+    # string → same. Keeps the file as small as possible after
+    # migration. If ``models`` itself ends up empty, drop it too.
+    if not registry:
+        models.pop("registry", None)
+    if models.get("default", None) == "":
+        models.pop("default", None)
+    if not models:
+        data.pop("models", None)
+
+    try:
         config_path.write_text(
-            CONFIG_YAML_HEADER
-            + yaml.dump(
-                DEFAULT_CONFIG,
-                default_flow_style=False,
-                sort_keys=False,
-            )
+            CONFIG_YAML_HEADER + yaml.dump(data, default_flow_style=False, sort_keys=False)
         )
+        logger.info(
+            "Migrated ~/.ember/config.yaml: removed legacy bundled cloud entries %s.",
+            removed,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to write migrated home config — bundled cloud "
+            "entries may still shadow the live catalogue. Edit "
+            "~/.ember/config.yaml manually if so.",
+            exc_info=True,
+        )
+
+
+def _looks_like_bundled_cloud_entry(entry: dict[str, object]) -> bool:
+    """True for entries that match the old bundled cloud-model shape.
+
+    The signal is ``url`` pointing at an ``ignite-ember.sh`` host AND
+    ``api_key == "cloud_token"``. Both anchor on conventions only the
+    package ever wrote; a user pointing their own ``cloud_token``
+    sentinel at a different URL (or vice-versa) doesn't match.
+    """
+    url = entry.get("url")
+    if not isinstance(url, str) or "ignite-ember.sh" not in url:
+        return False
+    return entry.get("api_key") == "cloud_token"
 
 
 def _provision_hooks(project_dir: Path) -> None:
@@ -424,30 +536,15 @@ def _write_project_config(project_dir: Path) -> None:
         path.write_text(PROJECT_CONFIG_TEMPLATE)
 
 
-# Default permissions for new projects:
-# - file_read/grep/glob/list_files: allow (safe, read-only)
-# - file_write/shell_execute/python: ask (requires user confirmation)
+# Default permissions for new projects. Use display names only —
+# tool_permissions.py:FUNC_TO_TOOL normalizes Agno function names
+# (``run_shell_command``, ``edit_file``, ``save_file``, …) to the
+# display name (``Bash``, ``Edit``, ``Write``) before any rule lookup,
+# so listing both is redundant and leaks an internal detail into a
+# user-facing config file.
 DEFAULT_PERMISSIONS = {
-    "allow": [
-        "Glob",
-        "Grep",
-        "LS",
-        "Read",
-        "ReadFile",
-        "ListFiles",
-        "WebSearch",
-        "WebFetch",
-    ],
-    "ask": [
-        "Write",
-        "CreateFile",
-        "edit_file",
-        "Edit",
-        "Bash",
-        "BashOutput",
-        "Python",
-        "run_shell_command",
-    ],
+    "allow": ["Glob", "Grep", "LS", "Read", "WebSearch", "WebFetch"],
+    "ask": ["Write", "Edit", "Bash", "BashOutput", "Python"],
 }
 
 

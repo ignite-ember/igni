@@ -1,124 +1,138 @@
-"""SQLite-backed store for scheduled tasks — fully async via aiosqlite."""
+"""Per-project SQLite-backed store for scheduled tasks (async via SQLAlchemy).
 
-import sqlite3
+Tasks live in ``~/.ember/projects/<project_hash>/state.db`` so each project
+has its own scheduler queue — switching projects doesn't surface another
+project's pending ``/loop`` jobs.
+"""
+
+from __future__ import annotations
+
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
-import aiosqlite
+from sqlalchemy import delete, select
 
+from ember_code.core.code_index.paths import state_db_path
+from ember_code.core.config.settings import Settings
+from ember_code.core.db.database import Database
+from ember_code.core.scheduler.db_models import ScheduledTaskModel
 from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
 
-_CREATE_TABLE = """
-CREATE TABLE IF NOT EXISTS scheduled_tasks (
-    id TEXT PRIMARY KEY,
-    description TEXT NOT NULL,
-    scheduled_at TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    result TEXT DEFAULT '',
-    error TEXT DEFAULT '',
-    recurrence TEXT DEFAULT ''
-)
-"""
 
-_MIGRATE_RECURRENCE = """
-ALTER TABLE scheduled_tasks ADD COLUMN recurrence TEXT DEFAULT ''
-"""
+def _resolve_db_path(
+    db_path: str | Path | None,
+    project_dir: str | Path | None,
+) -> Path:
+    """Pick a SQLite path. Explicit ``db_path`` wins; otherwise derive from project."""
+    if db_path is not None:
+        return Path(str(db_path)).expanduser()
+    project = project_dir if project_dir is not None else Path.cwd()
+    try:
+        data_dir = Settings().storage.data_dir
+    except Exception:
+        data_dir = "~/.ember"
+    return state_db_path(project, data_dir=data_dir)
 
 
 class TaskStore:
-    """Persists scheduled tasks in SQLite (async)."""
+    """Persists scheduled tasks in a per-project SQLite file (async)."""
 
-    def __init__(self, db_path: str | Path | None = None):
-        if db_path is None:
-            db_path = Path.home() / ".ember" / "scheduler.db"
-        self._db_path = str(Path(db_path))
-        Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._init_db_sync()
-
-    def _init_db_sync(self) -> None:
-        with sqlite3.connect(self._db_path) as conn:
-            conn.execute(_CREATE_TABLE)
-            # Migrate: add recurrence column if missing
-            cols = {row[1] for row in conn.execute("PRAGMA table_info(scheduled_tasks)")}
-            if "recurrence" not in cols:
-                conn.execute(_MIGRATE_RECURRENCE)
+    def __init__(
+        self,
+        db_path: str | Path | None = None,
+        *,
+        project_dir: str | Path | None = None,
+        db: Database | None = None,
+    ) -> None:
+        if db is not None:
+            self._db = db
+            return
+        path = _resolve_db_path(db_path, project_dir)
+        self._db = Database(path)
 
     async def add(self, task: ScheduledTask) -> None:
-        async with aiosqlite.connect(self._db_path) as db:
-            await db.execute(
-                """
-                INSERT INTO scheduled_tasks
-                    (id, description, scheduled_at, created_at, status, result, error, recurrence)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    task.id,
-                    task.description,
-                    task.scheduled_at.isoformat(),
-                    task.created_at.isoformat(),
-                    task.status.value,
-                    task.result,
-                    task.error,
-                    task.recurrence,
-                ),
-            )
-            await db.commit()
+        async with self._db.session() as session, session.begin():
+            session.add(_task_to_row(task))
 
     async def update_status(
         self, task_id: str, status: TaskStatus, result: str = "", error: str = ""
     ) -> None:
-        async with aiosqlite.connect(self._db_path) as db:
-            await db.execute(
-                "UPDATE scheduled_tasks SET status = ?, result = ?, error = ? WHERE id = ?",
-                (status.value, result, error, task_id),
-            )
-            await db.commit()
+        async with self._db.session() as session, session.begin():
+            row = await session.get(ScheduledTaskModel, task_id)
+            if row is None:
+                return
+            row.status = status.value
+            row.result = result
+            row.error = error
 
     async def remove(self, task_id: str) -> bool:
-        async with aiosqlite.connect(self._db_path) as db:
-            cursor = await db.execute("DELETE FROM scheduled_tasks WHERE id = ?", (task_id,))
-            await db.commit()
-            return cursor.rowcount > 0
+        async with self._db.session() as session, session.begin():
+            result = await session.execute(
+                delete(ScheduledTaskModel).where(ScheduledTaskModel.id == task_id)
+            )
+            return (result.rowcount or 0) > 0
 
     async def get_due_tasks(self) -> list[ScheduledTask]:
         """Get all pending tasks whose scheduled time has passed."""
-        now = datetime.now().isoformat()
-        async with aiosqlite.connect(self._db_path) as db:
-            cursor = await db.execute(
-                "SELECT * FROM scheduled_tasks WHERE status = 'pending' AND scheduled_at <= ? ORDER BY scheduled_at",
-                (now,),
+        now = datetime.now()
+        async with self._db.session() as session:
+            result = await session.execute(
+                select(ScheduledTaskModel)
+                .where(
+                    ScheduledTaskModel.status == TaskStatus.pending.value,
+                    ScheduledTaskModel.scheduled_at <= now,
+                )
+                .order_by(ScheduledTaskModel.scheduled_at)
             )
-            rows = await cursor.fetchall()
-        return [self._row_to_task(r) for r in rows]
+            rows = result.scalars().all()
+        return [_row_to_task(r) for r in rows]
 
     async def get_all(self, include_done: bool = False) -> list[ScheduledTask]:
-        """Get all tasks, optionally including completed/failed/cancelled."""
-        async with aiosqlite.connect(self._db_path) as db:
-            if include_done:
-                cursor = await db.execute("SELECT * FROM scheduled_tasks ORDER BY scheduled_at")
-            else:
-                cursor = await db.execute(
-                    "SELECT * FROM scheduled_tasks WHERE status IN ('pending', 'running') ORDER BY scheduled_at"
-                )
-            rows = await cursor.fetchall()
-        return [self._row_to_task(r) for r in rows]
+        """Get all tasks, optionally including completed/failed/cancelled.
+
+        Ordered by ``scheduled_at`` descending — tasks set to run
+        furthest in the future surface first. Both the TUI tasks
+        panel and the agent-facing ``list_scheduled_tasks`` tool
+        render the store's order verbatim.
+        """
+        stmt = select(ScheduledTaskModel).order_by(ScheduledTaskModel.scheduled_at.desc())
+        if not include_done:
+            stmt = stmt.where(
+                ScheduledTaskModel.status.in_((TaskStatus.pending.value, TaskStatus.running.value))
+            )
+        async with self._db.session() as session:
+            result = await session.execute(stmt)
+            rows = result.scalars().all()
+        return [_row_to_task(r) for r in rows]
 
     async def get(self, task_id: str) -> ScheduledTask | None:
-        async with aiosqlite.connect(self._db_path) as db:
-            cursor = await db.execute("SELECT * FROM scheduled_tasks WHERE id = ?", (task_id,))
-            row = await cursor.fetchone()
-        return self._row_to_task(row) if row else None
+        async with self._db.session() as session:
+            row = await session.get(ScheduledTaskModel, task_id)
+        return _row_to_task(row) if row else None
 
-    @staticmethod
-    def _row_to_task(row: tuple) -> ScheduledTask:
-        return ScheduledTask(
-            id=row[0],
-            description=row[1],
-            scheduled_at=datetime.fromisoformat(row[2]),
-            created_at=datetime.fromisoformat(row[3]),
-            status=TaskStatus(row[4]),
-            result=row[5] or "",
-            error=row[6] or "",
-            recurrence=row[7] or "" if len(row) > 7 else "",
-        )
+
+def _task_to_row(task: ScheduledTask) -> ScheduledTaskModel:
+    return ScheduledTaskModel(
+        id=task.id,
+        description=task.description,
+        scheduled_at=task.scheduled_at,
+        created_at=task.created_at,
+        status=task.status.value,
+        result=task.result,
+        error=task.error,
+        recurrence=task.recurrence,
+    )
+
+
+def _row_to_task(row: Any) -> ScheduledTask:
+    return ScheduledTask(
+        id=row.id,
+        description=row.description,
+        scheduled_at=row.scheduled_at,
+        created_at=row.created_at,
+        status=TaskStatus(row.status),
+        result=row.result or "",
+        error=row.error or "",
+        recurrence=row.recurrence or "",
+    )
