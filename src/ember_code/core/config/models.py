@@ -40,6 +40,54 @@ if not _llm_logger.handlers:
 DEFAULT_CONTEXT_WINDOW = 128_000
 
 
+_NO_MODEL_ERROR = (
+    "No model configured. Run `/login` to discover hosted models from "
+    "Ember Cloud, or add a model to `models.registry` in "
+    "~/.ember/config.yaml."
+)
+
+
+class _NoModelConfigured(OpenAILike):
+    """Stand-in model returned when no real model resolves.
+
+    Lets ``Session.__init__`` (and the Agno ``Agent``/``Team``
+    construction inside ``_build_main_agent``) complete so the TUI
+    can render and the user can reach ``/login`` to fix the
+    underlying problem (no token, org-membership 403, network down,
+    stale credentials, etc.). Earlier versions raised at session
+    init time, which bricked the binary before any recovery action
+    was reachable — restarting was the only "fix" and it didn't
+    work because the credential file was the root cause.
+
+    Construction is cheap: ``OpenAILike`` just stores config. Any
+    actual model invocation (``ainvoke``, ``ainvoke_stream``,
+    ``invoke``, ``aresponse``) raises the same descriptive
+    ``ValueError`` so the user sees a clear error message in chat
+    rather than a network failure from the dummy endpoint.
+    """
+
+    def __init__(self):
+        super().__init__(
+            id="(no model configured)",
+            base_url="https://placeholder.invalid/v1",
+            api_key="placeholder",
+        )
+
+    async def ainvoke(self, *_args, **_kwargs):
+        raise ValueError(_NO_MODEL_ERROR)
+
+    async def ainvoke_stream(self, *_args, **_kwargs):
+        raise ValueError(_NO_MODEL_ERROR)
+        yield  # unreachable, satisfies the async-generator typing
+
+    def invoke(self, *_args, **_kwargs):
+        raise ValueError(_NO_MODEL_ERROR)
+
+    def invoke_stream(self, *_args, **_kwargs):
+        raise ValueError(_NO_MODEL_ERROR)
+        yield  # unreachable
+
+
 def _caller_context(depth: int = 4) -> str:
     """Walk the call stack to find the meaningful caller (skip Agno internals)."""
     for frame_info in inspect.stack()[depth : depth + 8]:
@@ -231,9 +279,23 @@ class ModelRegistry:
         self._cloud_server_url = settings.api_url if self._cloud_token else None
 
     def get_model(self, name: str | None = None) -> OpenAILike:
-        """Get an Agno model instance by registry name."""
+        """Get an Agno model instance by registry name.
+
+        When no model resolves (registry empty AND no default —
+        e.g. brand-new install before ``/login``, or a stale token
+        that returned no entries from cloud discovery) we return a
+        :class:`_NoModelConfigured` placeholder so the session can
+        still construct. Real invocation raises a clear error; the
+        TUI stays reachable so the user can run ``/login``.
+        """
         if name is None or name == "":
-            name = self._effective_default()
+            name = self._effective_default(strict=False)
+        if not name:
+            logger.warning(
+                "No model configured — returning placeholder. "
+                "Run /login or add a model to models.registry."
+            )
+            return _NoModelConfigured()
 
         entry = self._resolve_entry(name)
         if entry is None:
@@ -314,9 +376,18 @@ class ModelRegistry:
         return model
 
     def get_context_window(self, name: str | None = None) -> int:
-        """Get the context window size for a model (synchronous)."""
+        """Get the context window size for a model.
+
+        Bootstrap-safe: when no model is configured (registry empty,
+        no default) we return the configured ``max_context_window``
+        instead of raising. The session must be able to construct
+        even when cloud discovery hasn't populated the registry yet
+        — otherwise the user can't reach ``/login`` to fix it.
+        """
         if name is None or name == "":
-            name = self._effective_default()
+            name = self._effective_default(strict=False)
+        if not name:
+            return self.settings.models.max_context_window
         entry = self._resolve_entry(name)
         model_id = entry["model_id"] if entry else name
         return self.context_windows.resolve(model_id, entry)
@@ -324,7 +395,9 @@ class ModelRegistry:
     async def aget_context_window(self, name: str | None = None) -> int:
         """Get the context window size, with async API fallback."""
         if name is None or name == "":
-            name = self._effective_default()
+            name = self._effective_default(strict=False)
+        if not name:
+            return self.settings.models.max_context_window
         entry = self._resolve_entry(name)
         model_id = entry["model_id"] if entry else name
         return await self.context_windows.aresolve(model_id, entry)
@@ -333,7 +406,7 @@ class ModelRegistry:
         """Register a custom provider class."""
         self.PROVIDERS[name] = cls
 
-    def _effective_default(self) -> str:
+    def _effective_default(self, *, strict: bool = True) -> str:
         """Return the active default model name.
 
         Resolution order:
@@ -342,14 +415,23 @@ class ModelRegistry:
            ``/model`` switch, or cloud-discovery auto-assign).
         2. First key in ``settings.models.registry`` — works as soon as
            cloud discovery has merged at least one entry.
-        3. Raise: there's nothing to fall back to and silent failure
-           would surface as a cryptic "Unknown model: ''" error later.
+        3. ``strict=True`` (default, for ``get_model`` — calls that
+           actually need a working model): raise with an actionable
+           "run /login" message.
+        4. ``strict=False`` (bootstrap calls — context-window lookups
+           during ``Session.__init__``): return ``""`` so the session
+           can still construct. Raising here would brick the binary
+           before the user can reach ``/login`` to fix the underlying
+           problem (no cloud token, org-membership 403, network down,
+           etc.).
         """
         explicit = self.settings.models.default
         if explicit:
             return explicit
         if self.settings.models.registry:
             return next(iter(self.settings.models.registry))
+        if not strict:
+            return ""
         raise ValueError(
             "No model configured. Run `/login` to discover hosted "
             "models from Ember Cloud, or add an entry to "
