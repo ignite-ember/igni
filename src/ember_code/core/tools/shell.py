@@ -159,6 +159,16 @@ class _ManagedProcess:
         except Exception as exc:
             logger.warning("reader task for pid=%s errored: %s", self.proc.pid, exc)
         finally:
+            # ``proc.returncode`` is only populated after
+            # ``proc.wait()`` resolves. On some Linux/Python combos
+            # the stdout close races ahead of that — without an
+            # explicit wait, ``_emit_completion`` would publish
+            # ``exit_code=None``. The wait is cheap (the process
+            # has already terminated by the time the reader loop
+            # breaks) and bounded so a stuck child can't deadlock
+            # the reader task.
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(self.proc.wait(), timeout=2.0)
             self.finished = True
             if self.was_backgrounded:
                 _emit_completion(self)
