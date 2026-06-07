@@ -312,7 +312,7 @@ class PluginsPanelWidget(Widget):
 
         items = self._current_items()
         existing: dict[str, Static] = {
-            child.id: child
+            child.id: child  # type: ignore[misc]
             for child in container.children
             if child.id and child.id.startswith("plug-")
         }
@@ -322,16 +322,16 @@ class PluginsPanelWidget(Widget):
 
         if not items:
             # Drop any in-place entries, mount the empty notice once.
-            for w in existing.values():
-                w.remove()
+            for entry in existing.values():
+                entry.remove()
             if not empty_widgets:
                 container.mount(Static(self._empty_text(), classes="plugins-empty"))
             else:
                 empty_widgets[0].update(self._empty_text())
         else:
             # Clear any prior empty notice — we have items now.
-            for w in empty_widgets:
-                w.remove()
+            for empty in empty_widgets:
+                empty.remove()
             for i, item in enumerate(items):
                 widget_id = f"plug-{i}"
                 content = self._render_item(item, i)

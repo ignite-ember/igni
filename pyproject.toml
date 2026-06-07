@@ -76,7 +76,10 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 ignore = ["E501"]
 
 [tool.mypy]
-python_version = "3.10"
+# Matches ``requires-python = ">=3.11"`` above. ``StrEnum`` is 3.11+;
+# leaving mypy at 3.10 narrows ``StrEnum`` members to ``str`` and
+# trips dict-key / tuple-element / index checks across the codebase.
+python_version = "3.11"
 warn_return_any = false
 warn_unused_configs = true
 disallow_untyped_defs = false

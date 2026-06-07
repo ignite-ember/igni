@@ -209,13 +209,13 @@ class SkillsPanelWidget(Widget):
         ]
 
         if not self._skills:
-            for w in existing.values():
-                w.remove()
+            for entry in existing.values():
+                entry.remove()
             if not empty_widgets:
                 container.mount(Static("No skills loaded.", classes="skills-empty"))
         else:
-            for w in empty_widgets:
-                w.remove()
+            for empty in empty_widgets:
+                empty.remove()
             for i, skill in enumerate(self._skills):
                 widget_id = f"skill-{i}"
                 content = (

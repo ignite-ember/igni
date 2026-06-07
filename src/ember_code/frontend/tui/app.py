@@ -21,6 +21,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches
 from textual.events import Resize
+from textual.timer import Timer
 from textual.widgets import Static
 
 from ember_code import __version__
@@ -253,6 +254,11 @@ class EmberApp(App):
         self._backend: Any = None
         self._process_mgr: Any = None
         self._task_refresh_timer: Any = None
+        # Panel status-poll intervals — set when the matching panel is
+        # opened, cleared back to None when it closes. Declared Optional
+        # so the close path's ``= None`` reset type-checks.
+        self._codeindex_status_poll: Timer | None = None
+        self._loop_status_poll: Timer | None = None
 
         self._conversation: ConversationView | None = None
         self._shell_context: list[str] = []  # accumulated shell results for AI context

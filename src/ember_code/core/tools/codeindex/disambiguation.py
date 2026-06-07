@@ -121,11 +121,11 @@ class DisambiguationService:
                 # Look up parent names + paths for the via_parent label.
                 parent_info = await self._fetch_parent_info(parent_ids, sha)
                 for child_id, parent_id in parent_lookups.items():
-                    dirs = p_per_item.get(parent_id)
-                    if not dirs:
+                    parent_dirs = p_per_item.get(parent_id)
+                    if not parent_dirs:
                         continue
                     group = await self._build_group(
-                        dirs=dirs,
+                        dirs=parent_dirs,
                         target_meta=p_target_meta,
                         query_text=query_text,
                         sha=sha,

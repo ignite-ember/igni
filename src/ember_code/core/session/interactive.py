@@ -164,7 +164,7 @@ async def run_session_interactive(
 
     # ── Knowledge sync: DB → file (export for git) ─────────────────
     if session.settings.knowledge.share and session.settings.knowledge.auto_sync:
-        sync_result = session.knowledge_mgr.sync_to_file()
+        sync_result = await session.knowledge_mgr.sync_to_file()
         if sync_result.new_entries > 0:
             print_info(
                 f"Knowledge sync: exported {sync_result.new_entries} new entries to "

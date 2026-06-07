@@ -207,8 +207,8 @@ class AgentsPanelWidget(Widget):
         ]
 
         if not self._agents:
-            for w in existing.values():
-                w.remove()
+            for entry in existing.values():
+                entry.remove()
             if not empty_widgets:
                 container.mount(
                     Static(
@@ -217,8 +217,8 @@ class AgentsPanelWidget(Widget):
                     )
                 )
         else:
-            for w in empty_widgets:
-                w.remove()
+            for empty in empty_widgets:
+                empty.remove()
             for i, agent in enumerate(self._agents):
                 widget_id = f"agent-{i}"
                 content = (

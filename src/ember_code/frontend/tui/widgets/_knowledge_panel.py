@@ -290,8 +290,8 @@ class KnowledgePanelWidget(Widget):
         ]
 
         if not self._results:
-            for w in existing.values():
-                w.remove()
+            for entry in existing.values():
+                entry.remove()
             empty_text = (
                 "No results."
                 if self.mode == "search"
@@ -302,8 +302,8 @@ class KnowledgePanelWidget(Widget):
             else:
                 empty_widgets[0].update(empty_text)
         else:
-            for w in empty_widgets:
-                w.remove()
+            for empty in empty_widgets:
+                empty.remove()
             for i, hit in enumerate(self._results):
                 widget_id = f"kb-{i}"
                 content = (

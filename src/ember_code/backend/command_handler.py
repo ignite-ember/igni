@@ -615,15 +615,15 @@ class CommandHandler:
             if action_rest:
                 name = action_rest[0]
                 try:
-                    entry = _refresh(name, data_dir=data_dir)
+                    refreshed = _refresh(name, data_dir=data_dir)
                 except _GitError as e:
                     return CommandResult.error(f"git error: {e}")
                 except Exception as e:
                     return CommandResult.error(f"Refresh failed: {e}")
-                if entry is None:
+                if refreshed is None:
                     return CommandResult.error(f"No marketplace named '{name}' is registered.")
-                count = len(entry.cached.plugins) if entry.cached else 0
-                return CommandResult.info(f"Refreshed '{entry.name}' ({count} plugin(s)).")
+                count = len(refreshed.cached.plugins) if refreshed.cached else 0
+                return CommandResult.info(f"Refreshed '{refreshed.name}' ({count} plugin(s)).")
 
             # Refresh all.
             registry = _load(data_dir=data_dir)
@@ -904,10 +904,11 @@ class CommandHandler:
                 return CommandResult.info("No results.")
             lines = f"## CodeIndex Search ({len(results)} results)\n"
             for i, r in enumerate(results, 1):
+                score_str = f"{r.score:.3f}" if r.score is not None else "n/a"
                 lines += (
-                    f"\n**{i}. {r['name']}** (`{r['item_id']}`)"
-                    f" — {r['path']} (score {r['score']:.3f})\n"
-                    f"{r['chunk_preview']}\n"
+                    f"\n**{i}. {r.name}** (`{r.item_id}`)"
+                    f" — {r.path} (score {score_str})\n"
+                    f"{r.chunk_preview or ''}\n"
                 )
             return CommandResult.markdown(lines)
 
@@ -915,15 +916,15 @@ class CommandHandler:
             item = await index.get_item(item_id=sub_args.strip())
             if item is None:
                 return CommandResult.error(f"Item {sub_args.strip()} not found.")
-            preview = item["content"]
+            preview = item.content
             if len(preview) > 1500:
                 preview = preview[:1500] + "..."
             return CommandResult.markdown(
-                f"## {item['name']}\n"
-                f"- **id:** `{item['item_id']}`\n"
-                f"- **path:** {item['path']}\n"
-                f"- **type:** {item['type']}\n"
-                f"- **commit:** {item['commit']}\n\n"
+                f"## {item.name}\n"
+                f"- **id:** `{item.item_id}`\n"
+                f"- **path:** {item.path}\n"
+                f"- **type:** {item.type}\n"
+                f"- **commit:** {item.commit}\n\n"
                 f"```\n{preview}\n```"
             )
 
@@ -968,8 +969,9 @@ class CommandHandler:
                     f"Sync of {result.commit_sha[:8] if result.commit_sha else '?'} failed: {result.error}"
                 )
             stats = result.stats
+            short_sha = result.commit_sha[:8] if result.commit_sha else "?"
             return CommandResult.info(
-                f"Synced {result.commit_sha[:8]}: "
+                f"Synced {short_sha}: "
                 f"{stats.items_upserted} upserts, {stats.items_deleted} deletes, "
                 f"{stats.references_upserted} refs."
             )
