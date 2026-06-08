@@ -9,7 +9,6 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-import tiktoken
 from textual.widgets import Static
 
 from ember_code.frontend.tui.widgets import (
@@ -65,11 +64,6 @@ class RunController:
         self._current_task: asyncio.Task | None = None
         self._queue: list[str] = []
         self._queue_hook: Any = None
-        self._tokenizer = tiktoken.get_encoding("cl100k_base")
-
-        # Per-run token tracking
-        self._run_input_tokens = 0
-        self._run_output_tokens = 0
         self._streamed = False
 
         # Turn counter — kept for status-bar / logging only.
@@ -238,15 +232,12 @@ class RunController:
         self._processing = True
 
         # Reset per-run state
-        self._run_input_tokens = 0
-        self._run_output_tokens = 0
         self._run_output_text: list[str] = []
         self._last_token_update = 0.0
         self._streamed = False
         self._ui_finalized = False
         self._agent_stack.clear()
         self._seen_run_ids.clear()
-        self._run_input_tokens = len(self._tokenizer.encode(message))
 
         backend = self._app.backend
 
@@ -306,16 +297,14 @@ class RunController:
 
         # ── FE: finalize UI ──
         if not getattr(self, "_ui_finalized", False):
-            if self._run_output_text:
-                full_output = "".join(self._run_output_text)
-                self._run_output_tokens = len(self._tokenizer.encode(full_output))
-            self._status.set_run_tokens(self._run_input_tokens, self._run_output_tokens)
-            self._status.add_tokens(self._run_input_tokens, self._run_output_tokens)
             self._finalize_spinner()
             self._status.end_run()
+            # ``update_context_usage`` is also called from
+            # ``_post_run_compaction`` once the backend has counted —
+            # this initial call clears the indicator pending the
+            # asynchronous refresh so the bar doesn't show stale data.
             self._status.update_context_usage()
         self._ui_finalized = False
-        self._status.record_turn()
 
         # Clean up — mark as not processing so user can send next message
         self._processing = False
@@ -336,11 +325,23 @@ class RunController:
         await self._drain_queue()
 
     async def _post_run_compaction(self) -> None:
-        """Check compaction in background — doesn't block next message."""
+        """Refresh the context-fill indicator and run the compaction
+        check, both from Agno's locally-counted token total.
+
+        We used to read ``input_tokens`` off the wire and feed it into
+        both consumers. On prompt-caching providers (Anthropic) that
+        number includes ``cache_read_input_tokens`` cumulated across
+        tool iterations — millions of tokens after a few turns — which
+        spuriously triggered the 80% auto-compaction → history wipe.
+        Asking the backend to ``count_tokens(messages)`` produces the
+        actual conversation size instead.
+        """
         try:
-            ctx_tokens = self._status._context_input_tokens
-            max_ctx = self._status.max_context_tokens
             backend = self._app.backend
+            ctx_tokens = await backend.count_context_tokens()
+            max_ctx = self._status.max_context_tokens
+            self._status.set_context_tokens(ctx_tokens)
+            self._status.update_context_usage()
             result = await backend.compact_if_needed(ctx_tokens, max_ctx)
             if result:
                 self._conversation.append_info(
@@ -348,11 +349,8 @@ class RunController:
                 )
                 if result.summary:
                     self._conversation.append_info(f"Summary: {result.summary}")
-                self._status._context_input_tokens = 0
-                bar = self._status._bar()
-                if bar:
-                    bar.set_context_usage(0, self._status.max_context_tokens)
-                    bar.set_run_tokens(0, 0)
+                self._status.set_context_tokens(0)
+                self._status.update_context_usage()
         except Exception as e:
             logger.debug("Post-run compaction failed: %s", e)
 
@@ -467,14 +465,6 @@ class RunController:
                 await self._on_content_chunk(proto.text)
                 self._streamed = True
                 self._run_output_text.append(proto.text)
-                import time as _time
-
-                now = _time.monotonic()
-                if now - self._last_token_update > 1.0:
-                    self._last_token_update = now
-                    full_output = "".join(self._run_output_text)
-                    self._run_output_tokens = len(self._tokenizer.encode(full_output))
-                    self._status.set_run_tokens(self._run_input_tokens, self._run_output_tokens)
 
         elif isinstance(proto, msg.ToolStarted):
             await self._on_tool_started(
@@ -482,8 +472,6 @@ class RunController:
             )
 
         elif isinstance(proto, msg.ToolCompleted):
-            self._run_input_tokens += len(self._tokenizer.encode(proto.full_result))
-            self._status.set_run_tokens(self._run_input_tokens, self._run_output_tokens)
             self._status.update_status_bar()
             self._on_tool_completed(
                 proto.summary,
@@ -497,10 +485,6 @@ class RunController:
             self._on_tool_error(proto.error)
 
         elif isinstance(proto, msg.ModelCompleted):
-            if proto.input_tokens > 0:
-                self._run_input_tokens = proto.input_tokens
-            if proto.output_tokens > 0:
-                self._run_output_tokens = proto.output_tokens
             self._on_tokens(
                 proto.input_tokens,
                 proto.output_tokens,
@@ -509,11 +493,6 @@ class RunController:
             )
             if self._streamed and not self._ui_finalized:
                 self._ui_finalized = True
-                if self._run_output_text:
-                    full_output = "".join(self._run_output_text)
-                    self._run_output_tokens = len(self._tokenizer.encode(full_output))
-                self._status.set_run_tokens(self._run_input_tokens, self._run_output_tokens)
-                self._status.add_tokens(self._run_input_tokens, self._run_output_tokens)
                 self._finalize_spinner()
                 self._status.end_run()
                 self._status.update_context_usage()
@@ -530,9 +509,6 @@ class RunController:
             )
 
         elif isinstance(proto, msg.RunCompleted):
-            if proto.input_tokens and not self._run_input_tokens:
-                self._run_input_tokens = proto.input_tokens
-                self._run_output_tokens = proto.output_tokens
             if proto.run_id:
                 self._on_agent_completed(proto.run_id, proto.parent_run_id or None)
 
@@ -733,16 +709,17 @@ class RunController:
     def _on_tokens(
         self, input_t: int, output_t: int, run_id: str | None, parent_run_id: str | None
     ) -> None:
+        """Forward per-model-call tokens to the in-flight spinner only.
+
+        The status bar's context-fill indicator and the auto-compaction
+        trigger both read from the backend's locally-counted total —
+        not from API-reported ``input_tokens``, which inflates with
+        ``cache_read_input_tokens`` on prompt-caching providers.
+        """
         if self._spinner and isinstance(self._spinner, AgentActivityWidget):
             if run_id:
                 self._spinner.on_agent_tokens(run_id, input_t, output_t)
             self._spinner.set_tokens(input_t + output_t)
-
-        self._status.set_run_tokens(input_t, output_t)
-        # Track the largest single input_tokens as context size —
-        # the leader's request includes full history and is always the largest
-        if input_t > self._status._context_input_tokens:
-            self._status.add_context_tokens(input_t)
 
     # ── Agent lifecycle ───────────────────────────────────────────
 

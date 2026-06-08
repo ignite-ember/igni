@@ -112,18 +112,12 @@ class StatusBar(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._model_name: str = ""
-        self._run_input: int = 0
-        self._run_output: int = 0
         self._run_elapsed: float = 0.0
         self._context_tokens: int = 0
         self._max_context: int = 128_000
         self._running: bool = False
         self._run_timer: Timer | None = None
         self._last_elapsed: float = 0.0
-        self._last_input: int = 0
-        self._last_output: int = 0
-        self._total_input: int = 0
-        self._total_output: int = 0
         self._cloud_connected: bool = False
         self._cloud_org: str = ""
         # Short session identifier (8-char uuid prefix). Rendered on
@@ -139,14 +133,6 @@ class StatusBar(Widget):
         self._codeindex_status: CodeIndexStatusInfo | None = None
 
     @property
-    def total_input_tokens(self) -> int:
-        return self._total_input
-
-    @property
-    def total_output_tokens(self) -> int:
-        return self._total_output
-
-    @property
     def context_used_pct(self) -> float:
         if self._max_context <= 0:
             return 0.0
@@ -159,17 +145,6 @@ class StatusBar(Widget):
     def set_session_id(self, session_id: str) -> None:
         """Update the short session identifier shown next to the model."""
         self._session_id = session_id or ""
-        self._tick += 1
-
-    def add_tokens(self, input_tokens: int = 0, output_tokens: int = 0) -> None:
-        """Accumulate session-wide token totals."""
-        self._total_input += input_tokens
-        self._total_output += output_tokens
-        self._tick += 1
-
-    def set_run_tokens(self, input_tokens: int, output_tokens: int) -> None:
-        self._run_input = input_tokens
-        self._run_output = output_tokens
         self._tick += 1
 
     def set_context_usage(self, context_tokens: int, max_context: int) -> None:
@@ -211,8 +186,6 @@ class StatusBar(Widget):
     def start_run(self) -> None:
         self._running = True
         self._run_elapsed = 0.0
-        self._run_input = 0
-        self._run_output = 0
         if self._run_timer:
             self._run_timer.stop()
         self._run_timer = self.set_interval(0.1, self._tick_elapsed)
@@ -224,8 +197,6 @@ class StatusBar(Widget):
             self._run_timer.stop()
             self._run_timer = None
         self._last_elapsed = self._run_elapsed
-        self._last_input = self._run_input
-        self._last_output = self._run_output
         self._tick += 1
 
     def _tick_elapsed(self) -> None:

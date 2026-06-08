@@ -461,8 +461,6 @@ class TestRunControllerQueue:
         ctrl._session = None
         ctrl._stream_widget = None
         ctrl._spinner = None
-        ctrl._run_input_tokens = 0
-        ctrl._run_output_tokens = 0
         ctrl._streamed = False
         return ctrl
 

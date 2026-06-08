@@ -245,6 +245,8 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
         RpcMethod.GET_KNOWLEDGE_STATUS: lambda args: backend.get_knowledge_status(),
         RpcMethod.KNOWLEDGE_SEARCH: lambda args: backend.knowledge_search(args["query"]),
         RpcMethod.KNOWLEDGE_ADD: lambda args: backend.knowledge_add(args["source"]),
+        # ── Conversation ──────────────────────────────────────────
+        RpcMethod.COUNT_CONTEXT_TOKENS: lambda args: backend.count_context_tokens(),
         # ── CodeIndex ─────────────────────────────────────────────
         RpcMethod.CODEINDEX_STATUS: lambda args: backend.codeindex_status(),
         RpcMethod.CODEINDEX_SYNC: lambda args: backend.codeindex_sync(args.get("sha")),

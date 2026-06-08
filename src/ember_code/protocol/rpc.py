@@ -133,6 +133,9 @@ class RpcMethod(StrEnum):
     KNOWLEDGE_SEARCH = "knowledge_search"
     KNOWLEDGE_ADD = "knowledge_add"
 
+    # ── Conversation ──────────────────────────────────────────────
+    COUNT_CONTEXT_TOKENS = "count_context_tokens"
+
     # ── CodeIndex ─────────────────────────────────────────────────
     CODEINDEX_STATUS = "codeindex_status"
     CODEINDEX_SYNC = "codeindex_sync"

@@ -121,24 +121,6 @@ class TestTokenBadge:
 
 
 class TestStatusBar:
-    def test_initial_values(self):
-        bar = StatusBar()
-        assert bar.total_input_tokens == 0
-        assert bar.total_output_tokens == 0
-
-    def test_add_tokens(self):
-        bar = StatusBar()
-        bar.add_tokens(input_tokens=100, output_tokens=50)
-        assert bar.total_input_tokens == 100
-        assert bar.total_output_tokens == 50
-
-    def test_add_tokens_accumulates(self):
-        bar = StatusBar()
-        bar.add_tokens(input_tokens=100, output_tokens=50)
-        bar.add_tokens(input_tokens=200, output_tokens=100)
-        assert bar.total_input_tokens == 300
-        assert bar.total_output_tokens == 150
-
     def test_context_usage(self):
         bar = StatusBar()
         bar.set_context_usage(context_tokens=42_000, max_context=100_000)

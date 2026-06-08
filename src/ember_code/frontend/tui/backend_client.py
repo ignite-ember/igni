@@ -490,6 +490,13 @@ class BackendClient:
 
     # ── Compaction / Learning ────────────────────────────────────
 
+    async def count_context_tokens(self) -> int:
+        result = await self._rpc(RpcMethod.COUNT_CONTEXT_TOKENS)
+        try:
+            return int(result or 0)
+        except (TypeError, ValueError):
+            return 0
+
     async def compact_if_needed(self, ctx_tokens: int, max_ctx: int) -> msg.SessionCleared | None:
         result = await self._rpc(
             RpcMethod.COMPACT_IF_NEEDED, ctx_tokens=ctx_tokens, max_ctx=max_ctx

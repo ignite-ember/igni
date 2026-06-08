@@ -1,4 +1,13 @@
-"""StatusTracker — tracks token usage, context window, and message count."""
+"""StatusTracker — keeps the status bar in sync with session state.
+
+Token-related state is intentionally minimal: just the locally-counted
+context fill and the model's window size. The bar's other slots
+(model, session, cloud, CodeIndex) are pure passthrough from backend
+RPCs. We don't track per-run or session-total token sums anymore —
+those used to read API-reported ``input_tokens`` which on prompt-
+caching providers compounded ``cache_read`` into millions of tokens
+and triggered the auto-compaction → history wipe path.
+"""
 
 from typing import TYPE_CHECKING
 
@@ -11,13 +20,16 @@ if TYPE_CHECKING:
 
 
 class StatusTracker:
-    """Tracks token usage, context window, and delegates to StatusBar."""
+    """Tracks context window usage and delegates to StatusBar."""
 
     def __init__(self, app: "EmberApp"):
         self._app = app
-        self.total_tokens_used: int = 0
-        # Context tokens: only main conversation agent tokens (excludes sub-agents)
-        self._context_input_tokens: int = 0
+        # Backend-supplied count of the current conversation's tokens.
+        # Refreshed in ``RunController._post_run_compaction`` via
+        # ``BackendClient.count_context_tokens`` (Agno's per-model
+        # tokenizer). Cached here so the bar's sync render can read
+        # it without an RPC.
+        self._context_tokens: int = 0
         self.max_context_tokens: int = 128_000
 
     def _bar(self) -> StatusBar | None:
@@ -25,12 +37,6 @@ class StatusTracker:
             return self._app.query_one("#status-bar", StatusBar)
         except NoMatches:
             return None
-
-    def add_tokens(self, input_tokens: int, output_tokens: int) -> None:
-        self.total_tokens_used += input_tokens + output_tokens
-        bar = self._bar()
-        if bar:
-            bar.add_tokens(input_tokens, output_tokens)
 
     def start_run(self) -> None:
         bar = self._bar()
@@ -41,11 +47,6 @@ class StatusTracker:
         bar = self._bar()
         if bar:
             bar.end_run()
-
-    def set_run_tokens(self, input_tokens: int, output_tokens: int) -> None:
-        bar = self._bar()
-        if bar:
-            bar.set_run_tokens(input_tokens, output_tokens)
 
     def update_status_bar(self) -> None:
         backend = getattr(self._app, "_backend", None)
@@ -62,19 +63,18 @@ class StatusTracker:
             # extra RPC. Empty string short-circuits the bar render.
             bar.set_session_id(getattr(backend, "session_id", ""))
 
-    def add_context_tokens(self, input_tokens: int) -> None:
-        """Track main conversation input tokens for context % calculation.
+    def set_context_tokens(self, tokens: int) -> None:
+        """Replace the cached context-fill count.
 
-        Only call this for the top-level agent's model requests — not sub-agents.
-        The input_tokens of the last main-agent request approximates how full
-        the context window is (since it includes conversation history).
+        Called after the backend re-counts the conversation locally;
+        also called with ``0`` after auto-compaction wipes history.
         """
-        self._context_input_tokens = input_tokens
+        self._context_tokens = max(0, tokens)
 
     def update_context_usage(self) -> None:
         bar = self._bar()
         if bar:
-            bar.set_context_usage(self._context_input_tokens, self.max_context_tokens)
+            bar.set_context_usage(self._context_tokens, self.max_context_tokens)
 
     def set_ide_status(self, name: str, connected: bool) -> None:
         """Update the IDE connection indicator in the status bar."""
@@ -97,9 +97,5 @@ class StatusTracker:
         if bar:
             bar.set_codeindex_status(status)
 
-    def record_turn(self) -> None:
-        pass  # No longer tracking message count in status bar
-
     def reset(self) -> None:
-        self.total_tokens_used = 0
-        self._context_input_tokens = 0
+        self._context_tokens = 0

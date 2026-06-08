@@ -712,6 +712,38 @@ class BackendServer:
 
     # ── Compaction ────────────────────────────────────────────────
 
+    async def count_context_tokens(self) -> int:
+        """Locally count the tokens of the current conversation.
+
+        Agno's ``Model.count_tokens`` picks the right tokenizer per model
+        (tiktoken for OpenAI-likes, HF for known HF models, character
+        estimation otherwise) so we don't roll our own per-provider
+        logic. Used by the status-bar context indicator and the
+        ``compact_if_needed`` trigger — both used to read
+        ``input_tokens`` off the wire, which on prompt-caching providers
+        (Anthropic) compounds ``cache_read_input_tokens`` across tool
+        iterations into millions of tokens and was triggering the 80%
+        auto-compaction → history wipe path on basically every turn.
+        """
+        try:
+            agno_session = await self._session.main_team.aget_session(
+                session_id=self._session.session_id,
+                user_id=self._session.user_id,
+            )
+        except Exception:
+            return 0
+        if agno_session is None:
+            return 0
+        try:
+            messages = agno_session.get_messages()
+        except Exception:
+            return 0
+        try:
+            return int(self._session.main_team.model.count_tokens(messages))
+        except Exception as exc:
+            logger.debug("count_tokens failed (%s); reporting 0", exc)
+            return 0
+
     async def compact_if_needed(self, ctx_tokens: int, max_ctx: int) -> msg.SessionCleared | None:
         """Compact session if approaching context limit."""
         compacted = await self._session.compact_if_needed(ctx_tokens, max_ctx)
