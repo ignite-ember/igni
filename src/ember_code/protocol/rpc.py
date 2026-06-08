@@ -136,6 +136,7 @@ class RpcMethod(StrEnum):
     # ── CodeIndex ─────────────────────────────────────────────────
     CODEINDEX_STATUS = "codeindex_status"
     CODEINDEX_SYNC = "codeindex_sync"
+    CODEINDEX_RESYNC = "codeindex_resync"
     CODEINDEX_CLEAN = "codeindex_clean"
     CODEINDEX_INSTALL = "codeindex_install"
 

@@ -164,6 +164,35 @@ class TestPrepareCommit:
         assert fetched.name == "seed.py"
 
 
+class TestForgetCommit:
+    """``/codeindex resync`` needs to wipe a single commit's local
+    state so the next sync can rebuild from a snapshot. Pin the
+    contract: chroma dir gone, manifest entry gone, cached client
+    dropped, idempotent on the unknown case.
+    """
+
+    @pytest.mark.asyncio
+    async def test_forget_removes_chroma_and_manifest_entry(self, index):
+        path = await index.prepare_commit("doomed")
+        assert path.exists()
+        assert "doomed" in index.manifest.load().commits
+
+        removed = await index.forget_commit("doomed")
+        assert removed is True
+        assert not path.exists()
+        assert "doomed" not in index.manifest.load().commits
+        assert index.has_commit("doomed") is False
+
+    @pytest.mark.asyncio
+    async def test_forget_unknown_commit_is_noop(self, index):
+        removed = await index.forget_commit("never_existed")
+        assert removed is False
+
+    @pytest.mark.asyncio
+    async def test_forget_empty_sha_is_noop(self, index):
+        assert await index.forget_commit("") is False
+
+
 # -- add_item / search / get_item ---------------------------------------------
 
 

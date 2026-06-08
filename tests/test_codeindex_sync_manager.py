@@ -232,19 +232,30 @@ class TestSyncSuccessAndErrors:
 
 
 class TestSnapshotVsDeltaRouting:
-    """Pins the parent-driven choice between the delta and snapshot endpoints.
+    """Pins the routing between the delta and snapshot endpoints.
 
-    The sync manager has to read ``PreflightResult.parent_sha`` and the
-    local index's ``has_commit`` to decide whether the per-commit delta
-    is applicable. Three branches:
+    The rule: pick the endpoint that keeps the local chroma matching the
+    cloud's definition. Delta is safe only when there's a local ancestor
+    to copy-on-write from; otherwise the only correct choice is the
+    snapshot. Branches we pin:
 
-    * No parent (root commit) → delta endpoint works fine.
-    * Parent present locally → delta endpoint, normal copy-on-write.
-    * Parent missing locally → snapshot endpoint, the only safe route.
+    * No usable local ancestor (root or missing parent) → snapshot.
+    * Parent present locally → delta + copy-on-write.
+    * Target already indexed locally → delta (idempotent replay).
+    * ``force_snapshot=True`` → snapshot regardless of state.
     """
 
     @pytest.mark.asyncio
-    async def test_root_commit_uses_delta_endpoint(self, tmp_path, monkeypatch):
+    async def test_no_parent_no_local_target_uses_snapshot(self, tmp_path, monkeypatch):
+        """``parent_sha=None`` + target not local → snapshot.
+
+        The server returns ``parent_sha=None`` whenever it lacks parent
+        lineage on the preflight response, *including* for non-root
+        commits. Trusting the delta here used to leave the local index
+        with only the diff's items. The conservative rule below picks
+        the snapshot endpoint so the index starts from a known full
+        state.
+        """
         index = _stub_index()
         index.has_commit = MagicMock(return_value=False)
         mgr = _make_mgr(
@@ -263,9 +274,68 @@ class TestSnapshotVsDeltaRouting:
 
         result = await mgr.sync_now(sha="abc1234")
         assert result.succeeded
+        snapshot_called.assert_awaited_once()
+        delta_called.assert_not_called()
+        assert result.stats.items_upserted == 99
+
+    @pytest.mark.asyncio
+    async def test_target_already_local_uses_delta(self, tmp_path, monkeypatch):
+        """Target chroma already exists locally → delta endpoint.
+
+        Re-applying the JSONL on top of an existing chroma is the
+        idempotent replay path; there's no need to pay the cost of a
+        full snapshot when the local state is already populated.
+        """
+        index = _stub_index()
+        # has_commit("abc1234") returns True (target present); anything
+        # else returns False.
+        index.has_commit = MagicMock(side_effect=lambda sha: sha == "abc1234")
+        mgr = _make_mgr(
+            project_dir=tmp_path,
+            code_index=index,
+            resolver=_stub_resolver(_RESOLVED),
+            credentials=_stub_credentials(),
+        )
+        from ember_code.core.code_index import sync_manager as sm
+
+        _patch_preflight(monkeypatch, PreflightResult(status=PreflightStatus.OK, parent_sha=None))
+        delta_called = AsyncMock(return_value=DeltaStats(items_upserted=1))
+        snapshot_called = AsyncMock(return_value=DeltaStats(items_upserted=99))
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply", delta_called)
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply_snapshot", snapshot_called)
+
+        result = await mgr.sync_now(sha="abc1234")
+        assert result.succeeded
         delta_called.assert_awaited_once()
         snapshot_called.assert_not_called()
-        index.has_commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_force_snapshot_overrides_routing(self, tmp_path, monkeypatch):
+        """``force_snapshot=True`` ignores parent / target presence."""
+        index = _stub_index()
+        # Both target and parent present — would normally pick delta.
+        index.has_commit = MagicMock(return_value=True)
+        mgr = _make_mgr(
+            project_dir=tmp_path,
+            code_index=index,
+            resolver=_stub_resolver(_RESOLVED),
+            credentials=_stub_credentials(),
+        )
+        from ember_code.core.code_index import sync_manager as sm
+
+        _patch_preflight(
+            monkeypatch,
+            PreflightResult(status=PreflightStatus.OK, parent_sha="parentsha"),
+        )
+        delta_called = AsyncMock(return_value=DeltaStats(items_upserted=1))
+        snapshot_called = AsyncMock(return_value=DeltaStats(items_upserted=99))
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply", delta_called)
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply_snapshot", snapshot_called)
+
+        result = await mgr.sync_now(sha="abc1234", force_snapshot=True)
+        assert result.succeeded
+        snapshot_called.assert_awaited_once()
+        delta_called.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_parent_present_locally_uses_delta_endpoint(self, tmp_path, monkeypatch):
@@ -292,7 +362,10 @@ class TestSnapshotVsDeltaRouting:
         assert result.succeeded
         delta_called.assert_awaited_once()
         snapshot_called.assert_not_called()
-        index.has_commit.assert_called_once_with("parentsha")
+        # New routing also peeks at target_sha to allow idempotent
+        # replay when the chroma is already there. Both checks must
+        # happen; the parent check is the load-bearing one.
+        index.has_commit.assert_any_call("parentsha")
 
     @pytest.mark.asyncio
     async def test_parent_missing_locally_uses_snapshot_endpoint(self, tmp_path, monkeypatch):

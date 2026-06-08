@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ignite-ember"
-version = "0.5.5"
+version = "0.5.6"
 description = "Terminal-based AI coding assistant built on Agno"
 readme = "README.md"
 license = "MIT"
@@ -43,6 +43,16 @@ dependencies = [
     "dateparser~=1.4.0",
     "chromadb~=1.5.9",
     "sentence-transformers~=5.5.1",
+    # Explicit torch / torchvision pins. ``sentence-transformers`` pulls
+    # both transitively, but the resolver freely picked a torchvision
+    # wheel one minor ahead of torch (e.g. torch 2.11 + torchvision 0.27)
+    # which made torchvision crash at import with
+    # ``RuntimeError: operator torchvision::nms does not exist`` and
+    # collapsed every ``transformers`` import into a misleading
+    # ``ModuleNotFoundError: PreTrainedModel``. Pinning the matched pair
+    # here keeps the lockfile stable across regenerations.
+    "torch~=2.11.0",
+    "torchvision~=0.26.0",
 ]
 
 [project.optional-dependencies]

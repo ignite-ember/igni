@@ -140,6 +140,34 @@ class CodeIndex:
             return False
         return commit_chroma_path(self.project, sha, data_dir=self.data_dir).exists()
 
+    async def forget_commit(self, sha: str) -> bool:
+        """Remove a commit's local state so the next sync can rebuild from scratch.
+
+        Drops the cached chromadb client, deletes ``<sha>.chroma/`` from
+        disk, and removes the commit from the manifest. Returns True if
+        something was actually removed. Used by ``/codeindex resync``
+        when the local index has drifted from the cloud definition.
+        """
+        if not sha:
+            return False
+        removed = False
+        async with self._lock:
+            if sha in self._clients:
+                try:
+                    self._clients.pop(sha)
+                except Exception:
+                    logger.debug("failed to drop cached chroma client for %s", sha)
+                removed = True
+        target = commit_chroma_path(self.project, sha, data_dir=self.data_dir)
+        if target.exists():
+            await asyncio.to_thread(shutil.rmtree, str(target), ignore_errors=True)
+            removed = True
+        try:
+            self.manifest.remove_commit(sha)
+        except Exception:
+            logger.debug("manifest had no record of %s", sha)
+        return removed
+
     # -- Commit lifecycle ------------------------------------------------------
 
     async def prepare_commit(

@@ -177,14 +177,19 @@ class CodeIndexSyncManager:
 
     # ── Sync ─────────────────────────────────────────────────────────
 
-    async def sync_now(self, *, sha: str | None = None) -> SyncResult:
-        """Download and apply the changeset for ``sha`` (defaults to current HEAD)."""
+    async def sync_now(self, *, sha: str | None = None, force_snapshot: bool = False) -> SyncResult:
+        """Download and apply the changeset for ``sha`` (defaults to current HEAD).
+
+        ``force_snapshot`` skips the delta-vs-snapshot routing and always
+        pulls the full snapshot — used by ``/codeindex resync`` to recover
+        from a drifted local index.
+        """
         async with self._lock:
-            result = await self._sync_locked(sha=sha)
+            result = await self._sync_locked(sha=sha, force_snapshot=force_snapshot)
             self._last_sync_result = result
             return result
 
-    async def _sync_locked(self, *, sha: str | None) -> SyncResult:
+    async def _sync_locked(self, *, sha: str | None, force_snapshot: bool = False) -> SyncResult:
         if self.code_index is None:
             return SyncResult(skipped=True, reason="code index not initialized")
         if self.resolver is None:
@@ -244,22 +249,34 @@ class CodeIndexSyncManager:
         if non_ok is not None:
             return non_ok
 
-        # Delta-vs-snapshot routing: a delta JSONL is only useful if
-        # the parent commit's chroma already exists locally. The
-        # preflight response tells us the parent SHA — a root commit
-        # (``parent_sha is None``) is fine with the delta endpoint
-        # because there's no copy-on-write step. Any other case where
-        # the parent is absent locally (fresh install, pruned history,
-        # branch switch jumping over uncached commits) needs the
-        # snapshot endpoint so the local chroma starts from a known
-        # full state.
-        use_snapshot = pf.parent_sha is not None and not self.code_index.has_commit(pf.parent_sha)
+        # Delta-vs-snapshot routing. Goal: keep the local chroma as
+        # close to the server's definition as possible. A delta JSONL
+        # is only safe when we have a local ancestor to copy-on-write
+        # from — otherwise the delta gets applied to an empty chroma
+        # and the resulting index reflects only what changed in the
+        # last commit, not the full state.
+        #
+        # We previously trusted ``parent_sha is None`` to mean "this is
+        # a git root, the delta is the full state". The server doesn't
+        # actually guarantee that — it can return ``None`` whenever it
+        # doesn't carry parent lineage on the preflight response, even
+        # for non-root commits. Treating that case as a delta produced
+        # silently broken indexes (see investigation notes in the
+        # repo history). The conservative rule below picks the
+        # snapshot endpoint whenever we'd otherwise apply a delta to
+        # an empty chroma, and falls back to the delta endpoint only
+        # when we have a usable local ancestor.
+        target_exists = self.code_index.has_commit(target_sha)
+        parent_usable = pf.parent_sha is not None and self.code_index.has_commit(pf.parent_sha)
+        use_snapshot = force_snapshot or (not target_exists and not parent_usable)
         try:
             if use_snapshot:
+                reason = "forced" if force_snapshot else "no local ancestor to copy-on-write from"
                 logger.info(
-                    "sync %s via snapshot (parent %s missing locally)",
+                    "sync %s via snapshot (%s; parent_sha=%s)",
                     target_sha[:8],
-                    pf.parent_sha[:8] if pf.parent_sha else "?",
+                    reason,
+                    pf.parent_sha[:8] if pf.parent_sha else "None",
                 )
                 stats = await self._fetcher.pull_and_apply_snapshot(
                     index=self.code_index,

@@ -248,6 +248,7 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
         # ── CodeIndex ─────────────────────────────────────────────
         RpcMethod.CODEINDEX_STATUS: lambda args: backend.codeindex_status(),
         RpcMethod.CODEINDEX_SYNC: lambda args: backend.codeindex_sync(args.get("sha")),
+        RpcMethod.CODEINDEX_RESYNC: lambda args: backend.codeindex_resync(args.get("sha")),
         RpcMethod.CODEINDEX_CLEAN: lambda args: backend.codeindex_clean(),
         RpcMethod.CODEINDEX_INSTALL: lambda args: backend.codeindex_install(),
         # ── Plugins ───────────────────────────────────────────────

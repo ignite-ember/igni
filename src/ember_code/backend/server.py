@@ -1181,6 +1181,30 @@ class BackendServer:
             "references_upserted": stats.references_upserted if stats else 0,
         }
 
+    async def codeindex_resync(self, sha: str | None) -> dict:
+        """Wipe the local chroma for ``sha`` (defaults to HEAD) and pull
+        a fresh snapshot. Mirrors ``/codeindex resync`` for panel use —
+        the underlying recovery path is identical: ``forget_commit`` +
+        ``sync_now(force_snapshot=True)``.
+        """
+        target_sha = sha or self._session.code_index_sync.current_sha()
+        forgot = False
+        if target_sha:
+            forgot = await self._session.code_index.forget_commit(target_sha)
+        result = await self._session.code_index_sync.sync_now(sha=target_sha, force_snapshot=True)
+        stats = result.stats
+        return {
+            "forgot": forgot,
+            "skipped": result.skipped,
+            "reason": result.reason or "",
+            "commit_sha": result.commit_sha or "",
+            "error": result.error or "",
+            "link_start_url": result.link_start_url or "",
+            "items_upserted": stats.items_upserted if stats else 0,
+            "items_deleted": stats.items_deleted if stats else 0,
+            "references_upserted": stats.references_upserted if stats else 0,
+        }
+
     async def codeindex_clean(self) -> dict:
         """Drop commits past the retention rules (selective: keeps
         HEAD and every branch tip). Returns the SHAs that were

@@ -1545,6 +1545,52 @@ class EmberApp(App):
         finally:
             panel.set_busy(None)
 
+    @on(CodeIndexPanelWidget.ResyncRequested)
+    async def _on_codeindex_resync(
+        self,
+        _event: CodeIndexPanelWidget.ResyncRequested,
+    ) -> None:
+        """Wipe local chroma for HEAD and pull a fresh snapshot.
+
+        Recovery path for indexes that have drifted from the cloud
+        definition — same backend behaviour as ``/codeindex resync``.
+        """
+        try:
+            panel = self.query_one(CodeIndexPanelWidget)
+        except Exception:
+            return
+        panel.set_busy("Resyncing (full snapshot)…")
+        try:
+            result = await self._backend.codeindex_resync(None)
+            if result.get("link_start_url"):
+                import webbrowser as _wb
+
+                _wb.open(result["link_start_url"])
+                self._conversation.append_info(
+                    f"CodeIndex needs setup. Opened {result['link_start_url']} in your browser. "
+                    "Re-run resync after finishing the install."
+                )
+            elif result.get("error"):
+                self._conversation.append_error(f"Resync failed: {result['error']}")
+            elif result.get("skipped"):
+                self._conversation.append_info(
+                    f"Resync skipped: {result.get('reason', '')}".rstrip(": ")
+                )
+            else:
+                sha = (result.get("commit_sha") or "")[:8]
+                prefix = "Wiped local index. " if result.get("forgot") else ""
+                self._conversation.append_info(
+                    f"{prefix}Resynced {sha} via snapshot: "
+                    f"{result.get('items_upserted', 0)} upserts, "
+                    f"{result.get('references_upserted', 0)} refs."
+                )
+            status_dict = await self._backend.codeindex_status()
+            status = CodeIndexStatusInfo(**status_dict)
+            panel.set_status(status)
+            self._status.set_codeindex_status(status)
+        finally:
+            panel.set_busy(None)
+
     @on(CodeIndexPanelWidget.CleanRequested)
     async def _on_codeindex_clean(
         self,

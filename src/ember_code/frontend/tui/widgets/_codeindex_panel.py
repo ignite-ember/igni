@@ -105,6 +105,9 @@ class CodeIndexPanelWidget(Widget):
     class SyncRequested(Message):
         pass
 
+    class ResyncRequested(Message):
+        pass
+
     class CleanRequested(Message):
         pass
 
@@ -198,7 +201,7 @@ class CodeIndexPanelWidget(Widget):
 
     @staticmethod
     def _hint_text() -> str:
-        return "[dim]S sync · C clean · I install · Esc close[/dim]"
+        return "[dim]S sync · R resync · C clean · I install · Esc close[/dim]"
 
     # ── Refresh / rebuild ─────────────────────────────────────────
 
@@ -231,6 +234,11 @@ class CodeIndexPanelWidget(Widget):
             event.stop()
             event.prevent_default()
             self.post_message(self.SyncRequested())
+            return
+        if event.key == "R":
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.ResyncRequested())
             return
         if event.key == "C":
             event.stop()

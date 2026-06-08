@@ -253,6 +253,7 @@ class CommandHandler:
             "  pre-pointed at your current repo. Click **Install** and you're done.\n\n"
             "**Daily commands:**\n"
             "- `/codeindex sync` — pull and apply the changeset for the current commit\n"
+            "- `/codeindex resync` — wipe local state and re-pull a full snapshot\n"
             "- `/codeindex search <query>` — semantic search the indexed commit\n"
             "- `/codeindex item <id>` — full details for one item\n"
             "- `/codeindex commits` — list locally-indexed commits\n"
@@ -976,6 +977,30 @@ class CommandHandler:
                 f"{stats.references_upserted} refs."
             )
 
+        if subcommand == "resync":
+            # Wipe the local chroma for the target sha and pull a fresh
+            # snapshot. Used when the local index drifts from the cloud
+            # definition — e.g. an earlier sync took the delta path with
+            # an absent parent and stored only the diff's items.
+            target_sha = sub_args or sync.current_sha()
+            if not target_sha:
+                return CommandResult.error("Not a git repository — pass an explicit sha.")
+            forgot = await index.forget_commit(target_sha)
+            result = await sync.sync_now(sha=target_sha, force_snapshot=True)
+            short_sha = (result.commit_sha or target_sha)[:8]
+            if result.skipped:
+                prefix = "Wiped local index; " if forgot else ""
+                return CommandResult.info(f"{prefix}sync skipped: {result.reason}")
+            if result.error:
+                return CommandResult.error(f"Resync of {short_sha} failed: {result.error}")
+            stats = result.stats
+            prefix = "Wiped local index. " if forgot else ""
+            return CommandResult.info(
+                f"{prefix}Resynced {short_sha} via snapshot: "
+                f"{stats.items_upserted} upserts, "
+                f"{stats.references_upserted} refs."
+            )
+
         if subcommand == "install":
             # Explicit "open the install page for this repo" entry point —
             # useful when `sync` already succeeded but the user wants to
@@ -1031,6 +1056,7 @@ class CommandHandler:
             "- `/codeindex commits` — list indexed commits as markdown\n"
             "- `/codeindex clean` — drop stale, non-branch commits\n"
             "- `/codeindex sync [sha]` — pull and apply a changeset (defaults to HEAD)\n"
+            "- `/codeindex resync [sha]` — wipe local state and pull a fresh snapshot\n"
             "- `/codeindex install` — open the GitHub App install page for this repo\n"
             "- `/codeindex status` — show sync state and install progress\n"
         )

@@ -315,6 +315,10 @@ class BackendClient:
         result = await self._rpc(RpcMethod.CODEINDEX_SYNC, sha=sha)
         return result or {}
 
+    async def codeindex_resync(self, sha: str | None = None) -> dict:
+        result = await self._rpc(RpcMethod.CODEINDEX_RESYNC, sha=sha)
+        return result or {}
+
     async def codeindex_clean(self) -> dict:
         result = await self._rpc(RpcMethod.CODEINDEX_CLEAN)
         return result or {}
