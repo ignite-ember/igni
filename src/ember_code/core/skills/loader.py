@@ -1,4 +1,20 @@
-"""Skill loader — discovers and loads skills from directories."""
+"""Skill loader — discovers and loads skills from directories.
+
+Resolution order (highest priority wins on name collision; integers are
+explicit so the outcome doesn't depend on load order). Within the same
+scope, native Ember sources beat cross-tool Claude sources by +1:
+
+    5  <project>/.ember/skills/          (project, native)
+    4  <project>/.ember/skills.local/    (project personal, gitignored)
+    3  <project>/.claude/skills/         (project, cross-tool)
+    2  ~/.ember/skills/                  (user, native)
+    1  ~/.claude/skills/                 (user, cross-tool)
+    0  core/bundled_skills/              (built-in defaults)
+
+Plugins land under their own namespace (``<plugin>:<skill>``) so they
+never collide with the base hierarchy. Two plugins of the same name
+across roots are resolved one step earlier, inside ``PluginLoader``.
+"""
 
 import sys
 from pathlib import Path
@@ -6,6 +22,22 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from ember_code.core.skills.parser import SkillDefinition, SkillParser
+
+
+class SkillPriority:
+    """Resolution priorities — see module docstring for the full table.
+
+    Constants are integers so they compose with the existing
+    ``load_directory(priority=...)`` API; callers (tests, plugins) can
+    still pass any integer they want.
+    """
+
+    BUNDLED = 0
+    USER_CLAUDE = 1
+    USER_EMBER = 2
+    PROJECT_CLAUDE = 3
+    PROJECT_LOCAL = 4
+    PROJECT_EMBER = 5
 
 
 class SkillEntry(BaseModel):
@@ -68,32 +100,43 @@ class SkillPool:
                 print(f"Warning: Failed to load skill from {skill_file}: {e}", file=sys.stderr)
 
     def load_all(self, project_dir: Path | None = None, cross_tool_support: bool = False):
-        """Load skills from all directories in priority order."""
+        """Load skills from all directories. See module docstring for the
+        full resolution table — each source has an explicit integer
+        priority so ties never depend on call order here.
+        """
         if project_dir is None:
             project_dir = Path.cwd()
 
-        # Priority 0: Built-in skills
+        # Built-in defaults (lowest).
         builtin_dir = Path(__file__).parent.parent / "bundled_skills"
-        self.load_directory(builtin_dir, priority=0)
+        self.load_directory(builtin_dir, priority=SkillPriority.BUNDLED)
 
-        # Priority 1: Global user skills
-        global_dir = Path.home() / ".ember" / "skills"
-        self.load_directory(global_dir, priority=1)
+        # User-level Ember (beats user-level Claude by +1).
+        self.load_directory(
+            Path.home() / ".ember" / "skills", priority=SkillPriority.USER_EMBER
+        )
 
-        # Priority 2: Project local skills (gitignored)
-        local_dir = project_dir / ".ember" / "skills.local"
-        self.load_directory(local_dir, priority=2)
+        # Project-level personal overrides (gitignored).
+        self.load_directory(
+            project_dir / ".ember" / "skills.local", priority=SkillPriority.PROJECT_LOCAL
+        )
 
-        # Priority 3: Project skills
-        project_skills = project_dir / ".ember" / "skills"
-        self.load_directory(project_skills, priority=3)
+        # Project-level Ember (highest).
+        self.load_directory(
+            project_dir / ".ember" / "skills", priority=SkillPriority.PROJECT_EMBER
+        )
 
-        # Cross-tool support: Claude Code directories
+        # Cross-tool Claude Code directories — explicitly slotted *below*
+        # their same-scope Ember equivalents.
         if cross_tool_support:
-            claude_project = project_dir / ".claude" / "skills"
-            self.load_directory(claude_project, priority=1)
-            claude_global = Path.home() / ".claude" / "skills"
-            self.load_directory(claude_global, priority=0)
+            self.load_directory(
+                project_dir / ".claude" / "skills",
+                priority=SkillPriority.PROJECT_CLAUDE,
+            )
+            self.load_directory(
+                Path.home() / ".claude" / "skills",
+                priority=SkillPriority.USER_CLAUDE,
+            )
 
     def get(self, name: str) -> SkillDefinition | None:
         """Get a skill by name."""

@@ -1,4 +1,20 @@
-"""Agent Pool — loads, parses, and manages agent definitions from .md files."""
+"""Agent Pool — loads, parses, and manages agent definitions from .md files.
+
+Resolution order (highest priority wins on name collision; integers are
+explicit so the outcome doesn't depend on load order). Within the same
+scope, native Ember sources beat cross-tool Claude sources by +1:
+
+    10  ephemeral agents created at runtime via ``create_ephemeral``
+     4  <project>/.ember/agents/          (project, native)
+     3  <project>/.ember/agents.local/    (project personal, gitignored)
+     2  <project>/.claude/agents/         (project, cross-tool)
+     1  ~/.ember/agents/                  (user, native)
+     0  ~/.claude/agents/                 (user, cross-tool)
+
+Plugins land under their own namespace (``<plugin>:<agent>``) so they
+never collide with the base hierarchy. Two plugins of the same name
+across roots are resolved one step earlier, inside ``PluginLoader``.
+"""
 
 import re
 import sys
@@ -13,6 +29,22 @@ from ember_code.core.config.models import ModelRegistry
 from ember_code.core.config.settings import Settings
 from ember_code.core.config.tool_permissions import ToolPermissions
 from ember_code.core.tools.registry import ToolRegistry
+
+
+class AgentPriority:
+    """Resolution priorities — see module docstring for the full table.
+
+    Constants are integers so they compose with the existing
+    ``_load_directory(priority=...)`` API; callers (tests, plugins)
+    can still pass any integer they want.
+    """
+
+    USER_CLAUDE = 0
+    USER_EMBER = 1
+    PROJECT_CLAUDE = 2
+    PROJECT_LOCAL = 3
+    PROJECT_EMBER = 4
+    EPHEMERAL = 10
 
 
 class AgentDefinition(BaseModel):
@@ -284,14 +316,14 @@ class AgentPool:
         self._codeindex_available = codeindex_available
 
         dirs = [
-            (Path.home() / ".ember" / "agents", 1),
-            (project_dir / ".ember" / "agents.local", 2),
-            (project_dir / ".ember" / "agents", 3),
+            (Path.home() / ".ember" / "agents", AgentPriority.USER_EMBER),
+            (project_dir / ".ember" / "agents.local", AgentPriority.PROJECT_LOCAL),
+            (project_dir / ".ember" / "agents", AgentPriority.PROJECT_EMBER),
         ]
 
         if settings.agents.cross_tool_support:
-            dirs.append((project_dir / ".claude" / "agents", 2))
-            dirs.append((Path.home() / ".claude" / "agents", 1))
+            dirs.append((project_dir / ".claude" / "agents", AgentPriority.PROJECT_CLAUDE))
+            dirs.append((Path.home() / ".claude" / "agents", AgentPriority.USER_CLAUDE))
 
         for directory, priority in dirs:
             self._load_directory(directory, priority)
@@ -546,7 +578,7 @@ class AgentPool:
 
         # Parse and register
         definition = parse_agent_file(md_path)
-        self._definitions[name] = (definition, 10)  # highest priority
+        self._definitions[name] = (definition, AgentPriority.EPHEMERAL)
         self._agents.pop(name, None)  # clear cache so it rebuilds
         self._ephemeral_count += 1
 
@@ -585,7 +617,7 @@ class AgentPool:
 
         # Update definition source path and priority
         defn.source_path = dest_path
-        self._definitions[name] = (defn, 3)  # project-level priority
+        self._definitions[name] = (defn, AgentPriority.PROJECT_EMBER)
         self._ephemeral_count = max(0, self._ephemeral_count - 1)
 
         return dest_path

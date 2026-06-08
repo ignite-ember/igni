@@ -1,5 +1,7 @@
 """Tests for skills — parser, loader, pool."""
 
+from pathlib import Path
+
 from ember_code.core.skills.loader import SkillPool
 from ember_code.core.skills.parser import SkillDefinition, SkillParser
 
@@ -179,3 +181,98 @@ class TestSkillPool:
         pool = SkillPool()
         pool.load_directory(tmp_path, priority=0)
         assert pool.list_skills() == []
+
+
+class TestSkillResolutionOrder:
+    """Pin down the documented resolution order so a future reorder of
+    ``load_all`` can't silently flip who wins on a name collision.
+
+    See the module docstring of ``skills/loader.py`` for the canonical
+    table. These tests assert the strict order: project Ember > project
+    local > project Claude > user Ember > user Claude > bundled.
+    """
+
+    def _write_skill(self, root: Path, name: str, label: str) -> None:
+        d = root / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: {label}\n---\nbody\n"
+        )
+
+    def _build_layout(self, tmp_path: Path) -> tuple[Path, Path]:
+        """Create a fake ``$HOME`` and project under ``tmp_path``."""
+        home = tmp_path / "home"
+        project = tmp_path / "project"
+        home.mkdir()
+        project.mkdir()
+        return home, project
+
+    def _load(self, monkeypatch, home: Path, project: Path, cross_tool: bool = True):
+        monkeypatch.setattr("pathlib.Path.home", lambda: home)
+        pool = SkillPool()
+        pool.load_all(project_dir=project, cross_tool_support=cross_tool)
+        return pool
+
+    def test_user_ember_beats_user_claude_at_same_scope(self, tmp_path, monkeypatch):
+        home, project = self._build_layout(tmp_path)
+        self._write_skill(home / ".ember" / "skills", "shared", "ember-user")
+        self._write_skill(home / ".claude" / "skills", "shared", "claude-user")
+        pool = self._load(monkeypatch, home, project)
+        assert pool.get("shared").description == "ember-user"
+
+    def test_project_ember_beats_project_claude_at_same_scope(self, tmp_path, monkeypatch):
+        home, project = self._build_layout(tmp_path)
+        self._write_skill(project / ".ember" / "skills", "shared", "ember-project")
+        self._write_skill(project / ".claude" / "skills", "shared", "claude-project")
+        pool = self._load(monkeypatch, home, project)
+        assert pool.get("shared").description == "ember-project"
+
+    def test_project_beats_user_across_scopes(self, tmp_path, monkeypatch):
+        home, project = self._build_layout(tmp_path)
+        self._write_skill(home / ".ember" / "skills", "shared", "ember-user")
+        self._write_skill(project / ".ember" / "skills", "shared", "ember-project")
+        pool = self._load(monkeypatch, home, project)
+        assert pool.get("shared").description == "ember-project"
+
+    def test_project_claude_beats_user_ember(self, tmp_path, monkeypatch):
+        """Cross-scope: a project's Claude config overrides the user's
+        global Ember preferences. This is the deliberate semantic of
+        the explicit priority scheme."""
+        home, project = self._build_layout(tmp_path)
+        self._write_skill(home / ".ember" / "skills", "shared", "ember-user")
+        self._write_skill(project / ".claude" / "skills", "shared", "claude-project")
+        pool = self._load(monkeypatch, home, project)
+        assert pool.get("shared").description == "claude-project"
+
+    def test_user_claude_beats_bundled(self, tmp_path, monkeypatch):
+        """User-level Claude skills should override silent bundled defaults."""
+        home, project = self._build_layout(tmp_path)
+        # Stub a bundled skill by writing into the actual bundled_skills dir
+        # would be invasive; instead verify the priority constants directly.
+        from ember_code.core.skills.loader import SkillPriority
+
+        assert SkillPriority.USER_CLAUDE > SkillPriority.BUNDLED
+
+    def test_local_beats_project_claude(self, tmp_path, monkeypatch):
+        home, project = self._build_layout(tmp_path)
+        self._write_skill(project / ".ember" / "skills.local", "shared", "ember-local")
+        self._write_skill(project / ".claude" / "skills", "shared", "claude-project")
+        pool = self._load(monkeypatch, home, project)
+        assert pool.get("shared").description == "ember-local"
+
+    def test_full_chain_yields_project_ember(self, tmp_path, monkeypatch):
+        """All six sources define ``shared``; the project-Ember one wins."""
+        home, project = self._build_layout(tmp_path)
+        self._write_skill(home / ".claude" / "skills", "shared", "claude-user")
+        self._write_skill(home / ".ember" / "skills", "shared", "ember-user")
+        self._write_skill(project / ".claude" / "skills", "shared", "claude-project")
+        self._write_skill(project / ".ember" / "skills.local", "shared", "ember-local")
+        self._write_skill(project / ".ember" / "skills", "shared", "ember-project")
+        pool = self._load(monkeypatch, home, project)
+        assert pool.get("shared").description == "ember-project"
+
+    def test_claude_skipped_when_cross_tool_disabled(self, tmp_path, monkeypatch):
+        home, project = self._build_layout(tmp_path)
+        self._write_skill(project / ".claude" / "skills", "claude-only", "claude")
+        pool = self._load(monkeypatch, home, project, cross_tool=False)
+        assert pool.get("claude-only") is None

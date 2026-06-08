@@ -1,9 +1,12 @@
 """Tests for utils/context.py — hierarchical rules loading."""
 
+from ember_code.core.utils import context as context_module
 from ember_code.core.utils.context import (
+    _parse_frontmatter,
     load_project_context,
     load_project_rules,
     load_subdirectory_rules,
+    load_user_rules,
 )
 
 
@@ -136,3 +139,129 @@ class TestLoadProjectContext:
 
         result = load_project_context(tmp_path, working_dir=src)
         assert "---" in result
+
+
+class TestParseFrontmatter:
+    def test_no_frontmatter(self):
+        paths, body = _parse_frontmatter("hello world\n")
+        assert paths == []
+        assert body == "hello world\n"
+
+    def test_frontmatter_without_paths(self):
+        content = "---\nname: test\n---\nbody text\n"
+        paths, body = _parse_frontmatter(content)
+        assert paths == []
+        assert body == "body text\n"
+
+    def test_paths_block(self):
+        content = (
+            "---\n"
+            "paths:\n"
+            '  - "**/*.test.ts"\n'
+            "  - src/api/**\n"
+            "---\n"
+            "scoped rule body"
+        )
+        paths, body = _parse_frontmatter(content)
+        assert paths == ["**/*.test.ts", "src/api/**"]
+        assert body == "scoped rule body"
+
+    def test_paths_inline_list(self):
+        content = '---\npaths: ["a/*", \'b/*\']\n---\nbody'
+        paths, body = _parse_frontmatter(content)
+        assert paths == ["a/*", "b/*"]
+        assert body == "body"
+
+
+def _redirect_user_rules(monkeypatch, tmp_path, *, with_claude=False):
+    """Point the user-rules constants at a sandbox under ``tmp_path``."""
+    monkeypatch.setattr(context_module, "USER_RULES_PATH", tmp_path / "rules.md")
+    monkeypatch.setattr(context_module, "USER_RULES_DIR", tmp_path / "rules")
+    claude_dir = tmp_path / "claude-rules" if with_claude else tmp_path / "nonexistent"
+    monkeypatch.setattr(context_module, "CLAUDE_USER_RULES_DIR", claude_dir)
+
+
+class TestLoadUserRules:
+    def test_loads_legacy_single_file(self, tmp_path, monkeypatch):
+        _redirect_user_rules(monkeypatch, tmp_path)
+        (tmp_path / "rules.md").write_text("legacy rules")
+        result = load_user_rules()
+        assert result == "legacy rules"
+
+    def test_loads_ember_rules_directory(self, tmp_path, monkeypatch):
+        _redirect_user_rules(monkeypatch, tmp_path)
+        rules_dir = tmp_path / "rules"
+        rules_dir.mkdir()
+        (rules_dir / "a.md").write_text("rule A")
+        (rules_dir / "b.md").write_text("rule B")
+        result = load_user_rules()
+        assert "rule A" in result
+        assert "rule B" in result
+
+    def test_merges_legacy_and_directory(self, tmp_path, monkeypatch):
+        _redirect_user_rules(monkeypatch, tmp_path)
+        (tmp_path / "rules.md").write_text("legacy")
+        rules_dir = tmp_path / "rules"
+        rules_dir.mkdir()
+        (rules_dir / "one.md").write_text("dir rule")
+        result = load_user_rules()
+        assert "legacy" in result
+        assert "dir rule" in result
+
+    def test_reads_claude_rules_when_enabled(self, tmp_path, monkeypatch):
+        _redirect_user_rules(monkeypatch, tmp_path, with_claude=True)
+        claude_dir = tmp_path / "claude-rules"
+        claude_dir.mkdir()
+        (claude_dir / "git.md").write_text("git habits")
+        result = load_user_rules(read_claude_rules=True)
+        assert "git habits" in result
+
+    def test_skips_claude_rules_when_disabled(self, tmp_path, monkeypatch):
+        _redirect_user_rules(monkeypatch, tmp_path, with_claude=True)
+        claude_dir = tmp_path / "claude-rules"
+        claude_dir.mkdir()
+        (claude_dir / "git.md").write_text("git habits")
+        result = load_user_rules(read_claude_rules=False)
+        assert "git habits" not in result
+
+    def test_paths_frontmatter_filters_out_when_no_match(self, tmp_path, monkeypatch):
+        _redirect_user_rules(monkeypatch, tmp_path)
+        rules_dir = tmp_path / "rules"
+        rules_dir.mkdir()
+        (rules_dir / "tui.md").write_text(
+            "---\npaths:\n  - tui/**\n---\ntui-only rule"
+        )
+        project_dir = tmp_path / "project"
+        working_dir = project_dir / "backend"
+        working_dir.mkdir(parents=True)
+        result = load_user_rules(working_dir=working_dir, project_dir=project_dir)
+        assert "tui-only rule" not in result
+
+    def test_paths_frontmatter_includes_when_match(self, tmp_path, monkeypatch):
+        _redirect_user_rules(monkeypatch, tmp_path)
+        rules_dir = tmp_path / "rules"
+        rules_dir.mkdir()
+        (rules_dir / "tui.md").write_text(
+            "---\npaths:\n  - tui/**\n---\ntui-only rule"
+        )
+        project_dir = tmp_path / "project"
+        working_dir = project_dir / "tui" / "panels"
+        working_dir.mkdir(parents=True)
+        result = load_user_rules(working_dir=working_dir, project_dir=project_dir)
+        assert "tui-only rule" in result
+
+    def test_paths_frontmatter_excluded_without_working_dir(self, tmp_path, monkeypatch):
+        _redirect_user_rules(monkeypatch, tmp_path)
+        rules_dir = tmp_path / "rules"
+        rules_dir.mkdir()
+        (rules_dir / "scoped.md").write_text(
+            "---\npaths:\n  - any/**\n---\nscoped"
+        )
+        (rules_dir / "always.md").write_text("always-on rule")
+        result = load_user_rules()
+        assert "always-on rule" in result
+        assert "scoped" not in result
+
+    def test_empty_when_nothing_configured(self, tmp_path, monkeypatch):
+        _redirect_user_rules(monkeypatch, tmp_path)
+        assert load_user_rules() == ""

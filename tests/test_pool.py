@@ -183,6 +183,101 @@ class TestAgentPool:
         assert "Read" in desc
 
 
+class TestAgentResolutionOrder:
+    """Pin down the documented resolution order so a future reorder of
+    ``load_definitions`` can't silently flip who wins on a name collision.
+
+    See the module docstring of ``pool.py`` for the canonical table.
+    These tests assert: ephemeral > project Ember > project local >
+    project Claude > user Ember > user Claude.
+    """
+
+    def _write_agent(self, root, name: str, label: str) -> None:
+        root.mkdir(parents=True, exist_ok=True)
+        (root / f"{name}.md").write_text(
+            f"---\nname: {name}\ndescription: {label}\n---\nbody\n"
+        )
+
+    def _build_layout(self, tmp_path):
+        from pathlib import Path
+
+        home = tmp_path / "home"
+        project = tmp_path / "project"
+        home.mkdir()
+        project.mkdir()
+        return home, project
+
+    def _load(self, monkeypatch, home, project, settings, cross_tool=True):
+        monkeypatch.setattr("pathlib.Path.home", lambda: home)
+        settings.agents.cross_tool_support = cross_tool
+        pool = AgentPool()
+        pool.load_definitions(settings, project_dir=project)
+        return pool
+
+    def test_user_ember_beats_user_claude(self, tmp_path, monkeypatch, settings):
+        home, project = self._build_layout(tmp_path)
+        self._write_agent(home / ".ember" / "agents", "shared", "ember-user")
+        self._write_agent(home / ".claude" / "agents", "shared", "claude-user")
+        pool = self._load(monkeypatch, home, project, settings)
+        assert pool.get_definition("shared").description == "ember-user"
+
+    def test_project_local_beats_project_claude(self, tmp_path, monkeypatch, settings):
+        home, project = self._build_layout(tmp_path)
+        self._write_agent(project / ".ember" / "agents.local", "shared", "ember-local")
+        self._write_agent(project / ".claude" / "agents", "shared", "claude-project")
+        pool = self._load(monkeypatch, home, project, settings)
+        assert pool.get_definition("shared").description == "ember-local"
+
+    def test_project_ember_beats_project_claude(self, tmp_path, monkeypatch, settings):
+        home, project = self._build_layout(tmp_path)
+        self._write_agent(project / ".ember" / "agents", "shared", "ember-project")
+        self._write_agent(project / ".claude" / "agents", "shared", "claude-project")
+        pool = self._load(monkeypatch, home, project, settings)
+        assert pool.get_definition("shared").description == "ember-project"
+
+    def test_project_beats_user(self, tmp_path, monkeypatch, settings):
+        home, project = self._build_layout(tmp_path)
+        self._write_agent(home / ".ember" / "agents", "shared", "ember-user")
+        self._write_agent(project / ".ember" / "agents", "shared", "ember-project")
+        pool = self._load(monkeypatch, home, project, settings)
+        assert pool.get_definition("shared").description == "ember-project"
+
+    def test_project_claude_beats_user_ember(self, tmp_path, monkeypatch, settings):
+        """Cross-scope: a project's Claude agents override the user's
+        global Ember agents."""
+        home, project = self._build_layout(tmp_path)
+        self._write_agent(home / ".ember" / "agents", "shared", "ember-user")
+        self._write_agent(project / ".claude" / "agents", "shared", "claude-project")
+        pool = self._load(monkeypatch, home, project, settings)
+        assert pool.get_definition("shared").description == "claude-project"
+
+    def test_full_chain_yields_project_ember(self, tmp_path, monkeypatch, settings):
+        home, project = self._build_layout(tmp_path)
+        self._write_agent(home / ".claude" / "agents", "shared", "claude-user")
+        self._write_agent(home / ".ember" / "agents", "shared", "ember-user")
+        self._write_agent(project / ".claude" / "agents", "shared", "claude-project")
+        self._write_agent(project / ".ember" / "agents.local", "shared", "ember-local")
+        self._write_agent(project / ".ember" / "agents", "shared", "ember-project")
+        pool = self._load(monkeypatch, home, project, settings)
+        assert pool.get_definition("shared").description == "ember-project"
+
+    def test_claude_skipped_when_cross_tool_disabled(self, tmp_path, monkeypatch, settings):
+        home, project = self._build_layout(tmp_path)
+        self._write_agent(project / ".claude" / "agents", "claude-only", "claude")
+        pool = self._load(monkeypatch, home, project, settings, cross_tool=False)
+        with pytest.raises(KeyError):
+            pool.get_definition("claude-only")
+
+    def test_priority_constants_are_ordered(self):
+        from ember_code.core.pool import AgentPriority
+
+        assert AgentPriority.USER_CLAUDE < AgentPriority.USER_EMBER
+        assert AgentPriority.USER_EMBER < AgentPriority.PROJECT_CLAUDE
+        assert AgentPriority.PROJECT_CLAUDE < AgentPriority.PROJECT_LOCAL
+        assert AgentPriority.PROJECT_LOCAL < AgentPriority.PROJECT_EMBER
+        assert AgentPriority.PROJECT_EMBER < AgentPriority.EPHEMERAL
+
+
 class TestBuildAgentMCPFiltering:
     """Tests for MCP server filtering based on agent's mcp_servers field."""
 

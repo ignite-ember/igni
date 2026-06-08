@@ -315,3 +315,256 @@ class TestSessionLearning:
             assert call_kwargs["learning"] is None
         finally:
             _stop_patches(patches)
+
+
+def _patches_with_real_context_loader():
+    """Same set of mocks as ``_session_patches`` but leaves
+    ``load_project_context`` un-mocked so the real loader fires and we can
+    verify that rule files on disk actually reach the agent."""
+    overrides = {
+        "initialize_project": None,
+        "setup_db": None,
+        "PermissionGuard": None,
+        "AuditLogger": None,
+        "HookLoader": None,
+        "HookExecutor": None,
+        "AgentPool": None,
+        "SkillPool": None,
+        "ModelRegistry": None,
+        "MCPClientManager": None,
+        "SessionPersistence": None,
+        "SessionMemoryManager": None,
+        "SessionKnowledgeManager": None,
+        "CloudCredentials": None,
+        "CodeIndex": None,
+        "CodeIndexSyncManager": None,
+        "ToolRegistry": None,
+        "ToolPermissions": None,
+        "create_learning_machine": None,
+        "ToolEventHook": None,
+        "_create_reasoning_tools": None,
+        "_create_guardrails": None,
+        "CompressionManager": None,
+        "Agent": None,
+        "load_prompt": "You are an assistant.",
+    }
+    patches = []
+    for name, rv in overrides.items():
+        target = f"ember_code.core.session.core.{name}"
+        if name[0].isupper():
+            patches.append(patch(target))
+        else:
+            patches.append(patch(target, return_value=rv))
+    return patches
+
+
+def _agent_instructions(agent_mock) -> list[str]:
+    """Pull the ``instructions`` arg out of the most recent Agent(...) call."""
+    assert agent_mock.called
+    kwargs = agent_mock.call_args.kwargs
+    if "instructions" in kwargs:
+        return list(kwargs["instructions"])
+    # Fall back to positional — current code uses kwargs, but guard anyway.
+    args = agent_mock.call_args.args
+    for a in args:
+        if isinstance(a, list):
+            return list(a)
+    return []
+
+
+class TestRulesReachAgent:
+    """End-to-end: rules loaded from disk must land in the Agent's
+    ``instructions=`` argument. Without these tests the new loader paths
+    (~/.ember/rules/, ~/.claude/rules/) would happily run while never
+    actually influencing the AI — exactly the dead-code risk worth
+    guarding against.
+    """
+
+    def _isolate_user_rules(self, monkeypatch, tmp_path, *, claude_dir=None):
+        """Redirect user-rule lookups into ``tmp_path`` so the test host's
+        real ``~/.ember/`` and ``~/.claude/`` never leak in."""
+        from ember_code.core.utils import context as ctx_mod
+
+        monkeypatch.setattr(ctx_mod, "USER_RULES_PATH", tmp_path / "_no_legacy.md")
+        monkeypatch.setattr(ctx_mod, "USER_RULES_DIR", tmp_path / "_no_user_dir")
+        monkeypatch.setattr(
+            ctx_mod,
+            "CLAUDE_USER_RULES_DIR",
+            claude_dir if claude_dir is not None else tmp_path / "_no_claude_dir",
+        )
+
+    def _build_session(self, project_dir, settings=None):
+        from ember_code.core.session.core import Session
+
+        return Session(settings or Settings(), project_dir=project_dir)
+
+    def test_project_ember_md_reaches_agent_instructions(self, tmp_path, monkeypatch):
+        project = tmp_path / "proj"
+        project.mkdir()
+        (project / "ember.md").write_text("SENTINEL_PROJECT_RULE_XYZ")
+        self._isolate_user_rules(monkeypatch, tmp_path)
+
+        patches = _patches_with_real_context_loader()
+        mocks = {}
+        for p in patches:
+            mocks[p.attribute] = p.start()
+        mocks["ModelRegistry"].return_value.get_context_window.return_value = 128_000
+        try:
+            session = self._build_session(project)
+            # 1. The loader fired and populated project_instructions.
+            assert "SENTINEL_PROJECT_RULE_XYZ" in session.project_instructions
+            # 2. Those instructions flowed into the Agent constructor.
+            instructions = _agent_instructions(mocks["Agent"])
+            assert any("SENTINEL_PROJECT_RULE_XYZ" in s for s in instructions)
+        finally:
+            _stop_patches(patches)
+
+    def test_user_legacy_rules_md_reaches_agent_instructions(self, tmp_path, monkeypatch):
+        from ember_code.core.utils import context as ctx_mod
+
+        legacy = tmp_path / "rules.md"
+        legacy.write_text("SENTINEL_USER_LEGACY_ABC")
+        monkeypatch.setattr(ctx_mod, "USER_RULES_PATH", legacy)
+        monkeypatch.setattr(ctx_mod, "USER_RULES_DIR", tmp_path / "_no_user_dir")
+        monkeypatch.setattr(ctx_mod, "CLAUDE_USER_RULES_DIR", tmp_path / "_no_claude_dir")
+
+        project = tmp_path / "proj"
+        project.mkdir()
+
+        patches = _patches_with_real_context_loader()
+        mocks = {}
+        for p in patches:
+            mocks[p.attribute] = p.start()
+        mocks["ModelRegistry"].return_value.get_context_window.return_value = 128_000
+        try:
+            session = self._build_session(project)
+            assert "SENTINEL_USER_LEGACY_ABC" in session.project_instructions
+            instructions = _agent_instructions(mocks["Agent"])
+            assert any("SENTINEL_USER_LEGACY_ABC" in s for s in instructions)
+        finally:
+            _stop_patches(patches)
+
+    def test_user_rules_directory_reaches_agent_instructions(self, tmp_path, monkeypatch):
+        """``~/.ember/rules/*.md`` (the new directory source) must reach the agent."""
+        from ember_code.core.utils import context as ctx_mod
+
+        user_dir = tmp_path / "ember-rules"
+        user_dir.mkdir()
+        (user_dir / "commit-style.md").write_text("SENTINEL_USER_DIR_RULE_111")
+        (user_dir / "lint.md").write_text("SENTINEL_USER_DIR_RULE_222")
+
+        monkeypatch.setattr(ctx_mod, "USER_RULES_PATH", tmp_path / "_no_legacy.md")
+        monkeypatch.setattr(ctx_mod, "USER_RULES_DIR", user_dir)
+        monkeypatch.setattr(ctx_mod, "CLAUDE_USER_RULES_DIR", tmp_path / "_no_claude_dir")
+
+        project = tmp_path / "proj"
+        project.mkdir()
+
+        patches = _patches_with_real_context_loader()
+        mocks = {}
+        for p in patches:
+            mocks[p.attribute] = p.start()
+        mocks["ModelRegistry"].return_value.get_context_window.return_value = 128_000
+        try:
+            session = self._build_session(project)
+            assert "SENTINEL_USER_DIR_RULE_111" in session.project_instructions
+            assert "SENTINEL_USER_DIR_RULE_222" in session.project_instructions
+            instructions = _agent_instructions(mocks["Agent"])
+            joined = "\n".join(s for s in instructions if isinstance(s, str))
+            assert "SENTINEL_USER_DIR_RULE_111" in joined
+            assert "SENTINEL_USER_DIR_RULE_222" in joined
+        finally:
+            _stop_patches(patches)
+
+    def test_claude_rules_directory_reaches_agent_when_cross_tool_enabled(
+        self, tmp_path, monkeypatch
+    ):
+        """``~/.claude/rules/*.md`` (the cross-tool source) must reach the agent
+        when ``rules.cross_tool_support`` is enabled (default)."""
+        claude_dir = tmp_path / "claude-rules"
+        claude_dir.mkdir()
+        (claude_dir / "git.md").write_text("SENTINEL_CLAUDE_DIR_RULE_AAA")
+        self._isolate_user_rules(monkeypatch, tmp_path, claude_dir=claude_dir)
+
+        project = tmp_path / "proj"
+        project.mkdir()
+
+        patches = _patches_with_real_context_loader()
+        mocks = {}
+        for p in patches:
+            mocks[p.attribute] = p.start()
+        mocks["ModelRegistry"].return_value.get_context_window.return_value = 128_000
+        try:
+            session = self._build_session(project)
+            assert "SENTINEL_CLAUDE_DIR_RULE_AAA" in session.project_instructions
+            instructions = _agent_instructions(mocks["Agent"])
+            assert any("SENTINEL_CLAUDE_DIR_RULE_AAA" in s for s in instructions)
+        finally:
+            _stop_patches(patches)
+
+    def test_claude_rules_directory_excluded_when_cross_tool_disabled(
+        self, tmp_path, monkeypatch
+    ):
+        """Same Claude rules, but with cross-tool support off: they must NOT
+        appear in the agent's instructions."""
+        claude_dir = tmp_path / "claude-rules"
+        claude_dir.mkdir()
+        (claude_dir / "git.md").write_text("SENTINEL_CLAUDE_DIR_RULE_BBB")
+        self._isolate_user_rules(monkeypatch, tmp_path, claude_dir=claude_dir)
+
+        project = tmp_path / "proj"
+        project.mkdir()
+
+        settings = Settings()
+        settings.rules.cross_tool_support = False
+
+        patches = _patches_with_real_context_loader()
+        mocks = {}
+        for p in patches:
+            mocks[p.attribute] = p.start()
+        mocks["ModelRegistry"].return_value.get_context_window.return_value = 128_000
+        try:
+            session = self._build_session(project, settings=settings)
+            assert "SENTINEL_CLAUDE_DIR_RULE_BBB" not in session.project_instructions
+            instructions = _agent_instructions(mocks["Agent"])
+            assert not any("SENTINEL_CLAUDE_DIR_RULE_BBB" in s for s in instructions)
+        finally:
+            _stop_patches(patches)
+
+    def test_all_three_user_sources_merge_into_agent_instructions(
+        self, tmp_path, monkeypatch
+    ):
+        """Sanity: legacy file + ember rules dir + claude rules dir all merge
+        and reach the agent in a single session."""
+        from ember_code.core.utils import context as ctx_mod
+
+        legacy = tmp_path / "rules.md"
+        legacy.write_text("SENTINEL_TRIPLE_LEGACY")
+        ember_dir = tmp_path / "ember-rules"
+        ember_dir.mkdir()
+        (ember_dir / "one.md").write_text("SENTINEL_TRIPLE_EMBER")
+        claude_dir = tmp_path / "claude-rules"
+        claude_dir.mkdir()
+        (claude_dir / "two.md").write_text("SENTINEL_TRIPLE_CLAUDE")
+
+        monkeypatch.setattr(ctx_mod, "USER_RULES_PATH", legacy)
+        monkeypatch.setattr(ctx_mod, "USER_RULES_DIR", ember_dir)
+        monkeypatch.setattr(ctx_mod, "CLAUDE_USER_RULES_DIR", claude_dir)
+
+        project = tmp_path / "proj"
+        project.mkdir()
+
+        patches = _patches_with_real_context_loader()
+        mocks = {}
+        for p in patches:
+            mocks[p.attribute] = p.start()
+        mocks["ModelRegistry"].return_value.get_context_window.return_value = 128_000
+        try:
+            self._build_session(project)
+            instructions = _agent_instructions(mocks["Agent"])
+            joined = "\n".join(s for s in instructions if isinstance(s, str))
+            assert "SENTINEL_TRIPLE_LEGACY" in joined
+            assert "SENTINEL_TRIPLE_EMBER" in joined
+            assert "SENTINEL_TRIPLE_CLAUDE" in joined
+        finally:
+            _stop_patches(patches)
