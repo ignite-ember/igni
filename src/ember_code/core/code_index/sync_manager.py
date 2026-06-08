@@ -244,13 +244,36 @@ class CodeIndexSyncManager:
         if non_ok is not None:
             return non_ok
 
+        # Delta-vs-snapshot routing: a delta JSONL is only useful if
+        # the parent commit's chroma already exists locally. The
+        # preflight response tells us the parent SHA — a root commit
+        # (``parent_sha is None``) is fine with the delta endpoint
+        # because there's no copy-on-write step. Any other case where
+        # the parent is absent locally (fresh install, pruned history,
+        # branch switch jumping over uncached commits) needs the
+        # snapshot endpoint so the local chroma starts from a known
+        # full state.
+        use_snapshot = pf.parent_sha is not None and not self.code_index.has_commit(pf.parent_sha)
         try:
-            stats = await self._fetcher.pull_and_apply(
-                index=self.code_index,
-                file_refs=self.code_index._file_reference_service(),
-                repository_id=resolved.repository_id,
-                commit_sha=target_sha,
-            )
+            if use_snapshot:
+                logger.info(
+                    "sync %s via snapshot (parent %s missing locally)",
+                    target_sha[:8],
+                    pf.parent_sha[:8] if pf.parent_sha else "?",
+                )
+                stats = await self._fetcher.pull_and_apply_snapshot(
+                    index=self.code_index,
+                    file_refs=self.code_index._file_reference_service(),
+                    repository_id=resolved.repository_id,
+                    commit_sha=target_sha,
+                )
+            else:
+                stats = await self._fetcher.pull_and_apply(
+                    index=self.code_index,
+                    file_refs=self.code_index._file_reference_service(),
+                    repository_id=resolved.repository_id,
+                    commit_sha=target_sha,
+                )
         except ChangesetFetchError as exc:
             logger.info("sync skipped (%s)", exc)
             return SyncResult(

@@ -164,6 +164,58 @@ class TestDownload:
         assert seen["body"] == {"repository_id": "r-7", "commit_sha": "abc1234"}
 
 
+class TestDownloadSnapshot:
+    @pytest.mark.asyncio
+    async def test_full_signed_url_flow_hits_snapshot_endpoint(self, tmp_path):
+        body = b'{"op":"commit","sha":"abc","parent_sha":null}\n'
+        seen_path: dict[str, str] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "/codeindex/" in request.url.path:
+                seen_path["endpoint"] = request.url.path
+                return httpx.Response(
+                    200,
+                    content=json.dumps(
+                        {"signed_url": SIGNED_URL, "expires_at": "2026-04-28T00:10:00Z"}
+                    ).encode(),
+                    request=request,
+                )
+            if str(request.url) == SIGNED_URL:
+                return httpx.Response(200, content=body, request=request)
+            return httpx.Response(500, content=b"unexpected", request=request)
+
+        fetcher = ChangesetFetcher(server_url="http://srv", bearer_token="tok")
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            target = await fetcher.download_snapshot(
+                repository_id="r",
+                commit_sha="abc",
+                dest_dir=tmp_path,
+                client=client,
+            )
+        assert target == tmp_path / "abc.jsonl"
+        assert target.read_bytes() == body
+        # Pin the actual endpoint suffix so a typo or accidental fallthrough
+        # to /changeset-url would surface here.
+        assert seen_path["endpoint"].endswith("/codeindex/changeset-snapshot")
+
+    @pytest.mark.asyncio
+    async def test_403_from_snapshot_endpoint_raises(self, tmp_path):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/codeindex/changeset-snapshot"):
+                return httpx.Response(403, content=b'{"detail":"no access"}', request=request)
+            return httpx.Response(500, request=request)
+
+        fetcher = ChangesetFetcher(server_url="http://srv", bearer_token="tok")
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with pytest.raises(ChangesetFetchError, match="access denied"):
+                await fetcher.download_snapshot(
+                    repository_id="r",
+                    commit_sha="abc",
+                    dest_dir=tmp_path,
+                    client=client,
+                )
+
+
 class TestPullAndApply:
     @pytest.mark.asyncio
     async def test_calls_apply_delta_with_downloaded_file(self, tmp_path, monkeypatch):
@@ -197,6 +249,35 @@ class TestPullAndApply:
         assert captured["index"] is index
         assert captured["file_refs"] is file_refs
         assert captured["jsonl_path"] == canned
+
+    @pytest.mark.asyncio
+    async def test_pull_and_apply_snapshot_uses_snapshot_downloader(self, tmp_path, monkeypatch):
+        """``pull_and_apply_snapshot`` must download via the snapshot
+        endpoint, not the per-commit-delta one."""
+        fetcher = ChangesetFetcher(server_url="http://srv", bearer_token="tok")
+
+        canned = tmp_path / "abc.jsonl"
+        canned.write_text("{}")
+        snapshot_called = AsyncMock(return_value=canned)
+        delta_called = AsyncMock(return_value=canned)
+        fetcher.download_snapshot = snapshot_called  # type: ignore[method-assign]
+        fetcher.download = delta_called  # type: ignore[method-assign]
+
+        async def fake_apply(*, index, file_refs, jsonl_path):
+            from ember_code.core.code_index.delta import DeltaStats
+
+            return DeltaStats(items_upserted=1)
+
+        monkeypatch.setattr("ember_code.core.code_index.fetcher.apply_delta", fake_apply)
+
+        await fetcher.pull_and_apply_snapshot(
+            index=object(),
+            file_refs=object(),
+            repository_id="r",
+            commit_sha="abc",
+        )
+        snapshot_called.assert_awaited_once()
+        delta_called.assert_not_called()
 
 
 class TestPreflight:
@@ -272,3 +353,30 @@ class TestPreflight:
         async with httpx.AsyncClient(transport=transport) as client:
             with pytest.raises(ChangesetFetchError, match="malformed"):
                 await fetcher.preflight(repository_id="r", commit_sha="abc", client=client)
+
+    @pytest.mark.asyncio
+    async def test_parses_parent_sha_from_ok_response(self):
+        """``parent_sha`` must round-trip from the server's OK response —
+        the sync manager uses it to decide between the delta and
+        snapshot endpoints."""
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"status": "ok", "parent_sha": "deadbeef" * 5})
+
+        transport = httpx.MockTransport(handler)
+        fetcher = ChangesetFetcher(server_url="http://srv", bearer_token="tok")
+        async with httpx.AsyncClient(transport=transport) as client:
+            result = await fetcher.preflight(repository_id="r", commit_sha="abc", client=client)
+        assert result.status == PreflightStatus.OK
+        assert result.parent_sha == "deadbeef" * 5
+
+    @pytest.mark.asyncio
+    async def test_parent_sha_null_for_root_commit(self):
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"status": "ok", "parent_sha": None})
+
+        transport = httpx.MockTransport(handler)
+        fetcher = ChangesetFetcher(server_url="http://srv", bearer_token="tok")
+        async with httpx.AsyncClient(transport=transport) as client:
+            result = await fetcher.preflight(repository_id="r", commit_sha="abc", client=client)
+        assert result.parent_sha is None

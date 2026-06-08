@@ -51,6 +51,7 @@ class PreflightResult:
     """Parsed shape of POST /codeindex/preflight."""
 
     status: PreflightStatus
+    parent_sha: str | None = None
     progress_percentage: int | None = None
     current_step: str | None = None
     started_at: datetime | None = None
@@ -68,6 +69,7 @@ class PreflightResult:
                 started_at = None
         return cls(
             status=PreflightStatus(payload["status"]),
+            parent_sha=payload.get("parent_sha"),
             progress_percentage=payload.get("progress_percentage"),
             current_step=payload.get("current_step"),
             started_at=started_at,
@@ -102,7 +104,47 @@ class ChangesetFetcher:
         dest_dir: str | Path | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> Path:
-        """Stream the changeset to disk and return the file path."""
+        """Stream the per-commit delta changeset to disk and return the file path."""
+        return await self._download_via(
+            endpoint="changeset-url",
+            repository_id=repository_id,
+            commit_sha=commit_sha,
+            dest_dir=dest_dir,
+            client=client,
+        )
+
+    async def download_snapshot(
+        self,
+        *,
+        repository_id: str,
+        commit_sha: str,
+        dest_dir: str | Path | None = None,
+        client: httpx.AsyncClient | None = None,
+    ) -> Path:
+        """Stream a full-state snapshot JSONL to disk and return the file path.
+
+        Used when the local index has no ancestor to copy-on-write
+        from (fresh install, pruned history, branch switch). Server
+        builds + caches the snapshot in GCS the first time, returns a
+        signed URL the same way the delta endpoint does.
+        """
+        return await self._download_via(
+            endpoint="changeset-snapshot",
+            repository_id=repository_id,
+            commit_sha=commit_sha,
+            dest_dir=dest_dir,
+            client=client,
+        )
+
+    async def _download_via(
+        self,
+        *,
+        endpoint: str,
+        repository_id: str,
+        commit_sha: str,
+        dest_dir: str | Path | None,
+        client: httpx.AsyncClient | None,
+    ) -> Path:
         target_dir = (
             Path(dest_dir) if dest_dir else Path(tempfile.mkdtemp(prefix="ember-changeset-"))
         )
@@ -114,6 +156,7 @@ class ChangesetFetcher:
         try:
             signed_url = await self._request_signed_url(
                 client=http,
+                endpoint=endpoint,
                 repository_id=repository_id,
                 commit_sha=commit_sha,
             )
@@ -122,7 +165,7 @@ class ChangesetFetcher:
             if owns_client:
                 await http.aclose()
 
-        logger.info("Downloaded changeset %s/%s → %s", repository_id, commit_sha[:8], target)
+        logger.info("Downloaded %s %s/%s → %s", endpoint, repository_id, commit_sha[:8], target)
         return target
 
     async def preflight(
@@ -174,8 +217,47 @@ class ChangesetFetcher:
         repository_id: str,
         commit_sha: str,
     ) -> DeltaStats:
-        """Download a changeset and apply it to the local index in one shot."""
-        jsonl_path = await self.download(repository_id=repository_id, commit_sha=commit_sha)
+        """Download the per-commit delta and apply it to the local index in one shot."""
+        return await self._pull_and_apply_via(
+            self.download,
+            index=index,
+            file_refs=file_refs,
+            repository_id=repository_id,
+            commit_sha=commit_sha,
+        )
+
+    async def pull_and_apply_snapshot(
+        self,
+        *,
+        index,
+        file_refs,
+        repository_id: str,
+        commit_sha: str,
+    ) -> DeltaStats:
+        """Download a snapshot and apply it to the local index in one shot.
+
+        Mirrors ``pull_and_apply`` but uses the snapshot endpoint, so
+        the caller doesn't need a local ancestor — the JSONL upserts
+        the full state at ``commit_sha`` from scratch.
+        """
+        return await self._pull_and_apply_via(
+            self.download_snapshot,
+            index=index,
+            file_refs=file_refs,
+            repository_id=repository_id,
+            commit_sha=commit_sha,
+        )
+
+    async def _pull_and_apply_via(
+        self,
+        downloader,
+        *,
+        index,
+        file_refs,
+        repository_id: str,
+        commit_sha: str,
+    ) -> DeltaStats:
+        jsonl_path = await downloader(repository_id=repository_id, commit_sha=commit_sha)
         try:
             return await apply_delta(index=index, file_refs=file_refs, jsonl_path=jsonl_path)
         finally:
@@ -191,10 +273,11 @@ class ChangesetFetcher:
         self,
         *,
         client: httpx.AsyncClient,
+        endpoint: str,
         repository_id: str,
         commit_sha: str,
     ) -> str:
-        endpoint = f"{self.server_url}/v1/codeindex/changeset-url"
+        endpoint = f"{self.server_url}/v1/codeindex/{endpoint}"
         try:
             response = await client.post(
                 endpoint,

@@ -231,6 +231,95 @@ class TestSyncSuccessAndErrors:
         assert "boom" in (result.error or "")
 
 
+class TestSnapshotVsDeltaRouting:
+    """Pins the parent-driven choice between the delta and snapshot endpoints.
+
+    The sync manager has to read ``PreflightResult.parent_sha`` and the
+    local index's ``has_commit`` to decide whether the per-commit delta
+    is applicable. Three branches:
+
+    * No parent (root commit) → delta endpoint works fine.
+    * Parent present locally → delta endpoint, normal copy-on-write.
+    * Parent missing locally → snapshot endpoint, the only safe route.
+    """
+
+    @pytest.mark.asyncio
+    async def test_root_commit_uses_delta_endpoint(self, tmp_path, monkeypatch):
+        index = _stub_index()
+        index.has_commit = MagicMock(return_value=False)
+        mgr = _make_mgr(
+            project_dir=tmp_path,
+            code_index=index,
+            resolver=_stub_resolver(_RESOLVED),
+            credentials=_stub_credentials(),
+        )
+        from ember_code.core.code_index import sync_manager as sm
+
+        _patch_preflight(monkeypatch, PreflightResult(status=PreflightStatus.OK, parent_sha=None))
+        delta_called = AsyncMock(return_value=DeltaStats(items_upserted=1))
+        snapshot_called = AsyncMock(return_value=DeltaStats(items_upserted=99))
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply", delta_called)
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply_snapshot", snapshot_called)
+
+        result = await mgr.sync_now(sha="abc1234")
+        assert result.succeeded
+        delta_called.assert_awaited_once()
+        snapshot_called.assert_not_called()
+        index.has_commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_parent_present_locally_uses_delta_endpoint(self, tmp_path, monkeypatch):
+        index = _stub_index()
+        index.has_commit = MagicMock(return_value=True)
+        mgr = _make_mgr(
+            project_dir=tmp_path,
+            code_index=index,
+            resolver=_stub_resolver(_RESOLVED),
+            credentials=_stub_credentials(),
+        )
+        from ember_code.core.code_index import sync_manager as sm
+
+        _patch_preflight(
+            monkeypatch, PreflightResult(status=PreflightStatus.OK, parent_sha="parentsha"),
+        )
+        delta_called = AsyncMock(return_value=DeltaStats(items_upserted=1))
+        snapshot_called = AsyncMock(return_value=DeltaStats(items_upserted=99))
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply", delta_called)
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply_snapshot", snapshot_called)
+
+        result = await mgr.sync_now(sha="abc1234")
+        assert result.succeeded
+        delta_called.assert_awaited_once()
+        snapshot_called.assert_not_called()
+        index.has_commit.assert_called_once_with("parentsha")
+
+    @pytest.mark.asyncio
+    async def test_parent_missing_locally_uses_snapshot_endpoint(self, tmp_path, monkeypatch):
+        index = _stub_index()
+        index.has_commit = MagicMock(return_value=False)
+        mgr = _make_mgr(
+            project_dir=tmp_path,
+            code_index=index,
+            resolver=_stub_resolver(_RESOLVED),
+            credentials=_stub_credentials(),
+        )
+        from ember_code.core.code_index import sync_manager as sm
+
+        _patch_preflight(
+            monkeypatch, PreflightResult(status=PreflightStatus.OK, parent_sha="parentsha"),
+        )
+        delta_called = AsyncMock(return_value=DeltaStats(items_upserted=1))
+        snapshot_called = AsyncMock(return_value=DeltaStats(items_upserted=99))
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply", delta_called)
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply_snapshot", snapshot_called)
+
+        result = await mgr.sync_now(sha="abc1234")
+        assert result.succeeded
+        snapshot_called.assert_awaited_once()
+        delta_called.assert_not_called()
+        assert result.stats.items_upserted == 99
+
+
 class TestCurrentSha:
     def test_returns_none_when_not_a_git_repo(self, tmp_path):
         mgr = _make_mgr(project_dir=tmp_path)
