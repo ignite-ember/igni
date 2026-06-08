@@ -165,21 +165,28 @@ class TestPrepareCommit:
 
 
 class TestForgetCommit:
-    """``/codeindex resync`` needs to wipe a single commit's local
-    state so the next sync can rebuild from a snapshot. Pin the
-    contract: chroma dir gone, manifest entry gone, cached client
-    dropped, idempotent on the unknown case.
+    """``/codeindex resync`` needs to mark a single commit's local
+    state as un-indexed so the next sync rebuilds from a snapshot.
+
+    The contract:
+    * manifest entry dropped
+    * ``has_commit`` reports False afterwards
+    * chroma directory STAYS (we don't rmtree under chromadb's live
+      process-level client — that triggers SQLITE_READONLY_DBMOVED
+      on the next write)
+    * idempotent on the unknown case
     """
 
     @pytest.mark.asyncio
-    async def test_forget_removes_chroma_and_manifest_entry(self, index):
+    async def test_forget_drops_manifest_entry_and_reports_not_indexed(self, index):
         path = await index.prepare_commit("doomed")
         assert path.exists()
         assert "doomed" in index.manifest.load().commits
+        assert index.has_commit("doomed") is True
 
         removed = await index.forget_commit("doomed")
         assert removed is True
-        assert not path.exists()
+        assert path.exists(), "chroma dir must stay so the live client doesn't go stale"
         assert "doomed" not in index.manifest.load().commits
         assert index.has_commit("doomed") is False
 
@@ -191,6 +198,17 @@ class TestForgetCommit:
     @pytest.mark.asyncio
     async def test_forget_empty_sha_is_noop(self, index):
         assert await index.forget_commit("") is False
+
+    @pytest.mark.asyncio
+    async def test_has_commit_false_without_manifest_entry(self, index):
+        """If the chroma dir exists but the manifest has no entry, the
+        commit isn't really indexed — guard against the case where a
+        stale dir survives a prior wipe."""
+        path = await index.prepare_commit("orphan")
+        assert path.exists()
+        # Drop the manifest entry behind the index's back.
+        index.manifest.remove_commit("orphan")
+        assert index.has_commit("orphan") is False
 
 
 # -- add_item / search / get_item ---------------------------------------------

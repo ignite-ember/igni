@@ -135,38 +135,60 @@ class CodeIndex:
             self._clients.clear()
 
     def has_commit(self, sha: str) -> bool:
-        """Return True iff a chroma directory exists on disk for ``sha``."""
-        if not sha:
-            return False
-        return commit_chroma_path(self.project, sha, data_dir=self.data_dir).exists()
+        """Return True iff the commit is fully indexed locally.
 
-    async def forget_commit(self, sha: str) -> bool:
-        """Remove a commit's local state so the next sync can rebuild from scratch.
-
-        Drops the cached chromadb client, deletes ``<sha>.chroma/`` from
-        disk, and removes the commit from the manifest. Returns True if
-        something was actually removed. Used by ``/codeindex resync``
-        when the local index has drifted from the cloud definition.
+        Both the chroma dir AND a manifest entry must be present. The
+        manifest check lets ``forget_commit`` mark a commit as
+        un-indexed without ``rmtree``-ing under chromadb's live
+        client (see ``forget_commit`` for why we avoid that).
         """
         if not sha:
             return False
-        removed = False
-        async with self._lock:
-            if sha in self._clients:
-                try:
-                    self._clients.pop(sha)
-                except Exception:
-                    logger.debug("failed to drop cached chroma client for %s", sha)
-                removed = True
+        if not commit_chroma_path(self.project, sha, data_dir=self.data_dir).exists():
+            return False
+        return sha in self.manifest.load().commits
+
+    async def forget_commit(self, sha: str) -> bool:
+        """Wipe a commit's local state so the next sync rebuilds from scratch.
+
+        Used by ``/codeindex resync`` when the local index has drifted
+        from the cloud definition.
+
+        We deliberately don't ``rmtree`` the ``<sha>.chroma/`` directory:
+        chromadb keeps a process-level client cache, so a directory
+        wiped underneath a live client leaves a stale SQLite handle and
+        the next write fails with ``SQLITE_READONLY_DBMOVED`` (1032 —
+        "database file was moved out from under it"). Going through
+        chromadb's own ``delete_collection`` API keeps its connection
+        state consistent; the snapshot apply then re-creates the
+        collections via ``get_or_create_collection`` and re-fills them.
+        The manifest entry is dropped so ``has_commit`` reports the
+        commit as missing.
+        """
+        if not sha:
+            return False
         target = commit_chroma_path(self.project, sha, data_dir=self.data_dir)
-        if target.exists():
-            await asyncio.to_thread(shutil.rmtree, str(target), ignore_errors=True)
-            removed = True
+        had_state = target.exists()
+
+        if had_state:
+            try:
+                client = await self._client_for(sha)
+                for name in (DOCUMENTS_COLLECTION, CHUNKS_COLLECTION):
+                    try:
+                        await asyncio.to_thread(client.delete_collection, name)
+                    except Exception as exc:
+                        # Missing collection / chroma rejection is fine —
+                        # we only care that nothing's left to write into.
+                        logger.debug("forget_commit: delete_collection(%s) skipped (%s)", name, exc)
+            except Exception as exc:
+                logger.debug("forget_commit: chroma teardown failed (%s)", exc)
+
         try:
             self.manifest.remove_commit(sha)
         except Exception:
             logger.debug("manifest had no record of %s", sha)
-        return removed
+
+        return had_state
 
     # -- Commit lifecycle ------------------------------------------------------
 
