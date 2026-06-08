@@ -4,54 +4,60 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ignite-ember"
-version = "0.5.2"
+version = "0.5.3"
 description = "Terminal-based AI coding assistant built on Agno"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
+# Tight ``~=X.Y.Z`` pins (PEP 440 "compatible release", which expands
+# to ``>= X.Y.Z, < X.(Y+1).0``). Any minor-version bump from an
+# upstream package goes through an explicit ember-code release, not
+# through pip's resolver. Stops repeats of the v0.5.2 incident where
+# ``textual~=8.1`` quietly let 8.2.7 install and the renamed theme
+# ``textual-ansi`` → ``ansi-dark`` silently bricked the TUI.
 dependencies = [
-    "agno[openai,ddg,sqlite,sql,mcp]~=2.5",
-    "aiosqlite~=0.22",
-    "sqlalchemy[asyncio]>=2.0",
-    "alembic>=1.13",
-    "greenlet~=3.3",
-    "rich~=14.3",
-    "textual~=8.1",
-    "pyyaml~=6.0",
-    "click~=8.3",
-    "pydantic~=2.12",
-    "httpx~=0.28",
-    "google-genai~=1.67",
-    "tokenizers>=0.22.2",
-    "tiktoken>=0.12.0",
-    "ripgrep>=15.0.0",
-    "beautifulsoup4>=4.12",
-    "pypdf>=5.0",
-    "python-docx>=1.1",
-    "python-pptx>=1.0",
-    "openpyxl>=3.1",
-    "aiofiles>=24.1",
-    "youtube_transcript_api>=1.0",
-    "arxiv>=2.1",
-    "wikipedia>=1.4",
-    "dateparser>=1.4.0",
-    "chromadb>=1.5.5",
-    "sentence-transformers>=5.3.0",
+    "agno[openai,ddg,sqlite,sql,mcp]~=2.6.12",
+    "aiosqlite~=0.22.1",
+    "sqlalchemy[asyncio]~=2.0.50",
+    "alembic~=1.18.4",
+    "greenlet~=3.5.1",
+    "rich~=15.0.0",
+    "textual~=8.2.7",
+    "pyyaml~=6.0.3",
+    "click~=8.4.1",
+    "pydantic~=2.13.4",
+    "httpx~=0.28.1",
+    "google-genai~=2.8.0",
+    "tokenizers~=0.22.2",
+    "tiktoken~=0.13.0",
+    "ripgrep~=15.1.0",
+    "beautifulsoup4~=4.15.0",
+    "pypdf~=6.13.0",
+    "python-docx~=1.2.0",
+    "python-pptx~=1.0.2",
+    "openpyxl~=3.1.5",
+    "aiofiles~=25.1.0",
+    "youtube_transcript_api~=1.2.4",
+    "arxiv~=4.0.0",
+    "wikipedia~=1.4.0",
+    "dateparser~=1.4.0",
+    "chromadb~=1.5.9",
+    "sentence-transformers~=5.5.1",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest~=9.0",
-    "pytest-asyncio~=1.3",
-    "ruff~=0.15",
-    "mypy~=1.19",
-    "python-dotenv~=1.2",
+    "pytest~=9.0.2",
+    "pytest-asyncio~=1.3.0",
+    "ruff~=0.15.6",
+    "mypy~=1.19.1",
+    "python-dotenv~=1.2.2",
 ]
 mcp = [
-    "mcp~=1.26",
+    "mcp~=1.26.0",
 ]
 gemini = [
-    "google-genai~=1.67",
+    "google-genai~=2.8.0",
 ]
 web = [
     "duckduckgo-search~=8.1",

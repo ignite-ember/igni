@@ -383,9 +383,31 @@ class EmberApp(App):
             yield StatusBar(id="status-bar")
 
     async def on_mount(self) -> None:
-        # Use ANSI colors so the terminal's own palette is respected
+        try:
+            await self._on_mount_inner()
+        except Exception:
+            # Textual silently swallows ``on_mount`` exceptions and
+            # tears the app down with exit code 0 — no traceback to
+            # stderr, no entry in the debug log. The v0.5.2 incident
+            # (renamed theme ``textual-ansi`` → ``ansi-dark`` after
+            # a Textual upgrade) shipped as a silent shell-returns-
+            # immediately bug for that reason. Surface anything that
+            # crashes the mount via the logger so future regressions
+            # are at least visible in ``~/.ember/debug.log``.
+            logger.exception("TUI on_mount raised — app will exit")
+            raise
+
+    async def _on_mount_inner(self) -> None:
+        # Use ANSI colors so the terminal's own palette is respected.
         self.ansi_color = True
-        self.theme = "textual-ansi"
+        # ``ansi-dark`` is the registered ANSI-respecting theme on
+        # Textual 8.2+ (the prior name ``textual-ansi`` was retired).
+        # Guard on ``available_themes`` so a future rename can't
+        # bring the app down — if the theme isn't there, the default
+        # styling is fine; ``ansi_color = True`` above is what
+        # actually makes Textual respect the terminal palette.
+        if "ansi-dark" in self.available_themes:
+            self.theme = "ansi-dark"
 
         container = self.query_one("#conversation", ScrollableContainer)
 
@@ -463,6 +485,15 @@ class EmberApp(App):
         asyncio.create_task(self._init_mcp_background())
         asyncio.create_task(self._file_index.ensure_loaded())
         asyncio.create_task(self._auto_sync_knowledge())
+        # Cloud-discovered models live only in memory — without an
+        # on-mount refresh, ``_has_usable_model`` reports False on
+        # every fresh launch even when the user has a valid token
+        # and a previously-selected default. Surfaced as "No model
+        # configured" on the very first message; ``/login`` or
+        # ``/model`` would silently fix it because both refresh the
+        # registry as a side-effect. Mirror their refresh here so
+        # the first message just works.
+        asyncio.create_task(self._refresh_cloud_models_on_startup())
 
         # CodeIndex status-bar slot — eager refresh + recurring
         # poll so the badge reflects current state even before the
@@ -510,6 +541,51 @@ class EmberApp(App):
             # Upgraded from DEBUG to WARNING so this is visible
             # without the user re-running with ``--debug``.
             logger.warning("FE: MCP background init failed: %s", exc, exc_info=True)
+
+    async def _refresh_cloud_models_on_startup(self) -> None:
+        """Repopulate ``settings.models.registry`` from cloud discovery.
+
+        ``models.registry`` lives only in memory; nothing persists it
+        across CLI runs. ``settings.models.default`` IS persisted (it's
+        written to ``~/.ember/config.yaml`` on ``/model`` selection),
+        so the status bar reads the previously-chosen model and
+        renders ready. But the run controller's pre-flight
+        ``_has_usable_model`` iterates the registry — finds it empty
+        on a fresh launch — and rejects the first message with the
+        cryptic "No model configured" prompt. Running ``/login`` or
+        ``/model`` "fixes" it because each refresh-on-open call also
+        merges cloud entries; this task mirrors that side-effect at
+        mount time so the first message just works.
+
+        Fire-and-forget, bounded by ``fetch_cloud_models``'s built-in
+        3-second timeout. Soft-fail on any error (no token, network
+        down, 403 from the org check) — the user can still reach
+        ``/login`` from the TUI to recover.
+        """
+        try:
+            from ember_code.core.auth.credentials import CloudCredentials
+            from ember_code.core.config.cloud_models import (
+                fetch_cloud_models,
+                merge_into_registry,
+            )
+
+            cloud_token = CloudCredentials(self.settings.auth.credentials_file).access_token
+            if not cloud_token:
+                return
+            # ``fetch_cloud_models`` is sync (3s timeout). Push to a
+            # thread so the event loop stays free while it blocks.
+            loop = asyncio.get_event_loop()
+            entries = await loop.run_in_executor(
+                None, fetch_cloud_models, self.settings.api_url, cloud_token
+            )
+            if entries:
+                added = merge_into_registry(
+                    self.settings.models.registry, entries, self.settings.api_url
+                )
+                if added:
+                    logger.info("FE: merged %d cloud model(s) on startup", added)
+        except Exception as exc:
+            logger.warning("FE: cloud-models startup refresh failed: %s", exc, exc_info=True)
 
     async def _auto_sync_knowledge(self) -> None:
         """Auto-sync knowledge file → DB on startup if enabled."""
