@@ -136,7 +136,7 @@ class TestResolve:
         assert second is first
         assert len(captured) == 1
         url, kwargs = captured[0]
-        assert url == "http://srv/v1/cli/codeindex/repository"
+        assert url == "http://srv/v1/codeindex/repository"
         assert kwargs["params"] == {"remote_url": "https://github.com/acme/widgets"}
         assert kwargs["headers"]["Authorization"] == "Bearer tok-xyz"
 

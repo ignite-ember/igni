@@ -2,7 +2,7 @@
 
 The CLI never hits ``storage.googleapis.com`` directly. The flow is:
 
-1. ember-code asks ember-server for a signed URL: ``POST /v1/cli/codeindex/changeset-url``
+1. ember-code asks ember-server for a signed URL: ``POST /v1/codeindex/changeset-url``
    with the cloud auth token and ``{repository_id, commit_sha}``.
 2. ember-server verifies live read access (calls GitHub/GitLab as the
    user) and mints a 10-minute signed GCS URL.
@@ -142,7 +142,7 @@ class ChangesetFetcher:
         owns_client = client is None
         http = client or httpx.AsyncClient(timeout=self.timeout)
         try:
-            endpoint = f"{self.server_url}/v1/cli/codeindex/preflight"
+            endpoint = f"{self.server_url}/v1/codeindex/preflight"
             try:
                 response = await http.post(
                     endpoint,
@@ -194,7 +194,7 @@ class ChangesetFetcher:
         repository_id: str,
         commit_sha: str,
     ) -> str:
-        endpoint = f"{self.server_url}/v1/cli/codeindex/changeset-url"
+        endpoint = f"{self.server_url}/v1/codeindex/changeset-url"
         try:
             response = await client.post(
                 endpoint,

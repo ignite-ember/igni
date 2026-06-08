@@ -3,7 +3,7 @@
 Given a project directory, the resolver:
 
 1. Reads the local git remote URL via ``git remote get-url origin``
-2. Calls ``GET {server_url}/v1/cli/codeindex/repository?remote_url=...``
+2. Calls ``GET {server_url}/v1/codeindex/repository?remote_url=...``
    with the user's cloud auth token. The server returns one of:
 
    - ``status='registered'`` + ``repository_id`` → caller has access; proceed.
@@ -111,7 +111,7 @@ class RepositoryResolver:
                 logger.debug("skipping codeindex resolve: no cloud auth")
                 return None
 
-            endpoint = f"{self.server_url}/v1/cli/codeindex/repository"
+            endpoint = f"{self.server_url}/v1/codeindex/repository"
             try:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     response = await client.get(
