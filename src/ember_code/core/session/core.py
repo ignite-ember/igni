@@ -1216,6 +1216,18 @@ class Session:
                 logger.debug("sweep_stale_dirs failed (%s); continuing", exc)
 
             await self.code_index_sync.sync_now()
+            # If that initial sync populated the chroma (most common
+            # case: fresh checkout, prior session wiped, first
+            # install), the agent built earlier in __init__ has the
+            # wrong system prompt — it was constructed before any
+            # data was available. Recheck and rebuild if so.
+            try:
+                self.refresh_codeindex_availability()
+            except Exception as exc:
+                logger.debug(
+                    "refresh_codeindex_availability after initial sync failed (%s)",
+                    exc,
+                )
             try:
                 dropped = await self.code_index.clean()
                 if dropped:
@@ -1390,6 +1402,51 @@ class Session:
         clients = {name: self.mcp_manager._clients[name] for name in connected}
         self.pool.build_agents(mcp_clients=clients if clients else None)
         self.main_team = self._build_main_agent()
+
+    def refresh_codeindex_availability(self) -> bool:
+        """Re-derive ``_codeindex_available`` from the current chroma
+        state and rebuild the agent pool + main team if the flag flipped.
+
+        Without this, the main agent and every specialist keep the
+        prompt variant chosen at session ``__init__`` time. After a
+        ``/codeindex resync`` (or any sync that transitions HEAD from
+        unindexed → indexed) the chroma now has data but the agent's
+        system prompt still says *"CodeIndex isn't active"*; the
+        agent then refuses to use the ``codeindex_query`` /
+        ``codeindex_tree`` tools and tells the user to set things up.
+        Called after every successful sync so the prompt always
+        matches reality.
+
+        Returns ``True`` if a rebuild happened.
+        """
+        head = self.code_index_sync.current_sha()
+        new_avail = bool(head and self.code_index.has_commit(head))
+        if new_avail == self._codeindex_available:
+            return False
+
+        self._codeindex_available = new_avail
+        # Reload definitions so the pool picks the right
+        # ``<name>.codeindex.md`` vs ``<name>.md`` prompt variant per
+        # specialist. ``load_definitions`` only upserts when an
+        # entry's priority is *strictly greater* than what's already
+        # there, so calling it twice with the same sources is a noop.
+        # Clear first to force a true reload; ``clear_definitions``
+        # preserves ephemerals so user-created agents survive.
+        self.pool.clear_definitions(preserve_ephemeral=True)
+        self.pool.load_definitions(self.settings, self.project_dir, codeindex_available=new_avail)
+        self.plugin_loader.apply_to_agents(self.pool, disabled=self._disabled_plugins)
+        # Rebuild Agent objects, preserving current MCP wiring.
+        connected = self.mcp_manager.list_connected()
+        clients = {name: self.mcp_manager._clients[name] for name in connected}
+        self.pool.build_agents(mcp_clients=clients if clients else None)
+        # Main team's prompt also flips between ``main_agent.md`` and
+        # ``main_agent.codeindex.md`` — rebuild it.
+        self.main_team = self._build_main_agent()
+        logger.info(
+            "codeindex_available → %s; rebuilt agent pool + main team",
+            new_avail,
+        )
+        return True
 
     # ── MCP status ─────────────────────────────────────────────────
 

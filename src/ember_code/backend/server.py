@@ -1218,6 +1218,16 @@ class BackendServer:
         it in a browser and prompts the user to retry.
         """
         result = await self._session.code_index_sync.sync_now(sha=sha)
+        # If this sync flipped the codeindex from absent → present
+        # (or vice versa), rebuild the agent pool + main team so the
+        # system prompt matches reality (``main_agent.codeindex.md``
+        # vs ``main_agent.md``). Without this, an agent built at
+        # session start with an empty chroma keeps saying
+        # "CodeIndex isn't active" even after a successful sync.
+        try:
+            self._session.refresh_codeindex_availability()
+        except Exception as exc:
+            logger.debug("refresh_codeindex_availability after sync failed (%s)", exc)
         stats = result.stats
         return {
             "skipped": result.skipped,
@@ -1241,6 +1251,14 @@ class BackendServer:
         if target_sha:
             forgot = await self._session.code_index.forget_commit(target_sha)
         result = await self._session.code_index_sync.sync_now(sha=target_sha, force_snapshot=True)
+        # Same rebuild as ``codeindex_sync``: ``forget_commit`` cleared
+        # the chroma and the snapshot just refilled it. The avail flag
+        # was likely False during forget, True after the snapshot — so
+        # the agent definitely needs the codeindex prompt variant now.
+        try:
+            self._session.refresh_codeindex_availability()
+        except Exception as exc:
+            logger.debug("refresh_codeindex_availability after resync failed (%s)", exc)
         stats = result.stats
         return {
             "forgot": forgot,

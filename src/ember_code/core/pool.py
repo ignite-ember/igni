@@ -288,6 +288,33 @@ class AgentPool:
 
     # ── Phase 1: Load definitions ─────────────────────────────────
 
+    def clear_definitions(self, *, preserve_ephemeral: bool = True) -> None:
+        """Drop parsed agent definitions so the next ``load_definitions``
+        actually re-picks prompt variants.
+
+        ``_load_directory`` only upserts when the new entry's priority
+        is *strictly greater* than the existing one's — calling
+        ``load_definitions`` twice with the same sources is therefore
+        a noop. That bites the codeindex-availability refresh path,
+        which needs the same source to re-load with a different
+        prompt variant (``<name>.md`` vs ``<name>.codeindex.md``).
+        Clearing first forces a true reload.
+
+        ``preserve_ephemeral=True`` (the default) keeps
+        ``AgentPriority.EPHEMERAL`` entries — those represent agents
+        created mid-session via ``/agents create`` and have no
+        backing ``.md`` file to reload from, so wiping them would
+        delete the user's work.
+        """
+        if preserve_ephemeral:
+            self._definitions = {
+                name: entry
+                for name, entry in self._definitions.items()
+                if entry[1] == AgentPriority.EPHEMERAL
+            }
+        else:
+            self._definitions = {}
+
     def load_definitions(
         self,
         settings: Settings,

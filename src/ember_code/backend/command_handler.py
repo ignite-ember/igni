@@ -747,8 +747,19 @@ class CommandHandler:
         import uuid
 
         self._session.session_id = str(uuid.uuid4())[:8]
-        # New dialogue → re-pull the changeset for current HEAD (fire-and-forget).
-        asyncio.create_task(self._session.code_index_sync.sync_now())
+
+        # New dialogue → re-pull the changeset for current HEAD
+        # (fire-and-forget). Also refresh the codeindex_available flag
+        # afterwards so the rebuilt agent's system prompt matches the
+        # post-sync chroma state.
+        async def _sync_then_refresh() -> None:
+            await self._session.code_index_sync.sync_now()
+            try:
+                self._session.refresh_codeindex_availability()
+            except Exception as exc:
+                logger.debug("refresh after /clear sync failed (%s)", exc)
+
+        asyncio.create_task(_sync_then_refresh())
         return CommandResult.clear()
 
     async def _cmd_sessions(self, _args: str) -> "CommandResult":
@@ -953,6 +964,13 @@ class CommandHandler:
         if subcommand == "sync":
             target_sha = sub_args or None
             result = await sync.sync_now(sha=target_sha)
+            # Re-derive ``codeindex_available`` so the agent's prompt
+            # matches the post-sync chroma state (see
+            # ``Session.refresh_codeindex_availability``).
+            try:
+                self._session.refresh_codeindex_availability()
+            except Exception as exc:
+                logger.debug("refresh after /codeindex sync failed (%s)", exc)
             if result.link_start_url:
                 _open_in_browser(result.link_start_url)
                 lines = (
@@ -987,6 +1005,13 @@ class CommandHandler:
                 return CommandResult.error("Not a git repository — pass an explicit sha.")
             forgot = await index.forget_commit(target_sha)
             result = await sync.sync_now(sha=target_sha, force_snapshot=True)
+            # Same as ``/codeindex sync`` — keep the agent's prompt
+            # in sync with the chroma state ``forget_commit`` +
+            # ``sync_now`` just established.
+            try:
+                self._session.refresh_codeindex_availability()
+            except Exception as exc:
+                logger.debug("refresh after /codeindex resync failed (%s)", exc)
             short_sha = (result.commit_sha or target_sha)[:8]
             if result.skipped:
                 prefix = "Wiped local index; " if forgot else ""
