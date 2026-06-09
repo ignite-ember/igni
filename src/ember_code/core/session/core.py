@@ -1184,10 +1184,48 @@ class Session:
         return
 
     def start_codeindex_background(self) -> None:
-        """Fire an initial sync and start the HEAD watcher (fire-and-forget)."""
+        """Fire an initial sync, evict stale commit chromas, and start
+        the HEAD watcher — all fire-and-forget on the running loop.
+
+        ``CodeIndex.clean()`` drops every commit that isn't HEAD, isn't
+        a branch tip, and hasn't been touched in the last 30 days. We
+        run it once per session after the initial sync so the cutoff
+        applies to a freshly-refreshed manifest — HEAD's
+        ``last_used_at`` was just bumped by ``sync_now``, so we won't
+        accidentally evict the current commit even if its previous
+        timestamp was old.
+        """
 
         async def _bootstrap() -> None:
+            # Sweep orphaned chroma dirs from prior sessions BEFORE we
+            # open any client. ``CodeIndex.clean`` defers the
+            # filesystem ``rmtree`` until startup so it doesn't pull
+            # the rug out from under a live chromadb client (same
+            # trap that bit ``forget_commit`` in v0.5.8). The first
+            # safe chance to finish that eviction is right here,
+            # before ``sync_now`` constructs the first PersistentClient.
+            try:
+                swept = self.code_index.sweep_stale_dirs()
+                if swept:
+                    logger.info(
+                        "Reclaimed %d orphaned chroma dir(s): %s",
+                        len(swept),
+                        ", ".join(s[:8] for s in swept[:5]) + ("…" if len(swept) > 5 else ""),
+                    )
+            except Exception as exc:
+                logger.debug("sweep_stale_dirs failed (%s); continuing", exc)
+
             await self.code_index_sync.sync_now()
+            try:
+                dropped = await self.code_index.clean()
+                if dropped:
+                    logger.info(
+                        "Auto-clean dropped %d idle commit chroma(s): %s",
+                        len(dropped),
+                        ", ".join(s[:8] for s in dropped[:5]) + ("…" if len(dropped) > 5 else ""),
+                    )
+            except Exception as exc:
+                logger.debug("Auto-clean failed (%s); continuing", exc)
             await self.code_index_sync.start_watcher()
 
         try:

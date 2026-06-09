@@ -580,10 +580,18 @@ class CodeIndex:
         """Drop commits not on a branch and idle longer than ``keep_recent_days``.
 
         Selective housekeeping — preserves HEAD and every commit
-        pointed to by a local branch. For a full wipe-and-resync,
-        the chroma dir under ``~/.ember/projects/<id>/code_index``
-        can be removed manually; there is no in-process verb for
-        that yet.
+        pointed to by a local branch.
+
+        The eviction is **two-phase**: this call empties the chroma
+        data via chromadb's own ``delete_collection`` API and drops
+        the manifest entry, but leaves the (now-empty) directory on
+        disk. ``rmtree``-ing under a live chromadb client leaves
+        stale SQLite handles in chromadb's process-level cache and
+        triggers ``SQLITE_READONLY_DBMOVED`` on the next write —
+        the same trap that bit ``forget_commit`` in v0.5.8. The
+        directory husk is reclaimed by :meth:`sweep_stale_dirs`
+        which is safe to call at session startup, before any client
+        has been opened in this process.
         """
         # Refresh branch_refs from git so retention has fresh data.
         branch_map = _branch_heads(self.project)
@@ -610,10 +618,57 @@ class CodeIndex:
         for sha in to_drop:
             chroma_dir = commit_chroma_path(self.project, sha, data_dir=self.data_dir)
             if chroma_dir.exists():
-                await asyncio.to_thread(shutil.rmtree, str(chroma_dir))
-            self._clients.pop(sha, None)
+                # Empty the collections through chromadb's API. The
+                # directory stays — startup sweep reclaims it.
+                try:
+                    client = await self._client_for(sha)
+                    for name in (DOCUMENTS_COLLECTION, CHUNKS_COLLECTION):
+                        try:
+                            await asyncio.to_thread(client.delete_collection, name)
+                        except Exception as exc:
+                            logger.debug(
+                                "clean: delete_collection(%s, sha=%s) skipped (%s)",
+                                name,
+                                sha[:8],
+                                exc,
+                            )
+                except Exception as exc:
+                    logger.debug("clean: chroma teardown failed for %s (%s)", sha[:8], exc)
             self.manifest.remove_commit(sha)
         return to_drop
+
+    def sweep_stale_dirs(self) -> list[str]:
+        """Reclaim chroma directories that aren't tracked in the manifest.
+
+        :meth:`clean` and :meth:`forget_commit` both drop manifest
+        entries without ``rmtree``-ing — see those methods for why
+        rmtree under a live chromadb client is unsafe. This sweep
+        closes the loop by removing those orphaned directories from
+        disk. It is only safe to call **before** any
+        :meth:`_client_for` call in this process, since otherwise
+        chromadb's process-level cache might still hold open
+        handles to the path. Typical placement: at session startup,
+        before the initial ``sync_now``.
+        """
+        from ember_code.core.code_index.paths import code_index_dir
+
+        base = code_index_dir(self.project, data_dir=self.data_dir)
+        if not base.is_dir():
+            return []
+        tracked = set(self.manifest.load().commits.keys())
+        removed: list[str] = []
+        for child in base.iterdir():
+            if not child.is_dir() or not child.name.endswith(".chroma"):
+                continue
+            sha = child.name[: -len(".chroma")]
+            if sha in tracked:
+                continue
+            try:
+                shutil.rmtree(str(child), ignore_errors=True)
+                removed.append(sha)
+            except Exception as exc:
+                logger.debug("sweep_stale_dirs: failed to remove %s (%s)", child, exc)
+        return removed
 
     # -- Internal --------------------------------------------------------------
 

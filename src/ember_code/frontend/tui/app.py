@@ -1554,12 +1554,40 @@ class EmberApp(App):
 
         Recovery path for indexes that have drifted from the cloud
         definition — same backend behaviour as ``/codeindex resync``.
+        The apply phase embeds every chunk through sentence-transformers
+        which can run for ~30-90s on a fresh checkout; we poll the
+        backend's apply-progress fields twice a second and rewrite the
+        busy label so the UI doesn't look frozen during that window.
         """
         try:
             panel = self.query_one(CodeIndexPanelWidget)
         except Exception:
             return
+
         panel.set_busy("Resyncing (full snapshot)…")
+
+        async def _poll_progress() -> None:
+            while True:
+                try:
+                    await asyncio.sleep(0.5)
+                    status = await self._backend.codeindex_status()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    continue  # transient RPC blips shouldn't kill the ticker
+                done = int(status.get("apply_done") or 0)
+                total = int(status.get("apply_total") or 0)
+                step = (status.get("apply_step") or "").strip()
+                if total <= 0:
+                    continue  # apply hasn't started counting yet
+                pct = int(done * 100 / total)
+                label = f"Resyncing {pct}% — {done}/{total} items"
+                if step:
+                    short = step if len(step) <= 40 else step[:37] + "…"
+                    label += f" · {short}"
+                panel.set_busy(label)
+
+        ticker = asyncio.create_task(_poll_progress())
         try:
             result = await self._backend.codeindex_resync(None)
             if result.get("link_start_url"):
@@ -1589,6 +1617,9 @@ class EmberApp(App):
             panel.set_status(status)
             self._status.set_codeindex_status(status)
         finally:
+            ticker.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await ticker
             panel.set_busy(None)
 
     @on(CodeIndexPanelWidget.CleanRequested)

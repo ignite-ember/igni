@@ -227,7 +227,7 @@ class TestPullAndApply:
 
         captured: dict = {}
 
-        async def fake_apply(*, index, file_refs, jsonl_path):
+        async def fake_apply(*, index, file_refs, jsonl_path, on_progress=None):
             captured["jsonl_path"] = Path(jsonl_path)
             captured["index"] = index
             captured["file_refs"] = file_refs
@@ -263,7 +263,7 @@ class TestPullAndApply:
         fetcher.download_snapshot = snapshot_called  # type: ignore[method-assign]
         fetcher.download = delta_called  # type: ignore[method-assign]
 
-        async def fake_apply(*, index, file_refs, jsonl_path):
+        async def fake_apply(*, index, file_refs, jsonl_path, on_progress=None):
             from ember_code.core.code_index.delta import DeltaStats
 
             return DeltaStats(items_upserted=1)

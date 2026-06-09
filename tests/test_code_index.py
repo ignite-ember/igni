@@ -211,6 +211,62 @@ class TestForgetCommit:
         assert index.has_commit("orphan") is False
 
 
+class TestSweepStaleDirs:
+    """Finishes the two-phase eviction started by ``clean`` and
+    ``forget_commit``: those drop the manifest entry but leave the
+    on-disk chroma dir so chromadb's live client doesn't lose its
+    SQLite handle. ``sweep_stale_dirs`` reclaims those orphaned
+    dirs — safe to call at session startup before any client opens.
+    """
+
+    @pytest.mark.asyncio
+    async def test_removes_dirs_not_in_manifest(self, index):
+        from ember_code.core.code_index.paths import code_index_dir
+
+        # Two tracked commits.
+        await index.prepare_commit("alive_a")
+        await index.prepare_commit("alive_b")
+        # One orphan: dir exists but no manifest entry.
+        await index.prepare_commit("orphan")
+        index.manifest.remove_commit("orphan")
+
+        base = code_index_dir(index.project, data_dir=index.data_dir)
+        names_before = {p.name for p in base.iterdir() if p.is_dir()}
+        assert "alive_a.chroma" in names_before
+        assert "alive_b.chroma" in names_before
+        assert "orphan.chroma" in names_before
+
+        removed = index.sweep_stale_dirs()
+
+        assert removed == ["orphan"]
+        names_after = {p.name for p in base.iterdir() if p.is_dir()}
+        assert "alive_a.chroma" in names_after
+        assert "alive_b.chroma" in names_after
+        assert "orphan.chroma" not in names_after
+
+    def test_noop_when_base_missing(self, index):
+        # Index never had any commits → no code_index dir yet.
+        assert index.sweep_stale_dirs() == []
+
+    @pytest.mark.asyncio
+    async def test_ignores_non_chroma_entries(self, index):
+        from ember_code.core.code_index.paths import code_index_dir
+
+        await index.prepare_commit("alive")
+        base = code_index_dir(index.project, data_dir=index.data_dir)
+        # Sibling files / unrelated dirs must survive — manifest.json
+        # lives next to the chroma dirs and must not be swept.
+        (base / "manifest.json.bak").write_text("{}")
+        (base / "scratch").mkdir(exist_ok=True)
+
+        removed = index.sweep_stale_dirs()
+
+        assert removed == []
+        assert (base / "manifest.json.bak").is_file()
+        assert (base / "scratch").is_dir()
+        assert (base / "alive.chroma").is_dir()
+
+
 # -- add_item / search / get_item ---------------------------------------------
 
 
@@ -339,6 +395,12 @@ class TestClean:
 
     @pytest.mark.asyncio
     async def test_drops_stale_non_branch_commits(self, index):
+        """``clean`` drops the manifest entry but leaves the chroma dir
+        on disk — the filesystem rmtree is deferred to
+        ``sweep_stale_dirs`` so it doesn't pull the rug out from
+        under a live chromadb client. Pin both halves of the
+        contract: manifest entry gone, ``has_commit`` reports False,
+        directory survives until the next sweep."""
         await index.prepare_commit("stale")
         await index.set_head("head")
         await index.prepare_commit("head")
@@ -352,6 +414,17 @@ class TestClean:
         dropped = await index.clean(keep_recent_days=30)
         assert "stale" in dropped
         assert "head" not in dropped
+        # Manifest entry dropped; ``has_commit`` reports False even
+        # though the dir lingers (sweep_stale_dirs reclaims it next
+        # session, before any chromadb client opens its path).
+        assert "stale" not in index.manifest.load().commits
+        assert index.has_commit("stale") is False
+        # The deferred rmtree leaves the husk on disk for the sweep.
+        assert commit_chroma_path(index.project, "stale", data_dir=index.data_dir).exists()
+
+        # And the sweep finishes the eviction.
+        swept = index.sweep_stale_dirs()
+        assert "stale" in swept
         assert not commit_chroma_path(index.project, "stale", data_dir=index.data_dir).exists()
 
     @pytest.mark.asyncio

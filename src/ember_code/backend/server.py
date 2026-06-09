@@ -1146,7 +1146,15 @@ class BackendServer:
         head_indexed = bool(local_sha) and local_sha in state.commits
 
         last = sync._last_sync_result
-        sync_in_progress = bool(sync._in_progress_sha and sync._in_progress_sha == local_sha)
+        # ``sync_in_progress`` is True for either a server-side
+        # IN_PROGRESS preflight *or* a local apply-delta currently
+        # running. Both stretch the panel's "syncing…" state; the
+        # apply-side progress is what saved ``/codeindex resync``
+        # from looking frozen during the embedding-heavy snapshot
+        # apply.
+        sync_in_progress = (
+            bool(sync._in_progress_sha and sync._in_progress_sha == local_sha) or sync._applying
+        )
         # Only surface pct/step when the cached result is *for the
         # current HEAD* and still in-progress. A stale in-progress
         # result from a previous sha would otherwise paint the wrong
@@ -1161,6 +1169,12 @@ class BackendServer:
             if last.in_progress:
                 sync_progress_pct = last.progress_percentage
                 sync_step = last.current_step or ""
+        # Local apply takes precedence: it's actually running *now*,
+        # while ``last.in_progress`` is the most recent preflight
+        # report which may be stale.
+        if sync._applying and sync._apply_total > 0:
+            sync_progress_pct = int(sync._apply_done * 100 / sync._apply_total)
+            sync_step = sync._apply_step or "indexing"
 
         resolved = sync.resolver.cached if sync.resolver else None
         if resolved is None:
@@ -1186,6 +1200,9 @@ class BackendServer:
             "sync_step": sync_step,
             "sync_reason": sync_reason,
             "sync_error": sync_error,
+            "apply_done": sync._apply_done if sync._applying else 0,
+            "apply_total": sync._apply_total if sync._applying else 0,
+            "apply_step": sync._apply_step if sync._applying else "",
             "install_state": install_state,
             "repository_id": repository_id,
             "install_url": install_url,

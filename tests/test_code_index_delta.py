@@ -120,6 +120,100 @@ class TestApplyDelta:
             await apply_delta(index=index, file_refs=file_refs, jsonl_path=path)
 
     @pytest.mark.asyncio
+    async def test_on_progress_fires_with_item_counts(self, index, file_refs, tmp_path):
+        """The progress callback must receive ``(done, total, label)``
+        for each upserted item, with ``total`` matching the up-front
+        item count (refs and commit ops excluded). This drives the
+        ``Resyncing N/M`` busy label during ``/codeindex resync``."""
+        path = _write_jsonl(
+            tmp_path / "delta.jsonl",
+            [
+                {"op": "commit", "sha": "s", "parent_sha": None},
+                {
+                    "op": "upsert_item",
+                    "id": "a",
+                    "type": "file",
+                    "name": "a.py",
+                    "path": "a.py",
+                    "content": "alpha",
+                    "kind": "code",
+                },
+                {
+                    "op": "upsert_item",
+                    "id": "b",
+                    "type": "file",
+                    "name": "b.py",
+                    "path": "b.py",
+                    "content": "beta",
+                    "kind": "code",
+                },
+                # References are cheap, they must NOT inflate the bar.
+                {
+                    "op": "upsert_reference",
+                    "from_id": "a",
+                    "to_id": "b",
+                    "relation": "imports",
+                    "meta": {},
+                },
+            ],
+        )
+        calls: list[tuple[int, int, str]] = []
+        await apply_delta(
+            index=index,
+            file_refs=file_refs,
+            jsonl_path=path,
+            on_progress=lambda done, total, label: calls.append((done, total, label)),
+        )
+
+        assert calls, "callback must fire at least once"
+        # Every call agrees on the same total (the up-front item count).
+        totals = {t for _, t, _ in calls}
+        assert totals == {2}
+        # ``done`` is monotonic and ends at total.
+        dones = [d for d, _, _ in calls]
+        assert dones == sorted(dones)
+        assert dones[-1] == 2
+        # The opening "preparing" call carries done=0; subsequent calls
+        # carry a non-empty label (the item path).
+        assert calls[0][0] == 0
+        assert calls[0][2] == "preparing"
+        # Item-level labels include the path strings.
+        item_labels = [label for done, _, label in calls if done > 0]
+        assert "a.py" in item_labels
+        assert "b.py" in item_labels
+
+    @pytest.mark.asyncio
+    async def test_on_progress_swallows_exceptions(self, index, file_refs, tmp_path):
+        """A misbehaving callback must not abort the apply — progress
+        is a UI nicety, not a load-bearing part of the indexing path."""
+        path = _write_jsonl(
+            tmp_path / "delta.jsonl",
+            [
+                {"op": "commit", "sha": "s", "parent_sha": None},
+                {
+                    "op": "upsert_item",
+                    "id": "a",
+                    "type": "file",
+                    "name": "a.py",
+                    "path": "a.py",
+                    "content": "alpha",
+                    "kind": "code",
+                },
+            ],
+        )
+
+        def boom(done: int, total: int, label: str) -> None:
+            raise RuntimeError("UI exploded")
+
+        stats = await apply_delta(
+            index=index,
+            file_refs=file_refs,
+            jsonl_path=path,
+            on_progress=boom,
+        )
+        assert stats.items_upserted == 1
+
+    @pytest.mark.asyncio
     async def test_full_round_trip(self, index, file_refs, tmp_path):
         path = _write_jsonl(
             tmp_path / "delta.jsonl",

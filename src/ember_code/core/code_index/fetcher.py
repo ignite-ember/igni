@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -216,6 +217,7 @@ class ChangesetFetcher:
         file_refs,
         repository_id: str,
         commit_sha: str,
+        on_progress: Callable[[int, int, str], None] | None = None,
     ) -> DeltaStats:
         """Download the per-commit delta and apply it to the local index in one shot."""
         return await self._pull_and_apply_via(
@@ -224,6 +226,7 @@ class ChangesetFetcher:
             file_refs=file_refs,
             repository_id=repository_id,
             commit_sha=commit_sha,
+            on_progress=on_progress,
         )
 
     async def pull_and_apply_snapshot(
@@ -233,6 +236,7 @@ class ChangesetFetcher:
         file_refs,
         repository_id: str,
         commit_sha: str,
+        on_progress: Callable[[int, int, str], None] | None = None,
     ) -> DeltaStats:
         """Download a snapshot and apply it to the local index in one shot.
 
@@ -246,6 +250,7 @@ class ChangesetFetcher:
             file_refs=file_refs,
             repository_id=repository_id,
             commit_sha=commit_sha,
+            on_progress=on_progress,
         )
 
     async def _pull_and_apply_via(
@@ -256,10 +261,16 @@ class ChangesetFetcher:
         file_refs,
         repository_id: str,
         commit_sha: str,
+        on_progress: Callable[[int, int, str], None] | None = None,
     ) -> DeltaStats:
         jsonl_path = await downloader(repository_id=repository_id, commit_sha=commit_sha)
         try:
-            return await apply_delta(index=index, file_refs=file_refs, jsonl_path=jsonl_path)
+            return await apply_delta(
+                index=index,
+                file_refs=file_refs,
+                jsonl_path=jsonl_path,
+                on_progress=on_progress,
+            )
         finally:
             try:
                 jsonl_path.unlink()

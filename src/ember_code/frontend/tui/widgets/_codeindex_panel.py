@@ -60,6 +60,13 @@ class CodeIndexStatusInfo(BaseModel):
     sync_step: str = ""
     sync_reason: str = ""
     sync_error: str = ""
+    # Local apply-progress counters — populated while a sync is
+    # running so the resync busy label can render
+    # ``Resyncing N/M · current_item``. Zero/empty when no apply
+    # is active.
+    apply_done: int = 0
+    apply_total: int = 0
+    apply_step: str = ""
     install_state: str = "unknown"  # "unknown" | "needs_install" | "installed"
     repository_id: str = ""
     install_url: str = ""

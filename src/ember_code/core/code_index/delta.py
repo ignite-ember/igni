@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -221,9 +222,36 @@ async def apply_delta(
     index: CodeIndex,
     file_refs: FileReferenceService,
     jsonl_path: str | Path,
+    on_progress: Callable[[int, int, str], None] | None = None,
 ) -> DeltaStats:
-    """Stream a JSONL file and apply each op to the index + reference table."""
+    """Stream a JSONL file and apply each op to the index + reference table.
+
+    ``on_progress`` (if provided) is invoked as items are applied. The
+    callback receives ``(done, total, current_label)``: the number of
+    item-upserts processed so far, the total predicted upserts, and a
+    short text label for the most recent item (its path/name). Only
+    ``upsert_item`` ops count toward the total — reference ops are
+    cheap and don't move the bar. Used by ``/codeindex resync`` to
+    drive the busy-label progress display.
+    """
     stats = DeltaStats()
+    jsonl_path = Path(jsonl_path)
+
+    # Pre-pass: count the expensive ops up front so the callback's
+    # denominator is accurate. Cheap (microseconds for a ~30-line
+    # snapshot, milliseconds for the largest realistic delta) and
+    # skipped entirely when no callback is wired.
+    total_items = 0
+    if on_progress is not None:
+        with open(jsonl_path) as f:
+            for line in f:
+                try:
+                    obj = json.loads(line)
+                except (ValueError, json.JSONDecodeError):
+                    continue
+                if obj.get("op") == "upsert_item":
+                    total_items += 1
+
     ops_iter = iter_ops(jsonl_path)
 
     try:
@@ -235,12 +263,25 @@ async def apply_delta(
     sha = first.sha
     await index.prepare_commit(sha, parent_sha=first.parent_sha)
 
+    if on_progress is not None:
+        try:
+            on_progress(0, total_items, "preparing")
+        except Exception:  # pragma: no cover — defensive: never let progress break apply
+            logger.debug("on_progress raised; continuing without progress updates")
+
+    done = 0
     for op in ops_iter:
         if isinstance(op, CommitOp):
             raise DeltaError(f"unexpected second commit header at sha={op.sha}")
         elif isinstance(op, UpsertItemOp):
             await index.add_item(sha, _op_to_item(op))
             stats.items_upserted += 1
+            done += 1
+            if on_progress is not None:
+                try:
+                    on_progress(done, total_items, op.path or op.name or "")
+                except Exception:  # pragma: no cover
+                    logger.debug("on_progress raised; continuing")
         elif isinstance(op, DeleteItemOp):
             await index.remove_item(sha, op.id)
             # Cascade — every reference (in or out) involving this UUID

@@ -116,6 +116,19 @@ class CodeIndexSyncManager:
         # state of the most recent background poll, not the user's last
         # manual click.
         self._last_sync_result: SyncResult | None = None
+        # Live apply-progress, updated by ``apply_delta``'s callback
+        # while a sync is running. ``codeindex_status`` surfaces these
+        # so ``/codeindex resync`` and ``/codeindex sync`` can render
+        # ``Resyncing N/M · current_item`` instead of looking frozen
+        # while embeddings churn for ~2s per item. Reset on each new
+        # sync call. ``_applying`` is True only while ``apply_delta``
+        # is actually running — it gates ``codeindex_status``'s
+        # ``sync_in_progress`` so a long-completed sync doesn't keep
+        # showing "100% done" after the FE has dismissed it.
+        self._applying: bool = False
+        self._apply_done: int = 0
+        self._apply_total: int = 0
+        self._apply_step: str = ""
 
     @classmethod
     def from_settings(
@@ -189,7 +202,30 @@ class CodeIndexSyncManager:
             self._last_sync_result = result
             return result
 
+    def _on_apply_progress(self, done: int, total: int, label: str) -> None:
+        """Callback fed to ``apply_delta`` to surface real-time progress.
+
+        The TUI polls ``BackendServer.codeindex_status`` while a
+        ``/codeindex resync`` is running; reading these three fields
+        keeps the busy label moving instead of stuck at
+        ``Resyncing (full snapshot)…`` for the ~30-90s an apply
+        takes on a fresh checkout.
+        """
+        self._apply_done = done
+        self._apply_total = total
+        self._apply_step = label
+
+    def _reset_apply_progress(self) -> None:
+        self._applying = False
+        self._apply_done = 0
+        self._apply_total = 0
+        self._apply_step = ""
+
     async def _sync_locked(self, *, sha: str | None, force_snapshot: bool = False) -> SyncResult:
+        # Start each sync with a clean progress slate so a poll
+        # arriving right at sync start doesn't show leftovers from
+        # a previous run.
+        self._reset_apply_progress()
         if self.code_index is None:
             return SyncResult(skipped=True, reason="code index not initialized")
         if self.resolver is None:
@@ -269,6 +305,7 @@ class CodeIndexSyncManager:
         target_exists = self.code_index.has_commit(target_sha)
         parent_usable = pf.parent_sha is not None and self.code_index.has_commit(pf.parent_sha)
         use_snapshot = force_snapshot or (not target_exists and not parent_usable)
+        self._applying = True
         try:
             if use_snapshot:
                 reason = "forced" if force_snapshot else "no local ancestor to copy-on-write from"
@@ -283,6 +320,7 @@ class CodeIndexSyncManager:
                     file_refs=self.code_index._file_reference_service(),
                     repository_id=resolved.repository_id,
                     commit_sha=target_sha,
+                    on_progress=self._on_apply_progress,
                 )
             else:
                 stats = await self._fetcher.pull_and_apply(
@@ -290,6 +328,7 @@ class CodeIndexSyncManager:
                     file_refs=self.code_index._file_reference_service(),
                     repository_id=resolved.repository_id,
                     commit_sha=target_sha,
+                    on_progress=self._on_apply_progress,
                 )
         except ChangesetFetchError as exc:
             logger.info("sync skipped (%s)", exc)
@@ -303,6 +342,8 @@ class CodeIndexSyncManager:
                 error=f"apply failed: {exc}",
                 preflight_status=PreflightStatus.OK,
             )
+        finally:
+            self._applying = False
 
         self._last_synced_sha = target_sha
         logger.info(

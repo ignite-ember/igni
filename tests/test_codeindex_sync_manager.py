@@ -169,7 +169,9 @@ class TestSyncSuccessAndErrors:
         _patch_preflight(monkeypatch, _OK)
         captured = {}
 
-        async def fake_pull_and_apply(self, *, index, file_refs, repository_id, commit_sha):
+        async def fake_pull_and_apply(
+            self, *, index, file_refs, repository_id, commit_sha, on_progress=None
+        ):
             captured["repository_id"] = repository_id
             captured["commit_sha"] = commit_sha
             captured["bearer_token"] = self.bearer_token
@@ -308,6 +310,137 @@ class TestSnapshotVsDeltaRouting:
         assert result.succeeded
         delta_called.assert_awaited_once()
         snapshot_called.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_apply_progress_callback_is_wired(self, tmp_path, monkeypatch):
+        """The SyncManager must hand its ``_on_apply_progress`` callback
+        to ``apply_delta`` through the fetcher — otherwise the apply
+        runs but ``_apply_done`` / ``_apply_total`` stay at 0 and the
+        TUI's ``Resyncing N/M`` busy label never updates.
+
+        Capturing the kwarg from the stub is the only way to confirm
+        the wiring; ``AsyncMock`` silently accepts any kwargs, so
+        removing ``on_progress=...`` from sync_manager.py would
+        otherwise pass every existing routing test.
+        """
+        index = _stub_index()
+        index.has_commit = MagicMock(return_value=False)
+        mgr = _make_mgr(
+            project_dir=tmp_path,
+            code_index=index,
+            resolver=_stub_resolver(_RESOLVED),
+            credentials=_stub_credentials(),
+        )
+        from ember_code.core.code_index import sync_manager as sm
+
+        _patch_preflight(monkeypatch, PreflightResult(status=PreflightStatus.OK, parent_sha=None))
+        snapshot_called = AsyncMock(return_value=DeltaStats(items_upserted=1))
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply", AsyncMock())
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply_snapshot", snapshot_called)
+
+        await mgr.sync_now(sha="abc1234")
+
+        snapshot_called.assert_awaited_once()
+        kwargs = snapshot_called.call_args.kwargs
+        assert "on_progress" in kwargs, "fetcher must receive on_progress kwarg"
+        # Bound methods compare equal but each access creates a fresh
+        # wrapper object, so ``is`` doesn't hold. Verify identity via
+        # behaviour: invoking the captured callback must mutate this
+        # manager's progress fields.
+        cb = kwargs["on_progress"]
+        assert callable(cb), "on_progress must be a callable"
+        mgr._apply_done = 0
+        mgr._apply_total = 0
+        mgr._apply_step = ""
+        cb(7, 28, "math_utils.py")
+        assert (mgr._apply_done, mgr._apply_total, mgr._apply_step) == (7, 28, "math_utils.py"), (
+            "callback must update the SyncManager's own progress state"
+        )
+
+    @pytest.mark.asyncio
+    async def test_applying_flag_and_progress_lifecycle(self, tmp_path, monkeypatch):
+        """While ``apply_delta`` is running, ``_applying`` must be True
+        and the live progress fields must reflect callback values.
+        After the call returns (success OR failure), ``_applying``
+        flips back to False via the ``finally`` clause — otherwise the
+        TUI's status poll would report a stale "syncing" state forever.
+        """
+        index = _stub_index()
+        index.has_commit = MagicMock(return_value=False)
+        mgr = _make_mgr(
+            project_dir=tmp_path,
+            code_index=index,
+            resolver=_stub_resolver(_RESOLVED),
+            credentials=_stub_credentials(),
+        )
+        from ember_code.core.code_index import sync_manager as sm
+
+        _patch_preflight(monkeypatch, PreflightResult(status=PreflightStatus.OK, parent_sha=None))
+
+        snapshots: list[tuple[bool, int, int, str]] = []
+
+        async def fake_snapshot(self, *, index, file_refs, repository_id, commit_sha, on_progress):
+            # Simulate what apply_delta does: invoke the callback at
+            # several points; record the manager's state at each so
+            # the test can assert the live update.
+            snapshots.append((mgr._applying, mgr._apply_done, mgr._apply_total, mgr._apply_step))
+            on_progress(0, 28, "preparing")
+            snapshots.append((mgr._applying, mgr._apply_done, mgr._apply_total, mgr._apply_step))
+            on_progress(14, 28, "math_utils.py::evaluate")
+            snapshots.append((mgr._applying, mgr._apply_done, mgr._apply_total, mgr._apply_step))
+            on_progress(28, 28, "security_helpers.py::run_shell")
+            snapshots.append((mgr._applying, mgr._apply_done, mgr._apply_total, mgr._apply_step))
+            return DeltaStats(items_upserted=28)
+
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply_snapshot", fake_snapshot)
+
+        result = await mgr.sync_now(sha="abc1234", force_snapshot=True)
+
+        assert result.succeeded
+        # Snapshot just before the first callback — _applying flipped
+        # True, counters reset to 0.
+        assert snapshots[0] == (True, 0, 0, "")
+        # After "preparing" with total=28.
+        assert snapshots[1] == (True, 0, 28, "preparing")
+        # Mid-apply: 14/28, current item path.
+        assert snapshots[2] == (True, 14, 28, "math_utils.py::evaluate")
+        # Final callback before fetcher returns.
+        assert snapshots[3] == (True, 28, 28, "security_helpers.py::run_shell")
+        # After the call returns, the finally clause flips _applying
+        # back to False even though the counters still reflect the
+        # last state — that's fine because the TUI gates its
+        # "syncing" display on _applying, not the counters.
+        assert mgr._applying is False
+        assert mgr._apply_done == 28
+        assert mgr._apply_total == 28
+
+    @pytest.mark.asyncio
+    async def test_applying_flag_clears_on_error(self, tmp_path, monkeypatch):
+        """If the fetcher raises (network failure, malformed JSONL),
+        ``_applying`` must still flip back to False. Without the
+        ``finally`` clause an apply that crashed mid-flight would
+        leave the panel stuck on "syncing" forever."""
+        index = _stub_index()
+        index.has_commit = MagicMock(return_value=False)
+        mgr = _make_mgr(
+            project_dir=tmp_path,
+            code_index=index,
+            resolver=_stub_resolver(_RESOLVED),
+            credentials=_stub_credentials(),
+        )
+        from ember_code.core.code_index import sync_manager as sm
+
+        _patch_preflight(monkeypatch, PreflightResult(status=PreflightStatus.OK, parent_sha=None))
+
+        async def boom(self, **_kwargs):
+            raise ChangesetFetchError("network exploded")
+
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply_snapshot", boom)
+
+        result = await mgr.sync_now(sha="abc1234", force_snapshot=True)
+
+        assert not result.succeeded
+        assert mgr._applying is False
 
     @pytest.mark.asyncio
     async def test_force_snapshot_overrides_routing(self, tmp_path, monkeypatch):
