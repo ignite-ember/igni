@@ -187,6 +187,9 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
         # ── Session / status ──────────────────────────────────────
         RpcMethod.SHUTDOWN: lambda args: backend.shutdown(),
         RpcMethod.GET_CHAT_HISTORY: lambda args: backend.get_chat_history(args["session_id"]),
+        RpcMethod.GET_PENDING_MESSAGES: lambda args: backend.get_pending_messages(
+            args["session_id"]
+        ),
         RpcMethod.LIST_SESSIONS: lambda args: backend.list_sessions(),
         RpcMethod.SWITCH_SESSION: lambda args: backend.switch_session(args["session_id"]),
         RpcMethod.GET_PROCESSING: lambda args: backend.processing,

@@ -3,6 +3,8 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
+from ember_code.protocol.messages import CommandAction, CommandResultKind
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,67 +53,67 @@ class CommandResult:
 
     @classmethod
     def markdown(cls, text: str) -> "CommandResult":
-        return cls(kind="markdown", content=text)
+        return cls(kind=CommandResultKind.MARKDOWN, content=text)
 
     @classmethod
     def info(cls, text: str) -> "CommandResult":
-        return cls(kind="info", content=text)
+        return cls(kind=CommandResultKind.INFO, content=text)
 
     @classmethod
     def error(cls, text: str) -> "CommandResult":
-        return cls(kind="error", content=text)
+        return cls(kind=CommandResultKind.ERROR, content=text)
 
     @classmethod
     def quit(cls) -> "CommandResult":
-        return cls(kind="action", action="quit")
+        return cls(kind=CommandResultKind.ACTION, action=CommandAction.QUIT)
 
     @classmethod
     def clear(cls) -> "CommandResult":
-        return cls(kind="action", action="clear")
+        return cls(kind=CommandResultKind.ACTION, action=CommandAction.CLEAR)
 
     @classmethod
     def sessions(cls) -> "CommandResult":
-        return cls(kind="action", action="sessions")
+        return cls(kind=CommandResultKind.ACTION, action=CommandAction.SESSIONS)
 
     @classmethod
     def model(cls) -> "CommandResult":
-        return cls(kind="action", action="model")
+        return cls(kind=CommandResultKind.ACTION, action=CommandAction.MODEL)
 
     @classmethod
     def login(cls) -> "CommandResult":
-        return cls(kind="action", action="login")
+        return cls(kind=CommandResultKind.ACTION, action=CommandAction.LOGIN)
 
     @classmethod
     def mcp(cls) -> "CommandResult":
-        return cls(kind="action", action="mcp")
+        return cls(kind=CommandResultKind.ACTION, action=CommandAction.MCP)
 
     @classmethod
     def plugins(cls) -> "CommandResult":
-        return cls(kind="action", action="plugins")
+        return cls(kind=CommandResultKind.ACTION, action=CommandAction.PLUGINS)
 
     @classmethod
     def agents(cls) -> "CommandResult":
-        return cls(kind="action", action="agents")
+        return cls(kind=CommandResultKind.ACTION, action=CommandAction.AGENTS)
 
     @classmethod
     def skills(cls) -> "CommandResult":
-        return cls(kind="action", action="skills")
+        return cls(kind=CommandResultKind.ACTION, action=CommandAction.SKILLS)
 
     @classmethod
     def knowledge(cls) -> "CommandResult":
-        return cls(kind="action", action="knowledge")
+        return cls(kind=CommandResultKind.ACTION, action=CommandAction.KNOWLEDGE)
 
     @classmethod
     def codeindex(cls) -> "CommandResult":
-        return cls(kind="action", action="codeindex")
+        return cls(kind=CommandResultKind.ACTION, action=CommandAction.CODEINDEX)
 
     @classmethod
     def hooks(cls) -> "CommandResult":
-        return cls(kind="action", action="hooks")
+        return cls(kind=CommandResultKind.ACTION, action=CommandAction.HOOKS)
 
     @classmethod
     def loop(cls) -> "CommandResult":
-        return cls(kind="action", action="loop")
+        return cls(kind=CommandResultKind.ACTION, action=CommandAction.LOOP)
 
 
 class CommandHandler:
@@ -336,7 +338,7 @@ class CommandHandler:
             return CommandResult.error(f"Unknown help topic: {topic}. Available: {available}")
 
         # No topic: show interactive panel
-        return CommandResult(kind="info", content="", action="help")
+        return CommandResult(kind=CommandResultKind.INFO, content="", action=CommandAction.HELP)
 
     async def _cmd_agents(self, args: str) -> "CommandResult":
         parts = args.strip().split(None, 1)
@@ -1096,7 +1098,15 @@ class CommandHandler:
                 return CommandResult.error(f"Unknown model: '{name}'. Available: {available}")
             self._session.settings.models.default = name
             self._session.main_team = self._session._build_main_agent()
-            return CommandResult.info(f"Switched to model: {name}")
+            # ``action="model_switched"`` tells the FE to refresh the
+            # status-bar model slot. Without it the bar showed the
+            # OLD model after ``/model <name>`` direct switches —
+            # nothing else triggers a refresh on that code path.
+            return CommandResult(
+                kind=CommandResultKind.INFO,
+                content=f"Switched to model: {name}",
+                action=CommandAction.MODEL_SWITCHED,
+            )
         # No args: show picker
         return CommandResult.model()
 
@@ -1180,7 +1190,11 @@ class CommandHandler:
 
         email_msg = f"Logged out ({creds.email})." if creds else "Not logged in."
         messages.insert(0, email_msg)
-        return CommandResult(kind="info", content="\n".join(messages), action="logout")
+        return CommandResult(
+            kind=CommandResultKind.INFO,
+            content="\n".join(messages),
+            action=CommandAction.LOGOUT,
+        )
 
     async def _cmd_whoami(self, _args: str) -> "CommandResult":
         from ember_code.core.auth.credentials import is_token_expired, load_credentials
@@ -1208,7 +1222,9 @@ class CommandHandler:
 
         # No args or "list" → open the task panel
         if subcommand == "list" or not args.strip():
-            return CommandResult(kind="info", content="", action="schedule")
+            return CommandResult(
+                kind=CommandResultKind.INFO, content="", action=CommandAction.SCHEDULE
+            )
 
         if subcommand == "add" and sub_args:
             return await self._schedule_add(store, sub_args)
@@ -1241,7 +1257,7 @@ class CommandHandler:
             return CommandResult.markdown(lines)
 
         # Unknown subcommand — open the panel
-        return CommandResult(kind="info", content="", action="schedule")
+        return CommandResult(kind=CommandResultKind.INFO, content="", action=CommandAction.SCHEDULE)
 
     @staticmethod
     async def _schedule_add(store, text: str) -> "CommandResult":
@@ -1326,7 +1342,11 @@ class CommandHandler:
 
     async def _cmd_compact(self, _args: str) -> "CommandResult":
         status, summary = await self._session.force_compact()
-        return CommandResult(kind="action", action="compact", content=summary or status)
+        return CommandResult(
+            kind=CommandResultKind.ACTION,
+            action=CommandAction.COMPACT,
+            content=summary or status,
+        )
 
     # ── /loop ─────────────────────────────────────────────────────────
     # In-session loop primitive. After the user invokes ``/loop <prompt>``,
@@ -1390,9 +1410,9 @@ class CommandHandler:
                 # running.
                 return CommandResult.info("Loop is already running.")
             return CommandResult(
-                kind="info",
+                kind=CommandResultKind.INFO,
                 content=prompt,
-                action="run_prompt",
+                action=CommandAction.RUN_PROMPT,
             )
 
         # Parse leading "<N>" or "<N>x" as the iteration cap.
@@ -1461,10 +1481,10 @@ class CommandHandler:
         )
 
         return CommandResult(
-            kind="info",
+            kind=CommandResultKind.INFO,
             content=wrapped,
             display_content=prompt,
-            action="run_prompt",
+            action=CommandAction.RUN_PROMPT,
         )
 
     def _loop_status(self) -> "CommandResult":
@@ -1510,7 +1530,11 @@ class CommandHandler:
         if skill_match:
             skill, args = skill_match
             rendered = skill.render(args, session_id=self._session.session_id)
-            return CommandResult(kind="info", content=rendered, action="run_prompt")
+            return CommandResult(
+                kind=CommandResultKind.INFO,
+                content=rendered,
+                action=CommandAction.RUN_PROMPT,
+            )
         return CommandResult.error(f"Unknown command: {stripped.split()[0]}")
 
     # ── Command dispatch table ────────────────────────────────────

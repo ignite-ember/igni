@@ -241,6 +241,36 @@ def _load_yaml(path: Path) -> dict:
     return {}
 
 
+def save_default_model(model_name: str) -> None:
+    """Persist a model choice to ``~/.ember/config.yaml`` so it
+    survives across app restarts.
+
+    Was missing entirely — the picker / ``/model <name>`` flows
+    only flipped ``settings.models.default`` in memory, so the
+    next launch always loaded the built-in default and the user
+    had to re-pick every session. Writes a minimal patch:
+
+    * reads the existing user config (or starts blank)
+    * sets/updates ``models.default``
+    * writes back via ``yaml.safe_dump``
+
+    The hosted-model *registry* is intentionally NOT persisted
+    here — it gets refreshed from cloud discovery on session
+    start, so freezing it would just stale-out as new models
+    ship. Only the default identity is sticky.
+    """
+    user_config_path = Path.home() / ".ember" / "config.yaml"
+    existing = _load_yaml(user_config_path)
+    models_block = existing.setdefault("models", {})
+    if not isinstance(models_block, dict):
+        models_block = {}
+        existing["models"] = models_block
+    models_block["default"] = model_name
+    user_config_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(user_config_path, "w") as f:
+        yaml.safe_dump(existing, f, default_flow_style=False, sort_keys=False)
+
+
 _EMBER_CLOUD_HOST = "api.ignite-ember.sh"
 
 

@@ -70,6 +70,7 @@ class RpcMethod(StrEnum):
     GET_STATUS = "get_status"
     GET_PROCESSING = "get_processing"
     GET_CHAT_HISTORY = "get_chat_history"
+    GET_PENDING_MESSAGES = "get_pending_messages"
     LIST_SESSIONS = "list_sessions"
     SWITCH_SESSION = "switch_session"
     CANCEL_RUN = "cancel_run"

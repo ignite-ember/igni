@@ -37,6 +37,10 @@ MODEL_COMPLETED_EVENTS = (
     agent_events.ModelRequestCompletedEvent,
     team_events.ModelRequestCompletedEvent,
 )
+RUN_CONTENT_COMPLETED_EVENTS = (
+    agent_events.RunContentCompletedEvent,
+    team_events.RunContentCompletedEvent,
+)
 RUN_COMPLETED_EVENTS = (
     agent_events.RunCompletedEvent,
     team_events.RunCompletedEvent,

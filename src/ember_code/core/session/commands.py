@@ -11,6 +11,7 @@ from __future__ import annotations
 from ember_code.backend.command_handler import CommandHandler, CommandResult
 from ember_code.core.session.core import Session
 from ember_code.core.utils.display import print_error, print_info, print_markdown
+from ember_code.protocol.messages import CommandAction, CommandResultKind
 
 
 async def dispatch(session: Session, command: str) -> bool:
@@ -19,7 +20,7 @@ async def dispatch(session: Session, command: str) -> bool:
     result = await handler.handle(command.strip())
 
     # Unknown command — let the caller handle it (skill matching, etc.)
-    if result.kind == "error" and "Unknown command" in result.content:
+    if result.kind == CommandResultKind.ERROR and "Unknown command" in result.content:
         return False
 
     await _render_result(session, result)
@@ -28,27 +29,28 @@ async def dispatch(session: Session, command: str) -> bool:
 
 async def _render_result(session: Session, result: CommandResult) -> None:
     """Render a CommandResult as plain text output."""
-    if result.action == "quit":
+    action = result.action
+    if action == CommandAction.QUIT:
         raise SystemExit(0)
-    elif result.action == "clear":
+    elif action == CommandAction.CLEAR:
         print_info(f"Conversation cleared. New session: {session.session_id}")
-    elif result.action == "sessions":
+    elif action == CommandAction.SESSIONS:
         await _text_sessions(session)
-    elif result.action == "model":
+    elif action == CommandAction.MODEL:
         _text_model_picker(session)
-    elif result.action == "mcp":
+    elif action == CommandAction.MCP:
         _text_mcp_status(session)
-    elif result.action == "compact":
+    elif action == CommandAction.COMPACT:
         print_info("Context compacted. Old messages summarized and cleared.")
         if result.content:
             print_info(f"Summary:\n{result.content}")
-    elif result.action == "login":
+    elif action == CommandAction.LOGIN:
         print_info("Login is only available in TUI mode. Run without --no-tui to use /login.")
-    elif result.kind == "markdown":
+    elif result.kind == CommandResultKind.MARKDOWN:
         print_markdown(result.content)
-    elif result.kind == "info":
+    elif result.kind == CommandResultKind.INFO:
         print_info(result.content)
-    elif result.kind == "error":
+    elif result.kind == CommandResultKind.ERROR:
         print_error(result.content)
 
 

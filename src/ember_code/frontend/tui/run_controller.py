@@ -58,6 +58,12 @@ class RunController:
         self._spinner: AgentActivityWidget | None = None
         self._task_progress: TaskProgressWidget | None = None
         self._processing = False
+        # Monotonic counter — bumped at the start of every ``_run``
+        # invocation. Lets the finally distinguish "I'm the latest"
+        # from "a newer turn took ownership while I was draining the
+        # BE tail" and avoid clobbering shared state in the second
+        # case.
+        self._run_generation = 0
         # Agent nesting — stack of (AgentRunContainer, run_id) pairs
         self._agent_stack: list[tuple[AgentRunContainer, str]] = []
         self._seen_run_ids: set[str] = set()
@@ -230,6 +236,14 @@ class RunController:
         self._auto_scroll()
         self._status.start_run()
         self._processing = True
+        # Generation tag so a newer ``_run`` task (started while this
+        # one is still draining its BE tail) can take ownership of
+        # ``_processing`` without an outgoing finally overwriting it.
+        # Without this, a follow-up submit during the tail flips
+        # ``_processing`` False — the new turn is in flight — and
+        # the old run's finally races back to clear it again.
+        self._run_generation += 1
+        my_generation = self._run_generation
 
         # Reset per-run state
         self._run_output_text: list[str] = []
@@ -306,9 +320,16 @@ class RunController:
             self._status.update_context_usage()
         self._ui_finalized = False
 
-        # Clean up — mark as not processing so user can send next message
-        self._processing = False
-        self._current_task = None
+        # Only clear ``_processing`` if no newer ``_run`` has taken
+        # ownership in the meantime. The flag is normally cleared at
+        # ``StreamingDone`` time (well before this finally runs), so
+        # this is the safety net for runs that error / get cancelled
+        # before content streaming finishes. Same guard for
+        # ``_current_task`` — the new turn's task pointer must not be
+        # clobbered by the old turn's cleanup.
+        if my_generation == self._run_generation:
+            self._processing = False
+            self._current_task = None
 
         # ── Background post-run work (non-blocking) ──
         self._turn_count += 1
@@ -512,6 +533,19 @@ class RunController:
         elif isinstance(proto, msg.RunCompleted):
             if proto.run_id:
                 self._on_agent_completed(proto.run_id, proto.parent_run_id or None)
+
+        elif isinstance(proto, msg.StreamingDone):
+            # Agent's content stream is over — user POV says "done"
+            # even though Agno's post-stream tail (compression,
+            # memory, final persistence) is still running. Mark the
+            # controller as not-processing so ``process_message``
+            # accepts the next user input immediately; the BE
+            # serialises the actual ``team.arun`` calls behind its
+            # own lock, so a follow-up submit just waits silently
+            # there until the tail finishes — the user sees the
+            # normal "Thinking" UI rather than a stale queue panel.
+            self._processing = False
+            self._sync_queue_panel()
 
         elif isinstance(proto, msg.RunError):
             await self._on_run_error(proto.error)

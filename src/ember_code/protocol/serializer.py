@@ -17,6 +17,7 @@ from ember_code.protocol.agno_events import (
     REASONING_CONTENT_EVENTS,
     REASONING_EVENTS,
     RUN_COMPLETED_EVENTS,
+    RUN_CONTENT_COMPLETED_EVENTS,
     RUN_ERROR_EVENTS,
     RUN_PAUSED_EVENTS,
     RUN_STARTED_EVENTS,
@@ -170,6 +171,17 @@ def serialize_event(event: Any) -> msg.Message | None:
             input_tokens=getattr(evt_metrics, "input_tokens", 0) or 0 if evt_metrics else 0,
             output_tokens=getattr(evt_metrics, "output_tokens", 0) or 0 if evt_metrics else 0,
         )
+
+    # ── Streaming done ──
+    # Fires when Agno finishes streaming model content but before the
+    # post-stream tail (memory/learning extraction, compression,
+    # persistence) completes. The FE uses this to unblock user input
+    # ~immediately after the visible response ends — without it the
+    # queue panel stays visible for the full Agno tail (5-15s
+    # observed). Distinct from ``RunCompleted`` which marks the *whole*
+    # run done, including everything Agno does after the last token.
+    if isinstance(event, RUN_CONTENT_COMPLETED_EVENTS):
+        return msg.StreamingDone(run_id=str(getattr(event, "run_id", "") or ""))
 
     # ── Run error ──
     if isinstance(event, RUN_ERROR_EVENTS):

@@ -3,6 +3,7 @@
 Covers: API timeout handling, cancel behavior, MCP crash recovery.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -38,6 +39,14 @@ class TestBackendRunMessageErrors:
             server._processing = False
             server._settings = MagicMock()
             server._pending_requirements = {}
+            server._run_lock = asyncio.Lock()
+            server._interrupted_run_summary = None
+            server._pending_store = MagicMock()
+            server._pending_store.arecord_received = AsyncMock(return_value="mid-1")
+            server._pending_store.amark_completed = AsyncMock()
+            server._pending_store.adiscard = AsyncMock()
+            server._pending_message_ids_to_drop = []
+            server._periodic_checkpoint = AsyncMock()
 
             results = []
             async for proto in server.run_message("hello"):
@@ -65,6 +74,14 @@ class TestBackendRunMessageErrors:
             server._processing = False
             server._settings = MagicMock()
             server._pending_requirements = {}
+            server._run_lock = asyncio.Lock()
+            server._interrupted_run_summary = None
+            server._pending_store = MagicMock()
+            server._pending_store.arecord_received = AsyncMock(return_value="mid-1")
+            server._pending_store.amark_completed = AsyncMock()
+            server._pending_store.adiscard = AsyncMock()
+            server._pending_message_ids_to_drop = []
+            server._periodic_checkpoint = AsyncMock()
 
             results = []
             async for proto in server.run_message("blocked message"):

@@ -61,17 +61,23 @@ class TestBackendServerCommands:
     async def test_switch_model(self):
         from ember_code.backend.server import BackendServer
 
-        with patch("ember_code.backend.server.BackendServer.__init__", return_value=None):
+        with (
+            patch("ember_code.backend.server.BackendServer.__init__", return_value=None),
+            patch("ember_code.core.config.settings.save_default_model"),
+        ):
             server = BackendServer.__new__(BackendServer)
             server._session = MagicMock()
             server._session._build_main_agent = MagicMock()
+            server._session.session_id = "test-sess"
             server._settings = MagicMock()
+            server._session_prefs = MagicMock()
 
             result = server.switch_model("new-model")
 
         assert isinstance(result, msg.Info)
         assert "new-model" in result.text
         server._session._build_main_agent.assert_called_once()
+        server._session_prefs.set_model.assert_called_once_with("test-sess", "new-model")
 
 
 class TestCloseModelHttpClient:

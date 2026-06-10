@@ -221,7 +221,11 @@ class BackendClient:
         result = await self._send_and_wait(msg.Command(text=text))
         if isinstance(result, msg.CommandResult):
             return result
-        return msg.CommandResult(kind="error", content=str(result), action="")
+        return msg.CommandResult(
+            kind=msg.CommandResultKind.ERROR,
+            content=str(result),
+            action=msg.CommandAction.NONE,
+        )
 
     # ── Session management ───────────────────────────────────────
 
@@ -239,12 +243,58 @@ class BackendClient:
     async def get_chat_history(self, session_id: str) -> list[dict]:
         return await self._rpc(RpcMethod.GET_CHAT_HISTORY, session_id=session_id) or []
 
+    async def get_pending_messages(self, session_id: str) -> list[dict]:
+        """User messages whose runs never completed — surfaced on
+        ``--continue`` so the interrupted prompt renders alongside
+        normal chat history. See ``BackendServer.get_pending_messages``
+        for the persistence model."""
+        return await self._rpc(RpcMethod.GET_PENDING_MESSAGES, session_id=session_id) or []
+
     # ── Model ────────────────────────────────────────────────────
 
-    def switch_model(self, model_name: str) -> msg.Info:
-        # Fire-and-forget — the response comes async
-        asyncio.ensure_future(self._send_and_wait(msg.ModelSwitch(model_name=model_name)))
-        return msg.Info(text=f"Switching to {model_name}")
+    async def switch_model(self, model_name: str) -> msg.Info:
+        """Switch the active model on the BE, wait for confirmation,
+        and refresh the cached status so the FE status bar reads
+        the new model name.
+
+        Two changes from the v0.5.13 implementation:
+
+        1. Awaits the RPC instead of fire-and-forget. The earlier
+           version returned ``Info`` immediately while the BE was
+           still processing, so any follow-up
+           ``update_status_bar`` raced the switch and rendered the
+           OLD model.
+        2. Re-fetches ``GET_STATUS`` and updates ``_cached_status``.
+           ``get_status()`` is a cache read by design (it's called
+           on every status-bar tick), and the cache is only
+           populated at session start via ``refresh_cache``. Without
+           the explicit refresh here, the status bar reads the
+           stale boot-time model long after the switch.
+        """
+        result = await self._send_and_wait(msg.ModelSwitch(model_name=model_name))
+        await self._refresh_cached_status()
+        if isinstance(result, msg.Info):
+            return result
+        return msg.Info(text=f"Switched to {model_name}")
+
+    async def _refresh_cached_status(self) -> None:
+        """Re-fetch ``GET_STATUS`` from the BE into the local cache.
+
+        The cache backs the sync ``get_status()`` accessor used by
+        the status-bar tick. Any operation that changes BE-side
+        status fields (model, cloud auth, session id) must call
+        this to keep the cache fresh — otherwise the next render
+        pulls stale fields.
+        """
+        try:
+            status_data = await self._rpc(RpcMethod.GET_STATUS)
+        except Exception as exc:
+            logging.getLogger(__name__).debug("status refresh failed: %s", exc)
+            return
+        if isinstance(status_data, dict):
+            self._cached_status = msg.StatusUpdate(**status_data)
+        elif isinstance(status_data, msg.StatusUpdate):
+            self._cached_status = status_data
 
     # ── MCP ──────────────────────────────────────────────────────
 

@@ -64,7 +64,7 @@ from ember_code.frontend.tui.widgets import (
     TipBar,
     UpdateBar,
 )
-from ember_code.protocol.messages import CommandResult
+from ember_code.protocol.messages import CommandAction, CommandResult, CommandResultKind
 from ember_code.protocol.rpc import RpcMethod
 
 logger = logging.getLogger(__name__)
@@ -1070,18 +1070,26 @@ class EmberApp(App):
     # ── Command result rendering ──────────────────────────────────
 
     def render_command_result(self, result: CommandResult) -> None:
-        if result.action == "quit":
+        action = result.action
+        if action == CommandAction.QUIT:
             self.exit()
-        elif result.action == "clear":
+        elif action == CommandAction.CLEAR:
             self._sessions.clear()
             self._conversation.append_info("Conversation cleared.")
-        elif result.action == "sessions":
+        elif action == CommandAction.SESSIONS:
             asyncio.create_task(self._sessions.show_picker())
-        elif result.action == "model":
+        elif action == CommandAction.MODEL:
             self._show_model_picker()
-        elif result.action == "login":
+        elif action == CommandAction.MODEL_SWITCHED:
+            # ``/model <name>`` direct switch — the BE already
+            # rebuilt the team; just refresh the status-bar so the
+            # footer model slot matches the chat info line.
+            self._status.update_status_bar()
+            self._conversation.append_info(result.content)
+            return
+        elif action == CommandAction.LOGIN:
             self._show_login()
-        elif result.action == "logout":
+        elif action == CommandAction.LOGOUT:
             if hasattr(self, "_backend"):
                 status = self._backend.clear_cloud_credentials()
                 self._status.set_cloud_status(status.cloud_connected, status.cloud_org)
@@ -1090,27 +1098,27 @@ class EmberApp(App):
             self._status.update_status_bar()
             self._conversation.append_info(result.content)
             return
-        elif result.action == "help":
+        elif action == CommandAction.HELP:
             self._show_help_panel()
-        elif result.action == "mcp":
+        elif action == CommandAction.MCP:
             asyncio.create_task(self._show_mcp_panel())
-        elif result.action == "agents":
+        elif action == CommandAction.AGENTS:
             asyncio.create_task(self._show_agents_panel())
-        elif result.action == "skills":
+        elif action == CommandAction.SKILLS:
             asyncio.create_task(self._show_skills_panel())
-        elif result.action == "knowledge":
+        elif action == CommandAction.KNOWLEDGE:
             asyncio.create_task(self._show_knowledge_panel())
-        elif result.action == "codeindex":
+        elif action == CommandAction.CODEINDEX:
             asyncio.create_task(self._show_codeindex_panel())
-        elif result.action == "loop":
+        elif action == CommandAction.LOOP:
             asyncio.create_task(self._show_loop_panel())
-        elif result.action == "hooks":
+        elif action == CommandAction.HOOKS:
             asyncio.create_task(self._show_hooks_panel())
-        elif result.action == "plugins":
+        elif action == CommandAction.PLUGINS:
             asyncio.create_task(self._show_plugins_panel())
-        elif result.action == "schedule":
+        elif action == CommandAction.SCHEDULE:
             asyncio.create_task(self.action_toggle_tasks())
-        elif result.action == "run_prompt":
+        elif action == CommandAction.RUN_PROMPT:
             # Feed the prompt directly into the run loop, bypassing
             # ``process_message``. We skip ``process_message`` because
             # its cancel-on-non-/loop guard would kill an active
@@ -1126,16 +1134,16 @@ class EmberApp(App):
             # ``<loop-iteration>`` wrapper.
             display = getattr(result, "display_content", "") or None
             asyncio.create_task(self._controller._run(result.content, display=display))
-        elif result.action == "compact":
+        elif action == CommandAction.COMPACT:
             self._status.reset()
             self._status.update_context_usage()
             self._status.update_status_bar()
             self._conversation.append_info(result.content or "Context compacted.")
-        elif result.kind == "markdown":
+        elif result.kind == CommandResultKind.MARKDOWN:
             self._conversation.append_markdown(result.content)
-        elif result.kind == "info":
+        elif result.kind == CommandResultKind.INFO:
             self._conversation.append_info(result.content)
-        elif result.kind == "error":
+        elif result.kind == CommandResultKind.ERROR:
             self._conversation.append_error(result.content)
 
     # ── Session picker events ─────────────────────────────────────
@@ -1188,9 +1196,14 @@ class EmberApp(App):
         picker.focus()
 
     @on(ModelPickerWidget.Selected)
-    def _on_model_selected(self, event: ModelPickerWidget.Selected) -> None:
+    async def _on_model_selected(self, event: ModelPickerWidget.Selected) -> None:
+        # ``switch_model`` is async-await now; the prior fire-and-
+        # forget version raced the status-bar update below and left
+        # the footer showing the OLD model name until the next
+        # render. Awaiting here keeps the bar and the chat info
+        # line agree.
         if hasattr(self, "_backend"):
-            self._backend.switch_model(event.model_name)
+            await self._backend.switch_model(event.model_name)
         self.settings.models.default = event.model_name
         self._status.update_status_bar()
         self._conversation.append_info(f"Switched to model: {event.model_name}")

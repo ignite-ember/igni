@@ -61,12 +61,36 @@ class SessionManager:
         self._app.query_one("#user-input", PromptInput).focus()
 
     async def _load_history(self, session_id: str) -> None:
-        """Load chat history from the backend and render in the conversation view."""
+        """Load chat history from the backend and render in the conversation view.
+
+        Renders two sources, in order:
+
+        1. **Agno's session history** — the completed user/assistant
+           messages persisted at end-of-run. The bulk of the chat.
+        2. **Pre-persisted pending messages** — user prompts that
+           started a run that crashed before completing. Agno never
+           saw the end-of-run save for those, so they're invisible
+           in source #1. The pending-message store catches them,
+           and we render them last with an info marker so the user
+           can see what they asked and that the response was
+           interrupted.
+
+        Both can be empty on a fresh session — that's the "(no
+        previous messages)" path.
+        """
         import re
 
         try:
             messages = await self._app.backend.get_chat_history(session_id)
-            if not messages:
+            pending = []
+            try:
+                pending = await self._app.backend.get_pending_messages(session_id)
+            except Exception as e:
+                import logging
+
+                logging.getLogger(__name__).debug("get_pending_messages failed: %s", e)
+
+            if not messages and not pending:
                 self._conversation.append_info("(no previous messages)")
                 return
 
@@ -84,6 +108,21 @@ class SessionManager:
                     ).strip()
                     if content:
                         self._conversation.append_user(content, expanded=True)
+
+            if pending:
+                # Surface each interrupted prompt as a normal user
+                # message so the user sees what they asked. The Info
+                # line frames it — "the agent didn't get to answer
+                # this; send a new message to pick up".
+                for p in pending:
+                    text = (p.get("content") or "").strip()
+                    if text:
+                        self._conversation.append_user(text, expanded=True)
+                noun = "message" if len(pending) == 1 else "messages"
+                self._conversation.append_info(
+                    f"({len(pending)} {noun} above was interrupted by a crash or restart. "
+                    "Send any input to continue and the agent will recap or pick up.)"
+                )
         except Exception as e:
             import logging
 

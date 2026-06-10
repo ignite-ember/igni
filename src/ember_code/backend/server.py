@@ -40,7 +40,24 @@ class BackendServer:
         resume_session_id: str | None = None,
         additional_dirs: list[Path] | None = None,
     ):
+        from ember_code.core.code_index.paths import state_db_path
         from ember_code.core.session import Session
+        from ember_code.core.session.session_preferences import SessionPreferencesStore
+
+        # Per-session prefs need to be consulted BEFORE the Session
+        # builds its main team, since the team binds whatever model
+        # is in ``settings.models.default`` at construction time. The
+        # store lives in the project-local ``state.db``, so we have
+        # to know the project_dir up front — fall back to cwd to
+        # mirror what Session does internally.
+        resolved_project_dir = project_dir or Path.cwd()
+        self._session_prefs = SessionPreferencesStore(
+            state_db_path(resolved_project_dir, data_dir=settings.storage.data_dir),
+        )
+        if resume_session_id:
+            persisted_model = self._session_prefs.get_model(resume_session_id)
+            if persisted_model and persisted_model in settings.models.registry:
+                settings.models.default = persisted_model
 
         self._session = Session(
             settings,
@@ -52,6 +69,45 @@ class BackendServer:
         self._pending_requirements: dict[str, Any] = {}  # requirement_id → Agno requirement
         self._processing = False
         self._current_team: Any = None  # held during HITL pause
+        # Serialises concurrent ``run_message`` calls. The FE unblocks
+        # user input on ``StreamingDone`` (emitted when Agno's content
+        # stream ends) but the previous run's Agno tail —
+        # compression, memory/learning extraction, final persistence —
+        # is still draining. Two ``team.arun()`` calls in flight on the
+        # same Agno team would race on session/memory state, so the
+        # lock makes the second call wait silently until the previous
+        # tail finishes. From the user's POV the second submit just
+        # shows the normal "Thinking" UI for a beat longer than usual.
+        self._run_lock = asyncio.Lock()
+        # Set during ``startup`` if the resumed session's last run
+        # had ``status=running`` — i.e. the previous process crashed
+        # mid-chain. The next ``run_message`` injects a system note
+        # so the agent knows it was interrupted and can decide
+        # whether to recap, retry, or pick up where it left off.
+        # Cleared after the note is consumed (one-shot per launch).
+        self._interrupted_run_summary: str | None = None
+        # Pending-message ids surfaced on the next ``--continue``
+        # boot. Kept alive in the store (not discarded by
+        # ``_detect_interrupted_run``) so the FE can fetch them via
+        # ``get_pending_messages`` and render the interrupted prompt
+        # as a chat-history entry. Cleared from the store after the
+        # next ``run_message`` consumes the summary.
+        self._pending_message_ids_to_drop: list[str] = []
+        # Pre-persist user messages BEFORE handing them to Agno.
+        # Agno's streaming runs don't write to disk until the run
+        # completes, so a kill mid-stream loses the user's prompt
+        # entirely — the partial response, sure, but also the
+        # question they asked. The store lives in the same
+        # state.db file Agno uses; the table is created on first
+        # touch via ``CREATE TABLE IF NOT EXISTS``.
+        from ember_code.core.session.pending_messages import PendingMessageStore
+
+        self._pending_store = PendingMessageStore(
+            state_db_path(
+                self._session.project_dir,
+                data_dir=settings.storage.data_dir,
+            ),
+        )
 
     # No .session property — all access goes through backend methods
 
@@ -63,8 +119,106 @@ class BackendServer:
         now this hydrates the persisted ``/loop`` state — if the CLI
         was killed mid-loop, the prompt + counters are restored from
         ``state.db`` so the panel reflects the interrupted run.
+
+        Also probes the resumed session for an in-flight run that
+        never reached ``status=completed`` — that's the signature of
+        a crash mid-chain. When detected, a one-shot summary is
+        stashed so the next ``run_message`` can hand it to the
+        agent as system context.
         """
         await self._session.load_persisted_loop_state()
+        await self._detect_interrupted_run()
+
+    async def _detect_interrupted_run(self) -> None:
+        """Build a system-context note if the previous launch crashed mid-run.
+
+        Two independent signals are consulted, in order of how much
+        they tell us:
+
+        1. **Agno's session** — if ``aget_session`` returns a session
+           whose latest run has ``status=running``, we have rich
+           partial state (tool calls, partial content). Use that.
+        2. **Pending-message store** — ours. If Agno's session has
+           no interrupted run but the pre-persistence layer has a
+           ``pending`` row, the previous process died before Agno
+           ever wrote anything (the common case for text-only
+           responses). We still know the user's question and that
+           it didn't finish, which is enough to nudge the agent
+           into recapping.
+
+        The summary is one-shot per launch — consumed and cleared
+        on the next ``run_message``. Pending rows are then
+        discarded so they don't surface again on a subsequent
+        restart.
+        """
+        try:
+            from agno.run.base import RunStatus
+
+            session = await self._session.main_team.aget_session(
+                session_id=self._session.session_id,
+            )
+            interrupted_run = None
+            if session is not None:
+                runs = getattr(session, "runs", None) or []
+                if runs and getattr(runs[-1], "status", None) == RunStatus.running:
+                    interrupted_run = runs[-1]
+
+            # Pending pre-persisted user messages — the only signal
+            # we have when Agno never wrote anything for the
+            # crashed run.
+            try:
+                pending = await self._pending_store.alist_pending(self._session.session_id)
+            except Exception:
+                pending = []
+
+            if interrupted_run is None and not pending:
+                return  # nothing to recover from — clean shutdown
+
+            parts = ["Previous run was interrupted before completion."]
+            if pending:
+                # The pre-persisted question(s) the user actually
+                # typed last time. Quoting verbatim so the agent
+                # can recap their words rather than paraphrasing.
+                if len(pending) == 1:
+                    parts.append(f"The user had asked: {pending[0].text!r}.")
+                else:
+                    qs = "; ".join(p.text for p in pending)
+                    parts.append(f"The user had pending question(s): {qs!r}.")
+
+            if interrupted_run is not None:
+                tool_names: list[str] = []
+                for t in getattr(interrupted_run, "tools", None) or []:
+                    name = getattr(t, "tool_name", None) or "?"
+                    tool_names.append(str(name))
+                content = (getattr(interrupted_run, "content", None) or "")[:400]
+                if tool_names:
+                    parts.append(f"Tool calls completed: {', '.join(tool_names)}.")
+                if content.strip():
+                    parts.append(f"Partial response so far: {content!r}.")
+
+            parts.append(
+                "The user has not yet sent a new message. Decide whether to "
+                "continue, recap what you found, or ask for direction."
+            )
+            self._interrupted_run_summary = " ".join(parts)
+            # Pending IDs are stashed so the next ``run_message`` can
+            # discard them after the agent acknowledges the resume.
+            # We deliberately do NOT discard here — the FE needs to
+            # read the pending text via ``get_pending_messages`` to
+            # render the interrupted question in the conversation
+            # pane on ``--continue``. If we discarded eagerly the FE
+            # would only have a single ``Info`` line referencing a
+            # question the user could no longer see.
+            self._pending_message_ids_to_drop = [p.message_id for p in pending]
+
+            logger.info(
+                "detected interrupted previous run "
+                "(agno_run=%s, pending=%d); summary will be injected on next user message",
+                getattr(interrupted_run, "run_id", None),
+                len(pending),
+            )
+        except Exception as exc:
+            logger.debug("interrupted-run detection failed: %s", exc)
 
     # ── Run a user message (streaming) ────────────────────────────
 
@@ -75,7 +229,25 @@ class BackendServer:
 
         This is the main streaming entry point. The FE iterates over
         the yielded messages and renders them.
+
+        Serialised by ``self._run_lock``: when the FE submits a new
+        message before the previous run's Agno tail has finished
+        (compression, memory extraction, final persistence), the new
+        call waits silently on the lock. The FE has already cleared
+        its "processing" state on ``StreamingDone`` so the user can
+        type, but two concurrent ``team.arun()`` calls on the same
+        Agno team would race on session/memory state. The lock makes
+        the second turn appear as a normal beat of "Thinking" from
+        the user's POV; the wait is invisible apart from that.
         """
+        async with self._run_lock:
+            async for proto in self._run_message_locked(text, media):
+                yield proto
+
+    async def _run_message_locked(
+        self, text: str, media: dict[str, Any] | None
+    ) -> AsyncIterator[msg.Message]:
+        """Body of ``run_message`` — runs only when the serial lock is held."""
         from ember_code.core.hooks.events import HookEvent
 
         self._processing = True
@@ -126,11 +298,29 @@ class BackendServer:
         # Inject learnings
         await self._session._inject_learnings()
 
-        # Add timestamp
+        # If the previous process died mid-chain, surface the
+        # incomplete-run summary built during ``startup`` so the
+        # agent knows it was interrupted. One-shot per launch — the
+        # next iteration of this turn will see ``None``. Pending
+        # rows surfaced by ``get_pending_messages`` to the FE on
+        # resume are discarded here too, after the agent has been
+        # nudged about them — that way a SECOND restart before the
+        # user actually responds doesn't surface them again.
+        interrupted_summary = self._interrupted_run_summary
+        self._interrupted_run_summary = None
+        for pending_id_to_drop in self._pending_message_ids_to_drop:
+            await self._pending_store.adiscard(pending_id_to_drop)
+        self._pending_message_ids_to_drop = []
+
+        # Add timestamp (and the interrupted-run note, if any)
         from datetime import datetime
 
         timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
-        message = f"<system-context>Current datetime: {timestamp}</system-context>\n{text}"
+        ctx_parts = [f"Current datetime: {timestamp}"]
+        if interrupted_summary:
+            ctx_parts.append(interrupted_summary)
+            yield msg.Info(text="(continuing from an interrupted previous run)")
+        message = f"<system-context>{' '.join(ctx_parts)}</system-context>\n{text}"
 
         # Fire UserPromptSubmit hook
         hook_result = await self._session.hook_executor.execute(
@@ -153,14 +343,53 @@ class BackendServer:
         # pauses surfaced — an earlier version only multiplexed inside
         # ``run_message`` and the sub-agent's pauses silently sat in the
         # coordinator forever.
+        # Pre-persist the user message so a kill mid-stream doesn't
+        # lose it (Agno doesn't write to disk until end-of-run).
+        # The id is opaque; we use it on the success path to mark
+        # the row completed. On a crash the row stays ``pending``
+        # and ``_detect_interrupted_run`` surfaces it on the next
+        # ``--continue`` boot.
+        pending_id = await self._pending_store.arecord_received(self._session.session_id, text)
+
+        # Periodic checkpoint task — fires ``asave_session`` every
+        # few seconds during the run so streaming responses (which
+        # otherwise see zero disk writes between RunStarted and
+        # RunCompleted) survive a crash within ~3 seconds of
+        # whatever Agno had assembled by then. Cancelled in the
+        # finally below regardless of how the run exits.
+        checkpoint_task = asyncio.create_task(self._periodic_checkpoint(team))
+
         media_kwargs = media or {}
         try:
             async for proto in self._stream_with_subagent_hitl(
                 team.arun(message, stream=True, **media_kwargs)
             ):
                 yield proto
+                # Checkpoint after each tool completion. Agno's default
+                # persistence model is end-of-run only — if the process
+                # crashes mid-chain, the in-flight ``RunOutput`` is lost
+                # and ``--continue`` can't surface the partial work to
+                # the agent. Forcing ``asave_session`` after every
+                # tool-completed write means a crash leaves a session
+                # with ``status=running`` containing every tool call
+                # that finished. On a successful run the natural
+                # end-of-run save overwrites the last partial snapshot
+                # via Agno's upsert semantics, so no separate "drop
+                # partial" cleanup is needed. The cost is one ~1-5ms
+                # SQLite upsert per tool call — negligible compared to
+                # the model latency, and only fires on actual tool
+                # completion events (not every ContentDelta).
+                if isinstance(proto, (msg.ToolCompleted, msg.ToolError)):
+                    await self._checkpoint_session(team)
+            # Run reached natural end → mark the pre-persisted user
+            # message as completed so it doesn't get surfaced as
+            # "interrupted" on the next boot.
+            await self._pending_store.amark_completed(pending_id)
         finally:
             self._processing = False
+            checkpoint_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await checkpoint_task
             await self._close_model_http_client(team)
 
         # Fire Stop hook
@@ -341,6 +570,63 @@ class BackendServer:
         # which picks the coordinator path), but we forward it for logs.
         sub_run_id = entries[0][1].run_id if entries else ""
         return msg.RunPaused(run_id=sub_run_id, requirements=requirements)
+
+    async def _periodic_checkpoint(self, team: Any, interval: float = 3.0) -> None:
+        """Background loop that snapshots the session every ``interval`` seconds.
+
+        Agno's streaming runs don't write to disk between
+        RunStarted and RunCompleted. For a pure text-only response
+        (no tools, so no tool-completed event for us to hook), the
+        in-flight ``RunOutput`` would never reach SQLite — a crash
+        mid-stream would lose the user's prompt AND the partial
+        response. The pre-persistence in ``_run_message_locked``
+        saves the prompt unconditionally; this task takes care of
+        the partial response by forcing ``asave_session`` on a
+        cadence.
+
+        Cancellation is the normal stop signal — the streaming
+        loop cancels this task in its finally. We swallow
+        ``CancelledError`` cleanly and exit; anything else is
+        logged but never propagated.
+        """
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                await self._checkpoint_session(team)
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.debug("periodic checkpoint task crashed: %s", exc)
+
+    async def _checkpoint_session(self, team: Any) -> None:
+        """Force Agno to persist the in-flight session to SQLite.
+
+        Agno saves the session blob only at end-of-run via
+        ``_cleanup_and_store``. Mid-run, ``upsert_run`` writes to the
+        *in-memory* session but never touches disk. A process crash
+        between user message and run completion therefore loses
+        everything Agno did so far — tool calls, partial responses,
+        intermediate planning. By snapshotting the cached session
+        after every tool completion we keep the disk copy within one
+        tool-result of the live state, so ``--continue`` after a
+        crash surfaces the in-flight ``RunOutput`` (with
+        ``status=running``) and the agent can pick up where it left
+        off. On a clean completion, Agno's own end-of-run save
+        overwrites these snapshots via upsert semantics — no
+        explicit cleanup needed.
+
+        Best-effort: a transient persistence failure must not abort
+        the live stream. If the session blob is unavailable (e.g.
+        Agno hasn't created the cached_session yet on a very early
+        event) we log and move on.
+        """
+        try:
+            session = getattr(team, "cached_session", None)
+            if session is None:
+                return
+            await team.asave_session(session)
+        except Exception as exc:
+            logger.debug("incremental session checkpoint failed: %s", exc)
 
     def _drop_pending_for_run(self, run_id: str) -> None:
         """Remove any pending HITL entries tied to a finished run.
@@ -596,13 +882,42 @@ class BackendServer:
     # ── Model ─────────────────────────────────────────────────────
 
     def switch_model(self, model_name: str) -> msg.Info:
-        """Switch the active model."""
+        """Switch the active model and persist the choice.
+
+        Two layers of persistence so the choice survives both an
+        app restart AND a session resume:
+
+        * **User-level default** — written to
+          ``~/.ember/config.yaml`` so any new session opened next
+          launch uses this model. Best-effort: a save failure is
+          logged but doesn't fail the switch (the in-memory state
+          is already updated).
+        * **Per-session preference** — written to
+          ``state.db``'s ``ember_session_preferences`` table keyed
+          by session_id. ``--continue`` consults this on startup
+          and overrides the user-level default for the resumed
+          session.
+        """
+        from ember_code.core.config.settings import save_default_model
+
         old_name = self._session.settings.models.default
         old_cfg = self._session.settings.models.registry.get(old_name, {})
         new_cfg = self._session.settings.models.registry.get(model_name, {})
 
         self._session.settings.models.default = model_name
         self._session.main_team = self._session._build_main_agent()
+
+        # User-level persistence.
+        try:
+            save_default_model(model_name)
+        except Exception as exc:
+            logger.warning("failed to persist model choice to user config: %s", exc)
+
+        # Per-session persistence.
+        try:
+            self._session_prefs.set_model(self._session.session_id, model_name)
+        except Exception as exc:
+            logger.debug("failed to persist per-session model preference: %s", exc)
 
         note = f"Switched to {model_name}"
         # Warn if switching from vision to non-vision with media in history
@@ -1046,6 +1361,32 @@ class BackendServer:
                 }
             )
         return servers
+
+    async def get_pending_messages(self, session_id: str) -> list[dict]:
+        """Pending user messages that never completed a run.
+
+        Surfaced by the FE on ``--continue`` to render the user's
+        interrupted question(s) in the conversation pane — Agno's
+        own ``get_chat_history`` doesn't return them because Agno
+        only persists at end-of-run, so a crash mid-stream leaves
+        the message visible only in our pre-persistence table.
+        Returns ``[{role: "user", content: "<text>", received_at: <ts>}, ...]``
+        in oldest-first order.
+        """
+        try:
+            rows = await self._pending_store.alist_pending(session_id)
+        except Exception as exc:
+            logger.debug("get_pending_messages failed: %s", exc)
+            return []
+        return [
+            {
+                "role": "user",
+                "content": r.text,
+                "received_at": r.received_at,
+                "message_id": r.message_id,
+            }
+            for r in rows
+        ]
 
     async def get_chat_history(self, session_id: str) -> list[dict]:
         """Get chat history for a session. Returns list of {role, content} dicts."""

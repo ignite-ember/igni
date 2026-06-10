@@ -6,9 +6,75 @@ No Agno imports — these are the contract between processes.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+
+class CommandResultKind(StrEnum):
+    """How the FE should render a ``CommandResult.content`` payload.
+
+    Same motivation as ``CommandAction``: was a free-string field
+    so producers and consumers had to agree on literals like
+    ``"info"`` / ``"markdown"`` without any type-checker help.
+    Wire format stays string-compatible via ``StrEnum``.
+
+    * ``MARKDOWN`` — render as rich markdown (default for slash
+      commands that emit long-form help text).
+    * ``INFO`` — single-line dim chat line (status updates,
+      confirmations).
+    * ``ERROR`` — single-line red chat line.
+    * ``ACTION`` — no content to render directly; the FE
+      dispatches off ``action`` to open a panel / picker / etc.
+    """
+
+    MARKDOWN = "markdown"
+    INFO = "info"
+    ERROR = "error"
+    ACTION = "action"
+
+
+class CommandAction(StrEnum):
+    """Closed set of actions a ``CommandResult`` can request.
+
+    Was an unconstrained ``str`` field — comparisons in
+    ``app.py``/``commands.py`` used string literals like
+    ``"quit"``, ``"clear"``, which made typos silent (mismatched
+    arm would never fire) and made it hard to know the full
+    surface from one place. ``StrEnum`` keeps wire compatibility
+    (Pydantic serialises enum values to their strings) while
+    giving the dispatch sites a single authoritative list.
+
+    ``UNKNOWN`` is the safety valve for forward compatibility: a
+    newer BE could emit an action this client doesn't recognise.
+    Comparisons against the enum still work via ``StrEnum``'s
+    string equality, but the dispatcher's ``else`` branch should
+    handle the unknown case (typically: fall through to rendering
+    ``content`` as info text).
+    """
+
+    NONE = ""  # default — no action, just render content
+    QUIT = "quit"
+    CLEAR = "clear"
+    SESSIONS = "sessions"
+    MODEL = "model"  # show picker
+    MODEL_SWITCHED = "model_switched"  # direct switch happened — refresh bar
+    LOGIN = "login"
+    LOGOUT = "logout"
+    HELP = "help"
+    MCP = "mcp"
+    PLUGINS = "plugins"
+    AGENTS = "agents"
+    SKILLS = "skills"
+    KNOWLEDGE = "knowledge"
+    CODEINDEX = "codeindex"
+    HOOKS = "hooks"
+    LOOP = "loop"
+    SCHEDULE = "schedule"
+    COMPACT = "compact"
+    RUN_PROMPT = "run_prompt"
+
 
 # ── Base envelope ─────────────────────────────────────────────────────
 
@@ -97,6 +163,26 @@ class RunCompleted(Message):
     parent_run_id: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
+
+
+class StreamingDone(Message):
+    """Emitted by the BE when the model's content stream has finished
+    but the run's post-stream tail (compression, memory, persistence,
+    metrics) is still draining inside Agno. The FE uses this to
+    optimistically unblock user input — the agent is *logically* done
+    from the user's POV even though the backend stream stays open for
+    several more seconds. Without this event, ``_processing`` stays
+    True for the entire Agno tail and the queue panel hangs around
+    long after the response is visible.
+
+    The BE still serialises subsequent ``run_message`` calls behind an
+    internal lock so the next run can't start until the previous tail
+    finishes — but that wait is invisible to the user, who sees the
+    normal "Thinking" UI as soon as they submit.
+    """
+
+    type: Literal["streaming_done"] = "streaming_done"
+    run_id: str = ""
 
 
 class RunError(Message):
