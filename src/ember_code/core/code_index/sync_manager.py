@@ -235,6 +235,25 @@ class CodeIndexSyncManager:
         if not target_sha:
             return SyncResult(skipped=True, reason="not a git repository")
 
+        # Short-circuit when the target sha is already fully indexed
+        # locally. Avoids the resolver call + ``preflight`` round-trip
+        # + a delta pull that would be a no-op anyway. ``has_commit``
+        # checks BOTH the chroma dir and the manifest entry, so this
+        # path can't be taken against a half-deleted index.
+        #
+        # ``head_indexed`` in ``codeindex_status`` uses the same check
+        # against the manifest, so the panel renders ``[green]indexed[/green]``
+        # without the misleading ``not indexed · already indexed locally``
+        # combo. ``force_snapshot`` (``/codeindex resync``) intentionally
+        # bypasses this to recover from a drifted local index.
+        if not force_snapshot and self.code_index.has_commit(target_sha):
+            self._last_synced_sha = target_sha
+            return SyncResult(
+                commit_sha=target_sha,
+                skipped=True,
+                reason="already indexed locally",
+            )
+
         resolved = await self.resolver.resolve()
         if resolved is None:
             return SyncResult(

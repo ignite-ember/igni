@@ -46,6 +46,11 @@ def _stub_resolver(resolved: ResolvedRepository | None = None):
 def _stub_index():
     index = MagicMock()
     index._file_reference_service = MagicMock(return_value=MagicMock())
+    # Default to "target not indexed locally" so skip-path tests still
+    # reach the resolver/preflight/network checks. Tests that want to
+    # exercise the short-circuit (e.g. ``test_target_already_local…``)
+    # override this with their own ``MagicMock``.
+    index.has_commit = MagicMock(return_value=False)
     return index
 
 
@@ -178,7 +183,11 @@ class TestSyncSuccessAndErrors:
             captured["server_url"] = self.server_url
             return DeltaStats(items_upserted=5, references_upserted=3)
 
+        # With ``has_commit`` default-False + ``_OK.parent_sha=None``,
+        # routing picks the snapshot endpoint. Patch that one — the
+        # delta patch stays as a safety net for any future routing change.
         monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply", fake_pull_and_apply)
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply_snapshot", fake_pull_and_apply)
 
         result = await mgr.sync_now(sha="abc1234")
         assert result.succeeded
@@ -206,6 +215,7 @@ class TestSyncSuccessAndErrors:
             raise ChangesetFetchError("access denied")
 
         monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply", boom)
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply_snapshot", boom)
 
         result = await mgr.sync_now(sha="abc")
         assert not result.succeeded
@@ -228,6 +238,7 @@ class TestSyncSuccessAndErrors:
             raise RuntimeError("boom")
 
         monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply", kaboom)
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply_snapshot", kaboom)
 
         result = await mgr.sync_now(sha="abc")
         assert "boom" in (result.error or "")
@@ -243,7 +254,7 @@ class TestSnapshotVsDeltaRouting:
 
     * No usable local ancestor (root or missing parent) → snapshot.
     * Parent present locally → delta + copy-on-write.
-    * Target already indexed locally → delta (idempotent replay).
+    * Target already indexed locally → short-circuit (no network).
     * ``force_snapshot=True`` → snapshot regardless of state.
     """
 
@@ -281,17 +292,53 @@ class TestSnapshotVsDeltaRouting:
         assert result.stats.items_upserted == 99
 
     @pytest.mark.asyncio
-    async def test_target_already_local_uses_delta(self, tmp_path, monkeypatch):
-        """Target chroma already exists locally → delta endpoint.
+    async def test_target_already_local_short_circuits(self, tmp_path, monkeypatch):
+        """Target chroma already indexed locally → no network at all.
 
-        Re-applying the JSONL on top of an existing chroma is the
-        idempotent replay path; there's no need to pay the cost of a
-        full snapshot when the local state is already populated.
+        Resolver, preflight, and the snapshot/delta fetchers all stay
+        untouched. The result is a ``skipped=True`` SyncResult with
+        ``reason='already indexed locally'``; ``_last_synced_sha`` is
+        set so the HEAD watcher won't re-fire on the next tick. The
+        panel renders the commit as ``[green]indexed[/green]``
+        independently because ``head_indexed`` reads the manifest
+        directly.
         """
         index = _stub_index()
-        # has_commit("abc1234") returns True (target present); anything
-        # else returns False.
         index.has_commit = MagicMock(side_effect=lambda sha: sha == "abc1234")
+        resolver = _stub_resolver(_RESOLVED)
+        mgr = _make_mgr(
+            project_dir=tmp_path,
+            code_index=index,
+            resolver=resolver,
+            credentials=_stub_credentials(),
+        )
+        from ember_code.core.code_index import sync_manager as sm
+
+        preflight = AsyncMock()
+        delta_called = AsyncMock(return_value=DeltaStats(items_upserted=1))
+        snapshot_called = AsyncMock(return_value=DeltaStats(items_upserted=99))
+        monkeypatch.setattr(sm.ChangesetFetcher, "preflight", preflight)
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply", delta_called)
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply_snapshot", snapshot_called)
+
+        result = await mgr.sync_now(sha="abc1234")
+        assert result.skipped is True
+        assert result.reason == "already indexed locally"
+        assert result.commit_sha == "abc1234"
+        assert mgr.last_synced_sha == "abc1234"
+        # No network calls at all.
+        resolver.resolve.assert_not_called()
+        preflight.assert_not_called()
+        delta_called.assert_not_called()
+        snapshot_called.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_force_snapshot_bypasses_short_circuit(self, tmp_path, monkeypatch):
+        """``force_snapshot=True`` (``/codeindex resync``) must NOT
+        short-circuit even when the target is already indexed —
+        that's the recovery path for a drifted local index."""
+        index = _stub_index()
+        index.has_commit = MagicMock(return_value=True)
         mgr = _make_mgr(
             project_dir=tmp_path,
             code_index=index,
@@ -301,15 +348,13 @@ class TestSnapshotVsDeltaRouting:
         from ember_code.core.code_index import sync_manager as sm
 
         _patch_preflight(monkeypatch, PreflightResult(status=PreflightStatus.OK, parent_sha=None))
-        delta_called = AsyncMock(return_value=DeltaStats(items_upserted=1))
         snapshot_called = AsyncMock(return_value=DeltaStats(items_upserted=99))
-        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply", delta_called)
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply", AsyncMock())
         monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply_snapshot", snapshot_called)
 
-        result = await mgr.sync_now(sha="abc1234")
+        result = await mgr.sync_now(sha="abc1234", force_snapshot=True)
         assert result.succeeded
-        delta_called.assert_awaited_once()
-        snapshot_called.assert_not_called()
+        snapshot_called.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_apply_progress_callback_is_wired(self, tmp_path, monkeypatch):
@@ -473,7 +518,10 @@ class TestSnapshotVsDeltaRouting:
     @pytest.mark.asyncio
     async def test_parent_present_locally_uses_delta_endpoint(self, tmp_path, monkeypatch):
         index = _stub_index()
-        index.has_commit = MagicMock(return_value=True)
+        # Parent indexed locally, target NOT — the load-bearing case
+        # for the delta endpoint. (Target also indexed would
+        # short-circuit before routing.)
+        index.has_commit = MagicMock(side_effect=lambda sha: sha == "parentsha")
         mgr = _make_mgr(
             project_dir=tmp_path,
             code_index=index,
@@ -495,9 +543,6 @@ class TestSnapshotVsDeltaRouting:
         assert result.succeeded
         delta_called.assert_awaited_once()
         snapshot_called.assert_not_called()
-        # New routing also peeks at target_sha to allow idempotent
-        # replay when the chroma is already there. Both checks must
-        # happen; the parent check is the load-bearing one.
         index.has_commit.assert_any_call("parentsha")
 
     @pytest.mark.asyncio
@@ -603,7 +648,11 @@ class TestConcurrentSyncSerializes:
         from ember_code.core.code_index import sync_manager as sm
 
         _patch_preflight(monkeypatch, _OK)
+        # ``_OK.parent_sha=None`` + ``has_commit=False`` → snapshot
+        # route. Patch both so a future routing change can't make this
+        # test silently no-op.
         monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply", slow_pull_and_apply)
+        monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply_snapshot", slow_pull_and_apply)
 
         mgr = _make_mgr(
             project_dir=tmp_path,
