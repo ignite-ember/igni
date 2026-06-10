@@ -123,9 +123,7 @@ class TestShowFilePicker:
         input_widget = MagicMock()
         footer = MagicMock()
         prompt_row = MagicMock()
-        with patch.object(
-            EmberApp, "query_one", side_effect=[input_widget, footer, prompt_row]
-        ):
+        with patch.object(EmberApp, "query_one", side_effect=[input_widget, footer, prompt_row]):
             app._show_file_picker(["foo.py", "bar.py"])
         assert app._file_picker_mounted is True
         footer.mount.assert_called_once()
@@ -137,9 +135,7 @@ class TestShowFilePicker:
         app._file_picker_mounted = True
         input_widget = MagicMock()
         existing_picker = MagicMock()
-        with patch.object(
-            EmberApp, "query_one", side_effect=[input_widget, existing_picker]
-        ):
+        with patch.object(EmberApp, "query_one", side_effect=[input_widget, existing_picker]):
             app._show_file_picker(["new.py"])
         assert app._file_picker_mounted is True
         existing_picker.update_matches.assert_called_once_with(["new.py"])
