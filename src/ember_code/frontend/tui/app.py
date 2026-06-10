@@ -288,6 +288,20 @@ class EmberApp(App):
         self._shell_proc: Any = None  # active inline shell subprocess
         self._shell_task: Any = None  # asyncio task for _run_shell_inline
         self._input_handler: InputHandler | None = None
+        # Visibility flags for the per-keystroke autocomplete/file-picker
+        # paths. ``_on_input_changed`` used to ``query_one`` for the
+        # widgets every keystroke just to find out whether they were
+        # mounted; on a long conversation that tree walk was O(N) and
+        # made typing visibly laggy ("each keystroke takes seconds").
+        # The flags let the hot path skip the lookup when nothing is
+        # mounted.
+        self._autocomplete_mounted: bool = False
+        self._file_picker_mounted: bool = False
+        # Cached PromptInput reference — ``on_key`` resolved it via
+        # ``query_one`` on every keypress, which is O(N) over the
+        # widget tree. The input widget is mounted once at startup
+        # and never moves, so caching is safe.
+        self._user_input_widget: PromptInput | None = None
 
         # Managers initialised in on_mount once widgets exist
         self._status: StatusTracker | None = None
@@ -685,19 +699,26 @@ class EmberApp(App):
         if mention_query is not None and self._input_handler:
             matches = self._input_handler.get_file_completions(mention_query)
             self._show_file_picker(matches)
-            # Hide slash autocomplete if visible
-            with contextlib.suppress(NoMatches):
-                self.query_one("#autocomplete", Static).display = False
+            # Hide slash autocomplete if it happens to be visible.
+            if self._autocomplete_mounted:
+                with contextlib.suppress(NoMatches):
+                    self.query_one("#autocomplete", Static).display = False
             return
 
-        # Hide file picker when not in @-mention
-        self._hide_file_picker()
+        # Hide file picker only when it's actually mounted — saves the
+        # query_one tree walk on every regular keystroke.
+        if self._file_picker_mounted:
+            self._hide_file_picker()
 
         # ── Slash command autocomplete ───────────────────────────
-        try:
-            widget = self.query_one("#autocomplete", Static)
-        except NoMatches:
-            widget = None
+        # Same guard: only walk the tree if the widget is mounted.
+        widget: Static | None = None
+        if self._autocomplete_mounted:
+            try:
+                widget = self.query_one("#autocomplete", Static)
+            except NoMatches:
+                widget = None
+                self._autocomplete_mounted = False
 
         if self._input_handler:
             # In command mode, text has no / prefix — add it for autocomplete
@@ -722,6 +743,7 @@ class EmberApp(App):
         try:
             area = self.query_one("#footer", Vertical)
             area.mount(Static(f"[dim]{hint}[/dim]", id="autocomplete"))
+            self._autocomplete_mounted = True
         except Exception:
             pass
 
@@ -731,24 +753,35 @@ class EmberApp(App):
         """Show or update the file picker dropdown."""
         input_widget = self.query_one("#user-input", PromptInput)
         input_widget.suppress_submit = True
-        try:
-            picker = self.query_one(FilePickerDropdown)
-            picker.update_matches(matches)
-        except NoMatches:
-            picker = FilePickerDropdown(matches)
+        if self._file_picker_mounted:
             try:
-                footer = self.query_one("#footer", Vertical)
-                prompt_row = self.query_one("#prompt-row")
-                footer.mount(picker, before=prompt_row)
-            except Exception:
-                pass
+                picker = self.query_one(FilePickerDropdown)
+                picker.update_matches(matches)
+                return
+            except NoMatches:
+                self._file_picker_mounted = False
+        picker = FilePickerDropdown(matches)
+        try:
+            footer = self.query_one("#footer", Vertical)
+            prompt_row = self.query_one("#prompt-row")
+            footer.mount(picker, before=prompt_row)
+            self._file_picker_mounted = True
+        except Exception:
+            pass
 
     def _hide_file_picker(self) -> None:
-        """Remove the file picker dropdown if present."""
+        """Remove the file picker dropdown if present.
+
+        Guarded by ``_file_picker_mounted`` at the only hot caller
+        (``_on_input_changed``), so the bare ``query_one`` calls here
+        only fire when the picker was actually mounted — never on a
+        regular keystroke in a long conversation.
+        """
         with contextlib.suppress(NoMatches):
             self.query_one(FilePickerDropdown).remove()
         with contextlib.suppress(NoMatches):
             self.query_one("#user-input", PromptInput).suppress_submit = False
+        self._file_picker_mounted = False
 
     def _insert_file_mention(self, path: str) -> None:
         """Replace the @query with the selected file path."""
@@ -951,10 +984,18 @@ class EmberApp(App):
         self._shell_context.append(f"$ {cmd}\n{output}")
 
     async def on_key(self, event) -> None:
-        try:
-            input_widget = self.query_one("#user-input", PromptInput)
-        except NoMatches:
-            return
+        # Cached input widget — every keypress used to do a fresh
+        # ``query_one`` here, which on a long conversation walks the
+        # whole widget tree. Combined with the picker lookup below
+        # and the autocomplete lookups in ``_on_input_changed``, the
+        # per-keystroke tree walks compounded into seconds of lag.
+        input_widget = self._user_input_widget
+        if input_widget is None:
+            try:
+                input_widget = self.query_one("#user-input", PromptInput)
+            except NoMatches:
+                return
+            self._user_input_widget = input_widget
         if not input_widget.has_focus:
             return
 
@@ -972,10 +1013,14 @@ class EmberApp(App):
                 return
 
         # ── File picker navigation (takes priority) ─────────────
-        try:
-            picker = self.query_one(FilePickerDropdown)
-        except NoMatches:
-            picker = None
+        # Same guard as ``_on_input_changed``: only walk the tree if
+        # we know the picker is mounted.
+        picker: FilePickerDropdown | None = None
+        if self._file_picker_mounted:
+            try:
+                picker = self.query_one(FilePickerDropdown)
+            except NoMatches:
+                self._file_picker_mounted = False
 
         if picker and picker.has_matches:
             if event.key == "up":
