@@ -218,19 +218,28 @@ class StatusBar(Widget):
            brief warm-up window at session start.
         2. ``sync_error`` — ``!err`` (red). User needs to act —
            open the panel to read the full error.
-        3. ``install_state == "needs_install"`` — ``uninstalled``
+        3. ``head_indexed`` — ``✓`` (green). Current commit is
+           fully indexed and searchable. Outranks the install-state
+           signals below: search runs against the LOCAL chroma, so
+           a cold resolver doesn't make the index any less usable.
+           This ordering is load-bearing since the sync
+           short-circuit — when the target sha is already indexed,
+           startup never calls ``resolver.resolve()``, leaving
+           ``install_state == "unknown"`` for the whole session
+           even though search works fine. The badge used to show
+           ``inactive`` in that state while the panel said
+           ``indexed``.
+        4. ``install_state == "needs_install"`` — ``uninstalled``
            (yellow). The GitHub App isn't installed for this repo;
            ``I`` in the panel opens the install flow.
-        4. ``install_state == "unknown"`` — ``inactive`` (dim).
+        5. ``install_state == "unknown"`` — ``inactive`` (dim).
            Resolver hasn't initialised — no cloud auth, no git
            remote, or feature disabled at the session level. Avoids
            "offline" because the cause isn't connectivity.
-        5. ``sync_in_progress`` — ``syncing`` (yellow). BE is
+        6. ``sync_in_progress`` — ``syncing`` (yellow). BE is
            indexing HEAD. No ``%`` rendered here even though the BE
            sends one — the bar is tight and the panel owns progress
            detail.
-        6. ``head_indexed`` — ``✓`` (green). Current commit is
-           fully indexed and searchable.
         7. Fall-through — ``not indexed`` (yellow). HEAD exists,
            install is fine, no sync is running, but the current
            commit hasn't been synced yet — ``S`` in the panel
@@ -245,14 +254,14 @@ class StatusBar(Widget):
             return "CodeIndex [dim]checking\u2026[/dim]"
         if s.sync_error:
             return "CodeIndex [red]!err[/red]"
+        if s.head_indexed:
+            return "CodeIndex [green]\u2713[/green]"
         if s.install_state == "needs_install":
             return "CodeIndex [yellow]uninstalled[/yellow]"
         if s.install_state == "unknown":
             return "CodeIndex [dim]inactive[/dim]"
         if s.sync_in_progress:
             return "CodeIndex [yellow]syncing[/yellow]"
-        if s.head_indexed:
-            return "CodeIndex [green]\u2713[/green]"
         return "CodeIndex [yellow]not indexed[/yellow]"
 
     @staticmethod

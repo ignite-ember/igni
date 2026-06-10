@@ -207,6 +207,30 @@ class TestStatusBar:
         # Regression guard against the old, ambiguous wording.
         assert "offline" not in badge
 
+    def test_codeindex_badge_indexed_wins_over_unknown_install_state(self):
+        """``head_indexed`` must outrank ``install_state == "unknown"``.
+
+        The v0.5.16 sync short-circuit returns before
+        ``resolver.resolve()`` when the target sha is already
+        indexed, so the resolver cache stays cold all session and
+        ``install_state`` reports ``unknown``. The local index is
+        fully usable in that state — the badge showing ``inactive``
+        while the panel said ``indexed`` was the reported bug."""
+        from ember_code.frontend.tui.widgets._codeindex_panel import CodeIndexStatusInfo
+
+        bar = StatusBar()
+        bar.set_codeindex_status(
+            CodeIndexStatusInfo(
+                local_sha="abc",
+                head_indexed=True,
+                install_state="unknown",
+            )
+        )
+        badge = bar._codeindex_badge()
+        assert "[green]" in badge
+        assert "✓" in badge
+        assert "inactive" not in badge
+
     def test_codeindex_badge_error_red(self):
         from ember_code.frontend.tui.widgets._codeindex_panel import CodeIndexStatusInfo
 
