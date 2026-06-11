@@ -4,6 +4,7 @@ import {
   assistantItem,
   errorItem,
   infoItem,
+  newStreamState,
   shellItem,
   userItem,
   type ChatItem,
@@ -78,6 +79,10 @@ export default function App() {
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const processingRef = useRef(false);
+  // <think>-tag parser state. `usesThinkTags` persists across runs
+  // (the model identity doesn't change mid-session unless switched);
+  // inThinking/carry reset at each run start.
+  const streamRef = useRef(newStreamState());
 
   const append = useCallback(
     (item: ChatItem) => setItems((prev) => [...prev, item]),
@@ -116,7 +121,7 @@ export default function App() {
         }
         return;
       }
-      setItems((prev) => applyEvent(prev, m));
+      setItems((prev) => applyEvent(prev, m, streamRef.current));
     },
     [setProc],
   );
@@ -196,7 +201,7 @@ export default function App() {
           append({ kind: "agent", id: Date.now(), text: String(m.payload.line ?? "") });
         }
       } else if (m.type === "info" || m.type === "error") {
-        setItems((prev) => applyEvent(prev, m));
+        setItems((prev) => applyEvent(prev, m, streamRef.current));
       }
     });
     client.connect();
@@ -251,6 +256,10 @@ export default function App() {
   const runUserMessage = useCallback(
     async (text: string) => {
       setProc(true);
+      // Fresh turn: close any dangling thinking state from a
+      // cancelled run; keep usesThinkTags (model didn't change).
+      streamRef.current.inThinking = false;
+      streamRef.current.carry = "";
       try {
         await client.runMessage(text, onStreamEvent);
       } catch (e) {
