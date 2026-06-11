@@ -14,6 +14,7 @@ import { Composer, BUILTIN_COMMANDS, type SlashCommand } from "./components/Comp
 import { HitlDialog, type HitlDecision } from "./components/HitlDialog";
 import { Sidebar, type SessionEntry } from "./components/Sidebar";
 import { CodeIndexPanel } from "./components/panels/CodeIndexPanel";
+import { DetailsPanel } from "./components/panels/DetailsPanel";
 import { InfoPanel } from "./components/panels/InfoPanel";
 import { LoginPanel } from "./components/panels/LoginPanel";
 import { LoopPanel } from "./components/panels/LoopPanel";
@@ -29,7 +30,8 @@ type PanelState =
   | { kind: "loop" }
   | { kind: "schedule" }
   | { kind: "login" }
-  | { kind: "info"; title: string; markdown: string };
+  | { kind: "info"; title: string; markdown: string }
+  | { kind: "details"; title: string; method: string; fallback: string };
 
 interface UpdateInfo {
   available: boolean;
@@ -74,7 +76,6 @@ export default function App() {
   const [modelMenu, setModelMenu] = useState<
     { name: string; current: boolean }[] | null
   >(null);
-  const [toolsMenu, setToolsMenu] = useState(false);
   const [accountMenu, setAccountMenu] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -336,13 +337,24 @@ export default function App() {
           case "skills":
           case "plugins":
           case "knowledge":
-          case "hooks":
+          case "hooks": {
+            // These actions carry no content — the TUI builds panels
+            // from the details RPCs; we render the same data.
+            const method = {
+              agents: "get_agent_details",
+              skills: "get_skill_details",
+              plugins: "get_plugin_details",
+              knowledge: "get_knowledge_status",
+              hooks: "get_hooks_details",
+            }[result.action];
             setPanel({
-              kind: "info",
+              kind: "details",
               title: result.action[0].toUpperCase() + result.action.slice(1),
-              markdown: content,
+              method,
+              fallback: content,
             });
             return;
+          }
           case "help": {
             const lines = [...BUILTIN_COMMANDS, ...skills].map(
               (c) => `- \`${c.name}\` — ${c.description}`,
@@ -574,13 +586,6 @@ export default function App() {
               Log in
             </button>
           )}
-          <button
-            className="chip"
-            title="Tools & settings"
-            onClick={() => setToolsMenu(!toolsMenu)}
-          >
-            ⋯
-          </button>
           <span className="chip" style={{ cursor: "default" }} title={`backend ${conn}`}>
             <span className={`dot ${conn}`} />
           </span>
@@ -627,33 +632,10 @@ export default function App() {
               </div>
             </>
           )}
-          {toolsMenu && (
-            <>
-              <div
-                style={{ position: "fixed", inset: 0, zIndex: 39 }}
-                onClick={() => setToolsMenu(false)}
-              />
-              <div className="dropdown" style={{ width: 280 }}>
-                {TOOLS_MENU.map((t) => (
-                  <div
-                    key={t.command}
-                    className="popup-item"
-                    onClick={() => {
-                      setToolsMenu(false);
-                      void runCommand(t.command, false);
-                    }}
-                  >
-                    <span className="cmd">{t.label}</span>
-                    <span className="desc">{t.desc}</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
         </header>
 
         <div className="conversation" ref={scrollRef}>
-          <div className="col">
+          <div className={`col${processing ? " streaming" : ""}`}>
             {items.length === 0 && (
               <div className="welcome">
                 <div
@@ -698,6 +680,8 @@ export default function App() {
           connected={conn === "connected"}
           processing={processing}
           skills={skills}
+          tools={TOOLS_MENU}
+          onTool={(cmd) => void runCommand(cmd, false)}
           onSubmit={(t) => void submit(t)}
           onStop={() => client.cancel()}
         />
@@ -730,6 +714,15 @@ export default function App() {
         <InfoPanel
           title={panel.title}
           markdown={panel.markdown}
+          onClose={() => setPanel({ kind: "none" })}
+        />
+      )}
+      {panel.kind === "details" && (
+        <DetailsPanel
+          client={client}
+          title={panel.title}
+          method={panel.method}
+          fallbackMarkdown={panel.fallback}
           onClose={() => setPanel({ kind: "none" })}
         />
       )}

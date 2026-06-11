@@ -302,6 +302,41 @@ button {
   gap: 18px;
 }
 
+/* New items ease in — applied to every direct child so user
+   bubbles, tool cards, and info lines all enter consistently. */
+.col > * {
+  animation: item-in 0.18s ease;
+}
+
+@keyframes item-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Blinking caret on the last assistant block while streaming. */
+.col.streaming > .msg-assistant:last-child::after {
+  content: "▍";
+  color: var(--ember-orange);
+  animation: caret-blink 1s steps(2) infinite;
+  margin-left: 2px;
+}
+
+@keyframes caret-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
 .welcome {
   margin: 14vh auto 0;
   text-align: center;
@@ -600,6 +635,35 @@ button {
   gap: 6px;
 }
 
+.slash-btn {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.12s ease, color 0.12s ease, transform 0.12s ease;
+}
+
+.slash-btn:hover,
+.slash-btn.open {
+  border-color: var(--ember-orange);
+  color: var(--ember-orange);
+}
+
+.slash-btn.open {
+  transform: rotate(8deg);
+}
+
 .mode-badge {
   font-family: var(--font-mono);
   font-size: 11.5px;
@@ -679,6 +743,19 @@ button {
   box-shadow: var(--shadow-pop);
   padding: 5px;
   z-index: 30;
+  animation: menu-pop 0.14s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+  transform-origin: bottom center;
+}
+
+@keyframes menu-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }
 
 .popup-item {
@@ -757,6 +834,16 @@ button {
   align-items: center;
   justify-content: center;
   z-index: 50;
+  animation: fade-in 0.16s ease;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .dialog {
@@ -768,6 +855,18 @@ button {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-pop);
   padding: 22px;
+  animation: dialog-pop 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+@keyframes dialog-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }
 
 .dialog-title {
@@ -817,6 +916,18 @@ button {
   z-index: 45;
   display: flex;
   flex-direction: column;
+  animation: drawer-in 0.22s cubic-bezier(0.25, 0.8, 0.3, 1);
+}
+
+@keyframes drawer-in {
+  from {
+    transform: translateX(40px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
 .drawer-head {
@@ -887,6 +998,8 @@ button {
   box-shadow: var(--shadow-pop);
   padding: 5px;
   z-index: 40;
+  animation: menu-pop 0.14s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+  transform-origin: top right;
 }
 
 /* ── Responsive: narrow IDE panels ──────────────────────────────── */

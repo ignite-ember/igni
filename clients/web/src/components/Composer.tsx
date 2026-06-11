@@ -40,11 +40,19 @@ interface MenuState {
  * `@` file mentions (BE-side FileIndex), `$` shell mode badge,
  * Up/Down input history, send/stop button.
  */
+export interface ToolEntry {
+  label: string;
+  command: string;
+  desc: string;
+}
+
 export function Composer({
   client,
   connected,
   processing,
   skills,
+  tools,
+  onTool,
   onSubmit,
   onStop,
 }: {
@@ -52,11 +60,14 @@ export function Composer({
   connected: boolean;
   processing: boolean;
   skills: SlashCommand[];
+  tools: ToolEntry[];
+  onTool: (command: string) => void;
   onSubmit: (text: string) => void;
   onStop: () => void;
 }) {
   const [text, setText] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
   const [histIdx, setHistIdx] = useState(-1);
   const [draft, setDraft] = useState("");
@@ -204,6 +215,29 @@ export function Composer({
   return (
     <div className="composer-zone">
       <div className="composer">
+        {toolsOpen && (
+          <>
+            <div
+              style={{ position: "fixed", inset: 0, zIndex: 29 }}
+              onClick={() => setToolsOpen(false)}
+            />
+            <div className="popup-menu">
+              {tools.map((t) => (
+                <div
+                  key={t.command}
+                  className="popup-item"
+                  onClick={() => {
+                    setToolsOpen(false);
+                    onTool(t.command);
+                  }}
+                >
+                  <span className="cmd">{t.label}</span>
+                  <span className="desc">{t.desc}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
         {menu && (
           <div className="popup-menu">
             {menu.entries.map((entry, i) => (
@@ -239,6 +273,13 @@ export function Composer({
           onKeyDown={onKeyDown}
         />
         <div className="composer-bar">
+          <button
+            className={`slash-btn${toolsOpen ? " open" : ""}`}
+            title="Tools & commands"
+            onClick={() => setToolsOpen(!toolsOpen)}
+          >
+            /
+          </button>
           {shellMode && <span className="mode-badge">$ shell</span>}
           <span className="composer-hint">
             Enter to send · Shift+Enter newline · ↑ history
