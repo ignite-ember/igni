@@ -669,6 +669,12 @@ async def _run(
                 additional_dirs=additional_dirs,
             )
             await rt_backend.startup()
+            # Background services the boot runtime gets in _run —
+            # without these, a session locked to another repo has no
+            # knowledge load and no codeindex sync/watch for it
+            # (degraded vs "the TUI opened in that repo").
+            rt_backend._session.start_knowledge_background()
+            rt_backend._session.start_codeindex_background()
             rt_queue: list[str] = []
             rt_backend.wire_queue_hook(rt_queue)
             stamped = SessionStampingTransport(transport, rt_backend)
