@@ -51,6 +51,12 @@ class BackendClient:
         self._push_handlers: dict[str, Callable] = {}
         self._reader_task: asyncio.Task | None = None
         self._connected = False
+        # Mirroring (multi-view sessions): uncorrelated events like
+        # remote Typing / UserMessageReceived land here instead of
+        # the "Unmatched message" debug log.
+        self._mirror_handler: Callable[[Message], None] | None = None
+        self._typing_pending: str | None = None
+        self._typing_timer: Any = None
 
         # Cached sync properties
         self._cached_processing = False
@@ -102,6 +108,20 @@ class BackendClient:
                     self._pending.pop(msg_id).set_result(message)
                     continue
 
+                # Mirroring events from other attached views (web
+                # tabs on the same BE): live drafts, message echoes,
+                # remote HITL resolutions.
+                if isinstance(
+                    message,
+                    (msg.Typing, msg.UserMessageReceived, msg.RequirementResolved, msg.Welcome),
+                ):
+                    if self._mirror_handler is not None:
+                        try:
+                            self._mirror_handler(message)
+                        except Exception as exc:
+                            logger.debug("Mirror handler error: %s", exc)
+                    continue
+
                 logger.debug("Unmatched message: %s (id=%s)", type(message).__name__, msg_id)
 
         except Exception as exc:
@@ -135,6 +155,34 @@ class BackendClient:
             return response.result
         # Direct message response (e.g., Info, StatusUpdate)
         return response
+
+    def set_mirror_handler(self, handler: Callable[[Message], None]) -> None:
+        """Receive mirroring events from other views on the same BE."""
+        self._mirror_handler = handler
+
+    def notify_typing(self, text: str) -> None:
+        """Broadcast this view's live composer draft (mirroring).
+
+        Trailing-edge throttled to ~10/s; the final value always
+        flushes so other views never display a stale draft. Fire and
+        forget — drafts are cosmetic, drops are fine.
+        """
+        if not self._connected:
+            return
+        self._typing_pending = text
+
+        if self._typing_timer is not None:
+            return
+
+        def _flush() -> None:
+            self._typing_timer = None
+            pending = self._typing_pending
+            self._typing_pending = None
+            if pending is None:
+                return
+            asyncio.ensure_future(self._transport.send(msg.Typing(text=pending, client_id="tui")))
+
+        self._typing_timer = asyncio.get_event_loop().call_later(0.1, _flush)
 
     async def _send_and_wait(self, message: Message) -> Message:
         """Send a typed message and wait for one response."""

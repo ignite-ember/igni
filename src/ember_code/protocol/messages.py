@@ -330,11 +330,19 @@ class RunPaused(Message):
 
 
 class UserMessage(Message):
-    """User sends a chat message."""
+    """User sends a chat message.
+
+    ``client_id`` (mirroring) identifies the sending view so the BE's
+    ``UserMessageReceived`` broadcast lets every OTHER view paint the
+    bubble while the sender skips its own echo. Empty for views that
+    predate mirroring — the echo then renders everywhere except
+    nowhere, which is harmless for a single view.
+    """
 
     type: Literal["user_message"] = "user_message"
     text: str = ""
     file_contents: dict[str, str] = Field(default_factory=dict)  # path → content
+    client_id: str = ""
 
 
 class QueueMessage(Message):
@@ -342,6 +350,7 @@ class QueueMessage(Message):
 
     type: Literal["queue_message"] = "queue_message"
     text: str = ""
+    client_id: str = ""
 
 
 class HITLResponse(Message):
@@ -460,3 +469,53 @@ class PushNotification(Message):
     type: Literal["push_notification"] = "push_notification"
     channel: str = ""  # "scheduler_event", "orchestrate_progress", "login_status"
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+# ── Multi-client session mirroring ──────────────────────────────────
+# One BE session, N attached views (web tabs, IDE webviews, the TUI).
+# Every state change is an event so all views render identically.
+
+
+class Welcome(Message):
+    """First message the BE sends a newly attached client.
+
+    ``client_id`` lets a view recognise its own broadcasts (e.g. skip
+    rendering an echo of a message it already painted locally).
+    """
+
+    type: Literal["welcome"] = "welcome"
+    client_id: str = ""
+
+
+class Typing(Message):
+    """Live draft of a client's composer, broadcast to every view.
+
+    Carries the FULL draft text (not per-character deltas) so views
+    can't drift on a dropped frame; senders throttle. Empty ``text``
+    clears the remote draft (sent on submit/clear).
+    """
+
+    type: Literal["typing"] = "typing"
+    text: str = ""
+    client_id: str = ""
+
+
+class UserMessageReceived(Message):
+    """Broadcast echo of an accepted user/queue message.
+
+    The sending view already painted the bubble locally; other views
+    paint it from this event (and the sender skips it by client_id).
+    """
+
+    type: Literal["user_message_received"] = "user_message_received"
+    text: str = ""
+    client_id: str = ""
+    queued: bool = False
+
+
+class RequirementResolved(Message):
+    """Broadcast when a HITL requirement is decided by any view, so
+    the other views dismiss their (now stale) permission dialogs."""
+
+    type: Literal["requirement_resolved"] = "requirement_resolved"
+    requirement_id: str = ""

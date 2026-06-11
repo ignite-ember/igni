@@ -64,6 +64,7 @@ from ember_code.frontend.tui.widgets import (
     TipBar,
     UpdateBar,
 )
+from ember_code.protocol import messages as pmsg
 from ember_code.protocol.messages import CommandAction, CommandResult, CommandResultKind
 from ember_code.protocol.rpc import RpcMethod
 
@@ -474,6 +475,11 @@ class EmberApp(App):
         )
         self._backend = await self._process_mgr.start()
 
+        # Mirroring: render events from other views attached to the
+        # same BE (web tabs over --ws-port). Remote drafts go to the
+        # tip bar; remote user messages appear as dim info lines.
+        self._backend.set_mirror_handler(self._on_mirror_event)
+
         # Replace loading indicator with welcome content
         await container.remove_children()
         self._conversation = ConversationView(container, display_config=self.settings.display)
@@ -671,6 +677,13 @@ class EmberApp(App):
     def _on_input_changed(self, event: PromptInput.Changed) -> None:
         text_area = event.text_area
         text = text_area.text
+
+        # ── Mirroring: broadcast the live draft to other views ───
+        # (web tabs attached to the same BE). Throttled inside the
+        # client; fire-and-forget.
+        if self._backend is not None:
+            with contextlib.suppress(Exception):
+                self._backend.notify_typing(text)
 
         # ── Mode toggles (/, !, $) ─────────────────────────────
         if not self._shell_mode and not self._command_mode and text in ("/", "!", "$"):
@@ -2273,6 +2286,32 @@ class EmberApp(App):
             tip_bar.set_tip(random.choice(self._TIPS))
         except Exception:
             pass
+
+    def _on_mirror_event(self, message: pmsg.Message) -> None:
+        """Render mirroring events from other views on the same BE.
+
+        Called from the BackendClient reader task — UI mutations are
+        scheduled via ``call_later`` onto Textual's message pump.
+        """
+        if isinstance(message, pmsg.Typing) and message.client_id != "tui":
+            import random
+
+            def _update_tip(text: str = message.text) -> None:
+                with contextlib.suppress(Exception):
+                    tip = self.query_one("#tip-bar", TipBar)
+                    if text:
+                        tip.set_tip(f"✎ another window: {text}")
+                    else:
+                        tip.set_tip(random.choice(self._TIPS))
+
+            self.call_later(_update_tip)
+        elif isinstance(message, pmsg.UserMessageReceived) and message.client_id != "tui":
+            # A message submitted from another view — show it so the
+            # TUI's conversation matches what the agent sees.
+            conv = self._conversation
+            if conv is not None and message.text:
+                label = "queued from another window" if message.queued else "another window"
+                self.call_later(conv.append_info, f"[{label}] {message.text}")
 
     def on_resize(self) -> None:
         """Clear the compositor + force a full repaint on every resize.

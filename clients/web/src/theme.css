@@ -635,6 +635,34 @@ button {
   gap: 6px;
 }
 
+/* Live draft from another attached view (mirroring). */
+.remote-draft {
+  max-width: var(--col);
+  margin: 0 auto 6px;
+  padding: 0 24px;
+  font-size: 12.5px;
+  color: var(--fg-faint);
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: fade-in 0.15s ease;
+}
+
+.remote-draft-pen {
+  color: var(--ember-orange);
+  font-style: normal;
+}
+
+.remote-draft-text {
+  color: var(--fg-muted);
+}
+
+.remote-caret {
+  color: var(--ember-orange);
+  animation: caret-blink 1s steps(2) infinite;
+}
+
 .slash-btn {
   width: 28px;
   height: 28px;

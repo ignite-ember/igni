@@ -139,18 +139,46 @@ export class EmberClient {
 
   // ── Core flows ────────────────────────────────────────────────────
 
+  /** This view's identity, assigned by the BE's Welcome at attach.
+   *  Used to skip rendering echoes of our own messages/typing. */
+  clientId = "";
+
   /**
    * Send a user message; `onMessage` receives every streamed event
    * for this run. Resolves when `stream_end` arrives.
    */
   runMessage(text: string, onMessage: StreamHandler): Promise<void> {
     const id = genId("run");
-    return this.stream(fe.userMessage(text, id), id, onMessage);
+    return this.stream(fe.userMessage(text, id, this.clientId), id, onMessage);
   }
 
   /** Queue a message while a run is in flight. Fire-and-forget. */
   queueMessage(text: string): void {
-    this.send(fe.queueMessage(text));
+    this.send(fe.queueMessage(text, this.clientId));
+  }
+
+  private typingTimer: number | null = null;
+  private typingPending: string | null = null;
+
+  /**
+   * Broadcast this view's live composer draft (mirroring). Trailing-
+   * edge throttled to ~10/s; always flushes the final value so other
+   * views never display a stale draft.
+   */
+  sendTyping(text: string): void {
+    this.typingPending = text;
+    if (this.typingTimer !== null) return;
+    this.typingTimer = window.setTimeout(() => {
+      this.typingTimer = null;
+      if (this.typingPending === null) return;
+      const value = this.typingPending;
+      this.typingPending = null;
+      try {
+        this.send(fe.typing(value, this.clientId));
+      } catch {
+        /* disconnected — drafts are best-effort */
+      }
+    }, 100);
   }
 
   /**
@@ -301,6 +329,11 @@ export class EmberClient {
   }
 
   private dispatch(msg: ServerMessage): void {
+    if (msg.type === "welcome") {
+      this.clientId = msg.client_id;
+      // Fall through to listeners so the app can react to attach.
+    }
+
     const id = msg.id ?? "";
 
     // RPC replies are correlated purely by id: either an rpc_response

@@ -78,6 +78,8 @@ export default function App() {
   >(null);
   const [accountMenu, setAccountMenu] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  // Live draft from another attached view (mirroring).
+  const [remoteDraft, setRemoteDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const processingRef = useRef(false);
   // <think>-tag parser state. `usesThinkTags` persists across runs
@@ -187,6 +189,32 @@ export default function App() {
       }
     });
     const offEvent = client.onEvent((m) => {
+      // ── Mirroring events ────────────────────────────────────────
+      if (m.type === "welcome") return; // client stored its id
+      if (m.type === "typing") {
+        if (m.client_id !== client.clientId) setRemoteDraft(m.text);
+        return;
+      }
+      if (m.type === "user_message_received") {
+        // Another view submitted — paint its bubble here. Our own
+        // echo is skipped (we already painted on submit).
+        if (m.client_id !== client.clientId) {
+          setRemoteDraft("");
+          append(userItem(m.text));
+          if (m.queued) append(infoItem("Queued — will run after the current turn."));
+        }
+        return;
+      }
+      if (m.type === "requirement_resolved") {
+        // Another view answered the permission dialog — drop it here.
+        setHitl((prev) => {
+          if (!prev) return prev;
+          const left = prev.filter((r) => r.requirement_id !== m.requirement_id);
+          return left.length ? left : null;
+        });
+        return;
+      }
+
       if (m.type === "run_paused") setHitl(m.requirements);
       else if (m.type === "status_update") setStatus(m);
       else if (m.type === "push_notification") {
@@ -201,7 +229,17 @@ export default function App() {
           // Rendered inside tool cards by the TUI; keep as dim info.
           append({ kind: "agent", id: Date.now(), text: String(m.payload.line ?? "") });
         }
-      } else if (m.type === "info" || m.type === "error") {
+      } else if (m.type === "streaming_done" || m.type === "stream_end") {
+        // A run initiated by ANOTHER view finished its content.
+        setProc(false);
+      } else if (m.type === "run_started") {
+        // A run initiated by another view began — reflect busy state
+        // so submits from this view queue instead of racing.
+        setProc(true);
+        setItems((prev) => applyEvent(prev, m, streamRef.current));
+      } else {
+        // Remaining streamed events (content deltas, tool cards...)
+        // from runs other views started: render them identically.
         setItems((prev) => applyEvent(prev, m, streamRef.current));
       }
     });
@@ -686,6 +724,13 @@ export default function App() {
           </div>
         </div>
 
+        {remoteDraft && (
+          <div className="remote-draft">
+            <span className="remote-draft-pen">✎</span> another window:&nbsp;
+            <span className="remote-draft-text">{remoteDraft}</span>
+            <span className="remote-caret">▍</span>
+          </div>
+        )}
         <Composer
           client={client}
           connected={conn === "connected"}
@@ -693,6 +738,7 @@ export default function App() {
           skills={skills}
           tools={TOOLS_MENU}
           onTool={(cmd) => void runCommand(cmd, false)}
+          onTyping={(t) => client.sendTyping(t)}
           onSubmit={(t) => void submit(t)}
           onStop={() => client.cancel()}
         />

@@ -177,6 +177,31 @@ export interface PushNotification extends BaseMessage {
   payload: Record<string, unknown>;
 }
 
+// ── Multi-client session mirroring ──────────────────────────────────
+
+export interface Welcome extends BaseMessage {
+  type: "welcome";
+  client_id: string;
+}
+
+export interface Typing extends BaseMessage {
+  type: "typing";
+  text: string;
+  client_id: string;
+}
+
+export interface UserMessageReceived extends BaseMessage {
+  type: "user_message_received";
+  text: string;
+  client_id: string;
+  queued: boolean;
+}
+
+export interface RequirementResolved extends BaseMessage {
+  type: "requirement_resolved";
+  requirement_id: string;
+}
+
 export type ServerMessage =
   | ContentDelta
   | ToolStarted
@@ -196,7 +221,11 @@ export type ServerMessage =
   | ErrorMessage
   | StreamEnd
   | RPCResponse
-  | PushNotification;
+  | PushNotification
+  | Welcome
+  | Typing
+  | UserMessageReceived
+  | RequirementResolved;
 
 // ── FE → BE messages ────────────────────────────────────────────────
 
@@ -207,13 +236,28 @@ export interface HITLDecision {
 }
 
 export const fe = {
-  userMessage: (text: string, id: string, fileContents: Record<string, string> = {}) => ({
+  userMessage: (
+    text: string,
+    id: string,
+    clientId = "",
+    fileContents: Record<string, string> = {},
+  ) => ({
     type: "user_message",
     id,
     text,
     file_contents: fileContents,
+    client_id: clientId,
   }),
-  queueMessage: (text: string) => ({ type: "queue_message", text }),
+  queueMessage: (text: string, clientId = "") => ({
+    type: "queue_message",
+    text,
+    client_id: clientId,
+  }),
+  typing: (text: string, clientId: string) => ({
+    type: "typing",
+    text,
+    client_id: clientId,
+  }),
   command: (text: string, id: string) => ({ type: "command", id, text }),
   hitlResponse: (requirementId: string, action: string, choice: string, id: string) => ({
     type: "hitl_response",

@@ -53,6 +53,7 @@ export function Composer({
   skills,
   tools,
   onTool,
+  onTyping,
   onSubmit,
   onStop,
 }: {
@@ -62,6 +63,7 @@ export function Composer({
   skills: SlashCommand[];
   tools: ToolEntry[];
   onTool: (command: string) => void;
+  onTyping?: (text: string) => void;
   onSubmit: (text: string) => void;
   onStop: () => void;
 }) {
@@ -154,6 +156,7 @@ export function Composer({
     setHistIdx(-1);
     setText("");
     setMenu(null);
+    onTyping?.(""); // clear our remote draft on other views
     requestAnimationFrame(autoGrow);
     onSubmit(t);
   };
@@ -268,6 +271,7 @@ export function Composer({
           onChange={(e) => {
             setText(e.target.value);
             setHistIdx(-1);
+            onTyping?.(e.target.value);
             void refreshMenu(e.target.value, e.target.selectionStart ?? 0);
           }}
           onKeyDown={onKeyDown}

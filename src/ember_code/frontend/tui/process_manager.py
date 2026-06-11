@@ -80,6 +80,9 @@ class BackendProcess:
         self._settings = settings
         self._debug = debug
         self._socket_path = f"/tmp/ember-code/{uuid.uuid4().hex[:12]}.sock"
+        # WS attach point for mirrored GUI views; set from the BE
+        # ready line in ``start()``.
+        self.ws_url = ""
         self._process: asyncio.subprocess.Process | None = None
         self._client: BackendClient | None = None
 
@@ -95,6 +98,13 @@ class BackendProcess:
             "ember_code.backend",
             "--socket",
             self._socket_path,
+            # Mirroring: also listen on a loopback WS port so GUI
+            # views (browser tabs, IDE webviews) can attach to this
+            # TUI session and render the same events live. Port 0 =
+            # auto-assign; the bound port comes back in the ready
+            # line and is exposed via ``self.ws_url``.
+            "--ws-port",
+            "0",
             "--project-dir",
             str(self._project_dir),
         ]
@@ -142,6 +152,7 @@ class BackendProcess:
                     data = json.loads(text)
                     if data.get("status") == "ready":
                         logger.info("BE ready: %s", text)
+                        self.ws_url = data.get("ws_url", "")
                         break
                 except json.JSONDecodeError:
                     # Skip non-JSON lines (library warnings, model load reports)

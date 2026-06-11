@@ -78,8 +78,8 @@ def main(
     debug: bool,
 ) -> None:
     """Start the Ember Code backend server."""
-    if (socket_path is None) == (ws_port is None):
-        raise click.UsageError("exactly one of --socket or --ws-port is required")
+    if socket_path is None and ws_port is None:
+        raise click.UsageError("at least one of --socket or --ws-port is required")
     if debug:
         log_path = Path.home() / ".ember" / "debug.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -381,14 +381,27 @@ async def _run(
 
     settings = load_settings(project_dir=project_dir)
 
+    # Transport selection. Both flags together = mirrored session:
+    # the TUI attaches over the Unix socket while GUI tabs attach
+    # over WS, and every view receives every broadcast.
+    ws_transport = None
+    children: list[Any] = []
+    if socket_path is not None:
+        from ember_code.transport.unix_socket import UnixSocketServerTransport
+
+        children.append(UnixSocketServerTransport(socket_path))
     if ws_port is not None:
         from ember_code.transport.websocket import WebSocketServerTransport
 
-        transport: Any = WebSocketServerTransport(port=ws_port)
-    else:
-        from ember_code.transport.unix_socket import UnixSocketServerTransport
+        ws_transport = WebSocketServerTransport(port=ws_port)
+        children.append(ws_transport)
 
-        transport = UnixSocketServerTransport(socket_path)
+    if len(children) == 1:
+        transport: Any = children[0]
+    else:
+        from ember_code.transport.websocket import CompositeTransport
+
+        transport = CompositeTransport(children)
     await transport.start()
 
     backend = BackendServer(
@@ -515,12 +528,12 @@ async def _run(
     import json as _json
 
     ready: dict[str, Any] = {"status": "ready"}
-    if ws_port is not None:
+    if ws_transport is not None:
         # The actual bound port — meaningful when --ws-port 0 asked
         # for auto-assign. Shells parse this to point their webview.
-        ready["ws_port"] = transport.port
-        ready["ws_url"] = f"ws://127.0.0.1:{transport.port}"
-    else:
+        ready["ws_port"] = ws_transport.port
+        ready["ws_url"] = f"ws://127.0.0.1:{ws_transport.port}"
+    if socket_path is not None:
         ready["socket"] = str(socket_path)
     print(_json.dumps(ready), flush=True)
 
@@ -605,6 +618,11 @@ async def _handle_message(
 
     # ── Streaming: run_message ──
     if isinstance(message, msg.UserMessage):
+        # Mirroring: every attached view paints the user bubble; the
+        # sender recognises its own client_id and skips the echo.
+        await transport.send(
+            msg.UserMessageReceived(text=message.text, client_id=message.client_id)
+        )
         async for proto in backend.run_message(message.text, media=message.file_contents):
             if req_id:
                 proto = proto.model_copy(update={"id": req_id})
@@ -613,6 +631,9 @@ async def _handle_message(
 
     # ── Streaming: resolve_hitl ──
     elif isinstance(message, msg.HITLResponse):
+        # Mirroring: dismiss the now-stale permission dialog on every
+        # other view before the resumed run starts streaming.
+        await transport.send(msg.RequirementResolved(requirement_id=message.requirement_id))
         async for proto in backend.resolve_hitl(
             message.requirement_id, message.action, message.choice
         ):
@@ -623,6 +644,8 @@ async def _handle_message(
 
     # ── Streaming: resolve_hitl_batch (multi-req pause resolution) ──
     elif isinstance(message, msg.HITLResponseBatch):
+        for decision in message.decisions:
+            await transport.send(msg.RequirementResolved(requirement_id=decision.requirement_id))
         async for proto in backend.resolve_hitl_batch(message.decisions):
             if req_id:
                 proto = proto.model_copy(update={"id": req_id})
@@ -659,6 +682,15 @@ async def _handle_message(
     # ── Queue injection ──
     elif isinstance(message, msg.QueueMessage):
         queue.append(message.text)
+        await transport.send(
+            msg.UserMessageReceived(text=message.text, client_id=message.client_id, queued=True)
+        )
+
+    # ── Mirroring: live composer drafts ──
+    # Relayed to ALL views (sender included — it filters by
+    # client_id). Pure fan-out: the BE adds nothing.
+    elif isinstance(message, msg.Typing):
+        await transport.send(message)
 
     # ── Cancel ──
     elif isinstance(message, msg.Cancel):
