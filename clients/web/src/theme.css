@@ -240,11 +240,16 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 12px;
+  /* Fixed height + uniform padding so every header bubble is the
+     same shape regardless of content (text, icons, or just a dot). */
+  height: 30px;
+  padding: 0 12px;
+  box-sizing: border-box;
   border-radius: 9999px;
   border: 1px solid var(--border-soft);
   background: var(--bg-surface);
   font-size: 12.5px;
+  line-height: 1;
   color: var(--fg-muted);
   cursor: pointer;
   white-space: nowrap;

@@ -652,6 +652,7 @@ export default function App() {
           ) : (
             <span className="chip" style={{ cursor: "default" }} title={`backend ${conn}`}>
               <span className={`dot ${conn}`} />
+              <span className="chip-label">{conn}</span>
             </span>
           )}
 
