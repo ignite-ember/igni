@@ -569,11 +569,71 @@ async def _run(
         # UserMessages degrades gracefully.
         in_flight: set[asyncio.Task] = set()
 
+        # ── Session pool ──────────────────────────────────────────
+        # Messages route by their ``session_id`` stamp: empty → the
+        # default runtime (TUI behaviour, unchanged); a known id →
+        # its live runtime; an unknown id → lazily resumed in its
+        # own runtime. Different sessions run in parallel.
+        from ember_code.backend.session_pool import (
+            SessionPool,
+            SessionRuntime,
+            SessionStampingTransport,
+        )
+
+        default_runtime = SessionRuntime(
+            backend=backend,
+            rpc_table=rpc_table,
+            queue=_queue,
+            transport=SessionStampingTransport(transport, backend),
+        )
+
+        async def _create_runtime(session_id: str) -> SessionRuntime:
+            from ember_code.backend.server import BackendServer
+
+            # Deep-copy settings: resuming applies the session's
+            # persisted model preference, which must not leak into
+            # other runtimes' defaults.
+            rt_settings = settings.model_copy(deep=True)
+            rt_backend = BackendServer(
+                rt_settings,
+                project_dir=project_dir,
+                resume_session_id=session_id,
+                additional_dirs=additional_dirs,
+            )
+            await rt_backend.startup()
+            rt_queue: list[str] = []
+            rt_backend.wire_queue_hook(rt_queue)
+            stamped = SessionStampingTransport(transport, rt_backend)
+            rt_table = _build_rpc_table(rt_backend, stamped, login_state)
+            return SessionRuntime(
+                backend=rt_backend,
+                rpc_table=rt_table,
+                queue=rt_queue,
+                transport=stamped,
+            )
+
+        pool = SessionPool(default_runtime, _create_runtime)
+
         async def _dispatch(message: Any) -> None:
             try:
-                await _handle_message(message, backend, transport, rpc_table, _queue, login_state)
+                rt = await pool.get_or_create(message.session_id or "")
+                rt.remember_id()
+                await _handle_message(
+                    message, rt.backend, rt.transport, rt.rpc_table, rt.queue, login_state
+                )
+                # Pick up id renames (/clear) so views still stamping
+                # the old id keep routing here.
+                rt.remember_id()
             except Exception as exc:
                 logger.error("message handler crashed: %s", exc, exc_info=True)
+                with contextlib.suppress(Exception):
+                    await transport.send(
+                        msg.Error(
+                            id=message.id or "",
+                            session_id=message.session_id or "",
+                            text=f"session routing failed: {exc}",
+                        )
+                    )
 
         async for message in transport.receive():
             if isinstance(message, msg.Shutdown):
@@ -598,7 +658,12 @@ async def _run(
             await parent_watch_task
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await shutdown_close_task
-        await backend.shutdown()
+        try:
+            # Shut down every pooled runtime (includes the default).
+            await pool.shutdown()  # noqa: F821 — defined in the try body
+        except (NameError, UnboundLocalError):
+            # Startup failed before the pool existed.
+            await backend.shutdown()
         await transport.close()
         logger.info("Backend shut down")
 

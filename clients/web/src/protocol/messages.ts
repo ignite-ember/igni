@@ -10,6 +10,9 @@ export interface BaseMessage {
   type: string;
   /** Correlation id for request/response and stream grouping. */
   id?: string;
+  /** Session routing: which session a message targets (FE→BE) or
+   *  was emitted by (BE→FE). Empty = default session / global. */
+  session_id?: string;
 }
 
 // ── BE → FE streaming events ────────────────────────────────────────

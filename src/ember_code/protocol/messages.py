@@ -84,6 +84,12 @@ class Message(BaseModel):
 
     type: str
     id: str = ""  # optional correlation ID
+    # Session routing (multi-session BE). FE→BE: which session this
+    # message targets — empty routes to the default session, so views
+    # that predate the pool (the TUI) keep working unchanged. BE→FE:
+    # which session emitted the event — views filter to their bound
+    # session; empty means session-agnostic (Welcome, global pushes).
+    session_id: str = ""
 
 
 # ── BE → FE messages ─────────────────────────────────────────────────

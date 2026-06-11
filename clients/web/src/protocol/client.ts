@@ -143,6 +143,13 @@ export class EmberClient {
    *  Used to skip rendering echoes of our own messages/typing. */
   clientId = "";
 
+  /** The session this view is bound to. Stamped on every outgoing
+   *  message (BE routes to the matching runtime, lazily resuming
+   *  it); incoming events from OTHER sessions are filtered out so
+   *  each tab can live on a different session. Empty until the
+   *  initial get_session_id resolves (routes to the BE default). */
+  sessionId = "";
+
   /**
    * Send a user message; `onMessage` receives every streamed event
    * for this run. Resolves when `stream_end` arrives.
@@ -325,6 +332,12 @@ export class EmberClient {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("not connected to backend");
     }
+    // Session routing: stamp this view's bound session unless the
+    // caller already targeted one explicitly.
+    const stamped = payload as { session_id?: string };
+    if (!stamped.session_id && this.sessionId) {
+      stamped.session_id = this.sessionId;
+    }
     this.ws.send(JSON.stringify(payload));
   }
 
@@ -338,6 +351,8 @@ export class EmberClient {
 
     // RPC replies are correlated purely by id: either an rpc_response
     // envelope or a typed message echoed back with the request id.
+    // Correlation beats session filtering — replies to OUR requests
+    // are always for us.
     if (id && this.rpcWaiters.has(id)) {
       const waiter = this.rpcWaiters.get(id)!;
       this.rpcWaiters.delete(id);
@@ -349,6 +364,13 @@ export class EmberClient {
     const stream = id ? this.streams.get(id) : undefined;
     if (stream) {
       stream(msg);
+      return;
+    }
+
+    // Session filter for uncorrelated broadcasts: this view only
+    // renders events from its bound session. Unstamped events
+    // (Welcome, global pushes) pass through.
+    if (msg.session_id && this.sessionId && msg.session_id !== this.sessionId) {
       return;
     }
 

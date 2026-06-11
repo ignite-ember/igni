@@ -160,7 +160,12 @@ export default function App() {
       if (s === "connected") {
         void (async () => {
           try {
-            setSessionId(await client.rpc<string>("get_session_id"));
+            // Adopt the BE default session as this view's binding
+            // (unless the tab already bound one before a reconnect).
+            if (!client.sessionId) {
+              client.sessionId = await client.rpc<string>("get_session_id");
+            }
+            setSessionId(client.sessionId);
           } catch {
             /* ignore */
           }
@@ -327,16 +332,21 @@ export default function App() {
         }
         const content = result.display_content || result.content;
         switch (result.action) {
-          case "clear":
+          case "clear": {
             setItems([]);
             try {
-              setSessionId(await client.rpc<string>("get_session_id"));
+              // /clear renews the runtime's session id — rebind so
+              // this view follows the fresh conversation.
+              const renewed = await client.rpc<string>("get_session_id");
+              client.sessionId = renewed;
+              setSessionId(renewed);
             } catch {
               /* ignore */
             }
             append(infoItem("New conversation started."));
             void refreshSessions();
             return;
+          }
           case "sessions":
             setSidebarOpen(true);
             void refreshSessions();
@@ -484,9 +494,15 @@ export default function App() {
   const pickSession = useCallback(
     async (id: string) => {
       try {
-        await client.rpc("switch_session", { session_id: id });
+        // Bind this VIEW to the session — no switch_session RPC.
+        // The BE's session pool lazily resumes it in its own
+        // runtime, so other tabs keep their sessions running in
+        // parallel. First contact can take a few seconds (Session
+        // construction), hence the loading note.
+        client.sessionId = id;
         setSessionId(id);
         setItems([]);
+        append(infoItem(`Loading session ${id}…`));
         // Load persisted history for the resumed session (TUI parity).
         try {
           const history = await client.rpc<Record<string, unknown>[]>(

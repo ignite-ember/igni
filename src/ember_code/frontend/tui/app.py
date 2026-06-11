@@ -680,10 +680,12 @@ class EmberApp(App):
 
         # ── Mirroring: broadcast the live draft to other views ───
         # (web tabs attached to the same BE). Throttled inside the
-        # client; fire-and-forget.
-        if self._backend is not None:
+        # client; fire-and-forget. getattr: keystrokes can arrive
+        # before the backend finishes starting.
+        backend = getattr(self, "_backend", None)
+        if backend is not None:
             with contextlib.suppress(Exception):
-                self._backend.notify_typing(text)
+                backend.notify_typing(text)
 
         # ── Mode toggles (/, !, $) ─────────────────────────────
         if not self._shell_mode and not self._command_mode and text in ("/", "!", "$"):
