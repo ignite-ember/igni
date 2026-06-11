@@ -15,6 +15,7 @@ import { HitlDialog, type HitlDecision } from "./components/HitlDialog";
 import { Sidebar, type SessionEntry } from "./components/Sidebar";
 import { CodeIndexPanel } from "./components/panels/CodeIndexPanel";
 import { DetailsPanel } from "./components/panels/DetailsPanel";
+import { DirectoryPicker } from "./components/panels/DirectoryPicker";
 import { InfoPanel } from "./components/panels/InfoPanel";
 import { LoginPanel } from "./components/panels/LoginPanel";
 import { LoopPanel } from "./components/panels/LoopPanel";
@@ -31,7 +32,8 @@ type PanelState =
   | { kind: "schedule" }
   | { kind: "login" }
   | { kind: "info"; title: string; markdown: string }
-  | { kind: "details"; title: string; method: string; fallback: string };
+  | { kind: "details"; title: string; method: string; fallback: string }
+  | { kind: "dir-picker" };
 
 interface UpdateInfo {
   available: boolean;
@@ -80,6 +82,8 @@ export default function App() {
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   // Live draft from another attached view (mirroring).
   const [remoteDraft, setRemoteDraft] = useState("");
+  // The directory this session is locked to (tools + shell cwd).
+  const [projectDir, setProjectDir] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const processingRef = useRef(false);
   // <think>-tag parser state. `usesThinkTags` persists across runs
@@ -135,6 +139,11 @@ export default function App() {
       if (s) setStatus(s);
     } catch {
       /* disconnected */
+    }
+    try {
+      setProjectDir(await client.rpc<string>("get_project_dir"));
+    } catch {
+      /* older BE */
     }
   }, [client]);
 
@@ -491,30 +500,31 @@ export default function App() {
     [client, onStreamEvent],
   );
 
-  const newChatInFolder = useCallback(async () => {
-    const dir = window.prompt(
-      "Project directory for the new session (absolute path):",
-    );
-    if (!dir?.trim()) return;
-    try {
-      // Pool-level attach: creates a fresh session whose tools and
-      // $-shell run in that directory; the binding persists with
-      // the session (global session→dir registry on the BE).
-      const res = await client.rpc<{ session_id: string; project_dir: string }>(
-        "attach_session",
-        { project_dir: dir.trim() },
-      );
-      client.sessionId = res.session_id;
-      setSessionId(res.session_id);
-      setItems([]);
-      append(infoItem(`New session ${res.session_id} in ${res.project_dir}`));
-      void refreshSessions();
-      void refreshStatus();
-    } catch (e) {
-      append(errorItem(String(e)));
-    }
+  const attachInFolder = useCallback(
+    async (dir: string) => {
+      setPanel({ kind: "none" });
+      try {
+        // Pool-level attach: creates a fresh session whose tools and
+        // $-shell run in that directory; the binding persists with
+        // the session (global session→dir registry on the BE).
+        const res = await client.rpc<{ session_id: string; project_dir: string }>(
+          "attach_session",
+          { project_dir: dir },
+        );
+        client.sessionId = res.session_id;
+        setSessionId(res.session_id);
+        setProjectDir(res.project_dir);
+        setItems([]);
+        append(infoItem(`Session locked to ${res.project_dir}`));
+        void refreshSessions();
+        void refreshStatus();
+      } catch (e) {
+        append(errorItem(String(e)));
+      }
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client]);
+    [client],
+  );
 
   const pickSession = useCallback(
     async (id: string) => {
@@ -568,6 +578,7 @@ export default function App() {
           /* pending-message recovery is best-effort */
         }
         append(infoItem(`Resumed session ${id}.`));
+        void refreshStatus();
       } catch (e) {
         append(errorItem(String(e)));
       }
@@ -604,7 +615,6 @@ export default function App() {
         sessions={sessions}
         currentId={sessionId}
         onNewChat={() => void runCommand("/clear", false)}
-        onNewChatInFolder={() => void newChatInFolder()}
         onPick={(id) => void pickSession(id)}
         onClose={() => setSidebarOpen(false)}
       />
@@ -638,6 +648,17 @@ export default function App() {
             </div>
           )}
           <div className="header-spacer" />
+          <button
+            className="chip"
+            title={
+              projectDir
+                ? `Session locked to ${projectDir} — click to lock a different project`
+                : "Lock this session to a project folder"
+            }
+            onClick={() => setPanel({ kind: "dir-picker" })}
+          >
+            📁 <span className="chip-label">{projectDir.split("/").pop() || "project"}</span>
+          </button>
           <button
             className="chip"
             title="Switch model"
@@ -824,6 +845,14 @@ export default function App() {
           method={panel.method}
           fallbackMarkdown={panel.fallback}
           onClose={() => setPanel({ kind: "none" })}
+        />
+      )}
+      {panel.kind === "dir-picker" && (
+        <DirectoryPicker
+          client={client}
+          title="Lock session to a project folder"
+          onSelect={(dir) => void attachInFolder(dir)}
+          onCancel={() => setPanel({ kind: "none" })}
         />
       )}
       {panel.kind === "login" && (

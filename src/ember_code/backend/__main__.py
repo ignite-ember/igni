@@ -183,6 +183,46 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
         await idx.ensure_loaded()
         return idx.match(str(args.get("query", "")), limit=int(args.get("limit", 50)))
 
+    async def _list_dirs(args: dict) -> dict:
+        """Subdirectory listing for the GUI folder browser.
+
+        Same trust level as ``run_shell`` (local user over loopback).
+        Dot-dirs are filtered unless ``show_hidden`` — the browser is
+        for picking project roots, not spelunking.
+        """
+
+        def _scan() -> dict:
+            raw = str(args.get("path") or Path.home())
+            show_hidden = bool(args.get("show_hidden", False))
+            base = Path(raw).expanduser()
+            try:
+                base = base.resolve()
+                dirs = sorted(
+                    (
+                        p.name
+                        for p in base.iterdir()
+                        if p.is_dir() and (show_hidden or not p.name.startswith("."))
+                    ),
+                    key=str.lower,
+                )
+            except (OSError, PermissionError) as exc:
+                return {
+                    "path": str(base),
+                    "parent": str(base.parent),
+                    "dirs": [],
+                    "home": str(Path.home()),
+                    "error": str(exc),
+                }
+            return {
+                "path": str(base),
+                "parent": str(base.parent) if base != base.parent else "",
+                "dirs": dirs,
+                "home": str(Path.home()),
+                "error": "",
+            }
+
+        return await asyncio.to_thread(_scan)
+
     async def _run_shell(args: dict) -> dict:
         """$-prefix shell mode. Captured (non-interactive) by design —
         parity with the TUI's inline shell for the common cases."""
@@ -285,6 +325,8 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
         # ── GUI-client parity ─────────────────────────────────────
         RpcMethod.COMPLETE_FILES: _complete_files,
         RpcMethod.RUN_SHELL: _run_shell,
+        RpcMethod.LIST_DIRS: _list_dirs,
+        RpcMethod.GET_PROJECT_DIR: lambda args: str(backend.project_dir),
         # Pool-level method — intercepted in the dispatch loop before
         # per-runtime routing; this stub only exists so the
         # exhaustiveness check passes and a future regression (the

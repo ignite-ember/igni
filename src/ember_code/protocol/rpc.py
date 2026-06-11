@@ -134,6 +134,11 @@ class RpcMethod(StrEnum):
     # dispatch), NOT by per-runtime tables — the per-runtime entry is
     # a guard stub.
     ATTACH_SESSION = "attach_session"
+    # Directory listing for the GUI folder browser (picking a
+    # project dir for a new session). Webviews can't touch the FS.
+    LIST_DIRS = "list_dirs"
+    # The directory the session is locked to (tools + shell cwd).
+    GET_PROJECT_DIR = "get_project_dir"
 
     # ── Agents ────────────────────────────────────────────────────
     GET_AGENT_DETAILS = "get_agent_details"

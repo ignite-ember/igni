@@ -640,6 +640,62 @@ button {
   gap: 6px;
 }
 
+/* ── Directory picker ───────────────────────────────────────────── */
+
+.dir-picker {
+  display: flex;
+  flex-direction: column;
+}
+
+.dir-pathbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.dir-path-input {
+  flex: 1;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  padding: 6px 10px;
+}
+
+.dir-path-input:focus {
+  outline: none;
+  border-color: var(--ember-orange);
+}
+
+.dir-list {
+  min-height: 220px;
+  max-height: 46vh;
+  overflow-y: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 4px;
+  background: var(--bg-default);
+}
+
+.dir-icon {
+  color: var(--ember-orange);
+  font-size: 10px;
+  width: 12px;
+}
+
+.dir-hidden-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg-faint);
+  cursor: pointer;
+  user-select: none;
+}
+
 /* Live draft from another attached view (mirroring). */
 .remote-draft {
   max-width: var(--col);

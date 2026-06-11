@@ -9,7 +9,6 @@ export function Sidebar({
   sessions,
   currentId,
   onNewChat,
-  onNewChatInFolder,
   onPick,
   onClose,
 }: {
@@ -17,7 +16,6 @@ export function Sidebar({
   sessions: SessionEntry[];
   currentId: string;
   onNewChat: () => void;
-  onNewChatInFolder: () => void;
   onPick: (id: string) => void;
   onClose: () => void;
 }) {
@@ -34,17 +32,9 @@ export function Sidebar({
           <div className="brand-flame" />
           <strong>Ember Code</strong>
         </div>
-        <div style={{ padding: "6px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ padding: "6px 12px" }}>
           <button className="btn" style={{ width: "100%" }} onClick={onNewChat}>
             + New chat
-          </button>
-          <button
-            className="btn btn-sm"
-            style={{ width: "100%", fontWeight: 400 }}
-            title="Start a session whose tools and shell run in a different directory"
-            onClick={onNewChatInFolder}
-          >
-            + New chat in folder…
           </button>
         </div>
         <div className="sidebar-section">Sessions</div>
