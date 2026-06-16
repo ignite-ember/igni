@@ -33,6 +33,15 @@ const PYTHON_VERSION = "3.12";
 const UV_VERSION = "0.5.7";
 const INSTALL_MARKER = "ember-install.json";
 
+/**
+ * Conservative free-space requirement before bootstrap starts.
+ * Sized for uv + CPython + ignite-ember + transitives + the
+ * sentence-transformer model + headroom (~700 MB needed, 1 GB
+ * required). Failing fast here is much better UX than ``pip``
+ * mid-install dying with a cryptic ENOSPC.
+ */
+const MIN_BOOTSTRAP_FREE_BYTES = 1024 * 1024 * 1024;
+
 export type ProgressFn = (msg: string) => void;
 
 export interface RuntimeOptions {
@@ -42,6 +51,11 @@ export interface RuntimeOptions {
   configuredPython?: string;
   /** Progress hook for the long-running download/install steps. */
   onProgress?: ProgressFn;
+  /** IDE-configured HTTP proxy env vars (HTTPS_PROXY, HTTP_PROXY,
+   *  NO_PROXY). Forwarded to uv / pip / the BE so corporate users
+   *  whose shell doesn't know about the IDE's proxy still install
+   *  cleanly. */
+  proxyEnv?: Record<string, string>;
 }
 
 /** Result of [ensureBackendPython]: the Python to spawn the BE with,
@@ -62,15 +76,21 @@ export interface BackendInstall {
 export async function ensureBackendPython(opts: RuntimeOptions): Promise<BackendInstall> {
   const log = opts.onProgress ?? (() => {});
 
+  const proxyEnv = opts.proxyEnv ?? {};
+
   // ── Dev / user override ──
   const dev = process.env.EMBER_DEV_BACKEND?.trim();
-  if (dev) return { python: dev, env: {} };
+  if (dev) return { python: dev, env: { ...proxyEnv } };
   if (opts.configuredPython && opts.configuredPython.trim()) {
-    return { python: opts.configuredPython.trim(), env: {} };
+    return { python: opts.configuredPython.trim(), env: { ...proxyEnv } };
   }
 
   await fs.promises.mkdir(opts.cacheDir, { recursive: true });
   const hfHome = path.join(opts.cacheDir, "huggingface");
+
+  // Disk-space precondition — fail fast with a clear message
+  // instead of letting pip / uv die mid-install on ENOSPC.
+  await ensureFreeSpace(opts.cacheDir, MIN_BOOTSTRAP_FREE_BYTES, log);
 
   const uvPath = path.join(opts.cacheDir, isWindows() ? "uv.exe" : "uv");
   const markerPath = path.join(opts.cacheDir, INSTALL_MARKER);
@@ -90,7 +110,7 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
   // ── 1. uv binary ──
   if (!(await isExecutable(uvPath)) || haveMarker !== wantMarker) {
     log("Downloading uv (one-time, ~25 MB)…");
-    await downloadUv(uvPath);
+    await downloadUv(uvPath, proxyEnv);
   }
 
   // ── 2. Python + 3. venv + 4. ignite-ember + 5. prefetch ──
@@ -100,10 +120,10 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
       await fs.promises.rm(venvDir, { recursive: true, force: true });
     }
     log(`Installing Python ${PYTHON_VERSION} (one-time)…`);
-    await runUv(uvPath, ["python", "install", PYTHON_VERSION]);
+    await runUv(uvPath, ["python", "install", PYTHON_VERSION], proxyEnv);
 
     log("Creating backend venv…");
-    await runUv(uvPath, ["venv", "--python", PYTHON_VERSION, venvDir]);
+    await runUv(uvPath, ["venv", "--python", PYTHON_VERSION, venvDir], proxyEnv);
 
     log("Installing ignite-ember (one-time)…");
     await runUv(uvPath, [
@@ -112,21 +132,60 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
       "--python",
       venvPython,
       `ignite-ember==${IGNITE_EMBER_VERSION}`,
-    ]);
+    ], proxyEnv);
 
     // Pre-warm the sentence-transformer cache so the first agent
     // run doesn't stall mid-chat on a silent 90 MB HuggingFace
     // download.
     log("Downloading embedding model (one-time, ~90 MB)…");
     await runProcess(venvPython, ["-m", "ember_code.prefetch_models"], {
-      env: { HF_HOME: hfHome },
+      env: { HF_HOME: hfHome, ...proxyEnv },
       timeoutMs: 10 * 60_000,
     });
 
     await fs.promises.writeFile(markerPath, wantMarker);
   }
 
-  return { python: venvPython, env: { HF_HOME: hfHome } };
+  return { python: venvPython, env: { HF_HOME: hfHome, ...proxyEnv } };
+}
+
+/**
+ * Throw with a clear message if the filesystem holding ``dir``
+ * doesn't have at least ``minBytes`` free. ``dir`` may not exist
+ * yet; we walk up to an existing ancestor.
+ */
+async function ensureFreeSpace(
+  dir: string,
+  minBytes: number,
+  log: ProgressFn,
+): Promise<void> {
+  // Node's ``fs.statfs`` returns block-level info we can multiply
+  // out to bytes. Walk up until we hit an existing path so the
+  // call doesn't error on a not-yet-created cache dir.
+  let probe = dir;
+  while (probe && !(await pathExists(probe))) {
+    const parent = path.dirname(probe);
+    if (parent === probe) break;
+    probe = parent;
+  }
+  let free: number;
+  try {
+    const st = await fs.promises.statfs(probe);
+    free = Number(st.bavail) * Number(st.bsize);
+  } catch {
+    // statfs unavailable on this Node build — skip the check
+    // rather than blocking installation.
+    return;
+  }
+  if (free >= minBytes) return;
+  const freeMb = Math.round(free / (1024 * 1024));
+  const needMb = Math.round(minBytes / (1024 * 1024));
+  log("Disk space check failed.");
+  throw new Error(
+    `Not enough disk space for the Ember backend bootstrap: ` +
+      `${freeMb} MB free at ${dir}, need at least ${needMb} MB. ` +
+      `Free up space and try again.`,
+  );
 }
 
 /** Wipe the entire managed cache. Used by ``emberCode.reinstall``. */
@@ -157,15 +216,32 @@ function uvTarget(): string {
   }
 }
 
-async function downloadUv(dest: string): Promise<void> {
+async function downloadUv(
+  dest: string,
+  proxyEnv: Record<string, string> = {},
+): Promise<void> {
   const triple = uvTarget();
   const ext = isWindows() ? "zip" : "tar.gz";
   const url =
     `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${triple}.${ext}`;
   const tmp = path.join(os.tmpdir(), `uv-${Date.now()}.${ext}`);
 
+  // ``fetch`` itself doesn't read HTTPS_PROXY in Node's built-in
+  // implementation. The cleanest way to honour the IDE proxy
+  // without pulling in undici as a dep is to fall back to ``curl``
+  // when proxy env is set — curl is on every supported platform
+  // (including modern Windows) and honors *_PROXY out of the box.
+  // For the no-proxy case we keep fetch (faster, no subprocess).
   try {
-    await downloadFile(url, tmp);
+    if (proxyEnv.HTTPS_PROXY || proxyEnv.HTTP_PROXY) {
+      await runProcess(
+        "curl",
+        ["-fsSL", "--retry", "3", "-o", tmp, url],
+        { env: proxyEnv, timeoutMs: 5 * 60_000 },
+      );
+    } else {
+      await downloadFile(url, tmp);
+    }
     await extractUv(tmp, dest, ext);
   } finally {
     fs.promises.unlink(tmp).catch(() => {});
@@ -254,8 +330,12 @@ async function findFileNamed(root: string, name: string): Promise<string | null>
 
 // ── uv / process invocation ────────────────────────────────────────
 
-function runUv(uvPath: string, args: string[]): Promise<void> {
-  return runProcess(uvPath, args, { timeoutMs: 10 * 60_000 });
+function runUv(
+  uvPath: string,
+  args: string[],
+  proxyEnv: Record<string, string> = {},
+): Promise<void> {
+  return runProcess(uvPath, args, { timeoutMs: 10 * 60_000, env: proxyEnv });
 }
 
 function runProcess(

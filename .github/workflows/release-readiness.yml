@@ -38,27 +38,18 @@ on:
         default: false
 
 jobs:
-  smoke:
+  # POSIX smoke — macOS + Linux. Bash script + tar.gz uv archive.
+  smoke-posix:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        # Windows uses a different shell + uv archive format (zip
-        # vs tar.gz); ``onboarding-smoke.sh`` is bash-only. A
-        # PowerShell variant for Windows is a separate piece of
-        # work — for now we rely on the per-platform JetBrains /
-        # VSCode build matrix to catch most Windows-specific
-        # regressions, and exercise the user-visible bootstrap on
-        # the two POSIX platforms.
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run onboarding smoke
+      - name: Run onboarding smoke (POSIX)
         env:
-          # CI runners can be slow; give pip + uv more headroom on
-          # network ops. The script itself enforces a 60s ceiling
-          # on the BE-ready handshake.
           UV_HTTP_TIMEOUT: "120"
         run: |
           ARGS=()
@@ -76,5 +67,33 @@ jobs:
         with:
           name: onboarding-smoke-logs-${{ matrix.os }}
           path: /tmp/ember-onboarding-*/be-*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Windows smoke — separate job because the shell, archive format,
+  # and ``Start-Process`` flow are different enough that a single
+  # script would be a mess of branches. ``onboarding-smoke.ps1``
+  # mirrors the POSIX script step-by-step.
+  smoke-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run onboarding smoke (Windows)
+        shell: pwsh
+        env:
+          UV_HTTP_TIMEOUT: "120"
+        run: |
+          $args = @()
+          if ("${{ inputs.use_local }}" -eq "true") { $args += "-Local" }
+          if ("${{ inputs.version }}") { $args += "-Version"; $args += "${{ inputs.version }}" }
+          & ./scripts/onboarding-smoke.ps1 @args
+
+      - name: Upload smoke logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onboarding-smoke-logs-windows
+          path: ${{ runner.temp }}/ember-onboarding-*/be-*.log
           if-no-files-found: ignore
           retention-days: 7

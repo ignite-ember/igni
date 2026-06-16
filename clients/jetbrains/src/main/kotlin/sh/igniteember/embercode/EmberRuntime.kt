@@ -45,6 +45,15 @@ object EmberRuntime {
     /** Pinned CPython tag fed to ``uv python install``. */
     private const val PYTHON_VERSION = "3.12"
 
+    /** Minimum free bytes the cache filesystem needs before we
+     *  start the bootstrap. Sized for ``uv`` (~25 MB) + CPython
+     *  (~50 MB) + ``ignite-ember`` + its transitives (chromadb,
+     *  sentence-transformers, torch wheels — ~600 MB unpacked) +
+     *  the sentence-transformer model (~90 MB) + headroom. 1 GB
+     *  is conservative but kind: a disk-full failure midway
+     *  through is much worse UX than failing fast here. */
+    private const val MIN_BOOTSTRAP_FREE_BYTES = 1024L * 1024L * 1024L
+
     /** Pinned ``uv`` release used for the runtime bootstrap. Bumped
      *  when we need a new uv feature; otherwise stable. */
     private const val UV_VERSION = "0.5.7"
@@ -76,7 +85,13 @@ object EmberRuntime {
      *  HuggingFace cache inside the plugin-managed directory so
      *  "Reinstall Backend (Clean)" really wipes everything (instead
      *  of leaving ~250 MB of cached embeddings in
-     *  ``~/.cache/huggingface``). */
+     *  ``~/.cache/huggingface``).
+     *
+     *  ``HTTPS_PROXY`` / ``HTTP_PROXY`` / ``NO_PROXY`` get layered on
+     *  too when the IDE has a proxy configured — corporate users
+     *  whose shell doesn't know about the IDE's proxy settings would
+     *  otherwise see uv / pip / the BE itself fail with cryptic
+     *  network errors. */
     data class BackendInstall(val python: Path, val env: Map<String, String>)
 
     /**
@@ -104,6 +119,14 @@ object EmberRuntime {
         val cache = cacheRoot()
         Files.createDirectories(cache)
         val hfHome = cache.resolve("huggingface")
+
+        // ── Disk-space precondition ──
+        // The full bootstrap pulls ~250-300 MB across uv +
+        // CPython + ignite-ember + the sentence-transformer model.
+        // Bail out NOW with a clean message instead of failing
+        // partway through with whatever uv / pip happens to emit
+        // when the disk fills.
+        ensureFreeSpace(cache, MIN_BOOTSTRAP_FREE_BYTES, listener)
 
         val markerPath = cache.resolve(INSTALL_MARKER)
         val currentMarker =
@@ -164,8 +187,49 @@ object EmberRuntime {
 
         return BackendInstall(
             python = venvPython,
-            env = mapOf("HF_HOME" to hfHome.toString()),
+            env = buildMap {
+                put("HF_HOME", hfHome.toString())
+                putAll(ideProxyEnv())
+            },
         )
+    }
+
+    /**
+     * Pick up the IDE's configured HTTP proxy (Settings → Appearance
+     * & Behavior → System Settings → HTTP Proxy) and translate it
+     * into ``HTTPS_PROXY`` / ``HTTP_PROXY`` / ``NO_PROXY`` env vars
+     * that ``uv``, ``pip``, and ``urllib`` (which the BE uses) all
+     * honor. Without this, a corporate user whose IDE knows about a
+     * proxy but whose shell doesn't would see uv / pip / sentence-
+     * transformers all fail with cryptic ``Connection refused``.
+     *
+     * Returns an empty map when no proxy is configured.
+     */
+    private fun ideProxyEnv(): Map<String, String> {
+        return try {
+            val http = com.intellij.util.net.HttpConfigurable.getInstance()
+            if (!http.USE_HTTP_PROXY && !http.USE_PROXY_PAC) return emptyMap()
+            val host = http.PROXY_HOST.orEmpty().trim()
+            if (host.isEmpty()) return emptyMap()
+            val port = http.PROXY_PORT
+            val scheme = if (http.PROXY_TYPE_IS_SOCKS) "socks5" else "http"
+            val auth =
+                if (http.PROXY_AUTHENTICATION && !http.proxyLogin.isNullOrBlank()) {
+                    "${http.proxyLogin}:${http.plainProxyPassword}@"
+                } else {
+                    ""
+                }
+            val url = "$scheme://$auth$host:$port"
+            val noProxy = http.PROXY_EXCEPTIONS.orEmpty().trim()
+            buildMap {
+                put("HTTPS_PROXY", url)
+                put("HTTP_PROXY", url)
+                if (noProxy.isNotEmpty()) put("NO_PROXY", noProxy)
+            }
+        } catch (e: Exception) {
+            log.info("IDE proxy lookup failed; subprocess will use system defaults: $e")
+            emptyMap()
+        }
     }
 
     // ── Platform + paths ──
@@ -336,6 +400,25 @@ object EmberRuntime {
     }
 
     // ── Utilities ──
+
+    /** Throw with a clear message if the filesystem holding
+     *  ``cache`` doesn't have at least ``minBytes`` free. ``internal``
+     *  for unit-test coverage. */
+    internal fun ensureFreeSpace(cache: Path, minBytes: Long, listener: (String) -> Unit) {
+        // ``cache`` may not exist yet — walk up until we find an
+        // existing ancestor so ``getFreeSpace`` returns a real number.
+        var probe: Path? = cache
+        while (probe != null && !Files.exists(probe)) probe = probe.parent
+        val free = probe?.toFile()?.freeSpace ?: return
+        if (free >= minBytes) return
+        val freeMb = free / (1024 * 1024)
+        val needMb = minBytes / (1024 * 1024)
+        val msg = "Not enough disk space for the Ember backend bootstrap: " +
+            "${freeMb} MB free at ${cache}, need at least ${needMb} MB. " +
+            "Free up space and try again."
+        listener("Disk space check failed.")
+        error(msg)
+    }
 
     private fun deleteRecursively(path: Path) {
         if (!Files.exists(path)) return

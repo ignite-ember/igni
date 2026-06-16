@@ -72,4 +72,42 @@ class EmberRuntimeTest {
             "uvTarget=$triple is not one of the recognised uv release assets",
         )
     }
+
+    @Test
+    fun `ensureFreeSpace passes when minimum is trivially satisfied`() {
+        // 1 byte is essentially always available — confirms the
+        // happy path doesn't throw on a freshly-created tmp dir.
+        val tmp = java.nio.file.Files.createTempDirectory("ember-disk-test-")
+        try {
+            EmberRuntime.ensureFreeSpace(tmp, 1L) {}
+        } finally {
+            tmp.toFile().delete()
+        }
+    }
+
+    @Test
+    fun `ensureFreeSpace throws with an actionable message when minimum is too large`() {
+        // ``Long.MAX_VALUE`` will never be available — confirms the
+        // failure path produces a message that includes the byte
+        // counts and the cache path so the user has something to
+        // act on.
+        val tmp = java.nio.file.Files.createTempDirectory("ember-disk-test-")
+        try {
+            val exc = org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalStateException::class.java,
+            ) {
+                EmberRuntime.ensureFreeSpace(tmp, Long.MAX_VALUE) {}
+            }
+            assertTrue(
+                exc.message?.contains("disk space") == true,
+                "error message should mention 'disk space', got: ${exc.message}",
+            )
+            assertTrue(
+                exc.message?.contains(tmp.toString()) == true,
+                "error should include the path; got: ${exc.message}",
+            )
+        } finally {
+            tmp.toFile().delete()
+        }
+    }
 }

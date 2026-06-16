@@ -47,6 +47,7 @@ function startBackend(
     const install = await ensureBackendPython({
       cacheDir: context.globalStorageUri.fsPath,
       configuredPython: configured || undefined,
+      proxyEnv: vscodeProxyEnv(),
       onProgress: progress,
     });
 
@@ -330,6 +331,43 @@ function resolveAbs(p: string): string | null {
   if (path.isAbsolute(p)) return p;
   const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   return ws ? path.join(ws, p) : null;
+}
+
+/**
+ * Pick up the IDE's HTTP proxy (Settings → Application → Proxy or
+ * the standard ``http.proxy`` setting) and emit
+ * ``HTTPS_PROXY`` / ``HTTP_PROXY`` / ``NO_PROXY`` env vars the
+ * spawned uv + pip + Python subprocesses honor. VSCode reads its
+ * own proxy from these env vars first, then from the
+ * ``http.proxy`` setting — we forward both so a corporate user
+ * whose shell doesn't know the proxy still gets a working install.
+ *
+ * Returns ``{}`` when no proxy is configured.
+ */
+function vscodeProxyEnv(): Record<string, string> {
+  const out: Record<string, string> = {};
+  // ``WorkspaceConfiguration.get`` doesn't necessarily return a
+  // string even when the setting is declared as one — when the user
+  // hasn't set it, ``proxySupport: "off"`` returns ``null``, and
+  // unset registered settings can come back as ``undefined``. Be
+  // defensive about the type before calling ``.trim()``.
+  const readStr = (key: string): string => {
+    const raw = vscode.workspace.getConfiguration("http").get(key);
+    return typeof raw === "string" ? raw.trim() : "";
+  };
+  const proxy = readStr("proxy");
+  if (proxy) {
+    out.HTTPS_PROXY = proxy;
+    out.HTTP_PROXY = proxy;
+  } else {
+    // Fall back to the shell env in case the user set them outside
+    // the IDE settings.
+    if (process.env.HTTPS_PROXY) out.HTTPS_PROXY = process.env.HTTPS_PROXY;
+    if (process.env.HTTP_PROXY) out.HTTP_PROXY = process.env.HTTP_PROXY;
+  }
+  const noProxy = readStr("noProxy") || process.env.NO_PROXY || "";
+  if (noProxy) out.NO_PROXY = noProxy;
+  return out;
 }
 
 function pushToComposer(payload: {
