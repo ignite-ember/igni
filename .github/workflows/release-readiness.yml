@@ -1,0 +1,80 @@
+name: Release readiness
+
+# Runs the end-to-end onboarding smoke that exercises the exact path
+# a new user takes: download uv → install Python → install
+# ignite-ember → prefetch embedding model → spawn the BE → confirm
+# the ready line. ~2-3 min per platform.
+#
+# Why a separate workflow:
+#   - It downloads ~150 MB and takes ~3 min — too slow for every PR.
+#   - The thing that breaks here is rarely the FE code; it's PyPI
+#     wheel availability, uv release-asset URLs, model-cache layout.
+#     Those drift on their own schedule (PyPI maintenance, uv minor
+#     bumps, HuggingFace outages), so a nightly + on-tag schedule
+#     catches them BEFORE we cut a release.
+#
+# Triggers:
+#   - Tag push (``v*``) — final gate before publishing.
+#   - Nightly cron — surfaces upstream drift in a recognisable
+#     window.
+#   - Manual dispatch — for verifying a specific commit.
+
+on:
+  push:
+    tags: ["v*"]
+  schedule:
+    # 06:00 UTC = ~11 PM PT the night before. Fast feedback for
+    # any drift overnight.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "ignite-ember version to install (blank = read from pyproject.toml)"
+        required: false
+        default: ""
+      use_local:
+        description: "Install from the working tree instead of PyPI"
+        type: boolean
+        default: false
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        # Windows uses a different shell + uv archive format (zip
+        # vs tar.gz); ``onboarding-smoke.sh`` is bash-only. A
+        # PowerShell variant for Windows is a separate piece of
+        # work — for now we rely on the per-platform JetBrains /
+        # VSCode build matrix to catch most Windows-specific
+        # regressions, and exercise the user-visible bootstrap on
+        # the two POSIX platforms.
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run onboarding smoke
+        env:
+          # CI runners can be slow; give pip + uv more headroom on
+          # network ops. The script itself enforces a 60s ceiling
+          # on the BE-ready handshake.
+          UV_HTTP_TIMEOUT: "120"
+        run: |
+          ARGS=()
+          if [[ "${{ inputs.use_local }}" == "true" ]]; then
+            ARGS+=(--local)
+          fi
+          if [[ -n "${{ inputs.version }}" ]]; then
+            ARGS+=(--version "${{ inputs.version }}")
+          fi
+          ./scripts/onboarding-smoke.sh "${ARGS[@]}"
+
+      - name: Upload smoke logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onboarding-smoke-logs-${{ matrix.os }}
+          path: /tmp/ember-onboarding-*/be-*.log
+          if-no-files-found: ignore
+          retention-days: 7

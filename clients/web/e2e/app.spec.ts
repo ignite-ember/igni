@@ -191,6 +191,149 @@ test.describe("push notifications", () => {
   });
 });
 
+test.describe("first-launch onboarding", () => {
+  /**
+   * The "new user opens the app for the first time" path: empty
+   * history, empty session list, default model. They type → send →
+   * see streaming → see the assistant bubble settle. This single
+   * test exercises every layer the FE will hit on day one and
+   * surfaces regressions that wouldn't show up in the isolated
+   * unit-style tests.
+   */
+  test("empty-history greeting → first message → streamed reply", async ({
+    page,
+    backend,
+    appUrl,
+  }) => {
+    // Pre-fixture state: brand-new user.
+    backend.onRpc("get_chat_history", () => []);
+    backend.onRpc("get_pending_messages", () => []);
+    backend.onRpc("list_sessions", () => ({ sessions: [] }));
+
+    await page.goto(appUrl);
+
+    // The composer's placeholder switches once we're connected —
+    // that's the visible signal a new user gets that the panel is
+    // ready to receive input.
+    await expect(page.locator(".composer-editable")).toHaveAttribute(
+      "data-placeholder",
+      /Message Ember/,
+      { timeout: 10_000 },
+    );
+
+    // No prior chat items rendered.
+    await expect(page.locator(".msg-user")).toHaveCount(0);
+    await expect(page.locator(".msg-assistant")).toHaveCount(0);
+
+    // Send the first message.
+    const editor = page.locator(".composer-editable");
+    await editor.click();
+    await editor.type("hello, are you working?");
+    await editor.press("Enter");
+
+    // FE renders the optimistic user bubble immediately.
+    await expect(page.locator(".msg-user").last()).toContainText(
+      "hello, are you working?",
+    );
+
+    // BE saw the envelope.
+    await expect
+      .poll(() =>
+        backend
+          .received()
+          .find(
+            (m) =>
+              m.type === "user_message" &&
+              String(m.text).includes("hello, are you working?"),
+          ),
+      )
+      .toBeTruthy();
+
+    const runId = String(
+      backend.received().find((m) => m.type === "user_message")!.id,
+    );
+
+    // Simulate a typical streamed reply: deltas then the standard
+    // run-completion handshake the BE emits at end of turn.
+    backend.pushEvent({
+      type: "content_delta",
+      id: runId,
+      text: "Yes, ",
+    });
+    backend.pushEvent({
+      type: "content_delta",
+      id: runId,
+      text: "I'm here and ready.",
+    });
+    backend.pushEvent({
+      type: "run_completed",
+      id: runId,
+      run_id: runId,
+      parent_run_id: null,
+      input_tokens: 12,
+      output_tokens: 5,
+      reasoning_tokens: 0,
+      duration: 1.2,
+    });
+    backend.pushEvent({ type: "stream_end", id: runId });
+
+    // Assistant bubble lands with the concatenated text.
+    await expect(page.locator(".msg-assistant").last()).toContainText(
+      "Yes, I'm here and ready.",
+    );
+
+    // After ``stream_end`` the composer becomes interactive again —
+    // verify by typing a follow-up (would be blocked if the FE
+    // thought a run was still in flight).
+    await editor.click();
+    await editor.type("good");
+    await expect(editor).toContainText("good");
+  });
+
+  /**
+   * Tests the "wires connected, BE never replies" failure mode.
+   * If a real BE crashes between accepting the message and
+   * producing any output, the FE has to remain usable instead of
+   * locking up the composer forever. Catches the regression class
+   * where ``stream_end`` is the only thing that unblocks input.
+   */
+  test("BE accepts then dies — composer recovers after disconnect", async ({
+    page,
+    backend,
+    appUrl,
+  }) => {
+    await page.goto(appUrl);
+    await expect(page.locator(".composer-editable")).toHaveAttribute(
+      "data-placeholder",
+      /Message Ember/,
+      { timeout: 10_000 },
+    );
+
+    const editor = page.locator(".composer-editable");
+    await editor.click();
+    await editor.type("hi");
+    await editor.press("Enter");
+
+    // Wait for the envelope to arrive at the BE so we know the
+    // run is in flight before we kill the connection.
+    await expect
+      .poll(() => backend.received().find((m) => m.type === "user_message"))
+      .toBeTruthy();
+
+    // BE crashes mid-run.
+    await backend.close();
+
+    // Composer placeholder reverts to the "Connecting…" state —
+    // that's the user-visible signal the app survived the crash
+    // rather than wedging.
+    await expect(page.locator(".composer-editable")).toHaveAttribute(
+      "data-placeholder",
+      /Connecting/,
+      { timeout: 10_000 },
+    );
+  });
+});
+
 test.describe("session bootstrap", () => {
   test("history loaded from get_chat_history renders on mount", async ({
     page,
