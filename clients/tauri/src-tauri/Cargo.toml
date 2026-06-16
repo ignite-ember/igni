@@ -15,6 +15,11 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
+# Background self-update channel — checks ``latest.json`` on
+# GitHub Releases on startup, downloads + verifies the signed
+# bundle if a newer version is available. See ``run()`` for the
+# plumbing and ``release.yml`` for the publishing side.
+tauri-plugin-updater = "2"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 
@@ -33,6 +38,19 @@ dirs = "5"
 # Free-space check before bootstrap so we fail fast on a full disk
 # instead of mid-pip-install.
 fs2 = "0.4"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Native NSWindow access for repositioning the traffic-light
+# cluster after navigation events that reset it back to the OS
+# default. Builder-time ``traffic_light_position`` doesn't survive
+# ``location.href`` navigations on macOS Big Sur+.
+objc2 = "0.5"
+objc2-foundation = { version = "0.2", features = ["NSGeometry"] }
+# CFRunLoopObserver — fires after every main-thread layout pass so
+# we can immediately undo AppKit's reset of the traffic-light
+# cluster. Background polling can't outrun the reset; a runloop
+# observer runs *after* AppKit's title-bar layout each iteration.
+core-foundation-sys = "0.8"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # uv ships its Windows release as a .zip. Tar.gz on every other

@@ -356,7 +356,23 @@ export function CodeIndexPanel({
         </div>
       )}
 
-      {/* ── Stat tiles ─────────────────────────────────────────── */}
+      {/* ── Stat tiles ───────────────────────────────────────────
+       *  All of these (Coverage, Commits, On disk, Last sync,
+       *  Connection state) are CodeIndex-specific telemetry. When
+       *  the App isn't connected, the only meaningful one is the
+       *  connection tile itself — keep that visible standalone so
+       *  the user sees the actionable status, and skip the rest
+       *  rather than render placeholder zeros. */}
+      {needsInstall ? (
+        <div className="codeindex-stats">
+          <StatTile
+            icon={<Icons.plug />}
+            label={provider.appLabel}
+            value="Not linked"
+            tone="warn"
+          />
+        </div>
+      ) : (
       <div className="codeindex-stats">
         <StatTile
           icon={<Icons.coverage />}
@@ -416,25 +432,33 @@ export function CodeIndexPanel({
           icon={<Icons.plug />}
           label={provider.appLabel}
           value={
-            needsInstall
-              ? "Not linked"
-              : status.install_state === "installed"
-                ? "Connected"
-                : status.install_state.replace(/_/g, " ")
+            status.install_state === "installed"
+              ? "Connected"
+              : status.install_state.replace(/_/g, " ")
           }
-          tone={
-            needsInstall ? "warn" : status.install_state === "installed" ? "good" : "muted"
-          }
+          tone={status.install_state === "installed" ? "good" : "muted"}
         />
       </div>
+      )}
 
-      {/* ── Activity sparkline ─────────────────────────────────── */}
-      {activity.length > 0 && (
+      {/* ── Activity sparkline ─────────────────────────────────── */
+      /*  Activity entries describe past sync/resync/etc. ops; when
+       *  the App isn't installed there's nothing to plot and the
+       *  empty-ish strip just adds vertical noise. */}
+      {!needsInstall && activity.length > 0 && (
         <ActivityStrip activity={activity} />
       )}
 
-      {/* ── HEAD: language donut + commits timeline ─────────────── */}
-      {breakdown && !breakdown.error && breakdown.file_count > 0 && (
+      {/* ── HEAD: language donut + commits timeline ─────────────── */
+      /*  Suppressed when CodeIndex isn't actually installed for
+       *  this repo. ``codeindex_head_breakdown`` is just a
+       *  ``git ls-files`` + recent-commit log; it returns real
+       *  file counts and commits regardless of install state, so
+       *  rendering it here would show e.g. "543 files · 0% indexed"
+       *  + a commits timeline next to a "Not connected" hero —
+       *  the user reads that as live data when it's actually
+       *  meaningless until they connect the App. */}
+      {!needsInstall && breakdown && !breakdown.error && breakdown.file_count > 0 && (
         <Section
           title="At HEAD"
           subtitle={
@@ -455,8 +479,12 @@ export function CodeIndexPanel({
         </Section>
       )}
 
-      {/* ── Cached commits ─────────────────────────────────────── */}
-      {status.branches_indexed.length > 0 && (
+      {/* ── Cached commits ─────────────────────────────────────── */
+      /*  Same reasoning as the other sections — if the index
+       *  isn't installed there can't be cached commits, but if
+       *  there's stale local data from a prior install we'd
+       *  rather not surface it as if it were live. */}
+      {!needsInstall && status.branches_indexed.length > 0 && (
         <Section title="Cached locally" subtitle={`${status.branches_indexed.length} commit(s)`}>
           <div className="codeindex-branches">
             {status.branches_indexed.slice(0, 6).map((b) => (

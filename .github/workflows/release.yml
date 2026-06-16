@@ -145,8 +145,94 @@ jobs:
           path: clients/vscode/*.vsix
           retention-days: 30
 
+  # Tauri desktop installers — mac (arm + intel), windows, linux.
+  # Tauri Action handles the per-platform bundle (.dmg/.msi/.AppImage),
+  # generates the updater signatures, and uploads everything to the
+  # GitHub Release. ``tagName`` matches the tag we're already on so
+  # all artifacts land on one release page.
+  #
+  # Secrets required (configure in repo → Settings → Secrets):
+  #   TAURI_SIGNING_PRIVATE_KEY          base64 of the updater priv key
+  #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD passphrase for the priv key
+  # Optional (Apple notarization):
+  #   APPLE_CERTIFICATE                  .p12 base64
+  #   APPLE_CERTIFICATE_PASSWORD
+  #   APPLE_SIGNING_IDENTITY             "Developer ID Application: …"
+  #   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
+  build-tauri:
+    needs: publish-pypi
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-14
+            args: --target aarch64-apple-darwin
+          - platform: macos-14
+            args: --target x86_64-apple-darwin
+          - platform: windows-latest
+            args: ""
+          - platform: ubuntu-22.04
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: clients/web/package-lock.json
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-14' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: clients/tauri/src-tauri
+
+      - name: Install Linux build deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf
+
+      - name: Build shared web UI
+        run: |
+          cd clients/web
+          npm ci
+          npm run build
+
+      - name: Build + sign + upload Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: clients/tauri
+          tagName: ${{ github.ref_name }}
+          releaseId: ${{ github.event.release.id }}
+          args: ${{ matrix.args }}
+          # ``includeUpdaterJson`` makes the action emit ``latest.json``
+          # alongside the artifacts; our endpoint in tauri.conf.json
+          # points at the ``latest`` release alias so newly-published
+          # binaries are picked up the next time the app checks.
+          includeUpdaterJson: true
+
   github-release:
-    needs: [publish-pypi, build-jetbrains-plugin, build-vscode-plugin]
+    needs: [publish-pypi, build-jetbrains-plugin, build-vscode-plugin, build-tauri]
     runs-on: ubuntu-latest
     permissions:
       contents: write

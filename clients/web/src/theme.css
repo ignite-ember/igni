@@ -228,6 +228,88 @@ button {
   font-weight: 600;
 }
 
+/* ── Update prompt (in-app modal sheet) ───────────────────────
+   Renders when the host (Tauri / IDE) discovers a newer release.
+   The OS notification is the alerting surface; this sheet is the
+   action surface — clicking the OS banner focuses the app and
+   the user lands here. */
+.update-prompt-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+.update-prompt {
+  width: min(420px, 90vw);
+  padding: 22px 22px 18px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+  color: var(--fg);
+}
+.update-prompt-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.update-prompt-body {
+  font-size: 13.5px;
+  color: var(--fg-muted);
+  line-height: 1.45;
+  margin-bottom: 18px;
+}
+.update-prompt-body strong {
+  color: var(--fg);
+}
+.update-prompt-error {
+  font-size: 12.5px;
+  color: var(--danger, #d73a49);
+  background: color-mix(in srgb, var(--danger, #d73a49) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger, #d73a49) 35%, transparent);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 12px;
+}
+.update-prompt-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ── Update pill (statusline) ─────────────────────────────────
+   Geometry matches ``.codeindex-pill`` / ``.session-chip`` so the
+   row reads as one consistent strip of pills. The accent color
+   conveys "actionable" — same orange treatment as elsewhere. */
+.brand-update {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 9999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: var(--font-ui);
+  color: var(--ember-orange);
+  background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ember-orange) 50%, transparent);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.brand-update:hover {
+  background: color-mix(in srgb, var(--ember-orange) 22%, transparent);
+  border-color: var(--ember-orange);
+}
+
+
 /* ── Header ─────────────────────────────────────────────────────── */
 
 .app-header {
@@ -236,6 +318,143 @@ button {
   gap: 8px;
   padding: 10px 16px;
   flex-shrink: 0;
+}
+
+/* ── Custom title bar (Tauri / macOS) ───────────────────────────────
+   The Tauri shell uses ``TitleBarStyle::Overlay``: the webview
+   extends to y=0 and the traffic-light buttons float on top in
+   the top-left ~75px. We turn the existing app-header row into
+   the de-facto title bar by:
+     - Reserving the left padding so the brand doesn't sit under
+       the traffic lights.
+     - Making the row's empty area draggable (move the window by
+       clicking anywhere except a control).
+     - Excluding interactive elements from the drag region so
+       they remain clickable.
+   The hint comes from the Tauri init script setting
+   ``data-host="tauri"`` + ``data-platform="mac"`` on <html> — all
+   other hosts (JetBrains JCEF, VSCode webview, plain browser)
+   keep their default OS chrome and aren't affected by these
+   rules. */
+/* The traffic-light cluster is anchored to the top-left of the
+   WINDOW, not to any panel. So the "title bar" host depends on
+   which element actually sits under them:
+     - Sidebar OPEN  → .sidebar-head is under the lights; gutter +
+                        drag region go there. .app-header sits to
+                        the right of the sidebar with normal padding
+                        and the brand right next to the hamburger.
+     - Sidebar CLOSED → .main fills the window; .app-header is
+                         under the lights; gutter + drag region go
+                         there.
+   Either way the brand is docked next to the sandwich; only the
+   traffic-light gutter migrates between elements.
+
+   macOS HIG: the cluster sits ~20 px from the left edge and runs
+   ~58 px wide; 80–100 px of padding-left leaves a comfortable
+   margin past the right edge of the green button. */
+
+/* ── Sidebar OPEN: sidebar-head IS the title bar ──────────────
+   Traffic-light cluster right edge sits at ~x=70 (origin 16
+   + ~54px cluster width). Padding-left lands the hamburger a
+   short gap past the cluster. */
+:root[data-host="tauri"][data-platform="mac"] .sidebar:not(.closed) .sidebar-head {
+  padding-left: 48px;
+  min-height: 38px;
+  box-sizing: border-box;
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+:root[data-host="tauri"][data-platform="mac"] .sidebar:not(.closed) .sidebar-head button,
+:root[data-host="tauri"][data-platform="mac"] .sidebar:not(.closed) .sidebar-head input,
+:root[data-host="tauri"][data-platform="mac"] .sidebar:not(.closed) .sidebar-head a {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+/* Sidebar open: .app-header sits to the right of the sidebar, NOT
+   under the traffic lights. No gutter — the hamburger lands flush
+   against the sidebar edge, with the brand immediately next to
+   it (natural flex flow, no auto-margins). Still a drag handle
+   across the row's empty space.
+
+   ``padding`` matches the sidebar-CLOSED state below (8px top/bottom,
+   16px right) so the row height stays pixel-identical across the
+   sidebar toggle — without this override the row inherits
+   ``.app-header``'s default ``padding: 10px 16px`` and the chips
+   visibly jitter 2 px down whenever the user opens the sidebar. */
+:root[data-host="tauri"][data-platform="mac"] .sidebar:not(.closed) ~ .main .app-header {
+  padding: 8px 16px;
+  min-height: 38px;
+  box-sizing: border-box;
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+:root[data-host="tauri"][data-platform="mac"] .sidebar:not(.closed) ~ .main .app-header button,
+:root[data-host="tauri"][data-platform="mac"] .sidebar:not(.closed) ~ .main .app-header .chip,
+:root[data-host="tauri"][data-platform="mac"] .sidebar:not(.closed) ~ .main .app-header .file-pill,
+:root[data-host="tauri"][data-platform="mac"] .sidebar:not(.closed) ~ .main .app-header .file-pill-wrap,
+:root[data-host="tauri"][data-platform="mac"] .sidebar:not(.closed) ~ .main .app-header input,
+:root[data-host="tauri"][data-platform="mac"] .sidebar:not(.closed) ~ .main .app-header a {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* ── Sidebar CLOSED: .app-header takes the gutter ─────────────
+   Same 48px left padding as the sidebar-head when open, so the
+   hamburger lands at the same x in both states (no jitter when
+   toggling the sidebar) and sits 16 px past the cluster. */
+:root[data-host="tauri"][data-platform="mac"] .sidebar.closed ~ .main .app-header {
+  padding: 8px 16px 8px 80px;
+  min-height: 38px;
+  box-sizing: border-box;
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+:root[data-host="tauri"][data-platform="mac"] .sidebar.closed ~ .main .app-header button,
+:root[data-host="tauri"][data-platform="mac"] .sidebar.closed ~ .main .app-header .chip,
+:root[data-host="tauri"][data-platform="mac"] .sidebar.closed ~ .main .app-header .file-pill,
+:root[data-host="tauri"][data-platform="mac"] .sidebar.closed ~ .main .app-header .file-pill-wrap,
+:root[data-host="tauri"][data-platform="mac"] .sidebar.closed ~ .main .app-header input,
+:root[data-host="tauri"][data-platform="mac"] .sidebar.closed ~ .main .app-header a {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* ── Native fullscreen: collapse the traffic-light gutter ──────
+   In native macOS fullscreen, AppKit reparents the standard window
+   buttons into a slide-down panel — they're invisible in our top
+   row until the user hovers the very top edge. We reclaim the ~48
+   px of left-padding the windowed mode reserves for them and slide
+   the hamburger + brand into that space. The Rust side emits
+   ``ember-fullscreen`` whenever the window's fullscreen state
+   changes (see ``on_window_event`` in lib.rs). */
+:root[data-host="tauri"][data-platform="mac"][data-fullscreen="true"]
+  .sidebar:not(.closed) .sidebar-head {
+  padding-left: 32px !important;
+}
+/* Sidebar OPEN: hamburger lives in the main column's .app-header,
+   immediately to the right of the sidebar. */
+:root[data-host="tauri"][data-platform="mac"][data-fullscreen="true"]
+  .sidebar:not(.closed) ~ .main .app-header {
+  padding: 8px 16px 8px 32px !important;
+}
+/* Sidebar CLOSED: traffic-light cluster is hidden behind the
+   slide-down panel in fullscreen, so reclaim the space — pin the
+   hamburger close to the window edge. During the brief moment the
+   user hovers the top to reveal the panel, the cluster will
+   appear above the row; that's accepted (matches Safari/VS Code
+   convention). */
+:root[data-host="tauri"][data-platform="mac"][data-fullscreen="true"]
+  .sidebar.closed ~ .main .app-header {
+  padding: 8px 16px 8px 16px !important;
+}
+
+/* Brand never wraps — ellipsis-truncate at narrow widths instead. */
+:root[data-host="tauri"][data-platform="mac"] .app-header .brand,
+:root[data-host="tauri"][data-platform="mac"] .app-header .brand span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .brand {

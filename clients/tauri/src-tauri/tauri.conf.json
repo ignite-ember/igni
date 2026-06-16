@@ -5,13 +5,25 @@
   "identifier": "sh.ignite-ember.desktop",
   "build": {
     "frontendDist": "../../web/dist",
-    "beforeBuildCommand": "npm --prefix ../web run build"
+    "beforeBuildCommand": "npm --prefix ../web run build",
+    "beforeDevCommand": "npm --prefix ../web run dev",
+    "devUrl": "http://localhost:5173"
   },
   "app": {
     "windows": [],
     "withGlobalTauri": true,
     "security": {
       "csp": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/ignite-ember/ember-code/releases/latest/download/latest.json"
+      ],
+      "dialog": false,
+      "pubkey": "PLACEHOLDER_UPDATER_PUBKEY"
     }
   },
   "bundle": {

@@ -24,7 +24,6 @@ import { CtxMeter, SessionChip } from "./components/StatusBits";
 import { HitlDialog, type HitlDecision } from "./components/HitlDialog";
 import {
   ChevronIcon,
-  CloseIcon,
   CloudIcon,
   FlameIcon,
   FolderIcon,
@@ -38,6 +37,7 @@ import { FilePreview } from "./components/FilePreview";
 import { HooksPanel } from "./components/panels/HooksPanel";
 import { KnowledgePanel } from "./components/panels/KnowledgePanel";
 import { Toasts, type Toast } from "./components/Toasts";
+import { UpdatePrompt } from "./components/UpdatePrompt";
 import { host } from "./lib/host";
 import { PluginsPanel } from "./components/panels/PluginsPanel";
 import { SkillsPanel } from "./components/panels/SkillsPanel";
@@ -108,6 +108,27 @@ export default function App() {
     host.setPreviewFallback((p) => setPreviewPath(p));
   }, []);
 
+  // Host-aware CSS hook. The Tauri shell sets these via its
+  // ``initialization_script`` at page-load time, but Tauri 2 doesn't
+  // re-fire that script when the loading view navigates to the real
+  // app via ``location.href``. Re-stamp from the React mount so the
+  // host-aware rules in theme.css (custom title bar, traffic-light
+  // gutter, drag region) always match. Idempotent — re-running just
+  // sets the same attributes.
+  useEffect(() => {
+    const html = typeof document !== "undefined" ? document.documentElement : null;
+    if (!html) return;
+    const w = window as unknown as { __TAURI__?: unknown };
+    if (!w.__TAURI__) return;
+    html.dataset.host = "tauri";
+    const p = (navigator.platform || "").toLowerCase();
+    html.dataset.platform = /mac/.test(p)
+      ? "mac"
+      : /win/.test(p)
+        ? "win"
+        : "linux";
+  }, []);
+
   // IDE → web-UI event bus. Two paths converge here:
   //
   //   • JetBrains dispatches ``ember-host`` CustomEvents on
@@ -145,6 +166,13 @@ export default function App() {
         if (id === "new_chat") {
           // Empty the chat — same effect as the ``/clear`` command.
           setItems([]);
+        } else if (id === "check_update") {
+          // App-menu "Check for Updates…" — fire the explicit check
+          // with feedback (``silent=false`` surfaces an OS "Up to
+          // date" notification when there's nothing new). Routed
+          // through a ref so this listener can stay mounted once
+          // and still call the latest closure.
+          void checkForUpdateRef.current?.(false);
         } else if (id === "restart_backend") {
           // Best-effort reconnect signal. The native side already
           // restarts the BE process; here we just kick the WS
@@ -202,6 +230,109 @@ export default function App() {
   const dismissToast = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
+  // Single dispatch for user-facing notifications. Tries the native
+  // host bridge first (Tauri → macOS Notification Center; VSCode →
+  // ``window.showInformationMessage``; JetBrains → balloon). Only
+  // falls back to the in-app toast stack on plain web where no
+  // bridge exists.
+  const notifyHost = useCallback(
+    async (payload: {
+      title: string;
+      body?: string;
+      onClick?: () => void;
+      data?: Record<string, unknown>;
+    }) => {
+      const delivered = await host.notify({
+        title: payload.title,
+        body: payload.body,
+        data: payload.data,
+      });
+      if (delivered) return;
+      addToast({
+        title: payload.title,
+        body: payload.body,
+        onClick: payload.onClick,
+      });
+    },
+    [addToast],
+  );
+  // In-app modal sheet for the update action surface. The
+  // alerting surface is the host OS notification — see
+  // ``announceUpdate``. ``null`` means no update pending or the
+  // user picked "Later".
+  const [pendingUpdate, setPendingUpdate] = useState<UpdateInfo | null>(null);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  // Ref to the latest ``checkForUpdate`` closure so the once-mounted
+  // ``ember-host`` listener (deps ``[]``) can call the current version.
+  const checkForUpdateRef = useRef<((silent?: boolean) => Promise<void>) | null>(
+    null,
+  );
+  const announceUpdate = useCallback(
+    (info: UpdateInfo) => {
+      if (info.available) {
+        setPendingUpdate(info);
+        setShowUpdateModal(true);
+        // OS-level alert so the user sees it even if the app is
+        // backgrounded. The modal sheet takes over once they
+        // refocus the window.
+        void host.notify({
+          title: "Update available",
+          body: `Ember Code ${info.latest_version} is ready to install.`,
+        });
+      }
+    },
+    [],
+  );
+  // Re-runnable update check used by the native "Check for Updates…"
+  // menu item and the version chip click. ``silent=false`` surfaces
+  // an OS notification when there's no update, so the menu click
+  // always gives the user feedback.
+  const checkForUpdate = useCallback(
+    async (silent = false) => {
+      try {
+        const tauriInvoke = (window as unknown as {
+          __TAURI__?: { core?: { invoke?: (cmd: string) => Promise<unknown> } };
+        }).__TAURI__?.core?.invoke;
+        const info = tauriInvoke
+          ? ((await tauriInvoke("ember_check_update")) as UpdateInfo)
+          : await client.rpc<UpdateInfo | null>("check_for_update");
+        if (!info) return;
+        if (info.available) {
+          announceUpdate(info);
+        } else if (!silent) {
+          void host.notify({
+            title: "Up to date",
+            body: `You're on the latest version (${info.current_version}).`,
+          });
+        }
+      } catch {
+        /* best-effort; silent failure */
+      }
+    },
+    [announceUpdate, client],
+  );
+  // Keep the ref in lockstep so the menu handler always invokes the
+  // freshest closure (which captures the latest ``client``).
+  useEffect(() => {
+    checkForUpdateRef.current = checkForUpdate;
+  }, [checkForUpdate]);
+  // DEV-ONLY: set ``VITE_EMBER_FAKE_UPDATE=1`` to surface the modal
+  // + OS notification at launch without contacting GitHub Releases.
+  // Remove before shipping.
+  const fakeUpdateDone = useRef(false);
+  useEffect(() => {
+    if (fakeUpdateDone.current) return;
+    const env = (import.meta as unknown as { env?: Record<string, string> }).env;
+    if (!env?.VITE_EMBER_FAKE_UPDATE) return;
+    fakeUpdateDone.current = true;
+    announceUpdate({
+      available: true,
+      current_version: "0.6.0",
+      latest_version: "0.7.0",
+      download_url:
+        "https://github.com/ignite-ember/ember-code/releases/latest",
+    });
+  }, [announceUpdate]);
   // Per-client UI state — hydrated from the BE on connect. Lives in
   // a memoized store so all three keys (session-id, sidebar, draft)
   // round-trip the same way regardless of host (browser / VSCode /
@@ -228,7 +359,6 @@ export default function App() {
   const [skills, setSkills] = useState<SlashCommand[]>([]);
   const [modelMenuSignal, setModelMenuSignal] = useState<{ n: number } | null>(null);
   const [accountMenu, setAccountMenu] = useState(false);
-  const [update, setUpdate] = useState<UpdateInfo | null>(null);
   // Live draft from another attached view (mirroring).
   // The directory this session is locked to (tools + shell cwd).
   const [projectDir, setProjectDir] = useState("");
@@ -529,12 +659,12 @@ export default function App() {
           } catch {
             /* skills optional */
           }
-          try {
-            const info = await client.rpc<UpdateInfo | null>("check_for_update");
-            if (info?.available) setUpdate(info);
-          } catch {
-            /* update check is best-effort */
-          }
+          // Silent startup check — populates the version chip and
+          // surfaces an OS notification + modal sheet if a newer
+          // build is available. The same helper is wired to the
+          // native "Check for Updates…" menu item, called with
+          // ``silent=false`` so the user gets feedback either way.
+          void checkForUpdate(true);
         })();
       }
     });
@@ -590,14 +720,11 @@ export default function App() {
           const title = ok
             ? `Background process finished${dur}`
             : `Background process failed (exit ${p.exit_code})${dur}`;
-          addToast({ title, body: cmdShort });
-          if (typeof document !== "undefined" && document.hidden) {
-            void host.notify({
-              title,
-              body: cmdShort,
-              data: { channel: m.channel },
-            });
-          }
+          void notifyHost({
+            title,
+            body: cmdShort,
+            data: { channel: m.channel },
+          });
         } else if (
           m.channel === "scheduler_started" ||
           m.channel === "scheduler_completed"
@@ -618,18 +745,12 @@ export default function App() {
             m.channel === "scheduler_completed" && result
               ? `${desc}\n\n${result.length > 240 ? result.slice(0, 240) + "…" : result}`
               : desc;
-          addToast({
+          void notifyHost({
             title,
             body,
             onClick: () => setPanel({ kind: "schedule" }),
+            data: { channel: m.channel, task_id: m.payload.task_id },
           });
-          if (typeof document !== "undefined" && document.hidden) {
-            void host.notify({
-              title,
-              body,
-              data: { channel: m.channel, task_id: m.payload.task_id },
-            });
-          }
         } else if (m.channel === "file_edited") {
           // BE edit_file / edit_file_replace_all / create_file just
           // wrote to disk. Forward to the host (JetBrains for now)
@@ -1195,26 +1316,12 @@ export default function App() {
         open={sidebarOpen}
         sessions={sessions}
         currentId={sessionId}
-        conn={conn}
         onNewChat={() => void runCommand("/clear", false)}
         onPick={(id) => void pickSession(id)}
         onClose={() => setSidebarOpen(false)}
       />
 
       <div className="main">
-        {update && (
-          <div className="update-banner">
-            Update available: {update.current_version} → {update.latest_version}
-            {update.download_url && (
-              <a href={update.download_url} target="_blank" rel="noreferrer">
-                get it
-              </a>
-            )}
-            <button className="icon-btn" onClick={() => setUpdate(null)}>
-              <CloseIcon />
-            </button>
-          </div>
-        )}
         <header className="app-header">
           <button
             className="icon-btn"
@@ -1223,17 +1330,19 @@ export default function App() {
           >
             <MenuIcon />
           </button>
-          {!sidebarOpen && (
-            <div className="brand">
-              <FlameIcon size={20} />
-              <span>Ember Code</span>
-              <span
-                className={`dot ${conn === "replaced" ? "disconnected" : conn}`}
-                title={`backend ${conn}`}
-                style={{ cursor: "default" }}
-              />
-            </div>
-          )}
+          {/* Brand always renders in the main column's app-header.
+              When the sidebar is open it still has its own internal
+              "Sessions" section title, but the app identity belongs
+              to the main pane so the user's eye anchors there. */}
+          <div className="brand">
+            <FlameIcon size={20} />
+            <span>Ember Code</span>
+            <span
+              className={`dot ${conn === "replaced" ? "disconnected" : conn}`}
+              title={`backend ${conn}`}
+              style={{ cursor: "default" }}
+            />
+          </div>
           <div className="header-spacer" />
           {/* Project chip — hidden when running inside an IDE (VSCode /
               JetBrains): the IDE's workspace folder IS the project root,
@@ -1286,8 +1395,6 @@ export default function App() {
                   whiteSpace: "nowrap",
                   direction: "rtl",
                   textAlign: "left",
-                  color: "var(--fg)",
-                  fontWeight: 500,
                 }}
               >
                 {projectDir ? `⁨${projectDir}⁩` : "project"}
@@ -1485,6 +1592,16 @@ export default function App() {
               />
             </>
           )}
+          {pendingUpdate && (
+            <button
+              type="button"
+              className="brand-update"
+              title={`Update to v${pendingUpdate.latest_version}`}
+              onClick={() => setShowUpdateModal(true)}
+            >
+              Update to v{pendingUpdate.latest_version}
+            </button>
+          )}
         </div>
       </div>
 
@@ -1568,6 +1685,12 @@ export default function App() {
         />
       )}
       <Toasts items={toasts} onDismiss={dismissToast} />
+      {showUpdateModal && pendingUpdate && (
+        <UpdatePrompt
+          info={pendingUpdate}
+          onDismiss={() => setShowUpdateModal(false)}
+        />
+      )}
       {panel.kind === "dir-picker" && (
         <DirectoryPicker
           client={client}

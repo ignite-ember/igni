@@ -1,4 +1,3 @@
-import { FlameIcon } from "./Icons";
 import { ThemeToggle } from "./ThemeToggle";
 
 export interface SessionEntry {
@@ -11,7 +10,6 @@ export function Sidebar({
   open,
   sessions,
   currentId,
-  conn,
   onNewChat,
   onPick,
   onClose,
@@ -19,8 +17,6 @@ export function Sidebar({
   open: boolean;
   sessions: SessionEntry[];
   currentId: string;
-  /** Backend connection state — rendered as a dot next to the brand. */
-  conn: string;
   onNewChat: () => void;
   onPick: (id: string) => void;
   onClose: () => void;
@@ -35,13 +31,12 @@ export function Sidebar({
       )}
       <nav className={`sidebar ${open ? "" : "closed"}`}>
         <div className="sidebar-head">
-          <FlameIcon size={20} />
-          <strong>Ember Code</strong>
-          <span
-            className={`dot ${conn === "replaced" ? "disconnected" : conn}`}
-            title={`backend ${conn}`}
-            style={{ cursor: "default" }}
-          />
+          {/* App identity (flame + "Ember Code") lives in the main
+              column's ``.app-header`` — repeating it in the sidebar
+              header makes the brand appear twice when the sidebar
+              is open. Keep this row for the controls only (theme
+              toggle today, settings later). The spacer pushes them
+              to the right so the row stays visually anchored. */}
           <div className="sidebar-head-spacer" />
           <ThemeToggle />
         </div>
