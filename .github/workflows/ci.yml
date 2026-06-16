@@ -243,6 +243,21 @@ jobs:
           path: clients/vscode/*.vsix
           retention-days: 14
 
+  # Proxy-propagation integration test. Stands up a tiny logging
+  # proxy, runs the same uv-download command runtime.ts issues
+  # when proxyEnv is set, asserts the request flowed through.
+  # Fast (~5 s) — runs on every PR so regressions in the proxy
+  # plumbing surface before they ship.
+  proxy-propagation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run proxy integration test
+        run: ./scripts/test-proxy-integration.sh
+
   # Tauri Rust shell: the desktop bridge between the system WebView
   # and the BE process. Most of the code is Tauri framework glue;
   # what's worth testing is the BE-stdout ready-line parser

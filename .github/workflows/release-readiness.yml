@@ -38,6 +38,22 @@ on:
         default: false
 
 jobs:
+  # Proxy-propagation integration test. Stands up a tiny logging
+  # HTTP/HTTPS proxy, sets HTTPS_PROXY, runs the same uv-download
+  # command ``runtime.ts::downloadUv`` issues when proxyEnv is
+  # set, and asserts the proxy log shows a CONNECT to github.com.
+  # Catches the regression where the FE reads a proxy from IDE
+  # settings but the env var never reaches the subprocess.
+  proxy-propagation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run proxy integration test
+        run: ./scripts/test-proxy-integration.sh
+
   # POSIX smoke — macOS + Linux. Bash script + tar.gz uv archive.
   smoke-posix:
     strategy:
