@@ -127,9 +127,21 @@ jobs:
       # ``JETBRAINS_MARKETPLACE_TOKEN`` is an upload token created
       # at https://plugins.jetbrains.com/author/me/tokens with the
       # "Upload Plugin" scope for the ``Ember Code`` plugin.
-      # First-time publish triggers JetBrains' moderation review
-      # (1-10 business days); subsequent updates clear in minutes.
+      #
+      # CRITICAL: JetBrains requires the FIRST upload of a new
+      # plugin to go through the web UI at
+      # https://plugins.jetbrains.com/plugin/add (so a human sets
+      # the listing's license, repo URL, screenshots before
+      # automated uploads are accepted). After that one-time
+      # manual upload, ``publishPlugin`` works for every
+      # subsequent release.
+      #
+      # Skipped on RC tags for the same reason as the VSCode
+      # marketplace push — JetBrains rejects re-uploads of the
+      # same version, and our version doesn't change across RC
+      # iterations.
       - name: Publish to JetBrains Marketplace
+        if: ${{ !contains(github.ref_name, '-') }}
         env:
           ORG_GRADLE_PROJECT_jbToken: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
         run: |
@@ -190,7 +202,15 @@ jobs:
       # ``Marketplace > Manage`` scope. The publisher ``ignite-ember``
       # (per ``package.json``) must already exist on
       # https://marketplace.visualstudio.com/manage.
+      #
+      # Skipped on RC / alpha / beta / dev tags: the marketplace
+      # rejects re-uploads of the same version, and ``package.json``'s
+      # version doesn't change across RC iterations (it's pinned to
+      # ``pyproject.toml``'s SoT). RC tags get a VSIX uploaded as a
+      # GitHub-Release artifact for testing; the marketplace push
+      # only fires on final-version tags.
       - name: Publish to VS Code Marketplace
+        if: ${{ !contains(github.ref_name, '-') }}
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
