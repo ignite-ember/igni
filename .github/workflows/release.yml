@@ -212,8 +212,43 @@ jobs:
   #   APPLE_CERTIFICATE_PASSWORD
   #   APPLE_SIGNING_IDENTITY             "Developer ID Application: …"
   #   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
-  build-tauri:
+  #
+  # Why a pre-create-release step: ``tauri-action`` v0 needs a
+  # ``releaseId`` to upload its bundles to. Under a push-tag event
+  # (we trigger by pushing a ``v*`` tag, not by clicking "Create
+  # release") there's no existing release, and the action's
+  # find-or-create-by-tag path errors with "Release not found or
+  # created" — possibly because the four matrix legs race to
+  # create the same release. Pre-creating it as a draft serialises
+  # the creation; the matrix uploads in parallel; the final
+  # ``github-release`` job downgrades draft → published and adds
+  # the VSIX + JetBrains zip.
+  prepare-release:
     needs: publish-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.create.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: softprops/action-gh-release@v2
+        id: create
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          draft: true
+          # Pre-releases (rc/alpha/beta/dev tags) get the
+          # "Pre-release" badge on the releases page so users don't
+          # accidentally pick them up as "Latest".
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          # Leave body empty here — the ``github-release`` job at
+          # the end of the workflow generates + sets the final body
+          # once every artifact has landed.
+          body: ""
+
+  build-tauri:
+    needs: prepare-release
     permissions:
       contents: write
     strategy:
@@ -280,17 +315,13 @@ jobs:
         with:
           projectPath: clients/tauri
           tagName: ${{ github.ref_name }}
-          # ``releaseId`` was previously sourced from
-          # ``github.event.release.id``, which is empty under a
-          # ``push`` tag event (we trigger via ``git push origin v*``,
-          # not via the GitHub-UI "create release" flow). With an
-          # empty id the action errored "Release not found or
-          # created". Omitting ``releaseId`` lets tauri-action
-          # find-or-create a release by ``tagName`` instead — the
-          # first matrix leg creates a draft release, the others
-          # append their bundles, and the ``github-release`` job
-          # below uses ``softprops/action-gh-release`` with the same
-          # tag to add the VSIX + JetBrains zip + publish it.
+          # ``releaseId`` previously came from
+          # ``github.event.release.id`` (empty under a push-tag
+          # event); then omitted (action couldn't find-or-create
+          # reliably across the parallel matrix). Now sourced from
+          # the ``prepare-release`` job which pre-creates a draft
+          # release exactly once — matrix legs upload to that id.
+          releaseId: ${{ needs.prepare-release.outputs.release_id }}
           args: ${{ matrix.args }}
           # ``includeUpdaterJson`` makes the action emit ``latest.json``
           # alongside the artifacts; our endpoint in tauri.conf.json
@@ -385,6 +416,15 @@ jobs:
 
   update-homebrew:
     needs: publish-pypi
+    # Skip on RC / alpha / beta / dev tags. The brew formula
+    # tracks the latest STABLE release; pre-release tags don't
+    # actually publish a new PyPI sdist (the version in
+    # ``pyproject.toml`` is the SoT, ``skip-existing: true`` silently
+    # no-ops the publish on RC tags). The homebrew job would 404 on
+    # the non-existent ``ignite_ember-X.Y.Zrc1.tar.gz`` file. Run
+    # only on tags WITHOUT a hyphen (i.e. ``v1.2.3`` not
+    # ``v1.2.3-rc.1``).
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     steps:
       - name: Wait for PyPI propagation
