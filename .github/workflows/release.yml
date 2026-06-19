@@ -350,7 +350,7 @@ jobs:
           includeUpdaterJson: true
 
   github-release:
-    needs: [publish-pypi, build-jetbrains-plugin, build-vscode-plugin, build-tauri]
+    needs: [prepare-release, publish-pypi, build-jetbrains-plugin, build-vscode-plugin, build-tauri]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -397,42 +397,69 @@ jobs:
             } >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          # Tag conventions: ``v1.2.3`` is final, anything with a
-          # hyphen (``v1.2.3-rc.1`` / ``-alpha.2`` / ``-beta.1``) is
-          # a pre-release. Auto-marking surfaces the right "Latest"
-          # badge on the releases page.
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          files: |
-            artifacts/*.zip
-            artifacts/*.vsix
-          body: |
-            ${{ steps.notes.outputs.body }}
+      # We target the draft release ``prepare-release`` created at
+      # the start of this workflow run, by its explicit ID — NOT by
+      # tag. Using ``softprops/action-gh-release`` here used to
+      # race with the draft's eventual-consistency lookup, creating
+      # a second (empty, published) release with the same tag and
+      # then failing to ``finalize`` the original because GitHub
+      # rejects ``tag_name`` collisions on PATCH. Using ``gh
+      # release`` CLI with the ID we already know avoids the
+      # lookup entirely.
+      - name: Upload IDE artifacts + publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.prepare-release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          # Upload VSIX + JetBrains zip to the existing draft. Tauri
+          # bundles were already attached by the build-tauri matrix.
+          for f in artifacts/*.zip artifacts/*.vsix; do
+            [ -f "$f" ] || continue
+            echo "Uploading $f"
+            gh release upload "${{ github.ref_name }}" "$f" --clobber
+          done
 
-            ## Install
+          # Compose the final body + publish (draft → false). We use
+          # the API directly because ``gh release edit`` can't take
+          # a release ID; it uses tag, which is fine here since we
+          # only have ONE release for this tag (the duplicate-race
+          # bug was specific to softprops).
+          BODY=$(cat <<'BODY_EOF'
+          ${{ steps.notes.outputs.body }}
 
-            **Python (CLI / library):**
-            ```bash
-            pip install 'ignite-ember==${{ steps.notes.outputs.pip_version }}'
-            # or
-            uv pip install 'ignite-ember==${{ steps.notes.outputs.pip_version }}'
-            ```
+          ## Install
 
-            **JetBrains plugin:** download the ``ember-code-jetbrains-*.zip``
-            asset below and install via Settings → Plugins → ⚙ →
-            Install Plugin from Disk…
+          **Python (CLI / library):**
+          ```bash
+          pip install 'ignite-ember==${{ steps.notes.outputs.pip_version }}'
+          # or
+          uv pip install 'ignite-ember==${{ steps.notes.outputs.pip_version }}'
+          ```
 
-            **VSCode extension:** download the ``ember-code-vscode-*.vsix``
-            asset below and install with:
-            ```bash
-            code --install-extension ember-code-vscode-*.vsix
-            ```
+          **JetBrains plugin:** download the ``ember-code-jetbrains-*.zip``
+          asset below and install via Settings → Plugins → ⚙ →
+          Install Plugin from Disk…
 
-            Both IDE plugins bootstrap uv + Python + ignite-ember on
-            first launch — no manual setup required.
+          **VSCode extension:** download the ``ember-code-vscode-*.vsix``
+          asset below and install with:
+          ```bash
+          code --install-extension ember-code-vscode-*.vsix
+          ```
+
+          Both IDE plugins bootstrap uv + Python + ignite-ember on
+          first launch — no manual setup required.
+          BODY_EOF
+          )
+
+          PRERELEASE=${{ contains(github.ref_name, '-') }}
+          gh api -X PATCH \
+            "repos/${{ github.repository }}/releases/${RELEASE_ID}" \
+            -f name="${{ github.ref_name }}" \
+            -f body="$BODY" \
+            -F draft=false \
+            -F prerelease=$PRERELEASE \
+            --jq '{id, name, draft, prerelease, html_url}'
 
   update-homebrew:
     needs: publish-pypi
