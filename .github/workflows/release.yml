@@ -142,6 +142,16 @@ jobs:
       # iterations.
       - name: Publish to JetBrains Marketplace
         if: ${{ !contains(github.ref_name, '-') }}
+        # Don't fail the whole release if JetBrains rejects:
+        #   * "Cannot find plugin" — first upload must be via the
+        #     web UI; this clears after the manual one-time setup
+        #   * "Version already exists" — same as VSCode, an earlier
+        #     RC pushed this version
+        # In either case, the plugin zip is still on the GitHub
+        # Release page and downloadable; the step is easily
+        # re-runnable from the workflow UI once the blocker is
+        # cleared.
+        continue-on-error: true
         env:
           ORG_GRADLE_PROJECT_jbToken: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
         run: |
@@ -211,6 +221,13 @@ jobs:
       # only fires on final-version tags.
       - name: Publish to VS Code Marketplace
         if: ${{ !contains(github.ref_name, '-') }}
+        # Don't fail the whole release if the marketplace push
+        # rejects the version (most common cause: same version
+        # was already published from an earlier RC iteration).
+        # The VSIX is still available on the GitHub Release page,
+        # and the failure shows as a yellow warning in the
+        # workflow log — easy to re-run manually if needed.
+        continue-on-error: true
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
