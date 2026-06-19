@@ -73,7 +73,24 @@ suite("Ember Code extension", () => {
     }
   });
 
-  test("emberCode.open creates the chat panel", async () => {
+  // Two tests below assert "panel opens" — that requires the fake
+  // backend to actually spawn. Windows blocks both common faking
+  // tricks: ``spawn`` rejects bare ``.js`` (no shebang support) with
+  // ``EFTYPE``, AND rejects ``.cmd`` wrappers since the Node CVE-
+  // 2024-27980 mitigation, with ``EINVAL``. The mechanism we'd test
+  // (panel opens via emberCode.open) is platform-independent — only
+  // the fake-spawn dance is Windows-hostile. Real Windows users
+  // install with a real ``python.exe`` where ``spawn`` works fine.
+  // Coverage on ubuntu + macos is sufficient.
+  const SKIP_PANEL_OPEN_ON_WIN =
+    process.platform === "win32"
+      ? { skip: true, reason: "Windows can't fake-spawn the BE (Node CVE-2024-27980)" }
+      : { skip: false, reason: "" };
+
+  test("emberCode.open creates the chat panel", async function () {
+    if (SKIP_PANEL_OPEN_ON_WIN.skip) {
+      this.skip();
+    }
     const ext = vscode.extensions.getExtension(PUBLISHER_ID);
     await ext!.activate();
 
@@ -122,7 +139,10 @@ suite("Ember Code extension", () => {
     assert.ok(true);
   });
 
-  test("addSelectionToChat with an active editor + selection", async () => {
+  test("addSelectionToChat with an active editor + selection", async function () {
+    if (SKIP_PANEL_OPEN_ON_WIN.skip) {
+      this.skip();
+    }
     // Happy-path counterpart to the no-editor case above. Opens a
     // throwaway untitled document, places a selection, runs the
     // command; verifies the Ember panel ends up active (the command
