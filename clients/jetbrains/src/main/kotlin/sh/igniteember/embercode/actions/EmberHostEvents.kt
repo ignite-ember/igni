@@ -28,16 +28,7 @@ object EmberHostEvents {
         EmberToolWindowFactory.pushEvent(
             project,
             "ember:addToComposer",
-            buildString {
-                append('{')
-                append("\"text\":\"").append(jsonEscape(text)).append('"')
-                if (path != null) {
-                    append(",\"path\":\"").append(jsonEscape(path)).append('"')
-                }
-                if (startLine != null) append(",\"line\":").append(startLine)
-                if (endLine != null) append(",\"end_line\":").append(endLine)
-                append('}')
-            },
+            composerPayload(path, text, startLine, endLine),
         )
     }
 
@@ -46,9 +37,37 @@ object EmberHostEvents {
         EmberToolWindowFactory.pushEvent(
             project,
             "ember:attachFile",
-            "{\"path\":\"${jsonEscape(path)}\"}",
+            attachFilePayload(path),
         )
     }
+
+    /** Pure JSON-payload builder for ``ember:addToComposer``. Split
+     *  out from ``addToComposer`` so the wire shape is unit-testable
+     *  without standing up an IntelliJ Platform Project fixture.
+     *
+     *  ``path`` is nullable because untitled / unsaved-buffer
+     *  selections have no on-disk location; the FE renders the pill
+     *  without a file label when it's missing. ``startLine``/
+     *  ``endLine`` are 1-indexed (FE convention). */
+    internal fun composerPayload(
+        path: String?,
+        text: String,
+        startLine: Int? = null,
+        endLine: Int? = null,
+    ): String = buildString {
+        append('{')
+        append("\"text\":\"").append(jsonEscape(text)).append('"')
+        if (path != null) {
+            append(",\"path\":\"").append(jsonEscape(path)).append('"')
+        }
+        if (startLine != null) append(",\"line\":").append(startLine)
+        if (endLine != null) append(",\"end_line\":").append(endLine)
+        append('}')
+    }
+
+    /** Pure JSON-payload builder for ``ember:attachFile``. */
+    internal fun attachFilePayload(path: String): String =
+        "{\"path\":\"${jsonEscape(path)}\"}"
 
     internal fun jsonEscape(s: String): String {
         val sb = StringBuilder(s.length + 8)

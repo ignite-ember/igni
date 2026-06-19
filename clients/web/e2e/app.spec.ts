@@ -161,6 +161,172 @@ test.describe("push notifications", () => {
     );
   });
 
+  test("two pages bound to different sessions only render their own session's events", async ({
+    backend,
+    browser,
+    appUrl,
+  }) => {
+    // Drives the FE-side composition of the multi-session contract:
+    // each tab binds to its own ``session_id`` via ``get_session_id``;
+    // every inbound broadcast is filtered by the FE's WS client
+    // (``protocol/client.ts`` ~ line 430) so a tab only renders events
+    // stamped for *its* session. Catches a class of "session-id drift"
+    // regressions — e.g. the FE forgetting to set ``sessionId`` after
+    // attach, or the filter accidentally matching empty stamps.
+    //
+    // We rely on the existing fixture (one WS server, broadcasts to
+    // all attached clients) and override ``get_session_id`` to hand
+    // out distinct ids per connection.
+    const handed: string[] = [];
+    const POOL = ["sess-alpha", "sess-beta"];
+    backend.onRpc("get_session_id", () => {
+      const id = POOL[handed.length] ?? POOL[POOL.length - 1];
+      handed.push(id);
+      return id;
+    });
+    // Initial composer-model text differs per page only because the
+    // session-stamped pushes below land. The fixture's default
+    // ``get_status`` answer is shared.
+    backend.onRpc("get_status", () => ({
+      type: "status_update",
+      model: "initial-model",
+      context_tokens: 0,
+      max_context: 200_000,
+      cloud_connected: false,
+      cloud_org: "",
+    }));
+
+    // Each page in its own browser context → independent
+    // localStorage / IndexedDB → independent ``client_id``, so they
+    // both hit ``get_session_id`` fresh (no leaked SESSION_KEY).
+    // Fresh contexts get no inherited ``baseURL``; pass it explicitly
+    // so the ``?ws=…`` relative path resolves to the dev server.
+    const ctxA = await browser.newContext({ baseURL: "http://127.0.0.1:5179" });
+    const ctxB = await browser.newContext({ baseURL: "http://127.0.0.1:5179" });
+    try {
+      const pageA = await ctxA.newPage();
+      const pageB = await ctxB.newPage();
+
+      await pageA.goto(appUrl);
+      await expect(pageA.locator(".composer-model").first()).toContainText(
+        "initial-model",
+        { timeout: 10_000 },
+      );
+      await pageB.goto(appUrl);
+      await expect(pageB.locator(".composer-model").first()).toContainText(
+        "initial-model",
+        { timeout: 10_000 },
+      );
+
+      // Both pages connected and each pulled a distinct session id.
+      await expect.poll(() => backend.clientCount()).toBe(2);
+      await expect.poll(() => handed.length).toBeGreaterThanOrEqual(2);
+      expect(new Set(handed.slice(0, 2))).toEqual(new Set(POOL));
+
+      // Push a status_update stamped for "sess-alpha" — only pageA
+      // (bound to that session) should render it. pageB must keep the
+      // initial model since the FE's session filter drops the event.
+      backend.pushEvent({
+        type: "status_update",
+        session_id: "sess-alpha",
+        model: "model-alpha",
+        context_tokens: 0,
+        max_context: 200_000,
+        cloud_connected: false,
+        cloud_org: "",
+      });
+      await expect(pageA.locator(".composer-model").first()).toContainText(
+        "model-alpha",
+      );
+      // pageB still shows the initial value — a regression would let
+      // alpha's update bleed in.
+      await expect(pageB.locator(".composer-model").first()).toContainText(
+        "initial-model",
+      );
+
+      // Now the mirror: stamp for "sess-beta" — only pageB should pick
+      // it up; pageA stays on model-alpha.
+      backend.pushEvent({
+        type: "status_update",
+        session_id: "sess-beta",
+        model: "model-beta",
+        context_tokens: 0,
+        max_context: 200_000,
+        cloud_connected: false,
+        cloud_org: "",
+      });
+      await expect(pageB.locator(".composer-model").first()).toContainText(
+        "model-beta",
+      );
+      await expect(pageA.locator(".composer-model").first()).toContainText(
+        "model-alpha",
+      );
+    } finally {
+      await ctxA.close();
+      await ctxB.close();
+    }
+  });
+
+  test("two pages bound to the same session both render its events (mirroring)", async ({
+    backend,
+    browser,
+    appUrl,
+  }) => {
+    // Two tabs of the same project (e.g. user duplicated the window):
+    // every event for "shared" must paint on BOTH. Catches the
+    // opposite-of-isolation regression — a stamping rule that
+    // accidentally drops valid same-session events.
+    backend.onRpc("get_session_id", () => "shared-session");
+    backend.onRpc("get_status", () => ({
+      type: "status_update",
+      model: "initial-shared",
+      context_tokens: 0,
+      max_context: 200_000,
+      cloud_connected: false,
+      cloud_org: "",
+    }));
+
+    // Fresh contexts get no inherited ``baseURL``; pass it explicitly
+    // so the ``?ws=…`` relative path resolves to the dev server.
+    const ctxA = await browser.newContext({ baseURL: "http://127.0.0.1:5179" });
+    const ctxB = await browser.newContext({ baseURL: "http://127.0.0.1:5179" });
+    try {
+      const pageA = await ctxA.newPage();
+      const pageB = await ctxB.newPage();
+      await pageA.goto(appUrl);
+      await pageB.goto(appUrl);
+      await expect.poll(() => backend.clientCount()).toBe(2);
+      await expect(pageA.locator(".composer-model").first()).toContainText(
+        "initial-shared",
+        { timeout: 10_000 },
+      );
+      await expect(pageB.locator(".composer-model").first()).toContainText(
+        "initial-shared",
+        { timeout: 10_000 },
+      );
+
+      backend.pushEvent({
+        type: "status_update",
+        session_id: "shared-session",
+        model: "shared-updated",
+        context_tokens: 0,
+        max_context: 200_000,
+        cloud_connected: false,
+        cloud_org: "",
+      });
+      // Both tabs reflect the push.
+      await expect(pageA.locator(".composer-model").first()).toContainText(
+        "shared-updated",
+      );
+      await expect(pageB.locator(".composer-model").first()).toContainText(
+        "shared-updated",
+      );
+    } finally {
+      await ctxA.close();
+      await ctxB.close();
+    }
+  });
+
   test("file_edited push routes to host.notifyFileEdited (no crash on web)", async ({
     page,
     backend,

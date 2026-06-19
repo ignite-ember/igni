@@ -29,7 +29,7 @@ export default defineConfig({
   expect: { timeout: 5_000 },
 
   use: {
-    baseURL: "http://127.0.0.1:5173",
+    baseURL: "http://127.0.0.1:5179",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
@@ -42,8 +42,8 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: "npm run dev -- --host 127.0.0.1 --port 5173 --strictPort",
-    url: "http://127.0.0.1:5173",
+    command: "npm run dev -- --host 127.0.0.1 --port 5179 --strictPort",
+    url: "http://127.0.0.1:5179",
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
     stdout: "ignore",

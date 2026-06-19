@@ -19,7 +19,19 @@
 // to connect, fail, and surface a "Connecting…" placeholder. Tests
 // assert on extension-host state (commands registered, panel mounted)
 // rather than webview DOM.
-process.stdout.write(JSON.stringify({ status: "ready", ws_port: 65535 }) + "\n");
+//
+// We emit the FULL multi-field ready envelope the real BE produces
+// (``ws_url`` alongside ``ws_port``) so the extension's stdout
+// parser is exercised against the production shape — protects
+// against a future tightening that accidentally rejects unknown
+// fields and breaks the BE handshake.
+process.stdout.write(
+  JSON.stringify({
+    status: "ready",
+    ws_port: 65535,
+    ws_url: "ws://127.0.0.1:65535",
+  }) + "\n",
+);
 
 // Idle. The extension's process_manager kills us when the workspace
 // closes; the test harness times out anyway. Keep stdin open so we

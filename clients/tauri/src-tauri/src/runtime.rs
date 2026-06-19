@@ -332,3 +332,92 @@ fn run_uv(uv: &Path, args: &[&str]) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn uv_target_returns_a_known_triple_on_this_platform() {
+        // ``uv_target`` is compile-time-bound to the host arch; we can
+        // only assert it returns *something* sensible here. The
+        // exhaustive match is the contract; this test catches a
+        // regression that removes the current host's arm.
+        let triple = uv_target().expect("host platform must be mapped");
+        let known = [
+            "aarch64-apple-darwin",
+            "x86_64-apple-darwin",
+            "aarch64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu",
+            "x86_64-pc-windows-msvc",
+        ];
+        assert!(known.contains(&triple), "unexpected triple {triple:?}");
+    }
+
+    #[test]
+    fn is_executable_detects_real_file() {
+        let tmp = std::env::temp_dir().join(format!(
+            "ember_runtime_test_{}",
+            std::process::id()
+        ));
+        fs::write(&tmp, b"hi").unwrap();
+        assert!(is_executable(&tmp));
+        // is_executable says false for a directory.
+        assert!(!is_executable(&std::env::temp_dir()));
+        // …and false for a nonexistent path.
+        assert!(!is_executable(&tmp.with_extension("nope")));
+        let _ = fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn ensure_free_space_accepts_zero_requirement() {
+        // 0-byte requirement should pass on any reachable directory.
+        let tmp = std::env::temp_dir();
+        assert!(ensure_free_space(&tmp, 0).is_ok());
+    }
+
+    #[test]
+    fn ensure_free_space_rejects_impossibly_large_requirement() {
+        // A petabyte won't fit on a dev laptop — assert the error
+        // message reports both available and required for the user.
+        let tmp = std::env::temp_dir();
+        let petabyte: u64 = 1024 * 1024 * 1024 * 1024 * 1024;
+        let err = ensure_free_space(&tmp, petabyte).unwrap_err();
+        assert!(err.contains("Not enough disk space"));
+        assert!(err.contains("MB free"));
+        assert!(err.contains("need at least"));
+    }
+
+    #[test]
+    fn ensure_free_space_walks_up_to_existing_parent() {
+        // Given a path whose own dir doesn't exist yet, the check
+        // should probe the closest existing ancestor instead of
+        // erroring on the missing leaf.
+        let nonexistent = std::env::temp_dir()
+            .join("ember_runtime_test_does_not_exist")
+            .join("nested")
+            .join("further");
+        assert!(ensure_free_space(&nonexistent, 0).is_ok());
+    }
+
+    #[test]
+    fn uv_bin_name_has_expected_extension() {
+        let name = uv_bin_name();
+        if cfg!(target_os = "windows") {
+            assert_eq!(name, "uv.exe");
+        } else {
+            assert_eq!(name, "uv");
+        }
+    }
+
+    #[test]
+    fn venv_python_relpath_matches_platform_layout() {
+        let p = venv_python_rel_path();
+        if cfg!(target_os = "windows") {
+            assert_eq!(p, "Scripts/python.exe");
+        } else {
+            assert_eq!(p, "bin/python");
+        }
+    }
+}

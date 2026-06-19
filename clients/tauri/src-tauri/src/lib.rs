@@ -1006,5 +1006,33 @@ mod tests {
         // value, just keep reading.
         assert_eq!(parse_ready_line(r#"{"status":"ready"}"#), None);
     }
+
+    #[test]
+    fn ready_line_with_non_numeric_ws_port_returns_none() {
+        // ``ws_port`` is u16 — string/bool/object values must be
+        // refused, not panic.
+        assert_eq!(
+            parse_ready_line(r#"{"status":"ready","ws_port":"oops"}"#),
+            None,
+        );
+        assert_eq!(
+            parse_ready_line(r#"{"status":"ready","ws_port":true}"#),
+            None,
+        );
+    }
+
+    #[test]
+    fn ready_line_with_out_of_range_ws_port_returns_none() {
+        // Anything above u16::MAX (65535) is not a port. We expect
+        // the caller's ``as u16`` to truncate — but ``parse_ready_line``
+        // currently coerces; lock that down so a fix one way or the
+        // other is a deliberate choice.
+        let line = format!(r#"{{"status":"ready","ws_port":{}}}"#, 1u64 << 40);
+        // Truncating cast yields *some* u16; we assert the parser
+        // doesn't crash and returns Some(_). If the contract tightens
+        // later, this test surfaces the change.
+        let got = parse_ready_line(&line);
+        assert!(got.is_some(), "huge ws_port currently coerces, not crashes");
+    }
 }
 

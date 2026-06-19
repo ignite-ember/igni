@@ -23,9 +23,7 @@ class AddFileToChatAction : AnAction() {
         val base = project.basePath
         for (vf in files) {
             if (vf.isDirectory) continue
-            val rel = if (base != null && vf.path.startsWith("$base/"))
-                vf.path.removePrefix("$base/")
-            else vf.path
+            val rel = PathUtils.projectRelative(vf.path, base)
             EmberHostEvents.attachFile(project, rel)
         }
         ToolWindowManager.getInstance(project)

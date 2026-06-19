@@ -44,12 +44,7 @@ class AddSelectionToChatAction : AnAction() {
         }
 
         val vf = e.getData(CommonDataKeys.VIRTUAL_FILE)
-        val base = project.basePath
-        val rel = if (vf != null && base != null && vf.path.startsWith("$base/")) {
-            vf.path.removePrefix("$base/")
-        } else {
-            vf?.path
-        }
+        val rel = vf?.let { PathUtils.projectRelative(it.path, project.basePath) }
 
         EmberHostEvents.addToComposer(project, rel, text, startLine, endLine)
 
