@@ -55,25 +55,29 @@ jobs:
           npm ci
           npm run build
 
-      # Same env as the real ``build-tauri`` job. We deliberately
-      # build via ``cargo tauri build`` directly (no tauri-action
-      # wrapper) so the .sig file ``tauri-bundler`` produces stays
-      # on disk — that's the file tauri-action otherwise deletes.
-      - name: Build + sign Tauri app
+      # Run tauri-action exactly like release.yml does — without
+      # an upload (no release exists for this branch). The point
+      # is to observe whether the .app.tar.gz.sig file persists
+      # after tauri-action finishes: that's the question that
+      # determines whether release.yml can "stash directly" or
+      # has to re-sign with minisign.
+      - name: Build via tauri-action
+        uses: tauri-apps/tauri-action@v0
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: clients/tauri
+          # No tagName / releaseId — we just want the bundle.
+          args: --target aarch64-apple-darwin
+
+      - name: List bundle dir after tauri-action
         run: |
-          cd clients/tauri
-          # ``createUpdaterArtifacts: true`` in tauri.conf.json
-          # tells tauri-bundler to emit ``<name>.app.tar.gz`` +
-          # ``.sig`` alongside the .app. Without that flag,
-          # ``tauri build`` only emits the .app directory and
-          # ``--bundles updater`` is silently a no-op (which is
-          # why the previous run found nothing to sign).
-          npx --yes @tauri-apps/cli@latest build --target aarch64-apple-darwin --bundles app
           echo "=== bundle/macos contents ==="
-          ls -la src-tauri/target/aarch64-apple-darwin/release/bundle/macos/
+          ls -la clients/tauri/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/ || true
+          echo "=== any *.sig in target ==="
+          find clients/tauri/src-tauri/target -name '*.sig' || true
 
       # Two-stage verification:
       #   1. tauri-bundler produced an ``.app.tar.gz.sig`` in the
