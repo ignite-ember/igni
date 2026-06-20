@@ -390,16 +390,40 @@ jobs:
       # but on Tauri 2.x + product names with spaces ("Ember Code")
       # it consistently logs ``Signature not found for the updater
       # JSON. Skipping upload...`` and the file never makes it to
-      # the release (verified across v0.6.0 + v0.6.1). The .app.tar.gz
-      # IS signed and the .sig sits next to it on disk — we just
-      # stash it as a workflow artifact so the ``updater-json`` job
-      # below can read both arches' sigs and write the file ourselves.
+      # the release (verified across v0.6.0 / v0.6.1 / v0.6.2). The
+      # ``.app.tar.gz`` IS signed and the ``.sig`` sits next to it
+      # on disk — we copy it to a no-spaces tmp path here so the
+      # ``updater-json`` job below can read both arches' sigs and
+      # write the manifest ourselves.
+      #
+      # Why ``find`` + ``cp`` instead of upload-artifact's glob:
+      # ``actions/upload-artifact`` with
+      # ``target/*/release/bundle/macos/*.app.tar.gz.sig`` failed on
+      # the v0.6.2 run with "No files were found" even though the
+      # file is at that exact path. ``find`` resolves the path
+      # deterministically (handles the space in "Ember Code" and the
+      # per-arch ``target/<triple>`` dir without any glob quirks).
       - name: Stash updater signature (macOS)
+        if: matrix.platform == 'macos-14'
+        run: |
+          set -euo pipefail
+          SIG=$(find clients/tauri/src-tauri/target -name '*.app.tar.gz.sig' -print -quit)
+          if [ -z "$SIG" ]; then
+            echo "::error::No .app.tar.gz.sig produced — tauri-action signing didn't run?"
+            echo "Listing bundle macos dir for debugging:"
+            find clients/tauri/src-tauri/target -path '*/release/bundle/macos/*' -maxdepth 8 -print || true
+            exit 1
+          fi
+          echo "Found sig: $SIG"
+          mkdir -p /tmp/updater-sig
+          cp "$SIG" /tmp/updater-sig/updater.sig
+          ls -la /tmp/updater-sig/
+      - name: Upload updater signature artifact
         if: matrix.platform == 'macos-14'
         uses: actions/upload-artifact@v4
         with:
           name: updater-sig-${{ contains(matrix.args, 'aarch64') && 'aarch64' || 'x86_64' }}
-          path: clients/tauri/src-tauri/target/*/release/bundle/macos/*.app.tar.gz.sig
+          path: /tmp/updater-sig/updater.sig
           if-no-files-found: error
           retention-days: 1
 
@@ -430,11 +454,13 @@ jobs:
           PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
 
-          # Sigs come down inside per-arch directories; the
-          # filename inside is ``Ember Code.app.tar.gz.sig`` (with
-          # a space) so we glob for it instead of hard-coding.
-          AARCH64_SIG="$(cat /tmp/sigs/updater-sig-aarch64/*.app.tar.gz.sig)"
-          X64_SIG="$(cat /tmp/sigs/updater-sig-x86_64/*.app.tar.gz.sig)"
+          # Each macOS matrix leg copied its ``.app.tar.gz.sig`` to
+          # ``/tmp/updater-sig/updater.sig`` before uploading the
+          # artifact, so the filename inside each download dir is
+          # the stable ``updater.sig`` (no space-in-filename glob
+          # surprises like the v0.6.2 attempt hit).
+          AARCH64_SIG="$(cat /tmp/sigs/updater-sig-aarch64/updater.sig)"
+          X64_SIG="$(cat /tmp/sigs/updater-sig-x86_64/updater.sig)"
 
           # ``jq -Rs .`` reads the file content as a raw string and
           # JSON-quotes it (escapes newlines / quotes correctly).
