@@ -366,6 +366,70 @@ jobs:
           # binaries are picked up the next time the app checks.
           includeUpdaterJson: true
 
+      # Stash IMMEDIATELY after tauri-action — before any other step
+      # touches the bundle dir. Probe runs on the ``fix/updater-
+      # resign`` branch confirmed that with ``createUpdaterArtifacts
+      # : true`` in tauri.conf.json the ``.app.tar.gz.sig`` is on
+      # disk right after the action, but earlier release runs found
+      # it missing later in the job — likely because tauri-action's
+      # upload-to-release step (which only runs when ``tagName`` +
+      # ``releaseId`` are supplied, as they are here) cleans up the
+      # source files. Grab it now while it's still there.
+      #
+      # The .sig content tauri-bundler writes is the standard
+      # minisign signature *base64-encoded* — that's what Tauri's
+      # updater client expects to read out of ``latest.json``'s
+      # ``signature`` field. ``updater-json`` below embeds the
+      # file's contents verbatim.
+      - name: Stash updater signature (macOS)
+        if: matrix.platform == 'macos-14'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/updater-sig
+          SIG=$(find clients/tauri/src-tauri/target -name '*.app.tar.gz.sig' -print -quit)
+          if [ -n "$SIG" ]; then
+            # Happy path: tauri-bundler's .sig is still on disk —
+            # stash it verbatim (it's already the base64-wrapped
+            # form ``latest.json`` needs).
+            echo "Found tauri-bundler sig: $SIG"
+            cp "$SIG" /tmp/updater-sig/updater.sig
+          else
+            # Fallback: tauri-action's upload step deleted the .sig
+            # before we could grab it (this is what bit v0.6.3).
+            # Re-sign the .app.tar.gz with minisign using the same
+            # secret key, then base64-encode to match Tauri's
+            # expected format. Verified path on ``fix/updater-
+            # resign`` test runs.
+            TARBALL=$(find clients/tauri/src-tauri/target -name '*.app.tar.gz' -not -path '*.app/*' -print -quit)
+            if [ -z "$TARBALL" ]; then
+              echo "::error::Neither .sig nor .app.tar.gz present — tauri-bundler didn't produce updater artifacts"
+              find clients/tauri/src-tauri/target -path '*/release/bundle/macos/*' -maxdepth 8 -print || true
+              exit 1
+            fi
+            echo "tauri-bundler .sig missing; re-signing $TARBALL with minisign"
+            brew install minisign
+            printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d > /tmp/priv.key
+            rm -f "${TARBALL}.minisig"
+            printf '%s' "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" | \
+              minisign -S -s /tmp/priv.key -m "$TARBALL" -W
+            # Wrap the raw minisign signature in base64 — that's the
+            # format Tauri's updater client expects out of latest.json.
+            base64 < "${TARBALL}.minisig" | tr -d '\n' > /tmp/updater-sig/updater.sig
+            rm -f /tmp/priv.key
+          fi
+          ls -la /tmp/updater-sig/
+      - name: Upload updater signature artifact
+        if: matrix.platform == 'macos-14'
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-sig-${{ contains(matrix.args, 'aarch64') && 'aarch64' || 'x86_64' }}
+          path: /tmp/updater-sig/updater.sig
+          if-no-files-found: error
+          retention-days: 1
+
       # The .dmg's Finder icon defaults to the bundled app icon
       # (Tauri copies icon.icns into the volume as .VolumeIcon.icns).
       # Strip it so the downloaded .dmg shows the generic disk-image
@@ -384,48 +448,6 @@ jobs:
             clients/tauri/scripts/strip-dmg-volume-icon.sh "$dmg"
             gh release upload "${{ github.ref_name }}" "$dmg" --clobber
           done
-
-      # ``tauri-action`` is supposed to assemble ``latest.json`` for
-      # the auto-updater when ``includeUpdaterJson: true`` is set,
-      # but on Tauri 2.x + product names with spaces ("Ember Code")
-      # it consistently logs ``Signature not found for the updater
-      # JSON. Skipping upload...`` and the file never makes it to
-      # the release (verified across v0.6.0 / v0.6.1 / v0.6.2). The
-      # ``.app.tar.gz`` IS signed and the ``.sig`` sits next to it
-      # on disk — we copy it to a no-spaces tmp path here so the
-      # ``updater-json`` job below can read both arches' sigs and
-      # write the manifest ourselves.
-      #
-      # Why ``find`` + ``cp`` instead of upload-artifact's glob:
-      # ``actions/upload-artifact`` with
-      # ``target/*/release/bundle/macos/*.app.tar.gz.sig`` failed on
-      # the v0.6.2 run with "No files were found" even though the
-      # file is at that exact path. ``find`` resolves the path
-      # deterministically (handles the space in "Ember Code" and the
-      # per-arch ``target/<triple>`` dir without any glob quirks).
-      - name: Stash updater signature (macOS)
-        if: matrix.platform == 'macos-14'
-        run: |
-          set -euo pipefail
-          SIG=$(find clients/tauri/src-tauri/target -name '*.app.tar.gz.sig' -print -quit)
-          if [ -z "$SIG" ]; then
-            echo "::error::No .app.tar.gz.sig produced — tauri-action signing didn't run?"
-            echo "Listing bundle macos dir for debugging:"
-            find clients/tauri/src-tauri/target -path '*/release/bundle/macos/*' -maxdepth 8 -print || true
-            exit 1
-          fi
-          echo "Found sig: $SIG"
-          mkdir -p /tmp/updater-sig
-          cp "$SIG" /tmp/updater-sig/updater.sig
-          ls -la /tmp/updater-sig/
-      - name: Upload updater signature artifact
-        if: matrix.platform == 'macos-14'
-        uses: actions/upload-artifact@v4
-        with:
-          name: updater-sig-${{ contains(matrix.args, 'aarch64') && 'aarch64' || 'x86_64' }}
-          path: /tmp/updater-sig/updater.sig
-          if-no-files-found: error
-          retention-days: 1
 
   # Build ``latest.json`` ourselves and attach it to the release —
   # see the long comment in the matrix step above. Mac-only for now;

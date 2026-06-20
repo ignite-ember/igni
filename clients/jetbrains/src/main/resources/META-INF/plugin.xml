@@ -13,6 +13,21 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>0.6.4</h3>
+        <ul>
+          <li>Auto-updater finally works on macOS. Required two
+              missing pieces:
+              <code>bundle.createUpdaterArtifacts: true</code> in
+              <code>tauri.conf.json</code> so the .app.tar.gz +
+              .sig actually get emitted, and a workflow step that
+              stashes the .sig before tauri-action's upload pass
+              cleans it up. Includes a minisign re-sign fallback
+              if the .sig is gone by the time we reach for it.
+              v0.6.0 / 0.6.1 / 0.6.2 / 0.6.3 clients will get a
+              real update prompt for 0.6.4 — the first release
+              with a valid <code>latest.json</code> attached.</li>
+          <li>Same product surface as 0.6.1 — no UI changes.</li>
+        </ul>
         <h3>0.6.3</h3>
         <ul>
           <li>Re-attempt of the 0.6.2 updater fix. The previous

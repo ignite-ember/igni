@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Ember Code",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "identifier": "sh.ignite-ember.desktop",
   "build": {
     "frontendDist": "../../web/dist",
