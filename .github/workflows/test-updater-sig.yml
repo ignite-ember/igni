@@ -65,7 +65,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           cd clients/tauri
-          npx --yes @tauri-apps/cli@latest build --target aarch64-apple-darwin --bundles app updater
+          # Tauri 2 ``--bundles`` is comma-separated. ``updater``
+          # is the bundle type that emits ``<name>.app.tar.gz``,
+          # which is what tauri-bundler signs to produce the
+          # ``.sig`` we need. ``app`` alone only produces the
+          # ``.app`` directory without the tarball.
+          npx --yes @tauri-apps/cli@latest build --target aarch64-apple-darwin --bundles app,updater
           echo "=== bundle/macos contents ==="
           ls -la src-tauri/target/aarch64-apple-darwin/release/bundle/macos/
 
