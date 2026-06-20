@@ -1252,6 +1252,31 @@ class BackendServer:
         self._session.main_team = self._session._build_main_agent()
         return self.get_status()
 
+    async def get_cloud_plan(self) -> dict | None:
+        """Fetch the current user's plan tier from the cloud.
+
+        Hits ``/portal/me`` with the stored JWT (same endpoint the
+        client uses to validate the token on login). The response
+        includes the user's tier from their active org membership —
+        ``lite`` / ``pro`` / ``max`` / ``codeindex``. FE renders
+        this as "Plan: Pro" in the org popover and refreshes on
+        every popover open so users see seat/tier changes without
+        having to restart the app.
+
+        Returns ``None`` when there are no credentials (logged out)
+        or the call fails — FE hides the row in that case.
+        """
+        token = self._session._cloud.access_token
+        if not token:
+            return None
+        from ember_code.core.auth.client import DEFAULT_API_URL, validate_token
+
+        api_url = getattr(self._settings.auth, "api_url", DEFAULT_API_URL) or DEFAULT_API_URL
+        info = await validate_token(token, api_url=api_url)
+        if not info:
+            return None
+        return {"tier": info.get("tier"), "org_name": info.get("org_display_name")}
+
     # ── Status ────────────────────────────────────────────────────
 
     def get_status(self) -> msg.StatusUpdate:

@@ -91,6 +91,25 @@ const TOOLS_MENU: { label: string; command: string; desc: string }[] = [
   { label: "Help", command: "/help", desc: "all commands" },
 ];
 
+/** Pretty label for ``Tier`` values from ember-server
+ *  (lite / pro / max / codeindex). The DB stores lowercase, the UI
+ *  wants title-case; ``codeindex`` is the special-purpose CodeIndex-
+ *  only tier so we spell it out for clarity. */
+function formatPlanName(tier: string): string {
+  switch (tier.toLowerCase()) {
+    case "lite":
+      return "Lite";
+    case "pro":
+      return "Pro";
+    case "max":
+      return "Max";
+    case "codeindex":
+      return "CodeIndex";
+    default:
+      return tier;
+  }
+}
+
 export default function App() {
   const client = useMemo(() => new EmberClient(), []);
   const [conn, setConn] = useState<ConnectionState>("connecting");
@@ -366,6 +385,12 @@ export default function App() {
   const [skills, setSkills] = useState<SlashCommand[]>([]);
   const [modelMenuSignal, setModelMenuSignal] = useState<{ n: number } | null>(null);
   const [accountMenu, setAccountMenu] = useState(false);
+  // Plan tier (``lite`` / ``pro`` / ``max`` / ``codeindex``) fetched
+  // on demand whenever the account popover opens — the BE calls
+  // ``/portal/me`` on the cloud and returns the tier from the user's
+  // active org membership. Refreshing on each open ensures the UI
+  // reflects seat-tier reassignments without an app restart.
+  const [cloudPlan, setCloudPlan] = useState<string | null>(null);
   // Live draft from another attached view (mirroring).
   // The directory this session is locked to (tools + shell cwd).
   const [projectDir, setProjectDir] = useState("");
@@ -1501,7 +1526,19 @@ export default function App() {
             <button
               className="chip"
               title="Account"
-              onClick={() => setAccountMenu(!accountMenu)}
+              onClick={() => {
+                const opening = !accountMenu;
+                setAccountMenu(opening);
+                if (opening) {
+                  // Fresh fetch every time the popover opens so seat
+                  // tier changes show up without an app restart. The
+                  // BE proxies to ``/portal/me`` on the cloud.
+                  void client
+                    .rpc<{ tier?: string | null } | null>("get_cloud_plan")
+                    .then((info) => setCloudPlan(info?.tier ?? null))
+                    .catch(() => setCloudPlan(null));
+                }
+              }}
             >
               <CloudIcon /> <span className="chip-label">{status.cloud_org}</span> <ChevronIcon size={9} down />
             </button>
@@ -1539,6 +1576,16 @@ export default function App() {
                 <div className="popup-item" style={{ cursor: "default" }}>
                   <span className="desc">Signed in to {status?.cloud_org}</span>
                 </div>
+                {cloudPlan && (
+                  <div className="popup-item" style={{ cursor: "default" }}>
+                    <span className="desc">
+                      Plan:{" "}
+                      <span style={{ color: "var(--fg)", fontWeight: 500 }}>
+                        {formatPlanName(cloudPlan)}
+                      </span>
+                    </span>
+                  </div>
+                )}
                 <div
                   className="popup-item"
                   onClick={() => {

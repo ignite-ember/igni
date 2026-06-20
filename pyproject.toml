@@ -7,7 +7,7 @@ name = "ignite-ember"
 version = "0.6.4"
 description = "AI coding assistant with multi-agent orchestration — TUI, web, JetBrains, VSCode, and Tauri clients"
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [{ name = "Ignite Ember" }]
 keywords = ["ai", "coding-assistant", "agent", "agno", "claude", "openai", "tui", "jetbrains"]
@@ -16,7 +16,7 @@ classifiers = [
     "Environment :: Console",
     "Environment :: Plugins",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Operating System :: Microsoft :: Windows",
