@@ -2,7 +2,7 @@
   "name": "ember-code-vscode",
   "displayName": "Ember Code",
   "description": "AI coding assistant with multi-agent orchestration — chat panel with zero-touch backend install",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "publisher": "ignite-ember",
   "license": "MIT",
   "icon": "icon.png",
