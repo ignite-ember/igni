@@ -508,7 +508,9 @@ jobs:
           EOF
           # Sanity-check the JSON before we ship it.
           jq . /tmp/latest.json >/dev/null
-          gh release upload "$TAG" /tmp/latest.json --clobber
+          # ``--repo`` is required because this job doesn't check out
+          # the repo (no .git), so ``gh`` can't detect the upstream.
+          gh release upload "$TAG" /tmp/latest.json --clobber --repo "$GITHUB_REPOSITORY"
           echo "latest.json uploaded:"
           cat /tmp/latest.json
 
