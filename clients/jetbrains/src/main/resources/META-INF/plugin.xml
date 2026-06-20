@@ -13,6 +13,23 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>0.6.3</h3>
+        <ul>
+          <li>Re-attempt of the 0.6.2 updater fix. The previous
+              workflow used <code>actions/upload-artifact</code>'s
+              glob to stash <code>.app.tar.gz.sig</code> from the
+              macOS build dirs, but the glob silently matched zero
+              files even though the file was at exactly that path,
+              failing both macOS matrix legs. Switched to a
+              <code>find</code> + <code>cp</code> step that copies
+              the sig to a stable no-spaces path before the
+              upload-artifact step picks it up.</li>
+          <li>Same set of features as 0.6.1 — frosted-glass header
+              / sidebar, custom scroll indicators, faster
+              post-stream tail, knowledge-index warmup, window-drag
+              from the chat header, dark-tile app icon, generic
+              DMG installer icon.</li>
+        </ul>
         <h3>0.6.2</h3>
         <ul>
           <li>Release-pipeline fix: <code>latest.json</code> for the
