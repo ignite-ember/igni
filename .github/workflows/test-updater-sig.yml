@@ -1,0 +1,136 @@
+name: Test updater signing (manual)
+
+# Manually-triggered probe for the auto-updater signing flow.
+# Builds the macOS Tauri app exactly like a real release would,
+# then RE-SIGNS the resulting .app.tar.gz ourselves with minisign
+# (using the same TAURI_SIGNING_PRIVATE_KEY tauri-bundler used) and
+# verifies the new signature with the public key embedded in
+# tauri.conf.json. Goal: prove out the re-sign step in isolation
+# before wiring it into release.yml.
+#
+# tauri-action's built-in latest.json assembly fails for product
+# names with spaces ("Ember Code") AND it deletes the .sig file
+# after building, so by the time we'd try to stash the .sig from
+# disk it's already gone. Re-signing solves both: we don't need
+# the original .sig at all; the runner has the key.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Rust target to build"
+        type: choice
+        default: aarch64-apple-darwin
+        options:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+
+jobs:
+  build-and-resign:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: clients/web/package-lock.json
+
+      - name: Install Rust target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ inputs.target }}
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: clients/tauri/src-tauri
+
+      - name: Install minisign + jq
+        run: brew install minisign jq
+
+      - name: Build shared web UI
+        run: |
+          cd clients/web
+          npm ci
+          npm run build
+
+      # Same env as the real ``build-tauri`` job. We deliberately
+      # build via ``cargo tauri build`` directly (no tauri-action
+      # wrapper) so the .sig file ``tauri-bundler`` produces stays
+      # on disk — that's the file tauri-action otherwise deletes.
+      - name: Build + sign Tauri app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          cd clients/tauri
+          npx --yes @tauri-apps/cli@latest build --target ${{ inputs.target }} --bundles app updater
+          echo "=== bundle/macos contents ==="
+          ls -la src-tauri/target/${{ inputs.target }}/release/bundle/macos/
+
+      # Independent verification — even if tauri-bundler's own .sig
+      # is still on disk here, we re-sign with minisign CLI and
+      # verify with the public key from tauri.conf.json to prove the
+      # workflow that would replace tauri-action's broken path.
+      - name: Re-sign .app.tar.gz with minisign
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          TARBALL=$(find clients/tauri/src-tauri/target -name '*.app.tar.gz' -not -path '*.app/*' -print -quit)
+          if [ -z "$TARBALL" ]; then
+            echo "::error::No .app.tar.gz found"
+            find clients/tauri/src-tauri/target -name '*.tar.gz' -maxdepth 8 || true
+            exit 1
+          fi
+          echo "Tarball: $TARBALL"
+
+          # The env var stores the secret key file base64-encoded
+          # (see the public key in tauri.conf.json — same format).
+          # rsign-generated keys are byte-compatible with minisign.
+          printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d > /tmp/priv.key
+          echo "=== key header ==="
+          head -1 /tmp/priv.key
+          echo "==================="
+
+          # ``-S -s KEY -m FILE`` signs ``FILE`` using ``KEY``.
+          # ``-W`` reads the password from stdin so the run is
+          # non-interactive. Output goes to ``FILE.minisig``.
+          printf '%s' "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" | \
+            minisign -S -s /tmp/priv.key -m "$TARBALL" -W
+          SIG_FILE="${TARBALL}.minisig"
+          echo "=== signature file ==="
+          cat "$SIG_FILE"
+          echo "======================"
+
+          # Decode the embedded public key (same base64 wrapping as
+          # the private one) and verify the sig we just produced.
+          PUBKEY_B64=$(jq -r '.plugins.updater.pubkey' clients/tauri/src-tauri/tauri.conf.json)
+          printf '%s' "$PUBKEY_B64" | base64 -d > /tmp/pub.key
+          # ``-V -p`` verifies the signature with that public key.
+          minisign -V -p /tmp/pub.key -m "$TARBALL" -x "$SIG_FILE"
+          echo "✓ signature verifies against the pubkey in tauri.conf.json"
+
+          # Save the sig in the stable location release.yml would use
+          # and surface the contents in the job summary so we can
+          # eyeball the format alongside what's in the failed v0.6.2
+          # / v0.6.3 builds.
+          mkdir -p /tmp/updater-sig
+          cp "$SIG_FILE" /tmp/updater-sig/updater.sig
+          {
+            echo "## Re-signed updater.sig"
+            echo '```'
+            cat /tmp/updater-sig/updater.sig
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload signature artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-sig-${{ inputs.target }}
+          path: /tmp/updater-sig/updater.sig
+          if-no-files-found: error
+          retention-days: 1
