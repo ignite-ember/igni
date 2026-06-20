@@ -385,8 +385,87 @@ jobs:
             gh release upload "${{ github.ref_name }}" "$dmg" --clobber
           done
 
+      # ``tauri-action`` is supposed to assemble ``latest.json`` for
+      # the auto-updater when ``includeUpdaterJson: true`` is set,
+      # but on Tauri 2.x + product names with spaces ("Ember Code")
+      # it consistently logs ``Signature not found for the updater
+      # JSON. Skipping upload...`` and the file never makes it to
+      # the release (verified across v0.6.0 + v0.6.1). The .app.tar.gz
+      # IS signed and the .sig sits next to it on disk — we just
+      # stash it as a workflow artifact so the ``updater-json`` job
+      # below can read both arches' sigs and write the file ourselves.
+      - name: Stash updater signature (macOS)
+        if: matrix.platform == 'macos-14'
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-sig-${{ contains(matrix.args, 'aarch64') && 'aarch64' || 'x86_64' }}
+          path: clients/tauri/src-tauri/target/*/release/bundle/macos/*.app.tar.gz.sig
+          if-no-files-found: error
+          retention-days: 1
+
+  # Build ``latest.json`` ourselves and attach it to the release —
+  # see the long comment in the matrix step above. Mac-only for now;
+  # Windows + Linux updaters use different bundle types we don't
+  # currently ship signed payloads for.
+  updater-json:
+    needs: [prepare-release, build-tauri]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download macOS updater signatures
+        uses: actions/download-artifact@v4
+        with:
+          pattern: updater-sig-*
+          path: /tmp/sigs/
+      - name: Assemble + upload latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.ref_name }}"
+          # Strip leading "v" so ``version`` matches what the
+          # updater plugin compares against ``CARGO_PKG_VERSION``.
+          VERSION="${TAG#v}"
+          PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+
+          # Sigs come down inside per-arch directories; the
+          # filename inside is ``Ember Code.app.tar.gz.sig`` (with
+          # a space) so we glob for it instead of hard-coding.
+          AARCH64_SIG="$(cat /tmp/sigs/updater-sig-aarch64/*.app.tar.gz.sig)"
+          X64_SIG="$(cat /tmp/sigs/updater-sig-x86_64/*.app.tar.gz.sig)"
+
+          # ``jq -Rs .`` reads the file content as a raw string and
+          # JSON-quotes it (escapes newlines / quotes correctly).
+          AARCH64_JSON="$(printf '%s' "$AARCH64_SIG" | jq -Rs .)"
+          X64_JSON="$(printf '%s' "$X64_SIG" | jq -Rs .)"
+
+          cat > /tmp/latest.json <<EOF
+          {
+            "version": "${VERSION}",
+            "notes": "See the GitHub release page for the changelog.",
+            "pub_date": "${PUB_DATE}",
+            "platforms": {
+              "darwin-aarch64": {
+                "signature": ${AARCH64_JSON},
+                "url": "${BASE_URL}/Ember.Code_aarch64.app.tar.gz"
+              },
+              "darwin-x86_64": {
+                "signature": ${X64_JSON},
+                "url": "${BASE_URL}/Ember.Code_x64.app.tar.gz"
+              }
+            }
+          }
+          EOF
+          # Sanity-check the JSON before we ship it.
+          jq . /tmp/latest.json >/dev/null
+          gh release upload "$TAG" /tmp/latest.json --clobber
+          echo "latest.json uploaded:"
+          cat /tmp/latest.json
+
   github-release:
-    needs: [prepare-release, publish-pypi, build-jetbrains-plugin, build-vscode-plugin, build-tauri]
+    needs: [prepare-release, publish-pypi, build-jetbrains-plugin, build-vscode-plugin, build-tauri, updater-json]
     runs-on: ubuntu-latest
     permissions:
       contents: write

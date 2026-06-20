@@ -13,6 +13,21 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>0.6.2</h3>
+        <ul>
+          <li>Release-pipeline fix: <code>latest.json</code> for the
+              Tauri auto-updater is now assembled and uploaded by
+              our own workflow step. <code>tauri-action</code>'s
+              built-in path was silently skipping with "Signature
+              not found for the updater JSON" on Tauri 2 + product
+              names with spaces, so previous releases shipped
+              without the updater manifest and clients couldn't
+              detect new versions. Users on 0.6.0 / 0.6.1 will
+              receive an update prompt for 0.6.2.</li>
+          <li>No JetBrains-side changes in this release; bundled
+              <code>ignite-ember</code> bumped to 0.6.2 in lockstep
+              via <code>build.gradle.kts</code>.</li>
+        </ul>
         <h3>0.6.1</h3>
         <ul>
           <li>Frosted-glass header + sidebar — messages scrolling
