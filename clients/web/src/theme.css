@@ -24,6 +24,10 @@
   --fg-faint: #87857d;
   --border: #4a4a45;
   --border-soft: #3d3d39;
+  /* Scroll-indicator thumb. Dark mode reuses ``--border`` (#4a4a45,
+     low-contrast on the dark bg). Light mode overrides this below
+     because ``--border`` (#dedcd3) reads too washed-out there. */
+  --scroll-thumb: #4a4a45;
 
   --accent-blue: #6aa3f7;
   --success: #4cb05c;
@@ -63,6 +67,11 @@
   --success: #1a7f37;
   --danger: #cf222e;
   --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.14);
+  /* Darker than ``--border`` so the thumb reads clearly against the
+     near-white bg — ``--border`` (#dedcd3) looked too washed out on
+     #faf9f5. ``#b8b5ad`` matches the dark theme's mid-tone, giving
+     similar visual weight in both modes. */
+  --scroll-thumb: #b8b5ad;
 }
 
 /* Fallback for very first paint: before the JS has set data-theme,
@@ -83,6 +92,7 @@
     --success: #1a7f37;
     --danger: #cf222e;
     --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.14);
+    --scroll-thumb: #b8b5ad;
   }
 }
 
@@ -104,6 +114,11 @@ body {
   font-size: 15px;
   line-height: 1.65;
   -webkit-font-smoothing: antialiased;
+  /* The shell never scrolls — overflow lives inside ``.conversation``
+     (and a few panels). Lock the body so an accidental layout
+     overflow can't rubber-band the whole window. */
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 button {
@@ -121,11 +136,17 @@ button {
 .sidebar {
   width: var(--sidebar-w);
   flex-shrink: 0;
-  background: var(--bg-inset);
+  /* Same surface as the chat column and the (transparent) header so
+     the SESSIONS rail blends into one continuous canvas instead of
+     reading as a separate panel. Previously ``--bg-inset`` (a darker
+     tone) made the sidebar feel inset/cooler than the chat. */
+  background: var(--bg);
   border-right: 1px solid var(--border-soft);
   display: flex;
   flex-direction: column;
   transition: margin-left 0.18s ease;
+  /* Anchor for ``.sidebar-top`` (absolute) below. */
+  position: relative;
 }
 
 .sidebar.closed {
@@ -174,10 +195,154 @@ button {
   color: var(--fg-faint);
 }
 
+/* Floating top cluster — head row + New-chat button + "Sessions"
+   label. Layered above ``.sidebar-list`` so the list can scroll up
+   behind the blur stack inside it. Background stays the sidebar's
+   own ``--bg`` (effectively transparent here) so the layers below
+   show through to be frosted by the stack. */
+.sidebar-top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  background: transparent;
+}
+
 .sidebar-list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 8px 12px;
+  /* Same hide-native trick as ``.conversation`` — the overlay
+     scrollbar below would otherwise be blurred along with the
+     session items. */
+  scrollbar-width: none;
+  /* ``padding-top`` matches the cluster's natural height so the
+     first item sits crisp directly below the "Sessions" label at
+     scroll-top, with no extra blank gap. Items only enter the blur
+     strip once the user actually scrolls. */
+  padding: 118px 8px 12px;
+  position: relative;
+  z-index: 1;
+  /* Same overscroll guard as ``.conversation`` so the macOS
+     rubber-band doesn't bounce the whole window from inside the
+     sidebar either. */
+  overscroll-behavior: contain;
+}
+
+/* ── Sidebar progressive blur ───────────────────────────────────────
+   Sibling of ``.sidebar-top`` rather than a child, so backdrop-filter
+   samples ``.sidebar-list`` directly without crossing an extra
+   stacking context. Stronger radii than the main header (the user
+   wants the text "barely visible" behind the Sessions cluster) and
+   the heaviest layers cover more of the zone so items get heavy
+   frost the moment they enter, not just at the very top. */
+.sidebar-blur {
+  position: absolute;
+  /* Extends from the very top of the sidebar (so an overscroll
+     rubber-band can't reveal crisp items above the cluster) down
+     to the bottom edge of the cluster (~118 px). The visible blur
+     ramp still concentrates near the bottom via the layer masks
+     below — peak frost right where items enter the cluster, fading
+     to nothing by the time they reach the top of the app. */
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 118px;
+  /* Sits between the scrollable list (z:1) and the cluster (z:10)
+     so items get frosted but the cluster's own text/widgets paint
+     over untouched. */
+  z-index: 5;
+  pointer-events: none;
+}
+.sidebar-blur-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+/* Same six-layer ramp as ``.app-header-blur-layer`` — keeps the
+   feel consistent across the two surfaces. Radii cap at 16 px;
+   the masks hold the heavy layers across the upper portion of the
+   zone so overscrolled items stay frosted, and fade to crisp in
+   the bottom few percent so the first item (sitting flush at the
+   zone's bottom edge) is sharp at scroll-top. */
+/* Identical mask values to the header above — smooth ramp from
+   max blur at the top of the zone to crisp at the bottom. The
+   zone itself is taller (118 px vs the header's ~54 px), so the
+   visible gradient covers more vertical distance but follows the
+   same shape. */
+.sidebar-blur-layer:nth-child(1) {
+  backdrop-filter: blur(0.5px);
+  -webkit-backdrop-filter: blur(0.5px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 95%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 95%, transparent 100%);
+}
+.sidebar-blur-layer:nth-child(2) {
+  backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(1px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
+}
+.sidebar-blur-layer:nth-child(3) {
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 65%, transparent 85%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 65%, transparent 85%);
+}
+.sidebar-blur-layer:nth-child(4) {
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 50%, transparent 70%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 50%, transparent 70%);
+}
+.sidebar-blur-layer:nth-child(5) {
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 35%, transparent 55%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 35%, transparent 55%);
+}
+.sidebar-blur-layer:nth-child(6) {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 20%, transparent 40%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 20%, transparent 40%);
+}
+
+/* WebKit scrollbar hide for both surfaces (Firefox uses
+   ``scrollbar-width: none`` above; WebKit needs this pseudo). */
+.conversation::-webkit-scrollbar,
+.sidebar-list::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* ── Scroll-position overlay ────────────────────────────────────────
+   Custom scrollbar thumb rendered above the frosted header so its
+   position is always visible. ``ScrollIndicator.tsx`` updates the
+   inline ``top`` + ``height`` from each scroll event; CSS handles
+   the look + the fade. */
+.scroll-indicator {
+  position: absolute;
+  /* Flush against the right edge — same place the native overlay
+     scrollbar would sit. The thumb's own 6 px width gives it
+     enough visual presence without needing inset padding. */
+  right: 1px;
+  width: 6px;
+  border-radius: 3px;
+  /* ``--scroll-thumb`` is theme-aware — dark mode reuses
+     ``--border`` (#4a4a45) for a subtle inset; light mode uses a
+     slightly-darker tone (#b8b5ad) so the thumb stays readable
+     against the near-white bg without looking too washed out. */
+  background: var(--scroll-thumb);
+  opacity: 0;
+  /* Sits above both the conversation header blur (z:10) and the
+     sidebar's cluster blur (z:5+10) so it never gets frosted. */
+  z-index: 30;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+.scroll-indicator.active {
+  opacity: 0.85;
 }
 
 .session-item {
@@ -207,6 +372,8 @@ button {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  /* Anchor for the absolutely-positioned .app-header overlay below. */
+  position: relative;
 }
 
 /* ── Update banner ──────────────────────────────────────────────── */
@@ -317,7 +484,45 @@ button {
   align-items: center;
   gap: 8px;
   padding: 10px 16px;
-  flex-shrink: 0;
+  /* Pulled out of the flex flow so it can float over the top of
+     ``.conversation`` — messages scroll up *behind* the header and
+     get visually frosted by the blur stack inside it. ``.main``
+     above is ``position: relative`` so this anchors to the main
+     column, not the viewport. */
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  /* Effectively transparent, but Tauri/WebKit's drag-region
+     hit-test ignores layers it considers fully empty — giving the
+     header a 1/255 alpha makes the layer "real" without showing. */
+  background: rgba(0, 0, 0, 0.004);
+}
+
+/* ── Window drag region (Tauri only) ────────────────────────────────
+   Make the header itself a drag handle so the user can grab any
+   empty area to move the window — VSCode/JetBrains webviews and
+   plain browsers ignore ``-webkit-app-region`` entirely, so this
+   only kicks in for the standalone Tauri shell. Interactive
+   children (buttons, inputs, pills, links) are excluded below so
+   they remain clickable.
+   The per-platform rules further down add traffic-light gutter
+   padding on macOS; this base rule covers Windows + Linux where
+   the Rust shell uses ``decorations: false`` and there's no native
+   title bar to drag from. */
+:root[data-host="tauri"] .app-header {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+:root[data-host="tauri"] .app-header button,
+:root[data-host="tauri"] .app-header .chip,
+:root[data-host="tauri"] .app-header .file-pill,
+:root[data-host="tauri"] .app-header .file-pill-wrap,
+:root[data-host="tauri"] .app-header input,
+:root[data-host="tauri"] .app-header a {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 /* ── Custom title bar (Tauri / macOS) ───────────────────────────────
@@ -550,6 +755,124 @@ button {
   overflow-y: auto;
   scrollbar-gutter: stable;
   position: relative;
+  z-index: 1;
+  /* Native scrollbar hidden — it would otherwise paint inside the
+     ``.conversation``'s own z-index: 1 layer and get blurred by
+     the header. The ``.scroll-indicator`` overlay below renders
+     the thumb at z-index: 20 instead, on top of the blur. */
+  scrollbar-width: none;
+  /* Stop the macOS rubber-band overshoot from chaining up to the
+     document body when the user keeps scrolling past either end.
+     Without this, hitting the top of the conversation bounces the
+     whole window a few pixels — looks like the chrome itself is
+     scrolling, which it should never do. */
+  overscroll-behavior: contain;
+}
+/* Pad the inner column so the first message doesn't start its life
+   under the header. Sits inside the scroll content so it scrolls
+   away along with the messages — that's what lets content slide
+   *behind* the header for the blur to pick up. 54 px matches the
+   Tauri/mac ``min-height: 38px + 8 px padding``; non-Tauri renders
+   close enough for the visual overlap. */
+.conversation > .col {
+  padding-top: 54px;
+}
+
+/* ── Progressive header blur ───────────────────────────────────────
+   The ``.app-header`` sits in document flow at the top of ``.main``
+   and we let the scrolling ``.conversation`` extend up *behind* it
+   (negative ``margin-top`` + matching ``padding-top``). Six stacked
+   layers inside the header build up a frosted-glass ramp: heaviest
+   blur at the top edge, fading to crisp at the bottom of the row —
+   so messages sliding up appear progressively blurred as they pass
+   under the brand / pills / chip. */
+.app-header-blur {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Extends ~28 px past the header's bottom edge so the blur ramp
+     doesn't end abruptly at the brand row — content drifting just
+     below the header still picks up a faint frosted edge. */
+  bottom: -28px;
+  /* Catch pointer events so the blur tail (which hangs below the
+     header's bounding box) acts as part of the drag handle —
+     mousedowns here bubble up to the header's onMouseDown and
+     start the window drag. The wrapper sits at ``z-index: -1`` so
+     interactive children (button / brand / chips) still hit-test
+     first; only otherwise-empty pixels reach this layer. */
+  pointer-events: auto;
+  /* Layer children below are still ``inset: 0`` so they paint within
+     the header proper; the bottom 28 px of *this* wrapper is just a
+     hit-area extension with no visual blur. That's intentional —
+     painting beyond the header would clip against ``.main``'s
+     stacking and confuse the conversation layer. */
+  /* ``z-index: -1`` paints the blur stack *behind* the header's
+     non-positioned children (brand / pills / chip). Without this,
+     the positioned blur layers would draw on top of those children
+     per the CSS stacking rules and the foreground text itself
+     would look frosted. */
+  z-index: -1;
+}
+/* Individual layers stay click-through; only the wrapper is a
+   hit target. Without this, each layer would steal the drag-region
+   computation and we'd lose the blur-tail drag handle. */
+.app-header-blur-layer {
+  pointer-events: none;
+}
+.app-header-blur-layer {
+  position: absolute;
+  inset: 0;
+}
+/* Mask design: monotonic ramp — full strength at the top of the
+   blur zone, holding through ~60 % of the distance, then fading
+   linearly to zero at the bottom. Stronger blurs fade out earlier
+   (their masks turn transparent at a smaller y%); the lightest
+   layer hangs on almost to the end so the trailing edge stays
+   smooth. Stacked, the result is heavy blur up top, plateau down
+   to ~60 %, then a soft taper to crisp. */
+/* Mask design: each layer's fade range is staggered so the
+   combined blur falls off smoothly across the whole zone instead
+   of plateauing at the top then cliff-dropping. Stronger layers
+   fade out earlier and faster; lighter layers hang on almost to
+   the bottom. Stacked, the per-y total goes 31.5 → 23 → 13 → 6
+   → 3 → 1 → 0 with no flat plateau and no hard edge — a real
+   1 → 0 ramp from chrome to crisp. */
+.app-header-blur-layer:nth-child(1) {
+  backdrop-filter: blur(0.5px);
+  -webkit-backdrop-filter: blur(0.5px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 95%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 95%, transparent 100%);
+}
+.app-header-blur-layer:nth-child(2) {
+  backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(1px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
+}
+.app-header-blur-layer:nth-child(3) {
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 65%, transparent 85%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 65%, transparent 85%);
+}
+.app-header-blur-layer:nth-child(4) {
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 50%, transparent 70%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 50%, transparent 70%);
+}
+.app-header-blur-layer:nth-child(5) {
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 35%, transparent 55%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 35%, transparent 55%);
+}
+.app-header-blur-layer:nth-child(6) {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 20%, transparent 40%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 20%, transparent 40%);
 }
 
 /* Floating jump-to-latest button. Lives inside .col so its horizontal

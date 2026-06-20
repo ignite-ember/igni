@@ -81,9 +81,14 @@ DEFAULT_CONFIG = {
     },
     "learning": {
         "enabled": True,
-        "user_profile": True,
+        # Auto-extraction blobs left off by default — they each run a
+        # separate post-stream LLM call that added 5–10s to the tail
+        # between ``streaming_done`` and ``run_completed``. The
+        # agentic ``user_memory`` tool path covers the same intent
+        # on demand (agent decides what's worth saving).
+        "user_profile": False,
         "user_memory": True,
-        "session_context": True,
+        "session_context": False,
         "entity_memory": False,
         "learned_knowledge": False,
     },

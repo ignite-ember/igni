@@ -1174,15 +1174,42 @@ class Session:
             blocked_commands=self.settings.safety.blocked_commands,
         )
 
-    # ── Lazy knowledge initialization (no-op while phase 3 is pending) ──
+    # ── Knowledge warmup ────────────────────────────────────────────
 
     def start_knowledge_background(self) -> None:
-        """Stub — the chroma-backed knowledge index is rebuilt in phase 3."""
-        return
+        """Open the chroma client + collections on a background task.
+
+        Without this warmup, the first ``/knowledge`` press blocks
+        while ``KnowledgeIndex.start()`` imports chromadb (heavy
+        transitive deps) and opens the on-disk persistent client.
+        Running it eagerly off the event loop lets the session
+        finish booting while the warmup happens in parallel.
+        """
+        if self.knowledge is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # No running loop yet — caller will trigger us once one exists.
+
+        async def _warmup() -> None:
+            try:
+                await self.knowledge.start()
+            except Exception as exc:
+                logger.debug("Knowledge warmup failed (%s); will retry lazily", exc)
+
+        loop.create_task(_warmup())
 
     async def _ensure_knowledge(self) -> None:
-        """Stub — knowledge is offline during the chroma migration."""
-        return
+        """Guarantee the chroma client is open before knowledge ops run.
+
+        Cheap once :meth:`start_knowledge_background` has warmed it —
+        ``KnowledgeIndex.start()`` is idempotent and re-entry-safe via
+        its internal lock.
+        """
+        if self.knowledge is None:
+            return
+        await self.knowledge.start()
 
     def start_codeindex_background(self) -> None:
         """Fire an initial sync, evict stale commit chromas, and start

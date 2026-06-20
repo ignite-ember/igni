@@ -463,10 +463,24 @@ export interface StreamState {
    *  consult this map to attribute tool cards to the agent that
    *  ran them during a broadcast. */
   runToAgent: Map<string, string>;
+  /** Wall-clock (ms) when the last visible ``content_delta`` arrived.
+   *  ``streaming_done`` reads this so the message timestamp reflects
+   *  when the last chunk actually landed, not when the (later)
+   *  ``streaming_done`` signal fired — the two can drift by hundreds
+   *  of ms on slow networks. ``ContentDelta`` itself carries no
+   *  ``run_id`` on the wire, but the BE serialises runs (one
+   *  ``_run_lock`` per session), so a single rolling value is safe:
+   *  ``streaming_done`` consumes and resets it. */
+  lastContentAt?: number;
 }
 
 export function newStreamState(): StreamState {
-  return { inThinking: false, usesThinkTags: false, carry: "", runToAgent: new Map() };
+  return {
+    inThinking: false,
+    usesThinkTags: false,
+    carry: "",
+    runToAgent: new Map(),
+  };
 }
 
 const OPEN_TAG = "<think>";
@@ -741,6 +755,12 @@ export function applyEvent(
   switch (msg.type) {
     case "content_delta": {
       if (!msg.text) return items;
+      // Track when the latest visible chunk landed so the user item
+      // can stamp ``streamingEndedAt`` from this (rather than from
+      // ``streaming_done``, which can lag by hundreds of ms).
+      if (!msg.is_thinking) {
+        stream.lastContentAt = Date.now();
+      }
       // Agno-level reasoning events are already tagged; inline
       // <think> tags need the streaming parser.
       if (msg.is_thinking) {
@@ -860,16 +880,22 @@ export function applyEvent(
 
     case "streaming_done": {
       // Stash the wall-clock when the visible stream ended on the
-      // matching user item. ``run_completed`` reads this to prefer the
-      // user-perceived time over Agno's post-stream-tail-inflated one.
+      // matching user item. Prefer the timestamp of the *last
+      // content chunk* over ``Date.now()`` here — ``streaming_done``
+      // can lag the final delta by hundreds of ms on slow networks,
+      // which would show up as bogus "extra time" on the stats line.
       if (!msg.run_id) return items;
       const runId = msg.run_id;
+      const endedAt = stream.lastContentAt ?? Date.now();
+      // Reset so the next run starts with a clean slate (and we fall
+      // back to ``Date.now()`` if it streams nothing).
+      stream.lastContentAt = undefined;
       for (let i = items.length - 1; i >= 0; i--) {
         const it = items[i];
         if (it.kind === "user" && it.runId === runId) {
           return [
             ...items.slice(0, i),
-            { ...it, streamingEndedAt: Date.now() },
+            { ...it, streamingEndedAt: endedAt },
             ...items.slice(i + 1),
           ];
         }

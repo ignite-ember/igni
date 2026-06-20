@@ -13,6 +13,29 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>0.6.1</h3>
+        <ul>
+          <li>Frosted-glass header + sidebar — messages scrolling
+              behind the brand row and the "Sessions" cluster now
+              fade through a six-layer progressive backdrop blur
+              instead of being clipped at a hard edge. Custom
+              scroll-position indicators paint above the blur so
+              the thumb stays sharp.</li>
+          <li>Faster perceived response time — Agno's per-turn
+              auto user-profile + session-context extractions are
+              off by default. They were firing a separate LLM call
+              after each run, adding 5–10 s between the visible
+              answer ending and the stats line landing. Agentic
+              memory tools still run on demand.</li>
+          <li>Knowledge index warms in the background at session
+              start, so the first <code>/knowledge</code> press no
+              longer waits on the Chroma client to open.</li>
+          <li>Window dragging from the chat header in the Tauri
+              shell (was previously gated by a missing
+              <code>core:window:allow-start-dragging</code>
+              capability). New dark-tile app icon; downloaded .dmg
+              no longer shows the app icon on the disk image.</li>
+        </ul>
         <h3>0.6.0</h3>
         <ul>
           <li>Multi-agent orchestration — the chat panel now drives a

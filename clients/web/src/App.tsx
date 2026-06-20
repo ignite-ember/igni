@@ -29,6 +29,7 @@ import {
   FolderIcon,
   MenuIcon,
 } from "./components/Icons";
+import { ScrollIndicator } from "./components/ScrollIndicator";
 import { Sidebar, type SessionEntry } from "./components/Sidebar";
 import { AgentsPanel } from "./components/panels/AgentsPanel";
 import { CodeIndexPanel } from "./components/panels/CodeIndexPanel";
@@ -95,6 +96,12 @@ export default function App() {
   const [conn, setConn] = useState<ConnectionState>("connecting");
   const [items, setItems] = useState<ChatItem[]>([]);
   const [processing, setProcessing] = useState(false);
+  // True between ``streaming_done`` and ``run_completed`` — the BE
+  // tail (memory writeback, stats roll-up) is still draining. Input
+  // is already unblocked (``processing`` is false), but we keep the
+  // "Ember is replying…" indicator visible so the UI doesn't claim
+  // "done" while the tokens line is still settling.
+  const [finalizing, setFinalizing] = useState(false);
   const [status, setStatus] = useState<StatusUpdate | null>(null);
   const [hitl, setHitl] = useState<HITLRequest[] | null>(null);
   const [panel, setPanel] = useState<PanelState>({ kind: "none" });
@@ -387,7 +394,43 @@ export default function App() {
     }
   }, [projectDir, status?.cloud_org]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
   const processingRef = useRef(false);
+
+  // Bind window-drag via a native mousedown listener — React's
+  // synthetic onMouseDown was firing but Tauri's drag-region path
+  // wasn't, and the CSS ``-webkit-app-region: drag`` rule was being
+  // skipped by WebKit when the header is absolutely positioned with
+  // a near-transparent background. Native listener + a direct call
+  // to ``startDragging`` bypasses every layer of hit-test indirection.
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const tauri = (window as unknown as {
+      __TAURI__?: {
+        window?: { getCurrentWindow?: () => { startDragging: () => Promise<void> | void } };
+      };
+    }).__TAURI__;
+    if (!tauri?.window?.getCurrentWindow) return; // not a Tauri host
+    const onDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      // Skip interactive children so they keep their click behaviour.
+      if (target.closest("button, input, textarea, a, .chip, .file-pill, .file-pill-wrap")) {
+        return;
+      }
+      e.preventDefault();
+      try {
+        const cur = tauri.window!.getCurrentWindow!();
+        void cur.startDragging();
+      } catch (err) {
+        console.warn("[ember] startDragging failed", err);
+      }
+    };
+    el.addEventListener("mousedown", onDown);
+    return () => el.removeEventListener("mousedown", onDown);
+  }, []);
   // Bumped on /clear: late events from a pre-clear run (Agno's
   // post-stream tail, e.g. run_completed) must not leak into the
   // fresh conversation.
@@ -445,7 +488,10 @@ export default function App() {
       if (m.type === "streaming_done") {
         // Same contract as the TUI: unblock input when content ends,
         // even though the BE tail (memory, compression) still drains.
+        // Hand off to ``finalizing`` so the indicator stays visible
+        // through the tail — see the state declaration above.
         setProc(false);
+        setFinalizing(true);
         return;
       }
       if (m.type === "run_paused") {
@@ -466,6 +512,12 @@ export default function App() {
         }
         return;
       }
+      if (m.type === "run_started") {
+        // Fresh run starting on this view — wipe any leftover tail
+        // flag from the previous run so the indicator lifecycle
+        // resets cleanly (processing is already true via setProc).
+        setFinalizing(false);
+      }
       setItems((prev) => applyEvent(prev, m, streamRef.current));
       // After a top-level run finishes, Agno's reported ``input_tokens``
       // is a sum across model iterations and is 2-3× the real session
@@ -475,6 +527,9 @@ export default function App() {
       // the web stats line by patching the just-emitted stats item
       // with the corrected number.
       if (m.type === "run_completed" && !m.parent_run_id && m.run_id) {
+        // Tail drained — drop the "finalizing" indicator unless a new
+        // run has already started (which clears it on its own).
+        setFinalizing(false);
         const runId = m.run_id;
         void client
           .rpc<number>("count_context_tokens")
@@ -881,10 +936,17 @@ export default function App() {
       } else if (m.type === "streaming_done" || m.type === "stream_end") {
         // A run initiated by ANOTHER view finished its content.
         setProc(false);
+        setFinalizing(true);
+      } else if (m.type === "run_completed") {
+        // Cross-view tail done — release the finalizing indicator.
+        setFinalizing(false);
+        setItems((prev) => applyEvent(prev, m, streamRef.current));
       } else if (m.type === "run_started") {
         // A run initiated by another view began — reflect busy state
-        // so submits from this view queue instead of racing.
+        // so submits from this view queue instead of racing. A fresh
+        // run wipes any leftover tail indicator from the prior one.
         setProc(true);
+        setFinalizing(false);
         setItems((prev) => applyEvent(prev, m, streamRef.current));
       } else {
         // Remaining streamed events (content deltas, tool cards...)
@@ -1322,7 +1384,41 @@ export default function App() {
       />
 
       <div className="main">
-        <header className="app-header">
+        {/* Window drag in the Tauri shell. Three layers of fallback —
+            we want this to work on every Tauri build / WebKit quirk:
+              1. ``data-tauri-drag-region`` attribute (Tauri's preferred
+                 v2 path; missed by some WebKit builds when the host is
+                 absolutely positioned with no opaque background).
+              2. CSS ``-webkit-app-region: drag`` (in theme.css; same
+                 caveat as above).
+              3. Explicit ``onMouseDown`` that calls
+                 ``getCurrentWindow().startDragging()`` — bypasses
+                 both hit-test paths and works regardless. We bail
+                 on interactive elements (buttons, inputs, anchors,
+                 chips, pills) so they keep their click behaviour.
+            All three are no-ops in non-Tauri hosts (the data
+            attribute is ignored, the CSS is gated by
+            ``[data-host="tauri"]``, and the JS branch checks the
+            global before calling). */}
+        <header
+          ref={headerRef}
+          className="app-header"
+          data-tauri-drag-region
+        >
+          {/* Progressive blur stack — six stacked backdrop-filter
+              layers, each with a stronger blur and a shorter gradient
+              mask, build up a smooth top→bottom blur ramp so messages
+              that scroll up behind the header appear frosted. Sits
+              absolutely behind the header content via DOM order (the
+              interactive children below are painted on top). */}
+          <div className="app-header-blur" aria-hidden="true">
+            <div className="app-header-blur-layer" />
+            <div className="app-header-blur-layer" />
+            <div className="app-header-blur-layer" />
+            <div className="app-header-blur-layer" />
+            <div className="app-header-blur-layer" />
+            <div className="app-header-blur-layer" />
+          </div>
           <button
             className="icon-btn"
             title="Toggle sessions"
@@ -1457,6 +1553,13 @@ export default function App() {
           )}
         </header>
 
+        {/* Custom scroll-position indicator — the native scrollbar is
+            hidden because it would render inside the ``.conversation``
+            layer (z:1) and get blurred by the header. Placed as a
+            sibling of ``.conversation`` (not a child) so it doesn't
+            scroll with the content; positioned absolutely against the
+            ``.main`` column at z:30, above the header blur. */}
+        <ScrollIndicator scrollRef={scrollRef} />
         <div className="conversation" ref={scrollRef}>
           <div className={`col${processing ? " streaming" : ""}`}>
             {items.length === 0 && (
@@ -1519,15 +1622,17 @@ export default function App() {
                 }}
               />
             ))}
-            {processing && (
+            {(processing || finalizing) && (
               <div className="typing-indicator" aria-live="polite">
                 <span className="typing-dots">
                   <span />
                   <span />
                   <span />
                 </span>
-                <span className="typing-label">Ember is replying…</span>
-                <span className="typing-hint">Esc to cancel</span>
+                <span className="typing-label">
+                  {processing ? "Ember is replying…" : "Finalizing…"}
+                </span>
+                {processing && <span className="typing-hint">Esc to cancel</span>}
               </div>
             )}
             {!stickToBottom && (
