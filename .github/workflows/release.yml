@@ -366,6 +366,25 @@ jobs:
           # binaries are picked up the next time the app checks.
           includeUpdaterJson: true
 
+      # The .dmg's Finder icon defaults to the bundled app icon
+      # (Tauri copies icon.icns into the volume as .VolumeIcon.icns).
+      # Strip it so the downloaded .dmg shows the generic disk-image
+      # look that users expect for an installer. Re-upload with
+      # ``--clobber`` to replace what tauri-action just uploaded.
+      # The .app.tar.gz updater payload (separately signed) is
+      # untouched, so the auto-updater chain stays valid.
+      - name: Strip DMG volume icon (macOS)
+        if: matrix.platform == 'macos-14'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for dmg in clients/tauri/src-tauri/target/*/release/bundle/dmg/*.dmg; do
+            clients/tauri/scripts/strip-dmg-volume-icon.sh "$dmg"
+            gh release upload "${{ github.ref_name }}" "$dmg" --clobber
+          done
+
   github-release:
     needs: [prepare-release, publish-pypi, build-jetbrains-plugin, build-vscode-plugin, build-tauri]
     runs-on: ubuntu-latest

@@ -139,9 +139,17 @@ class KnowledgeConfig(BaseModel):
 
 class LearningConfig(BaseModel):
     enabled: bool = True
-    user_profile: bool = True
+    # Auto-extraction blobs that Agno's LearningMachine fires *after*
+    # every run as separate LLM calls. They added 5–10 s to the tail
+    # between ``streaming_done`` and ``run_completed`` (the user
+    # perceives "still working" while the visible answer is already
+    # done). We rely on the agentic ``user_memory`` path instead —
+    # the agent calls ``update_user_memory`` itself when it decides
+    # the turn was memorable — so the auto-extractions are dead
+    # weight in our setup.
+    user_profile: bool = False
     user_memory: bool = True
-    session_context: bool = True
+    session_context: bool = False
     entity_memory: bool = False
     learned_knowledge: bool = False
 

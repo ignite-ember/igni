@@ -65,6 +65,54 @@
        state transitions don't visually flicker.        */
     transition: opacity 0.18s ease;
   }
+  /* Determinate progress bar — each Rust ``progress()`` string
+     maps to a known stage; the bar advances stepwise. Long
+     download stages also get a shimmer overlay so the user
+     sees motion even while bytes are still flowing. */
+  .ember-loading-progress {
+    width: 320px;
+    height: 4px;
+    background: rgba(127, 127, 127, 0.18);
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+  }
+  .ember-loading-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #f0883e 0%, #f85149 100%);
+    border-radius: 2px;
+    transition: width 0.55s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+  }
+  /* Subtle shimmer overlay — only enabled while a long download
+     stage is active. Tells the user "still working" when the
+     bar isn't moving for a while. */
+  .ember-loading-progress.shimmer .ember-loading-progress-fill::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0) 0%,
+      rgba(255, 255, 255, 0.35) 50%,
+      rgba(255, 255, 255, 0) 100%
+    );
+    animation: shimmer 1.4s linear infinite;
+  }
+  @keyframes shimmer {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(100%);  }
+  }
+  .ember-loading-step {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--fg-muted);
+    opacity: 0.65;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    min-height: 1.2em;
+  }
   .ember-loading-hint {
     font-size: 12px;
     color: var(--fg-muted);
@@ -93,6 +141,10 @@
   </svg>
   <div class="ember-loading-title">Ember Code</div>
   <div class="ember-loading-status" id="status">Starting up…</div>
+  <div class="ember-loading-progress" id="progress-bar">
+    <div class="ember-loading-progress-fill" id="progress-fill"></div>
+  </div>
+  <div class="ember-loading-step" id="step"></div>
   <div class="ember-loading-hint" id="hint">
     First launch downloads uv, Python, and ignite-ember (~250 MB total). Subsequent launches start instantly.
   </div>
@@ -105,10 +157,48 @@
   const params = new URLSearchParams(location.search);
   const status = document.getElementById("status");
   const hint = document.getElementById("hint");
+  const fill = document.getElementById("progress-fill");
+  const bar = document.getElementById("progress-bar");
+  const stepLabel = document.getElementById("step");
   if (params.get("msg")) status.textContent = params.get("msg");
+
+  // Each entry maps a regex against the Rust ``progress()`` string
+  // (see ``runtime.rs`` and ``lib.rs::bootstrap_and_open``) onto a
+  // stage index. The bar fills to ``(stage / total) * 100``. Stages
+  // marked ``download: true`` get a shimmer overlay so the user
+  // sees motion even though bytes-level progress isn't reported
+  // (would require a Rust streaming-read change to surface).
+  //
+  // Order must match the actual bootstrap sequence. ``Refreshing
+  // managed venv…`` only fires on the Reinstall path and replaces
+  // the uv-download stage, so they share a slot.
+  const STAGES = [
+    { re: /preparing.*backend/i,         download: false },
+    { re: /(downloading uv|refreshing.*venv)/i, download: true  },
+    { re: /installing python/i,          download: true  },
+    { re: /creating.*venv/i,             download: false },
+    { re: /installing.*ignite-ember/i,   download: true  },
+    { re: /downloading.*embedding model/i, download: true },
+    { re: /starting.*backend/i,          download: false },
+  ];
+  const TOTAL = STAGES.length;
+  let currentStage = 0;
 
   function applyStatus(text) {
     status.textContent = text;
+    // Match against the known stage list. We only advance forward
+    // — a later message arriving before an earlier one (rare race
+    // on event delivery) doesn't snap the bar backwards.
+    for (let i = 0; i < TOTAL; i++) {
+      if (STAGES[i].re.test(text) && i + 1 > currentStage) {
+        currentStage = i + 1;
+        fill.style.width = ((currentStage / TOTAL) * 100).toFixed(1) + "%";
+        stepLabel.textContent = "Step " + currentStage + " of " + TOTAL;
+        if (STAGES[i].download) bar.classList.add("shimmer");
+        else bar.classList.remove("shimmer");
+        break;
+      }
+    }
     // Hide the long-form hint once we're past the visible
     // bootstrap stages — keeps the screen quiet during the
     // ~3 s "Starting Ember backend…" tail.
@@ -127,6 +217,11 @@
       window.__TAURI__.event.listen("ember-bootstrap-error", e => {
         if (typeof e.payload === "string") {
           status.textContent = "";
+          stepLabel.textContent = "";
+          // Stop the shimmer and recolor the bar red so the
+          // visible state matches the error message.
+          bar.classList.remove("shimmer");
+          fill.style.background = "#d04a4a";
           const node = document.createElement("div");
           node.className = "ember-loading-error";
           node.textContent = "Bootstrap failed:\n\n" + e.payload;
