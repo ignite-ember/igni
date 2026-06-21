@@ -339,16 +339,21 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Apple Developer signing is deferred until enrollment
-          # completes (see the local secrets README). When these
-          # secrets are unset, GH Actions interpolates them as
-          # empty strings — tauri-action passes those to ``security
-          # import ""`` which fails. Adding the env vars back is
-          # safe once the secrets are populated.
-          #
-          # APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD
-          # APPLE_SIGNING_IDENTITY / APPLE_ID
-          # APPLE_PASSWORD / APPLE_TEAM_ID
+          # Apple Developer ID signing + notarization. tauri-action
+          # handles the full flow when these are set: imports the
+          # .p12 into a temp keychain, signs the .app with the
+          # identity, runs ``notarytool submit --wait``, and staples
+          # the resulting ticket. All six secrets must be populated
+          # in repo Settings → Secrets — see the macOS section of
+          # ``clients/tauri/README.md`` for the list and the one-
+          # time .p12 export instructions. Non-macOS matrix legs
+          # simply ignore these env vars.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: clients/tauri
           tagName: ${{ github.ref_name }}

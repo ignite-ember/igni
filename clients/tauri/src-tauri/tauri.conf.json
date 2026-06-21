@@ -40,6 +40,10 @@
     "category": "DeveloperTool",
     "shortDescription": "AI coding assistant with multi-agent orchestration",
     "longDescription": "Ember Code is an AI coding assistant with multi-agent orchestration. The desktop shell hosts the shared web UI and manages the local backend process — chat panel + project-locked sessions in a native window.",
-    "copyright": "Copyright © 2026 Ignite Ember"
+    "copyright": "Copyright © 2026 Ignite Ember",
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "minimumSystemVersion": "11.0"
+    }
   }
 }
