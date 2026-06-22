@@ -333,27 +333,39 @@ jobs:
           npm ci
           npm run build
 
+      # Validate notarytool auth before doing 4 min of cargo build +
+      # 1 min of codesign just to discover the credentials are wrong.
+      # ``notarytool history`` is a cheap auth-only call; on bad
+      # creds it exits non-zero with a clear "Authentication failed"
+      # in ~5 seconds, fast-failing the run.
+      - name: Preflight notarytool credentials (macOS)
+        if: matrix.platform == 'macos-14'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          xcrun notarytool history --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" \
+            | head -20
+
       - name: Build + sign + upload Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Apple Developer ID signing + notarization. tauri-action
-          # handles the full flow when these are set: imports the
-          # .p12 into a temp keychain, signs the .app with the
-          # identity, runs ``notarytool submit --wait``, and staples
-          # the resulting ticket. All six secrets must be populated
-          # in repo Settings → Secrets — see the macOS section of
-          # ``clients/tauri/README.md`` for the list and the one-
-          # time .p12 export instructions. Non-macOS matrix legs
-          # simply ignore these env vars.
+          # Apple Developer ID *signing only*. We deliberately do NOT
+          # pass APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID here —
+          # those would trigger tauri-action's built-in
+          # ``notarytool submit --wait`` which blocks the whole job
+          # for however long Apple's queue takes with zero log
+          # output (the v0.7.0-rc.1 dry run hung ~30 min on it). We
+          # do notarization ourselves in the next step with per-poll
+          # progress logging.
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: clients/tauri
           tagName: ${{ github.ref_name }}
@@ -370,6 +382,125 @@ jobs:
           # points at the ``latest`` release alias so newly-published
           # binaries are picked up the next time the app checks.
           includeUpdaterJson: true
+
+      # Submit the signed .app to Apple's notarization service
+      # ourselves, with per-30s status logging. Replaces the
+      # ``tauri-action`` --wait flow that produced 30+ min of dead
+      # silence under load. After Apple accepts, staple the ticket
+      # to the .app so first-launch on offline machines still
+      # passes Gatekeeper, then regenerate ``.app.tar.gz`` from the
+      # stapled .app — the updater payload must include the staple
+      # for offline-update verification to work. The stale
+      # ``.app.tar.gz.sig`` produced by tauri-bundler against the
+      # pre-staple tarball is deleted so the next step's fallback
+      # re-mints it via minisign against the new tarball.
+      - name: Notarize + staple .app (macOS)
+        if: matrix.platform == 'macos-14'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # 75 min ceiling: covers a worst-case first-time Apple queue
+        # depth (typically 2-8 min, observed up to 30 min for new
+        # Developer IDs). If we hit this, the credential is fine
+        # (preflight passed) but something is genuinely wrong on
+        # Apple's side — drop the job loudly rather than spin.
+        timeout-minutes: 75
+        run: |
+          set -euo pipefail
+          APP=$(find clients/tauri/src-tauri/target -maxdepth 8 -path '*release/bundle/macos*' -name 'Ember Code.app' -print -quit)
+          if [ -z "$APP" ]; then
+            echo "::error::Ember Code.app not found"
+            find clients/tauri/src-tauri/target -path '*/release/bundle/macos/*' -maxdepth 8 -print || true
+            exit 1
+          fi
+          echo "App bundle: $APP"
+
+          # Build a notarization-submission zip via ditto (Apple's
+          # documented tool — preserves the bundle layout / symlinks
+          # / xattrs correctly; plain ``zip`` mangles them).
+          SUBMIT_ZIP="$RUNNER_TEMP/ember-code-submit.zip"
+          /usr/bin/ditto -c -k --keepParent "$APP" "$SUBMIT_ZIP"
+          echo "Submission zip: $(ls -la "$SUBMIT_ZIP")"
+
+          # Submit without --wait so we get the UUID immediately.
+          SUBMIT_JSON=$(xcrun notarytool submit "$SUBMIT_ZIP" \
+            --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" \
+            --output-format json --no-wait)
+          SUBMISSION_ID=$(echo "$SUBMIT_JSON" | jq -r '.id // empty')
+          if [ -z "$SUBMISSION_ID" ]; then
+            echo "::error::no submission id returned"
+            echo "$SUBMIT_JSON"
+            exit 1
+          fi
+          echo "Submission id: $SUBMISSION_ID"
+
+          # Poll status; log [Xm Ys] status every interval so the
+          # log grows visibly even if Apple is slow. 30s matches
+          # Apple's documented notarization status cadence.
+          INTERVAL=30
+          DEADLINE=$((SECONDS + 70 * 60))   # 70 min, under step timeout
+          STATUS=
+          while [ "$SECONDS" -lt "$DEADLINE" ]; do
+            INFO_JSON=$(xcrun notarytool info "$SUBMISSION_ID" \
+              --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" \
+              --output-format json 2>/dev/null || true)
+            STATUS=$(echo "$INFO_JSON" | jq -r '.status // "Unknown"')
+            printf '[%dm %02ds] notarytool status: %s\n' "$((SECONDS/60))" "$((SECONDS%60))" "$STATUS"
+            case "$STATUS" in
+              Accepted)         break ;;
+              Invalid|Rejected) break ;;
+              *)                sleep "$INTERVAL" ;;
+            esac
+          done
+
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "::error::Notarization ended with status: $STATUS"
+            echo "::group::notarytool log"
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" || true
+            echo "::endgroup::"
+            exit 1
+          fi
+
+          # Staple the ticket into the .app so it works offline.
+          xcrun stapler staple "$APP"
+          /usr/bin/codesign --verify --deep --strict --verbose=1 "$APP"
+          /usr/sbin/spctl --assess --type execute --verbose=1 "$APP"
+
+          # Regenerate the updater tarball from the *stapled* .app.
+          # tauri-bundler writes the .tar.gz alongside the .app at
+          # ``bundle/macos/Ember Code_<arch>.app.tar.gz``; the suffix
+          # depends on the cargo --target, so rather than reconstruct
+          # we just find the existing one, blow it away, and re-emit
+          # using the same name. The companion ``.sig`` is also
+          # nuked so the next step's fallback path re-mints it via
+          # minisign against the new bytes.
+          OLD_TARBALL=$(find clients/tauri/src-tauri/target -name '*.app.tar.gz' -not -path '*.app/*' -print -quit || true)
+          if [ -n "$OLD_TARBALL" ]; then
+            echo "Regenerating tarball: $OLD_TARBALL"
+            OUT_DIR=$(dirname "$OLD_TARBALL")
+            BASENAME=$(basename "$OLD_TARBALL")
+            ( cd "$(dirname "$APP")" && tar -czf "$OUT_DIR/$BASENAME" "$(basename "$APP")" )
+            rm -f "${OLD_TARBALL}.sig" "${OLD_TARBALL}.minisig"
+            ls -la "$OLD_TARBALL"
+          else
+            echo "::warning::no existing .app.tar.gz found; updater payload may be missing"
+          fi
+
+          # The .app inside the .dmg also needs to be the stapled
+          # version. Re-upload the DMG too; that happens in the
+          # existing "Strip DMG volume icon" step which re-builds
+          # and re-uploads via gh release upload --clobber.
+
+          # Replace the .app.tar.gz that tauri-action uploaded with
+          # the stapled version. tauri-action uploaded it under the
+          # release tag; --clobber overwrites cleanly.
+          NEW_TARBALL=$(find clients/tauri/src-tauri/target -name '*.app.tar.gz' -not -path '*.app/*' -print -quit || true)
+          if [ -n "$NEW_TARBALL" ]; then
+            gh release upload "${{ github.ref_name }}" "$NEW_TARBALL" --clobber --repo "$GITHUB_REPOSITORY"
+          fi
 
       # Stash IMMEDIATELY after tauri-action — before any other step
       # touches the bundle dir. Probe runs on the ``fix/updater-
