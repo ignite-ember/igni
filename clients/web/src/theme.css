@@ -525,6 +525,20 @@ button {
   app-region: no-drag;
 }
 
+/* The ``.app-header`` is ``position: absolute`` and overlays the
+   top of ``.conversation``. The first user message's edit/delete
+   actions sit at ``top: -10px`` relative to the bubble — that puts
+   them inside the header's drag rectangle, where WebKit intercepts
+   hover/click at the compositor level before the DOM ever sees
+   them. Marking the conversation column itself as no-drag forces
+   every control inside it (message actions, file pills, tool-card
+   buttons, …) to receive events again. The header keeps its drag
+   region for window-moving since it's a sibling, not a parent. */
+:root[data-host="tauri"] .conversation {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
 /* ── Custom title bar (Tauri / macOS) ───────────────────────────────
    The Tauri shell uses ``TitleBarStyle::Overlay``: the webview
    extends to y=0 and the traffic-light buttons float on top in
@@ -768,14 +782,18 @@ button {
      scrolling, which it should never do. */
   overscroll-behavior: contain;
 }
-/* Pad the inner column so the first message doesn't start its life
-   under the header. Sits inside the scroll content so it scrolls
-   away along with the messages — that's what lets content slide
-   *behind* the header for the blur to pick up. 54 px matches the
-   Tauri/mac ``min-height: 38px + 8 px padding``; non-Tauri renders
-   close enough for the visual overlap. */
+/* Pad the inner column so the first message AND its edit/delete
+   action chip (positioned at ``top: -10px`` of the bubble) clear
+   the header overlay entirely. Without enough padding the chip
+   lands inside the header rectangle where the OS-level drag region
+   intercepts events before any DOM listener — buttons silently
+   stop working on the topmost message. 78 px = ~58px header height
+   + 10 px chip offset + ~10 px safety margin. Sits inside the
+   scroll content so it scrolls away along with the messages —
+   that's what lets content slide *behind* the header for the blur
+   to pick up. */
 .conversation > .col {
-  padding-top: 54px;
+  padding-top: 78px;
 }
 
 /* ── Progressive header blur ───────────────────────────────────────
@@ -1090,6 +1108,16 @@ button {
   pointer-events: none;
   transition: opacity 0.12s;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  /* The .app-header floats at ``z-index: 10`` over the top of the
+     conversation column and (in Tauri) is tagged as a drag region.
+     Without a higher z-index here the topmost user bubble's edit/
+     delete chip sits *under* the header — both visually and in the
+     compositor's hit-test, so clicks would drag the window instead
+     of editing/deleting. Lift the chip above the header and tag it
+     no-drag so the buttons reliably receive hover + click. */
+  z-index: 11;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
   /* Confirm step renders 'Delete this and everything after?' + two
      buttons. The pill must stay a single horizontal line — otherwise
      the buttons wrap onto a new row and the trailing letter of
@@ -1262,16 +1290,181 @@ button {
   margin: 12px 0;
 }
 
+/* Mermaid-rendered SVG container. Mermaid produces its own SVG with
+   embedded styles tuned for a light background — we frame it with
+   our standard pre surface (var(--bg-inset)) and clip overly wide
+   diagrams with horizontal scroll. The SVG itself stays responsive
+   via the inline ``max-width: 100%`` rule below. */
+.mermaid-diagram {
+  position: relative;
+  margin: 12px 0;
+  padding: 16px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+}
+
+.mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* svgbob renders monochrome SVG with embedded `stroke:black` /
+   `fill:black`. We frame it the same way as mermaid and use
+   ``color-scheme: light`` so the strokes always read against the
+   inset surface — even under data-theme="dark" where black-on-
+   dark-grey would be near-invisible, an explicit white background
+   keeps the diagram readable. */
+.svgbob-diagram {
+  position: relative;
+  margin: 12px 0;
+  padding: 16px;
+  background: #fcfbf7;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+  color-scheme: light;
+}
+
+.svgbob-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* svgbob's emitted SVG carries an inline ``<style>`` that — when
+   injected via innerHTML — bleeds onto every <path>/<line>/<rect>
+   in the document and ruins our toolbar icons. We strip the inline
+   sheet in JS and re-apply equivalent rules here, scoped to the
+   diagram container. Matches svgbob's defaults: black stroke,
+   width 2px, rounded line caps, miter joins; ``<text>`` falls back
+   to the UI's monospace font. */
+.svgbob-diagram svg line,
+.svgbob-diagram svg path,
+.svgbob-diagram svg circle,
+.svgbob-diagram svg rect,
+.svgbob-diagram svg polygon {
+  stroke: #1f1e1c;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: miter;
+  fill-opacity: 1;
+}
+
+.svgbob-diagram svg text {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  fill: #1f1e1c;
+}
+
+.svgbob-diagram svg rect.backdrop {
+  stroke: none;
+  fill: transparent;
+}
+
+.svgbob-diagram svg .broken {
+  stroke-dasharray: 8;
+}
+
+.svgbob-diagram svg .filled {
+  fill: #1f1e1c;
+}
+
+.svgbob-diagram svg .bg_filled {
+  fill: transparent;
+}
+
+/* svgbob tags every plain box-outline ``<rect>`` with ``solid
+   nofill`` — without this rule the rects fall through to SVG's
+   default fill (black) and the whole diagram becomes a row of
+   solid black silhouettes with no visible interior. */
+.svgbob-diagram svg .nofill {
+  fill: transparent;
+}
+
+.svgbob-error {
+  margin: 12px 0;
+  padding: 14px;
+  background: var(--bg-inset);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--fg);
+}
+
+/* Copy-source chip on diagram frames (mermaid + svgbob). Same look
+   as ``.code-block-copy`` so the affordance is consistent across
+   every rendered block type. */
+.diagram-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-inset);
+  color: var(--fg-muted);
+  cursor: pointer;
+  z-index: 1;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.svgbob-diagram .diagram-copy {
+  /* The svgbob container always has a near-white bg (#fcfbf7) for
+     legibility against the dark stroke; match the chip to that
+     instead of ``--bg-inset`` so it doesn't pop against the panel. */
+  background: #fcfbf7;
+  color: #6b6a64;
+}
+
+.diagram-copy:hover,
+.diagram-copy:focus-visible {
+  color: var(--fg);
+  border-color: var(--border);
+}
+
+.svgbob-diagram .diagram-copy:hover,
+.svgbob-diagram .diagram-copy:focus-visible {
+  color: #1f1e1c;
+  border-color: #cfcdc3;
+}
+
+/* Fallback rendering when mermaid fails to parse the source — shows
+   the raw text framed in danger-tinted border so the user can see
+   what went wrong without a console message. */
+.mermaid-error {
+  margin: 12px 0;
+  padding: 14px;
+  background: var(--bg-inset);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--fg);
+}
+
 .code-block-wrap pre {
   margin: 0;
 }
 
-/* Reserve a strip at the top so the absolute-positioned copy +
-   toggle chips (top: 8px, ~22px tall) don't sit on top of the
-   first code line. 38px = 8 + 22 + 8 buffer. Specificity is bumped
-   above ``.msg-assistant pre`` (which uses ``padding: 14px``
-   shorthand and declares later in the file). */
-.msg-assistant .code-block-wrap pre {
+/* Reserve a strip at the top ONLY when the collapse chevron is
+   present (i.e. the block was long enough to be collapsible).
+   Short blocks have no chevron — the copy button on the right
+   typically clears short trailing content, so the original 14px
+   ``.msg-assistant pre`` padding is fine. ``:has`` triggers when
+   the wrap contains a toggle button; specificity (0,3,1) wins
+   over ``.msg-assistant pre`` (0,1,1). */
+.msg-assistant .code-block-wrap:has(.code-block-toggle) pre {
   padding-top: 38px;
 }
 
@@ -2332,6 +2525,14 @@ button {
   padding: 32px 28px 80px;
   font-family: var(--font-ui);
   color: var(--fg);
+  /* The dev sandbox lives outside the regular chat shell, which means
+     it doesn't benefit from the inner scroll panels the real UI sets
+     up. body has ``overflow: hidden`` to stop accidental rubber-
+     banding, so without our own scroll container here any content
+     past the viewport just gets clipped silently. Take the full
+     viewport height and own the scrolling ourselves. */
+  height: 100%;
+  overflow-y: auto;
 }
 
 .demo-head {

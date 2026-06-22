@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, isValidElement, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -72,7 +72,86 @@ function useCopiedFlag(): [boolean, (text: string) => void] {
  *  + padding lands a touch over this — short blocks stay expanded. */
 const COLLAPSED_MAX_PX = 220;
 
+/** Dispatcher for fenced-block rendering. Routes:
+ *  - ``language-mermaid`` → MermaidBlock (text → SVG diagram)
+ *  - ASCII-art-looking content in plain fences OR ``language-bob``
+ *    / ``language-svgbob`` / ``language-ascii`` → SvgbobBlock (text
+ *    → SVG diagram via svgbob)
+ *  - Everything else → CodeBlock (copy chip, collapse chevron). */
 function MarkdownPre({ children }: { children?: ReactNode }) {
+  const mermaidSource = extractMermaidSource(children);
+  if (mermaidSource !== null) {
+    return <MermaidBlock source={mermaidSource} />;
+  }
+  const asciiSource = extractAsciiArtSource(children);
+  if (asciiSource !== null) {
+    return <SvgbobBlock source={asciiSource} />;
+  }
+  return <CodeBlock>{children}</CodeBlock>;
+}
+
+/** Extract the raw source string from a fenced ``mermaid`` block,
+ *  or null if this isn't a mermaid block. ReactMarkdown hands us a
+ *  ``<code class="language-mermaid">{source}</code>`` element as
+ *  the sole child of ``<pre>``. rehype-highlight leaves unknown
+ *  languages alone — content stays plain text. */
+function extractMermaidSource(children: ReactNode): string | null {
+  if (!isValidElement(children)) return null;
+  const props = children.props as { className?: string; children?: ReactNode };
+  const cls = props.className ?? "";
+  if (!cls.split(/\s+/).includes("language-mermaid")) return null;
+  return String(props.children ?? "").replace(/\n$/, "");
+}
+
+/** Structural box-drawing characters — corners, edges, junctions.
+ *  These only appear in actual diagrams, never in prose. Arrowheads
+ *  (``→ ← ↑ ↓ ▼ ▲``) are deliberately EXCLUDED — they show up in
+ *  ordinary text like ``alice → role`` and would create false
+ *  positives. */
+const BOX_STRUCTURAL_RE = /[┌┐└┘─│├┤┬┴┼╔╗╚╝═║]/;
+
+/** Heuristic: looks like the user (or model) drew an ASCII diagram
+ *  rather than wrote code or output. Both triggers require at least
+ *  TWO lines containing structural box characters — a single line
+ *  with one corner glyph isn't a diagram, it's prose or a log
+ *  entry. The two paths:
+ *  1. Unicode box-drawing corners/edges on 2+ lines.
+ *  2. ``+--+``-style ASCII corners on 2+ lines.
+ */
+function looksLikeAsciiArt(source: string): boolean {
+  let structuralLines = 0;
+  let plusCornerLines = 0;
+  for (const line of source.split("\n")) {
+    if (BOX_STRUCTURAL_RE.test(line)) structuralLines++;
+    if (/[+][-=]{2,}[+]/.test(line)) plusCornerLines++;
+    if (structuralLines >= 2 || plusCornerLines >= 2) return true;
+  }
+  return false;
+}
+
+/** Extract source for an ASCII-art block. Two cases:
+ *  - Explicit: ``language-bob`` / ``language-svgbob`` / ``language-ascii``.
+ *  - Implicit: plain-fence (no language hint) whose content
+ *    matches ``looksLikeAsciiArt`` — catches the ``+--+`` /
+ *    ``┌──┐`` shapes models produce by default. */
+function extractAsciiArtSource(children: ReactNode): string | null {
+  if (!isValidElement(children)) return null;
+  const props = children.props as { className?: string; children?: ReactNode };
+  const cls = props.className ?? "";
+  const classes = cls.split(/\s+/).filter(Boolean);
+  const langClass = classes.find((c) => c.startsWith("language-"));
+  const lang = langClass ? langClass.slice("language-".length) : "";
+  const source = String(props.children ?? "").replace(/\n$/, "");
+  if (lang === "bob" || lang === "svgbob" || lang === "ascii") return source;
+  // Implicit case: ONLY truly-bare fences (no language hint) AND
+  // content shape says diagram. ``text`` / ``plain`` are treated as
+  // "show as-is" — useful when the user wants the raw ASCII visible
+  // for explanation. Code-bearing languages never get rerouted.
+  if (lang !== "") return null;
+  return looksLikeAsciiArt(source) ? source : null;
+}
+
+function CodeBlock({ children }: { children?: ReactNode }) {
   const preRef = useRef<HTMLPreElement>(null);
   const [copied, copy] = useCopiedFlag();
   const [collapsed, setCollapsed] = useState(true);
@@ -120,6 +199,177 @@ function MarkdownPre({ children }: { children?: ReactNode }) {
         </button>
       ) : null}
     </div>
+  );
+}
+
+/** Lazy-loaded mermaid renderer. Mermaid is ~700KB so we import it
+ *  on first use rather than always — the dynamic import is cached
+ *  by the module system, so the second block on the page reuses
+ *  the already-loaded library. SVG is re-rendered on every theme
+ *  flip via a ``data-theme`` observer (the page-level mutation
+ *  isn't worth listening for here; React re-mounts on theme change
+ *  via a key further up). */
+type MermaidLib = { initialize: (opts: Record<string, unknown>) => void; render: (id: string, src: string) => Promise<{ svg: string }> };
+let mermaidPromise: Promise<MermaidLib> | null = null;
+/** Pick a mermaid built-in theme that matches the current Ember
+ *  theme. ``default`` = the colored light palette (purples / teals
+ *  / pinks); ``dark`` = a colored dark palette. Both run in colour;
+ *  the previous ``neutral`` choice was the cause of the all-grey
+ *  diagrams. */
+function mermaidThemeForDocument(): "default" | "dark" {
+  if (typeof document === "undefined") return "default";
+  const explicit = document.documentElement.dataset.theme;
+  if (explicit === "dark") return "dark";
+  if (explicit === "light") return "default";
+  // ``auto`` (or unset) — defer to the OS.
+  if (typeof window !== "undefined" && window.matchMedia) {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "default";
+  }
+  return "default";
+}
+
+function loadMermaid(): Promise<MermaidLib> {
+  if (!mermaidPromise) {
+    mermaidPromise = import("mermaid").then((m) => {
+      const lib = m.default as unknown as MermaidLib;
+      lib.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: mermaidThemeForDocument(),
+        themeVariables: {
+          fontFamily: "var(--font-ui)",
+          // Let our container's ``--bg-inset`` show through instead
+          // of mermaid's stark white panel.
+          background: "transparent",
+        },
+      });
+      return lib;
+    });
+  }
+  return mermaidPromise;
+}
+
+let mermaidId = 0;
+function MermaidBlock({ source }: { source: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+    void loadMermaid()
+      .then((lib) => lib.render(`mermaid-${++mermaidId}`, source))
+      .then(({ svg }) => {
+        if (cancelled || !ref.current) return;
+        ref.current.innerHTML = svg;
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [source]);
+  if (error) {
+    // Fall back to showing the raw source if the diagram doesn't
+    // parse — better than a blank box. Same look as a plain pre.
+    return (
+      <pre className="mermaid-error" title={`Mermaid render failed: ${error}`}>
+        {source}
+      </pre>
+    );
+  }
+  return (
+    <div className="mermaid-diagram">
+      <DiagramCopyButton source={source} />
+      <div ref={ref} />
+    </div>
+  );
+}
+
+/** Lazy-loaded svgbob (ASCII-art → SVG). ~1.3MB WASM, loaded once
+ *  the first time we encounter an ASCII diagram. ``Bob.render`` is
+ *  synchronous after ``loadWASM`` resolves, so we only need to
+ *  await the loader once per page. */
+type SvgbobLib = { loadWASM: () => Promise<void>; render: (source: string) => string };
+let svgbobPromise: Promise<SvgbobLib> | null = null;
+function loadSvgbob(): Promise<SvgbobLib> {
+  if (!svgbobPromise) {
+    svgbobPromise = import("bob-wasm").then(async (m) => {
+      const lib = m.default as SvgbobLib;
+      await lib.loadWASM();
+      return lib;
+    });
+  }
+  return svgbobPromise;
+}
+
+/** Strip svgbob's inline ``<style>`` block from the rendered SVG.
+ *  svgbob emits bare selectors like ``line, path, circle, rect,
+ *  polygon { stroke: black; ... }`` inside the SVG. When the SVG
+ *  is dropped into the document via ``innerHTML`` into a regular
+ *  ``<div>``, the browser treats that ``<style>`` as a *global*
+ *  stylesheet — every <path> / <line> / <rect> on the entire page
+ *  picks up ``stroke: black``, breaking our toolbar icons,
+ *  chevrons, etc. Strip it; theme.css has scoped equivalents under
+ *  ``.svgbob-diagram svg ...``. */
+function stripSvgbobInlineStyle(svg: string): string {
+  return svg.replace(/<style[\s\S]*?<\/style>/g, "");
+}
+
+function SvgbobBlock({ source }: { source: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+    loadSvgbob()
+      .then((lib) => {
+        if (cancelled || !ref.current) return;
+        ref.current.innerHTML = stripSvgbobInlineStyle(lib.render(source));
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [source]);
+  if (error) {
+    return (
+      <pre className="svgbob-error" title={`svgbob render failed: ${error}`}>
+        {source}
+      </pre>
+    );
+  }
+  return (
+    <div className="svgbob-diagram">
+      <DiagramCopyButton source={source} />
+      <div ref={ref} />
+    </div>
+  );
+}
+
+/** Shared copy-source button used by both ``MermaidBlock`` and
+ *  ``SvgbobBlock``. Sits top-right of the diagram frame and copies
+ *  the original fenced-source string, not the rendered SVG markup —
+ *  the user typically wants what the model emitted, not what the
+ *  renderer produced. */
+function DiagramCopyButton({ source }: { source: string }) {
+  const [copied, copy] = useCopiedFlag();
+  return (
+    <button
+      type="button"
+      className="diagram-copy"
+      title={copied ? "Copied!" : "Copy source"}
+      aria-label={copied ? "Copied" : "Copy source"}
+      onClick={() => copy(source)}
+    >
+      {copied ? <CheckIcon /> : <CopyIcon />}
+    </button>
   );
 }
 

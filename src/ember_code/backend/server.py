@@ -1779,7 +1779,7 @@ class BackendServer:
         # for ``visibleOutTokens``. Per-turn input is monotonic — it
         # grows as the chat grows, matching the user's intuition.
         history_chars = 0  # accumulated user/assistant/tool content so far
-        system_chars = 0   # the constant system + tool-defs overhead, captured once
+        system_chars = 0  # the constant system + tool-defs overhead, captured once
         for run in runs:
             if getattr(run, "parent_run_id", None):
                 continue
@@ -1841,14 +1841,10 @@ class BackendServer:
                         "run_id": run_id,
                         "input_tokens": input_tokens,
                         "output_tokens": output_tokens,
-                        "reasoning_tokens": int(
-                            getattr(metrics, "reasoning_tokens", 0) or 0
-                        )
+                        "reasoning_tokens": int(getattr(metrics, "reasoning_tokens", 0) or 0)
                         if metrics
                         else 0,
-                        "duration": float(getattr(metrics, "duration", 0) or 0)
-                        if metrics
-                        else 0.0,
+                        "duration": float(getattr(metrics, "duration", 0) or 0) if metrics else 0.0,
                     }
                 )
         return out
