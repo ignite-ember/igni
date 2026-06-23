@@ -502,11 +502,33 @@ jobs:
           # and re-uploads via gh release upload --clobber.
 
           # Replace the .app.tar.gz that tauri-action uploaded with
-          # the stapled version. tauri-action uploaded it under the
-          # release tag; --clobber overwrites cleanly.
+          # the stapled version. Two important details:
+          #
+          # 1. tauri-bundler emits the tarball locally as
+          #    ``<productName>.app.tar.gz`` (no arch suffix), but
+          #    tauri-action RENAMES it to ``<productName>_<arch>.app.tar.gz``
+          #    when uploading to the GitHub release (``_aarch64`` /
+          #    ``_x64``). Our ``latest.json`` URLs point at the
+          #    arch-suffixed names, so if we just uploaded the bare
+          #    basename we'd publish a new ``<productName>.app.tar.gz``
+          #    asset and leave the OLD pre-staple arch-suffixed asset
+          #    untouched — exactly what bit v0.7.0, where the updater
+          #    fetched the arch-suffixed (pre-staple) bytes but
+          #    verified against the post-staple signature, failing.
+          #    Use ``file#displayName`` to upload under the right name.
+          #
+          # 2. ``-not -path '*.app/*'`` skips matches inside the .app
+          #    bundle itself (where a nested .app.tar.gz could
+          #    theoretically appear from updater artifacts) and only
+          #    finds the top-level tarball.
           NEW_TARBALL=$(find clients/tauri/src-tauri/target -name '*.app.tar.gz' -not -path '*.app/*' -print -quit || true)
           if [ -n "$NEW_TARBALL" ]; then
-            gh release upload "${{ github.ref_name }}" "$NEW_TARBALL" --clobber --repo "$GITHUB_REPOSITORY"
+            if [[ "${{ matrix.args }}" == *aarch64* ]]; then
+              REMOTE_NAME="igni_aarch64.app.tar.gz"
+            else
+              REMOTE_NAME="igni_x64.app.tar.gz"
+            fi
+            gh release upload "${{ github.ref_name }}" "${NEW_TARBALL}#${REMOTE_NAME}" --clobber --repo "$GITHUB_REPOSITORY"
           fi
 
       # Stash IMMEDIATELY after tauri-action — before any other step
