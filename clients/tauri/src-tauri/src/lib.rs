@@ -852,6 +852,20 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             if let Some(w) = app.get_webview_window("main") {
                 install_traffic_light_observer(w.clone(), 16.0, 24.0);
+                // The observer fires on ``kCFRunLoopBeforeWaiting`` —
+                // only when the runloop goes idle. Under load (debug
+                // builds, slow first-frame paint), that idle moment
+                // can be delayed long enough for AppKit's initial
+                // title-bar layout to "stick" — buttons end up at
+                // AppKit's default ~y=10 instead of our requested
+                // y=24, and they don't shift until something
+                // re-triggers a layout (resize, etc.). The release
+                // (optimized) build is fast enough that the observer
+                // catches the first idle BEFORE this matters; debug
+                // builds race and lose. Belt-and-suspenders: pin
+                // explicitly right after install so we don't depend
+                // on runloop timing.
+                reposition_traffic_lights(&w, 16.0, 24.0);
                 // Native fullscreen detaches the traffic-light
                 // cluster (lives behind the slide-down panel
                 // afterwards). Watch the window's resize stream and

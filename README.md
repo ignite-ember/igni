@@ -85,6 +85,28 @@ See [Quickstart](QUICKSTART.md) for the full guide.
 
 ## Upgrading
 
+### Rebrand + signed desktop app (v0.7.0 → v0.7.1)
+
+- **Rebrand to `igni`.** Shorter, single-word product name — the Tauri window, the macOS Dock, the VSCode + JetBrains marketplace listings, the welcome screen, the agent's self-identification all read `igni`. Internal identifiers (PyPI package `ignite-ember`, Python module `ember_code`, Tauri bundle id `sh.ignite-ember.desktop`, VSCode/JetBrains plugin slugs) are preserved so existing installs keep auto-updating without breakage.
+- **`igni` CLI alias.** The terminal command is now `igni` (the old `ignite-ember` invocation still works for back-compat).
+- **Apple Developer ID signing + notarization** on the macOS desktop app. First-launch no longer triggers the "unidentified developer" Gatekeeper warning; the notarization ticket is stapled into the `.app` so offline first-launch works too. The auto-updater pulls a fully signed + notarized bundle.
+- **Mermaid + svgbob diagrams in the chat.** Fenced ` ```mermaid ` blocks render as SVG (sequence / flowchart / state / ER / pie / gantt / mindmap / xy-chart / quadrant / timeline). Plain fenced blocks containing ASCII box-drawing (`┌─┐ │ ▼ ──→` or repeated `+--+` corners) auto-render through svgbob, so the model's habitual ASCII art now looks like a real diagram. Both libraries lazy-load — first diagram in a session triggers the download.
+- **Collapsible code blocks.** Anything taller than ~220px starts collapsed behind a chevron with a fade overlay; click anywhere on the clip (or the chevron) to expand. Copy chip stays always-visible top-right.
+- **GitHub-Light syntax colors on light theme.** Stops the dark-dimmed `highlight.js` palette from painting neon-on-white when the user picks the light theme.
+- **Per-turn stats restored on resumed conversations.** Re-opening a session now shows the same `✦ in · think · out · duration` pill the live path emits — chars/4 estimates pulled from each persisted run's content (Agno's raw `input_tokens` reads non-monotonic across iterations and was useless to restore literally).
+- **Header drag-region fix.** The first user message's edit / delete chip is no longer captured by the Tauri shell's window-drag region — clicks reach the buttons.
+- **Updater signature bug fixed (v0.7.1).** The macOS auto-updater's tarball-signature pair now matches at the asset level: stapled bytes are uploaded under the arch-suffixed name `latest.json` references, so signature verification succeeds. Anyone who installed v0.7.0 before this fix should update to v0.7.1 — the auto-updater itself will pull it through cleanly.
+
+### GUI clients (v0.6.0 → v0.6.4)
+
+- **Tauri desktop app.** Native window hosting the shared web UI; spawns the Python backend over a Unix socket, kills it on app exit (with `EMBER_PARENT_PID` watchdog for crash safety). macOS / Windows / Linux installers from CI; signed auto-updater backed by minisign.
+- **VSCode extension.** WebView hosting the same shared UI; activates on workspace open with one command. Auto-installs `ignite-ember` via `uv` on first run — zero-touch.
+- **JetBrains plugin.** JCEF panel hosting the same UI. Plugin SDK build wired into the release pipeline; published to the JetBrains Marketplace.
+- **Shared web UI.** `clients/web` is the single React+TS surface; the three shells embed it. Single bundle, single React tree, single CSS — visual + behavioral parity across the three hosts.
+- **Backend multi-session reliability.** SQLite hardening (WAL + checkpoint tuning), idle session eviction, slow-client back-pressure, sync-in-async call-site audit. Removes the long-running-session memory-leak class.
+- **Release pipeline matured.** Marketplace publishing for VSCode + JetBrains; signed Tauri updater via minisign; per-tag draft → publish flow that avoids race-y duplicate releases under parallel matrix uploads. Pre-release tags (`-rc`) skip marketplace pushes + Homebrew updates so iteration doesn't pollute user-facing channels.
+- **UI polish (v0.6.1).** Header / sidebar use a backdrop blur stack so messages frost as they scroll under; custom scroll-indicator thumbs (the native scrollbar would have rendered inside the blur layer); dark-theme icon variants.
+
 **v0.5.0** is the "Beat Claude Code" release. Cumulative changes since v0.3.8:
 
 ### Benchmarks vs Claude Code (new in v0.5.0)
