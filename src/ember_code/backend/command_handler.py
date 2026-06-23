@@ -281,7 +281,7 @@ class CommandHandler:
         ),
         "memory": (
             "## Memory & Learning\n\n"
-            "Ember Code learns your preferences automatically from conversations.\n\n"
+            "igni learns your preferences automatically from conversations.\n\n"
             "**Commands:**\n"
             "- `/memory` — show what Ember has learned about you\n"
             "- `/memory optimize` — consolidate memories\n\n"
@@ -1075,7 +1075,7 @@ class CommandHandler:
                 )
             _open_in_browser(resolved.install_url)
             return CommandResult.markdown(
-                f"### Install Ember CodeIndex\nOpening your browser:\n`{resolved.install_url}`"
+                f"### Install igniIndex\nOpening your browser:\n`{resolved.install_url}`"
             )
 
         if subcommand == "status":

@@ -31,7 +31,7 @@ class WelcomeBanner(Static):
 
     def __init__(self):
         banner = (
-            f"  [bold]Ember Code[/bold] [dim]v{__version__}[/dim]\n"
+            f"  [bold]igni[/bold] [dim]v{__version__}[/dim]\n"
             f"  [dim]/help for commands · {_QUIT_KEY} to quit[/dim]"
         )
         super().__init__(banner)

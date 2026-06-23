@@ -126,7 +126,7 @@ jobs:
       #
       # ``JETBRAINS_MARKETPLACE_TOKEN`` is an upload token created
       # at https://plugins.jetbrains.com/author/me/tokens with the
-      # "Upload Plugin" scope for the ``Ember Code`` plugin.
+      # "Upload Plugin" scope for the ``igni`` plugin.
       #
       # CRITICAL: JetBrains requires the FIRST upload of a new
       # plugin to go through the web UI at
@@ -411,9 +411,9 @@ jobs:
         timeout-minutes: 180
         run: |
           set -euo pipefail
-          APP=$(find clients/tauri/src-tauri/target -maxdepth 8 -path '*release/bundle/macos*' -name 'Ember Code.app' -print -quit)
+          APP=$(find clients/tauri/src-tauri/target -maxdepth 8 -path '*release/bundle/macos*' -name 'igni.app' -print -quit)
           if [ -z "$APP" ]; then
-            echo "::error::Ember Code.app not found"
+            echo "::error::igni.app not found"
             find clients/tauri/src-tauri/target -path '*/release/bundle/macos/*' -maxdepth 8 -print || true
             exit 1
           fi
@@ -473,7 +473,7 @@ jobs:
 
           # Regenerate the updater tarball from the *stapled* .app.
           # tauri-bundler writes the .tar.gz alongside the .app at
-          # ``bundle/macos/Ember Code_<arch>.app.tar.gz``; the suffix
+          # ``bundle/macos/igni_<arch>.app.tar.gz``; the suffix
           # depends on the cargo --target, so rather than reconstruct
           # we just find the existing one, blow it away, and re-emit
           # using the same name. The companion ``.sig`` is also
@@ -632,6 +632,13 @@ jobs:
           AARCH64_JSON="$(printf '%s' "$AARCH64_SIG" | jq -Rs .)"
           X64_JSON="$(printf '%s' "$X64_SIG" | jq -Rs .)"
 
+          # tauri-bundler emits ``<productName>_<arch>.app.tar.gz`` —
+          # productName is ``igni`` per tauri.conf.json, so the assets
+          # are ``igni_aarch64.app.tar.gz`` and ``igni_x64.app.tar.gz``.
+          # (Pre-rename builds at v0.6.x used ``Ember.Code_<arch>...``;
+          # spaces in the old productName became dots in the
+          # filename. Bumping ``productName`` in tauri.conf.json
+          # changes this output; the URLs below must follow.)
           cat > /tmp/latest.json <<EOF
           {
             "version": "${VERSION}",
@@ -640,18 +647,20 @@ jobs:
             "platforms": {
               "darwin-aarch64": {
                 "signature": ${AARCH64_JSON},
-                "url": "${BASE_URL}/Ember.Code_aarch64.app.tar.gz"
+                "url": "${BASE_URL}/igni_aarch64.app.tar.gz"
               },
               "darwin-x86_64": {
                 "signature": ${X64_JSON},
-                "url": "${BASE_URL}/Ember.Code_x64.app.tar.gz"
+                "url": "${BASE_URL}/igni_x64.app.tar.gz"
               }
             }
           }
           EOF
           # Sanity-check the JSON before we ship it.
           jq . /tmp/latest.json >/dev/null
-          gh release upload "$TAG" /tmp/latest.json --clobber
+          # ``--repo`` is required because this job doesn't check out
+          # the repo (no .git), so ``gh`` can't detect the upstream.
+          gh release upload "$TAG" /tmp/latest.json --clobber --repo "$GITHUB_REPOSITORY"
           echo "latest.json uploaded:"
           cat /tmp/latest.json
 
@@ -836,7 +845,7 @@ jobs:
 
           # Simple formula: create venv, pip install from PyPI (uses wheels)
           cat > Formula/ignite-ember.rb << 'FORMULA'
-          class IgniteEmber < Formula
+          class igniteEmber < Formula
             include Language::Python::Virtualenv
 
             desc "AI coding assistant with multi-agent orchestration"
@@ -864,7 +873,7 @@ jobs:
             end
 
             test do
-              assert_match "Ember Code", shell_output("#{bin}/ignite-ember --version")
+              assert_match "igni", shell_output("#{bin}/ignite-ember --version")
             end
           end
           FORMULA

@@ -319,7 +319,7 @@ export default function App() {
         // refocus the window.
         void host.notify({
           title: "Update available",
-          body: `Ember Code ${info.latest_version} is ready to install.`,
+          body: `igni ${info.latest_version} is ready to install.`,
         });
       }
     },
@@ -489,7 +489,7 @@ export default function App() {
     try {
       if (typeof Notification === "undefined") return;
       if (Notification.permission === "granted") {
-        new Notification("Ember Code", { body: "Your reply is ready.", silent: true });
+        new Notification("igni", { body: "Your reply is ready.", silent: true });
       } else if (Notification.permission !== "denied") {
         // Request permission once; subsequent runs honour the choice.
         void Notification.requestPermission();
@@ -1485,7 +1485,7 @@ export default function App() {
               to the main pane so the user's eye anchors there. */}
           <div className="brand">
             <FlameIcon size={20} />
-            <span>Ember Code</span>
+            <span>igni</span>
             <span
               className={`dot ${conn === "replaced" ? "disconnected" : conn}`}
               title={`backend ${conn}`}
@@ -1642,7 +1642,7 @@ export default function App() {
                 <div style={{ display: "flex", justifyContent: "center" }}>
                   <FlameIcon size={56} />
                 </div>
-                <h1>Ember Code</h1>
+                <h1>igni</h1>
                 <p>Your AI coding agent, in this project.</p>
                 <div className="welcome-caps">
                   {(

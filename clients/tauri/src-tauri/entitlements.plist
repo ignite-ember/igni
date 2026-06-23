@@ -17,7 +17,7 @@
     runtime strips these unless this entitlement is present.
 
   Network access is implicit for GUI apps; no entitlement needed.
-  Outgoing-network sandbox is NOT applied here — Ember Code is a
+  Outgoing-network sandbox is NOT applied here — igni is a
   developer tool with full filesystem + outbound HTTP requirements.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

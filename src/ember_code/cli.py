@@ -1,4 +1,4 @@
-"""CLI interface for Ember Code."""
+"""CLI interface for igni."""
 
 import asyncio
 
@@ -8,7 +8,7 @@ from ember_code import __version__
 
 
 @click.group(invoke_without_command=True)
-@click.version_option(version=__version__, prog_name="Ember Code")
+@click.version_option(version=__version__, prog_name="igni")
 @click.option("--model", default=None, help="Model to use")
 @click.option("--verbose", is_flag=True, help="Show routing and reasoning")
 @click.option("--quiet", is_flag=True, help="Minimal output")
@@ -58,7 +58,7 @@ def cli(
     worktree,
     add_dir,
 ):
-    """Ember Code — AI coding assistant powered by Agno."""
+    """igni — AI coding assistant powered by Agno."""
     ctx.ensure_object(dict)
 
     # ── Debug logging ──────────────────────────────────────────────

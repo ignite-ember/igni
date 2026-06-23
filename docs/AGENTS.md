@@ -1,6 +1,6 @@
 # Agents
 
-Ember Code takes a **definition-driven, dynamic** approach to agents. There are no hardcoded agent hierarchies or fixed teams. Instead:
+igni takes a **definition-driven, dynamic** approach to agents. There are no hardcoded agent hierarchies or fixed teams. Instead:
 
 1. Agents are **defined as `.md` files** with YAML frontmatter
 2. All agent definitions form an **agent pool**
@@ -39,7 +39,7 @@ User Message
 
 ## Agent Definition Format
 
-Agent `.md` files use **the same format as Claude Code** — YAML frontmatter with `name`, `description`, `tools`, `model`, plus the markdown body as the system prompt. Claude Code agent files work in Ember Code out of the box. Ember Code extends the format with optional fields for orchestration.
+Agent `.md` files use **the same format as Claude Code** — YAML frontmatter with `name`, `description`, `tools`, `model`, plus the markdown body as the system prompt. Claude Code agent files work in igni out of the box. igni extends the format with optional fields for orchestration.
 
 ### Claude Code Compatible (works in both)
 
@@ -66,7 +66,7 @@ description: Deeply analyzes existing codebase features by tracing execution pat
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, WebSearch
 color: yellow
 
-# Ember extensions (ignored by Claude Code, used by Ember Code)
+# Ember extensions (ignored by Claude Code, used by igni)
 reasoning: false
 tags:
   - search
@@ -90,7 +90,7 @@ You are an expert code analyst...
 | `model` | string | no | Model ID (`MiniMax-M2.7`, `MiniMax-M2.7-highspeed`) or any Agno-supported model. Defaults to config default |
 | `color` | string | no | UI color for this agent (`yellow`, `red`, `green`, `blue`, etc.) |
 
-**Ember Code extensions** (ignored by Claude Code if the file is used there):
+**igni extensions** (ignored by Claude Code if the file is used there):
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -105,7 +105,7 @@ You are an expert code analyst...
 
 ### Tool Names
 
-Ember Code uses the **same tool names as Claude Code**. Agent files are fully cross-compatible.
+igni uses the **same tool names as Claude Code**. Agent files are fully cross-compatible.
 
 | Tool Name | Agno Toolkit | Description |
 |---|---|---|
@@ -122,7 +122,7 @@ Ember Code uses the **same tool names as Claude Code**. Agent files are fully cr
 | `NotebookRead` | `NotebookTools(read_only=True)` | Read Jupyter notebooks |
 | `TodoWrite` | `TodoTools()` | Task/todo management |
 | `KillShell` | `ProcessTools()` | Kill running shell processes |
-| `Python` | `PythonTools()` | Execute Python code (Ember Code addition) |
+| `Python` | `PythonTools()` | Execute Python code (igni addition) |
 | `Orchestrate` | `OrchestrateTools()` | Spawn sub-teams (included by default; set `can_orchestrate: false` to disable) |
 | `MCP:<server>` | `MCPTools(...)` | Tools from a named MCP server |
 
@@ -132,7 +132,7 @@ Drop a Claude Code agent file into `.ember/agents/` — it works immediately. Al
 
 ## Agent Pool
 
-By default, the agent pool loads from **Ember Code directories only**:
+By default, the agent pool loads from **igni directories only**:
 
 | Scope | Location | Format |
 |---|---|---|
@@ -147,7 +147,7 @@ By default, the agent pool loads from **Ember Code directories only**:
 
 ### Cross-Tool Support (on by default)
 
-Cross-tool support is enabled by default. Ember Code scans Claude Code and Codex directories automatically. To disable, set `agents.cross_tool_support: false`.
+Cross-tool support is enabled by default. igni scans Claude Code and Codex directories automatically. To disable, set `agents.cross_tool_support: false`.
 
 Additional directories scanned:
 
@@ -158,19 +158,19 @@ Additional directories scanned:
 | Global | `~/.claude/agents/` | Claude Code | `.md` with YAML frontmatter (native) |
 | Global | `~/.codex/` | Codex | Markdown + TOML (parsed) |
 
-Within the same scope, Ember Code directories take precedence over Claude Code, which takes precedence over Codex.
+Within the same scope, igni directories take precedence over Claude Code, which takes precedence over Codex.
 
 **Cross-tool compatibility:**
 
 - **Claude Code agents** — loaded natively. Same `.md` + YAML frontmatter format. No conversion needed.
 - **Codex agents** — Codex defines agent roles in `config.toml` and instructions in `AGENTS.md`. The loader parses these into the same internal representation.
-- **Ember Code agents** — native format. Claude Code compatible fields + Ember extensions (tags, reasoning, can_orchestrate).
+- **igni agents** — native format. Claude Code compatible fields + Ember extensions (tags, reasoning, can_orchestrate).
 
 If you're coming from Claude Code or Codex, your existing agents are picked up automatically — zero migration. See [Migration](MIGRATION.md) for details.
 
 ### Built-in Agents
 
-Ember Code ships with foundational agents in Claude Code compatible format plus Ember extensions. Override or extend them freely.
+igni ships with foundational agents in Claude Code compatible format plus Ember extensions. Override or extend them freely.
 
 **explorer.md** — Read-only codebase search and analysis.
 ```yaml
@@ -349,7 +349,7 @@ The Orchestrator's system prompt tells it:
 
 ## Recursive Nesting: Agents That Build Teams
 
-Unlike Claude Code (which caps sub-agents at one level), Ember Code places **no limit on nesting**. Every agent can access the full agent pool and spawn its own sub-teams at runtime by default. Set `can_orchestrate: false` on an agent to disable this.
+Unlike Claude Code (which caps sub-agents at one level), igni places **no limit on nesting**. Every agent can access the full agent pool and spawn its own sub-teams at runtime by default. Set `can_orchestrate: false` on an agent to disable this.
 
 ```
 Orchestrator
@@ -719,7 +719,7 @@ Always check running containers before making changes.
 Prefer docker-compose over raw docker commands when a compose file exists.
 ```
 
-This file works in both Claude Code and Ember Code. In Ember Code, the Orchestrator uses the description to decide when to include this agent.
+This file works in both Claude Code and igni. In igni, the Orchestrator uses the description to decide when to include this agent.
 
 ### With Ember Extensions (MCP + orchestration)
 
@@ -831,7 +831,7 @@ class AgentPool:
 
 ### Hot Reloading
 
-When running in interactive mode, the agent pool watches the agent directories for changes. Adding, modifying, or removing a `.md` file updates the pool without restarting Ember Code.
+When running in interactive mode, the agent pool watches the agent directories for changes. Adding, modifying, or removing a `.md` file updates the pool without restarting igni.
 
 ---
 
@@ -851,7 +851,7 @@ Skills use the same `SKILL.md` format as Claude Code — drop Claude Code skills
 
 ## Comparison with Claude Code
 
-| Aspect | Claude Code | Ember Code |
+| Aspect | Claude Code | igni |
 |---|---|---|
 | Agent file format | YAML frontmatter `.md` | **Same format** — files are cross-compatible |
 | Skill file format | `SKILL.md` in named directory | **Same format** — Claude Code skills work as-is |
@@ -863,4 +863,4 @@ Skills use the same `SKILL.md` format as Claude Code — drop Claude Code skills
 | Adding skills | Drop `SKILL.md` in `.claude/skills/name/` | Drop `SKILL.md` in `.ember/skills/name/` |
 | Agent selection | User or parent agent decides | Orchestrator decides automatically |
 | Skill execution | Runs inline or forked subagent | Runs inline or Orchestrator assembles a team |
-| Migration path | — | Drop Claude Code agents + skills into Ember Code, they just work |
+| Migration path | — | Drop Claude Code agents + skills into igni, they just work |

@@ -1,6 +1,6 @@
 # Quickstart
 
-Get up and running with Ember Code in under 5 minutes.
+Get up and running with igni in under 5 minutes.
 
 ## Install
 
@@ -26,7 +26,7 @@ uv pip install -e ".[dev]"
 
 ## Authenticate
 
-**Option A: Ember Code account (zero-config)**
+**Option A: igni account (zero-config)**
 
 Sign up for a free API key — all built-in models (MiniMax M2.7) work out of the box:
 
@@ -66,7 +66,7 @@ That's it — agents will now use GPT-4o. See [Configuration](docs/CONFIGURATION
 ignite-ember
 ```
 
-On first launch, Ember Code:
+On first launch, igni:
 1. Copies 13 built-in agents to `.ember/agents/`
 2. Copies skills to `.ember/skills/`
 3. Creates `ember.md` template and `.ember/config.yaml`
@@ -152,7 +152,7 @@ $ python -m pytest tests/ -q
 
 ### File References
 
-Include file paths or bare filenames in your message — Ember Code resolves them automatically:
+Include file paths or bare filenames in your message — igni resolves them automatically:
 
 ```
 > photo.jpg what's in here?
@@ -228,7 +228,7 @@ Agents get only the tools declared in their `.md` file. Built-in tools:
 
 ## Configuration
 
-Ember Code loads config from multiple layers (highest priority first):
+igni loads config from multiple layers (highest priority first):
 
 1. CLI flags
 2. `.ember/config.local.yaml` (project, gitignored)
@@ -238,7 +238,7 @@ Ember Code loads config from multiple layers (highest priority first):
 
 ### Minimal Config
 
-If you're using an Ember Code account, no config is needed — defaults work out of the box.
+If you're using an igni account, no config is needed — defaults work out of the box.
 
 For BYOM, the minimum is a model registry entry (see [Authenticate](#authenticate) above). You can also tune permissions:
 
@@ -312,7 +312,7 @@ In interactive mode, use `/` commands:
 
 ## Resume Sessions
 
-Ember Code persists sessions to SQLite. Pick up where you left off:
+igni persists sessions to SQLite. Pick up where you left off:
 
 ```bash
 ignite-ember --continue           # resume last session
@@ -359,7 +359,7 @@ Requires: `pip install ember-code[knowledge]`
 
 ### MCP (IDE Integration)
 
-Use Ember Code as a tool server in VS Code, Cursor, or JetBrains:
+Use igni as a tool server in VS Code, Cursor, or JetBrains:
 
 ```json
 {
@@ -452,7 +452,7 @@ All flags at a glance:
 
 ## Tips
 
-On startup, Ember Code shows contextual tips based on your configuration. For example:
+On startup, igni shows contextual tips based on your configuration. For example:
 
 - *Create an `ember.md` in your project root to give agents project-specific context.*
 - *Drop a `.md` file in `.ember/agents/` to create a project-specific agent — no code needed.*
@@ -466,7 +466,7 @@ Tips adapt to your setup — if you haven't enabled the knowledge base or guardr
 
 Most things just work. See the [Migration Guide](docs/MIGRATION.md) for details, but the short version:
 
-Ember Code reads `CLAUDE.md`, `.claude/agents/*.md`, `.claude/skills/`, and `.mcp.json` out of the box — cross-tool support is on by default.
+igni reads `CLAUDE.md`, `.claude/agents/*.md`, `.claude/skills/`, and `.mcp.json` out of the box — cross-tool support is on by default.
 
 ---
 
@@ -478,4 +478,4 @@ Ember Code reads `CLAUDE.md`, `.claude/agents/*.md`, `.claude/skills/`, and `.mc
 - [Tools](docs/TOOLS.md) — all available toolkits
 - [Skills](docs/SKILLS.md) — reusable prompted workflows
 - [Security](docs/SECURITY.md) — permissions, safety, audit logging
-- [Development](docs/DEVELOPMENT.md) — contributing to Ember Code
+- [Development](docs/DEVELOPMENT.md) — contributing to igni

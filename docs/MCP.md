@@ -1,10 +1,10 @@
 # MCP Integration
 
-Ember Code uses the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) as a **client** to connect to external MCP servers. This lets you extend Ember Code with additional capabilities — browser automation, database access, custom APIs, and more — without writing plugins.
+igni uses the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) as a **client** to connect to external MCP servers. This lets you extend igni with additional capabilities — browser automation, database access, custom APIs, and more — without writing plugins.
 
 ## How It Works
 
-Ember Code connects to external MCP servers at session start and makes their tools available to agents. This uses Agno's built-in `MCPTools` class.
+igni connects to external MCP servers at session start and makes their tools available to agents. This uses Agno's built-in `MCPTools` class.
 
 To add an MCP server, create or edit `.mcp.json` in your project root (see below).
 

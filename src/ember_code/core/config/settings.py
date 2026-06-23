@@ -205,7 +205,7 @@ class DisplayConfig(BaseModel):
 
 
 class Settings(BaseModel):
-    """Complete Ember Code settings."""
+    """Complete igni settings."""
 
     api_url: str = "https://api.ignite-ember.sh"
     update_check_ttl: int = 86400

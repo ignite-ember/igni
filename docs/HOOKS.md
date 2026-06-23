@@ -2,7 +2,7 @@
 
 Hooks are shell commands or HTTP calls that execute in response to agent lifecycle events. They let you automate workflows around tool execution — auto-format after every file write, run linters before commits, enforce security policies, log tool usage, or inject context at session start.
 
-Ember Code's hook system is **compatible with Claude Code's** hook format. If you already have Claude Code hooks, they work in Ember Code out of the box.
+igni's hook system is **compatible with Claude Code's** hook format. If you already have Claude Code hooks, they work in igni out of the box.
 
 ## Overview
 
@@ -421,7 +421,7 @@ echo '{"continue": true}'
 
 ## Claude Code Compatibility
 
-Ember Code hooks use the **same format** as Claude Code:
+igni hooks use the **same format** as Claude Code:
 - Same event names (`PreToolUse`, `PostToolUse`, `Stop`, etc.)
 - Same input/output JSON format
 - Same exit code semantics (0 = success, 2 = block)
@@ -430,7 +430,7 @@ Ember Code hooks use the **same format** as Claude Code:
 
 If you have existing Claude Code hooks in `.claude/settings.json`, copy them to `.ember/settings.json` — they work as-is.
 
-The one addition: Ember Code hooks also fire for **sub-team events** (`SubagentStart`, `SubagentStop`) since Ember Code has multi-agent teams. Claude Code has similar events for its subagents.
+The one addition: igni hooks also fire for **sub-team events** (`SubagentStart`, `SubagentStop`) since igni has multi-agent teams. Claude Code has similar events for its subagents.
 
 ---
 

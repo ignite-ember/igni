@@ -1,10 +1,10 @@
 # Tools
 
-Ember Code leverages Agno's toolkit system to give agents capabilities. Each agent gets only the tools it needs — no more.
+igni leverages Agno's toolkit system to give agents capabilities. Each agent gets only the tools it needs — no more.
 
 ## Core Toolkits
 
-Ember Code uses the **same tool names as Claude Code**. Each name maps to an Agno toolkit under the hood:
+igni uses the **same tool names as Claude Code**. Each name maps to an Agno toolkit under the hood:
 
 | Tool Name | Agno Toolkit | Description |
 |---|---|---|
@@ -28,7 +28,7 @@ Ember Code uses the **same tool names as Claude Code**. Each name maps to an Agn
 
 ## CodeIndex — Semantic Code Intelligence
 
-CodeIndex is the most important tool in Ember Code's arsenal. While other tools operate on raw text (grep for patterns, read for contents), CodeIndex provides **pre-processed, semantic understanding** of the entire codebase.
+CodeIndex is the most important tool in igni's arsenal. While other tools operate on raw text (grep for patterns, read for contents), CodeIndex provides **pre-processed, semantic understanding** of the entire codebase.
 
 See [CodeIndex](CODEINDEX.md) for the full documentation on categories, hierarchical summaries, indexing pipeline, and self-hosting.
 
@@ -64,7 +64,7 @@ CodeIndex works out of the box with zero configuration. Per-project customizatio
 
 ### Fallback: Local Mode
 
-If CodeIndex cloud is unavailable, Ember Code falls back to local tools (Grep, Glob, Read). The experience degrades gracefully — agents still work, just without semantic understanding.
+If CodeIndex cloud is unavailable, igni falls back to local tools (Grep, Glob, Read). The experience degrades gracefully — agents still work, just without semantic understanding.
 
 ---
 
@@ -338,7 +338,7 @@ The same state (`session.pending_loop_prompt`) is reachable from two surfaces:
 
 Loops never run in the background. Each iteration is a real conversation turn, so iteration outputs stream into the same session and the agent sees the cumulative history. If the user wants persistent, durable recurring execution that survives the session closing, `/schedule` is the right primitive instead.
 
-**Not to be confused with the in-turn `loop` skill.** Earlier versions of Ember Code shipped a `loop` skill (`bundled_skills/loop`) for the *different* pattern of "apply this task to a list of items within a single turn." That skill was removed in `0885ec0` because its name collided with `/loop` and the patterns are unrelated. The slash command and toolkit described above are the only loop primitive now.
+**Not to be confused with the in-turn `loop` skill.** Earlier versions of igni shipped a `loop` skill (`bundled_skills/loop`) for the *different* pattern of "apply this task to a list of items within a single turn." That skill was removed in `0885ec0` because its name collided with `/loop` and the patterns are unrelated. The slash command and toolkit described above are the only loop primitive now.
 
 ---
 
@@ -387,7 +387,7 @@ Place custom tools in `~/.ember/tools/` or `.ember/tools/` for project-level too
 
 ## Plugins — Claude-Code-compatible bundles
 
-A **plugin** is a directory that bundles skills, agents, hooks, MCP servers, and custom tools into a single distributable unit. Plugins built for Claude Code work in Ember Code unchanged.
+A **plugin** is a directory that bundles skills, agents, hooks, MCP servers, and custom tools into a single distributable unit. Plugins built for Claude Code work in igni unchanged.
 
 ```text
 my-plugin/

@@ -1,4 +1,4 @@
-//! Ember Code desktop shell.
+//! igni desktop shell.
 //!
 //! Spawns the Python backend (`python -m ember_code.backend --ws-port 0`),
 //! waits for its JSON ready line to learn the bound WebSocket port, then
@@ -284,12 +284,12 @@ fn parse_ready_line(line: &str) -> Option<u16> {
 fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     // ── App / About menu (macOS-only — Linux/Windows merge it into Help) ──
     let app_meta = AboutMetadata {
-        name: Some("Ember Code".into()),
+        name: Some("igni".into()),
         copyright: Some("© 2026 Ignite Ember".into()),
         website: Some("https://ignite-ember.sh".into()),
         ..Default::default()
     };
-    let about = PredefinedMenuItem::about(app, Some("About Ember Code"), Some(app_meta))?;
+    let about = PredefinedMenuItem::about(app, Some("About igni"), Some(app_meta))?;
     let check_update = MenuItem::with_id(
         app,
         "check_update",
@@ -304,7 +304,7 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let quit = PredefinedMenuItem::quit(app, None)?;
     let app_menu = Submenu::with_items(
         app,
-        "Ember Code",
+        "igni",
         true,
         &[
             &about,
@@ -485,7 +485,7 @@ fn set_app_title(
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .unwrap_or("Ember Code")
+        .unwrap_or("igni")
         .to_string();
     let org = org.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let title = match org {
@@ -551,7 +551,7 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
         .canonicalize()
         .ok()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-        .unwrap_or_else(|| "Ember Code".to_string());
+        .unwrap_or_else(|| "igni".to_string());
 
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.set_title(&folder);
@@ -820,14 +820,14 @@ pub fn run() {
             // the real UI. Same pattern as the JetBrains tool-
             // window placeholder.
             let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("loading.html".into()))
-                .title("Ember Code")
+                .title("igni")
                 .inner_size(1100.0, 780.0);
             // ── Custom title bar (macOS) ──
             // ``TitleBarStyle::Overlay`` keeps the traffic lights
             // visible but removes the title-bar background, so the
             // webview extends to the very top of the window. The
             // FE's ``.app-header`` then renders as a single row:
-            //   [traffic lights]  [☰] [🔥 Ember Code] · folder · org …
+            //   [traffic lights]  [☰] [🔥 igni] · folder · org …
             // ``hidden_title`` suppresses the default centered text
             // (we set our own brand in the row instead).
             #[cfg(target_os = "macos")]
@@ -895,7 +895,7 @@ pub fn run() {
                             escaped
                         ));
                     }
-                    eprintln!("Ember Code bootstrap failed: {e}");
+                    eprintln!("igni bootstrap failed: {e}");
                 }
             });
 
@@ -939,7 +939,7 @@ pub fn run() {
             }
         })
         .build(tauri::generate_context!())
-        .expect("error while building Ember Code app")
+        .expect("error while building igni app")
         .run(|app, event| {
             if let RunEvent::Exit = event {
                 if let Some(handle) = app.try_state::<BackendHandle>() {

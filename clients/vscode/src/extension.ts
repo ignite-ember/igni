@@ -1,5 +1,5 @@
 /**
- * Ember Code VSCode extension.
+ * igni VSCode extension.
  *
  * Hosts the shared web UI (clients/web, bundled into ./media) in a
  * webview panel and spawns the Python backend for the open workspace.
@@ -105,7 +105,7 @@ function startBackend(
         reject(
           new Error(
             `Failed to spawn '${install.python}': ${err.message}\n` +
-              `Try Ember Code: Reinstall Backend.`,
+              `Try igni: Reinstall Backend.`,
           ),
         );
       });
@@ -419,7 +419,7 @@ export function activate(context: vscode.ExtensionContext) {
           (await vscode.window.withProgress(
             {
               location: vscode.ProgressLocation.Notification,
-              title: "Ember Code",
+              title: "igni",
             },
             (p) =>
               startBackend(context, folder, (msg) => p.report({ message: msg })),
@@ -431,7 +431,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       panel = vscode.window.createWebviewPanel(
         "emberCode",
-        "Ember Code",
+        "igni",
         vscode.ViewColumn.Beside,
         {
           enableScripts: true,

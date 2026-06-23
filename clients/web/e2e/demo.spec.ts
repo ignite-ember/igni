@@ -27,7 +27,7 @@ async function gotoDemo(page: Page) {
   await page.goto("/?demo=team");
   // Wait for the nav to mount — every scenario button shows up
   // at the same moment React renders.
-  await expect(page.getByRole("heading", { name: /Ember Code UI sandbox/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /igni UI sandbox/i })).toBeVisible();
 }
 
 async function selectScenario(page: Page, title: string) {

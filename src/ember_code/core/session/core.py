@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 
 class Session:
-    """Manages a single Ember Code session with all subsystem integrations.
+    """Manages a single igni session with all subsystem integrations.
 
     Session persistence and chat history are delegated entirely to Agno's
     native ``db`` / ``session_id`` mechanism.  The main team and all its

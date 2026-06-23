@@ -2,7 +2,7 @@
 
 ## Overview
 
-Ember Code is a terminal-based AI coding assistant built on [Agno](https://docs.agno.com/). Its core innovation is **dynamic team assembly**: instead of a fixed agent hierarchy, an Orchestrator analyzes each task and builds a purpose-fit team on the fly from a pool of agent definitions.
+igni is a terminal-based AI coding assistant built on [Agno](https://docs.agno.com/). Its core innovation is **dynamic team assembly**: instead of a fixed agent hierarchy, an Orchestrator analyzes each task and builds a purpose-fit team on the fly from a pool of agent definitions.
 
 ```
 ┌ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┐
@@ -112,7 +112,7 @@ Not every task needs a team. The Orchestrator's primary optimization is **minimi
 
 ### 4. Unlimited Nesting
 
-Claude Code caps sub-agents at one level (sub-agents can't spawn sub-agents). Ember Code has **no nesting limit**. Every agent can access the agent pool and spawn sub-teams by default (`can_orchestrate: true`). Opt out per-agent with `can_orchestrate: false`.
+Claude Code caps sub-agents at one level (sub-agents can't spawn sub-agents). igni has **no nesting limit**. Every agent can access the agent pool and spawn sub-teams by default (`can_orchestrate: true`). Opt out per-agent with `can_orchestrate: false`.
 
 This matters because **the agent closest to the problem is best positioned to decide if it needs help**. An editor mid-refactor might spawn an explorer to understand unfamiliar code. A reviewer might spawn a security-auditor for a specific concern. Each sub-team picks its own mode.
 
@@ -223,11 +223,11 @@ Startup
            └── Orchestrator reads pool on each request
 ```
 
-By default, Ember Code loads agents and skills from both its own directories and Claude Code / Codex directories (`cross_tool_support` is on by default). Set `cross_tool_support: false` to only scan Ember Code directories. See [Agents](AGENTS.md) and [Skills](SKILLS.md) for format details.
+By default, igni loads agents and skills from both its own directories and Claude Code / Codex directories (`cross_tool_support` is on by default). Set `cross_tool_support: false` to only scan igni directories. See [Agents](AGENTS.md) and [Skills](SKILLS.md) for format details.
 
 ## Session Management
 
-Each Ember Code session:
+Each igni session:
 
 1. **First run?** — if `.ember/agents/` doesn't exist, run the [onboarding flow](ONBOARDING.md): create default agents, ask about the user's work, fetch project context from CodeIndex, propose tailored agents
 2. **Loads** — agent pool (from Ember/Claude/Codex directories), user memory, project context (`ember.md`), MCP servers, session history
@@ -237,11 +237,11 @@ Each Ember Code session:
 
 By default, sessions are stored locally in `~/.ember/sessions.db` using Agno's `SqliteDb` backend. User memory lives in `~/.ember/memory.db`.
 
-**Cross-device sync:** Claude Code stores sessions locally only — they don't sync across devices. Ember Code defaults to the same (SQLite, local), but Agno's storage layer supports 15+ backends. Configure `storage.backend: "postgres"` (or MongoDB, Redis, DynamoDB, etc.) to sync sessions and memory across devices. See [Configuration](CONFIGURATION.md) for details.
+**Cross-device sync:** Claude Code stores sessions locally only — they don't sync across devices. igni defaults to the same (SQLite, local), but Agno's storage layer supports 15+ backends. Configure `storage.backend: "postgres"` (or MongoDB, Redis, DynamoDB, etc.) to sync sessions and memory across devices. See [Configuration](CONFIGURATION.md) for details.
 
 ## Knowledge System
 
-Ember Code includes a built-in vector knowledge base powered by ChromaDB and a custom embedder.
+igni includes a built-in vector knowledge base powered by ChromaDB and a custom embedder.
 
 ### EmberEmbedder
 
@@ -352,7 +352,7 @@ When scheduled tasks complete, toast notifications appear via Textual's `notify(
 
 ## Process Split Architecture
 
-Ember Code runs as two OS processes connected by a Unix domain socket. This isolates the TUI rendering from heavy AI/tool execution, preventing long-running agent work from blocking the UI event loop.
+igni runs as two OS processes connected by a Unix domain socket. This isolates the TUI rendering from heavy AI/tool execution, preventing long-running agent work from blocking the UI event loop.
 
 ```
 ┌──────────────┐   Unix socket   ┌──────────────┐
@@ -415,7 +415,7 @@ All messages are Pydantic models defined in `protocol/messages.py` with plain ty
 
 ## Security Model
 
-Ember Code follows a defense-in-depth approach:
+igni follows a defense-in-depth approach:
 
 1. **Permission tiers** — configurable per-tool approval requirements
 2. **Command blocking** — dangerous shell commands blocked, others require confirmation

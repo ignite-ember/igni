@@ -1,6 +1,6 @@
 # Project Context
 
-<!-- This file gives igni agents context about your project.
+<!-- This file gives Ember Code agents context about your project.
      Edit it to match your project's specifics. Agents read this file
      before every task to understand conventions, architecture, and
      domain terminology. -->

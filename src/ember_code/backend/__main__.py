@@ -81,7 +81,7 @@ def main(
     additional_dirs: tuple[str, ...],
     debug: bool,
 ) -> None:
-    """Start the Ember Code backend server."""
+    """Start the igni backend server."""
     if socket_path is None and ws_port is None:
         raise click.UsageError("at least one of --socket or --ws-port is required")
     if debug:

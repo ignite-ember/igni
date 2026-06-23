@@ -1,4 +1,4 @@
-# Ember Code — Full QA Checklist
+# igni — Full QA Checklist
 
 > Priority by feature importance:
 > - **P0** = Product unusable if broken (core loop, tools, permissions, sessions)

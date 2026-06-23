@@ -27,6 +27,6 @@ class AddFileToChatAction : AnAction() {
             EmberHostEvents.attachFile(project, rel)
         }
         ToolWindowManager.getInstance(project)
-            .getToolWindow("Ember Code")?.show(null)
+            .getToolWindow("igni")?.show(null)
     }
 }

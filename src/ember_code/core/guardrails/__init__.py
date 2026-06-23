@@ -1,4 +1,4 @@
-"""Guardrails enforcement for Ember Code."""
+"""Guardrails enforcement for igni."""
 
 from ember_code.core.guardrails.base import Guardrail, GuardrailResult
 from ember_code.core.guardrails.injection import PromptInjectionGuardrail

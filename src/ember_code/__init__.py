@@ -1,4 +1,4 @@
-"""Ember Code — Terminal-based AI coding assistant built on Agno."""
+"""igni — Terminal-based AI coding assistant built on Agno."""
 
 # Must run before anything that pulls in ``transformers`` /
 # ``sentence-transformers``. See the shim's docstring for why.

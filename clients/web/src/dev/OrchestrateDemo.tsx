@@ -739,7 +739,7 @@ const SCENARIOS: Scenario[] = [
         args: "{path: 'README.md'}",
         status: "done",
         result:
-          "# Ember Code\n\nLocal-first AI coding agent. Backend in Python, web UI in React, …",
+          "# igni\n\nLocal-first AI coding agent. Backend in Python, web UI in React, …",
         isError: false,
         diffRows: null,
       },
@@ -1545,11 +1545,11 @@ const SCENARIOS: Scenario[] = [
           "  Tag + ship              :rel2, after rel1, 1d",
           "```",
           "",
-          "### Mindmap — Ember Code feature surface",
+          "### Mindmap — igni feature surface",
           "",
           "```mermaid",
           "mindmap",
-          "  root((Ember Code))",
+          "  root((igni))",
           "    Clients",
           "      Tauri desktop",
           "      VSCode extension",
@@ -1567,7 +1567,7 @@ const SCENARIOS: Scenario[] = [
           "      Skills / slash cmds",
           "```",
           "",
-          "### Timeline — Ember Code milestones",
+          "### Timeline — igni milestones",
           "",
           "```mermaid",
           "timeline",
@@ -1712,7 +1712,7 @@ export function OrchestrateDemo() {
   return (
     <div className="demo-shell">
       <header className="demo-head">
-        <h1>Ember Code UI sandbox</h1>
+        <h1>igni UI sandbox</h1>
         <p>
           Mock ChatItems rendered through the real components. Pick a
           scenario below; tweak{" "}

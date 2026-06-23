@@ -1,19 +1,19 @@
 # CodeIndex Integration
 
-CodeIndex is the semantic code intelligence engine behind Ember Code. While other tools operate on raw text (grep for patterns, read for file contents), CodeIndex gives agents **pre-processed understanding** of the entire codebase — searchable by meaning, not just keywords.
+CodeIndex is the semantic code intelligence engine behind igni. While other tools operate on raw text (grep for patterns, read for file contents), CodeIndex gives agents **pre-processed understanding** of the entire codebase — searchable by meaning, not just keywords.
 
-**CodeIndex is included with every Ember Code plan** (Lite, Pro, Max). If you only need code intelligence without the AI coding assistant, CodeIndex is also available as a standalone plan at $10/seat. Sign up at [ignite-ember.sh](https://ignite-ember.sh).
+**CodeIndex is included with every igni plan** (Lite, Pro, Max). If you only need code intelligence without the AI coding assistant, CodeIndex is also available as a standalone plan at $10/seat. Sign up at [ignite-ember.sh](https://ignite-ember.sh).
 
 ## What CodeIndex Does
 
-CodeIndex is a semantic search platform built on Weaviate (vector DB), PostgreSQL (metadata), and Agno readers (intelligent chunking). Ember Code uses it as the backend for code intelligence:
+CodeIndex is a semantic search platform built on Weaviate (vector DB), PostgreSQL (metadata), and Agno readers (intelligent chunking). igni uses it as the backend for code intelligence:
 
 ```
 Your Codebase
     │
     ▼
 ┌──────────────────────────────────────────┐
-│  Ember Code Analysis Pipeline            │
+│  igni Analysis Pipeline            │
 │                                          │
 │  1. Read every file                      │
 │  2. Chunk semantically (Agno readers)    │
@@ -60,7 +60,7 @@ It's important to understand the separation:
 - Access control, multi-tenancy, per-repository scoping
 - REST API for ingestion, search, and management
 
-**Ember Code** (the intelligence layer) provides:
+**igni** (the intelligence layer) provides:
 - The analysis pipeline that generates multi-category summaries
 - Bottom-up hierarchical summary generation (function → class → file → module → project)
 - Category-specific analysis (security, testability, architecture, performance, maintainability)
@@ -73,7 +73,7 @@ Together, they give agents something no other coding assistant has: **pre-comput
 
 ## Multi-Category Analysis
 
-When Ember Code indexes a codebase, it doesn't just store raw code. For each entity, it generates summaries across **six categories**:
+When igni indexes a codebase, it doesn't just store raw code. For each entity, it generates summaries across **six categories**:
 
 | Category | What It Captures | Example Insight |
 |---|---|---|
@@ -265,7 +265,7 @@ Returns:
 
 Beyond the per-entity summaries, the indexing pipeline also produces a **commit-level overview** — a single markdown digest that gives agents a factual high-level picture of the codebase *before they issue a single tool call*. Without it, an agent's first query often misfires because it hasn't yet learned the project's vocabulary; with it, the first query lands on the right area on the first try.
 
-The map is rendered **once per commit, server-side**, and shipped to the client as the final line of the JSONL changeset (`commit_summary` op). Ember Code persists the markdown alongside the per-commit chroma directory and, when a session starts, injects it into the agent's system prompt as a `## Project Map` section.
+The map is rendered **once per commit, server-side**, and shipped to the client as the final line of the JSONL changeset (`commit_summary` op). igni persists the markdown alongside the per-commit chroma directory and, when a session starts, injects it into the agent's system prompt as a `## Project Map` section.
 
 ### What's in the map
 
@@ -300,7 +300,7 @@ Agents access CodeIndex through the `CodeIndex` tool (see [Tools](TOOLS.md)):
 from ember_code.tools.codeindex import CodeIndexTools
 
 codeindex = CodeIndexTools(
-    project_id=config.project_id,  # authenticated via Ember Code login
+    project_id=config.project_id,  # authenticated via igni login
 )
 ```
 
@@ -389,7 +389,7 @@ CodeIndex supports multiple chunking strategies via Agno readers:
 
 ## Graceful Degradation
 
-If CodeIndex is unavailable (no account, offline, API error), Ember Code still works. The Orchestrator is aware of CodeIndex availability and adjusts:
+If CodeIndex is unavailable (no account, offline, API error), igni still works. The Orchestrator is aware of CodeIndex availability and adjusts:
 
 | CodeIndex Status | Agent Behavior |
 |---|---|
@@ -403,7 +403,7 @@ The experience degrades gracefully — agents are slower and less informed witho
 
 ## Configuration
 
-CodeIndex works out of the box with zero configuration. When you sign up at [ignite-ember.sh](https://ignite-ember.sh), CodeIndex is included automatically — no API keys, no config files needed. Your Ember Code login is all that's required.
+CodeIndex works out of the box with zero configuration. When you sign up at [ignite-ember.sh](https://ignite-ember.sh), CodeIndex is included automatically — no API keys, no config files needed. Your igni login is all that's required.
 
 > **Coming soon:** Per-project configuration for CodeIndex (custom categories, indexing options, ignore patterns, chunking strategies, self-hosting) is planned for a future release. Today, CodeIndex uses sensible defaults for all projects.
 

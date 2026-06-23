@@ -39,7 +39,7 @@ HELP_SECTIONS = [
         "Getting Started",
         "Basic usage and key concepts",
         "Just describe what you need in plain language.\n"
-        "Ember Code picks the right agents and tools automatically.\n\n"
+        "igni picks the right agents and tools automatically.\n\n"
         + "\n".join(
             [
                 _row("@filename", "reference project files with autocomplete"),
@@ -170,7 +170,7 @@ HELP_SECTIONS = [
         "/plugins, /plugin — Claude-Code-compatible bundles",
         "Plugins bundle skills, agents, hooks, MCP servers, and tools\n"
         "into one installable unit. Bundles built for Claude Code work\n"
-        "in Ember Code unchanged.\n\n"
+        "in igni unchanged.\n\n"
         + "\n".join(
             [
                 _row("/plugins", "open the panel"),

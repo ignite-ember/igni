@@ -1,10 +1,10 @@
-# Ember Code vs Claude Code — Comparison Analysis
+# igni vs Claude Code — Comparison Analysis
 
-A thorough feature-by-feature comparison between Ember Code and Claude Code.
+A thorough feature-by-feature comparison between igni and Claude Code.
 
 ## 1. Architectural Philosophy
 
-| Aspect | Claude Code | Ember Code |
+| Aspect | Claude Code | igni |
 |---|---|---|
 | **Core pattern** | Single-agent loop with optional sub-agents | Multi-agent team orchestration (Agno framework) |
 | **Execution model** | One context window, one agent decides everything | Orchestrator meta-agent assembles purpose-built teams per task |
@@ -13,13 +13,13 @@ A thorough feature-by-feature comparison between Ember Code and Claude Code.
 
 Claude Code is a **monolithic agent** — one powerful Claude model handles routing, planning, execution, and review in a single conversation loop. It can spawn sub-agents, but only one level deep, and the parent must explicitly decide when and what to delegate.
 
-Ember Code inverts this: an **Orchestrator** analyzes every task, picks agents from a pool, selects a team mode, and assembles a disposable team. Any agent can spawn sub-teams recursively (default depth: 5, configurable).
+igni inverts this: an **Orchestrator** analyzes every task, picks agents from a pool, selects a team mode, and assembles a disposable team. Any agent can spawn sub-teams recursively (default depth: 5, configurable).
 
 ---
 
 ## 2. Agent System
 
-| Aspect | Claude Code | Ember Code |
+| Aspect | Claude Code | igni |
 |---|---|---|
 | **Agent format** | `.md` files with YAML frontmatter | Same `.md` format (cross-compatible) |
 | **Built-in agents** | ~3 (main, sub-agent, plan mode) | 13 specialized agents (explorer, editor, planner, architect, reviewer, security, qa, debugger, simplifier, git, conversational, diagnostician, docs) |
@@ -30,7 +30,7 @@ Ember Code inverts this: an **Orchestrator** analyzes every task, picks agents f
 | **Agent extensions** | `name`, `description`, `tools`, `model` | All Claude Code fields + `tags`, `reasoning`, `reasoning_min/max_steps`, `can_orchestrate`, `temperature`, `max_turns`, `color`, `mcp_servers` |
 | **Cross-compat** | N/A | Scans `.claude/agents/` by default (cross-tool support on) |
 
-### Team Modes (Ember Code only)
+### Team Modes (igni only)
 
 | Mode | Behavior | Example |
 |---|---|---|
@@ -45,7 +45,7 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 
 ## 3. Tool System
 
-| Tool | Claude Code | Ember Code | Notes |
+| Tool | Claude Code | igni | Notes |
 |---|---|---|---|
 | Read | Yes | Yes (FileTools) | Same concept |
 | Write | Yes | Yes (FileTools) | Same concept |
@@ -65,7 +65,7 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 
 ### Tool Permissions
 
-| Aspect | Claude Code | Ember Code |
+| Aspect | Claude Code | igni |
 |---|---|---|
 | **Permission model** | Pattern-based allow/deny lists per tool | Category-based tiers (allow/ask/deny) per capability |
 | **Syntax** | `"allow": ["Bash(npm run *)"]` | `permissions.shell_execute: "ask"` |
@@ -78,7 +78,7 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 
 ## 4. LLM & Model Support
 
-| Aspect | Claude Code | Ember Code |
+| Aspect | Claude Code | igni |
 |---|---|---|
 | **Default model** | Claude Sonnet 4.6 (Anthropic) | MiniMax M2.7 (Ember hosted) |
 | **Provider lock-in** | Anthropic only (Claude models) | Any OpenAI-compatible provider |
@@ -93,7 +93,7 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 
 ## 5. UI & Interface
 
-| Aspect | Claude Code | Ember Code |
+| Aspect | Claude Code | igni |
 |---|---|---|
 | **Framework** | Ink (React for CLI) | Textual (Python TUI) + Rich |
 | **Default mode** | Interactive CLI | Full TUI with panels and widgets |
@@ -111,7 +111,7 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 
 ## 6. Context & Rules System
 
-| Aspect | Claude Code | Ember Code |
+| Aspect | Claude Code | igni |
 |---|---|---|
 | **Project instructions** | `CLAUDE.md` (root + subdirectories) | `ember.md` (root + subdirectories) + optionally `CLAUDE.md` |
 | **User-level rules** | `~/.claude/CLAUDE.md` | `~/.ember/rules.md` |
@@ -125,7 +125,7 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 
 ## 7. Memory & Persistence
 
-| Aspect | Claude Code | Ember Code |
+| Aspect | Claude Code | igni |
 |---|---|---|
 | **Memory model** | File-based (`MEMORY.md` index + `.md` files) | DB-backed (Agno Memory, SQLite default) |
 | **Session storage** | JSONL transcripts | SQLite (`~/.ember/sessions.db`) |
@@ -139,7 +139,7 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 
 ## 8. MCP (Model Context Protocol)
 
-| Aspect | Claude Code | Ember Code |
+| Aspect | Claude Code | igni |
 |---|---|---|
 | **As MCP Server** | Yes (stdio) | Yes (stdio) |
 | **As MCP Client** | Yes (consume external servers) | Yes (consume external servers via Agno MCPTools) |
@@ -153,7 +153,7 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 
 ## 9. Skills
 
-| Aspect | Claude Code | Ember Code |
+| Aspect | Claude Code | igni |
 |---|---|---|
 | **Format** | `SKILL.md` with frontmatter | Same format (cross-compatible) |
 | **Invocation** | `/skill-name [args]` | `/skill-name [args]` |
@@ -167,7 +167,7 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 
 ## 10. Safety & Guardrails
 
-| Aspect | Claude Code | Ember Code |
+| Aspect | Claude Code | igni |
 |---|---|---|
 | **Permission model** | Pattern-based per-tool | Category tiers (allow/ask/deny) |
 | **Command safety** | macOS sandbox-exec, Linux containers | Blocked patterns, confirmation prompts |
@@ -190,7 +190,7 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 | **Effort levels** (`--effort low/high`) | Token budget control |
 | **Anthropic model optimization** | Deep integration with Claude's extended thinking, caching |
 
-### Ember Code Only
+### igni Only
 
 | Feature | Notes |
 |---|---|
@@ -218,7 +218,7 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 
 ## 12. Cross-Compatibility Summary
 
-| Asset | Claude Code → Ember Code | Ember Code → Claude Code |
+| Asset | Claude Code → igni | igni → Claude Code |
 |---|---|---|
 | Agent `.md` files | Works when `agents.cross_tool_support: true` | Works (extensions ignored) |
 | Skills | Works when `skills.cross_tool_support: true` | Works (extensions ignored) |
@@ -234,6 +234,6 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 
 **Claude Code** excels as a **single-agent powerhouse** — deeply optimized for Anthropic's models, with tight IDE integration (VS Code extension, worktrees), and a simple mental model. Its strength is that one very capable model handles everything in one context window.
 
-**Ember Code** takes a **multi-agent orchestration** approach — instead of one agent doing everything, specialized agents collaborate in dynamically assembled teams. This adds complexity but provides: model flexibility (any provider), deeper code intelligence (CodeIndex), persistent learning (Agno Memory), and recursive delegation. The tradeoff is coordination overhead for simple tasks where a single capable agent would suffice.
+**igni** takes a **multi-agent orchestration** approach — instead of one agent doing everything, specialized agents collaborate in dynamically assembled teams. This adds complexity but provides: model flexibility (any provider), deeper code intelligence (CodeIndex), persistent learning (Agno Memory), and recursive delegation. The tradeoff is coordination overhead for simple tasks where a single capable agent would suffice.
 
-The cross-compatibility design (`cross_tool_support` flags) means teams can adopt Ember Code incrementally without discarding Claude Code assets.
+The cross-compatibility design (`cross_tool_support` flags) means teams can adopt igni incrementally without discarding Claude Code assets.

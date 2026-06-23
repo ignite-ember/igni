@@ -1,5 +1,5 @@
 /**
- * EmberClient — WebSocket protocol client for the Ember Code backend.
+ * EmberClient — WebSocket protocol client for the igni backend.
  *
  * Responsibilities:
  *  - connect/reconnect to `python -m ember_code.backend --ws-port N`

@@ -1,4 +1,4 @@
-# Ember Code — standalone desktop app (Tauri v2)
+# igni — standalone desktop app (Tauri v2)
 
 Thin native shell around the shared web UI (`clients/web`). On launch it:
 

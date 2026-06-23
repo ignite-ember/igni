@@ -1,4 +1,4 @@
-/* Ember Code chat UI.
+/* igni chat UI.
    Layout language: Claude-chat-like — calm neutral surfaces, one
    centered reading column, pill composer docked at the bottom.
    Brand accents from the portal LandingPage: ember orange #F97316 →
@@ -679,9 +679,15 @@ button {
 .brand {
   display: flex;
   align-items: center;
-  gap: 9px;
-  font-weight: 700;
-  font-size: 15px;
+  /* Tight grouping: flame + wordmark + status dot all read as one
+     glyph cluster. */
+  gap: 5px;
+  /* Lowercase ``igni`` wordmark: bigger than the old "Ember Code"
+     text but lighter weight, so it reads as a typographic mark
+     rather than a bold UI label. */
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
 }
 
 .header-spacer {
@@ -733,8 +739,8 @@ button {
 }
 
 .dot {
-  width: 7px;
-  height: 7px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -977,10 +983,14 @@ button {
 }
 
 .welcome h1 {
-  font-size: 30px;
+  /* Matches the 56px flame above so the wordmark balances the icon.
+     "Ember Code" at 30px filled the available width — lowercase
+     ``igni`` at 56px lands at a similar visual mass. */
+  font-size: 56px;
   font-weight: 700;
-  letter-spacing: -0.02em;
-  margin: 18px 0 6px;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  margin: 14px 0 8px;
 }
 
 .welcome p {

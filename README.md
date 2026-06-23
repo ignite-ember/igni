@@ -1,20 +1,20 @@
-# Ember Code
+# igni
 
 **One spark ignites a team.** An AI coding assistant built with [Agno](https://github.com/agno-agi/agno) orchestration.
 
 [ignite-ember.sh](https://ignite-ember.sh)
 
-Inspired by [Claude Code](https://github.com/anthropics/claude-code), Ember Code is a terminal-based coding agent that assembles specialized AI teams on the fly. Describe your task — the Orchestrator picks the right agents, the right team mode, and runs them.
+Inspired by [Claude Code](https://github.com/anthropics/claude-code), igni is a terminal-based coding agent that assembles specialized AI teams on the fly. Describe your task — the Orchestrator picks the right agents, the right team mode, and runs them.
 
-## Why Ember Code?
+## Why igni?
 
-Claude Code uses a single agent loop — powerful but monolithic. Ember Code takes a different approach: **dynamic multi-agent orchestration**. Instead of one agent doing everything, Agno's team system decomposes tasks, routes them to specialized agents, and synthesizes results — all automatically.
+Claude Code uses a single agent loop — powerful but monolithic. igni takes a different approach: **dynamic multi-agent orchestration**. Instead of one agent doing everything, Agno's team system decomposes tasks, routes them to specialized agents, and synthesizes results — all automatically.
 
 ### The numbers
 
 Head-to-head benchmark on a 12-case software-engineering suite, 5 runs per system, deterministic grading. See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for the full breakdown.
 
-| | Ember Code (MiniMax-M2.7) + CodeIndex | Claude Code (Opus-4.7) |
+| | igni (MiniMax-M2.7) + CodeIndex | Claude Code (Opus-4.7) |
 |---|---:|---:|
 | Directly mergeable (✅) | **49 / 60 (82 %)** | 31 / 60 (52 %) |
 | Needs clarification (⚠) | **4 / 60 (7 %)** | 22 / 60 (37 %) |
@@ -23,13 +23,13 @@ Head-to-head benchmark on a 12-case software-engineering suite, 5 runs per syste
 | Cost per run | **~$0.05** | $4.01 |
 | Wall time mean | 2 331 s | **1 548 s** |
 
-**Ember Code wins by +18 ✅ trials at 1/80th the cost.** The gap is concentrated in the ⚠ band — Ember Code commits to a concrete answer where Claude Code stays in design-conversation mode. Both systems hit the same hard-wrong rate (12 %), so the win comes from converting partial/clarifying responses into directly-mergeable ones.
+**igni wins by +18 ✅ trials at 1/80th the cost.** The gap is concentrated in the ⚠ band — igni commits to a concrete answer where Claude Code stays in design-conversation mode. Both systems hit the same hard-wrong rate (12 %), so the win comes from converting partial/clarifying responses into directly-mergeable ones.
 
 The architectural choices that drive the gap: (1) **CodeIndex queried first, not files** — a pre-built semantic + metadata index lets the agent locate reuse targets and conventions by typed filter or HyDE-style code-shaped query, instead of grep-walking the repo. (2) **A mandatory "What already exists" preamble** — agent must name the reuse target, the closest near-miss it rejected, and the conventions to match before writing any code. (3) **A small, focused model with structured tools** — MiniMax-M2.7 + index access matches Opus-4.7 quality at 1/80th the price.
 
 ### Feature comparison
 
-| Feature | Claude Code | Ember Code |
+| Feature | Claude Code | igni |
 |---|---|---|
 | Architecture | Single agent loop | Multi-agent teams (Agno) |
 | Task routing | Manual sub-agent spawning | Automatic via Coordinate/Route modes |
@@ -89,7 +89,7 @@ See [Quickstart](QUICKSTART.md) for the full guide.
 
 ### Benchmarks vs Claude Code (new in v0.5.0)
 
-- **Head-to-head benchmark suite.** 12 cases × 5 runs vs Claude Code on the same target codebase. Programmatic deterministic grading. Ember Code wins **49 / 60 ✅** vs **31 / 60 ✅** at one-eightieth of the per-run cost. Full breakdown in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+- **Head-to-head benchmark suite.** 12 cases × 5 runs vs Claude Code on the same target codebase. Programmatic deterministic grading. igni wins **49 / 60 ✅** vs **31 / 60 ✅** at one-eightieth of the per-run cost. Full breakdown in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 - **CodeIndex-first specialist agents.** New `*.codeindex.md` variants for `architect`, `debugger`, `explorer`, `reviewer`, `security`, `simplifier` — each with prompts tuned to query the index first instead of grepping. Auto-selected when a populated CodeIndex exists for the current commit.
 - **Mandatory "What already exists" preamble.** The main-agent prompt now requires every code-write response to start with a four-bullet section naming (a) the reuse target, (b) the closest near-miss it considered and rejected, (c) the conventions to match, (d) the parallel infrastructure it will *not* introduce. Forces contrastive reasoning before code is written.
 - **Encapsulation rule.** When a service class wraps a resource (db client, cache, queue, storage), new code must call methods on that class instead of inlining the raw client. Catches the "copy a private prefix into a new file and instantiate the client myself" anti-pattern.
@@ -145,7 +145,7 @@ See [Quickstart](QUICKSTART.md) for the full guide.
 - **Problem:** Learning features get stuck and never complete (caused by httpx connection pool issues in threads).
   - **Solution:** Run learning extraction as an async task on the main event loop instead of a separate thread.
 
-To upgrade Ember Code to the latest version:
+To upgrade igni to the latest version:
 
 ```bash
 brew upgrade ignite-ember/tap/ignite-ember
@@ -165,7 +165,7 @@ Features: streaming responses, agent tree visualization, token tracking, session
 
 ## IDE Integration
 
-Ember Code integrates with IDEs via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/):
+igni integrates with IDEs via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/):
 
 ```json
 {
@@ -232,7 +232,7 @@ Agents can pause execution to request confirmation or user input before proceedi
 - [Hooks](docs/HOOKS.md) — Pre/post tool execution hooks
 - [Migration](docs/MIGRATION.md) — Coming from Claude Code or Codex
 - [Security](docs/SECURITY.md) — Threat model, permissions, and enterprise hardening
-- [Development](docs/DEVELOPMENT.md) — Contributing and extending Ember Code
+- [Development](docs/DEVELOPMENT.md) — Contributing and extending igni
 
 ## License
 

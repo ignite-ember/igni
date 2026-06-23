@@ -15,6 +15,6 @@ class OpenChatAction : AnAction() {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         ToolWindowManager.getInstance(project)
-            .getToolWindow("Ember Code")?.show(null)
+            .getToolWindow("igni")?.show(null)
     }
 }

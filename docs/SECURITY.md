@@ -1,10 +1,10 @@
 # Security
 
-Ember Code follows a defense-in-depth approach. Multiple independent layers of protection ensure that even if one layer is bypassed, others still guard against harm.
+igni follows a defense-in-depth approach. Multiple independent layers of protection ensure that even if one layer is bypassed, others still guard against harm.
 
 ## Threat Model
 
-Ember Code is an AI agent that reads, writes, and executes code on behalf of the user. The primary threats:
+igni is an AI agent that reads, writes, and executes code on behalf of the user. The primary threats:
 
 | Threat | Risk | Mitigation |
 |---|---|---|
@@ -214,7 +214,7 @@ Audit logs are useful for:
 - **stdio only** — no network exposure; only the parent process connects
 - Permission system applies to all MCP tool calls
 - Audit logging covers MCP calls
-- MCP servers Ember Code consumes are NOT exposed to IDE clients (no passthrough)
+- MCP servers igni consumes are NOT exposed to IDE clients (no passthrough)
 
 **As client (consuming external servers):**
 - Project-scoped servers require approval on first use
@@ -343,7 +343,7 @@ For teams that can't send code to the cloud, self-hosted CodeIndex is planned fo
 
 ## Comparison with Claude Code
 
-| Security Feature | Claude Code | Ember Code |
+| Security Feature | Claude Code | igni |
 |---|---|---|
 | Permission tiers | allow / ask / deny per tool | Same, plus category-based presets |
 | Protected paths | Via deny rules | Dedicated protected_paths list |

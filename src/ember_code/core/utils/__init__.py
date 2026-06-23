@@ -1,1 +1,1 @@
-"""Utility modules for Ember Code."""
+"""Utility modules for igni."""

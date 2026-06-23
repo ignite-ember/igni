@@ -2,7 +2,7 @@
   "name": "@ember-code/web-ui",
   "private": true,
   "version": "0.1.0",
-  "description": "Shared Ember Code chat UI — hosted by the Tauri app, VSCode webview, and JetBrains JCEF panel",
+  "description": "Shared igni chat UI — hosted by the Tauri app, VSCode webview, and JetBrains JCEF panel",
   "type": "module",
   "scripts": {
     "dev": "vite",

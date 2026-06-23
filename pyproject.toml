@@ -91,7 +91,11 @@ web = [
 ]
 
 [project.scripts]
+# ``ignite-ember`` kept for backwards compatibility — existing user
+# shell aliases / docs / scripts continue to work. ``igni`` is the
+# canonical command going forward; both point at the same entrypoint.
 ignite-ember = "ember_code.__main__:main"
+igni = "ember_code.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ember_code"]

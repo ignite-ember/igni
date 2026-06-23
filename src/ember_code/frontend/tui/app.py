@@ -1,4 +1,4 @@
-"""Ember Code TUI — main application.
+"""igni TUI — main application.
 
 Thin shell that composes Textual widgets and delegates logic to
 ``ConversationView``, ``StatusTracker``, ``RunController``,
@@ -72,9 +72,9 @@ logger = logging.getLogger(__name__)
 
 
 class EmberApp(App):
-    """Ember Code Terminal UI Application."""
+    """igni Terminal UI Application."""
 
-    TITLE = "Ember Code"
+    TITLE = "igni"
     SUB_TITLE = f"v{__version__}"
     ALLOW_SELECT = True
 
@@ -375,7 +375,7 @@ class EmberApp(App):
         """
         lines = [
             "",
-            "  [bold]Why Ember Code:[/bold]",
+            "  [bold]Why igni:[/bold]",
             "",
             "    [dim]●[/dim]  [bold]/agents[/bold] — dispatch to a specialist (architect, debugger, ...)",
             "    [dim]●[/dim]  [bold]/skills[/bold] — slash-command workflows (/commit, /resolve-issues, ...)",
@@ -394,7 +394,7 @@ class EmberApp(App):
     def compose(self) -> ComposeResult:
         _quit_key = shortcut_label("Ctrl+D")
         yield Static(
-            f" [bold]Ember Code[/bold] [dim]v{__version__}[/dim]"
+            f" [bold]igni[/bold] [dim]v{__version__}[/dim]"
             f"    [dim]/help for commands · {_quit_key} to quit[/dim]",
             id="header-bar",
         )
