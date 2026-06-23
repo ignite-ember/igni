@@ -839,7 +839,7 @@ pub fn run() {
                 // the same (x, y) after every navigation to survive
                 // macOS' title-bar recompute. Kept in lockstep with
                 // the schedule below in ``bootstrap_and_open``.
-                .traffic_light_position(LogicalPosition::new(16.0, 24.0));
+                .traffic_light_position(LogicalPosition::new(16.0, 22.0));
             builder
                 .initialization_script(&INIT_SCRIPT.replace("__PLATFORM__", PLATFORM))
                 .build()?;
@@ -851,7 +851,7 @@ pub fn run() {
             // ``install_traffic_light_observer`` for the rationale.
             #[cfg(target_os = "macos")]
             if let Some(w) = app.get_webview_window("main") {
-                install_traffic_light_observer(w.clone(), 16.0, 24.0);
+                install_traffic_light_observer(w.clone(), 16.0, 22.0);
                 // The observer fires on ``kCFRunLoopBeforeWaiting`` —
                 // only when the runloop goes idle. Under load (debug
                 // builds, slow first-frame paint), that idle moment
