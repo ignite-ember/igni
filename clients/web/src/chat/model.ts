@@ -835,8 +835,14 @@ export function restoredStatsItem(
 
 /** Persisted-history turn → renderable item (TUI parity: strip the
  * injected system-context from user turns and think blocks from
- * assistant turns). Returns null for empty or non-chat turns. */
-export function restoredItem(role: string, content: string): ChatItem | null {
+ * assistant turns). Returns null for empty or non-chat turns.
+ *
+ * The full turn dict is passed (not just role + content) so the
+ * mapper can pick up tool metadata (``tool_name``, ``args``,
+ * ``is_error``) without a second signature for tool turns. */
+export function restoredItem(turn: Record<string, unknown>): ChatItem | null {
+  const role = String(turn.role ?? "");
+  const content = String(turn.content ?? "");
   if (role === "user") {
     const text = content
       .replace(SYSTEM_CONTEXT_RE, "")
@@ -857,6 +863,54 @@ export function restoredItem(role: string, content: string): ChatItem | null {
   if (role === "assistant") {
     const text = content.replace(THINK_BLOCK_RE, "").trim();
     return text ? assistantItem(text) : null;
+  }
+  if (role === "thinking") {
+    // Backend emits a synthetic ``thinking`` turn from the assistant
+    // message's ``reasoning_content``. Reuses the live ``thinking``
+    // kind so styling matches the streaming bubble.
+    const text = content.trim();
+    return text ? { kind: "thinking", id: nid(), text } : null;
+  }
+  if (role === "tool") {
+    // Restore the tool card with status="done" — the live path
+    // builds this in two events (``tool_started`` + ``tool_completed``).
+    // History squashes the two; we land already-complete.
+    const friendlyName = String(turn.friendly_name ?? turn.tool_name ?? "");
+    const args = String(turn.args ?? "");
+    const result = content;
+    const isError = Boolean(turn.is_error);
+    const runId = String(turn.run_id ?? "");
+    return {
+      kind: "tool",
+      id: nid(),
+      runId,
+      name: friendlyName,
+      args,
+      status: isError ? "error" : "done",
+      result,
+      isError,
+      // No diff rows in restored tool cards — the BE only computes
+      // these on the live path via ``edit_file``'s rich payload.
+      // A future enhancement could re-derive them by stashing the
+      // diff in tool_args; today the textual result is enough.
+      diffRows: null,
+    };
+  }
+  if (role === "plan") {
+    // Synthetic plan turn — emitted by ``get_chat_history`` in place
+    // of an ``exit_plan_mode`` tool result. Lets the PlanCard render
+    // at the point in the conversation where the agent submitted it,
+    // not bolted onto the end.
+    const planText = String(turn.plan ?? "").trim();
+    if (!planText) return null;
+    const item = planItem(planText, normalizePlanTasks(turn.tasks));
+    if (item.kind === "plan") {
+      const state = String(turn.state ?? "");
+      if (state === "pending" || state === "approved" || state === "dismissed") {
+        item.state = state;
+      }
+    }
+    return item;
   }
   return null;
 }

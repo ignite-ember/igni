@@ -211,18 +211,19 @@ You don't pick agents — the Orchestrator does. It analyzes each task and build
 
 Agents get only the tools declared in their `.md` file. Built-in tools:
 
+igni's main team is **shell-first**: `Bash` handles reads, search, and file listing (`cat`, `rg`, `find`, `ls`). `Read`/`Grep`/`Glob` exist in the registry but are not exposed to the main team — sub-agents can opt into them via their `tools:` allowlist. See [TOOLS.md](docs/TOOLS.md) for the full catalog and rationale.
+
 | Tool | What It Does |
 |---|---|
-| `Read` | Read file contents |
+| `Bash` | Shell command execution — also covers read (`cat`), search (`rg`), list (`find`/`ls`) |
 | `Write` | Create/overwrite files |
 | `Edit` | Targeted string-replacement editing |
-| `Bash` | Shell command execution |
-| `Grep` | Regex content search (ripgrep) |
-| `Glob` | File pattern matching |
+| `Schedule` | Schedule tasks for later or recurring execution |
+| `NotebookEdit` | Read and edit Jupyter notebook cells |
 | `WebSearch` | Web search |
 | `WebFetch` | Fetch URL content |
-| `Python` | Execute Python code |
 | `Orchestrate` | Spawn sub-teams |
+| `CodeIndex` | Semantic code search (when index is built) |
 
 ---
 

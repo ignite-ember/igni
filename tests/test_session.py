@@ -883,4 +883,3 @@ class TestSessionBroadcast:
         # ``late`` is now in the list for the next broadcast.
         session.broadcast("ev2", {})
         assert log == ["first", "first", "late"]
-

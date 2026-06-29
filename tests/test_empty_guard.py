@@ -27,8 +27,6 @@ The contract:
 
 from __future__ import annotations
 
-import pytest
-
 from ember_code.core.tools.codeindex.empty_guard import is_empty_call
 
 
@@ -125,9 +123,9 @@ class TestEmptyCallNonEmptyShapes:
             "issues",
         ]:
             kwargs = {filter_name: ["something"]}
-            assert (
-                is_empty_call(**kwargs) is False
-            ), f"{filter_name} filter should NOT count as empty"
+            assert is_empty_call(**kwargs) is False, (
+                f"{filter_name} filter should NOT count as empty"
+            )
 
     def test_str_filter_set_is_not_empty(self):
         # Some filters take a string (file_extension, path_prefix).

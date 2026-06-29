@@ -98,9 +98,7 @@ class TestDicts:
     def test_dict_values_recursively_serialized(self):
         # The whole point — nested structures flatten cleanly.
         nested = {"outer": {"inner": [1, 2, {"deep": True}]}}
-        assert _serialize(nested) == {
-            "outer": {"inner": [1, 2, {"deep": True}]}
-        }
+        assert _serialize(nested) == {"outer": {"inner": [1, 2, {"deep": True}]}}
 
 
 class TestPydanticModels:

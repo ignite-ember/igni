@@ -18,9 +18,6 @@ much Agno setup to be useful here.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
-
-import pytest
 
 from ember_code.core.knowledge.ingest import (
     _is_text_path,
@@ -128,9 +125,7 @@ class TestReaderForUrl:
         # spec — same pattern the source uses. Returns the class
         # object (not an instance), so we can assert with isinstance.
         module_name, _, class_name = dotted.partition(".")
-        module = __import__(
-            f"agno.knowledge.reader.{module_name}", fromlist=[class_name]
-        )
+        module = __import__(f"agno.knowledge.reader.{module_name}", fromlist=[class_name])
         return getattr(module, class_name)
 
     def test_youtube_dot_com_routes_to_youtube_reader(self):

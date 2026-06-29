@@ -1,4 +1,11 @@
-"""CLI interface for igni."""
+"""igni CLI — the ``ember`` / ``igni`` command-line entry point.
+
+Parses arguments via Click, then dispatches to the selected surface:
+TUI (default), plain Rich CLI (``--no-tui``), or pipe mode (``-p``).
+All session bring-up, model selection, permission flags, and worktree
+isolation flow through this single ``cli`` command group; subcommands
+add slash-command bridges, scheduled-task runners, and admin tooling.
+"""
 
 import asyncio
 

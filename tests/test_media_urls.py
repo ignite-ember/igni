@@ -119,9 +119,7 @@ class TestExtractMediaUrls:
         # Many CDN URLs append ``?w=600&fmt=auto``. The regex
         # explicitly tolerates a query string after the
         # extension so these still match.
-        out = extract_media_urls(
-            "see https://cdn.example.com/photo.png?w=600&fmt=auto"
-        )
+        out = extract_media_urls("see https://cdn.example.com/photo.png?w=600&fmt=auto")
         assert out is not None
         assert "images" in out
         # The Image.url should include the query string — strip

@@ -306,23 +306,27 @@ describe("applyEvent", () => {
 
 describe("restoredItem", () => {
   it("strips injected system-context from user turns", () => {
-    const item = restoredItem(
-      "user",
-      "<system-context>Current datetime: 2026-06-11 14:42 CEST</system-context>\nCount to 20.",
-    );
+    const item = restoredItem({
+      role: "user",
+      content:
+        "<system-context>Current datetime: 2026-06-11 14:42 CEST</system-context>\nCount to 20.",
+    });
     expect(item).toMatchObject({ kind: "user", text: "Count to 20." });
   });
 
   it("strips closed think blocks from assistant turns", () => {
-    const item = restoredItem(
-      "assistant",
-      "<think>plan it out</think>\nDone. Created notes.txt.",
-    );
+    const item = restoredItem({
+      role: "assistant",
+      content: "<think>plan it out</think>\nDone. Created notes.txt.",
+    });
     expect(item).toMatchObject({ kind: "assistant", text: "Done. Created notes.txt." });
   });
 
   it("strips a trailing unclosed think block (cancelled run)", () => {
-    const item = restoredItem("assistant", "Partial answer.\n<think>was still reason");
+    const item = restoredItem({
+      role: "assistant",
+      content: "Partial answer.\n<think>was still reason",
+    });
     expect(item).toMatchObject({ kind: "assistant", text: "Partial answer." });
   });
 
@@ -336,7 +340,7 @@ describe("restoredItem", () => {
       "Call loop_stop() when all work is done — don't keep looping just because the safety cap hasn't been hit.\n\n" +
       "process file 3\n" +
       "</loop-iteration>";
-    const item = restoredItem("user", wrapped);
+    const item = restoredItem({ role: "user", content: wrapped });
     expect(item?.kind).toBe("loop");
     if (item?.kind === "loop") {
       expect(item.index).toBe(3);
@@ -346,9 +350,60 @@ describe("restoredItem", () => {
   });
 
   it("returns null when nothing remains or role is unknown", () => {
-    expect(restoredItem("assistant", "<think>only thoughts</think>")).toBeNull();
-    expect(restoredItem("user", "  ")).toBeNull();
-    expect(restoredItem("system", "boot")).toBeNull();
+    expect(restoredItem({ role: "assistant", content: "<think>only thoughts</think>" })).toBeNull();
+    expect(restoredItem({ role: "user", content: "  " })).toBeNull();
+    expect(restoredItem({ role: "system", content: "boot" })).toBeNull();
+  });
+
+  it("restores a thinking turn into a thinking ChatItem", () => {
+    const item = restoredItem({
+      role: "thinking",
+      content: "let me reason through this carefully…",
+    });
+    expect(item).toMatchObject({
+      kind: "thinking",
+      text: "let me reason through this carefully…",
+    });
+  });
+
+  it("returns null for an empty thinking turn", () => {
+    expect(restoredItem({ role: "thinking", content: "   " })).toBeNull();
+  });
+
+  it("restores a tool turn into a done tool ChatItem", () => {
+    const item = restoredItem({
+      role: "tool",
+      tool_name: "run_shell_command",
+      friendly_name: "Bash",
+      args: "command=ls -la",
+      content: "drwxr-xr-x  6 user  staff   192 ...\n",
+      is_error: false,
+      run_id: "r1",
+    });
+    expect(item).toMatchObject({
+      kind: "tool",
+      name: "Bash",
+      args: "command=ls -la",
+      status: "done",
+      isError: false,
+      runId: "r1",
+    });
+    if (item?.kind === "tool") {
+      expect(item.result).toContain("drwxr-xr-x");
+    }
+  });
+
+  it("marks restored tool turns with tool_call_error as error", () => {
+    const item = restoredItem({
+      role: "tool",
+      tool_name: "edit_file",
+      friendly_name: "Edit",
+      args: "file_path=missing.py",
+      content: "Error: file not found",
+      is_error: true,
+      run_id: "r1",
+    });
+    expect(item).toMatchObject({ kind: "tool", status: "error", isError: true });
   });
 });
 

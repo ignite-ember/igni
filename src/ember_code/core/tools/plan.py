@@ -415,11 +415,18 @@ class PlanTool(Toolkit):
         # along in the payload so the FE seeds the PlanCard's
         # checklist on first render (later ``todos_updated``
         # pushes refresh statuses live).
-        if hasattr(self._session, "broadcast"):
-            self._session.broadcast(
-                "plan_submitted",
-                {"plan": plan_text, "tasks": task_snapshot},
-            )
+        #
+        # Defer to AFTER the run finishes: the PlanCard is the
+        # outcome of the run, so it should land below the agent's
+        # closing reply in the chat list, not mid-stream above it.
+        # ``queue_post_run_broadcast`` falls back to immediate
+        # ``broadcast`` for headless callers / tests that built the
+        # session without the queue.
+        payload = {"plan": plan_text, "tasks": task_snapshot}
+        if hasattr(self._session, "queue_post_run_broadcast"):
+            self._session.queue_post_run_broadcast("plan_submitted", payload)
+        elif hasattr(self._session, "broadcast"):
+            self._session.broadcast("plan_submitted", payload)
 
         reply = (
             "Plan submitted. Stop here — the user will review and either "

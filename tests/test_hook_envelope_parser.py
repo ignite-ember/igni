@@ -19,8 +19,6 @@ each one.
 
 from __future__ import annotations
 
-import pytest
-
 from ember_code.core.hooks.executor import _hook_result_from_envelope
 from ember_code.core.hooks.schemas import HookResult
 
@@ -69,26 +67,20 @@ class TestPermissionDecisionEnvelope:
         # The recommended shape — nested under
         # ``hookSpecificOutput`` so future per-event fields can
         # share the namespace without colliding.
-        result = _hook_result_from_envelope(
-            {"hookSpecificOutput": {"permissionDecision": "allow"}}
-        )
+        result = _hook_result_from_envelope({"hookSpecificOutput": {"permissionDecision": "allow"}})
         assert result.permission_decision == "allow"
         # ``should_continue`` defaults to True — the verdict is
         # the load-bearing signal, not the legacy bool.
         assert result.should_continue is True
 
     def test_hook_specific_output_deny(self):
-        result = _hook_result_from_envelope(
-            {"hookSpecificOutput": {"permissionDecision": "deny"}}
-        )
+        result = _hook_result_from_envelope({"hookSpecificOutput": {"permissionDecision": "deny"}})
         assert result.permission_decision == "deny"
 
     def test_hook_specific_output_ask(self):
         # ``ask`` means "kick to HITL". Pin separately because
         # this routes differently from deny.
-        result = _hook_result_from_envelope(
-            {"hookSpecificOutput": {"permissionDecision": "ask"}}
-        )
+        result = _hook_result_from_envelope({"hookSpecificOutput": {"permissionDecision": "ask"}})
         assert result.permission_decision == "ask"
 
     def test_bare_permission_decision_fallback(self):
@@ -192,9 +184,7 @@ class TestEnvelopeRobustness:
         # ``systemMessage: None`` must NOT render as the
         # literal "None" in the agent's view. The ``or ""``
         # guard catches it.
-        result = _hook_result_from_envelope(
-            {"continue": False, "systemMessage": None}
-        )
+        result = _hook_result_from_envelope({"continue": False, "systemMessage": None})
         assert result.message == ""
 
     def test_none_permission_decision_field_safe(self):

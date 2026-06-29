@@ -800,11 +800,22 @@ class TestBypassSlashCommand:
 
 class TestGetLatestPlanRpc:
     def test_returns_empty_when_no_plan(self):
-        session = MagicMock()
+        # The RPC now also carries ``tasks`` (from the todo store)
+        # and ``state`` (inferred from current permission mode) so
+        # the FE can rebuild the PlanCard on session restore — see
+        # ``BackendServer._infer_plan_state``.
+        session = MagicMock(spec=["plan_store", "todo_store", "permission_evaluator"])
         session.plan_store = PlanStore()
+        session.todo_store = None
+        session.permission_evaluator = None
         backend = BackendServer.__new__(BackendServer)
         backend._session = session
-        assert backend.get_latest_plan() == {"latest": "", "history": []}
+        snap = backend.get_latest_plan()
+        assert snap["latest"] == ""
+        assert snap["history"] == []
+        assert snap["tasks"] == []
+        # No plan → state is empty (nothing to render).
+        assert snap["state"] == ""
 
     def test_returns_latest_and_history(self):
         session = MagicMock()
@@ -824,7 +835,11 @@ class TestGetLatestPlanRpc:
         session = MagicMock(spec=[])  # no attributes
         backend = BackendServer.__new__(BackendServer)
         backend._session = session
-        assert backend.get_latest_plan() == {"latest": "", "history": []}
+        snap = backend.get_latest_plan()
+        assert snap["latest"] == ""
+        assert snap["history"] == []
+        assert snap["tasks"] == []
+        assert snap["state"] == ""
 
     def test_dispatch_table_routes_get_latest_plan(self):
         from ember_code.backend.__main__ import _build_rpc_table

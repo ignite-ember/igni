@@ -25,8 +25,6 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from ember_code.core.utils.audit import AuditLogger
 
 

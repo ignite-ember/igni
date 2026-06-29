@@ -2,27 +2,60 @@
 
 igni leverages Agno's toolkit system to give agents capabilities. Each agent gets only the tools it needs — no more.
 
-## Core Toolkits
+## Main team toolkit (shell-first)
 
-igni uses the **same tool names as Claude Code**. Each name maps to an Agno toolkit under the hood:
+> ⚠️ **Read this first.** The main team's tool list is intentionally narrow and
+> **shell-first** — `Bash` covers read / search / list / find, and only
+> `Write` / `Edit` are dedicated file-mutation toolkits. `Read`, `Grep`, and
+> `Glob` are registered in the registry but **NOT exposed to the main team**:
+> when the model had both `Read` and `Bash(cat)` available, it picked
+> inconsistently between them (v0.4.0, commit `7e50705`). Sub-agents can still
+> opt into them via their frontmatter `tools:` allowlist — see
+> [Agents](AGENTS.md). This is a deliberate divergence from Claude Code's
+> tool catalog; see `CLAUDE_CODE_PARITY.md` row 22.
+
+The actual tool list registered on the main team at session boot:
 
 | Tool Name | Agno Toolkit | Description |
 |---|---|---|
-| `Read` | `FileTools(read_only=True)` | Read file contents |
-| `Write` | `FileTools()` | Create/overwrite files |
-| `Edit` | `EmberEditTools` (custom) | Targeted string-replacement editing |
-| `Bash` | `EmberShellTools` (custom) | Non-blocking shell with process management |
-| `Grep` | `GrepTools` (custom) | Regex content search (ripgrep) |
-| `Glob` | `GlobTools` (custom) | File pattern matching |
-| `LS` | `EmberShellTools` (custom) | List directory contents |
-| `WebSearch` | `DuckDuckGoTools` or `TavilyTools` | Web search |
-| `WebFetch` | `WebTools` (custom) | Fetch and extract URL content |
-| `Orchestrate` | `OrchestrateTools` (custom) | Spawn sub-teams from agent pool |
-| `Schedule` | `ScheduleTools` (custom) | Schedule tasks for later or recurring execution |
-| `Loop` | `LoopTools` (custom) | Drive the in-session `/loop` primitive (re-fire a prompt across turns) |
-| `CodeIndex` | `CodeIndexTools` (custom) | Semantic search over pre-processed code intelligence |
-| `NotebookEdit` | `NotebookTools` (custom) | Read and edit Jupyter notebook cells |
-| `Python` | `PythonTools` | Execute Python code |
+| `Bash` | `EmberShellTools` (custom) | Non-blocking shell with process management. Handles read (`cat`), search (`rg`), list (`ls`/`find`), and arbitrary commands. |
+| `Write` | `FileTools()` | Create/overwrite files. Kept as a dedicated toolkit because `heredoc` rewrites are fragile. |
+| `Edit` | `EmberEditTools` (custom) | Targeted string-replacement editing. Kept dedicated because `sed` is fragile. |
+| `Schedule` | `ScheduleTools` (custom) | Schedule tasks for later or recurring execution. |
+| `NotebookEdit` | `NotebookTools` (custom) | Read and edit Jupyter notebook cells. |
+| `WebSearch` | `DuckDuckGoTools` or `TavilyTools` | Web search (when `permissions.web_search != "deny"`). |
+| `WebFetch` | `WebTools` (custom) | Fetch and extract URL content (when `permissions.web_fetch != "deny"`). |
+| `Orchestrate` | `OrchestrateTools` (custom) | Spawn sub-teams from the agent pool. |
+| `CodeIndex` | `CodeIndexTools` (custom) | Semantic search (only when an index is built for current HEAD). |
+
+### Registry-only toolkits (available to sub-agents)
+
+These exist in the registry and can be requested by sub-agents via their
+`tools:` frontmatter. They are **not** registered to the main team:
+
+| Tool Name | Agno Toolkit | Description |
+|---|---|---|
+| `Read` | `FileTools(read_only=True)` | Read file contents. Main team uses `Bash` + `cat` instead. |
+| `Grep` | `GrepTools` (custom) | Regex content search (ripgrep). Main team uses `Bash` + `rg` instead. |
+| `Glob` | `GlobTools` (custom) | File pattern matching. Main team uses `Bash` + `find` instead. |
+| `LS` | `EmberShellTools` (custom) | List directory contents. Main team uses `Bash` + `ls`. |
+| `Loop` | `LoopTools` (custom) | `/loop` primitive runtime support. |
+| `Python` | `PythonTools` | Execute Python code. |
+
+### Hooks: matcher gotcha
+
+Hook `matcher` strings are matched against the **internal tool function name**
+(e.g. `run_shell_command`), not the friendly catalog name (`Bash`). A hook
+with `"matcher": "Bash"` will never fire on the main team. Use the internal
+names:
+
+| Friendly name | Matcher to use |
+|---|---|
+| `Bash` | `run_shell_command` |
+| `Write` | `save_file` / `create_file` |
+| `Edit` | `edit_file` / `edit_file_replace_all` |
+
+See [Hooks](HOOKS.md) for the full matcher convention.
 
 ---
 
@@ -64,27 +97,29 @@ CodeIndex works out of the box with zero configuration. Per-project customizatio
 
 ### Fallback: Local Mode
 
-If CodeIndex cloud is unavailable, igni falls back to local tools (Grep, Glob, Read). The experience degrades gracefully — agents still work, just without semantic understanding.
+If CodeIndex cloud is unavailable, igni falls back to local shell-based search (`Bash` + `rg` / `find` / `cat`). The experience degrades gracefully — agents still work, just without semantic understanding.
 
 ---
 
 ## File Operations
 
-### Read / Write (FileTools)
+### Write (FileTools) — main team only
 
-Read and write files on the local filesystem.
+Write files on the local filesystem. The `Read` half of `FileTools` lives in
+the registry but isn't registered to the main team (see the "Main team
+toolkit" section above); the main team reads files via `Bash` + `cat`.
 
 ```python
 from agno.tools.file import FileTools
 
-# Read-only mode for Explorer/Reviewer
+# Read-only mode (registry-only — opt in via sub-agent frontmatter)
 FileTools(read_only=True, base_dir="/path/to/project")
 
-# Full access for Editor
+# Full access for the main team
 FileTools(base_dir="/path/to/project")
 ```
 
-**Functions:** `read_file`, `write_file`, `list_files`
+**Functions:** `read_file` (registry-only), `write_file`, `list_files`
 
 ### Edit (EmberEditTools)
 
@@ -407,7 +442,13 @@ See [Plugins](PLUGINS.md) for the full guide.
 
 ## Tool Access by Built-in Agent
 
-Each built-in agent's tools are declared in its `.md` file. This table shows the defaults:
+Each built-in agent's tools are declared in its `.md` file. This table shows the defaults.
+
+**Important:** this table covers **sub-agents** (the specialists spawned via
+`Orchestrate`/`spawn_agent`). Sub-agents CAN opt into `Read`/`Grep`/`Glob`
+via their `tools:` frontmatter and most do. The **main team** (the
+orchestrator the user chats with) does NOT register Read/Grep/Glob — see the
+"Main team toolkit" section above for why.
 
 | Tool | Explorer | Architect | Planner | Editor | Simplifier | Reviewer | Security | QA | Debugger | Git | Conversational |
 |---|---|---|---|---|---|---|---|---|---|---|---|

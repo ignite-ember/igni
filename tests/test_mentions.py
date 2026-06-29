@@ -19,8 +19,6 @@ Subtle invariants worth pinning:
 
 from __future__ import annotations
 
-import pytest
-
 from ember_code.core.utils.mentions import process_file_mentions
 
 
@@ -127,9 +125,7 @@ class TestEmailLikeRejection:
     def test_email_mixed_with_real_mention(self):
         # Tricky case — email AND a real ``@file`` mention in
         # one message. Only the file should be picked up.
-        cleaned, paths = process_file_mentions(
-            "ping user@example.com about @src/auth.py"
-        )
+        cleaned, paths = process_file_mentions("ping user@example.com about @src/auth.py")
         assert paths == ["src/auth.py"]
 
 

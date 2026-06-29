@@ -146,11 +146,88 @@ def test_plan_mode_blocks_edit_tools() -> None:
         assert ev.evaluate(tool, {"file_path": "x.py"}) is PermissionDecision.DENY, tool
 
 
-def test_plan_mode_allows_non_edit_tools() -> None:
+def test_plan_mode_allows_read_tools() -> None:
+    # Plan mode lets the agent investigate freely: ``Read`` (and
+    # other tools in FILE_READ_TOOLS) auto-allow so the user isn't
+    # prompted for every cat / grep / glob during planning.
     ev = PermissionEvaluator.from_strings(mode="plan")
-    # ``Read`` isn't in FILE_EDIT_TOOLS — plan-mode lets it
-    # through (falls to defer / allow).
-    assert ev.evaluate("Read", {"file_path": "x.py"}) is PermissionDecision.DEFER
+    assert ev.evaluate("Read", {"file_path": "x.py"}) is PermissionDecision.ALLOW
+    assert ev.evaluate("read_file", {"file_path": "x.py"}) is PermissionDecision.ALLOW
+    assert ev.evaluate("Grep", {"pattern": "foo"}) is PermissionDecision.ALLOW
+    assert ev.evaluate("Glob", {"pattern": "*.py"}) is PermissionDecision.ALLOW
+    assert ev.evaluate("LS", {"path": "."}) is PermissionDecision.ALLOW
+
+
+def test_plan_mode_allows_readonly_shell() -> None:
+    # Shell commands that don't mutate the filesystem (cat, ls,
+    # grep, find, head, …) are allowed under plan mode.
+    ev = PermissionEvaluator.from_strings(mode="plan")
+    for cmd in ("ls -la", "cat src/cli.py", "grep foo src", "find . -name '*.py'"):
+        assert ev.evaluate("Bash", {"command": cmd}) is PermissionDecision.ALLOW, cmd
+        assert ev.evaluate("run_shell_command", {"command": cmd}) is PermissionDecision.ALLOW, cmd
+
+
+def test_plan_mode_blocks_mutating_shell() -> None:
+    # Plan mode says "mutating shell commands are blocked" — sed -i,
+    # > redirects, rm/mv/cp/etc must DENY even though they go through
+    # Bash (which isn't in FILE_EDIT_TOOLS).
+    ev = PermissionEvaluator.from_strings(mode="plan")
+    mutating = [
+        "sed -i '1s/^/# header\\n/' file.py",
+        "echo hi > file.txt",
+        "echo more >> file.txt",
+        "rm -rf /tmp/x",
+        "mv a b",
+        "cp src dst",
+        "mkdir new_dir",
+        "touch newfile",
+        "chmod 755 script.sh",
+        "tee output.txt",
+        "perl -i.bak -pe 's/x/y/' file",
+    ]
+    for cmd in mutating:
+        assert ev.evaluate("Bash", {"command": cmd}) is PermissionDecision.DENY, (
+            f"plan mode should DENY: {cmd!r}"
+        )
+
+
+def test_explain_deny_plan_mode_edit() -> None:
+    # The reject note must tell the agent it's in plan mode and
+    # point at exit_plan_mode — without this hint the model treats
+    # the block as a hostile environment and asks the user to run
+    # the command manually.
+    from ember_code.core.config.permission_eval import explain_deny
+
+    ev = PermissionEvaluator.from_strings(mode="plan")
+    reason = explain_deny(ev, "edit_file", {"file_path": "x.py"})
+    assert "plan mode" in reason
+    assert "exit_plan_mode" in reason
+
+
+def test_explain_deny_plan_mode_mutating_shell() -> None:
+    from ember_code.core.config.permission_eval import explain_deny
+
+    ev = PermissionEvaluator.from_strings(mode="plan")
+    reason = explain_deny(ev, "run_shell_command", {"command": "sed -i '' '1s/^/x\\n/' f.py"})
+    assert "plan mode" in reason
+    assert "mutating shell" in reason or "shell" in reason
+    assert "exit_plan_mode" in reason
+
+
+def test_explain_deny_scoped_deny_rule() -> None:
+    from ember_code.core.config.permission_eval import explain_deny
+
+    ev = PermissionEvaluator.from_strings(mode="bypassPermissions", deny=["Bash(rm *)"])
+    reason = explain_deny(ev, "Bash", {"command": "rm -rf /tmp/x"})
+    assert "deny rule" in reason
+    assert "Bash(rm *)" in reason
+
+
+def test_plan_mode_stderr_merge_not_treated_as_write() -> None:
+    # ``2>&1`` is a stderr-to-stdout merge, not a file write.
+    # The mutation regex must not flag it.
+    ev = PermissionEvaluator.from_strings(mode="plan")
+    assert ev.evaluate("Bash", {"command": "ls -la 2>&1 | grep foo"}) is PermissionDecision.ALLOW
 
 
 def test_accept_edits_mode_allows_edit_tools() -> None:
@@ -198,12 +275,13 @@ def test_scoped_deny_survives_accept_edits() -> None:
 
 
 def test_plan_mode_deny_still_wins() -> None:
-    """``plan`` blocks edit tools; explicit deny on a read tool
-    is still honoured (otherwise the deny list would be silently
-    eclipsed by mode-mode in plan)."""
+    """``plan`` blocks edit tools and auto-allows reads; an explicit
+    deny on a read tool is still honoured (otherwise the deny list
+    would be silently eclipsed by the plan-mode auto-allow)."""
     ev = PermissionEvaluator.from_strings(mode="plan", deny=["Read(./.env)"])
     assert ev.evaluate("Read", {"file_path": "./.env"}) is PermissionDecision.DENY
-    assert ev.evaluate("Read", {"file_path": "x.py"}) is PermissionDecision.DEFER
+    # Other reads still get the plan-mode auto-allow.
+    assert ev.evaluate("Read", {"file_path": "x.py"}) is PermissionDecision.ALLOW
 
 
 # ── Mode enum smoke ──────────────────────────────────────────────

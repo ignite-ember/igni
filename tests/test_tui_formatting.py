@@ -11,13 +11,10 @@ transition so a refactor can't slip the boundary by 1.
 
 from __future__ import annotations
 
-import pytest
-
 from ember_code.frontend.tui.widgets._formatting import (
     format_elapsed_time,
     format_token_count,
 )
-
 
 # ── format_elapsed_time ─────────────────────────────────────
 

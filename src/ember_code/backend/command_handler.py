@@ -1721,7 +1721,9 @@ class CommandHandler:
                 "to leave the mode."
             )
         else:
-            tail = "\n\nbypassPermissions exited. Tools now require approval per the default policy."
+            tail = (
+                "\n\nbypassPermissions exited. Tools now require approval per the default policy."
+            )
         return CommandResult(
             kind=CommandResultKind.MARKDOWN,
             content=status_line + tail,

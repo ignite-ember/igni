@@ -72,6 +72,12 @@ describe("BUILTIN_COMMANDS — structural contract", () => {
       "/hooks",
       "/loop",
       "/schedule",
+      // Permission-mode commands. Were missing from the FE menu
+      // for a while even though the BE handlers existed — a user
+      // typing ``/p`` wouldn't see ``/plan`` in autocomplete.
+      "/plan",
+      "/accept",
+      "/bypass",
     ]) {
       expect(names).toContain(required);
     }

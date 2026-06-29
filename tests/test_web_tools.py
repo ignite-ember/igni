@@ -183,11 +183,7 @@ class TestExtractTextFromHtmlDeepDive:
         # too because each ``<…>`` chunk is a single tag-match
         # — though the comment's body content survives as text
         # if it spans multiple ``>``s.
-        html = (
-            "<!DOCTYPE html><html><body>"
-            "<!-- single-line comment -->"
-            "<p>visible</p></body></html>"
-        )
+        html = "<!DOCTYPE html><html><body><!-- single-line comment --><p>visible</p></body></html>"
         text = _extract_text_from_html(html)
         assert "visible" in text
         # DOCTYPE keyword is gone.

@@ -179,6 +179,13 @@ class Session:
         # polling. Empty list when no transport is wired — the
         # core session works headless too.
         self._broadcast_callbacks: list = []
+        # Broadcasts queued by tools (e.g. ``exit_plan_mode``) to
+        # fire AFTER the current run finishes. The PlanCard is the
+        # outcome of the run, not an interrupting event — emitting
+        # ``plan_submitted`` from inside the tool body puts the
+        # card above the agent's closing reply text. The BE stream
+        # consumer drains this list when ``RunCompleted`` flushes.
+        self._pending_post_run_broadcasts: list[tuple[str, dict]] = []
 
         # ── First-run initialization (agents, skills, hooks, ember.md) ─
         initialize_project(self.project_dir)
@@ -1047,7 +1054,18 @@ class Session:
         # (`rg`, `find`, `cat`, etc.). Edit/Write are kept for surgical
         # changes and new files because shell-based alternatives (sed,
         # heredoc rewrites) are fragile. Grep/Glob/Read toolkits intentionally
-        # omitted — they overlapped with shell and confused the model.
+        # omitted — they overlapped with shell and confused the model
+        # (v0.4.0 / commit 7e50705).
+        #
+        # Implications worth knowing about — see CLAUDE_CODE_PARITY.md row 22:
+        # * The main team has NO ``Read`` tool. Hook matchers targeting
+        #   ``read_file`` will never fire on the main team — use
+        #   ``run_shell_command`` instead.
+        # * Sub-agents CAN opt into Read/Grep/Glob via their frontmatter
+        #   ``tools:`` allowlist (see ``.ember/agents/<name>.md``).
+        # * Granular permissions on Read (e.g. ``deny: Read(.env)``) are
+        #   ineffective at this layer — ``.env`` protection comes from
+        #   ``ToolEventHook``'s Bash-command parsing instead.
         tool_names = [
             "Write",
             "Edit",
@@ -1669,6 +1687,45 @@ class Session:
                 cb(channel, payload)
             except Exception as exc:
                 logger.debug("broadcast callback raised on channel %s: %s", channel, exc)
+
+    def queue_post_run_broadcast(self, channel: str, payload: dict) -> None:
+        """Same delivery as :meth:`broadcast` but deferred until the
+        current run finishes streaming.
+
+        Used by tools whose result is meant to render *after* all the
+        agent's content — most notably ``exit_plan_mode``. If we
+        broadcast inline, the PlanCard appears mid-stream, above
+        whatever closing message the agent emits. The stream
+        consumer drains this queue when it sees ``RunCompleted``
+        (or ``RunError``) so the card lands at the bottom of the
+        reply where the user expects it.
+
+        Defensive against partially-initialised sessions.
+        """
+        queue = getattr(self, "_pending_post_run_broadcasts", None)
+        if queue is None:
+            # Init missing (test path) → fall back to immediate so
+            # we don't silently swallow the event.
+            self.broadcast(channel, payload)
+            return
+        queue.append((channel, payload))
+
+    def drain_post_run_broadcasts(self) -> None:
+        """Fire every queued post-run broadcast through
+        :meth:`broadcast`, then clear the queue.
+
+        Called by the BE stream consumer right after ``RunCompleted``
+        flushes. Safe to call on a clean session (no-op).
+        """
+        queue = getattr(self, "_pending_post_run_broadcasts", None)
+        if not queue:
+            return
+        # Snapshot + clear so a callback that re-queues doesn't
+        # loop in the same drain pass.
+        pending = list(queue)
+        queue.clear()
+        for channel, payload in pending:
+            self.broadcast(channel, payload)
 
     # ── Knowledge warmup ────────────────────────────────────────────
 

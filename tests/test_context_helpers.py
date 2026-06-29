@@ -18,16 +18,11 @@ or @-import behaviour.
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 from ember_code.core.utils.context import (
     _mask_code_regions,
     _resolve_at_path,
     _unmask_code_regions,
 )
-
 
 # ── _resolve_at_path ────────────────────────────────────────
 
@@ -166,11 +161,7 @@ class TestMaskRoundTrip:
 
     def test_both_fenced_and_inline_round_trip(self):
         # Most realistic case — both kinds in one doc.
-        original = (
-            "intro `@inline.md` then\n"
-            "```\n@fenced.md\n```\n"
-            "and `@another` here"
-        )
+        original = "intro `@inline.md` then\n```\n@fenced.md\n```\nand `@another` here"
         masked, originals = _mask_code_regions(original)
         # 3 stashed regions.
         assert len(originals) == 3

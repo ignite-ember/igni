@@ -61,9 +61,9 @@ class PermissionDecision(Enum):
 # Tools that mutate the filesystem — used by ``acceptEdits``
 # (auto-approve) and ``plan`` (block). Names match Claude Code's
 # Edit/Write/NotebookEdit set, plus ember-code's ``edit_file_*`` /
-# ``save_file`` / ``create_file`` variants. ``run_shell_command``
-# is intentionally not in this set: a shell command may or may not
-# mutate state, and the safer default is "treat as default-mode".
+# ``save_file`` / ``create_file`` variants. Bash is handled by a
+# separate heuristic (see ``_bash_command_mutates``) because shell
+# commands may or may not mutate.
 FILE_EDIT_TOOLS = frozenset(
     {
         "Edit",
@@ -75,6 +75,81 @@ FILE_EDIT_TOOLS = frozenset(
         "create_file",
     }
 )
+
+# Tools that only read — auto-allowed in plan mode so the agent can
+# investigate without prompting. Catalog names + internal Agno
+# function names (the evaluator may see either depending on the
+# call site).
+FILE_READ_TOOLS = frozenset(
+    {
+        "Read",
+        "read_file",
+        "read_file_chunk",
+        "Grep",
+        "grep",
+        "grep_files",
+        "grep_count",
+        "Glob",
+        "glob_files",
+        "LS",
+        "list_files",
+        "WebSearch",
+        "duckduckgo_search",
+        "duckduckgo_news",
+        "WebFetch",
+        "fetch_url",
+        "fetch_json",
+        "CodeIndex",
+        "codeindex_query",
+        "codeindex_tree",
+    }
+)
+
+# Shell tools — checked specially in plan mode via mutation heuristic.
+SHELL_TOOLS = frozenset({"Bash", "run_shell_command"})
+
+# Mutation markers in a shell command string. Plan mode denies any
+# Bash call whose command matches one of these. Conservative by
+# design: false positives just route to the user prompt, false
+# negatives let an edit slip through plan mode (worse).
+#
+# Covered: in-place edits (``sed -i``, ``perl -i``), redirects to a
+# file (``>``, ``>>``), and obvious filesystem-mutating verbs as the
+# first token after ``;`` / ``&&`` / ``|`` / start-of-command. Stderr
+# merges like ``2>&1`` don't trigger because the regex requires a
+# non-``&`` character after ``>``.
+_BASH_MUTATION_RE = re.compile(
+    r"(?:^|[\s|;&(`])"  # start-of-command or shell separator
+    r"(?:rm|rmdir|mv|cp|mkdir|touch|chmod|chown|ln|dd|truncate|tee)\b"
+    r"|\bsed\s+-i\b"
+    r"|\bperl\s+-i\b"
+    r"|>\s*[^&\s|]"  # write redirect to a path (not >& or > |)
+    r"|>>"
+)
+
+
+def _bash_command_mutates(tool_args: dict[str, Any]) -> bool:
+    """Heuristic: does this Bash invocation write to the filesystem?
+
+    Reads ``command`` (ember-code's ``run_shell_command`` arg) or
+    falls back to ``args`` (legacy ``ShellTools`` arg). Returns
+    ``True`` for any match of :data:`_BASH_MUTATION_RE`.
+    """
+    cmd_str = ""
+    raw = tool_args.get("command")
+    if isinstance(raw, str):
+        cmd_str = raw
+    elif isinstance(raw, list):
+        cmd_str = " ".join(str(p) for p in raw)
+    else:
+        args = tool_args.get("args")
+        if isinstance(args, list):
+            cmd_str = " ".join(str(p) for p in args)
+        elif isinstance(args, str):
+            cmd_str = args
+    if not cmd_str:
+        return False
+    return bool(_BASH_MUTATION_RE.search(cmd_str))
 
 
 # Matches ``ToolName`` or ``ToolName(pattern)`` rule strings. The
@@ -128,6 +203,48 @@ class PermissionRule:
         if target is None:
             return False
         return fnmatch.fnmatchcase(target, self.pattern)
+
+
+def explain_deny(
+    evaluator: PermissionEvaluator,
+    tool_name: str,
+    tool_args: dict[str, Any],
+) -> str:
+    """Human-readable reason an ``evaluate(...)`` came back DENY.
+
+    Threaded into the tool-rejection note so the **agent** — not just
+    the user reading the dialog — knows what to do next. Without
+    context the model treated a generic "Blocked by permission
+    policy" as a hostile environment and asked the user to run the
+    command manually; with this, it sees "plan mode blocks edits,
+    call exit_plan_mode(plan) when ready" and routes correctly.
+    """
+    # Step 2: a deny rule matched
+    for rule in evaluator.deny:
+        if rule.matches(tool_name, tool_args):
+            display = rule.tool
+            if rule.pattern:
+                display = f"{rule.tool}({rule.pattern})"
+            return f"deny rule '{display}' matched"
+
+    # Step 4: mode-specific shortcuts
+    if evaluator.mode is PermissionMode.PLAN:
+        if tool_name in FILE_EDIT_TOOLS:
+            return (
+                "plan mode blocks file edits. Use exit_plan_mode(plan) "
+                "when you're ready for the user to approve execution."
+            )
+        if tool_name in SHELL_TOOLS:
+            return (
+                "plan mode blocks mutating shell commands (rm, mv, cp, "
+                "mkdir, sed -i, > redirect, …). Read-only shell calls "
+                "are fine. Use exit_plan_mode(plan) when ready to execute."
+            )
+
+    if evaluator.mode is PermissionMode.DONT_ASK:
+        return f"headless mode (dontAsk) and {tool_name} is not in the allow list"
+
+    return f"{tool_name} is denied by policy"
 
 
 def _primary_arg(tool_name: str, tool_args: dict[str, Any]) -> str | None:
@@ -201,7 +318,7 @@ class PermissionEvaluator:
             return PermissionDecision.ASK
 
         # Step 4: mode-specific shortcuts
-        mode_decision = self._mode_step(tool_name)
+        mode_decision = self._mode_step(tool_name, tool_args)
         if mode_decision is not PermissionDecision.DEFER:
             return mode_decision
 
@@ -216,10 +333,26 @@ class PermissionEvaluator:
             return PermissionDecision.DENY
         return PermissionDecision.DEFER
 
-    def _mode_step(self, tool_name: str) -> PermissionDecision:
+    def _mode_step(self, tool_name: str, tool_args: dict[str, Any]) -> PermissionDecision:
         is_edit_tool = tool_name in FILE_EDIT_TOOLS
-        if self.mode is PermissionMode.PLAN and is_edit_tool:
-            return PermissionDecision.DENY
+        is_read_tool = tool_name in FILE_READ_TOOLS
+        is_shell_tool = tool_name in SHELL_TOOLS
+
+        if self.mode is PermissionMode.PLAN:
+            if is_edit_tool:
+                return PermissionDecision.DENY
+            if is_shell_tool:
+                # Shell commands may or may not mutate. In plan mode
+                # block the obvious writers (sed -i, > redirect, rm,
+                # mv, cp, ...) and let read-only shell calls through.
+                if _bash_command_mutates(tool_args):
+                    return PermissionDecision.DENY
+                return PermissionDecision.ALLOW
+            if is_read_tool:
+                return PermissionDecision.ALLOW
+            # Custom / unknown tool — fall through to step 5/6 so the
+            # user can decide. Don't auto-allow what we don't classify.
+            return PermissionDecision.DEFER
         if self.mode is PermissionMode.ACCEPT_EDITS and is_edit_tool:
             return PermissionDecision.ALLOW
         if self.mode is PermissionMode.BYPASS_PERMISSIONS:

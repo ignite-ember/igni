@@ -642,8 +642,7 @@ export default function App() {
             loaded.push(restoredStatsItem(turn, assistantTextByRun.get(runId) ?? ""));
             continue;
           }
-          const content = String(turn.content ?? "");
-          const item = restoredItem(role, content);
+          const item = restoredItem(turn);
           if (item) {
             // Attach the BE-side run_id to user items so they're
             // edit/delete-targetable after a session restore.
@@ -665,6 +664,11 @@ export default function App() {
       } catch {
         /* no history — fresh session */
       }
+      // PlanCards are emitted inline by ``get_chat_history`` (a
+      // synthetic ``role: "plan"`` turn replaces each
+      // ``exit_plan_mode`` tool result) so the card renders at the
+      // conversation position where the agent submitted it — not
+      // bolted onto the end. No separate fetch needed.
       try {
         const pending = await client.rpc<Record<string, unknown>[]>(
           "get_pending_messages",
@@ -676,7 +680,7 @@ export default function App() {
             // <attached-files> wrapper). Route through restoredItem
             // so the bubble displays only the user-typed text; the
             // @<path> tokens render as inline pills.
-            const item = restoredItem("user", String(p.content ?? ""));
+            const item = restoredItem({ role: "user", content: String(p.content ?? "") });
             if (item) loaded.push(item);
           }
           loaded.push(
@@ -1352,10 +1356,14 @@ export default function App() {
   // flips back to default, then mark the card as approved. The
   // command goes through the existing user-message pipeline so it
   // shows up in the transcript like any other slash command. We
-  // DON'T auto-send a "now execute the plan" follow-up — the user
-  // owns when the agent runs, matching CC's two-step approve →
-  // user-asks workflow. Refine = just dismiss the buttons; the
-  // user types their feedback in the composer.
+  // Approve = flip mode AND wake the agent. ``/plan off`` runs
+  // first through the command channel (must be a Command, NOT a
+  // user message — that would just show the string to the LLM and
+  // never flip the BE mode, sticking the PLAN badge). Then a brief
+  // user message kicks the agent into executing the plan it just
+  // submitted — otherwise the run is over after exit_plan_mode and
+  // the user would have to type "go" to get anything to happen.
+  // Refine = dismiss buttons; user types feedback in the composer.
   const onApprovePlan = useCallback(
     (id: number) => {
       setItems((prev) =>
@@ -1365,9 +1373,13 @@ export default function App() {
             : it,
         ),
       );
-      void runUserMessage("/plan off");
+      void (async () => {
+        await runCommand("/plan off", false);
+        await runUserMessage("Plan approved — execute it now.");
+      })();
     },
-    [runUserMessage],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
   );
   const onRejectPlan = useCallback((id: number) => {
     setItems((prev) =>

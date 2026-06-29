@@ -30,6 +30,9 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/hooks", description: "Configured hooks" },
   { name: "/loop", description: "Repeat a prompt until done" },
   { name: "/schedule", description: "Background scheduled tasks" },
+  { name: "/plan", description: "Toggle plan mode — agent proposes, you approve" },
+  { name: "/accept", description: "Auto-approve file edits" },
+  { name: "/bypass", description: "Skip permission prompts (scoped denies still apply)" },
 ];
 
 /** Prefix-filter the slash-command pool for the autocomplete menu.

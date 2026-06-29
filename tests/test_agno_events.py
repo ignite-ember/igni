@@ -182,9 +182,7 @@ class TestFormatToolArgsSpawnAgent:
     def test_omits_quoted_task_when_empty(self):
         # Empty / whitespace-only task → no quoted snippet at
         # the end. Showing ``""`` would just be visual noise.
-        out = format_tool_args(
-            {"agent_name": "n", "task": ""}, tool_name="spawn_agent"
-        )
+        out = format_tool_args({"agent_name": "n", "task": ""}, tool_name="spawn_agent")
         assert '""' not in out
         # Still surfaces the agent name though.
         assert "n" in out

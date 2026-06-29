@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import re
@@ -245,6 +246,74 @@ def _search_history(history: list[dict], needle: str, limit: int) -> list[dict]:
     return matches
 
 
+# Inline ``<think>...</think>`` block — many models emit reasoning
+# in the assistant content with these tags instead of Agno's
+# ``reasoning_content`` field. The trailing ``|$`` allows a final
+# unclosed block (cancelled run) to be captured up to end-of-content.
+_THINK_BLOCK_RE = re.compile(r"<think>([\s\S]*?)(?:</think>|$)")
+
+
+def _split_assistant_content_for_restore(content: str) -> list[tuple[str, str]]:
+    """Split an assistant message's content into interleaved
+    ``(role, text)`` segments, where ``role`` is ``"thinking"`` for
+    ``<think>...</think>`` blocks and ``"assistant"`` for everything
+    else. Preserves order so the rebuilt chat reads the same as the
+    live stream.
+
+    Returns ``[]`` when content has only whitespace / empty think
+    blocks (degenerate runs); the caller should emit nothing then.
+    """
+    if "<think>" not in content:
+        stripped = content.strip()
+        return [("assistant", stripped)] if stripped else []
+    parts: list[tuple[str, str]] = []
+    cursor = 0
+    for match in _THINK_BLOCK_RE.finditer(content):
+        before = content[cursor : match.start()].strip()
+        if before:
+            parts.append(("assistant", before))
+        thinking = match.group(1).strip()
+        if thinking:
+            parts.append(("thinking", thinking))
+        cursor = match.end()
+    trailing = content[cursor:].strip()
+    if trailing:
+        parts.append(("assistant", trailing))
+    return parts
+
+
+def _format_tool_args_for_restore(args: Any) -> str:
+    """One-line argument summary for restored tool cards.
+
+    Matches the live ``args_summary`` shape: ``key=value`` pairs joined
+    by spaces, with long values truncated. Strings are shown raw (not
+    JSON-quoted) so a shell ``command="ls -la"`` reads like a command,
+    not like JSON.
+    """
+    if isinstance(args, dict):
+        parts: list[str] = []
+        for k, v in args.items():
+            if isinstance(v, str):
+                v_str = v if len(v) <= 80 else v[:77] + "..."
+            elif isinstance(v, (int, float, bool)) or v is None:
+                v_str = str(v)
+            else:
+                try:
+                    v_str = json.dumps(v, separators=(",", ":"))
+                except Exception:
+                    v_str = str(v)
+                if len(v_str) > 80:
+                    v_str = v_str[:77] + "..."
+            parts.append(f"{k}={v_str}")
+        return " ".join(parts)
+    if isinstance(args, list):
+        try:
+            return json.dumps(args, separators=(",", ":"))
+        except Exception:
+            return str(args)
+    return str(args)
+
+
 class BackendServer:
     """Wraps Session and handles all FE→BE protocol messages."""
 
@@ -282,6 +351,14 @@ class BackendServer:
         )
         self._settings = settings
         self._pending_requirements: dict[str, Any] = {}  # requirement_id → Agno requirement
+        # Auto-resolved requirements waiting to merge into the next
+        # ``acontinue_run`` call. Populated by ``_handle_pause`` when
+        # the permission evaluator (plan / acceptEdits / bypass / deny
+        # rules) decides a paused tool BEFORE the user is asked.
+        # ``resolve_hitl_batch`` drains the bucket for the same run_id
+        # and includes them alongside the user-resolved reqs so Agno
+        # gets the full resolution set in one resume.
+        self._auto_resolved_requirements: dict[str, list[Any]] = {}
         self._processing = False
         self._current_team: Any = None  # held during HITL pause
         # Task currently iterating run_message → tool calls → events.
@@ -358,6 +435,80 @@ class BackendServer:
         """
         await self._session.load_persisted_loop_state()
         await self._detect_interrupted_run()
+        await self._rehydrate_plan_store()
+
+    async def _rehydrate_plan_store(self) -> None:
+        """Repopulate ``session.plan_store`` from the persisted history.
+
+        ``PlanStore`` is in-memory only — submitted via the agent's
+        ``exit_plan_mode`` tool, never written to its own table.
+        On BE restart the store is empty even when the previous run
+        clearly produced a plan. We walk the Agno session for the
+        most recent ``exit_plan_mode`` tool call and pull its
+        ``plan`` / ``tasks`` arguments back into the live stores, so
+        the FE's restore path sees the same PlanCard it did before
+        close.
+
+        Best-effort: any parse error / missing session / unexpected
+        shape is swallowed and leaves the stores empty (no plan
+        renders on restore, same as a fresh session).
+        """
+        store = getattr(self._session, "plan_store", None)
+        if store is None or store.latest:
+            return  # nothing to do (already populated or absent)
+        try:
+            agent = self._session.main_team
+            agno_session = await agent.aget_session(
+                session_id=self._session.session_id,
+                user_id=self._session.user_id,
+            )
+        except Exception as exc:
+            logger.debug("plan rehydrate: aget_session failed: %s", exc)
+            return
+        if agno_session is None:
+            return
+        runs = getattr(agno_session, "runs", None) or []
+        for run in reversed(runs):
+            messages = getattr(run, "messages", None) or []
+            for m in reversed(messages):
+                if getattr(m, "role", "") != "assistant":
+                    continue
+                tool_calls = getattr(m, "tool_calls", None) or []
+                for tc in tool_calls:
+                    fn = (tc.get("function") or {}) if isinstance(tc, dict) else {}
+                    if fn.get("name") != "exit_plan_mode":
+                        continue
+                    args_raw = fn.get("arguments")
+                    if isinstance(args_raw, str):
+                        try:
+                            args = json.loads(args_raw)
+                        except Exception:
+                            continue
+                    elif isinstance(args_raw, dict):
+                        args = args_raw
+                    else:
+                        continue
+                    plan_text = str(args.get("plan", "")).strip()
+                    if not plan_text:
+                        continue
+                    store.set_plan(plan_text)
+                    tasks_raw = args.get("tasks")
+                    todo = getattr(self._session, "todo_store", None)
+                    if todo is not None and isinstance(tasks_raw, list):
+                        try:
+                            from ember_code.core.tools.todo import _coerce_items
+
+                            items, _errs = _coerce_items(tasks_raw)
+                            if items:
+                                todo.set(items)
+                        except Exception as exc:
+                            logger.debug("plan rehydrate: todo coerce failed: %s", exc)
+                    logger.info(
+                        "Rehydrated plan_store from history (run_id=%s, plan=%d chars)",
+                        getattr(run, "run_id", ""),
+                        len(plan_text),
+                    )
+                    return  # most recent plan wins; stop scanning
 
     async def _detect_interrupted_run(self) -> None:
         """Build a system-context note if the previous launch crashed mid-run.
@@ -763,8 +914,43 @@ class BackendServer:
                     continue
                 event = payload
                 if isinstance(event, RUN_PAUSED_EVENTS):
-                    for pause_msg in self._handle_pause(event):
+                    pause_msgs, auto_resolved, paused_run_id = self._handle_pause(event)
+                    for pause_msg in pause_msgs:
                         yield pause_msg
+                    if pause_msgs:
+                        # Mixed pause: some reqs still need the user.
+                        # Stash the auto-resolved ones so
+                        # ``resolve_hitl_batch`` can merge them into the
+                        # eventual ``acontinue_run`` call.
+                        if auto_resolved and paused_run_id:
+                            self._auto_resolved_requirements.setdefault(paused_run_id, []).extend(
+                                auto_resolved
+                            )
+                        return
+                    if auto_resolved and paused_run_id:
+                        # Every req was decided by the evaluator. Resume
+                        # the team immediately without ever bothering
+                        # the FE — this is the plan-mode / acceptEdits /
+                        # bypass / deny-rule short-circuit.
+                        team = self._session.main_team
+                        llm_log.info(
+                            "auto-resuming run_id=%s with %d evaluator-resolved req(s)",
+                            paused_run_id,
+                            len(auto_resolved),
+                        )
+                        async for proto in self._stream_with_subagent_hitl(
+                            team.acontinue_run(
+                                run_id=paused_run_id,
+                                session_id=self._session.session_id,
+                                requirements=auto_resolved,
+                                stream=True,
+                                stream_events=True,
+                            )
+                        ):
+                            yield proto
+                        return
+                    # No requirements at all — defensive; shouldn't
+                    # normally happen but don't strand the stream.
                     return
                 # If a run completes/errors without going through HITL
                 # resolution (e.g. tool didn't require approval, or the
@@ -773,13 +959,25 @@ class BackendServer:
                 # the session. ``resolve_hitl_batch`` already pops the
                 # entries it resolves; this catches the "user closed the
                 # UI mid-pause and the run later wrapped up" path.
-                if isinstance(event, RUN_COMPLETED_EVENTS + RUN_ERROR_EVENTS):
+                run_finished = isinstance(event, RUN_COMPLETED_EVENTS + RUN_ERROR_EVENTS)
+                if run_finished:
                     finished_run_id = getattr(event, "run_id", None)
                     if finished_run_id:
                         self._drop_pending_for_run(finished_run_id)
                 proto = serialize_event(event)
                 if proto is not None:
                     yield proto
+                if run_finished:
+                    # Drain post-run broadcasts (e.g. ``plan_submitted``
+                    # queued by ``exit_plan_mode``). The push fires AFTER
+                    # the run's content has flushed so the PlanCard lands
+                    # at the bottom of the agent's reply, not mid-stream.
+                    drain = getattr(self._session, "drain_post_run_broadcasts", None)
+                    if drain is not None:
+                        try:
+                            drain()
+                        except Exception as exc:
+                            logger.debug("post-run broadcast drain raised: %s", exc)
         except asyncio.TimeoutError:
             yield msg.Error(text="Request timed out — the model took too long to respond.")
         except Exception as e:
@@ -901,35 +1099,120 @@ class BackendServer:
                 len(stale),
                 run_id,
             )
+        # Same sweep for the auto-resolved bucket — if the run finished
+        # without ``resolve_hitl_batch`` draining it, drop the entry so
+        # it doesn't leak across sessions.
+        auto_bucket = getattr(self, "_auto_resolved_requirements", None)
+        if auto_bucket is not None:
+            auto_bucket.pop(run_id, None)
 
-    def _handle_pause(self, event: Any) -> list[msg.Message]:
-        """Convert a RunPausedEvent into protocol messages and store requirements."""
+    def _handle_pause(self, event: Any) -> tuple[list[msg.Message], list[Any], str | None]:
+        """Convert a RunPausedEvent into protocol messages and store requirements.
+
+        Returns ``(messages, auto_resolved_reqs, run_id)``:
+
+        * ``messages`` — what to forward to the FE. Either a single
+          ``RunPaused`` (when at least one requirement still needs the
+          user) or empty (when the evaluator decided every req).
+        * ``auto_resolved_reqs`` — Agno requirement objects that the
+          evaluator already confirmed or rejected. Caller resumes Agno
+          with these via ``acontinue_run`` (all-auto case) or stashes
+          them on ``_auto_resolved_requirements`` for the eventual
+          ``resolve_hitl_batch`` (mixed case).
+        * ``run_id`` — the paused run; needed by the resume.
+
+        Why do this here: Agno's ``requires_confirmation`` gate pauses
+        every "ask"-level tool indiscriminately. Without this pre-step,
+        plan-mode-deny, acceptEdits-allow, bypass-allow, and ``deny:``
+        rules can never short-circuit the dialog — the user sees an
+        approval prompt for tools the policy already decided about.
+        """
+        from ember_code.core.config.permission_eval import (
+            PermissionDecision,
+            explain_deny,
+        )
         from ember_code.protocol.agno_events import TOOL_NAMES
 
-        run_id = getattr(event, "run_id", None)
-        messages = []
-        requirements = []
+        run_id_raw = getattr(event, "run_id", None)
+        run_id = str(run_id_raw) if run_id_raw else None
+        evaluator = getattr(self._session, "permission_evaluator", None)
+        requirements: list[msg.HITLRequest] = []
+        auto_resolved: list[Any] = []
+
         for req in getattr(event, "active_requirements", []) or []:
             req_id = str(uuid.uuid4())[:8]
-            # Store both the requirement and the run_id from the event
-            self._pending_requirements[req_id] = (req, run_id)
             tool_exec = getattr(req, "tool_execution", None)
             raw_name = str(getattr(tool_exec, "tool_name", "") if tool_exec else "")
+            tool_args = dict(getattr(tool_exec, "tool_args", {}) if tool_exec else {})
+
+            auto_decision: str | None = None  # "confirm" | "reject" | None
+            if evaluator is not None:
+                try:
+                    pd = evaluator.evaluate(raw_name, tool_args)
+                except Exception as exc:
+                    logger.warning(
+                        "permission_evaluator.evaluate(%s) raised %s — falling back to user prompt",
+                        raw_name,
+                        exc,
+                    )
+                else:
+                    if pd is PermissionDecision.DENY:
+                        auto_decision = "reject"
+                    elif pd is PermissionDecision.ALLOW:
+                        auto_decision = "confirm"
+
+            if auto_decision == "confirm":
+                try:
+                    req.confirm()
+                except Exception as exc:
+                    logger.warning(
+                        "auto-confirm raised for %s: %s — falling back to user prompt",
+                        raw_name,
+                        exc,
+                    )
+                else:
+                    logger.info(
+                        "Auto-confirmed %s by permission policy (run_id=%s)",
+                        raw_name,
+                        run_id,
+                    )
+                    auto_resolved.append(req)
+                    continue
+            elif auto_decision == "reject":
+                reason = explain_deny(evaluator, raw_name, tool_args)
+                try:
+                    req.reject(note=f"Blocked: {reason}")
+                except Exception as exc:
+                    logger.warning(
+                        "auto-reject raised for %s: %s — falling back to user prompt",
+                        raw_name,
+                        exc,
+                    )
+                else:
+                    logger.info(
+                        "Auto-rejected %s (%s) run_id=%s",
+                        raw_name,
+                        reason,
+                        run_id,
+                    )
+                    auto_resolved.append(req)
+                    continue
+
+            # Defer: ask the user as before.
+            self._pending_requirements[req_id] = (req, run_id)
             requirements.append(
                 msg.HITLRequest(
                     requirement_id=req_id,
                     tool_name=raw_name,
                     friendly_name=TOOL_NAMES.get(raw_name, raw_name),
-                    tool_args=dict(getattr(tool_exec, "tool_args", {}) if tool_exec else {}),
+                    tool_args=tool_args,
                 )
             )
-        messages.append(
-            msg.RunPaused(
-                run_id=str(getattr(event, "run_id", "") or ""),
-                requirements=requirements,
-            )
-        )
-        return messages
+
+        messages: list[msg.Message] = []
+        if requirements:
+            messages.append(msg.RunPaused(run_id=run_id or "", requirements=requirements))
+        return messages, auto_resolved, run_id
 
     async def resolve_hitl_batch(
         self, decisions: list[msg.HITLDecision]
@@ -1006,6 +1289,18 @@ class BackendServer:
                 yield msg.Error(text=f"Failed to {d.action} requirement {d.requirement_id}: {exc}")
                 continue
             main_resolved_reqs.append(req)
+
+        # Merge in any auto-resolved (plan/acceptEdits/bypass/deny)
+        # requirements that were decided in ``_handle_pause`` for the
+        # same run. Agno's ``acontinue_run`` denies anything not in
+        # the resolved set, so we MUST pass them all in one call.
+        # ``getattr`` default keeps tests that build the server via
+        # ``__new__`` (skipping ``__init__``) working unchanged.
+        auto_bucket = getattr(self, "_auto_resolved_requirements", None)
+        if run_id is not None and auto_bucket is not None:
+            stashed = auto_bucket.pop(run_id, [])
+            if stashed:
+                main_resolved_reqs.extend(stashed)
 
         if not main_resolved_reqs:
             return  # everything was sub-agent or failed
@@ -1816,18 +2111,32 @@ class BackendServer:
     async def get_chat_history(self, session_id: str) -> list[dict]:
         """Get chat history for a session. Returns a list of turn dicts.
 
-        Most turns are ``{role: "user"|"assistant", content, run_id}``.
-        After each completed top-level run we ALSO emit a synthetic
-        ``{role: "stats", run_id, input_tokens, output_tokens,
-        reasoning_tokens, duration}`` turn so the FE can render the
-        same per-turn token badge it shows live — without this, stats
-        only appeared on runs from the current session.
+        Turn shapes:
+          * ``{role: "user", content, run_id, created_at}``
+          * ``{role: "assistant", content, run_id, created_at}``
+          * ``{role: "thinking", content, run_id, created_at}`` —
+            synthesized from the preceding assistant message's
+            ``reasoning_content`` so a closed session re-opens with
+            the same thinking sections that were live the first time.
+          * ``{role: "tool", tool_name, friendly_name, tool_args,
+            content (= result), is_error, run_id, created_at}`` —
+            rebuilds the tool cards on restore (live path emits
+            ``tool_started`` + ``tool_completed`` events; history
+            squashes the two into one turn).
+          * ``{role: "plan", plan, tasks, state, run_id, created_at}``
+            — synthesized in place of an ``exit_plan_mode`` tool
+            result so the PlanCard renders at the chronological
+            position where the agent submitted the plan, not in a
+            separate "all plans at the end" pile.
+          * ``{role: "stats", run_id, input_tokens, output_tokens,
+            reasoning_tokens, duration}`` — per-run token badge.
 
         ``run_id`` lets the FE map a user message back to its owning
-        run — needed for the edit/delete operations which truncate the
-        session at a run boundary. Skips sub-agent runs (parent_run_id
-        set) and the per-message roles the FE doesn't render (tool,
-        system)."""
+        run for edit/delete truncation. Skips sub-agent runs
+        (parent_run_id set) and ``system`` messages.
+        """
+        from ember_code.protocol.agno_events import TOOL_NAMES
+
         agent = self._session.main_team
         agno_session = await agent.aget_session(
             session_id=session_id,
@@ -1855,11 +2164,18 @@ class BackendServer:
             # including this turn's user message).
             input_chars = history_chars
             assistant_chars = 0
+            # Track exit_plan_mode tool calls within this run so we
+            # can render a PlanCard in place of the regular tool turn
+            # when the tool result lands. ``tool_call_id`` (set on
+            # both the assistant's ``tool_calls`` entry and the
+            # subsequent tool message) is the correlation key.
+            plan_calls_in_run: dict[str, dict] = {}
             for m in messages:
                 if getattr(m, "from_history", False):
                     continue
                 role = getattr(m, "role", "")
                 content = m.content if isinstance(m.content, str) else str(m.content or "")
+                created_at = int(getattr(m, "created_at", 0) or 0)
                 # System messages are the system-prompt + tool-defs
                 # overhead the model receives on every API call.
                 # Same content on every run — capture once and add as
@@ -1868,16 +2184,124 @@ class BackendServer:
                     if not system_chars:
                         system_chars = len(content)
                     continue
-                # Tool messages aren't displayed as chat turns but they
-                # ARE part of the model's history on subsequent calls,
-                # so they DO count toward the input estimate.
+                # Tool result messages — rebuild the live tool card,
+                # UNLESS this is the result of an exit_plan_mode call:
+                # then emit a PlanCard turn instead so the card
+                # appears at the point in the chat where the agent
+                # actually submitted the plan, not bolted onto the end.
                 if role == "tool":
+                    tool_name = str(getattr(m, "tool_name", "") or "")
+                    tool_call_id = str(getattr(m, "tool_call_id", "") or "")
+                    if tool_call_id and tool_call_id in plan_calls_in_run:
+                        plan_args = plan_calls_in_run.pop(tool_call_id)
+                        plan_text = str(plan_args.get("plan", "")).strip()
+                        if plan_text:
+                            out.append(
+                                {
+                                    "role": "plan",
+                                    "plan": plan_text,
+                                    "tasks": plan_args.get("tasks") or [],
+                                    # State filled in post-walk: only
+                                    # the LATEST plan turn gets the
+                                    # inferred state; older plans are
+                                    # always "approved" (historical).
+                                    "state": "approved",
+                                    "run_id": run_id,
+                                    "created_at": created_at,
+                                }
+                            )
+                            history_chars += len(content)
+                            continue
+                    tool_args_raw = getattr(m, "tool_args", None)
+                    if isinstance(tool_args_raw, (dict, list)):
+                        args_summary = _format_tool_args_for_restore(tool_args_raw)
+                    elif tool_args_raw is None:
+                        args_summary = ""
+                    else:
+                        args_summary = str(tool_args_raw)
+                    out.append(
+                        {
+                            "role": "tool",
+                            "tool_name": tool_name,
+                            "friendly_name": TOOL_NAMES.get(tool_name, tool_name),
+                            "args": args_summary,
+                            "content": content,
+                            "is_error": bool(getattr(m, "tool_call_error", False)),
+                            "run_id": run_id,
+                            "created_at": created_at,
+                        }
+                    )
                     history_chars += len(content)
                     continue
-                # User / assistant — display AND count. Carry the
+                # Assistant message: handle two thinking sources and
+                # interleave with the visible reply so the restored
+                # chat reads in the same order the live stream
+                # produced (thinking → reply → maybe more thinking).
+                #
+                # Source 1: Agno's ``reasoning_content`` field — set
+                # by providers that expose reasoning as a sidecar
+                # stream (Anthropic-style). One thinking block,
+                # logically BEFORE the visible reply.
+                #
+                # Source 2: inline ``<think>...</think>`` tags inside
+                # the content itself (MiniMax-style). Split the
+                # content and interleave assistant + thinking turns
+                # in occurrence order.
+                #
+                # Also stash any ``exit_plan_mode`` tool calls keyed
+                # by call_id so the later tool result can be rewritten
+                # as a PlanCard turn.
+                if role == "assistant":
+                    reasoning = getattr(m, "reasoning_content", None)
+                    if isinstance(reasoning, str) and reasoning.strip():
+                        out.append(
+                            {
+                                "role": "thinking",
+                                "content": reasoning,
+                                "run_id": run_id,
+                                "created_at": created_at,
+                            }
+                        )
+                    for tc in getattr(m, "tool_calls", None) or []:
+                        if not isinstance(tc, dict):
+                            continue
+                        fn = tc.get("function") or {}
+                        if fn.get("name") != "exit_plan_mode":
+                            continue
+                        args_raw = fn.get("arguments")
+                        if isinstance(args_raw, str):
+                            try:
+                                parsed = json.loads(args_raw)
+                            except Exception:
+                                continue
+                        elif isinstance(args_raw, dict):
+                            parsed = args_raw
+                        else:
+                            continue
+                        call_id = str(tc.get("id") or "")
+                        if call_id:
+                            plan_calls_in_run[call_id] = parsed
+                    # Source 2: split inline <think> tags out of the
+                    # content. Each segment becomes its own turn.
+                    for part_role, part_text in _split_assistant_content_for_restore(content):
+                        out.append(
+                            {
+                                "role": part_role,
+                                "content": part_text,
+                                "run_id": run_id,
+                                "created_at": created_at,
+                            }
+                        )
+                        if part_role == "assistant":
+                            assistant_chars += len(part_text)
+                    # Count the full original content toward history
+                    # — that's what the model actually saw on the
+                    # next turn (including the think tags).
+                    history_chars += len(content)
+                    continue
+                # User turn — display AND count. Carry the
                 # message's ``created_at`` (Agno-issued epoch seconds)
                 # so the FE can stamp each turn with a real time.
-                created_at = int(getattr(m, "created_at", 0) or 0)
                 out.append(
                     {
                         "role": role,
@@ -1887,9 +2311,7 @@ class BackendServer:
                     }
                 )
                 history_chars += len(content)
-                if role == "assistant":
-                    assistant_chars += len(content)
-                elif role == "user":
+                if role == "user":
                     # The user message of this run lands in the model's
                     # input but not in the pre-run snapshot.
                     input_chars += len(content)
@@ -1922,6 +2344,15 @@ class BackendServer:
                         "duration": float(getattr(metrics, "duration", 0) or 0) if metrics else 0.0,
                     }
                 )
+        # The LATEST plan turn gets its state inferred from the
+        # current permission mode. Older plan turns stay "approved"
+        # (historical — the user is past them). Without this, every
+        # restored plan card would show as approved including the
+        # one the user is still deciding on.
+        for turn in reversed(out):
+            if turn.get("role") == "plan":
+                turn["state"] = self._infer_plan_state(turn.get("plan", ""))
+                break
         return out
 
     async def search_chat(self, session_id: str, query: str, limit: int = 50) -> list[dict]:
@@ -2944,13 +3375,48 @@ class BackendServer:
 
     def get_latest_plan(self) -> dict:
         """Snapshot of the session's plan store — the agent's
-        ``exit_plan_mode`` submissions (row 50). Returns
-        ``{latest: str, history: list[str]}``. Empty strings /
-        list when no plan has been submitted yet."""
+        ``exit_plan_mode`` submissions (row 50).
+
+        Returns ``{latest: str, history: list[str], tasks: list[dict],
+        state: "pending"|"approved"|""}``. ``tasks`` is the current
+        todo-store snapshot, included so a restored session can
+        rebuild the PlanCard's task checklist (the live path seeds
+        it from the ``plan_submitted`` push; on restart there's no
+        push to listen to, so we read state). ``state`` is inferred
+        from the current permission mode: if a plan exists AND the
+        session is still in plan mode, the user hasn't acted yet
+        (pending); otherwise the user exited plan mode (treat as
+        approved). ``dismissed`` (Refine) isn't restorable — we'd
+        need to persist the user's reject click, and that decision
+        is currently FE-only state.
+        Empty strings / list when no plan has been submitted yet.
+        """
         store = getattr(self._session, "plan_store", None)
-        if store is None:
-            return {"latest": "", "history": []}
-        return store.snapshot()
+        snap: dict = {"latest": "", "history": []}
+        if store is not None:
+            snap = store.snapshot()
+        todo = getattr(self._session, "todo_store", None)
+        snap["tasks"] = todo.snapshot() if todo is not None else []
+        snap["state"] = self._infer_plan_state(snap.get("latest", ""))
+        return snap
+
+    def _infer_plan_state(self, latest_plan: str) -> str:
+        """Best-effort state for a restored PlanCard.
+
+        ``""`` when no plan exists. ``"pending"`` when a plan exists
+        and the session is currently in plan mode (the user hasn't
+        approved or rejected yet). ``"approved"`` otherwise — the
+        only way to leave plan mode after a submission is for the
+        user to act on the card (or type ``/plan off``, which has
+        the same effect from the user's POV).
+        """
+        if not latest_plan:
+            return ""
+        evaluator = getattr(self._session, "permission_evaluator", None)
+        if evaluator is None:
+            return "approved"
+        mode_value = getattr(getattr(evaluator, "mode", None), "value", "") or ""
+        return "pending" if mode_value == "plan" else "approved"
 
     def get_todos(self) -> list[dict]:
         """Snapshot of the session's todo list as written by the

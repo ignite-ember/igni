@@ -22,8 +22,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-import pytest
-
 from ember_code.protocol.agno_events import extract_result
 
 
@@ -157,7 +155,7 @@ class TestTimingSuffix:
         # No metrics → no timing suffix.
         result = extract_result(_event(result="ok"))
         assert result.summary == "ok"
-        assert "s" not in result.summary or "s" == result.summary[-1]
+        assert "s" not in result.summary or result.summary[-1] == "s"
 
     def test_completed_in_timing_when_no_summary_text(self):
         # No result text but we have timing — show "completed
@@ -197,9 +195,7 @@ class TestSentinels:
     def test_no_metrics_no_timing(self):
         # ``tool.metrics`` may be None. The timing block
         # branches on that — pin no-crash.
-        tool = SimpleNamespace(
-            tool_name="x", result="ok", metrics=None, tool_args={}
-        )
+        tool = SimpleNamespace(tool_name="x", result="ok", metrics=None, tool_args={})
         result = extract_result(SimpleNamespace(tool=tool))
         assert result.summary == "ok"
 

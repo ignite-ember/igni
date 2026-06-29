@@ -748,18 +748,31 @@ async def _run(
     # ``plan_submitted`` (inline plan card).
     _plan_loop = asyncio.get_running_loop()
 
-    def _on_plan_event(channel: str, payload: dict) -> None:
-        def _send() -> None:
-            asyncio.ensure_future(
-                transport.send(msg.PushNotification(channel=channel, payload=payload))
-            )
+    def _make_broadcast_callback(send_through: Any):
+        """Build a ``(channel, payload) → PushNotification`` shim bound to
+        a specific transport. Pooled sessions get one bound to their
+        ``SessionStampingTransport`` so the push gets the correct
+        ``session_id`` and the FE routes it to the right view.
 
-        # Event loop closed during shutdown — drop the push.
-        with contextlib.suppress(RuntimeError):
-            _plan_loop.call_soon_threadsafe(_send)
+        Without per-runtime binding, broadcasts from pool-created
+        sessions would either fail (no callback registered) or land
+        unstamped on the boot transport and surface in the wrong view.
+        """
+
+        def _on_event(channel: str, payload: dict) -> None:
+            def _send() -> None:
+                asyncio.ensure_future(
+                    send_through.send(msg.PushNotification(channel=channel, payload=payload))
+                )
+
+            # Event loop closed during shutdown — drop the push.
+            with contextlib.suppress(RuntimeError):
+                _plan_loop.call_soon_threadsafe(_send)
+
+        return _on_event
 
     if hasattr(backend, "_session") and hasattr(backend._session, "register_broadcast_callback"):
-        backend._session.register_broadcast_callback(_on_plan_event)
+        backend._session.register_broadcast_callback(_make_broadcast_callback(transport))
 
     # ── File-edit push notifications ─────────────────────────────
     # Edit tools call ``set_file_edit_listener`` from any thread the
@@ -916,6 +929,13 @@ async def _run(
             stamped = SessionStampingTransport(transport, rt_backend)
             rt_table = _build_rpc_table(rt_backend, stamped, login_state)
             dir_registry.set_dir(rt_backend.session_id, rt_backend.project_dir)
+            # Wire pool-session broadcasts (plan_submitted,
+            # permission_mode_changed, …) through the stamped transport
+            # so they reach the FE with the right session_id. Without
+            # this, ``exit_plan_mode`` from a pooled session never
+            # produces a PlanCard.
+            if hasattr(rt_backend._session, "register_broadcast_callback"):
+                rt_backend._session.register_broadcast_callback(_make_broadcast_callback(stamped))
             return SessionRuntime(
                 backend=rt_backend,
                 rpc_table=rt_table,

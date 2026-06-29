@@ -23,8 +23,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-import pytest
-
 from ember_code.protocol.agno_events import _format_edit_diff
 
 # Colour codes the source uses. Pinned here so a future palette
@@ -167,7 +165,6 @@ class TestLineNumberFormat:
         # deliberate choice (would mis-align with the prefix).
         rows = _rows({"old_string": "", "new_string": "x"})
         assert rows is not None
-        text = rows[0][0]
         # ``+ ``  (prefix + space) + ``   1`` (right-padded) +
         # ``   `` (separator) + content.
         # Pin the right-pad: a 4-digit line number should fit
