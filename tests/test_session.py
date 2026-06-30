@@ -883,3 +883,131 @@ class TestSessionBroadcast:
         # ``late`` is now in the list for the next broadcast.
         session.broadcast("ev2", {})
         assert log == ["first", "first", "late"]
+
+
+class TestMainTeamToolkit:
+    """Pin the shell-first design of the main team's tool catalog
+    (CLAUDE_CODE_PARITY.md row 22 / commit 7e50705).
+
+    The main team intentionally has NO ``Read`` / ``Grep`` / ``Glob``
+    / ``LS`` — those overlap with ``Bash`` (``cat``, ``rg``, ``find``,
+    ``ls``) and confused the model into double-search behavior. They
+    stay in the registry so SUB-agents can opt in via their
+    ``tools:`` frontmatter, but they're not in the main team's
+    always-on set. A future refactor that re-adds them to the main
+    team must be a deliberate choice — this test makes silent
+    regression a failing test.
+    """
+
+    @staticmethod
+    def _stub_session(
+        *,
+        web: str = "ask",
+        fetch: str = "ask",
+        codeindex_available: bool = False,
+    ):
+        """Cheap stub: just enough state for
+        ``_resolve_main_tool_names`` to run, without booting Agno,
+        the DB, etc. The method only reads ``settings.permissions``
+        and ``_codeindex_available``."""
+        from unittest.mock import MagicMock
+
+        from ember_code.core.session.core import Session
+
+        session = Session.__new__(Session)
+        permissions = MagicMock()
+        permissions.web_search = web
+        permissions.web_fetch = fetch
+        settings = MagicMock()
+        settings.permissions = permissions
+        session.settings = settings
+        session._codeindex_available = codeindex_available
+        return session
+
+    @staticmethod
+    def _stub_registry():
+        """ToolRegistry stub — ``_resolve_main_tool_names`` only
+        uses ``.resolve([...])`` to probe whether a tool's
+        dependencies are importable. Return a no-op success so
+        every optional tool gets added when its permission/flag
+        gate allows it. Per-test variants override this to
+        simulate ``ImportError`` for missing extras."""
+        from unittest.mock import MagicMock
+
+        return MagicMock(resolve=MagicMock(return_value=[]))
+
+    def test_core_toolkit_is_shell_first(self):
+        session = self._stub_session()
+        names = session._resolve_main_tool_names(self._stub_registry())
+        # The 5 always-on tools — shell-first design.
+        for required in ("Write", "Edit", "Bash", "Schedule", "NotebookEdit"):
+            assert required in names, f"main team must always include {required}"
+
+    def test_main_toolkit_excludes_registry_only_tools(self):
+        # Hard contract: Read/Grep/Glob/LS/Python are registry-only
+        # (available to sub-agents that opt in). They MUST NOT
+        # appear in the main team's toolkit. A regression here
+        # silently re-introduces tool overlap with Bash.
+        session = self._stub_session(codeindex_available=True)
+        names = session._resolve_main_tool_names(self._stub_registry())
+        for forbidden in ("Read", "Grep", "Glob", "LS", "Python"):
+            assert forbidden not in names, (
+                f"{forbidden} is registry-only — sub-agents opt in via "
+                f"frontmatter; main team uses Bash for this. See "
+                f"CLAUDE_CODE_PARITY.md row 22."
+            )
+
+    def test_web_tools_omitted_when_denied(self):
+        # ``permissions.web_search: deny`` (e.g. ``--no-web`` CLI
+        # flag) hides the WebSearch toolkit from the agent's
+        # catalog entirely. Same for WebFetch.
+        session = self._stub_session(web="deny", fetch="deny")
+        names = session._resolve_main_tool_names(self._stub_registry())
+        assert "WebSearch" not in names
+        assert "WebFetch" not in names
+
+    def test_web_tools_included_when_allowed(self):
+        session = self._stub_session(web="ask", fetch="ask")
+        names = session._resolve_main_tool_names(self._stub_registry())
+        assert "WebSearch" in names
+        assert "WebFetch" in names
+
+    def test_web_tools_silently_skipped_on_import_error(self):
+        # Optional extras may not be installed (e.g. headless
+        # builds without DuckDuckGo). The registry raises
+        # ``ImportError``; ``_resolve_main_tool_names`` swallows
+        # it and just omits the tool — no crash, no warning to
+        # the user that doesn't want the dep anyway.
+        from unittest.mock import MagicMock
+
+        session = self._stub_session(web="ask", fetch="ask")
+        registry = MagicMock()
+        registry.resolve = MagicMock(side_effect=ImportError("no ddgs"))
+        names = session._resolve_main_tool_names(registry)
+        assert "WebSearch" not in names
+        assert "WebFetch" not in names
+        # Core tools still landed.
+        assert "Bash" in names
+
+    def test_codeindex_included_only_when_available(self):
+        without = self._stub_session(codeindex_available=False)
+        with_ = self._stub_session(codeindex_available=True)
+        names_without = without._resolve_main_tool_names(self._stub_registry())
+        names_with = with_._resolve_main_tool_names(self._stub_registry())
+        assert "CodeIndex" not in names_without
+        assert "CodeIndex" in names_with
+
+    def test_core_tools_constant_is_immutable(self):
+        # The 5-tool core is class-level + a tuple so a future
+        # contributor can't accidentally ``Session._MAIN_CORE_TOOLS
+        # .append("Read")`` and silently regress the design.
+        from ember_code.core.session.core import Session
+
+        assert isinstance(Session._MAIN_CORE_TOOLS, tuple)
+        assert Session._MAIN_CORE_TOOLS == (
+            "Write",
+            "Edit",
+            "Bash",
+            "Schedule",
+            "NotebookEdit",
+        )

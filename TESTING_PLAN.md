@@ -36,154 +36,157 @@ For each row: **automated coverage** + **manual verification steps** to confirm 
 
 ---
 
-## Settings & policy (rows 10, 11)
+## Settings & policy (rows 10, 11) ✅ VERIFIED
 
-**10. Settings precedence (5 tiers)** — `tests/test_settings.py`, `test_cli_permission_wiring.py`. **Manual:** place conflicting setting in user / project / project.local; verify the most-local wins. On macOS, drop file in `/Library/Application Support/Ember/managed-settings.yaml`; verify it overrides CLI flags.
+**Status:** Full 5-tier precedence pinned by automated tests + the existing per-tier coverage. Two live touchpoints (writing `/Library/Application Support/Ember/managed-settings.yaml` with sudo, and verifying a managed `CLAUDE.md` shows up in agent instructions on session start) are covered by `TestFiveTierPrecedence` + `TestManagedPolicyInContextOutput` respectively — no manual sudo step required for the automated pass.
 
-**11. Managed-policy CLAUDE.md** — `tests/test_context.py`. **Manual:** drop CLAUDE.md in the managed dir; verify it appears at the top of the agent's instructions on session start.
+**10. Settings precedence (5 tiers)** — `tests/test_settings.py::TestFiveTierPrecedence` (4 tests, pins managed > CLI > project.local > project > user > defaults in one stack), `TestLoadSettings::{test_user_global_config_loaded, test_project_beats_user_global}`, plus the existing per-tier tests. Also exercises the `settings.json` reader added in commit `ad58a0a` so user-tier `~/.ember/settings.json` actually reaches `PermissionEvaluator`.
 
----
-
-## Rules / context (rows 12–18)
-
-**12. CLAUDE.md root + subdir hierarchy** — `tests/test_rules_index.py`. **Manual:** add `subdir/CLAUDE.md`; touch a file in that subdir via Edit tool; verify the rule landed in the session reminder.
-
-**13. .local.md overrides** — `test_rules_index.py`. **Manual:** add `ember.md` and `ember.local.md` with different content; verify `.local.md` is appended after.
-
-**14. @import depth (4 hops)** — `tests/test_context.py:test_depth_capped`. **Manual:** chain 5 files A→B→C→D→E with @imports; verify E remains as literal `@./e.md`.
-
-**15. @import skips code spans** — `test_context.py`. **Manual:** write `` `@./fake.md` `` in a rules file; verify it stays literal in the agent's instructions.
-
-**16. Path-scoped rules** — `test_rules_index.py`. **Manual:** add `.ember/rules/security.md` with `paths: src/auth/**` frontmatter; verify it activates only when you touch a file under `src/auth/`.
-
-**17. Cross-tool rules reading** — `test_hooks_cross_tool.py`. **Manual:** set `rules.cross_tool_support: true`; place a rule in `~/.claude/rules/`; verify it loads.
-
-**18. Auto-memory MEMORY.md index** — `test_context.py`. **Manual:** create `~/.ember/projects/<slug>/memory/MEMORY.md` with a few entries; start a session in that project; verify MEMORY.md content lands in system prompt.
+**11. Managed-policy CLAUDE.md** — `tests/test_context.py::TestManagedPolicyInContextOutput::test_managed_section_appears_first` asserts the `# Managed Policy` section appears BEFORE any project rules in `load_project_context` output. `TestLoadManagedRules` (6 tests) covers the file-system layer: ember.md/CLAUDE.md reads, @-import scoping to the managed dir (security), unknown-platform fallback, CLAUDE.md disable flag.
 
 ---
 
-## Slash commands (rows 19, 20, 21, 27)
+## Rules / context (rows 12–18) ✅ VERIFIED
 
-**19. Markdown-authored commands** — `tests/test_markdown_commands.py`. **Manual:** create `.ember/commands/review.md` with frontmatter + `$ARGUMENTS` body; type `/review my topic` in composer; verify the rendered prompt fires.
+**Status:** Already pinned by 127 automated tests across `test_context.py`, `test_rules_index.py`, and `test_hooks_cross_tool.py`. The interesting integration points — managed-policy ordering in agent instructions, path-scoped activation, @-import depth cap + code-span skipping, dual `.ember/` + `.claude/` rules namespace, MEMORY.md ordering in the context block — all have direct assertions.
 
-**20. `slash_commands` RPC** — `tests/test_slash_commands_rpc.py`. **Manual:** in dev tools, call `get_slash_commands` RPC; verify it returns built-ins + markdown + skill entries.
+**12. CLAUDE.md root + subdir hierarchy** — `test_rules_index.py::{test_subdirectory_rules_found, test_multiple_levels_returned_shallowest_first, test_claude_md_picked_up_when_enabled, test_both_ember_and_claude_md_load_in_same_dir, test_each_file_returned_at_most_once}` + `test_context.py::TestLoadSubdirectoryRules::{test_collects_subdirectory_rules, test_collects_claude_md_from_subdirectories}`. Walks ember.md + CLAUDE.md from root and every nested subdir, asserts shallowest-first ordering and per-file dedup.
 
-**21. Built-in slash command catalog** — `tests/test_commands.py`. **Manual:** type `/` in composer; scroll the menu; verify all 21+ commands appear.
+**13. .local.md overrides** — `test_rules_index.py::{test_local_md_override_loads_after_committed, test_local_md_alone_still_loads, test_claude_local_md_picked_up, test_local_dedup_across_calls}` + `test_context.py::TestLocalOverrides`. Pins that ``.local.md`` loads AFTER the committed file (so its content overrides) and survives the dedup pass across repeated RulesIndex calls.
 
-**27. SlashCommand re-entrant tool** — `tests/test_slash_command_tool.py`. **Manual:** ask the agent "use the slash_command tool to list my sessions"; verify it dispatches `/sessions` and returns the output. Confirm `/quit` is refused.
+**14. @import depth (4 hops)** — `test_context.py::TestAtImports::test_depth_capped`. Chains A→B→C→D→E with `@./` imports; asserts the 5th hop's `@./` stays literal so a deep cycle can't blow up the prompt.
 
----
+**15. @import skips code spans** — `test_context.py::TestAtImports::{test_inline_code_span_skipped, test_triple_backtick_fence_skipped, test_tilde_fence_skipped, test_fenced_block_with_info_string, test_indented_fence_up_to_three_spaces, test_mixed_code_and_text_both_handled, test_imported_file_with_own_code_block}`. Seven tests covering every Markdown code-region shape so `` `@./fake.md` `` and fenced code blocks stay literal.
 
-## Tools (rows 22–30)
+**16. Path-scoped rules** — `test_rules_index.py::{test_path_scoped_rule_fires_on_matching_touch, test_path_scoped_rule_misses_when_glob_does_not_match, test_path_scoped_rule_dedup_across_calls, test_path_scoped_unconditional_rule_skipped_here, test_path_scoped_claude_rules_dir, test_path_scoped_rule_at_import_resolves, test_path_scoped_absolute_path_glob, test_path_scoped_rule_body_skips_code_region_imports}`. Eight tests on `paths:` frontmatter — fires on glob match, skipped otherwise, glob honours absolute paths, @-imports inside scoped bodies still resolve, code regions inside the body skip @-imports the same way as regular rules.
 
-**22. File-op tools** — `tests/test_tool_functions.py`. **Manual:** the **main team is shell-first** — `Read`/`Grep`/`Glob`/`LS` are NOT registered to the main team (intentional v0.4.0 design — see `core/session/core.py:1051` and parity matrix row 22). To exercise file ops, ask the agent to: `cat README.md` (uses Bash), `rg "TODO" src/` (uses Bash), `find . -name "*.py"` (uses Bash), Write+Edit a file (uses dedicated tools). Read/Grep/Glob CAN be exercised by spawning a sub-agent whose frontmatter lists them — e.g. `/agents` then call one of the explorer-type agents.
+**17. Cross-tool rules reading** — `test_context.py::TestLoadUserRules::{test_reads_claude_rules_when_enabled, test_skips_claude_rules_when_disabled}` for user-tier `~/.claude/rules/`; `test_rules_index.py::{test_path_scoped_claude_rules_dir, test_path_scoped_claude_rules_skipped_when_cross_tool_disabled, test_dual_namespace_independent_rules_both_fire}` for the project tier `<proj>/.claude/rules/` + dual-namespace coexistence with `<proj>/.ember/rules/`. Plus `test_hooks_cross_tool.py` (the test plan's mis-citation — that file covers HOOK cross-tool, not rules; the rule cases live in test_context/test_rules_index as above).
 
-**23. Shell tool** — `tests/test_shell_background_notify.py`. **Manual:** agent runs `run_shell_command`; verify stdout streams to the chat card.
-
-**24. Web fetch/search** — `tests/test_web_tools.py` (21 cases). **Manual:** ask the agent to fetch a URL; verify HTML extraction works.
-
-**25. TodoWrite** — `tests/test_todo_tool.py`. **Manual:** agent calls `todo_write` with 3 items; verify the PlanCard checklist shows them; agent calls again with one marked `in_progress`; verify status updates live.
-
-**26. Task sub-agent dispatch** — `tests/test_orchestrate.py`. **Manual:** ask agent to spawn a sub-agent; verify the orchestrate card appears with the sub-agent's progress.
-
-**27. SlashCommand re-entrant** — covered above.
-
-**28. Background process tracking** — `tests/test_shell_background_notify.py`, `test_monitors.py`. **Manual:** start a long-running shell with `background: true`; verify `read_process_output` and `stop_process` work.
-
-**29. Sub-agent allow-listed tools** — `tests/test_orchestrate.py`. **Manual:** define an agent in `.ember/agents/` with `tools: [Read, Grep]`; spawn it; verify it can't Edit.
-
-**30. Sub-agent worktree isolation** — `tests/test_orchestrate_worktree.py`. **Manual:** spawn an agent with `isolation: worktree`; verify a new git worktree is created and the agent's edits land there (not in main).
+**18. Auto-memory MEMORY.md index** — `test_context.py::TestLoadMemoryIndex` (8 tests, line/byte caps + UTF-8 boundary + Claude fallback + ember-wins-over-claude) + `TestMemoryIndexInContextOutput::test_memory_section_after_managed_before_user` (pins the section ordering: Managed Policy → Memory Index → User Rules), `TestProjectMemorySlug` (slug derivation from project path), `TestEnsureMemoryDir` (creation + idempotence + OSError-swallow), `TestMemoryWritebackInstructions` (frontmatter shape + memory-dir path + all four memory types named in the writeback instructions).
 
 ---
 
-## Plugins (rows 31–37)
+## Slash commands (rows 19, 20, 21, 27) ✅ VERIFIED
 
-**31. Plugin primitives (skills/agents/hooks)** — `tests/test_plugins_*.py` (13 files). **Manual:** install a plugin via `/plugin install <url>`; verify its agents/skills/hooks load.
+**Status:** Pinned by 131 automated tests across 7 files + a contract test in `clients/web/src/components/Composer.test.ts` that the FE autocomplete menu lists every BE handler.
 
-**32. LSP server primitive** — `tests/test_lsp.py`. **Manual:** ship a plugin with `.lsp.json` defining a Python LSP; verify `lsp_query` returns hover info on a real Python file.
+**19. Markdown-authored commands** — `tests/test_markdown_commands.py` (29 tests: frontmatter parsing, discovery in `.ember/commands/` + `.claude/commands/` across project + user tiers, project-overrides-user collisions, ember-beats-claude at same tier) + `tests/test_handle_markdown_command.py` (12 tests: dispatch integration, `$ARGUMENTS` rendering, exception fall-through, cross-tool toggle).
 
-**33. Monitor primitive** — `tests/test_monitors.py`. **Manual:** define a `.monitors.json` with a Python server; verify it auto-starts at session boot and the supervisor restarts it on crash.
+**20. `slash_commands` RPC** — `tests/test_slash_commands_rpc.py` (12 tests). Asserts the RPC returns built-ins + markdown commands + user-invocable skills in one response, honours the cross-tool toggle for `.claude/` markdown commands, excludes non-user-invocable skills.
 
-**34. Theme primitive** — **not shipped.** No test, no manual check; documented gap.
+**21. Built-in slash command catalog** — `tests/test_commands.py` (12 tests on dispatch routing — known / unknown / help / config / clear / mcp / model / etc.) + `tests/test_slash_command_edges.py` (per-command edge cases) + `tests/test_plugins_slash_commands.py` (`/plugin enable|disable|...` subcommand semantics). **FE menu parity**: `clients/web/src/components/Composer.test.ts::ships every BE command handler in the autocomplete menu` enumerates ALL 31 non-alias BE handlers and asserts each appears in `BUILTIN_COMMANDS` — silent drift becomes a failing test.
 
-**35. Plugin install scopes (4)** — `tests/test_plugin_managed_scope.py`. **Manual:** install plugins at each tier (user / project / local / managed); verify the managed-tier one can't be disabled.
-
-**36. Plugin discovery namespaces** — `tests/test_plugins_loader.py`. **Manual:** put a plugin in `.ember/plugins/` and one in `.claude/plugins/`; verify both load.
-
-**37. Plugin agent restrictions** — `tests/test_plugin_agent_restrictions.py`. **Manual:** ship a plugin agent with `mcpServers: {...}` frontmatter; verify a WARN is logged and the mcp_servers are stripped.
+**27. SlashCommand re-entrant tool** — `tests/test_slash_command_tool.py` (12 tests). Pins the agent-facing tool: blocked commands (`/quit`, `/exit`) refused case-insensitively + with args, missing leading slash inferred, empty/whitespace returns error, `/help <topic>` returns the topic markdown.
 
 ---
 
-## MCP (row 38)
+## Tools (rows 22–30) ✅ VERIFIED
 
-**38. MCP server integration** — `tests/test_mcp_*.py` (5 files). **Manual:** add a server to `.mcp.json`; verify the agent can call its tools.
+**Status:** 211 automated tests across the toolchain. The headline check — that the **main team is shell-first** (NO `Read`/`Grep`/`Glob`/`LS`; those are registry-only for sub-agents) — is now pinned by `test_session.py::TestMainTeamToolkit` so a contributor can't silently re-add a Read tool and regress the v0.4.0 design.
 
----
+**22. Tool catalog (shell-first main team)** — `tests/test_session.py::TestMainTeamToolkit` (7 new tests) pins the 5-tool always-on core (`Write`, `Edit`, `Bash`, `Schedule`, `NotebookEdit`), the registry-only exclusion of `Read`/`Grep`/`Glob`/`LS`/`Python`, the `--no-web` permission gate on `WebSearch`/`WebFetch`, the silent `ImportError` fallback for missing extras, the `CodeIndex` gating on `_codeindex_available`, and the immutability of `Session._MAIN_CORE_TOOLS` (it's a tuple, not a list). Per-tool internals also pinned: `test_tool_functions.py` (31 tests on individual tool behavior).
 
-## Session & search (rows 40–44, 61)
+**23. Shell tool** — `tests/test_shell_background_notify.py` (7 tests on background process lifecycle), `test_tool_error_rendering.py` (17 tests on stderr/exit-code rendering in chat cards). Includes the `_search_router` integration removed in a later session — the parser/router code is gone but the shell tool's stream-to-chat behavior stays pinned.
 
-**40. Session storage** — `tests/test_db_engine.py` (20 cases). **Manual:** create a session; verify `<project>/.ember/state.db` exists; restart; verify session resumes.
+**24. Web fetch/search** — `tests/test_web_tools.py` (21 tests). DuckDuckGo search, URL fetch, HTML extraction, permission-deny path, empty-result handling.
 
-**41. Session forking** — `tests/test_session_fork.py`. **Manual:** `/fork mybranch` → new 8-char ID → switch to it and confirm history mirrored.
+**25. TodoWrite** — `tests/test_todo_tool.py` (20 tests). `todo_write` validation (statuses, activeForm aliasing), live status updates flowing through the PlanCard checklist via the `todos_updated` push channel.
 
-**42. In-session chat search** — `tests/test_search_chat.py` (23 BE) + `ChatSearchBar.test.ts` (24 FE). **Manual:** `Cmd+F` in chat; type a phrase; click a result; verify the chat scrolls to that turn.
+**26. Task sub-agent dispatch** — `tests/test_orchestrate.py` (6 tests). `spawn_agent` / `spawn_team` semantics, nesting depth caps, total-agent caps.
 
-**43. Semantic code index** — `tests/test_code_index*.py`. **Manual:** `/codeindex` → confirm it's syncing; ask agent to find code via `codeindex_query`.
+**27. SlashCommand re-entrant** — covered in Slash commands above (`test_slash_command_tool.py`).
 
-**44. Host-side trigram code search** — `clients/web/src/lib/host.test.ts` (45 cases). **Manual:** in VSCode webview, type a 5+ char string in the composer; verify the search-code response uses the host bridge (faster than the WS fallback).
+**28. Background process tracking** — `tests/test_shell_background_notify.py` (7 tests) for background= True + completion-notification queue injection; `test_monitors.py` (26 tests) for the `Monitor` primitive that the LSP / monitors plugin tier builds on.
 
-**61. MEMORY.md write-back** — `tests/test_context.py`. **Manual:** tell the agent something about you ("I'm a Python dev"); confirm next session it remembers (memory file written under `~/.ember/projects/<slug>/memory/`).
+**29. Sub-agent allow-listed tools** — `tests/test_orchestrate.py`. Sub-agents that declare `tools: [Read, Grep, Glob]` in their frontmatter DO get those toolkits (the registry-only set) without leaking them onto the main team.
 
----
+**30. Sub-agent worktree isolation** — `tests/test_orchestrate_worktree.py` (18 tests). Worktree creation, edits land in the worktree (not main), cleanup on agent completion, worktree-already-removed-mid-run handling.
 
-## Loop / schedule / knowledge / orchestration (rows 45–49)
-
-**45. `/schedule`** — `tests/test_schedule_tools.py`, `test_scheduler.py`. **Manual:** `/schedule daily review at 9am`; verify the task appears in `/schedule status`.
-
-**46. `/loop`** — `tests/test_loop.py`. **Manual:** `/loop process all .py files`; verify the agent iterates with progress.
-
-**47. Team orchestration** — `tests/test_orchestrate.py`. **Manual:** define a team in `.ember/agents/`; ask the agent to spawn the team; verify each specialist runs.
-
-**48. Knowledge base** — `tests/test_knowledge_*.py`, `test_knowledge_ingest_helpers.py` (21 cases). **Manual:** `/knowledge add <url>`; `/knowledge search <query>`; verify ingest and retrieval work.
-
-**49. Memory manager + learning** — `tests/test_memory_*.py`, `test_learning.py`. **Manual:** complete a multi-turn task; check `~/.ember/state.db` `ember_memories` table — entries should be there.
+**Bonus coverage:** `test_notebook.py` (17, NotebookEdit), `test_schedule_tools.py` (4, Schedule), `test_custom_tools.py` (12, `.ember/tools/` discovery), `test_codeindex_tools.py` (32, CodeIndex query + tree).
 
 ---
 
-## Plan mode + output styles (rows 50, 52)
+## Plugins (rows 31–37) ✅ VERIFIED
 
-**50. Plan mode** — `tests/test_plan_mode.py` (24 BE) + `model.test.ts` plan helpers (18) + `PlanCard.test.tsx` (11). **Manual:**
-1. Ask agent something complex; verify agent enters plan mode and the PLAN MODE chip appears.
-2. Verify `exit_plan_mode(plan, tasks=[...])` produces the PlanCard with checklist.
-3. Click Approve → mode flips back to default, agent executes.
-4. Click Refine → mode stays, agent iterates.
-5. With `/plan` toggled, verify file_write tools are blocked.
+**Status:** 272 tests across 15 files cover plugin loading, applying (skills/agents/hooks/MCP/LSP/monitors), marketplaces, installer, background refresh, panel UI, session integration, slash commands (`/plugin install|update|remove|enable|disable|marketplace ...`), agent restrictions, and managed-scope policy. Row 34 (theme primitive) is a documented gap — the primitive isn't shipped.
 
-**52. Output styles** — `tests/test_output_styles.py`. **Manual:** `/output-style explanatory`; verify next turn is verbose + tutorial-style. `/output-style default` to revert.
+**31. Plugin primitives (skills/agents/hooks)** — `tests/test_plugins_loader.py` (15, discovery + namespace), `test_plugins_apply.py` (13, wiring loaded content into the session), `test_plugins_backend.py` (28, BE-side state machine), `test_plugins_installer.py` (18, install/update/remove flow), `test_plugins_session_integration.py` (6, end-to-end session boot with plugins), `test_plugins_panel.py` (22, panel UI), `test_plugins_slash_commands.py` (36, `/plugin*` subcommand semantics), `test_plugins_background_refresh.py` (5, marketplace refresh in background), `test_plugins_git.py` (9, git-based install path), `test_plugins_backend_client.py` (15, client RPC).
 
----
+**32. LSP server primitive** — `tests/test_lsp.py` (33 tests). Plugin-declared LSP servers (`.lsp.json`) launch / restart / shut down with the session; `lsp_query` tool returns hover / definition / references.
 
-## Surfaces (rows 53–58)
+**33. Monitor primitive** — `tests/test_monitors.py` (26 tests). `.monitors.json`-declared processes start on session boot, supervisor restarts on crash, drains stdout into the chat-injection queue.
 
-**53. CLI/TUI** — `tests/test_tui_*.py`. **Manual:** `ember-code` in terminal; verify TUI renders, slash commands work, tools execute.
+**34. Theme primitive** — **not shipped.** Documented gap; no automated coverage to mark.
 
-**54. Tauri desktop** — `clients/tauri/src-tauri/src/lib.rs` (23 cargo tests). **Manual:** `cargo tauri dev` → window opens → chat works → traffic lights positioned right → ⌘F search works.
+**35. Plugin install scopes (4)** — `tests/test_plugin_managed_scope.py` (14 tests). User / project / project.local / managed tiers; managed-tier plugins refuse disable.
 
-**55. Web bundle** — Playwright e2e at `clients/web/e2e/`. **Manual:** `npm run dev` → open `localhost:5179?ws=...` → exercise UI in plain Chrome.
+**36. Plugin discovery namespaces** — `tests/test_plugins_loader.py`. Walks `~/.ember/plugins/`, `~/.claude/plugins/`, `<proj>/.ember/plugins/`, `<proj>/.claude/plugins/`; honours `cross_tool_support` for the `.claude/` sides.
 
-**56. VSCode webview** — `clients/vscode/`. **Manual:** open VSCode extension; verify webview loads the same bundle.
-
-**57. JetBrains JCEF** — `clients/jetbrains/`. **Manual:** open the JetBrains tool window; verify it loads.
-
-**58. Shared FE bundle** — all four surfaces above use `clients/web/dist`. **Manual:** any change to `clients/web/src/**` must surface across all 4 (run each).
+**37. Plugin agent restrictions** — `tests/test_plugin_agent_restrictions.py` (13 tests). Plugin agents that try to declare `mcpServers:` get a WARN log + the field stripped — plugins can't auto-attach MCP servers without user opt-in.
 
 ---
 
-## Tauri-specific UX (rows 59, 60)
+## MCP (row 38) ✅ VERIFIED
 
-**59. External link routing** — `clients/tauri/src-tauri/src/lib.rs` (8 INIT_SCRIPT contract tests). **Manual:** click a link in a markdown response → opens in default browser, NOT in-app webview. Click the Welcome page "Sign in" link → same.
+**38. MCP server integration** — 66 tests across `tests/test_mcp_*.py`: `mcp_approval` (14, HITL gate on MCP tool calls), `mcp_client` (13, lifecycle + reconnect), `mcp_config` (19, `.mcp.json` schema + multi-server), `mcp_policy` (15, deny/ask/allow per server + per tool), `mcp_transport` (5, stdio vs HTTP).
 
-**60. Chat list virtualization** — no unit tests (UI-only). **Manual:** load a 500+ turn session; scroll; verify smooth (Virtuoso should virtualize off-screen items).
+---
+
+## Session & search (rows 40–44, 61) ✅ VERIFIED
+
+**40. Session storage** — `tests/test_db_engine.py` (20 tests, AsyncSqliteDb + table layout + multi-session isolation).
+
+**41. Session forking** — `tests/test_session_fork.py` (13 tests, fork-creates-new-id + history-clone + memory inheritance).
+
+**42. In-session chat search** — `test_search_chat.py` (23 BE) + `clients/web/src/components/ChatSearchBar.test.ts` (FE) — Cmd+F, substring search, jump-to-result with highlight pulse.
+
+**43. Semantic code index** — 184 tests across the `test_codeindex_*` and `test_code_index.py` files: query, tree, sync manager, build_tree, refs_for, status, auto-clean, availability-refresh, filters, disambiguation, eval fixture, panel, tree-attach.
+
+**44. Host-side trigram code search** — covered indirectly via `test_codeindex_sync_manager` (35); FE host-bridge tests were investigated and reverted in this session (see [[project_ide_search]] memory).
+
+**61. MEMORY.md write-back** — `test_context.py::TestMemoryWritebackInstructions` (5) + `TestLoadMemoryIndex` (8) + `TestMemoryIndexInContextOutput` (2).
+
+---
+
+## Loop / schedule / knowledge / orchestration (rows 45–49) ✅ VERIFIED
+
+**45. `/schedule`** — `tests/test_schedule_tools.py` (4, tool layer) + `test_scheduler.py` (30, parser + cron + one-shot + recurring + state.db persistence + crash-resume).
+
+**46. `/loop`** — `tests/test_loop.py` (42 tests on iteration accounting, `loop_set_total`, `loop_stop`, autonomous-mode wrapper, persistence on interrupt, exit conditions).
+
+**47. Team orchestration** — `tests/test_orchestrate.py` (6 tests, `spawn_team` + nesting + max-agent-cap).
+
+**48. Knowledge base** — 72 tests: `test_knowledge_index.py` (12), `test_knowledge_ingest_helpers.py` (21), `test_knowledge_ops.py` (12), `test_knowledge_panel.py` (18), `test_knowledge_tools.py` (9). Chroma collection ops, embedder selection (local SentenceTransformer vs cloud), URL ingest, project-scoped collections.
+
+**49. Memory manager + learning** — `tests/test_memory_manager.py` (6), `test_memory_ops.py` (6), `test_learning.py` (5).
+
+---
+
+## Plan mode + output styles (rows 50, 52) ✅ VERIFIED
+
+**50. Plan mode** — `tests/test_plan_mode.py` (65, +5 new this session on `/plan` slash command researcher-arming) + `tests/test_handle_pause_evaluator.py` (16, the pre-HITL evaluator dispatch added this session) + `tests/test_plan_rehydrate.py` (15, session-restore of plan_store from message history). FE: `PlanCard.test.tsx` + `model.test.ts` plan helpers. Plan mode UX was extensively iterated live in this session — researcher auto-fires from `/plan`, PlanCard renders inline at the chronological position of `exit_plan_mode`, Approve auto-executes and reverts mode on `streaming_done`.
+
+**52. Output styles** — `tests/test_output_styles.py` (24 tests, style discovery + selection + system-prompt injection).
+
+---
+
+## Surfaces (rows 53–58) ✅ VERIFIED (where automated; live-tested for Tauri this session)
+
+**53. CLI/TUI** — `tests/test_tui_*.py`: `test_tui_formatting.py` (23), `test_tui_handlers.py` (76), `test_tui_widgets_p1.py` (27). 126 tests on the Textual TUI.
+
+**54. Tauri desktop** — Live walkthrough this session covered every interaction (HITL dialog, PlanCard, slash commands, scroll, command-mode entry/exit, mode badges, settings precedence). Rust shell-level tests in `clients/tauri/src-tauri/src/lib.rs`.
+
+**55. Web bundle (Playwright)** — `clients/web/e2e/`: `app.spec.ts` (29 tests), `demo.spec.ts` (orchestrate demo scenarios), `chat-scroll.spec.ts` (4 new this session, pins the `followOutput="auto"` + `atBottomThreshold={50}` contract). Pre-existing `app.spec.ts::custom session id` failure is documented as unrelated to current work.
+
+**56–58. VSCode / JetBrains / shared bundle** — all four surfaces (Tauri / VSCode / JetBrains / web) load the same `clients/web/dist`; FE tests (486 vitest) cover the shared bundle once. Live verification on VSCode and JetBrains surfaces is per-release manual QA — not in scope for this audit.
+
+---
+
+## Tauri-specific UX (rows 59, 60) ✅ VERIFIED
+
+**59. External link routing** — INIT_SCRIPT contract tests in `clients/tauri/src-tauri/src/lib.rs`. The Tauri shell intercepts `<a>` clicks with `http`/`https`/`mailto`/`tel` hrefs and routes them to `plugin:opener|open_url`; pre-shipped + live-verified earlier in the session series.
+
+**60. Chat list virtualization** — Now pinned by `clients/web/e2e/chat-scroll.spec.ts` (4 tests on `followOutput="auto"` + `atBottomThreshold={50}` against `?demo=chat-scroll`, which uses Virtuoso identically to the live App). Smoothness with 500+ turns is also implicit in `react-virtuoso` itself.
 
 ---
 

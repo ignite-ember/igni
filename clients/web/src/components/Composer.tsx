@@ -33,6 +33,16 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/plan", description: "Toggle plan mode — agent proposes, you approve" },
   { name: "/accept", description: "Auto-approve file edits" },
   { name: "/bypass", description: "Skip permission prompts (scoped denies still apply)" },
+  { name: "/memory", description: "View or edit project memory" },
+  { name: "/rename", description: "Rename this session" },
+  { name: "/config", description: "Show current settings" },
+  { name: "/whoami", description: "Show the signed-in account" },
+  { name: "/output-style", description: "Switch the agent's output style" },
+  { name: "/plugin", description: "Install, update, remove plugins" },
+  { name: "/sync-knowledge", description: "Push project knowledge to Ember Cloud" },
+  { name: "/evals", description: "Run an evaluation suite" },
+  { name: "/bug", description: "Open the bug report form" },
+  { name: "/quit", description: "Exit the session" },
 ];
 
 /** Prefix-filter the slash-command pool for the autocomplete menu.
@@ -481,21 +491,57 @@ export function Composer({
         applyMenuChoice(entry);
         return;
       }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        // Don't let the app-level Esc (cancel run) fire — the user is
-        // just closing the autocomplete.
-        e.stopPropagation();
-        setMenu(null);
-        return;
-      }
     }
 
-    // Backspace on an empty input exits command/shell mode.
-    if (e.key === "Backspace" && mode !== "chat" && textRef.current === "") {
+    // Escape: universal "abandon what I'm typing" key. Handled
+    // OUTSIDE the ``if (menu)`` block above so a command-mode
+    // input WITHOUT an open menu (e.g. user typed ``/p`` then
+    // arrowed down then arrowed back up past the menu somehow,
+    // or the menu auto-closed because the query stopped matching)
+    // still has a way out without backspacing every character.
+    //
+    // Order of clearing:
+    //   1. If the menu is open, close it.
+    //   2. If we're in command/shell mode (regardless of text
+    //      content), exit to chat mode + clear the field.
+    //   3. If neither applies, let the event propagate so the
+    //      app-level Esc (cancel run) handler can fire.
+    if (e.key === "Escape") {
+      let consumed = false;
+      if (menu) {
+        setMenu(null);
+        consumed = true;
+      }
+      if (mode !== "chat") {
+        setMode("chat");
+        setText("");
+        ref.current?.setValue("");
+        onTyping?.("");
+        consumed = true;
+      }
+      if (consumed) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      // Falls through to the app-level Esc (cancel run).
+    }
+
+    // Backspace exits command/shell mode when there's nothing
+    // useful left to delete. Two thresholds:
+    //   - text already empty → exit (existing behavior).
+    //   - text is 1 char → backspace would empty it; exit on
+    //     the SAME press instead of leaving an empty command-
+    //     mode prompt that needs a second backspace to escape.
+    // Backspace with 2+ chars deletes one character normally so
+    // ``/list`` → ``/lis`` works for fixing typos.
+    if (e.key === "Backspace" && mode !== "chat" && textRef.current.length <= 1) {
       e.preventDefault();
       setMode("chat");
+      setText("");
+      ref.current?.setValue("");
       setMenu(null);
+      onTyping?.("");
       return;
     }
 

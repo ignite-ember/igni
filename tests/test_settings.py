@@ -160,6 +160,110 @@ class TestLoadSettings:
         s = load_settings(project_dir=tmp_path)
         assert s.models.default == "local"
 
+    def test_user_global_config_loaded(self, tmp_path):
+        # The user tier is the lowest-priority FILE source — sits
+        # under built-in defaults, gets overridden by everything
+        # above it. Hit it in isolation: only ``~/.ember/config.yaml``
+        # exists, no project files, no CLI.
+        # ``conftest._isolate_user_settings`` already redirects
+        # ``Path.home()`` to a per-test tmp dir, so writing
+        # ``Path.home() / .ember / config.yaml`` writes inside the
+        # fake home without touching the developer's real config.
+        from pathlib import Path
+
+        user_ember = Path.home() / ".ember"
+        user_ember.mkdir(parents=True)
+        (user_ember / "config.yaml").write_text("models:\n  default: user-global-model\n")
+        s = load_settings(project_dir=tmp_path)
+        assert s.models.default == "user-global-model"
+
+    def test_project_beats_user_global(self, tmp_path):
+        from pathlib import Path
+
+        user_ember = Path.home() / ".ember"
+        user_ember.mkdir(parents=True)
+        (user_ember / "config.yaml").write_text("models:\n  default: user-global\n")
+        project_ember = tmp_path / ".ember"
+        project_ember.mkdir()
+        (project_ember / "config.yaml").write_text("models:\n  default: project-model\n")
+        s = load_settings(project_dir=tmp_path)
+        # Project wins over user — same precedence as YAML files in
+        # the CC tier model.
+        assert s.models.default == "project-model"
+
+
+class TestFiveTierPrecedence:
+    """Pins the FULL precedence stack in one go: managed > CLI >
+    project.local > project > user > built-in defaults. Each
+    tier writes the same key with a different value; the assertion
+    walks DOWN by removing the winning tier and re-running, so a
+    silent reordering of the precedence (e.g. a refactor that
+    flips two ``_deep_merge`` calls) gets caught in this test
+    rather than at the customer site."""
+
+    def _write_all_tiers(self, tmp_path, monkeypatch, *, value: str, tier_label: str) -> None:
+        """Helper: stage every tier with values keyed to a label
+        so each test can verify which one wins for that value.
+        Returns once all tiers are present."""
+        from pathlib import Path
+
+        # Tier 5: user global
+        user_ember = Path.home() / ".ember"
+        user_ember.mkdir(parents=True, exist_ok=True)
+        (user_ember / "config.yaml").write_text(f"models:\n  default: user-{tier_label}\n")
+        # Tiers 4 + 3: project + project.local
+        project_ember = tmp_path / ".ember"
+        project_ember.mkdir(parents=True, exist_ok=True)
+        (project_ember / "config.yaml").write_text(f"models:\n  default: project-{tier_label}\n")
+        (project_ember / "config.local.yaml").write_text(
+            f"models:\n  default: local-{tier_label}\n"
+        )
+        # Tier 1: managed policy (sits at the top)
+        managed = tmp_path / "managed.yaml"
+        managed.write_text(f"models:\n  default: managed-{tier_label}\n")
+        monkeypatch.setattr(
+            "ember_code.core.config.settings._platform_managed_settings_path",
+            lambda: managed,
+        )
+
+    def test_managed_is_top_of_stack(self, tmp_path, monkeypatch):
+        # All five tiers present; managed must win.
+        self._write_all_tiers(tmp_path, monkeypatch, value="x", tier_label="x")
+        s = load_settings(
+            cli_overrides={"models": {"default": "cli-x"}},
+            project_dir=tmp_path,
+        )
+        assert s.models.default == "managed-x"
+
+    def test_cli_wins_when_no_managed(self, tmp_path, monkeypatch):
+        # Drop managed → CLI takes over the top.
+        self._write_all_tiers(tmp_path, monkeypatch, value="x", tier_label="x")
+        # Clear the managed file but keep the lookup path intact.
+        (tmp_path / "managed.yaml").unlink()
+        s = load_settings(
+            cli_overrides={"models": {"default": "cli-x"}},
+            project_dir=tmp_path,
+        )
+        assert s.models.default == "cli-x"
+
+    def test_project_local_wins_when_no_cli_no_managed(self, tmp_path, monkeypatch) -> None:
+        self._write_all_tiers(tmp_path, monkeypatch, value="x", tier_label="x")
+        (tmp_path / "managed.yaml").unlink()
+        s = load_settings(project_dir=tmp_path)
+        assert s.models.default == "local-x"
+
+    def test_project_wins_when_only_user_and_project(self, tmp_path) -> None:
+        from pathlib import Path
+
+        user_ember = Path.home() / ".ember"
+        user_ember.mkdir(parents=True, exist_ok=True)
+        (user_ember / "config.yaml").write_text("models:\n  default: user-only\n")
+        project_ember = tmp_path / ".ember"
+        project_ember.mkdir(parents=True, exist_ok=True)
+        (project_ember / "config.yaml").write_text("models:\n  default: project-only\n")
+        s = load_settings(project_dir=tmp_path)
+        assert s.models.default == "project-only"
+
 
 class TestPlatformManagedSettingsPath:
     """The autouse fixture neutralises the live module attribute;

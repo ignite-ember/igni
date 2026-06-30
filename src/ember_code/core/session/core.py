@@ -1033,6 +1033,65 @@ class Session:
 
     # ── Main Agent setup ────────────────────────────────────────────
 
+    # Tools the main team ALWAYS gets — the shell-first core. Bash
+    # handles search/find/list/read directly (``rg``, ``find``,
+    # ``cat``, etc.); Edit/Write stay for surgical changes and new
+    # files because shell-based alternatives (``sed -i``, here-doc
+    # rewrites) are fragile. Grep/Glob/Read/LS toolkits intentionally
+    # omitted — they overlapped with shell and confused the model
+    # (v0.4.0 / commit 7e50705). See CLAUDE_CODE_PARITY.md row 22.
+    #
+    # Implications worth knowing about:
+    # * The main team has NO ``Read`` tool. Hook matchers targeting
+    #   ``read_file`` will never fire on the main team — use
+    #   ``run_shell_command`` instead.
+    # * Sub-agents CAN opt into Read/Grep/Glob via their frontmatter
+    #   ``tools:`` allowlist (see ``.ember/agents/<name>.md``).
+    # * Granular permissions on Read (e.g. ``deny: Read(.env)``) are
+    #   ineffective at this layer — ``.env`` protection comes from
+    #   ``ToolEventHook``'s Bash-command parsing instead.
+    _MAIN_CORE_TOOLS: tuple[str, ...] = (
+        "Write",
+        "Edit",
+        "Bash",
+        "Schedule",
+        "NotebookEdit",
+    )
+
+    def _resolve_main_tool_names(self, registry: "ToolRegistry") -> list[str]:
+        """Compose the main team's toolkit, honouring per-session
+        flags (web permissions, CodeIndex availability). Extracted
+        from ``_build_main_agent`` so the shell-first composition
+        can be pinned by a unit test without spinning up a full
+        agent — see ``tests/test_session.py``.
+        """
+        tool_names: list[str] = list(self._MAIN_CORE_TOOLS)
+        web_allowed = self.settings.permissions.web_search != "deny"
+        fetch_allowed = self.settings.permissions.web_fetch != "deny"
+        if web_allowed:
+            try:
+                registry.resolve(["WebSearch"])
+                tool_names.append("WebSearch")
+            except (ImportError, ValueError):
+                pass
+        if fetch_allowed:
+            try:
+                registry.resolve(["WebFetch"])
+                tool_names.append("WebFetch")
+            except (ImportError, ValueError):
+                pass
+        # CodeIndex tools are only exposed when there's a usable
+        # local chroma index for the current git HEAD. Without
+        # one, ``codeindex_search`` would return empty results and
+        # waste a tool slot in the agent's catalog — hide it
+        # entirely. The ``self._codeindex_available`` flag was set
+        # in ``__init__`` before ``pool.load_definitions`` ran (so
+        # the pool could pick the right ``<name>.codeindex.md``
+        # vs ``<name>.md`` variant per agent).
+        if self._codeindex_available:
+            tool_names.append("CodeIndex")
+        return tool_names
+
     def _build_main_agent(self) -> Agent:
         """Build the main agent with all tools and orchestration capability.
 
@@ -1050,52 +1109,7 @@ class Session:
             cloud_token=self._cloud.access_token,
             cloud_server_url=self._cloud_server_url,
         )
-        # Shell-first toolkit: Bash handles search/find/list/read directly
-        # (`rg`, `find`, `cat`, etc.). Edit/Write are kept for surgical
-        # changes and new files because shell-based alternatives (sed,
-        # heredoc rewrites) are fragile. Grep/Glob/Read toolkits intentionally
-        # omitted — they overlapped with shell and confused the model
-        # (v0.4.0 / commit 7e50705).
-        #
-        # Implications worth knowing about — see CLAUDE_CODE_PARITY.md row 22:
-        # * The main team has NO ``Read`` tool. Hook matchers targeting
-        #   ``read_file`` will never fire on the main team — use
-        #   ``run_shell_command`` instead.
-        # * Sub-agents CAN opt into Read/Grep/Glob via their frontmatter
-        #   ``tools:`` allowlist (see ``.ember/agents/<name>.md``).
-        # * Granular permissions on Read (e.g. ``deny: Read(.env)``) are
-        #   ineffective at this layer — ``.env`` protection comes from
-        #   ``ToolEventHook``'s Bash-command parsing instead.
-        tool_names = [
-            "Write",
-            "Edit",
-            "Bash",
-            "Schedule",
-            "NotebookEdit",
-        ]
-        web_allowed = self.settings.permissions.web_search != "deny"
-        fetch_allowed = self.settings.permissions.web_fetch != "deny"
-        if web_allowed:
-            try:
-                registry.resolve(["WebSearch"])
-                tool_names.append("WebSearch")
-            except (ImportError, ValueError):
-                pass
-        if fetch_allowed:
-            try:
-                registry.resolve(["WebFetch"])
-                tool_names.append("WebFetch")
-            except (ImportError, ValueError):
-                pass
-        # CodeIndex tools are only exposed when there's a usable local
-        # chroma index for the current git HEAD. Without one,
-        # ``codeindex_search`` would return empty results and waste a
-        # tool slot in the agent's catalog — hide it entirely. The
-        # ``self._codeindex_available`` flag was set in __init__ before
-        # pool.load_definitions ran (so the pool could pick the right
-        # ``<name>.codeindex.md`` vs ``<name>.md`` variant per agent).
-        if self._codeindex_available:
-            tool_names.append("CodeIndex")
+        tool_names = self._resolve_main_tool_names(registry)
         tools = registry.resolve(tool_names)
 
         # Orchestration tools — lets the agent delegate to specialists

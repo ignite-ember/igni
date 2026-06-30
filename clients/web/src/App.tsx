@@ -786,7 +786,13 @@ export default function App() {
             clientState.set(SESSION_KEY, client.sessionId);
             setSessionId(client.sessionId);
             // Resumed BE session (--resume-session / crash restart):
-            // show its history instead of an empty welcome.
+            // show its history instead of an empty welcome. The
+            // actual "land at the most recent message" scroll fires
+            // from the ``bootScrollDoneRef`` effect below — we
+            // can't call ``scrollToBottom`` inline here because
+            // ``setItems`` is async and Virtuoso's ``data`` prop
+            // hasn't updated yet, so ``scrollToIndex("LAST")``
+            // would resolve against the still-empty list.
             const loaded = await fetchHistoryItems(client.sessionId);
             if (loaded.items.length) setItems(loaded.items);
             setHistoryIndexToItemIndex(loaded.historyMap);
@@ -1165,6 +1171,21 @@ export default function App() {
     virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "auto" });
     setStickToBottom(true);
   }, []);
+
+  // ── Boot scroll: land the resumed session at its most recent
+  // message instead of the very first user prompt. Fires once,
+  // the first time ``items`` transitions from empty to populated
+  // (after React commits + Virtuoso has the new ``data`` prop —
+  // calling ``scrollToBottom`` inline from the boot effect runs
+  // BEFORE the commit, so ``scrollToIndex("LAST")`` resolves
+  // against the still-empty list and lands on nothing).
+  const bootScrollDoneRef = useRef(false);
+  useEffect(() => {
+    if (bootScrollDoneRef.current) return;
+    if (items.length === 0) return;
+    bootScrollDoneRef.current = true;
+    scrollToBottom();
+  }, [items.length, scrollToBottom]);
   // Find-in-conversation. Cmd/Ctrl+F opens the bar; a small icon
   // button near the chat header opens it too. ``highlightedItemId``
   // applies a pulse class to the jumped-to message via the new

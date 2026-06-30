@@ -53,32 +53,53 @@ describe("BUILTIN_COMMANDS — structural contract", () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it("ships the core CC-parity slash commands", () => {
-    // These are the commands the TUI's CommandHandler also
-    // ships — the FE menu must stay in sync. Picking the load-
-    // bearing ones rather than enumerating all 18 (the rest are
-    // covered by the structural checks above).
-    const names = BUILTIN_COMMANDS.map((c) => c.name);
-    for (const required of [
+  it("ships every BE command handler in the autocomplete menu", () => {
+    // ALL non-alias entries from ``CommandHandler._COMMANDS`` in
+    // ``src/ember_code/backend/command_handler.py`` must appear in
+    // ``BUILTIN_COMMANDS`` — otherwise a user types ``/x`` and the
+    // menu silently omits it even though the BE handles it. This
+    // list is the single source of truth; when a new handler is
+    // added on the BE side, add it here AND to BUILTIN_COMMANDS
+    // in the same change so they stay in lockstep.
+    //
+    // ``/exit`` intentionally absent — it aliases ``/quit`` on the
+    // BE and listing both would clutter the menu with the same
+    // action under two names.
+    const REQUIRED = [
       "/help",
       "/clear",
       "/compact",
+      "/ctx",
       "/sessions",
       "/fork",
+      "/rename",
       "/model",
       "/login",
       "/logout",
+      "/whoami",
+      "/mcp",
+      "/agents",
+      "/skills",
+      "/plugin",
       "/plugins",
+      "/knowledge",
+      "/codeindex",
+      "/sync-knowledge",
       "/hooks",
       "/loop",
       "/schedule",
-      // Permission-mode commands. Were missing from the FE menu
-      // for a while even though the BE handlers existed — a user
-      // typing ``/p`` wouldn't see ``/plan`` in autocomplete.
+      "/memory",
+      "/config",
+      "/output-style",
       "/plan",
       "/accept",
       "/bypass",
-    ]) {
+      "/evals",
+      "/bug",
+      "/quit",
+    ];
+    const names = BUILTIN_COMMANDS.map((c) => c.name);
+    for (const required of REQUIRED) {
       expect(names).toContain(required);
     }
   });
