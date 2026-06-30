@@ -187,21 +187,11 @@ Features: streaming responses, agent tree visualization, token tracking, session
 
 ## IDE Integration
 
-igni integrates with IDEs via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/):
+Dedicated extensions for **VS Code** and **JetBrains** (IntelliJ, PyCharm, WebStorm, etc.) ship the igni backend embedded in the extension — install from each marketplace and the chat surface lives inside your IDE; no MCP setup needed.
 
-```json
-{
-  "mcpServers": {
-    "ignite-ember": {
-      "type": "stdio",
-      "command": "ignite-ember",
-      "args": ["mcp", "serve"]
-    }
-  }
-}
-```
+In the other direction, igni acts as an MCP *client*: configure external MCP servers via `/mcp` or the MCP panel and their tools become available to the agent.
 
-Works with **VS Code**, **JetBrains** (IntelliJ, PyCharm, etc.), **Cursor**, and **Windsurf**. See [MCP docs](docs/MCP.md) for details.
+> *Exposing igni itself as an MCP server (so any MCP-compatible IDE — Cursor, Windsurf, etc. — can connect to it) is on the roadmap; the `ignite-ember mcp serve` subcommand isn't shipped yet.*
 
 ## Key Features
 
