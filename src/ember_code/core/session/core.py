@@ -275,7 +275,11 @@ class Session:
         # background tasks when they exit with code 2. Initialise
         # the queue here so the executor's callback always has a
         # destination, regardless of which __init__ branch built
-        # the executor.
+        # the executor. This is the CANONICAL typed declaration —
+        # the two later re-inits in ``_maybe_reinit_executor``
+        # branches use bare assignment (no annotation) so mypy
+        # doesn't complain about the attribute being redefined
+        # with a duplicate type annotation.
         self._pending_reminders: list[str] = []
         self.hook_executor = HookExecutor(
             self.hooks_map,
@@ -737,8 +741,11 @@ class Session:
         # background tasks when they exit with code 2. Initialise
         # the queue here so the executor's callback always has a
         # destination, regardless of which __init__ branch built
-        # the executor.
-        self._pending_reminders: list[str] = []
+        # the executor. Re-init here (without annotation — the
+        # canonical typed declaration is at the top of __init__)
+        # so a branch that skipped the top path still has an empty
+        # queue instead of a missing attribute.
+        self._pending_reminders = []
         self.hook_executor = HookExecutor(
             self.hooks_map,
             mcp_resolver=self._mcp_resolver,
@@ -810,8 +817,11 @@ class Session:
         # background tasks when they exit with code 2. Initialise
         # the queue here so the executor's callback always has a
         # destination, regardless of which __init__ branch built
-        # the executor.
-        self._pending_reminders: list[str] = []
+        # the executor. Re-init here (without annotation — the
+        # canonical typed declaration is at the top of __init__)
+        # so a branch that skipped the top path still has an empty
+        # queue instead of a missing attribute.
+        self._pending_reminders = []
         self.hook_executor = HookExecutor(
             self.hooks_map,
             mcp_resolver=self._mcp_resolver,

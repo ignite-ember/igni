@@ -276,6 +276,19 @@ class HookExecutor:
                 hook.mcp_tool,
             )
             return HookResult(should_continue=True)
+        # ``MCPResolver`` unions Callable + Awaitable + None. In
+        # practice every wired resolver returns a callable — the
+        # Awaitable branch is a defensive placeholder. Narrow to
+        # Callable here so mypy stops complaining about the
+        # ``invoker(**call_args)`` call below, and so a resolver
+        # that ever returns a bare coroutine degrades gracefully.
+        if not callable(invoker):
+            logger.debug(
+                "mcp_tool %s/%s resolver returned non-callable — skipping",
+                hook.mcp_server,
+                hook.mcp_tool,
+            )
+            return HookResult(should_continue=True)
         try:
             call_args = {"event": event, "payload": payload, **hook.mcp_args}
             timeout_secs = hook.timeout / 1000

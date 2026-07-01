@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import io
 import logging
 import os
 import signal
@@ -72,8 +73,10 @@ class _ManagedProcess:
         # File handle opened lazily on first backgrounded line —
         # foreground commands skip it (their output is consumed
         # immediately by the calling tool's reply). See
-        # ``_reader``.
-        self._log_file = None
+        # ``_reader``. Explicit annotation so mypy doesn't infer
+        # ``None`` and reject the later ``TextIOBase`` assignment
+        # in ``_reader`` when the file is opened.
+        self._log_file: io.TextIOBase | None = None
         # Buffer is mutated by the reader task and by ``read``/``read_new``;
         # both run on the event loop so a regular lock would be enough,
         # but ``threading.Lock`` is also safe to call from

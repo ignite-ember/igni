@@ -1063,9 +1063,12 @@ class BackendServer:
                     finished_run_id = getattr(event, "run_id", None)
                     if finished_run_id:
                         self._drop_pending_for_run(finished_run_id)
-                proto = serialize_event(event)
-                if proto is not None:
-                    yield proto
+                # Local name distinct from the outer-loop ``proto``
+                # so mypy doesn't complain about widening a Message
+                # binding to Message | None.
+                serialized = serialize_event(event)
+                if serialized is not None:
+                    yield serialized
                 if run_finished:
                     # Drain post-run broadcasts (e.g. ``plan_submitted``
                     # queued by ``exit_plan_mode``). The push fires AFTER
