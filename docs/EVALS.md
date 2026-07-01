@@ -2,7 +2,7 @@
 
 When agents are defined as `.md` files that anyone can edit, it's easy to accidentally break things. The evaluation framework catches regressions: change an agent, run evals, see if it still works.
 
-Ember Code's eval system is built on top of **Agno's three eval primitives** — `AccuracyEval`, `ReliabilityEval`, and `PerformanceEval` — and extends them with agent-specific and orchestration-aware assertions.
+igni's eval system is built on top of **Agno's three eval primitives** — `AccuracyEval`, `ReliabilityEval`, and `PerformanceEval` — and extends them with agent-specific and orchestration-aware assertions.
 
 ## Agno's Eval Primitives
 
@@ -20,7 +20,7 @@ from agno.eval.reliability import ReliabilityEval, ReliabilityResult
 from agno.eval.performance import PerformanceEval
 ```
 
-Ember Code wraps these into a higher-level framework that:
+igni wraps these into a higher-level framework that:
 - Loads eval definitions from YAML files (not just Python)
 - Maps evals to specific `.md` agent definitions
 - Adds orchestrator-specific assertions (team mode, agent selection)
@@ -93,7 +93,7 @@ Built-in agents ship with built-in evals in `<install>/evals/`. Project evals in
 
 ## Eval File Format
 
-Each YAML file defines test cases that Ember Code translates into Agno eval calls:
+Each YAML file defines test cases that igni translates into Agno eval calls:
 
 ```yaml
 # .ember/evals/editor.yaml
@@ -166,7 +166,7 @@ Each test case generates up to three Agno eval calls:
 | `file_assertions` | Ember extension | File system state after agent runs |
 
 ```python
-# Under the hood — what Ember Code generates from the YAML above:
+# Under the hood — what igni generates from the YAML above:
 
 from agno.eval.accuracy import AccuracyEval
 from agno.eval.reliability import ReliabilityEval
@@ -261,7 +261,7 @@ performance:
 
 ### 4. File Assertions (Ember Extension)
 
-Verify filesystem state after the agent runs. Not in Agno — this is Ember Code's extension for coding-specific evals.
+Verify filesystem state after the agent runs. Not in Agno — this is igni's extension for coding-specific evals.
 
 | Type | Parameters | Description |
 |---|---|---|
@@ -449,7 +449,7 @@ Both approaches (YAML + slash commands, or Python + pytest) run the same Agno ev
 ## Terminal Output
 
 ```
-Ember Code Agent Evals
+igni Agent Evals
 ═══════════════════════════════════════════════════════════
 
   explorer (6 cases)

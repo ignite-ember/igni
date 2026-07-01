@@ -3,8 +3,8 @@ name = "ember-code-app"
 # Kept in lockstep with ``pyproject.toml`` by
 # ``scripts/sync-version.mjs`` (also drives the runtime's
 # ``IGNITE_EMBER_VERSION`` pin via ``CARGO_PKG_VERSION``).
-version = "0.6.4"
-description = "Ember Code — standalone desktop app"
+version = "0.7.5"
+description = "igni — standalone desktop app"
 edition = "2021"
 
 [build-dependencies]

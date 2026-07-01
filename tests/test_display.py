@@ -81,7 +81,7 @@ class TestDisplayManager:
         mgr, buf = self._make()
         mgr.print_welcome("0.1.0")
         output = buf.getvalue()
-        assert "Ember Code" in output
+        assert "igni" in output
         assert "0.1.0" in output
 
     def test_print_markdown(self):

@@ -1,6 +1,6 @@
 # Sample Project
 
-A small Python project used as the fixture codebase for Ember Code's
+A small Python project used as the fixture codebase for igni's
 editor-agent eval suite. Key files:
 
 - `src/auth/login.py`, `src/auth/token.py` — authentication

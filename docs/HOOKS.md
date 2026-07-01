@@ -2,7 +2,7 @@
 
 Hooks are shell commands or HTTP calls that execute in response to agent lifecycle events. They let you automate workflows around tool execution — auto-format after every file write, run linters before commits, enforce security policies, log tool usage, or inject context at session start.
 
-Ember Code's hook system is **compatible with Claude Code's** hook format. If you already have Claude Code hooks, they work in Ember Code out of the box.
+igni's hook system is **compatible with Claude Code's** hook format. If you already have Claude Code hooks, they work in igni out of the box.
 
 ## Overview
 
@@ -67,7 +67,7 @@ Hooks are defined in settings files, with the same format as Claude Code:
       {
         "type": "command",
         "command": ".ember/hooks/validate.sh",
-        "matcher": "Bash|Write|Edit",
+        "matcher": "run_shell_command|save_file|edit_file",
         "timeout": 10000
       }
     ],
@@ -75,7 +75,7 @@ Hooks are defined in settings files, with the same format as Claude Code:
       {
         "type": "command",
         "command": ".ember/hooks/format.sh",
-        "matcher": "Write|Edit"
+        "matcher": "save_file|edit_file|edit_file_replace_all|create_file"
       }
     ],
     "SessionStart": [
@@ -101,7 +101,7 @@ Hooks are defined in settings files, with the same format as Claude Code:
 {
   "type": "command",
   "command": ".ember/hooks/format.sh",
-  "matcher": "Write|Edit",
+  "matcher": "save_file|edit_file|edit_file_replace_all|create_file",
   "timeout": 10000
 }
 ```
@@ -114,7 +114,7 @@ Hooks are defined in settings files, with the same format as Claude Code:
   "headers": {
     "Authorization": "Bearer ${HOOK_API_KEY}"
   },
-  "matcher": "Bash",
+  "matcher": "run_shell_command",
   "timeout": 10000
 }
 ```
@@ -138,16 +138,34 @@ Matchers are regex patterns that filter when a hook fires. Only hooks whose matc
 
 | Event | Matcher Field | Examples |
 |---|---|---|
-| `PreToolUse` / `PostToolUse` / `PostToolUseFailure` | Tool name | `Bash`, `Write\|Edit`, `mcp__.*` |
+| `PreToolUse` / `PostToolUse` / `PostToolUseFailure` | **Internal tool function name** (not the friendly catalog name) | `run_shell_command`, `save_file\|edit_file`, `mcp__.*` |
 | `SubagentStart` / `SubagentStop` | Agent name | `coder`, `explorer` |
 | `SessionStart` / `SessionEnd` / `Stop` / `UserPromptSubmit` | *(no target — matcher not used)* | Omit matcher |
 
-**Examples:**
+> ⚠️ **Matcher gotcha**: the matcher is checked against the **internal tool
+> function name** (the Agno-registered function), NOT the friendly catalog
+> name from [TOOLS.md](TOOLS.md). A matcher of `"Bash"` will never fire —
+> the actual function is `run_shell_command`. Use this translation table:
+>
+> | Friendly catalog name | Use this in `matcher` |
+> |---|---|
+> | `Bash` | `run_shell_command` |
+> | `Write` | `save_file` and/or `create_file` |
+> | `Edit` | `edit_file` and/or `edit_file_replace_all` |
+> | `Read` | `read_file` (registry-only — won't fire on the main team; see [TOOLS.md](TOOLS.md)) |
+> | `Grep` | `grep` / `grep_files` / `grep_count` (registry-only) |
+> | `Glob` | `glob_files` (registry-only) |
+> | `LS` | `list_files` (registry-only) |
+> | `WebSearch` | `duckduckgo_search` / `duckduckgo_news` |
+> | `WebFetch` | `fetch_url` / `fetch_json` |
+> | `Schedule` | `schedule_task` / `list_scheduled_tasks` / `cancel_scheduled_task` |
+
+**Examples (corrected):**
 ```json
-"matcher": "Bash"           // only Bash tool calls
-"matcher": "Write|Edit"     // Write or Edit
-"matcher": "mcp__.*"        // any MCP tool
-"matcher": ""               // all (or omit matcher)
+"matcher": "run_shell_command"        // only shell tool calls
+"matcher": "save_file|edit_file"      // Write or Edit
+"matcher": "mcp__.*"                  // any MCP tool
+"matcher": ""                         // all (or omit matcher)
 ```
 
 ---
@@ -241,7 +259,7 @@ Run Prettier/Black/Ruff after every file write:
 ```bash
 #!/bin/bash
 # .ember/hooks/format.sh
-# Hook: PostToolUse, matcher: Write|Edit
+# Hook: PostToolUse, matcher: save_file|edit_file
 
 input=$(cat)
 file_path=$(echo "$input" | jq -r '.tool_args.file_path // empty')
@@ -272,7 +290,7 @@ echo '{"continue": true}'
       {
         "type": "command",
         "command": ".ember/hooks/format.sh",
-        "matcher": "Write|Edit"
+        "matcher": "save_file|edit_file"
       }
     ]
   }
@@ -286,7 +304,7 @@ Prevent destructive operations:
 ```bash
 #!/bin/bash
 # .ember/hooks/validate-bash.sh
-# Hook: PreToolUse, matcher: Bash
+# Hook: PreToolUse, matcher: run_shell_command
 
 input=$(cat)
 command=$(echo "$input" | jq -r '.tool_args.command // empty')
@@ -356,7 +374,7 @@ EOF
 ```bash
 #!/bin/bash
 # .ember/hooks/protect-paths.sh
-# Hook: PreToolUse, matcher: Write|Edit
+# Hook: PreToolUse, matcher: save_file|edit_file
 
 input=$(cat)
 file_path=$(echo "$input" | jq -r '.tool_args.file_path // empty')
@@ -421,7 +439,7 @@ echo '{"continue": true}'
 
 ## Claude Code Compatibility
 
-Ember Code hooks use the **same format** as Claude Code:
+igni hooks use the **same format** as Claude Code:
 - Same event names (`PreToolUse`, `PostToolUse`, `Stop`, etc.)
 - Same input/output JSON format
 - Same exit code semantics (0 = success, 2 = block)
@@ -430,7 +448,7 @@ Ember Code hooks use the **same format** as Claude Code:
 
 If you have existing Claude Code hooks in `.claude/settings.json`, copy them to `.ember/settings.json` — they work as-is.
 
-The one addition: Ember Code hooks also fire for **sub-team events** (`SubagentStart`, `SubagentStop`) since Ember Code has multi-agent teams. Claude Code has similar events for its subagents.
+The one addition: igni hooks also fire for **sub-team events** (`SubagentStart`, `SubagentStop`) since igni has multi-agent teams. Claude Code has similar events for its subagents.
 
 ---
 
@@ -447,7 +465,7 @@ The one addition: Ember Code hooks also fire for **sub-team events** (`SubagentS
 
 1. **Keep hooks fast.** They run on every tool call. A 2-second hook on PostToolUse means 2 extra seconds per edit. Target <500ms.
 
-2. **Use matchers.** Don't run a formatting hook on Grep calls. Match only `Write|Edit`.
+2. **Use matchers.** Don't run a formatting hook on shell calls. Match only `save_file|edit_file|edit_file_replace_all|create_file`.
 
 3. **Exit 0 by default.** Only exit 2 when you need to block. Unhandled errors should not block the agent.
 

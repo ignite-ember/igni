@@ -7,6 +7,7 @@ import logging
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agno.tools import Toolkit
@@ -15,11 +16,55 @@ if TYPE_CHECKING:
     from ember_code.core.config.settings import Settings
     from ember_code.core.hooks.executor import HookExecutor
     from ember_code.core.pool import AgentPool
+    from ember_code.core.worktree import WorktreeInfo
+
+_VALID_ISOLATION_MODES: frozenset[str] = frozenset({"", "worktree"})
 
 logger = logging.getLogger(__name__)
 
 _agent_counter_lock = threading.Lock()
 _agent_counters: dict[str, int] = {}
+
+
+def _finalize_worktree(
+    manager: Any,
+    info: "WorktreeInfo | None",
+    original_base_dirs: dict[Any, Any],
+) -> str:
+    """Restore tool ``base_dir`` rebinds and clean up the
+    worktree. Returns a footer string for the spawn response so
+    the parent agent knows whether the worktree was reaped or
+    preserved.
+
+    Idempotent and exception-safe — designed to run inside
+    ``finally``-ish paths after every spawn, isolated or not.
+    Returns ``""`` when there was no worktree (the normal case)
+    so callers can append unconditionally.
+    """
+    # Restore tool base_dirs first — the worktree dir may
+    # disappear in the cleanup step below, and a stray reference
+    # to it after that would point at a missing path.
+    for tool, original in original_base_dirs.items():
+        with contextlib.suppress(Exception):
+            tool.base_dir = original
+    if manager is None or info is None:
+        return ""
+    try:
+        reaped = manager.cleanup()
+    except Exception as exc:
+        logger.warning("worktree cleanup failed: %s", exc)
+        return (
+            f"\n\nWorktree: {info.worktree_path} (branch: "
+            f"{info.branch_name}) — cleanup failed: {exc}"
+        )
+    if reaped:
+        return f"\n\nWorktree {info.branch_name} (clean) — reaped."
+    return (
+        f"\n\nWorktree preserved: {info.worktree_path} "
+        f"(branch: {info.branch_name}) — has uncommitted changes.\n"
+        f"To merge: git merge {info.branch_name}\n"
+        f"To remove: git worktree remove {info.worktree_path}"
+    )
 
 
 def _format_args(tool_args: dict | None) -> str:
@@ -781,6 +826,7 @@ class OrchestrateTools(Toolkit):
         hook_executor: "HookExecutor | None" = None,
         session_id: str = "",
         hitl_coordinator: Any = None,
+        project_dir: Path | None = None,
     ):
         super().__init__(name="ember_orchestrate")
         self.pool = pool
@@ -790,6 +836,11 @@ class OrchestrateTools(Toolkit):
         self._hook_executor = hook_executor
         self._session_id = session_id
         self._max_agents = settings.orchestration.max_total_agents
+        # Required for ``isolation="worktree"`` spawns — the
+        # worktree is forked from this repo. ``None`` disables
+        # the isolation feature (spawn_agent returns an error if
+        # the agent requests it without a project_dir wired in).
+        self._project_dir = project_dir
         self._on_progress: Any = None
         # When set, sub-agent pauses get pushed here so the backend can
         # surface them as ordinary HITL requests. Without it, sub-agent
@@ -818,18 +869,101 @@ class OrchestrateTools(Toolkit):
         with contextlib.suppress(Exception):
             await self._hook_executor.execute(event=event, payload=payload)
 
-    async def spawn_agent(self, task: str, agent_name: str) -> str:
+    def _create_isolated_worktree(self, agent_name: str):
+        """Create a fresh worktree for an isolated spawn.
+
+        Returns ``(WorktreeManager, WorktreeInfo)`` on success, or
+        ``(None, error_string)`` if creation failed. Failures are
+        surfaced as ``Error: ...`` strings so the agent sees the
+        reason (not a repo, worktree path collision, etc.) and
+        can fall back to non-isolated spawning.
+
+        Mirrors Claude Code's ``isolation: "worktree"`` workflow
+        flag — each subagent gets its own working tree so file
+        mutations across parallel spawns don't conflict.
+        """
+        if self._project_dir is None:
+            return None, "Error: isolation=worktree requires a project directory."
+        try:
+            from ember_code.core.worktree import WorktreeManager
+
+            manager = WorktreeManager(self._project_dir)
+        except RuntimeError as exc:
+            return None, f"Error: cannot create worktree — {exc}"
+        try:
+            # Short, stable suffix encoded into the branch name so
+            # multiple isolated spawns within one session don't
+            # collide on the worktree path.
+            wt_suffix = f"{self._session_id[:8] or 'sess'}-{agent_name}-{uuid.uuid4().hex[:6]}"
+            info = manager.create(session_id=wt_suffix)
+        except RuntimeError as exc:
+            return None, f"Error: worktree create failed — {exc}"
+        return manager, info
+
+    @staticmethod
+    def _rebind_tool_base_dirs(agent: Any, new_base: Path) -> dict:
+        """Best-effort: point every toolkit on ``agent`` at
+        ``new_base``. Returns ``{toolkit: original_base_dir}`` so
+        callers can restore after the spawn completes.
+
+        Shallow-copies each toolkit so the rebind is local to
+        THIS spawn — the pool's shared agent instance keeps its
+        original tool refs untouched. Toolkits without a
+        ``base_dir`` attribute (MCP clients, the orchestrate
+        toolkit itself, etc.) are left alone; documented caveat
+        in ``spawn_agent``."""
+        if not hasattr(agent, "tools") or agent.tools is None:
+            return {}
+        try:
+            agent.tools = [copy.copy(t) for t in agent.tools]
+        except Exception:
+            # Some toolkits can't be shallow-copied (rare). Bail
+            # without raising — partial isolation beats hard fail.
+            return {}
+        originals: dict[Any, Any] = {}
+        for tool in agent.tools:
+            if hasattr(tool, "base_dir"):
+                originals[tool] = tool.base_dir
+                with contextlib.suppress(Exception):
+                    tool.base_dir = new_base
+        return originals
+
+    async def spawn_agent(
+        self,
+        task: str,
+        agent_name: str,
+        isolation: str = "",
+    ) -> str:
         """Run a single agent from the pool on a subtask.
 
         Args:
             task: The subtask description for the agent.
             agent_name: Name of the agent to spawn (from the pool).
+            isolation: Optional isolation mode. Currently the only
+                non-empty value is ``"worktree"`` — creates a
+                fresh git worktree branched off the session's
+                project, runs the agent with its file/shell tools
+                rebased to that worktree, then either cleans up
+                (no changes) or preserves the worktree (changes
+                remain on the new branch for the caller to merge
+                or discard). Tools without a ``base_dir``
+                attribute (most MCP clients) still see the
+                original project dir.
 
         Returns:
-            The agent's response with activity log.
+            The agent's response with activity log. When the
+            spawn was isolated, a ``Worktree:`` footer reports
+            the branch + path so the caller knows where the
+            changes landed.
         """
         if self.current_depth >= self.max_depth:
             return f"Error: Maximum nesting depth ({self.max_depth}) reached."
+
+        if isolation and isolation not in _VALID_ISOLATION_MODES:
+            return (
+                f"Error: unknown isolation mode {isolation!r}. "
+                f"Valid: {sorted(m for m in _VALID_ISOLATION_MODES if m)}."
+            )
 
         if limit_err := self._check_agent_limit(1):
             return limit_err
@@ -854,6 +988,47 @@ class OrchestrateTools(Toolkit):
         defn = self.pool.get_definition(agent_name)
         agent_desc = defn.description if defn else ""
         agent_tools = ", ".join(defn.tools) if defn and defn.tools else "none"
+
+        # Plugin-shipped agents force their own isolation
+        # regardless of what the caller asked for — CC parity
+        # row 37. ``AgentDefinition.force_isolation`` is set to
+        # ``"worktree"`` by the plugin loader; user / project
+        # agents leave it ``None`` and respect the caller's arg.
+        # ``isinstance(..., str)`` guards against duck-typed
+        # test mocks where ``defn.force_isolation`` might be a
+        # MagicMock — a truthy MagicMock would otherwise sneak
+        # into ``isolation`` and silently disable the worktree
+        # branch.
+        forced = getattr(defn, "force_isolation", None) if defn is not None else None
+        if isinstance(forced, str) and forced:
+            isolation = forced
+
+        # ── Isolation: per-spawn worktree ─────────────────────
+        worktree_manager = None
+        worktree_info: WorktreeInfo | None = None
+        original_base_dirs: dict[Any, Any] = {}
+        worktree_task = task
+        if isolation == "worktree":
+            worktree_manager, info_or_err = self._create_isolated_worktree(agent_name)
+            if worktree_manager is None:
+                # Surface the failure as the spawn result — agent
+                # sees the reason and can fall back to a non-
+                # isolated retry.
+                return info_or_err
+            worktree_info = info_or_err
+            original_base_dirs = self._rebind_tool_base_dirs(agent, worktree_info.worktree_path)
+            # Tell the model where its sandbox is. Many tools
+            # respect ``base_dir``; the few that don't (custom
+            # MCP, etc.) still see the project root, so the
+            # explicit instruction nudges the agent to pass
+            # absolute paths within the worktree.
+            worktree_task = (
+                f"You are running in an isolated git worktree at "
+                f"{worktree_info.worktree_path} (branch: "
+                f"{worktree_info.branch_name}). Treat that path as "
+                f"your working directory — operate within it.\n\n"
+                f"{task}"
+            )
 
         await self._fire_hook("SubagentStart", {"agent_name": agent_name, "task": task[:500]})
 
@@ -884,7 +1059,7 @@ class OrchestrateTools(Toolkit):
             result, activity = await asyncio.wait_for(
                 _run_agent_streaming(
                     agent,
-                    task,
+                    worktree_task,
                     on_progress=self._on_progress,
                     hitl_coordinator=self._hitl_coordinator,
                     agent_path=[agent_name],
@@ -911,6 +1086,9 @@ class OrchestrateTools(Toolkit):
                     "the response below is partial. Consider retrying, or proceed "
                     "with the partial result if it's sufficient.\n" + "\n".join(run_errors)
                 )
+            worktree_footer = _finalize_worktree(
+                worktree_manager, worktree_info, original_base_dirs
+            )
             return (
                 f"[Agent: {agent_name}] {agent_desc}\n"
                 f"[Tools: {agent_tools}]\n"
@@ -919,6 +1097,7 @@ class OrchestrateTools(Toolkit):
                 f"Activity:\n{activity_log}\n\n"
                 f"Response:\n{result}"
                 f"{error_section}"
+                f"{worktree_footer}"
             )
         except asyncio.TimeoutError:
             error = (
@@ -927,10 +1106,12 @@ class OrchestrateTools(Toolkit):
                 "likely stalled mid-stream."
             )
             await self._fire_hook("SubagentStop", {"agent_name": agent_name, "error": error})
+            _finalize_worktree(worktree_manager, worktree_info, original_base_dirs)
             return error
         except Exception as e:
             error = f"Error running sub-agent '{agent_name}': {e}"
             await self._fire_hook("SubagentStop", {"agent_name": agent_name, "error": error})
+            _finalize_worktree(worktree_manager, worktree_info, original_base_dirs)
             return error
 
     async def spawn_team(self, task: str, agent_names: str, mode: str = "coordinate") -> str:

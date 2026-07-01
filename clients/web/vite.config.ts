@@ -7,6 +7,10 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   base: "./",
+  // Pin to the port that ``clients/tauri/src-tauri/tauri.conf.json``
+  // expects in ``devUrl`` — otherwise vite picks 5173 by default and
+  // ``cargo tauri dev`` times out waiting on 5179.
+  server: { port: 5179, strictPort: true },
   build: {
     outDir: "dist",
     target: "es2022",

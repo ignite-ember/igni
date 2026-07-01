@@ -223,6 +223,7 @@
       "max_context",
       "model",
       "output_tokens",
+      "permission_mode",
       "session_id",
       "type"
     ],

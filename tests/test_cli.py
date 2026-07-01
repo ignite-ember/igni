@@ -22,7 +22,7 @@ class TestCLIFlags:
         runner = CliRunner()
         result = runner.invoke(cli, ["--version"])
         assert result.exit_code == 0
-        assert "Ember Code" in result.output
+        assert "igni" in result.output
 
     def test_model_override(self):
         runner = CliRunner()

@@ -1,9 +1,9 @@
 <idea-plugin>
     <id>sh.igniteember.ember-code</id>
-    <name>Ember Code</name>
+    <name>igni</name>
     <vendor url="https://ignite-ember.sh">Ignite Ember</vendor>
     <description><![CDATA[
-        Ember Code AI coding assistant — chat tool window backed by a
+        igni AI coding assistant — chat tool window backed by a
         managed local Ember backend. <br>
         <br>
         Nothing to install: the plugin downloads <code>uv</code> on
@@ -125,7 +125,7 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow
-            id="Ember Code"
+            id="igni"
             anchor="right"
             icon="/icons/emberToolWindow.svg"
             factoryClass="sh.igniteember.embercode.EmberToolWindowFactory"/>
@@ -157,13 +157,13 @@
             <add-to-group group-id="ProjectViewPopupMenu" anchor="first"/>
         </action>
 
-        <!-- Top-level menu entries under Tools → Ember Code. -->
-        <group id="EmberCode.ToolsMenu" text="Ember Code" popup="true">
+        <!-- Top-level menu entries under Tools → igni. -->
+        <group id="EmberCode.ToolsMenu" text="igni" popup="true">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
             <action id="EmberCode.OpenChat"
                     class="sh.igniteember.embercode.actions.OpenChatAction"
                     text="Open Chat"
-                    description="Show the Ember Code tool window"/>
+                    description="Show the igni tool window"/>
             <action id="EmberCode.RestartBackend"
                     class="sh.igniteember.embercode.actions.RestartBackendAction"
                     text="Restart Backend"

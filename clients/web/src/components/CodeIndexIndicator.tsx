@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { EmberClient } from "../protocol/client";
 
-interface CodeIndexStatus {
+export interface CodeIndexStatus {
   head_indexed: boolean;
   sync_in_progress: boolean;
   sync_progress_pct: number | null;
@@ -10,7 +10,7 @@ interface CodeIndexStatus {
   remote_url: string;
 }
 
-function providerName(remoteUrl: string): string {
+export function providerName(remoteUrl: string): string {
   const host = remoteUrl.match(/(?:https?:\/\/|git@)([^/:]+)/)?.[1]?.toLowerCase() || "";
   if (host.includes("gitlab")) return "GitLab";
   if (host.includes("bitbucket")) return "Bitbucket";
@@ -26,7 +26,7 @@ interface BadgeState {
   detail: string;
 }
 
-function classify(s: CodeIndexStatus | null): BadgeState {
+export function classify(s: CodeIndexStatus | null): BadgeState {
   if (!s) return { label: "checking…", tone: "muted", detail: "Probing CodeIndex" };
   if (s.sync_error) return { label: "error", tone: "bad", detail: s.sync_error };
   if (s.install_state === "needs_install")

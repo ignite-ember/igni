@@ -65,7 +65,7 @@ async def test_background_process_emits_completion(tmp_path, collected_completio
     seen, seen_event = collected_completions
     tools = EmberShellTools(base_dir=str(tmp_path))
 
-    out = await tools.run_shell_command(args=["echo", "done"], background=True)
+    out = await tools.run_shell_command(command="echo done", background=True)
     # Either landed as "exited immediately" (which still counts —
     # reader task fires the callback in finally) or "running".
     assert "echo" in out or "Background" in out
@@ -90,7 +90,7 @@ async def test_foreground_process_does_not_emit(tmp_path, collected_completions)
     seen, seen_event = collected_completions
     tools = EmberShellTools(base_dir=str(tmp_path))
 
-    await tools.run_shell_command(args=["echo", "hi"], timeout=5)
+    await tools.run_shell_command(command="echo hi", timeout=5)
     # Give the loop a tick in case the reader task is still wrapping up.
     await asyncio.sleep(0.2)
     assert seen == [], f"foreground command should not notify, got {seen}"
@@ -109,7 +109,7 @@ async def test_read_process_output_is_idempotent_after_finish(tmp_path):
     """
     tools = EmberShellTools(base_dir=str(tmp_path))
     out = await tools.run_shell_command(
-        args=["sh", "-c", "echo first_read_works; sleep 4"],
+        command="echo first_read_works; sleep 4",
         background=True,
     )
     m = re.search(r"PID (\d+)", out)
@@ -144,7 +144,7 @@ async def test_finished_process_evicted_after_ttl(tmp_path, monkeypatch):
 
     tools = EmberShellTools(base_dir=str(tmp_path))
     out = await tools.run_shell_command(
-        args=["sh", "-c", "echo hi; sleep 4"],
+        command="echo hi; sleep 4",
         background=True,
     )
     pid = int(re.search(r"PID (\d+)", out).group(1))
@@ -175,7 +175,7 @@ async def test_ttl_resets_on_subsequent_read(tmp_path, monkeypatch):
 
     tools = EmberShellTools(base_dir=str(tmp_path))
     out = await tools.run_shell_command(
-        args=["sh", "-c", "echo hi; sleep 4"],
+        command="echo hi; sleep 4",
         background=True,
     )
     pid = int(re.search(r"PID (\d+)", out).group(1))
@@ -209,7 +209,7 @@ async def test_unsubscribe_stops_emissions(tmp_path):
     unsubscribe_from_process_completion(_cb)
 
     tools = EmberShellTools(base_dir=str(tmp_path))
-    await tools.run_shell_command(args=["echo", "after_unsub"], background=True)
+    await tools.run_shell_command(command="echo after_unsub", background=True)
 
     # Wait long enough for the reader task to finish.
     await asyncio.sleep(1.0)
@@ -237,7 +237,7 @@ async def test_run_shell_command_does_not_block_loop(tmp_path):
     ticker_task = asyncio.create_task(_ticker())
     # ``timeout=2`` gives the ticker ~40 ticks of headroom; even a
     # cautious threshold of 5 confirms the loop is alive.
-    await tools.run_shell_command(args=["sh", "-c", "sleep 1.5"], timeout=2)
+    await tools.run_shell_command(command="sleep 1.5", timeout=2)
     await ticker_task
 
     assert ticks >= 5, f"event loop appeared frozen during shell command; ticks={ticks}"

@@ -2,7 +2,7 @@
  *  category — picks by the filename's extension. Color is set by the
  *  parent (currentColor) so the icon inherits the pill's tint. */
 
-type Kind = "image" | "pdf" | "code" | "data" | "doc" | "archive" | "video" | "audio" | "shell" | "file";
+export type Kind = "image" | "pdf" | "code" | "data" | "doc" | "archive" | "video" | "audio" | "shell" | "file";
 
 const KINDS: Record<string, Kind> = {
   // images
@@ -31,7 +31,7 @@ const KINDS: Record<string, Kind> = {
   sh: "shell", bash: "shell", zsh: "shell", fish: "shell", ps1: "shell",
 };
 
-function kindFor(name: string): Kind {
+export function kindFor(name: string): Kind {
   const ext = name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";
   return KINDS[ext] || "file";
 }

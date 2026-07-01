@@ -1,4 +1,4 @@
-"""Custom Textual widgets for Ember Code TUI."""
+"""Custom Textual widgets for igni TUI."""
 
 from ember_code.frontend.tui.widgets._activity import AgentActivityWidget
 from ember_code.frontend.tui.widgets._agent_run import AgentRunContainer  # noqa: F401

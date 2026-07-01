@@ -1,4 +1,4 @@
-"""Configuration management for Ember Code."""
+"""Configuration management for igni."""
 
 from ember_code.core.config.settings import Settings, load_settings
 

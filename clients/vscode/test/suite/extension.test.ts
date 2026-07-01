@@ -1,5 +1,5 @@
 /**
- * Smoke tests for the Ember Code VSCode extension.
+ * Smoke tests for the igni VSCode extension.
  *
  * These run inside the extension host process (via
  * ``@vscode/test-electron``) and assert on the IDE-side surface:
@@ -20,7 +20,7 @@ import * as vscode from "vscode";
 
 const PUBLISHER_ID = "ignite-ember.ember-code-vscode";
 
-suite("Ember Code extension", () => {
+suite("igni extension", () => {
   suiteSetup(async () => {
     // Anchor the fake "Python" path on the extension's install
     // directory (the source tree, not the compiled-output mirror)
@@ -116,13 +116,13 @@ suite("Ember Code extension", () => {
       while (Date.now() < deadline) {
         emberTab = vscode.window.tabGroups.all
           .flatMap((g) => g.tabs)
-          .find((t) => t.label === "Ember Code");
+          .find((t) => t.label === "igni");
         if (emberTab) break;
         await new Promise((r) => setTimeout(r, 100));
       }
       assert.ok(
         emberTab,
-        `Ember Code panel tab not found within 5 s. Errors: ${errors.join(" | ") || "(none)"}`,
+        `igni panel tab not found within 5 s. Errors: ${errors.join(" | ") || "(none)"}`,
       );
     } finally {
       (vscode.window as any).showErrorMessage = orig;
@@ -180,7 +180,7 @@ suite("Ember Code extension", () => {
       while (Date.now() < deadline) {
         emberTab = vscode.window.tabGroups.all
           .flatMap((g) => g.tabs)
-          .find((t) => t.label === "Ember Code");
+          .find((t) => t.label === "igni");
         if (emberTab) break;
         await new Promise((r) => setTimeout(r, 100));
       }

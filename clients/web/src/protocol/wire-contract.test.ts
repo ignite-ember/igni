@@ -25,7 +25,7 @@ const MESSAGE_READS: Record<string, string[]> = {
   run_completed: ["input_tokens", "output_tokens", "reasoning_tokens", "duration", "parent_run_id"],
   run_paused: ["requirements"],
   requirement_resolved: ["requirement_id"],
-  status_update: ["model", "context_tokens", "max_context"],
+  status_update: ["model", "context_tokens", "max_context", "permission_mode"],
   session_list_result: ["sessions"],
   rpc_response: ["id", "result"],
   push_notification: ["channel", "payload"],

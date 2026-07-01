@@ -1,6 +1,7 @@
 """Session core — wires up subsystems and handles messages."""
 
 import asyncio
+import contextlib
 import getpass
 import logging
 import re
@@ -46,13 +47,14 @@ from ember_code.core.utils.audit import AuditLogger
 from ember_code.core.utils.context import load_project_context
 from ember_code.core.utils.display import print_error, print_info
 from ember_code.core.utils.response import extract_response_text
+from ember_code.core.utils.rules_index import RulesIndex
 from ember_code.core.workspace import WorkspaceManager
 
 logger = logging.getLogger(__name__)
 
 
 class Session:
-    """Manages a single Ember Code session with all subsystem integrations.
+    """Manages a single igni session with all subsystem integrations.
 
     Session persistence and chat history are delegated entirely to Agno's
     native ``db`` / ``session_id`` mechanism.  The main team and all its
@@ -132,6 +134,59 @@ class Session:
         self.loop_store = LoopStore(project_dir=self.project_dir)
         self.loop_progress_store = LoopProgressStore(project_dir=self.project_dir)
 
+        # Per-session todo list — populated by the agent's
+        # ``todo_write`` tool (CC's ``TodoWrite`` parity). In
+        # memory only for now; persistence would belong on the
+        # session-state row alongside other agent scratch.
+        from ember_code.core.tools.todo import TodoStore
+
+        self.todo_store = TodoStore()
+
+        # Per-session plan store — populated by the agent's
+        # ``exit_plan_mode`` tool when in plan mode (row 50).
+        # Latest plan is rendered in the UI for the user to
+        # review; ``/plan`` toggles in/out of plan mode.
+        from ember_code.core.tools.plan import PlanStore
+
+        self.plan_store = PlanStore()
+
+        # Plan-mode validation state. ``_plan_mode_attempt``
+        # counts how many times the agent has submitted to
+        # ``exit_plan_mode`` since the last ``enter_plan_mode``
+        # — the validator rejects thin submissions up to a cap,
+        # then accepts whatever came in so the loop converges.
+        self._plan_mode_attempt: int = 0
+
+        # Pre-create the per-project memory directory so the
+        # agent's first ``save_file`` into the auto-memory area
+        # (row 61) doesn't fail with "parent doesn't exist".
+        # Idempotent — existing dirs are left alone.
+        from ember_code.core.utils.context import ensure_memory_dir
+
+        ensure_memory_dir(self.project_dir)
+
+        # Output-style placeholders — populated later in
+        # __init__ after ``plugin_loader`` is constructed (the
+        # discovery walk includes plugin roots). Pre-declaring
+        # here so anything between this point and the real
+        # init that touches ``output_styles`` doesn't AttributeError.
+        self.output_styles: dict = {}
+        self._active_output_style: str = ""
+
+        # Plan-mode broadcast hooks. Backend's __main__ appends a
+        # callback that emits a ``PushNotification`` so the FE
+        # can update its mode badge + render a plan card without
+        # polling. Empty list when no transport is wired — the
+        # core session works headless too.
+        self._broadcast_callbacks: list = []
+        # Broadcasts queued by tools (e.g. ``exit_plan_mode``) to
+        # fire AFTER the current run finishes. The PlanCard is the
+        # outcome of the run, not an interrupting event — emitting
+        # ``plan_submitted`` from inside the tool body puts the
+        # card above the agent's closing reply text. The BE stream
+        # consumer drains this list when ``RunCompleted`` flushes.
+        self._pending_post_run_broadcasts: list[tuple[str, dict]] = []
+
         # ── First-run initialization (agents, skills, hooks, ember.md) ─
         initialize_project(self.project_dir)
 
@@ -174,7 +229,34 @@ class Session:
         self.plugin_state = load_state(settings.storage.data_dir)
         self.plugin_loader = PluginLoader()
         self.plugin_loader.load_all(self.project_dir)
-        self._disabled_plugins = set(self.plugin_state.disabled)
+        # Managed plugins are always enabled — strip them from
+        # any persisted disable list. A user can't disable an
+        # org-enforced plugin by editing plugin-state.json.
+        managed_plugins = {p.name for p in self.plugin_loader.list_plugins() if p.is_managed}
+        self._disabled_plugins = set(self.plugin_state.disabled) - managed_plugins
+
+        # Output-style discovery (row 52). Walks project +
+        # user + plugin tiers (last-write-wins precedence on
+        # name collisions). Active style defaults to ``default``
+        # when it exists; otherwise the first available name
+        # (deterministic via sort); ``""`` only when no styles
+        # are configured at all.
+        from ember_code.core.output_styles import discover_output_styles
+
+        plugin_style_roots = [
+            (p.root_path, p.name)
+            for p in self.plugin_loader.list_plugins()
+            if p.name not in self._disabled_plugins
+        ]
+        self.output_styles = discover_output_styles(
+            self.project_dir,
+            plugin_roots=plugin_style_roots,
+            read_claude=settings.rules.cross_tool_support,
+        )
+        if "default" in self.output_styles:
+            self._active_output_style = "default"
+        elif self.output_styles:
+            self._active_output_style = sorted(self.output_styles)[0]
 
         # ── Hooks ────────────────────────────────────────────────────
         self._hook_loader = HookLoader(
@@ -189,12 +271,36 @@ class Session:
             self.hooks_map,
             disabled=self._disabled_plugins,
         )
-        self.hook_executor = HookExecutor(self.hooks_map)
+        # ``asyncRewake`` hooks fire ``_queue_rewake`` from
+        # background tasks when they exit with code 2. Initialise
+        # the queue here so the executor's callback always has a
+        # destination, regardless of which __init__ branch built
+        # the executor. This is the CANONICAL typed declaration —
+        # the two later re-inits in ``_maybe_reinit_executor``
+        # branches use bare assignment (no annotation) so mypy
+        # doesn't complain about the attribute being redefined
+        # with a duplicate type annotation.
+        self._pending_reminders: list[str] = []
+        self.hook_executor = HookExecutor(
+            self.hooks_map,
+            mcp_resolver=self._mcp_resolver,
+            rewake_callback=self._queue_rewake,
+        )
 
         # ── Project Context ──────────────────────────────────────────
         self.project_instructions = load_project_context(
             self.project_dir,
             settings.context.project_file,
+            read_claude_md=settings.rules.cross_tool_support,
+        )
+        # Subdirectory rules (``ember.md`` / ``CLAUDE.md`` deeper in
+        # the tree) are NOT pre-loaded — they're discovered lazily by
+        # ``ToolEventHook`` when the agent actually touches a file in
+        # those areas. This keeps the system prompt small for repos
+        # with many service folders while still delivering scoped
+        # rules at the moment they become relevant.
+        self.rules_index = RulesIndex(
+            self.project_dir,
             read_claude_md=settings.rules.cross_tool_support,
         )
 
@@ -263,6 +369,40 @@ class Session:
             disabled=self._disabled_plugins,
         )
         self._mcp_initialized = False
+
+        # ── LSP Servers (plugin + project + user tier) ───────────────
+        # Lazy-launched: each server's ``start()`` runs on its first
+        # ``lsp_query`` from the agent. Manager is constructed even
+        # when no servers are configured so callers can check
+        # ``list_servers()`` for an empty list without conditional
+        # plumbing.
+        from ember_code.core.lsp import LspServerManager, load_lsp_config
+
+        lsp_plugin_roots = self.plugin_loader.collect_lsp_roots(
+            disabled=self._disabled_plugins,
+        )
+        lsp_configs = load_lsp_config(
+            self.project_dir,
+            plugin_roots=lsp_plugin_roots,
+        )
+        self.lsp_manager = LspServerManager(lsp_configs, self.project_dir)
+
+        # ── Plugin monitors (background processes) ──────────────────
+        # Unlike LSP servers, monitors start EAGERLY — the whole
+        # point is they're already running by the time the agent
+        # asks. Construction is cheap; ``start_all`` is called
+        # explicitly by the session entrypoint once the asyncio
+        # event loop is ready.
+        from ember_code.core.monitors import MonitorManager, load_monitor_config
+
+        monitor_plugin_roots = self.plugin_loader.collect_monitor_roots(
+            disabled=self._disabled_plugins,
+        )
+        monitor_configs = load_monitor_config(
+            self.project_dir,
+            plugin_roots=monitor_plugin_roots,
+        )
+        self.monitor_manager = MonitorManager(monitor_configs, self.project_dir)
 
         # ── Guardrails ───────────────────────────────────────────────
         self.guardrail_runner = GuardrailRunner(settings)
@@ -597,7 +737,20 @@ class Session:
     def reload_hooks(self) -> int:
         """Reload hooks from settings files. Returns the number of hooks loaded."""
         self.hooks_map = self._hook_loader.load()
-        self.hook_executor = HookExecutor(self.hooks_map)
+        # ``asyncRewake`` hooks fire ``_queue_rewake`` from
+        # background tasks when they exit with code 2. Initialise
+        # the queue here so the executor's callback always has a
+        # destination, regardless of which __init__ branch built
+        # the executor. Re-init here (without annotation — the
+        # canonical typed declaration is at the top of __init__)
+        # so a branch that skipped the top path still has an empty
+        # queue instead of a missing attribute.
+        self._pending_reminders = []
+        self.hook_executor = HookExecutor(
+            self.hooks_map,
+            mcp_resolver=self._mcp_resolver,
+            rewake_callback=self._queue_rewake,
+        )
         # Recreate tool event hook on the team
         tool_event_hook = self._create_tool_event_hook()
         if self.main_team:
@@ -642,11 +795,14 @@ class Session:
         # Re-read disabled set from ``plugins.json`` — the user may
         # have toggled enable/disable while we were running.
         self.plugin_state = load_state(self.settings.storage.data_dir)
-        self._disabled_plugins = set(self.plugin_state.disabled)
 
-        # Rescan the four plugin roots.
+        # Rescan the plugin roots (user / project / managed).
         self.plugin_loader = PluginLoader()
         self.plugin_loader.load_all(self.project_dir)
+        # Same managed-plugin enforcement as the constructor —
+        # rescan can't suddenly disable an org-enforced plugin.
+        managed_plugins = {p.name for p in self.plugin_loader.list_plugins() if p.is_managed}
+        self._disabled_plugins = set(self.plugin_state.disabled) - managed_plugins
 
         # Hooks — settings files first, plugins prepend onto them so
         # project hooks still run last (matches the constructor's
@@ -657,7 +813,20 @@ class Session:
             self.hooks_map,
             disabled=self._disabled_plugins,
         )
-        self.hook_executor = HookExecutor(self.hooks_map)
+        # ``asyncRewake`` hooks fire ``_queue_rewake`` from
+        # background tasks when they exit with code 2. Initialise
+        # the queue here so the executor's callback always has a
+        # destination, regardless of which __init__ branch built
+        # the executor. Re-init here (without annotation — the
+        # canonical typed declaration is at the top of __init__)
+        # so a branch that skipped the top path still has an empty
+        # queue instead of a missing attribute.
+        self._pending_reminders = []
+        self.hook_executor = HookExecutor(
+            self.hooks_map,
+            mcp_resolver=self._mcp_resolver,
+            rewake_callback=self._queue_rewake,
+        )
 
         # Skills — fresh pool from disk plus plugin contributions.
         self.skill_pool = SkillPool()
@@ -874,6 +1043,65 @@ class Session:
 
     # ── Main Agent setup ────────────────────────────────────────────
 
+    # Tools the main team ALWAYS gets — the shell-first core. Bash
+    # handles search/find/list/read directly (``rg``, ``find``,
+    # ``cat``, etc.); Edit/Write stay for surgical changes and new
+    # files because shell-based alternatives (``sed -i``, here-doc
+    # rewrites) are fragile. Grep/Glob/Read/LS toolkits intentionally
+    # omitted — they overlapped with shell and confused the model
+    # (v0.4.0 / commit 7e50705). See CLAUDE_CODE_PARITY.md row 22.
+    #
+    # Implications worth knowing about:
+    # * The main team has NO ``Read`` tool. Hook matchers targeting
+    #   ``read_file`` will never fire on the main team — use
+    #   ``run_shell_command`` instead.
+    # * Sub-agents CAN opt into Read/Grep/Glob via their frontmatter
+    #   ``tools:`` allowlist (see ``.ember/agents/<name>.md``).
+    # * Granular permissions on Read (e.g. ``deny: Read(.env)``) are
+    #   ineffective at this layer — ``.env`` protection comes from
+    #   ``ToolEventHook``'s Bash-command parsing instead.
+    _MAIN_CORE_TOOLS: tuple[str, ...] = (
+        "Write",
+        "Edit",
+        "Bash",
+        "Schedule",
+        "NotebookEdit",
+    )
+
+    def _resolve_main_tool_names(self, registry: "ToolRegistry") -> list[str]:
+        """Compose the main team's toolkit, honouring per-session
+        flags (web permissions, CodeIndex availability). Extracted
+        from ``_build_main_agent`` so the shell-first composition
+        can be pinned by a unit test without spinning up a full
+        agent — see ``tests/test_session.py``.
+        """
+        tool_names: list[str] = list(self._MAIN_CORE_TOOLS)
+        web_allowed = self.settings.permissions.web_search != "deny"
+        fetch_allowed = self.settings.permissions.web_fetch != "deny"
+        if web_allowed:
+            try:
+                registry.resolve(["WebSearch"])
+                tool_names.append("WebSearch")
+            except (ImportError, ValueError):
+                pass
+        if fetch_allowed:
+            try:
+                registry.resolve(["WebFetch"])
+                tool_names.append("WebFetch")
+            except (ImportError, ValueError):
+                pass
+        # CodeIndex tools are only exposed when there's a usable
+        # local chroma index for the current git HEAD. Without
+        # one, ``codeindex_search`` would return empty results and
+        # waste a tool slot in the agent's catalog — hide it
+        # entirely. The ``self._codeindex_available`` flag was set
+        # in ``__init__`` before ``pool.load_definitions`` ran (so
+        # the pool could pick the right ``<name>.codeindex.md``
+        # vs ``<name>.md`` variant per agent).
+        if self._codeindex_available:
+            tool_names.append("CodeIndex")
+        return tool_names
+
     def _build_main_agent(self) -> Agent:
         """Build the main agent with all tools and orchestration capability.
 
@@ -891,41 +1119,7 @@ class Session:
             cloud_token=self._cloud.access_token,
             cloud_server_url=self._cloud_server_url,
         )
-        # Shell-first toolkit: Bash handles search/find/list/read directly
-        # (`rg`, `find`, `cat`, etc.). Edit/Write are kept for surgical
-        # changes and new files because shell-based alternatives (sed,
-        # heredoc rewrites) are fragile. Grep/Glob/Read toolkits intentionally
-        # omitted — they overlapped with shell and confused the model.
-        tool_names = [
-            "Write",
-            "Edit",
-            "Bash",
-            "Schedule",
-            "NotebookEdit",
-        ]
-        web_allowed = self.settings.permissions.web_search != "deny"
-        fetch_allowed = self.settings.permissions.web_fetch != "deny"
-        if web_allowed:
-            try:
-                registry.resolve(["WebSearch"])
-                tool_names.append("WebSearch")
-            except (ImportError, ValueError):
-                pass
-        if fetch_allowed:
-            try:
-                registry.resolve(["WebFetch"])
-                tool_names.append("WebFetch")
-            except (ImportError, ValueError):
-                pass
-        # CodeIndex tools are only exposed when there's a usable local
-        # chroma index for the current git HEAD. Without one,
-        # ``codeindex_search`` would return empty results and waste a
-        # tool slot in the agent's catalog — hide it entirely. The
-        # ``self._codeindex_available`` flag was set in __init__ before
-        # pool.load_definitions ran (so the pool could pick the right
-        # ``<name>.codeindex.md`` vs ``<name>.md`` variant per agent).
-        if self._codeindex_available:
-            tool_names.append("CodeIndex")
+        tool_names = self._resolve_main_tool_names(registry)
         tools = registry.resolve(tool_names)
 
         # Orchestration tools — lets the agent delegate to specialists
@@ -938,6 +1132,7 @@ class Session:
             hook_executor=self.hook_executor,
             session_id=self.session_id,
             hitl_coordinator=self.sub_agent_hitl,
+            project_dir=self.project_dir,
         )
         tools.append(orchestrate)
 
@@ -964,6 +1159,60 @@ class Session:
 
         tools.append(LoopTools(self))
         tools.append(LoopProgressTool(self))
+
+        # TodoWrite — agent-facing planning tool (CC parity).
+        # The model uses it to maintain a per-session todo list
+        # that the UI can render alongside the chat. Keeps
+        # multi-step plans visible without scrolling back through
+        # reasoning output.
+        from ember_code.core.tools.todo import TodoTools
+
+        tools.append(TodoTools(self))
+
+        # Plan mode — ``exit_plan_mode`` agent tool (CC parity,
+        # row 50). The user toggles plan mode via ``/plan`` (which
+        # flips ``permissions.mode`` to ``plan`` and blocks file
+        # edits via ``PermissionEvaluator``); this tool lets the
+        # agent signal "plan ready for review" at the end of a
+        # plan-mode turn. Mode flip back to default stays
+        # user-controlled — the agent can't exit the sandbox on
+        # its own.
+        from ember_code.core.tools.plan import PlanTool
+
+        tools.append(PlanTool(self))
+
+        # SlashCommand — agent-facing re-entrant slash command
+        # dispatch (CC parity). Lets the agent invoke ``/help``,
+        # ``/ctx``, ``/codeindex search …``, etc. from inside a
+        # tool-using turn. A small blocklist (``/quit``, ``/clear``,
+        # ``/model``, ``/login``, ``/logout``) is refused with an
+        # explanatory error — those would either kill the session
+        # or require UI interaction the agent can't provide.
+        from ember_code.core.tools.slash import SlashCommandTool
+
+        tools.append(SlashCommandTool(self))
+
+        # LSP query tool — exposes plugin-declared language
+        # servers (CC parity, row 32). Only registered when at
+        # least one server is configured so the toolkit doesn't
+        # clutter the agent's tool list in sessions that don't
+        # use LSP. Lazy-launch happens inside ``LspServerManager``
+        # on first ``lsp_query`` call.
+        if self.lsp_manager is not None and self.lsp_manager.list_servers():
+            from ember_code.core.tools.lsp import LspTools
+
+            tools.append(LspTools(self.lsp_manager))
+
+        # Monitor inspection tools (CC parity, row 33). Only
+        # registered when at least one monitor is configured —
+        # same logic as the LSP toolkit. Monitors are
+        # plugin-owned background processes; the agent observes
+        # status / output and can restart, but can't define new
+        # monitors at runtime.
+        if self.monitor_manager is not None and self.monitor_manager.list_names():
+            from ember_code.core.tools.monitors import MonitorTools
+
+            tools.append(MonitorTools(self.monitor_manager))
 
         # MCP tools — connected MCP server clients
         connected_mcp = self.mcp_manager.list_connected()
@@ -1065,6 +1314,127 @@ class Session:
                 if extra_rules:
                     instructions.append(f"Additional workspace ({extra_dir.name}):\n{extra_rules}")
 
+        # Plan-mode nudge (row 50 UX) — the model needs concrete
+        # cues here or it falls back to the existing
+        # ``spawn_team(mode="tasks")`` pattern (which also plans-
+        # then-executes, but bypasses the user-approval gate this
+        # mode provides). Three specific instructions:
+        # 1. WHEN to enter (concrete examples, not just adjectives)
+        # 2. The DIFFERENCE from spawn_team / tasks mode (the
+        #    user-approval gate is the headline distinction).
+        # 3. When CodeIndex is available, a strong nudge to use it
+        #    heavily during the read-only research phase — the
+        #    index is condensed source-of-truth (LLM-distilled
+        #    summaries per code entity), so a few targeted queries
+        #    beat a dozen file reads on real-world repos.
+        plan_mode_nudge = (
+            "PLAN MODE — agent self-discipline before complex work\n\n"
+            "When the user asks for any of these, your VERY FIRST "
+            "tool call must be `enter_plan_mode(reason)` — before "
+            "reading, searching, or anything else:\n"
+            '* Multi-file refactor (e.g. "refactor the auth system", '
+            '"rename Foo → Bar across the codebase")\n'
+            '* Architectural change (e.g. "move X to its own service", '
+            '"replace the cookie session with JWT")\n'
+            "* Broad feature addition spanning multiple modules\n"
+            "* Anything where committing to a direction without "
+            "checking with the user first would be expensive to undo\n\n"
+            "After entering plan mode you can read, search, grep, "
+            "consult the codeindex — but file edits and mutating "
+            "shell are blocked. When you've gathered enough context, "
+            "call `exit_plan_mode(plan, tasks=[...])` with a concrete "
+            "proposal and STOP. The user clicks Approve in the UI; "
+            "the next turn executes.\n\n"
+            "Include `tasks=[...]` whenever the steps are "
+            "enumerable — one entry per execution step, shape "
+            '`{content: "Imperative description", activeForm: '
+            '"Verb-noun gerund"}`. The user sees both your prose '
+            "plan AND a live checklist; as you call `todo_write` "
+            "during execution, the checklist ticks off in their "
+            "UI in real time. Skip `tasks` only when the plan is "
+            'genuinely unstructured (e.g. "I propose option A '
+            'because…" — no enumerable steps).\n\n'
+            'Plan mode vs spawn_team(mode="tasks"): plan mode pauses '
+            "for USER approval before execution; tasks mode runs to "
+            "completion autonomously. For requests involving file "
+            "writes, prefer plan mode so the user sees the plan "
+            "first. For pure research / read-only tasks where you'd "
+            "synthesise an answer anyway, just answer directly.\n\n"
+            "Skip plan mode for simple one-shot requests (a small "
+            "bug fix, one obvious tweak, a typo correction)."
+        )
+        if self._codeindex_available:
+            # CodeIndex is the condensed source-of-truth: LLM-
+            # generated summaries of every meaningful code entity
+            # in the project, queryable by natural language or
+            # symbol name. In plan mode the agent SHOULD lean on
+            # it heavily — a few targeted queries answer
+            # "where does X live + what does it actually do" far
+            # more cheaply than grep-and-read cycles on a real
+            # repo. This block is appended only when the index is
+            # actually populated for the current HEAD; otherwise
+            # the model would be told to use a tool that returns
+            # empty results.
+            plan_mode_nudge += (
+                "\n\n"
+                "**CodeIndex is available for THIS commit** — use it "
+                "as your PRIMARY research surface in plan mode. "
+                "CodeIndex is a semantic index of every meaningful "
+                "entity in this repo with an LLM-generated summary "
+                "(condensed source-of-truth — one query often "
+                "replaces five file reads). Plan-mode workflow with "
+                "CodeIndex:\n"
+                "1. Call `enter_plan_mode(reason)`.\n"
+                "2. Fire several `codeindex_query` calls FIRST, "
+                "from different angles: by feature ('JWT validation', "
+                "'session storage'), by symbol name "
+                "('AuthMiddleware', 'login_user'), by area "
+                "('frontend auth', 'backend middleware'). Queries "
+                "are cheap — issue a handful before reading any "
+                "files.\n"
+                "3. For any entity that looks central, drill in via "
+                "`codeindex_tree` to see what depends on it / what "
+                "it imports — that's how you find the blast radius "
+                "of a refactor.\n"
+                "4. `file_read` is for things the index couldn't "
+                "tell you OR when you need exact source (a "
+                "specific function body the index summarised as "
+                '"validates X" but you need the validation logic). '
+                "Don't read files BEFORE consulting the index — "
+                "you'll be reading blind.\n"
+                "5. Build the `plan` markdown and `tasks=[...]` "
+                "from what CodeIndex told you. Cite specific files "
+                "and functions surfaced by the index. Plans "
+                "grounded in real codebase facts beat plans built "
+                "from prior assumptions.\n\n"
+                "Heuristic: if a plan-mode turn doesn't call "
+                "`codeindex_query` at least 2-3 times, you "
+                "probably haven't done enough research."
+            )
+        instructions.append(plan_mode_nudge)
+
+        # Output style (row 52) — appends the active style's
+        # body to the system prompt so the agent's communication
+        # mode shifts without rebuilding the agent. Loaded by
+        # ``discover_output_styles`` at session init; switched
+        # via ``/output-style <name>``. Empty when no styles
+        # are configured (the session still boots — falls back
+        # to bare model behaviour).
+        style = self.output_styles.get(self._active_output_style)
+        if style and style.body:
+            instructions.append(f"# Output style: {style.name}\n\n{style.body}")
+
+        # Auto-memory write-back (row 61). Teaches the agent
+        # WHEN and HOW to persist memories during this
+        # conversation — the READ side (loading existing
+        # MEMORY.md into the system prompt) landed with row 18.
+        # ``ensure_memory_dir`` is called at session bootstrap
+        # so the directory exists before the agent's first
+        # ``save_file`` into it.
+        from ember_code.core.utils.context import memory_writeback_instructions
+
+        instructions.append(memory_writeback_instructions(self.project_dir))
+
         # Guardrails
         guardrails = _create_guardrails(self.settings)
 
@@ -1165,14 +1535,296 @@ class Session:
             lines.append(f"- **{defn.name}**: {defn.description} (tools: {tools_str})")
         return "\n".join(lines)
 
+    def _queue_rewake(self, text: str) -> None:
+        """``asyncRewake`` hooks call this from background tasks
+        when they finish with exit-2. The text is buffered until
+        the next ``handle_message`` turn, where it's drained and
+        prepended as a system reminder so the agent sees it on
+        the next reasoning step (we can't interrupt an in-flight
+        response).
+        """
+        if not text:
+            return
+        # asyncio is single-threaded — no lock needed; appends are
+        # atomic from concurrent ``asyncio.create_task`` background
+        # hooks.
+        self._pending_reminders.append(text)
+
+    def _mcp_resolver(self, server: str, tool: str) -> Any | None:
+        """Resolver passed to ``HookExecutor`` so ``mcp_tool``-type
+        hooks can invoke MCP server tools without the executor
+        knowing about the MCP manager directly.
+
+        Resolved at hook-fire time (not at executor construction)
+        so this works even though ``__init__`` builds the executor
+        BEFORE ``mcp_manager`` is populated — the closure looks up
+        the manager dynamically. Reaches into the manager's
+        ``_clients`` dict; if MCP gains a public ``call_tool`` API
+        later, swap this body to call it.
+        """
+        mgr = getattr(self, "mcp_manager", None)
+        if mgr is None:
+            return None
+        client = getattr(mgr, "_clients", {}).get(server)
+        if client is None:
+            return None
+        return (getattr(client, "functions", None) or {}).get(tool)
+
     def _create_tool_event_hook(self) -> ToolEventHook:
         """Create a ToolEventHook for tool event hooks and protected path enforcement."""
+        from ember_code.core.config.permission_eval import PermissionEvaluator
+
+        # Build the 6-step permission evaluator from settings. Empty
+        # rule arrays + ``default`` mode keep the evaluator a no-op
+        # for users who haven't opted in — the existing protected_
+        # paths/blocked_commands enforcement still runs alongside.
+        # We cache the evaluator on ``self`` so the runtime
+        # plan-mode toggle (`/plan`) and the agent's
+        # ``exit_plan_mode`` tool can mutate ``evaluator.mode``
+        # without rebuilding the hook chain.
+        self.permission_evaluator = PermissionEvaluator.from_strings(
+            mode=self.settings.permissions.mode,
+            deny=self.settings.permissions.deny,
+            ask=self.settings.permissions.ask,
+            allow=self.settings.permissions.allow,
+        )
         return ToolEventHook(
             executor=self.hook_executor,
             session_id=self.session_id,
             protected_paths=self.settings.safety.protected_paths,
             blocked_commands=self.settings.safety.blocked_commands,
+            rules_index=self.rules_index,
+            project_dir=self.project_dir,
+            permission_evaluator=self.permission_evaluator,
         )
+
+    def set_output_style(self, name: str) -> str:
+        """Switch the active output style (row 52) at runtime.
+
+        Hot-patches the main team's ``instructions`` list — the
+        next agent turn sees the new style without rebuilding
+        the team. The style block is identified by its
+        ``# Output style: ...`` header, so the swap is precise.
+
+        Returns a short status string for the slash command to
+        echo. Unknown style names produce a list of available
+        options so the user can pick from what's actually
+        loaded."""
+        clean = (name or "").strip()
+        if clean not in self.output_styles:
+            available = sorted(self.output_styles)
+            return (
+                f"Error: unknown output style {clean!r}. "
+                f"Available: {', '.join(available) if available else '(none configured)'}"
+            )
+        prev = self._active_output_style
+        self._active_output_style = clean
+        # Patch the live team's instructions so the next ``arun``
+        # picks up the new style body. We look for the existing
+        # ``# Output style:`` block (zero or one — only one
+        # active style at a time) and replace it. The team may
+        # not exist yet on a partially-initialised session
+        # (tests via ``__new__``); fall through silently in that
+        # case — the change takes effect on first build.
+        team = getattr(self, "main_team", None)
+        if team is not None and hasattr(team, "instructions"):
+            new_block = (
+                f"# Output style: {clean}\n\n{self.output_styles[clean].body}"
+                if self.output_styles[clean].body
+                else ""
+            )
+            insts = team.instructions
+            if isinstance(insts, list):
+                # Strip any existing style block.
+                pruned = [
+                    s for s in insts if not (isinstance(s, str) and s.startswith("# Output style:"))
+                ]
+                if new_block:
+                    pruned.append(new_block)
+                team.instructions = pruned
+        # Broadcast so the FE can show the active style in a
+        # status chip (parallel to permission_mode_changed).
+        self.broadcast(
+            "output_style_changed",
+            {"style": clean, "previous": prev},
+        )
+        if prev == clean:
+            return f"Output style already {clean}."
+        return f"Output style: {prev or '(none)'} → {clean}."
+
+    def set_permission_mode(self, mode: str) -> str:
+        """Flip the live ``PermissionEvaluator``'s mode (e.g. into
+        or out of plan mode) without rebuilding the agent.
+
+        The evaluator instance is shared with the tool-event hook,
+        so the change takes effect on the very next tool call.
+        Broadcasts a ``permission_mode_changed`` push to attached
+        clients so the FE's mode badge updates without polling.
+        Returns a short status string for the caller (slash
+        command, ``exit_plan_mode`` tool) to surface."""
+        from ember_code.core.config.permission_eval import PermissionMode
+
+        if not hasattr(self, "permission_evaluator"):
+            return "Error: permission evaluator not initialised yet."
+        try:
+            new_mode = PermissionMode(mode)
+        except ValueError:
+            valid = ", ".join(m.value for m in PermissionMode)
+            return f"Error: unknown permission mode {mode!r}. Valid: {valid}"
+        prev = self.permission_evaluator.mode
+        self.permission_evaluator.mode = new_mode
+        if prev == new_mode:
+            return f"Permission mode already {new_mode.value}."
+        self.broadcast(
+            "permission_mode_changed",
+            {"mode": new_mode.value, "previous": prev.value},
+        )
+        return f"Permission mode: {prev.value} → {new_mode.value}."
+
+    async def approve_plan(self, run_id: str) -> dict:
+        """Record the user's approval of a specific plan and flip
+        out of plan mode in one atomic-ish step.
+
+        ``run_id`` is the run in which the agent called
+        ``exit_plan_mode`` — used as the persisted key so the
+        decision survives reloads. Without persistence, a
+        restart would fall back to inferring "approved" from
+        the current mode, which silently marked never-approved
+        plans as approved when the mode happened to be default.
+
+        Side effects in order:
+          1. ``plan_store.set_decision(run_id, "approved")``
+          2. Persist the new decisions map (``session_data``
+             write via :class:`SessionPersistence`).
+          3. ``set_permission_mode("default")`` — also
+             broadcasts ``permission_mode_changed``.
+          4. ``broadcast("plan_decided", ...)`` so the FE can
+             flip the matching PlanCard's state without waiting
+             for the mode broadcast.
+
+        Returns ``{run_id, decision, mode_status}`` for the RPC
+        caller. Raises ``ValueError`` on empty ``run_id``.
+        """
+        return await self._record_plan_decision(run_id, "approved", flip_mode=True)
+
+    async def dismiss_plan(self, run_id: str) -> dict:
+        """Record the user's dismissal of a specific plan.
+
+        Same persistence semantics as :meth:`approve_plan` but
+        does NOT flip the permission mode — the user staying in
+        plan mode is the whole point of Refine (they want to
+        iterate on the plan, not execute it).
+        """
+        return await self._record_plan_decision(run_id, "dismissed", flip_mode=False)
+
+    async def _record_plan_decision(self, run_id: str, decision: str, *, flip_mode: bool) -> dict:
+        if not run_id:
+            raise ValueError("run_id must be non-empty")
+        store = getattr(self, "plan_store", None)
+        if store is None:
+            raise RuntimeError("plan_store not initialised on this session")
+        store.set_decision(run_id, decision)
+        # Persist BEFORE flipping mode so a crash mid-flip
+        # doesn't leave the user with mode=default but no
+        # recorded approval (which would reproduce the original
+        # bug on the next restart).
+        if hasattr(self, "persistence"):
+            try:
+                await self.persistence.save_plan_decisions(store.decisions_snapshot())
+            except Exception as exc:
+                logger.debug("plan decision persist failed: %s", exc)
+        mode_status = ""
+        if flip_mode:
+            mode_status = self.set_permission_mode("default")
+        self.broadcast(
+            "plan_decided",
+            {"run_id": run_id, "decision": decision},
+        )
+        return {
+            "run_id": run_id,
+            "decision": decision,
+            "mode_status": mode_status,
+        }
+
+    def register_broadcast_callback(self, callback) -> None:
+        """Append a ``callback(channel: str, payload: dict)`` to
+        the session's broadcast list. Used by the backend's
+        transport wiring to push ``permission_mode_changed`` /
+        ``plan_submitted`` events to attached clients.
+
+        Idempotent — same callback can be registered multiple
+        times but we de-dupe so a reload doesn't fan out events
+        twice."""
+        if callback not in self._broadcast_callbacks:
+            self._broadcast_callbacks.append(callback)
+
+    def broadcast(self, channel: str, payload: dict) -> None:
+        """Fire every registered broadcast callback with
+        ``(channel, payload)``. Callbacks run synchronously here
+        — their job is just to enqueue a push, not to await it.
+        Exceptions in one callback don't sink the rest.
+
+        Defensive against partially-initialised sessions (tests
+        often construct via ``Session.__new__`` and don't run
+        ``__init__``): missing ``_broadcast_callbacks`` is a
+        no-op."""
+        callbacks = getattr(self, "_broadcast_callbacks", None)
+        if not callbacks:
+            return
+        for cb in list(callbacks):
+            try:
+                cb(channel, payload)
+            except Exception as exc:
+                logger.debug("broadcast callback raised on channel %s: %s", channel, exc)
+
+    def queue_post_run_broadcast(self, channel: str, payload: dict) -> None:
+        """Same delivery as :meth:`broadcast` but deferred until the
+        current run finishes streaming.
+
+        Used by tools whose result is meant to render *after* all the
+        agent's content — most notably ``exit_plan_mode``. If we
+        broadcast inline, the PlanCard appears mid-stream, above
+        whatever closing message the agent emits. The stream
+        consumer drains this queue when it sees ``RunCompleted``
+        (or ``RunError``) so the card lands at the bottom of the
+        reply where the user expects it.
+
+        Defensive against partially-initialised sessions.
+        """
+        queue = getattr(self, "_pending_post_run_broadcasts", None)
+        if queue is None:
+            # Init missing (test path) → fall back to immediate so
+            # we don't silently swallow the event.
+            self.broadcast(channel, payload)
+            return
+        queue.append((channel, payload))
+
+    def drain_post_run_broadcasts(self, run_id: str | None = None) -> None:
+        """Fire every queued post-run broadcast through
+        :meth:`broadcast`, then clear the queue.
+
+        Called by the BE stream consumer right after ``RunCompleted``
+        flushes. Safe to call on a clean session (no-op).
+
+        ``run_id`` (when supplied) is stamped onto every payload
+        that doesn't already carry one. This is how
+        ``plan_submitted`` payloads acquire the run_id the FE
+        needs to call ``approve_plan`` / ``dismiss_plan`` — the
+        plan tool can't see the current run_id from inside its
+        toolkit context, so the run-loop injects it at drain
+        time instead.
+        """
+        queue = getattr(self, "_pending_post_run_broadcasts", None)
+        if not queue:
+            return
+        # Snapshot + clear so a callback that re-queues doesn't
+        # loop in the same drain pass.
+        pending = list(queue)
+        queue.clear()
+        for channel, payload in pending:
+            if run_id and isinstance(payload, dict) and "run_id" not in payload:
+                payload = {**payload, "run_id": run_id}
+            self.broadcast(channel, payload)
 
     # ── Knowledge warmup ────────────────────────────────────────────
 
@@ -1669,8 +2321,34 @@ class Session:
         if usage < 0.8:
             return False
 
+        # PreCompact hook — lets plugins export / summarise / cancel
+        # before history is dropped. A blocking return cancels the
+        # compaction (the auto trigger respects it; the user can
+        # always retry manually).
+        pre = await self.hook_executor.execute(
+            event=HookEvent.PRE_COMPACT.value,
+            payload={
+                "session_id": self.session_id,
+                "scope": "auto",
+                "tokens_before": input_tokens,
+            },
+        )
+        if not pre.should_continue:
+            logger.info("Auto-compact cancelled by PreCompact hook: %s", pre.message)
+            return False
+
         await self._compact()
         logger.info("Auto-compacted at %.0f%% context usage", usage * 100)
+        # PostCompact hook — observation only; can't undo the
+        # compaction at this point.
+        await self.hook_executor.execute(
+            event=HookEvent.POST_COMPACT.value,
+            payload={
+                "session_id": self.session_id,
+                "scope": "auto",
+                "tokens_before": input_tokens,
+            },
+        )
         return True
 
     async def force_compact(self) -> tuple[str, str]:
@@ -1690,6 +2368,20 @@ class Session:
                 return "Nothing to compact — no conversation history.", ""
         except Exception:
             pass
+
+        # PreCompact hook (manual /compact path). Honouring the
+        # blocking decision: the user invoked the command but a
+        # plugin can still veto (e.g. an unsaved-changes guard).
+        pre = await self.hook_executor.execute(
+            event=HookEvent.PRE_COMPACT.value,
+            payload={
+                "session_id": self.session_id,
+                "scope": "manual",
+                "tokens_before": 0,
+            },
+        )
+        if not pre.should_continue:
+            return (pre.message or "Compaction cancelled by PreCompact hook.", "")
 
         error = await self._compact()
 
@@ -1714,6 +2406,18 @@ class Session:
             )
         else:
             status = "Context compacted. Conversation summarized, history cleared."
+        # PostCompact hook — fired regardless of summariser success so
+        # observers can still react to the history-cleared half of the
+        # operation. ``summary_chars`` is 0 in the failure path.
+        await self.hook_executor.execute(
+            event=HookEvent.POST_COMPACT.value,
+            payload={
+                "session_id": self.session_id,
+                "scope": "manual",
+                "tokens_before": 0,
+                "summary_chars": len(summary),
+            },
+        )
         return status, summary
 
     # ── Context breakdown ─────────────────────────────────────────────
@@ -1857,7 +2561,19 @@ class Session:
             from datetime import datetime
 
             timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
+            # Drain any pending ``asyncRewake`` reminders queued
+            # while the agent was idle — they ride in as a
+            # ``<system-reminder>`` block ahead of the user
+            # message so the model sees them before deciding
+            # what to do this turn. The queue is cleared in the
+            # same step (one-shot delivery).
+            reminders_block = ""
+            if self._pending_reminders:
+                joined = "\n".join(self._pending_reminders)
+                self._pending_reminders.clear()
+                reminders_block = f"<system-reminder>{joined}</system-reminder>\n"
             effective_message = (
+                f"{reminders_block}"
                 f"<system-context>Current datetime: {timestamp}</system-context>\n{message}"
             )
             if guardrail_prefix:
@@ -1913,6 +2629,21 @@ class Session:
                 status="error",
                 details={"error": str(e)},
             )
+
+            # StopFailure hook — observation-only. Mirrors the
+            # Stop hook on the happy path but fires when the run
+            # terminates with an unhandled exception. Plugins
+            # (crash reporters, alerting) react here without having
+            # to scrape audit logs.
+            with contextlib.suppress(Exception):
+                await self.hook_executor.execute(
+                    event=HookEvent.STOP_FAILURE.value,
+                    payload={
+                        "session_id": self.session_id,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                    },
+                )
 
             return error_msg
 

@@ -73,7 +73,7 @@ class DisplayManager:
         """Print the welcome banner."""
         self.console.print(
             Panel(
-                f"[bold]Ember Code[/bold] v{version}\n"
+                f"[bold]igni[/bold] v{version}\n"
                 f"[dim]AI coding assistant powered by Agno[/dim]\n\n"
                 f"Type your message, or /help for commands.\n"
                 f"Press Ctrl+C to exit.",

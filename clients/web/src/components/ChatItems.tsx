@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import { memo, useEffect, useRef, useState, isValidElement, type ReactNode } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark-dimmed.css";
@@ -8,6 +8,293 @@ import type { DiffRow } from "../protocol/messages";
 import { ChevronIcon } from "./Icons";
 import { FilePill } from "./FilePill";
 import { host } from "../lib/host";
+
+function CopyIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="4" y="4" width="8.5" height="9.5" rx="1.5" />
+      <path d="M3 11.5V3a1 1 0 0 1 1-1h7.5" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3.5 8.5l3 3 6-7" />
+    </svg>
+  );
+}
+
+function useCopiedFlag(): [boolean, (text: string) => void] {
+  const [copied, setCopied] = useState(false);
+  const trigger = (text: string) => {
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1300);
+      } catch {
+        /* clipboard blocked — silent */
+      }
+    })();
+  };
+  return [copied, trigger];
+}
+
+/** ReactMarkdown ``components.pre`` override: wraps each fenced
+ *  code block with a hover-revealed copy button. We read the text
+ *  off the rendered DOM (via a ref) at click time so the copy
+ *  payload matches exactly what the user sees, including any
+ *  hljs-injected whitespace. */
+/** Above this rendered height a code block starts collapsed and
+ *  shows a "Show more" toggle. ~10 lines at 13px / 1.65 line-height
+ *  + padding lands a touch over this — short blocks stay expanded. */
+const COLLAPSED_MAX_PX = 220;
+
+/** Dispatcher for fenced-block rendering. Routes:
+ *  - ``language-mermaid`` → MermaidBlock (text → SVG diagram)
+ *  - Everything else → CodeBlock (copy chip, collapse chevron). */
+function MarkdownPre({ children }: { children?: ReactNode }) {
+  const mermaidSource = extractMermaidSource(children);
+  if (mermaidSource !== null) {
+    return <MermaidBlock source={mermaidSource} />;
+  }
+  return <CodeBlock>{children}</CodeBlock>;
+}
+
+/** Extract the raw source string from a fenced ``mermaid`` block,
+ *  or null if this isn't a mermaid block. ReactMarkdown hands us a
+ *  ``<code class="language-mermaid">{source}</code>`` element as
+ *  the sole child of ``<pre>``. rehype-highlight leaves unknown
+ *  languages alone — content stays plain text. */
+function extractMermaidSource(children: ReactNode): string | null {
+  if (!isValidElement(children)) return null;
+  const props = children.props as { className?: string; children?: ReactNode };
+  const cls = props.className ?? "";
+  if (!cls.split(/\s+/).includes("language-mermaid")) return null;
+  return String(props.children ?? "").replace(/\n$/, "");
+}
+
+function CodeBlock({ children }: { children?: ReactNode }) {
+  const preRef = useRef<HTMLPreElement>(null);
+  const [copied, copy] = useCopiedFlag();
+  const [collapsed, setCollapsed] = useState(true);
+  const [overflowing, setOverflowing] = useState(false);
+  // After first render, measure: if the natural pre is taller than
+  // the collapsed cap, we keep it collapsed and reveal the toggle.
+  // If it fits, drop the collapsed state so nothing changes visually.
+  useEffect(() => {
+    const el = preRef.current;
+    if (!el) return;
+    const overflows = el.scrollHeight > COLLAPSED_MAX_PX + 4;
+    setOverflowing(overflows);
+    if (!overflows) setCollapsed(false);
+  }, [children]);
+  const isCollapsed = overflowing && collapsed;
+  return (
+    <div
+      className={`code-block-wrap${isCollapsed ? " code-block-wrap--collapsed" : ""}`}
+    >
+      <button
+        type="button"
+        className="code-block-copy"
+        title={copied ? "Copied!" : "Copy code"}
+        aria-label={copied ? "Copied" : "Copy code"}
+        onClick={() => copy(preRef.current?.textContent ?? "")}
+      >
+        {copied ? <CheckIcon /> : <CopyIcon />}
+      </button>
+      <pre
+        ref={preRef}
+        onClick={isCollapsed ? () => setCollapsed(false) : undefined}
+      >
+        {children}
+      </pre>
+      {overflowing ? (
+        <button
+          type="button"
+          className="code-block-toggle"
+          onClick={() => setCollapsed((c) => !c)}
+          aria-expanded={!isCollapsed}
+          aria-label={isCollapsed ? "Expand code" : "Collapse code"}
+          title={isCollapsed ? "Expand" : "Collapse"}
+        >
+          <ChevronIcon size={12} down={!isCollapsed} />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Lazy-loaded mermaid renderer. Mermaid is ~700KB so we import it
+ *  on first use rather than always — the dynamic import is cached
+ *  by the module system, so the second block on the page reuses
+ *  the already-loaded library. SVG is re-rendered on every theme
+ *  flip via a ``data-theme`` observer (the page-level mutation
+ *  isn't worth listening for here; React re-mounts on theme change
+ *  via a key further up). */
+type MermaidLib = { initialize: (opts: Record<string, unknown>) => void; render: (id: string, src: string) => Promise<{ svg: string }> };
+let mermaidPromise: Promise<MermaidLib> | null = null;
+/** Pick a mermaid built-in theme that matches the current Ember
+ *  theme. ``default`` = the colored light palette (purples / teals
+ *  / pinks); ``dark`` = a colored dark palette. Both run in colour;
+ *  the previous ``neutral`` choice was the cause of the all-grey
+ *  diagrams. */
+function mermaidThemeForDocument(): "default" | "dark" {
+  if (typeof document === "undefined") return "default";
+  const explicit = document.documentElement.dataset.theme;
+  if (explicit === "dark") return "dark";
+  if (explicit === "light") return "default";
+  // ``auto`` (or unset) — defer to the OS.
+  if (typeof window !== "undefined" && window.matchMedia) {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "default";
+  }
+  return "default";
+}
+
+function loadMermaid(): Promise<MermaidLib> {
+  if (!mermaidPromise) {
+    mermaidPromise = import("mermaid").then((m) => {
+      const lib = m.default as unknown as MermaidLib;
+      lib.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: mermaidThemeForDocument(),
+        themeVariables: {
+          fontFamily: "var(--font-ui)",
+          // Let our container's ``--bg-inset`` show through instead
+          // of mermaid's stark white panel.
+          background: "transparent",
+        },
+      });
+      return lib;
+    });
+  }
+  return mermaidPromise;
+}
+
+let mermaidId = 0;
+function MermaidBlock({ source }: { source: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+    void loadMermaid()
+      .then((lib) => lib.render(`mermaid-${++mermaidId}`, source))
+      .then(({ svg }) => {
+        if (cancelled || !ref.current) return;
+        ref.current.innerHTML = svg;
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [source]);
+  if (error) {
+    // Fall back to showing the raw source if the diagram doesn't
+    // parse — better than a blank box. Same look as a plain pre.
+    return (
+      <pre className="mermaid-error" title={`Mermaid render failed: ${error}`}>
+        {source}
+      </pre>
+    );
+  }
+  return (
+    <div className="mermaid-diagram">
+      <DiagramCopyButton source={source} />
+      <div ref={ref} />
+    </div>
+  );
+}
+
+/** Copy-source button used by ``MermaidBlock``. Sits top-right of
+ *  the diagram frame and copies the original fenced-source string,
+ *  not the rendered SVG markup — the user typically wants what the
+ *  model emitted, not what the renderer produced. */
+function DiagramCopyButton({ source }: { source: string }) {
+  const [copied, copy] = useCopiedFlag();
+  return (
+    <button
+      type="button"
+      className="diagram-copy"
+      title={copied ? "Copied!" : "Copy source"}
+      aria-label={copied ? "Copied" : "Copy source"}
+      onClick={() => copy(source)}
+    >
+      {copied ? <CheckIcon /> : <CopyIcon />}
+    </button>
+  );
+}
+
+const ASSISTANT_MD_COMPONENTS: Components = {
+  pre: MarkdownPre,
+};
+
+/** Assistant chat bubble with a hover-revealed copy-response
+ *  button. Copies the raw markdown source (``item.text``) — that's
+ *  what the user is actually looking at conceptually; copying the
+ *  rendered HTML would lose code fences and structure. */
+const AssistantMessage = memo(function AssistantMessage({ text }: { text: string }) {
+  return (
+    <div className="msg-assistant">
+      <div className="msg-assistant-body">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeHighlight]}
+          components={ASSISTANT_MD_COMPONENTS}
+        >
+          {normalizeAssistantMarkdown(text)}
+        </ReactMarkdown>
+      </div>
+    </div>
+  );
+});
+
+/** Inline copy-response button rendered to the right of the stats
+ *  line. The stats item carries no assistant text itself, so the
+ *  ChatItemView caller passes in the text of the most recent
+ *  assistant turn that owns this run. */
+function StatsCopyButton({ text }: { text: string }) {
+  const [copied, copy] = useCopiedFlag();
+  return (
+    <button
+      type="button"
+      className="msg-stats-copy"
+      title={copied ? "Copied!" : "Copy response"}
+      aria-label={copied ? "Copied" : "Copy response"}
+      onClick={() => copy(text)}
+    >
+      {copied ? <CheckIcon /> : <CopyIcon />}
+    </button>
+  );
+}
 
 const AT_PATH_INLINE_RE = /(?:^|\s)@(\S+)/g;
 
@@ -115,7 +402,7 @@ const CODE_PASTE_RE =
  *  the original block in ``store`` so we can swap it back on save.
  *  Visible to the user in the textarea so they can reorder snippets
  *  by cut-and-paste, but they can't accidentally edit snippet content. */
-function swapCodeBlocks(text: string, store: Map<string, string>): string {
+export function swapCodeBlocks(text: string, store: Map<string, string>): string {
   store.clear();
   let n = 0;
   return text.replace(CODE_PASTE_RE, (match, p1, _l, lineSpec) => {
@@ -131,7 +418,7 @@ function swapCodeBlocks(text: string, store: Map<string, string>): string {
  *  each surviving placeholder for its original block. Placeholders the
  *  user deleted simply stay gone — i.e. removing the placeholder from
  *  the textarea removes the snippet from the message. */
-function restoreCodeBlocks(text: string, store: Map<string, string>): string {
+export function restoreCodeBlocks(text: string, store: Map<string, string>): string {
   return text.replace(/«code:[^«»]*?#\d+»/g, (placeholder) => {
     return store.get(placeholder) ?? "";
   });
@@ -253,7 +540,7 @@ function UserCodePill({
  *  from the languages bundled into highlight.js's "common" set —
  *  anything not on this list falls back to plain text, which is
  *  still readable, just not coloured. */
-function guessLang(p: string): string {
+export function guessLang(p: string): string {
   const ext = p.split(".").pop()?.toLowerCase() || "";
   const map: Record<string, string> = {
     py: "python",
@@ -292,7 +579,7 @@ function guessLang(p: string): string {
  *  structured agent tree (one entry per spawned specialist) with
  *  per-agent status pills, tool-call rows, and a live content
  *  preview — no ASCII art. */
-function OrchestrateLog({
+const OrchestrateLog = memo(function OrchestrateLog({
   item,
   onStopTeam,
   onStopAgent,
@@ -406,7 +693,7 @@ function OrchestrateLog({
       )}
     </div>
   );
-}
+});
 
 /** Compact 1000s formatter — 1234 → "1.2k", 230 → "230". Used in the
  *  agent header tokens chips so a run of 30k input tokens doesn't
@@ -675,7 +962,7 @@ function DiffTable({ rows }: { rows: DiffRow[] }) {
   );
 }
 
-function ToolCard({ item }: { item: Extract<ChatItem, { kind: "tool" }> }) {
+const ToolCard = memo(function ToolCard({ item }: { item: Extract<ChatItem, { kind: "tool" }> }) {
   return (
     <ToolCardView
       name={item.name}
@@ -686,7 +973,7 @@ function ToolCard({ item }: { item: Extract<ChatItem, { kind: "tool" }> }) {
       agentName={item.agentName}
     />
   );
-}
+});
 
 /** Shared visual for a tool execution. Used by ``ToolCard`` (top-level
  *  tools from the FE's chat stream) and by ``OrchestrateAgentRow``
@@ -739,7 +1026,7 @@ export function ToolCardView({
   );
 }
 
-function UserMessage({
+const UserMessage = memo(function UserMessage({
   item,
   onEdit,
   onDelete,
@@ -892,7 +1179,7 @@ function UserMessage({
       )}
     </div>
   );
-}
+});
 
 function EditIcon() {
   return (
@@ -912,7 +1199,102 @@ function TrashIcon() {
   );
 }
 
-function CompactCard({
+export const PlanCard = memo(function PlanCard({
+  item,
+  onApprove,
+  onReject,
+}: {
+  item: Extract<ChatItem, { kind: "plan" }>;
+  onApprove: (id: number) => void;
+  onReject: (id: number) => void;
+}) {
+  // ``approved`` / ``dismissed`` both hide the buttons but keep the
+  // plan body visible — the plan IS the conversation artifact, so
+  // we don't want it to vanish on click. The state is mostly for
+  // styling (a green / dimmed footer line) so the user can see at
+  // a glance what they decided.
+  const isFinal = item.state !== "pending";
+  return (
+    <div className={`plan-card plan-card--${item.state}`}>
+      <div className="plan-card-head">
+        <span className="plan-card-badge" aria-hidden="true">▤</span>
+        <span className="plan-card-title">Plan ready for review</span>
+      </div>
+      <div className="plan-card-body">
+        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+          {item.plan}
+        </ReactMarkdown>
+      </div>
+      {item.tasks.length > 0 ? (
+        <ul className="plan-card-tasks">
+          {item.tasks.map((task, idx) => {
+            // Show the activeForm while in-progress (verb-noun
+            // gerund: "Running tests") and the imperative
+            // content otherwise ("Run tests"). Falls back to
+            // content if activeForm wasn't provided.
+            const label =
+              task.status === "in_progress" && task.activeForm
+                ? task.activeForm
+                : task.content;
+            const marker =
+              task.status === "completed"
+                ? "✓"
+                : task.status === "in_progress"
+                  ? "●"
+                  : "○";
+            return (
+              <li
+                key={`${task.content}-${idx}`}
+                className={`plan-card-task plan-card-task--${task.status}`}
+              >
+                <span className="plan-card-task-marker" aria-hidden="true">
+                  {marker}
+                </span>
+                <span className="plan-card-task-text">{label}</span>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      <div className="plan-card-actions">
+        {item.state === "pending" ? (
+          <>
+            <button
+              type="button"
+              className="plan-card-btn plan-card-btn--approve"
+              onClick={() => onApprove(item.id)}
+              title="Exit plan mode and let the agent execute this plan."
+            >
+              Approve &amp; exit plan mode
+            </button>
+            <button
+              type="button"
+              className="plan-card-btn plan-card-btn--reject"
+              onClick={() => onReject(item.id)}
+              title="Dismiss this plan. Stay in plan mode — type your feedback to ask for revisions."
+            >
+              Refine
+            </button>
+          </>
+        ) : (
+          <span
+            className={`plan-card-footer plan-card-footer--${item.state}`}
+            aria-live="polite"
+          >
+            {item.state === "approved" ? "Plan approved — plan mode exited." : "Plan dismissed."}
+          </span>
+        )}
+      </div>
+      {isFinal ? null : (
+        <div className="plan-card-hint">
+          The agent is paused. Approve to exit plan mode and execute, or refine to keep iterating.
+        </div>
+      )}
+    </div>
+  );
+});
+
+const CompactCard = memo(function CompactCard({
   item,
 }: {
   item: Extract<ChatItem, { kind: "compact" }>;
@@ -934,9 +1316,9 @@ function CompactCard({
       )}
     </div>
   );
-}
+});
 
-function LoopIterationCard({
+const LoopIterationCard = memo(function LoopIterationCard({
   item,
 }: {
   item: Extract<ChatItem, { kind: "loop" }>;
@@ -972,9 +1354,9 @@ function LoopIterationCard({
       {expanded && <pre className="loop-iteration-raw">{item.raw}</pre>}
     </div>
   );
-}
+});
 
-function ThinkingBlock({ text }: { text: string }) {
+const ThinkingBlock = memo(function ThinkingBlock({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
     <div>
@@ -988,9 +1370,9 @@ function ThinkingBlock({ text }: { text: string }) {
       {open && <div className="msg-thinking">{text}</div>}
     </div>
   );
-}
+});
 
-function ShellBlock({ item }: { item: Extract<ChatItem, { kind: "shell" }> }) {
+const ShellBlock = memo(function ShellBlock({ item }: { item: Extract<ChatItem, { kind: "shell" }> }) {
   return (
     <div className="shell-output">
       <div className="prompt-line">$ {item.command}</div>
@@ -1000,17 +1382,29 @@ function ShellBlock({ item }: { item: Extract<ChatItem, { kind: "shell" }> }) {
       )}
     </div>
   );
-}
+});
 
-export function ChatItemView({
+/** Memoized so streaming a token (which produces a new array with
+ *  N stable refs + 1 changed ref) only re-renders the one item that
+ *  actually changed. All callback props must be stable (useCallback
+ *  in App.tsx) for the shallow compare to hit. */
+export const ChatItemView = memo(function ChatItemView({
   item,
+  copyResponseText,
   onEditUser,
   onDeleteUser,
   onStopTeam,
   onStopAgent,
   onRetryAgent,
+  onApprovePlan,
+  onRejectPlan,
 }: {
   item: ChatItem;
+  /** Raw markdown text of the assistant turn this stats item closes.
+   *  Only used by the ``stats`` case to render an inline copy-response
+   *  button. Caller (App.tsx) walks back through the items to find the
+   *  preceding assistant message for the same ``runId``. */
+  copyResponseText?: string;
   /** Callback when the user submits an edit on a previous message.
    *  The handler truncates session history from this item forward and
    *  re-sends the new text as a fresh user turn. */
@@ -1026,6 +1420,13 @@ export function ChatItemView({
    *  Implementation: usually sends a follow-up user message asking
    *  the main agent to respawn the specialist with the new task. */
   onRetryAgent?: (agentName: string, newTask: string) => void;
+  /** Plan-card Approve button — exits plan mode (``/plan off``) and
+   *  flips the card's ``state`` to ``approved``. */
+  onApprovePlan?: (id: number) => void;
+  /** Plan-card Refine button — flips state to ``dismissed`` so the
+   *  buttons hide; the user types their feedback as a normal
+   *  message and the agent iterates. */
+  onRejectPlan?: (id: number) => void;
 }) {
   switch (item.kind) {
     case "attachments":
@@ -1041,16 +1442,7 @@ export function ChatItemView({
         />
       );
     case "assistant":
-      return (
-        <div className="msg-assistant">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeHighlight]}
-          >
-            {normalizeAssistantMarkdown(item.text)}
-          </ReactMarkdown>
-        </div>
-      );
+      return <AssistantMessage text={item.text} />;
     case "thinking":
       return <ThinkingBlock text={item.text} />;
     case "tool":
@@ -1070,17 +1462,24 @@ export function ChatItemView({
       return <LoopIterationCard item={item} />;
     case "compact":
       return <CompactCard item={item} />;
-    case "stats": {
-      const billed =
-        `Billed by the model: ${item.outputTokens} output total, ` +
-        `${item.reasoningTokens} of which was reasoning. ` +
-        `Visible "think" and "out" estimate what you can see on screen.`;
-      const inCtx = item.corrected
-        ? "in: real session context (count_context_tokens)"
-        : "in: still being corrected — RPC in flight";
+    case "plan":
       return (
-        <div className="agent-dispatch" title={`${inCtx}\n${billed}`}>
-          {formatStats(item)}
+        <PlanCard
+          item={item}
+          // Defaults stop the buttons from being interactive if a
+          // caller forgets to wire them — clicking does nothing
+          // rather than throwing.
+          onApprove={onApprovePlan ?? (() => {})}
+          onReject={onRejectPlan ?? (() => {})}
+        />
+      );
+    case "stats": {
+      return (
+        <div
+          className={`agent-dispatch${copyResponseText ? " agent-dispatch--with-copy" : ""}`}
+        >
+          <span>{formatStats(item)}</span>
+          {copyResponseText ? <StatsCopyButton text={copyResponseText} /> : null}
         </div>
       );
     }
@@ -1091,4 +1490,4 @@ export function ChatItemView({
     case "shell":
       return <ShellBlock item={item} />;
   }
-}
+});

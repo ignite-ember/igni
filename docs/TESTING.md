@@ -2,7 +2,7 @@
 
 ## Overview
 
-Ember Code uses **pytest** with **pytest-asyncio** for all testing. Tests live in `tests/` and run against the source in `src/ember_code/`.
+igni uses **pytest** with **pytest-asyncio** for all testing. Tests live in `tests/` and run against the source in `src/ember_code/`.
 
 ```bash
 uv run pytest tests/ -v              # full suite

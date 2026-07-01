@@ -2,7 +2,7 @@
 
 > **Status: Planned — not yet implemented.** This document describes the design for a future release. Currently, first-run setup is handled by `init.py` which copies default agents, skills, and hooks into `.ember/` without an interactive onboarding flow.
 
-When a user starts Ember Code for the first time in a project, it doesn't just drop them into a blank prompt. It runs a guided onboarding flow that sets up agents tailored to their specific project.
+When a user starts igni for the first time in a project, it doesn't just drop them into a blank prompt. It runs a guided onboarding flow that sets up agents tailored to their specific project.
 
 ## Flow Overview
 
@@ -53,7 +53,7 @@ First Run Detected
 
 ## Step 1: Create Default Agents
 
-On first run, Ember Code copies the built-in agent `.md` files into `.ember/agents/`:
+On first run, igni copies the built-in agent `.md` files into `.ember/agents/`:
 
 ```
 .ember/
@@ -76,16 +76,16 @@ These are working agents — the system is functional immediately. The rest of t
 **Why copy instead of reference?** Making them local means:
 - Users can see and edit them directly
 - They're committed to the repo (team gets them)
-- The project isn't dependent on the Ember Code version for agent definitions
+- The project isn't dependent on the igni version for agent definitions
 
 ---
 
 ## Step 2: Explain the System
 
-Ember Code introduces itself and explains the agent system:
+igni introduces itself and explains the agent system:
 
 ```
- ◆ Ember Code — ignited and ready.
+ ◆ igni — ignited and ready.
 
 I've sparked 11 agents in .ember/agents/:
 
@@ -137,12 +137,12 @@ The user can skip this step (`--skip-onboarding` or just pressing Enter).
 
 ## Step 4: Read Project Context from CodeIndex
 
-Ember Code connects to **CodeIndex** cloud to pull project intelligence:
+igni connects to **CodeIndex** cloud to pull project intelligence:
 
 ```python
 async def fetch_project_context(project_path: str) -> ProjectContext:
     """Fetch project summaries and metadata from CodeIndex."""
-    client = CodeIndexClient()  # authenticated via Ember Code login
+    client = CodeIndexClient()  # authenticated via igni login
 
     # Look up this project by repo URL or directory fingerprint
     project = await client.get_project(
@@ -173,13 +173,13 @@ async def fetch_project_context(project_path: str) -> ProjectContext:
 - **Recent activity** — what the team has been focused on lately
 - **Known issues** — tracked bugs, tech debt, areas of concern
 
-**Fallback:** If CodeIndex is unavailable or the project isn't indexed yet, Ember Code falls back to local analysis for now:
+**Fallback:** If CodeIndex is unavailable or the project isn't indexed yet, igni falls back to local analysis for now:
 - Parse `README.md`, `package.json`, `pyproject.toml`, `Cargo.toml`, etc.
 - Scan directory structure to infer architecture
 - Read `ember.md` / `CLAUDE.md` / `AGENTS.md` if they exist
 - Detect language/framework from file extensions and imports
 
-The CodeIndex fetch is marked as pending and **retried automatically at the start of the next session**. Once CodeIndex data becomes available, Ember Code merges the richer context into the existing agent pool and may suggest agent updates:
+The CodeIndex fetch is marked as pending and **retried automatically at the start of the next session**. Once CodeIndex data becomes available, igni merges the richer context into the existing agent pool and may suggest agent updates:
 
 ```
 CodeIndex context is now available for this project.
@@ -345,7 +345,7 @@ On subsequent runs, the onboarding flow is skipped. Instead:
 1. Agent pool loads from existing directories (including previously created agents)
 2. If CodeIndex context was pending from onboarding, retry the fetch — if now available, suggest agent updates
 3. CodeIndex context is refreshed in the background (if configured)
-4. If the project has changed significantly (new frameworks, major refactors), Ember Code may suggest updating agent definitions:
+4. If the project has changed significantly (new frameworks, major refactors), igni may suggest updating agent definitions:
 
 ```
 I notice you've added GraphQL (graphene) to the project since the agents
@@ -371,7 +371,7 @@ onboarding:
   skip: false                    # Skip onboarding entirely
   auto_create_defaults: true     # Copy default agents on first run
   ask_questions: true            # Interactive Q&A step
-  codeindex: true                # Fetch context from CodeIndex (uses Ember Code login)
+  codeindex: true                # Fetch context from CodeIndex (uses igni login)
   propose_agents: true           # Generate project-specific agent proposals
   max_proposals: 5               # Max number of agents to propose
 ```

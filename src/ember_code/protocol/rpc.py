@@ -80,6 +80,7 @@ class RpcMethod(StrEnum):
     GET_STATUS = "get_status"
     GET_PROCESSING = "get_processing"
     GET_CHAT_HISTORY = "get_chat_history"
+    SEARCH_CHAT = "search_chat"
     GET_PENDING_MESSAGES = "get_pending_messages"
     LIST_SESSIONS = "list_sessions"
     SWITCH_SESSION = "switch_session"
@@ -101,6 +102,50 @@ class RpcMethod(StrEnum):
     # ── Skills ────────────────────────────────────────────────────
     GET_SKILL_NAMES = "get_skill_names"
     GET_SKILL_DEFINITIONS = "get_skill_definitions"
+
+    # ── Slash commands (SDK enumeration) ─────────────────────────
+    # Mirrors Claude Code's SDK ``slash_commands`` field. Returns
+    # built-ins, markdown-authored commands, and user-invocable
+    # skills in one snapshot so IDE plugins / completion UIs can
+    # paint the full surface without inferring it.
+    GET_SLASH_COMMANDS = "get_slash_commands"
+
+    # ── Todo list (CC ``TodoWrite`` parity) ──────────────────────
+    # Snapshot of the per-session todo list maintained by the
+    # agent's ``todo_write`` tool. The UI polls or refreshes
+    # after every turn — there's no push channel yet.
+    GET_TODOS = "get_todos"
+
+    # ── Background-process watcher panel ─────────────────────────
+    # The FE's right-side watcher panel surfaces every
+    # backgrounded ``run_shell_command`` for view-only tail +
+    # explicit stop. Push channels ``process_started`` /
+    # ``process_line`` / ``process_exited`` deliver live updates
+    # so the panel doesn't poll.
+    LIST_BACKGROUND_PROCESSES = "list_background_processes"
+    READ_PROCESS_TAIL = "read_process_tail"
+    STOP_BACKGROUND_PROCESS = "stop_background_process"
+
+    # ── Plan mode (CC row 50) ────────────────────────────────────
+    # Latest plan the agent submitted via ``exit_plan_mode``.
+    # Returns ``{latest: str, history: list[str]}``. Empty when
+    # the agent hasn't called the tool yet.
+    GET_LATEST_PLAN = "get_latest_plan"
+    # User clicked Approve on a PlanCard. Persists the decision
+    # keyed by the originating run_id, flips permission mode →
+    # default, broadcasts ``plan_decided``. Returns
+    # ``{run_id, decision, mode_status}``.
+    APPROVE_PLAN = "approve_plan"
+    # User clicked Refine. Persists the dismissal but keeps the
+    # session in plan mode so the user can iterate. Same return
+    # shape as APPROVE_PLAN with empty ``mode_status``.
+    DISMISS_PLAN = "dismiss_plan"
+
+    # ── Output styles (CC row 52) ────────────────────────────────
+    # Discovered output styles + the active one. Returns
+    # ``{active: str, styles: [{name, description}, ...]}``.
+    # FE uses this to render a picker / status chip.
+    GET_OUTPUT_STYLES = "get_output_styles"
 
     # ── Knowledge ─────────────────────────────────────────────────
     AUTO_SYNC_KNOWLEDGE = "auto_sync_knowledge"

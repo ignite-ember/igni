@@ -142,7 +142,7 @@ BUILT_IN_HOOKS = [
 EMBER_MD_TEMPLATE = """\
 # Project Context
 
-<!-- This file gives Ember Code agents context about your project.
+<!-- This file gives igni agents context about your project.
      Edit it to match your project's specifics. Agents read this file
      before every task to understand conventions, architecture, and
      domain terminology. -->
@@ -170,7 +170,7 @@ EMBER_MD_TEMPLATE = """\
 
 
 CONFIG_YAML_HEADER = """\
-# Ember Code — user configuration
+# igni — user configuration
 # This file lives at ~/.ember/config.yaml and is never committed to git.
 # Project-level overrides go in .ember/config.yaml inside your repo.
 # See https://docs.ignite-ember.sh/configuration for details.
@@ -178,7 +178,7 @@ CONFIG_YAML_HEADER = """\
 """
 
 PROJECT_CONFIG_TEMPLATE = """\
-# Ember Code — project configuration
+# igni — project configuration
 # This file can be committed to git. Team members share these settings.
 # User-level overrides go in ~/.ember/config.yaml.
 # See https://docs.ignite-ember.sh/configuration for details.

@@ -1,6 +1,6 @@
 # Development
 
-Guide for contributing to Ember Code and understanding the codebase.
+Guide for contributing to igni and understanding the codebase.
 
 ## Project Structure
 
@@ -338,7 +338,7 @@ Built-in commands available in interactive mode:
 | Command | Description |
 |---|---|
 | `/help` | Show available commands and keyboard shortcuts |
-| `/quit` or `/exit` | Exit Ember Code |
+| `/quit` or `/exit` | Exit igni |
 | `/clear` | Clear conversation and reset session |
 | `/config` | Show current settings (model, permissions, features) |
 | `/agents` | List loaded agents with their tools |

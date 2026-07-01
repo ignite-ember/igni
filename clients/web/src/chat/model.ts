@@ -282,6 +282,78 @@ export function applyOrchestrateEvent(
   }
 }
 
+/** One structured task from the agent's ``exit_plan_mode``
+ *  ``tasks=[...]`` argument, plus the live status the
+ *  ``todos_updated`` push refreshes during execution.
+ *  ``activeForm`` is the verb-noun gerund the UI renders while
+ *  the task is ``in_progress`` (e.g. "Running tests" instead of
+ *  "Run tests"). */
+export type PlanTask = {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+  activeForm: string;
+};
+
+/** Coerce one untrusted task object (from a ``plan_submitted`` or
+ *  ``todos_updated`` push) to a {@link PlanTask}. Returns ``null``
+ *  when the object lacks a non-empty ``content`` field — those are
+ *  unusable and the caller should drop them. ``status`` defaults to
+ *  ``"pending"`` if missing or not one of the three valid values
+ *  (the BE could send a future status we don't recognise yet —
+ *  fail safe rather than crash). */
+export function normalizePlanTask(raw: unknown): PlanTask | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const content = String(r.content ?? "").trim();
+  if (!content) return null;
+  const status =
+    r.status === "in_progress" || r.status === "completed" ? r.status : "pending";
+  const activeForm = String(r.activeForm ?? "").trim();
+  return { content, status, activeForm };
+}
+
+/** Bulk version of {@link normalizePlanTask} that silently skips
+ *  any element it can't normalize. Used by the ``plan_submitted``
+ *  channel and ``todos_updated`` channel — both arrive as a list. */
+export function normalizePlanTasks(raw: unknown): PlanTask[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PlanTask[] = [];
+  for (const t of raw) {
+    const n = normalizePlanTask(t);
+    if (n) out.push(n);
+  }
+  return out;
+}
+
+/** Merge a fresh ``todos_updated`` snapshot into an existing
+ *  PlanCard's task list, matching by ``content``.
+ *
+ *  - Existing tasks not present in ``todos`` keep their last-known
+ *    status (the agent may have dropped a step mid-flight; blanking
+ *    would surprise the user worse than a stale tick).
+ *  - New tasks in ``todos`` that aren't in the original plan are
+ *    NOT added — the PlanCard reflects the plan the user
+ *    approved, not the live todo set. (CC behavior; the bare
+ *    ``/todos`` view shows the latter.)
+ *  - ``activeForm`` only updates if the new value is non-empty,
+ *    so a partial update can't erase a previously-set gerund. */
+export function mergePlanTasks(existing: PlanTask[], todos: unknown): PlanTask[] {
+  if (existing.length === 0) return existing;
+  const fresh = normalizePlanTasks(todos);
+  if (fresh.length === 0) return existing;
+  const byContent = new Map<string, PlanTask>();
+  for (const t of fresh) byContent.set(t.content, t);
+  return existing.map((task) => {
+    const match = byContent.get(task.content);
+    if (!match) return task;
+    return {
+      ...task,
+      status: match.status,
+      activeForm: match.activeForm || task.activeForm,
+    };
+  });
+}
+
 export type ChatItem =
   | {
       kind: "user";
@@ -359,6 +431,38 @@ export type ChatItem =
       summary: string;
     }
   | {
+      /** Plan submitted by the agent via ``exit_plan_mode`` (row 50).
+       *  Renders the plan markdown + Approve / Reject buttons.
+       *
+       *  ``state`` transitions: ``pending`` → ``approved`` (user
+       *  clicked Approve, which flips ``/plan off``) or
+       *  ``dismissed`` (user clicked Reject — buttons hide; the
+       *  plan body stays visible so the agent can still reference
+       *  it in the conversation transcript). The card never
+       *  disappears entirely — the plan is part of the
+       *  conversation history.
+       *
+       *  ``tasks`` is the optional structured checklist the
+       *  agent passed with ``exit_plan_mode(plan, tasks=[...])``.
+       *  Seeded from the ``plan_submitted`` push; updated in
+       *  place as ``todos_updated`` pushes arrive during
+       *  execution (matched by ``content``). Empty when the
+       *  agent submitted a prose-only plan. */
+      kind: "plan";
+      id: number;
+      plan: string;
+      state: "pending" | "approved" | "dismissed";
+      tasks: PlanTask[];
+      /** Run that submitted the plan. Used as the key when the
+       *  FE calls ``approve_plan`` / ``dismiss_plan`` so the BE
+       *  can persist the per-plan decision instead of inferring
+       *  from permission mode. Empty when the BE didn't supply
+       *  one (legacy push without ``run_id``); approve/dismiss
+       *  silently no-ops to keep the FE from spamming an empty
+       *  key the BE would reject. */
+      runId: string;
+    }
+  | {
       /** Structured marker for one ``/loop`` iteration. The wrapped
        *  prompt sent to the model is verbose (autonomous-mode
        *  instructions + ``loop_set_total`` reminder); the chat just
@@ -414,6 +518,10 @@ const nid = () => ++itemId;
 
 export function shellItem(command: string): ChatItem {
   return { kind: "shell", id: nid(), command, output: "", exitCode: null };
+}
+
+export function planItem(plan: string, tasks: PlanTask[] = [], runId = ""): ChatItem {
+  return { kind: "plan", id: nid(), plan, state: "pending", tasks, runId };
 }
 
 export function attachmentsItem(files: { name: string; path: string }[]): ChatItem {
@@ -704,10 +812,45 @@ const REFS_LINE_RE = /\[Referenced files:\s*([^\]]+?)\s+—\s+read before respon
 // can persist mid-thought).
 const THINK_BLOCK_RE = /<think>[\s\S]*?(<\/think>\s*|$)/g;
 
+/** Build a stats ChatItem from a persisted-history ``stats`` turn.
+ *  Backend ``get_chat_history`` emits one synthetic ``stats`` turn
+ *  per completed top-level run (input_tokens, output_tokens,
+ *  reasoning_tokens, duration). ``visibleOutText`` is the
+ *  concatenated assistant content this run produced — used to
+ *  estimate the ``out`` chars→tokens number the live path computes
+ *  from the rendered DOM. Thinking content is stripped on restore
+ *  so ``visibleThinkTokens`` is always 0 here. */
+export function restoredStatsItem(
+  turn: Record<string, unknown>,
+  visibleOutText: string,
+): ChatItem {
+  const num = (k: string) => Number(turn[k] ?? 0) || 0;
+  return {
+    kind: "stats",
+    id: nid(),
+    runId: String(turn.run_id ?? ""),
+    inputTokens: num("input_tokens"),
+    outputTokens: num("output_tokens"),
+    reasoningTokens: num("reasoning_tokens"),
+    visibleThinkTokens: 0,
+    visibleOutTokens: estimateTokens(visibleOutText),
+    duration: num("duration"),
+    // Historical stats land already-corrected — there's no in-flight
+    // count_context_tokens RPC to overwrite them.
+    corrected: true,
+  };
+}
+
 /** Persisted-history turn → renderable item (TUI parity: strip the
  * injected system-context from user turns and think blocks from
- * assistant turns). Returns null for empty or non-chat turns. */
-export function restoredItem(role: string, content: string): ChatItem | null {
+ * assistant turns). Returns null for empty or non-chat turns.
+ *
+ * The full turn dict is passed (not just role + content) so the
+ * mapper can pick up tool metadata (``tool_name``, ``args``,
+ * ``is_error``) without a second signature for tool turns. */
+export function restoredItem(turn: Record<string, unknown>): ChatItem | null {
+  const role = String(turn.role ?? "");
+  const content = String(turn.content ?? "");
   if (role === "user") {
     const text = content
       .replace(SYSTEM_CONTEXT_RE, "")
@@ -728,6 +871,55 @@ export function restoredItem(role: string, content: string): ChatItem | null {
   if (role === "assistant") {
     const text = content.replace(THINK_BLOCK_RE, "").trim();
     return text ? assistantItem(text) : null;
+  }
+  if (role === "thinking") {
+    // Backend emits a synthetic ``thinking`` turn from the assistant
+    // message's ``reasoning_content``. Reuses the live ``thinking``
+    // kind so styling matches the streaming bubble.
+    const text = content.trim();
+    return text ? { kind: "thinking", id: nid(), text } : null;
+  }
+  if (role === "tool") {
+    // Restore the tool card with status="done" — the live path
+    // builds this in two events (``tool_started`` + ``tool_completed``).
+    // History squashes the two; we land already-complete.
+    const friendlyName = String(turn.friendly_name ?? turn.tool_name ?? "");
+    const args = String(turn.args ?? "");
+    const result = content;
+    const isError = Boolean(turn.is_error);
+    const runId = String(turn.run_id ?? "");
+    return {
+      kind: "tool",
+      id: nid(),
+      runId,
+      name: friendlyName,
+      args,
+      status: isError ? "error" : "done",
+      result,
+      isError,
+      // No diff rows in restored tool cards — the BE only computes
+      // these on the live path via ``edit_file``'s rich payload.
+      // A future enhancement could re-derive them by stashing the
+      // diff in tool_args; today the textual result is enough.
+      diffRows: null,
+    };
+  }
+  if (role === "plan") {
+    // Synthetic plan turn — emitted by ``get_chat_history`` in place
+    // of an ``exit_plan_mode`` tool result. Lets the PlanCard render
+    // at the point in the conversation where the agent submitted it,
+    // not bolted onto the end.
+    const planText = String(turn.plan ?? "").trim();
+    if (!planText) return null;
+    const runId = String(turn.run_id ?? "");
+    const item = planItem(planText, normalizePlanTasks(turn.tasks), runId);
+    if (item.kind === "plan") {
+      const state = String(turn.state ?? "");
+      if (state === "pending" || state === "approved" || state === "dismissed") {
+        item.state = state;
+      }
+    }
+    return item;
   }
   return null;
 }

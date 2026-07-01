@@ -1,4 +1,4 @@
-"""Input history and prompt widget for Ember Code TUI."""
+"""Input history and prompt widget for igni TUI."""
 
 from textual.message import Message
 from textual.widgets import TextArea

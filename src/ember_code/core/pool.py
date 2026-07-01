@@ -16,6 +16,7 @@ never collide with the base hierarchy. Two plugins of the same name
 across roots are resolved one step earlier, inside ``PluginLoader``.
 """
 
+import logging
 import re
 import sys
 from pathlib import Path
@@ -29,6 +30,8 @@ from ember_code.core.config.models import ModelRegistry
 from ember_code.core.config.settings import Settings
 from ember_code.core.config.tool_permissions import ToolPermissions
 from ember_code.core.tools.registry import ToolRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class AgentPriority:
@@ -65,6 +68,13 @@ class AgentDefinition(BaseModel):
     temperature: float | None = None
     system_prompt: str = ""
     source_path: Path | None = None
+    # Set by ``PluginLoader`` for agents loaded from plugin
+    # roots — currently ``"worktree"``. ``OrchestrateTools.
+    # spawn_agent`` reads this to force per-spawn worktree
+    # isolation on plugin-shipped agents, so a plugin can't
+    # ride along on the user's filesystem with full write
+    # access. ``None`` for user / project agents.
+    force_isolation: str | None = None
 
 
 class AgentInfo(BaseModel):
@@ -93,6 +103,22 @@ class AgentInfo(BaseModel):
 
 
 # ── Parsing ──────────────────────────────────────────────────────────
+
+# Frontmatter keys that plugin-shipped agents are NOT allowed to
+# declare — they'd let a plugin escalate its own privileges. CC
+# parity (row 37: "no hooks / mcpServers / permissionMode").
+# Detection logs a warning and the fields are dropped from the
+# returned ``AgentDefinition``.
+_PLUGIN_RESTRICTED_FRONTMATTER_KEYS: frozenset[str] = frozenset(
+    {
+        "hooks",
+        "mcpServers",
+        "mcp_servers",  # snake_case alias — ember already parses it
+        "permissionMode",
+        "permission_mode",
+        "permissions",
+    }
+)
 
 
 def parse_agent_file(path: Path) -> AgentDefinition:
@@ -142,6 +168,70 @@ def parse_agent_file(path: Path) -> AgentDefinition:
         temperature=fm.get("temperature"),
         system_prompt=body,
         source_path=path,
+    )
+
+
+def _raw_frontmatter_keys(path: Path) -> set[str]:
+    """Return the top-level YAML frontmatter keys from ``path``,
+    or an empty set on any read / parse failure.
+
+    Used by the plugin-restriction filter to detect (and warn
+    about) restricted keys that ``parse_agent_file`` itself
+    silently drops. Without this we couldn't tell the difference
+    between "plugin author tried to declare hooks and we
+    discarded them" vs "plugin author didn't try."
+    """
+    try:
+        content = path.read_text()
+    except (OSError, UnicodeDecodeError):
+        return set()
+    match = re.match(r"^---\s*\n(.*?)\n---\s*\n?(.*)", content, re.DOTALL)
+    if not match:
+        return set()
+    try:
+        fm = yaml.safe_load(match.group(1)) or {}
+    except yaml.YAMLError:
+        return set()
+    if not isinstance(fm, dict):
+        return set()
+    return set(fm.keys())
+
+
+def _apply_plugin_restrictions(
+    definition: AgentDefinition,
+    raw_keys: set[str],
+    plugin_name: str = "",
+) -> AgentDefinition:
+    """Strip restricted fields from a plugin-shipped agent
+    definition and force ``force_isolation="worktree"`` so its
+    spawns run in a fresh worktree.
+
+    Restricted keys present in the original frontmatter trigger
+    a single warning per agent so plugin authors can fix their
+    manifests (and so a security audit can see the attempted
+    escalation in logs). ``mcp_servers`` was the only restricted
+    field already on ``AgentDefinition``; the others
+    (``hooks``, ``permissionMode``) are silently dropped by
+    ``parse_agent_file`` itself but still warned about here so
+    the threat model is enforced at the *load* boundary rather
+    than relying on the model never adding those fields.
+    """
+    declared_restricted = raw_keys & _PLUGIN_RESTRICTED_FRONTMATTER_KEYS
+    if declared_restricted:
+        agent_id = f"{plugin_name}:{definition.name}" if plugin_name else definition.name
+        logger.warning(
+            "Plugin agent %s declared restricted frontmatter keys %s — "
+            "these are stripped (CC parity, row 37). Plugin-shipped "
+            "agents cannot declare their own hooks, mcpServers, or "
+            "permissionMode.",
+            agent_id,
+            sorted(declared_restricted),
+        )
+    return definition.model_copy(
+        update={
+            "mcp_servers": [],
+            "force_isolation": "worktree",
+        }
     )
 
 
@@ -360,6 +450,7 @@ class AgentPool:
         path: Path,
         priority: int,
         namespace: str | None = None,
+        plugin_restricted: bool = False,
     ) -> None:
         """Parse .md files from a directory, keeping highest-priority wins.
 
@@ -395,6 +486,18 @@ class AgentPool:
                 continue
             try:
                 definition = parse_agent_file(md_file)
+                if plugin_restricted:
+                    # Apply CC's plugin-agent security envelope:
+                    # strip restricted fields and force per-spawn
+                    # worktree isolation. The raw-frontmatter
+                    # re-read costs one extra file read per
+                    # plugin agent (negligible) and lets us
+                    # surface a warning for any forbidden keys
+                    # the plugin author tried to declare.
+                    raw_keys = _raw_frontmatter_keys(md_file)
+                    definition = _apply_plugin_restrictions(
+                        definition, raw_keys, plugin_name=namespace or ""
+                    )
                 if namespace:
                     definition = definition.model_copy(
                         update={"name": f"{namespace}:{definition.name}"}

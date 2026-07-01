@@ -1,6 +1,6 @@
 # Configuration
 
-Ember Code is configured through a layered system of config files, environment variables, and CLI flags.
+igni is configured through a layered system of config files, environment variables, and CLI flags.
 
 ## Configuration Hierarchy
 
@@ -16,13 +16,13 @@ Each level deep-merges over the previous. The `~/.ember/config.yaml` file is aut
 
 ## Models & Authentication
 
-Ember Code needs an LLM to run. Models are resolved through a **config-driven registry** — agent `.md` files reference models by name (e.g., `model: MiniMax-M2.7`), and the registry maps that name to a provider, endpoint URL, model ID, and API key.
+igni needs an LLM to run. Models are resolved through a **config-driven registry** — agent `.md` files reference models by name (e.g., `model: MiniMax-M2.7`), and the registry maps that name to a provider, endpoint URL, model ID, and API key.
 
 ### Model Registry
 
 The registry has two layers:
 
-1. **Built-in models** — ship with Ember Code, route through the Ember hosted endpoint
+1. **Built-in models** — ship with igni, route through the Ember hosted endpoint
 2. **Custom models (BYOM)** — user-defined entries that override or extend the built-ins
 
 ```yaml
@@ -55,7 +55,7 @@ When an agent references `model: <name>`:
 4. None of the above?                               → error: unknown model
 ```
 
-### Option 1: Ember Code Account (default, zero-config)
+### Option 1: igni Account (default, zero-config)
 
 Sign up at **https://ignite-ember.sh**. All built-in models route through the Ember hosted endpoint. Free tier available.
 
@@ -69,7 +69,7 @@ No manual model configuration needed — the built-in registry handles everythin
 
 #### Cloud model auto-discovery
 
-When you're logged in, Ember Code fetches the deduplicated `(model, base_url)` catalogue from your Ember Cloud key pool (`GET /v1/chat/models`) and merges each entry into the local registry on session start. Opening the model picker (`/model`) refreshes the catalogue so models added on the portal show up without restarting the CLI.
+When you're logged in, igni fetches the deduplicated `(model, base_url)` catalogue from your Ember Cloud key pool (`GET /v1/chat/models`) and merges each entry into the local registry on session start. Opening the model picker (`/model`) refreshes the catalogue so models added on the portal show up without restarting the CLI.
 
 Cloud-discovered entries always use `api_key: cloud_token` (your login credentials) and are tagged with `source: "cloud"`. **User-defined entries always win** — if your config already defines `gpt-4o`, the cloud entry with the same name is skipped, so pinned timeouts and provider overrides survive.
 
@@ -139,9 +139,9 @@ Works with MiniMax, OpenAI, Anthropic, Groq, Together AI, OpenRouter, Ollama, or
 
 ### Comparison with Claude Code
 
-Claude Code uses a simple alias map (`"sonnet"` → `"claude-sonnet-4-6"`) because it only supports Anthropic models. Ember Code needs a full registry because it's multi-provider — each model name must resolve to a provider class, endpoint URL, model ID, and credentials.
+Claude Code uses a simple alias map (`"sonnet"` → `"claude-sonnet-4-6"`) because it only supports Anthropic models. igni needs a full registry because it's multi-provider — each model name must resolve to a provider class, endpoint URL, model ID, and credentials.
 
-| Aspect | Claude Code | Ember Code |
+| Aspect | Claude Code | igni |
 |---|---|---|
 | Model resolution | Alias map (string → string) | Config-driven registry (name → provider + URL + key) |
 | First-party API | `ANTHROPIC_API_KEY` | `/login` device-flow (Ember hosted MiniMax M2.7) |
@@ -152,7 +152,7 @@ Claude Code uses a simple alias map (`"sonnet"` → `"claude-sonnet-4-6"`) becau
 | Adding new models | Not supported (Anthropic only) | Add a registry entry in config |
 | Key helper script | `apiKeyHelper` | `api_key_env` or `api_key_cmd` per model |
 
-The key difference: Claude Code only supports Anthropic models through different providers. Ember Code supports **any model from any provider** — MiniMax, OpenAI, Anthropic, Groq, local Ollama, etc. The config-driven registry means adding a new provider is a config change, not a code change.
+The key difference: Claude Code only supports Anthropic models through different providers. igni supports **any model from any provider** — MiniMax, OpenAI, Anthropic, Groq, local Ollama, etc. The config-driven registry means adding a new provider is a config change, not a code change.
 
 ---
 
@@ -165,10 +165,10 @@ The key difference: Claude Code only supports Anthropic models through different
 #
 # Model resolution order:
 #   1. User-provided custom models (BYOM - Bring Your Own Model)
-#   2. Ember Code hosted models (requires Ember Code account)
+#   2. igni hosted models (requires igni account)
 #
-# If no custom model is configured, Ember Code uses its own hosted
-# MiniMax M2.7 endpoint. You need an Ember Code account for this.
+# If no custom model is configured, igni uses its own hosted
+# MiniMax M2.7 endpoint. You need an igni account for this.
 # Sign up at https://ignite-ember.sh (free tier available).
 
 models:
@@ -262,7 +262,7 @@ storage:
 
 # Context compression
 #
-# Ember Code uses a two-layer compression strategy to keep conversations
+# igni uses a two-layer compression strategy to keep conversations
 # within a token budget:
 #
 # 1. **Tool result compression** (Agno CompressionManager)
@@ -292,7 +292,7 @@ storage:
 
 # Project rules
 # Controls cross-tool compatibility for project instruction files.
-# When cross_tool_support is true, Ember Code reads CLAUDE.md files
+# When cross_tool_support is true, igni reads CLAUDE.md files
 # in addition to ember.md at every level (root + subdirectories).
 rules:
   cross_tool_support: true         # also reads CLAUDE.md files (set false to disable)
@@ -323,8 +323,8 @@ scheduler:
   max_concurrent: 1                # Max tasks running at once (bounded by semaphore)
 
 # Agents & Skills
-# By default, Ember Code scans its own directories AND Claude Code / Codex directories.
-# Set cross_tool_support: false to only scan Ember Code directories.
+# By default, igni scans its own directories AND Claude Code / Codex directories.
+# Set cross_tool_support: false to only scan igni directories.
 agents:
   cross_tool_support: true         # also scans .claude/agents/, .codex/, etc.
   # Ember dirs (always scanned):
@@ -460,7 +460,7 @@ cat src/auth.py | ignite-ember -p              # pipe stdin as context
 
 ## Project Instructions (Hierarchical Rules)
 
-Ember Code loads project instructions from multiple levels, merging them top-down. This is similar to Claude Code's `CLAUDE.md` system.
+igni loads project instructions from multiple levels, merging them top-down. This is similar to Claude Code's `CLAUDE.md` system.
 
 ### Rules Hierarchy
 
@@ -474,7 +474,7 @@ At each level, rules are merged additively. Subdirectory rules add specificity w
 
 ### CLAUDE.md Compatibility
 
-When `rules.cross_tool_support` is `true`, Ember Code also reads `CLAUDE.md` files at every level (root and subdirectories), in addition to `ember.md`. If both files exist in the same directory, their contents are merged.
+When `rules.cross_tool_support` is `true`, igni also reads `CLAUDE.md` files at every level (root and subdirectories), in addition to `ember.md`. If both files exist in the same directory, their contents are merged.
 
 ```yaml
 # .ember/config.yaml
@@ -537,7 +537,7 @@ When editing `handler.py`, the merged context includes:
 
 ## Progress Tracking (TODO.md)
 
-Ember Code uses a two-level TODO system for persistent progress tracking across sessions.
+igni uses a two-level TODO system for persistent progress tracking across sessions.
 
 ### Two Levels
 

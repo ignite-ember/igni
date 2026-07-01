@@ -1,11 +1,21 @@
 """Plugin discovery + namespace-prefixed apply to existing loaders.
 
-Scans four roots in priority order (later wins same-name collisions):
+Scans six roots in priority order (later wins same-name collisions):
 
-    1. ~/.claude/plugins/           (Claude user-global)
-    2. ~/.ember/plugins/            (ember user-global)
-    3. <project>/.claude/plugins/   (Claude project-local)
-    4. <project>/.ember/plugins/    (ember project-local)
+    1. ~/.claude/plugins/                       (Claude user-global)
+    2. ~/.ember/plugins/                        (ember user-global)
+    3. <project>/.claude/plugins/               (Claude project-local)
+    4. <project>/.ember/plugins/                (ember project-local)
+    5. <managed>/.claude/plugins/               (sysadmin, cross-tool)
+    6. <managed>/.ember/plugins/                (sysadmin, ember-native)
+
+``<managed>`` is the OS-specific write-protected directory used
+by the managed-settings tier (see
+``settings._platform_managed_settings_path``). Managed plugins
+beat project plugins on same-name collisions and can't be
+disabled by the user — the "you can't `--auto-approve` your way
+out of org policy" rule extends to "you can't disable an
+org-enforced plugin."
 
 A plugin = directory containing ``.claude-plugin/plugin.json``. Anything
 else under the roots is ignored silently — leaves room for stray files,
@@ -38,6 +48,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _platform_managed_plugins_root() -> Path | None:
+    """OS-specific sysadmin-controlled directory that may host
+    enforced plugin installations.
+
+    Same parent directory as the managed-settings file
+    (``managed-settings.yaml``) — both live under one
+    write-protected root so a sysadmin / MDM profile can ship a
+    full org policy bundle (settings + instructions + plugins)
+    in one place. Returns ``None`` on platforms with no defined
+    managed location.
+    """
+    import sys
+
+    if sys.platform == "darwin":
+        return Path("/Library/Application Support/Ember")
+    if sys.platform.startswith("linux"):
+        return Path("/etc/ember")
+    if sys.platform == "win32":
+        import os
+
+        program_data = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
+        return Path(program_data) / "Ember"
+    return None
+
+
 class PluginLoader:
     """Discovers plugins and applies their bundled extensions."""
 
@@ -47,12 +82,14 @@ class PluginLoader:
     # ── Discovery ────────────────────────────────────────────────────
 
     def load_all(self, project_dir: Path | None = None) -> None:
-        """Scan all four roots and populate the plugin registry.
+        """Scan all six roots and populate the plugin registry.
 
         Same-name collisions across roots resolve by ``priority``: the
         higher-priority root wins. Plugins disabled via state are still
         recorded here — the apply steps are where ``disabled`` is
-        honored, so the panel can still show disabled plugins.
+        honored, so the panel can still show disabled plugins. Managed
+        plugins (priorities 5/6) win above project (3/4) and are
+        always enabled — see :attr:`PluginDefinition.is_managed`.
         """
         if project_dir is None:
             project_dir = Path.cwd()
@@ -63,6 +100,14 @@ class PluginLoader:
             ("project-claude", project_dir / ".claude" / "plugins", 3),
             ("project-ember", project_dir / ".ember" / "plugins", 4),
         ]
+
+        # Managed tier — sysadmin-controlled, sibling to the
+        # managed-settings file. ``None`` on platforms with no
+        # defined managed location.
+        managed_root = _platform_managed_plugins_root()
+        if managed_root is not None:
+            roots.append(("managed-claude", managed_root / ".claude" / "plugins", 5))
+            roots.append(("managed-ember", managed_root / ".ember" / "plugins", 6))
 
         for root_kind, root_path, priority in roots:
             self._load_root(root_kind, root_path, priority)
@@ -100,6 +145,8 @@ class PluginLoader:
                 has_hooks=(plugin_dir / "hooks" / "hooks.json").is_file(),
                 has_mcp=(plugin_dir / ".mcp.json").is_file() or (plugin_dir / "mcp.json").is_file(),
                 has_tools=(plugin_dir / "tools").is_dir(),
+                has_lsp=(plugin_dir / ".lsp.json").is_file(),
+                has_monitors=(plugin_dir / ".monitors.json").is_file(),
             )
 
             existing = self._plugins.get(manifest.name)
@@ -149,7 +196,10 @@ class PluginLoader:
 
         AgentPool exposes ``_load_directory`` (single-underscore — used
         across the package, not strictly private). The namespacing
-        rule mirrors skills: ``<plugin>:<agent>``.
+        rule mirrors skills: ``<plugin>:<agent>``. Plugin agents are
+        loaded with ``plugin_restricted=True`` so their definitions
+        get sanitised (no hooks / mcpServers / permissionMode) and
+        forced into per-spawn worktree isolation — CC parity row 37.
         """
         disabled = disabled or set()
         for plugin in self._plugins.values():
@@ -159,6 +209,7 @@ class PluginLoader:
                 plugin.root_path / "agents",
                 priority=plugin.source.priority,
                 namespace=plugin.name,
+                plugin_restricted=True,
             )
 
     def apply_to_hooks(
@@ -216,4 +267,38 @@ class PluginLoader:
             (p.name, p.root_path / "tools")
             for p in self._plugins.values()
             if p.name not in disabled and p.has_tools
+        ]
+
+    def collect_lsp_roots(
+        self,
+        *,
+        disabled: set[str] | None = None,
+    ) -> list[tuple[Path, str]]:
+        """Return ``(plugin_root, plugin_name)`` for every enabled
+        plugin that bundles a ``.lsp.json``. Consumed by
+        :func:`ember_code.core.lsp.config.load_lsp_config` to
+        register plugin-bundled language servers under the
+        plugin's namespace."""
+        disabled = disabled or set()
+        return [
+            (p.root_path, p.name)
+            for p in self._plugins.values()
+            if p.name not in disabled and p.has_lsp
+        ]
+
+    def collect_monitor_roots(
+        self,
+        *,
+        disabled: set[str] | None = None,
+    ) -> list[tuple[Path, str]]:
+        """Return ``(plugin_root, plugin_name)`` for every enabled
+        plugin that bundles a ``.monitors.json``. Consumed by
+        :func:`ember_code.core.monitors.config.load_monitor_config`
+        to register plugin-bundled background monitors under the
+        plugin's namespace."""
+        disabled = disabled or set()
+        return [
+            (p.root_path, p.name)
+            for p in self._plugins.values()
+            if p.name not in disabled and p.has_monitors
         ]

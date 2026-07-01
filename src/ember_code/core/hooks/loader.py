@@ -90,9 +90,17 @@ class HookLoader:
                     command=hook_data.get("command", ""),
                     url=hook_data.get("url", ""),
                     headers=hook_data.get("headers", {}),
+                    text=hook_data.get("text", ""),
+                    mcp_server=hook_data.get("mcp_server", ""),
+                    mcp_tool=hook_data.get("mcp_tool", ""),
+                    mcp_args=hook_data.get("mcp_args", {}),
                     matcher=hook_data.get("matcher", ""),
                     timeout=hook_data.get("timeout", 10000),
                     background=hook_data.get("background", False),
+                    # Accept Claude Code's camelCase ``asyncRewake``
+                    # AND a snake_case alias for parity with the
+                    # rest of ember-code's settings.
+                    async_rewake=hook_data.get("asyncRewake", hook_data.get("async_rewake", False)),
                 )
                 bucket = target.setdefault(event_name, [])
                 if prepend:

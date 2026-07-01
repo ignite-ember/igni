@@ -50,6 +50,6 @@ class AddSelectionToChatAction : AnAction() {
 
         // Surface the chat panel so the user sees the new pill.
         ToolWindowManager.getInstance(project)
-            .getToolWindow("Ember Code")?.show(null)
+            .getToolWindow("igni")?.show(null)
     }
 }

@@ -1,4 +1,4 @@
-"""Interactive session loop — REPL for Ember Code."""
+"""Interactive session loop — REPL for igni."""
 
 import logging
 import time

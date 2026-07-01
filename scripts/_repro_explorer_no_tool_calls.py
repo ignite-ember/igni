@@ -69,7 +69,7 @@ def build_explorer_agent(work_dir: Path):
 # A task description like the one in the user's TUI screenshot — 8 numbered
 # steps + 7 sub-bullets. Enough length / structure to trigger the pattern.
 LONG_TASK = """\
-Explore the Ember Code project architecture comprehensively. Read these
+Explore the igni project architecture comprehensively. Read these
 files and directories:
 
 1. Read src/ember_code/backend/ directory listing and key files

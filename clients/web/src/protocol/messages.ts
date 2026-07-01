@@ -118,6 +118,7 @@ export type CommandAction =
   | "none"
   | "quit"
   | "clear"
+  | "fork"
   | "sessions"
   | "model"
   | "model_switched"
@@ -133,6 +134,7 @@ export type CommandAction =
   | "hooks"
   | "loop"
   | "schedule"
+  | "watcher"
   | "compact"
   | "run_prompt";
 
@@ -153,6 +155,12 @@ export interface StatusUpdate extends BaseMessage {
   model: string;
   cloud_connected: boolean;
   cloud_org: string;
+  /** Active permission mode (row 50 — plan-mode badge). One of
+   *  ``default`` / ``plan`` / ``acceptEdits`` / ``bypassPermissions`` /
+   *  ``dontAsk``. ``plan`` triggers the PlanBadge in the header.
+   *  Defaults to ``default`` so older BEs that don't send the
+   *  field still type-check. */
+  permission_mode: string;
 }
 
 export interface Info extends BaseMessage {
@@ -180,6 +188,13 @@ export interface PushNotification extends BaseMessage {
   channel: string;
   payload: Record<string, unknown>;
 }
+
+/** Channels emitted by the BE for plan-mode UI (row 50 — full UI).
+ *  Kept as string-literal types so the App.tsx router gets exhaustive
+ *  narrowing for the channels we care about while still allowing
+ *  future channels through the open ``string`` type on the parent. */
+export type PermissionModeChangedPayload = { mode: string; previous: string };
+export type PlanSubmittedPayload = { plan: string };
 
 // ── Multi-client session mirroring ──────────────────────────────────
 

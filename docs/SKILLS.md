@@ -7,7 +7,7 @@ Agents = persistent identities with tools        "I am an editor agent"
 Skills = reusable task recipes invoked on demand  "/deploy staging"
 ```
 
-Skills use the **same format as Claude Code** — `SKILL.md` files with YAML frontmatter. Claude Code skills work in Ember Code out of the box.
+Skills use the **same format as Claude Code** — `SKILL.md` files with YAML frontmatter. Claude Code skills work in igni out of the box.
 
 ---
 
@@ -112,20 +112,20 @@ Invoked as `/deploy staging` → `$1` becomes `staging`, `$ARGUMENTS` becomes `s
 
 ## Skill Directories
 
-By default, skills are loaded from **Ember Code directories only**:
+By default, skills are loaded from **igni directories only**:
 
 | Location | Scope | Shared? |
 |---|---|---|
 | `.ember/skills/` | Project | Yes (commit to repo) |
 | `.ember/skills.local/` | Project | No (gitignored) |
 | `~/.ember/skills/` | User (all projects) | No |
-| `<install>/skills/` | Built-in | Shipped with Ember Code |
+| `<install>/skills/` | Built-in | Shipped with igni |
 
 Name conflicts: project-level wins over user-level, which wins over built-in.
 
 ### Cross-Tool Support (on by default)
 
-Cross-tool support is enabled by default. Ember Code scans Claude Code directories automatically. To disable, set `skills.cross_tool_support: false`.
+Cross-tool support is enabled by default. igni scans Claude Code directories automatically. To disable, set `skills.cross_tool_support: false`.
 
 Additional directories scanned:
 
@@ -134,7 +134,7 @@ Additional directories scanned:
 | `.claude/skills/` | Claude Code (project) |
 | `~/.claude/skills/` | Claude Code (user) |
 
-Within the same scope, Ember Code directories take precedence over Claude Code.
+Within the same scope, igni directories take precedence over Claude Code.
 
 ---
 
@@ -282,7 +282,7 @@ This means a project with 50 skills adds only ~5,000 tokens of metadata to conte
 
 ## Built-in Skills
 
-Ember Code ships with built-in skills in `<install>/skills/`:
+igni ships with built-in skills in `<install>/skills/`:
 
 | Skill | Description |
 |---|---|
@@ -418,13 +418,13 @@ Skills are executed **by** agents. When you invoke `/resolve-issues main`, the O
 
 ## Claude Code Compatibility
 
-Ember Code skills use the **same format** as Claude Code:
+igni skills use the **same format** as Claude Code:
 - Same `SKILL.md` file in named directory
 - Same frontmatter fields (`name`, `description`, `context`, `agent`, `allowed-tools`, etc.)
 - Same string substitutions (`$ARGUMENTS`, `$1`, `${CLAUDE_SKILL_DIR}` mapped to `${EMBER_SKILL_DIR}`)
 - Same directory scoping (`.claude/skills/` is scanned alongside `.ember/skills/`)
 
-Claude Code skills work in Ember Code out of the box. The key difference: in Ember Code, skills can leverage CodeIndex for semantic understanding and the Orchestrator distributes skill instructions across a coordinated team — not just a single agent loop.
+Claude Code skills work in igni out of the box. The key difference: in igni, skills can leverage CodeIndex for semantic understanding and the Orchestrator distributes skill instructions across a coordinated team — not just a single agent loop.
 
 ---
 

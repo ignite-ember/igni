@@ -6,20 +6,27 @@ import {
   compactItem,
   correctStatsCtx,
   restoredItem,
+  restoredStatsItem,
   errorItem,
   infoItem,
   isOrchestrateActive,
   loopItem,
+  mergePlanTasks,
   newStreamState,
+  normalizePlanTasks,
+  planItem,
   shellItem,
   userItem,
   type ChatItem,
   type OrchestrateEvent,
 } from "./chat/model";
 import { ClientStateStore, ensureClientId } from "./clientState";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ChatItemView } from "./components/ChatItems";
+import { ChatSearchBar } from "./components/ChatSearchBar";
 import { Composer, BUILTIN_COMMANDS, type SlashCommand } from "./components/Composer";
 import { CodeIndexIndicator } from "./components/CodeIndexIndicator";
+import { WatcherIndicator } from "./components/WatcherIndicator";
 import { CtxMeter, SessionChip } from "./components/StatusBits";
 import { HitlDialog, type HitlDecision } from "./components/HitlDialog";
 import {
@@ -47,6 +54,7 @@ import { InfoPanel } from "./components/panels/InfoPanel";
 import { LoginPanel } from "./components/panels/LoginPanel";
 import { LoopPanel } from "./components/panels/LoopPanel";
 import { McpPanel } from "./components/panels/McpPanel";
+import { WatcherPanel } from "./components/panels/WatcherPanel";
 import { SchedulePanel } from "./components/panels/SchedulePanel";
 import { EmberClient, pickNativeDirectory, type ConnectionState } from "./protocol/client";
 import type { HITLRequest, ServerMessage, StatusUpdate } from "./protocol/messages";
@@ -65,6 +73,7 @@ type PanelState =
   | { kind: "plugins" }
   | { kind: "knowledge" }
   | { kind: "hooks" }
+  | { kind: "watcher" }
   | { kind: "dir-picker" };
 
 interface UpdateInfo {
@@ -86,10 +95,26 @@ const TOOLS_MENU: { label: string; command: string; desc: string }[] = [
   { label: "Hooks", command: "/hooks", desc: "pre/post tool hooks" },
   { label: "Loop", command: "/loop", desc: "recurring prompt status" },
   { label: "Scheduled tasks", command: "/schedule", desc: "background routines" },
+  { label: "Watcher", command: "/watcher", desc: "background processes & live logs" },
   { label: "Compact context", command: "/compact", desc: "summarize old turns" },
   { label: "Context breakdown", command: "/ctx", desc: "system vs runs token split" },
   { label: "Help", command: "/help", desc: "all commands" },
 ];
+
+/** Walk back from a ``stats`` item's index to find the assistant
+ *  text that closes the same run. The inline copy-response button on
+ *  the stats line copies this text. We stop at the previous user
+ *  message because every stats item belongs to exactly one turn. */
+function findAssistantTextForStats(items: ChatItem[], idx: number): string | undefined {
+  const stats = items[idx];
+  if (!stats || stats.kind !== "stats") return undefined;
+  for (let i = idx - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.kind === "user") return undefined;
+    if (it.kind === "assistant") return it.text;
+  }
+  return undefined;
+}
 
 /** Pretty label for ``Tier`` values from ember-server
  *  (lite / pro / max / codeindex). The DB stores lowercase, the UI
@@ -192,6 +217,7 @@ export default function App() {
         if (id === "new_chat") {
           // Empty the chat — same effect as the ``/clear`` command.
           setItems([]);
+          setHistoryIndexToItemIndex([]);
         } else if (id === "check_update") {
           // App-menu "Check for Updates…" — fire the explicit check
           // with feedback (``silent=false`` surfaces an OS "Up to
@@ -303,7 +329,7 @@ export default function App() {
         // refocus the window.
         void host.notify({
           title: "Update available",
-          body: `Ember Code ${info.latest_version} is ready to install.`,
+          body: `igni ${info.latest_version} is ready to install.`,
         });
       }
     },
@@ -356,7 +382,7 @@ export default function App() {
       current_version: "0.6.0",
       latest_version: "0.7.0",
       download_url:
-        "https://github.com/ignite-ember/ember__code/releases/latest",
+        "https://github.com/ignite-ember/igni/releases/latest",
     });
   }, [announceUpdate]);
   // Per-client UI state — hydrated from the BE on connect. Lives in
@@ -473,7 +499,7 @@ export default function App() {
     try {
       if (typeof Notification === "undefined") return;
       if (Notification.permission === "granted") {
-        new Notification("Ember Code", { body: "Your reply is ready.", silent: true });
+        new Notification("igni", { body: "Your reply is ready.", silent: true });
       } else if (Notification.permission !== "denied") {
         // Request permission once; subsequent runs honour the choice.
         void Notification.requestPermission();
@@ -507,6 +533,14 @@ export default function App() {
     }
   }, [client]);
 
+  // Tracks an acceptEdits flip that was triggered by the HITL
+  // dialog's *"Accept all edits during this session"* shortcut. The
+  // mental model the user signed up for is "auto-approve edits FOR
+  // THIS TASK" — not "permanently lower the gate". When the run's
+  // content stream ends (``streaming_done``) we revert by firing
+  // ``/accept off`` so the next user turn starts in default mode.
+  const autoAcceptForRunRef = useRef(false);
+
   // ── Streamed event handler (run + HITL-resume streams) ───────────
   const onStreamEvent = useCallback(
     (m: ServerMessage) => {
@@ -517,6 +551,13 @@ export default function App() {
         // through the tail — see the state declaration above.
         setProc(false);
         setFinalizing(true);
+        // Revert the auto-accept-for-this-run flip the shortcut put
+        // in place. Runs ``/accept off`` silently so the chat list
+        // doesn't show a fake typed slash command.
+        if (autoAcceptForRunRef.current) {
+          autoAcceptForRunRef.current = false;
+          void runCommand("/accept off", false);
+        }
         return;
       }
       if (m.type === "run_paused") {
@@ -579,29 +620,63 @@ export default function App() {
 
   // Persisted history + interrupted-message markers for a session,
   // as renderable items. Used on initial attach AND session picks.
+  // Parallel to ``items``: ``historyIndexToItemIndex[i]`` is the FE
+  // items position of the i-th turn in ``get_chat_history``'s output,
+  // or -1 if the turn was filtered out by ``restoredItem``. The chat
+  // search bar uses this to translate BE match indices into FE
+  // scroll-to positions without re-walking the items array.
+  const [historyIndexToItemIndex, setHistoryIndexToItemIndex] = useState<number[]>(
+    [],
+  );
+
   const fetchHistoryItems = useCallback(
-    async (id: string): Promise<ChatItem[]> => {
+    async (id: string): Promise<{ items: ChatItem[]; historyMap: number[] }> => {
       const loaded: ChatItem[] = [];
+      const historyMap: number[] = [];
       try {
         const history = await client.rpc<Record<string, unknown>[]>(
           "get_chat_history",
           { session_id: id },
         );
+        // Accumulate visible assistant text per run_id so the stats
+        // turn can estimate ``visibleOutTokens`` from the same string
+        // the user sees — matching the live path's behavior.
+        const assistantTextByRun = new Map<string, string>();
         for (const turn of history || []) {
           const role = String(turn.role ?? "");
-          const content = String(turn.content ?? "");
           const runId = typeof turn.run_id === "string" ? turn.run_id : "";
-          const item = restoredItem(role, content);
+          if (role === "stats") {
+            historyMap.push(loaded.length);
+            loaded.push(restoredStatsItem(turn, assistantTextByRun.get(runId) ?? ""));
+            continue;
+          }
+          const item = restoredItem(turn);
           if (item) {
             // Attach the BE-side run_id to user items so they're
             // edit/delete-targetable after a session restore.
             if (item.kind === "user" && runId) item.runId = runId;
+            if (item.kind === "assistant" && runId) {
+              const prev = assistantTextByRun.get(runId) ?? "";
+              assistantTextByRun.set(runId, prev ? `${prev} ${item.text}` : item.text);
+            }
+            historyMap.push(loaded.length);
             loaded.push(item);
+          } else {
+            // ``restoredItem`` filtered this turn out (empty after
+            // stripping). Record -1 so the search-result mapping
+            // marks this match as unreachable rather than landing on
+            // the wrong item.
+            historyMap.push(-1);
           }
         }
       } catch {
         /* no history — fresh session */
       }
+      // PlanCards are emitted inline by ``get_chat_history`` (a
+      // synthetic ``role: "plan"`` turn replaces each
+      // ``exit_plan_mode`` tool result) so the card renders at the
+      // conversation position where the agent submitted it — not
+      // bolted onto the end. No separate fetch needed.
       try {
         const pending = await client.rpc<Record<string, unknown>[]>(
           "get_pending_messages",
@@ -613,7 +688,7 @@ export default function App() {
             // <attached-files> wrapper). Route through restoredItem
             // so the bubble displays only the user-typed text; the
             // @<path> tokens render as inline pills.
-            const item = restoredItem("user", String(p.content ?? ""));
+            const item = restoredItem({ role: "user", content: String(p.content ?? "") });
             if (item) loaded.push(item);
           }
           loaded.push(
@@ -625,7 +700,7 @@ export default function App() {
       } catch {
         /* crash recovery is best-effort */
       }
-      return loaded;
+      return { items: loaded, historyMap };
     },
     [client],
   );
@@ -704,9 +779,16 @@ export default function App() {
             clientState.set(SESSION_KEY, client.sessionId);
             setSessionId(client.sessionId);
             // Resumed BE session (--resume-session / crash restart):
-            // show its history instead of an empty welcome.
+            // show its history instead of an empty welcome. The
+            // actual "land at the most recent message" scroll fires
+            // from the ``bootScrollDoneRef`` effect below — we
+            // can't call ``scrollToBottom`` inline here because
+            // ``setItems`` is async and Virtuoso's ``data`` prop
+            // hasn't updated yet, so ``scrollToIndex("LAST")``
+            // would resolve against the still-empty list.
             const loaded = await fetchHistoryItems(client.sessionId);
-            if (loaded.length) setItems(loaded);
+            if (loaded.items.length) setItems(loaded.items);
+            setHistoryIndexToItemIndex(loaded.historyMap);
           } catch {
             /* ignore */
           }
@@ -957,6 +1039,86 @@ export default function App() {
           });
         } else if (m.channel === "session_named") {
           void refreshSessions();
+        } else if (m.channel === "permission_mode_changed") {
+          // BE flipped the live ``PermissionEvaluator.mode``. The
+          // status badge reads from ``status.permission_mode``;
+          // patch the cached status so the badge updates without
+          // waiting for the next ``status_update`` push (which
+          // only fires on token-counter changes).
+          const mode = String(
+            (m.payload as { mode?: unknown }).mode ?? "default",
+          );
+          setStatus((prev) =>
+            prev ? { ...prev, permission_mode: mode } : prev,
+          );
+          // When the AGENT entered plan mode (via the
+          // ``enter_plan_mode`` tool, not the user's /plan
+          // command) inject an inline info banner so the user
+          // sees what happened and why. The basic flip
+          // broadcast lacks ``source`` so we only paint the
+          // banner on the follow-up agent-attributed event.
+          const src = String((m.payload as { source?: unknown }).source ?? "");
+          if (src === "agent" && mode === "plan") {
+            const reason = String(
+              (m.payload as { reason?: unknown }).reason ?? "",
+            ).trim();
+            const text = reason
+              ? `Agent entered plan mode — ${reason}`
+              : "Agent entered plan mode.";
+            append(infoItem(text));
+          }
+        } else if (m.channel === "plan_submitted") {
+          // Agent called ``exit_plan_mode(plan, tasks=[...])``.
+          // Append a ``plan`` ChatItem so the user sees the
+          // plan card + Approve / Refine buttons inline in the
+          // conversation. ``tasks`` (optional) seeds the live
+          // checklist; ``todos_updated`` pushes refresh the
+          // statuses during execution. ``run_id`` is the BE-side
+          // key for approve/dismiss RPCs — stamped onto the
+          // payload at drain time by the run loop.
+          const payload = m.payload as {
+            plan?: unknown;
+            tasks?: unknown;
+            run_id?: unknown;
+          };
+          const planText = String(payload.plan ?? "").trim();
+          const runId = String(payload.run_id ?? "");
+          if (planText) {
+            append(planItem(planText, normalizePlanTasks(payload.tasks), runId));
+          }
+        } else if (m.channel === "plan_decided") {
+          // Server-of-truth state change. Fired by
+          // ``Session.approve_plan`` / ``dismiss_plan`` after
+          // the decision is persisted. We update the matching
+          // PlanCard by ``runId`` so multiple stacked plans in
+          // the chat each flip independently.
+          const payload = m.payload as { run_id?: unknown; decision?: unknown };
+          const runId = String(payload.run_id ?? "");
+          const decision = String(payload.decision ?? "");
+          if (
+            runId &&
+            (decision === "approved" || decision === "dismissed")
+          ) {
+            setItems((prev) =>
+              prev.map((it) =>
+                it.kind === "plan" && it.runId === runId
+                  ? { ...it, state: decision }
+                  : it,
+              ),
+            );
+          }
+        } else if (m.channel === "todos_updated") {
+          // ``todo_write`` mutated the TodoStore. Patch every open
+          // ``plan`` ChatItem's tasks — see ``mergePlanTasks`` for
+          // the matching/preserve semantics.
+          const todos = (m.payload as { todos?: unknown }).todos;
+          setItems((prev) =>
+            prev.map((it) =>
+              it.kind === "plan"
+                ? { ...it, tasks: mergePlanTasks(it.tasks, todos) }
+                : it,
+            ),
+          );
         }
       } else if (m.type === "streaming_done" || m.type === "stream_end") {
         // A run initiated by ANOTHER view finished its content.
@@ -1010,29 +1172,117 @@ export default function App() {
   // the user is already there (within a small slack zone), release
   // the lock the moment they scroll away. A floating "↓" button
   // appears in the gap so they can jump back.
+  // Virtuoso owns scroll. We just observe the "at bottom" state to
+  // toggle the scroll-to-bottom button. ``followOutput="auto"`` keeps
+  // the view glued to the tail whenever the user is already there;
+  // when they've scrolled up to read history it leaves the position
+  // alone (no jumping mid-read).
   const [stickToBottom, setStickToBottom] = useState(true);
-  const SLACK_PX = 80;
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const [scrollEl, setScrollEl] = useState<HTMLElement | null>(null);
+  // Keep the legacy ``scrollRef`` populated so anything still reaching
+  // for it (debug, tests) sees the real scroller.
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const onScroll = () => {
-      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-      setStickToBottom(distance <= SLACK_PX);
-    };
-    el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
-  }, []);
-  useEffect(() => {
-    if (!stickToBottom) return;
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [items, processing, stickToBottom]);
+    scrollRef.current = scrollEl as HTMLDivElement | null;
+  }, [scrollEl]);
   const scrollToBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "auto" });
     setStickToBottom(true);
   }, []);
+
+  // ── Boot scroll: land the resumed session at its most recent
+  // message instead of the very first user prompt. Fires once,
+  // the first time ``items`` transitions from empty to populated
+  // (after React commits + Virtuoso has the new ``data`` prop —
+  // calling ``scrollToBottom`` inline from the boot effect runs
+  // BEFORE the commit, so ``scrollToIndex("LAST")`` resolves
+  // against the still-empty list and lands on nothing).
+  const bootScrollDoneRef = useRef(false);
+  useEffect(() => {
+    if (bootScrollDoneRef.current) return;
+    if (items.length === 0) return;
+    bootScrollDoneRef.current = true;
+    scrollToBottom();
+  }, [items.length, scrollToBottom]);
+  // Find-in-conversation. Cmd/Ctrl+F opens the bar; a small icon
+  // button near the chat header opens it too. ``highlightedItemId``
+  // applies a pulse class to the jumped-to message via the new
+  // ChatItemView prop so the user's eye lands on it after the scroll.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [highlightedItemId, setHighlightedItemId] = useState<number | null>(null);
+  const highlightTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const cmdLike = e.metaKey || e.ctrlKey;
+      if (cmdLike && e.key.toLowerCase() === "f") {
+        // Only intercept when there's something to search.
+        if (items.length === 0) return;
+        e.preventDefault();
+        setSearchOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [items.length]);
+  const onSearchJump = useCallback(
+    (itemIndex: number) => {
+      virtuosoRef.current?.scrollToIndex({
+        index: itemIndex,
+        align: "center",
+        behavior: "auto",
+      });
+      const target = items[itemIndex];
+      if (target) {
+        setHighlightedItemId(target.id);
+        if (highlightTimerRef.current !== null)
+          window.clearTimeout(highlightTimerRef.current);
+        highlightTimerRef.current = window.setTimeout(
+          () => setHighlightedItemId(null),
+          2400,
+        );
+      }
+    },
+    [items],
+  );
+  useEffect(
+    () => () => {
+      if (highlightTimerRef.current !== null)
+        window.clearTimeout(highlightTimerRef.current);
+    },
+    [],
+  );
+
+  // Memoize the Virtuoso ``components`` map so its identity is
+  // stable across App re-renders that don't change the footer
+  // state — without this, every state update (token streamed, status
+  // ticked) would hand Virtuoso a fresh Footer component and force
+  // it to remount the indicator.
+  const virtuosoComponents = useMemo(
+    () => ({
+      // 78 px spacer so the first message's edit/delete chip clears
+      // the OS-level drag region of the frosted header. Matches the
+      // original ``.conversation > .col { padding-top: 78px }`` rule
+      // that lived on the single column wrapper before virtualization.
+      Header: () => <div aria-hidden="true" style={{ height: 78 }} />,
+      Footer: () =>
+        processing || finalizing ? (
+          <div className="chat-row">
+            <div className="typing-indicator" aria-live="polite">
+              <span className="typing-dots">
+                <span />
+                <span />
+                <span />
+              </span>
+              <span className="typing-label">
+                {processing ? "Ember is replying…" : "Finalizing…"}
+              </span>
+              {processing && <span className="typing-hint">Esc to cancel</span>}
+            </div>
+          </div>
+        ) : null,
+    }),
+    [processing, finalizing],
+  );
 
   // ── Loop continuation (TUI parity: refire after each run) ────────
   const continueLoopIfPending = useCallback(async () => {
@@ -1130,6 +1380,80 @@ export default function App() {
     [append, runUserMessage, truncateAndTrim],
   );
 
+  // Stable per-item callbacks. The `items.map` below passes these to
+  // every ChatItemView; if they were inline arrows, React.memo's
+  // shallow compare would always miss and every item would re-render
+  // on every App state change (status, processing, stream events).
+  const onStopTeam = useCallback(() => client.cancel(), [client]);
+  const onStopAgent = useCallback(
+    (runId: string) =>
+      void client
+        .rpc("cancel_agent_run", { run_id: runId })
+        .catch((err) => console.warn("cancel_agent_run failed", err)),
+    [client],
+  );
+  const onRetryAgent = useCallback(
+    (agentName: string, newTask: string) => {
+      // Send a follow-up user message asking the main agent to
+      // respawn the specialist with the (possibly tweaked) task —
+      // free-form text so the model can pick the right mode.
+      const msg =
+        `Please retry the ${agentName} sub-agent with this task:` +
+        `\n\n${newTask}`;
+      void runUserMessage(msg);
+    },
+    [runUserMessage],
+  );
+
+  // ── Plan-card actions (row 50) ──────────────────────────────────
+  // Approve = call ``approve_plan(run_id)`` on the BE so the
+  // decision is persisted (survives reload), then send a brief
+  // user message to wake the agent into executing. The BE RPC
+  // is what flips ``PermissionEvaluator.mode`` back to default
+  // AND emits a ``plan_decided`` push that updates the card's
+  // visual state — we don't pre-flip in the FE so the BE stays
+  // the single source of truth. The wake-up message is still
+  // FE-driven because it's logically a user-typed continuation
+  // (it lands in the chat transcript as such).
+  // Refine = persist the dismissal via ``dismiss_plan(run_id)``
+  // and stay in plan mode so the user can iterate.
+  const onApprovePlan = useCallback(
+    (id: number) => {
+      const card = items.find(
+        (it): it is Extract<ChatItem, { kind: "plan" }> =>
+          it.kind === "plan" && it.id === id,
+      );
+      const runId = card?.runId ?? "";
+      void (async () => {
+        if (runId) {
+          try {
+            await client.approvePlan(runId);
+          } catch (e) {
+            console.warn("approve_plan RPC failed", e);
+          }
+        }
+        await runUserMessage("Plan approved — execute it now.");
+      })();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items],
+  );
+  const onRejectPlan = useCallback(
+    (id: number) => {
+      const card = items.find(
+        (it): it is Extract<ChatItem, { kind: "plan" }> =>
+          it.kind === "plan" && it.id === id,
+      );
+      const runId = card?.runId ?? "";
+      if (runId) {
+        void client.dismissPlan(runId).catch((e) => {
+          console.warn("dismiss_plan RPC failed", e);
+        });
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items],
+  );
   // ── Slash command routing ─────────────────────────────────────────
   // `echo=false` is the UI-affordance path (menu/button clicks): the
   // command runs silently instead of appearing as a fake typed
@@ -1148,6 +1472,7 @@ export default function App() {
           case "clear": {
             viewGenRef.current++;
             setItems([]);
+            setHistoryIndexToItemIndex([]);
             // The session id rotated and the new conversation has 0
             // context; pull a fresh StatusUpdate so the footer
             // doesn't keep showing the prior session's count.
@@ -1170,6 +1495,33 @@ export default function App() {
             setSidebarOpen(true);
             void refreshSessions();
             return;
+          case "fork": {
+            const newId = content.trim();
+            if (!newId) {
+              append(errorItem("Fork failed: backend returned no session id"));
+              return;
+            }
+            // Same dance as ``/clear`` but we also rehydrate the
+            // cloned history so the fork opens with the same context
+            // the user just left in the source session.
+            viewGenRef.current++;
+            setItems([]);
+            setHistoryIndexToItemIndex([]);
+            client.sessionId = newId;
+            clientState.set(SESSION_KEY, newId);
+            setSessionId(newId);
+            try {
+              const loaded = await fetchHistoryItems(newId);
+              setItems(loaded.items);
+              setHistoryIndexToItemIndex(loaded.historyMap);
+            } catch (e) {
+              append(errorItem(`Loaded fork id but history fetch failed: ${e}`));
+            }
+            append(infoItem("Forked to a new session — continuing the dialogue."));
+            void refreshStatus();
+            void refreshSessions();
+            return;
+          }
           case "model":
             // One picker UI: the composer's model menu (next to Send).
             setModelMenuSignal({ n: Date.now() });
@@ -1209,6 +1561,9 @@ export default function App() {
             return;
           case "hooks":
             setPanel({ kind: "hooks" });
+            return;
+          case "watcher":
+            setPanel({ kind: "watcher" });
             return;
           case "help": {
             const lines = [...BUILTIN_COMMANDS, ...skills].map(
@@ -1342,6 +1697,7 @@ export default function App() {
         setSessionId(res.session_id);
         setProjectDir(res.project_dir);
         setItems([]);
+        setHistoryIndexToItemIndex([]);
         append(infoItem(`Session locked to ${res.project_dir}`));
         void refreshSessions();
         void refreshStatus();
@@ -1365,9 +1721,14 @@ export default function App() {
         clientState.set(SESSION_KEY, id);
         setSessionId(id);
         setItems([]);
-        append(infoItem(`Loading session ${id}…`));
+        // Show the first 8 hex chars only — full UUIDs are noisy in
+        // an info bubble and the short prefix is uniquely identifying
+        // in practice across the sidebar listing.
+        const short = id.slice(0, 8);
+        append(infoItem(`Loading session ${short}…`));
         const loaded = await fetchHistoryItems(id);
-        setItems([...loaded, infoItem(`Resumed session ${id}.`)]);
+        setItems([...loaded.items, infoItem(`Resumed session ${short}.`)]);
+        setHistoryIndexToItemIndex(loaded.historyMap);
         void refreshStatus();
       } catch (e) {
         append(errorItem(String(e)));
@@ -1457,7 +1818,7 @@ export default function App() {
               to the main pane so the user's eye anchors there. */}
           <div className="brand">
             <FlameIcon size={20} />
-            <span>Ember Code</span>
+            <span>igni</span>
             <span
               className={`dot ${conn === "replaced" ? "disconnected" : conn}`}
               title={`backend ${conn}`}
@@ -1465,6 +1826,30 @@ export default function App() {
             />
           </div>
           <div className="header-spacer" />
+          {items.length > 0 && (
+            <button
+              className={`chip chip-search${searchOpen ? " active" : ""}`}
+              title="Find in conversation (⌘F)"
+              aria-label="Find in conversation"
+              onClick={() => setSearchOpen((v) => !v)}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+                style={{ display: "block" }}
+              >
+                <circle cx="7" cy="7" r="4.5" />
+                <path d="M10.5 10.5L13.5 13.5" />
+              </svg>
+            </button>
+          )}
           {/* Project chip — hidden when running inside an IDE (VSCode /
               JetBrains): the IDE's workspace folder IS the project root,
               and the FE shouldn't offer a switcher that would force the
@@ -1606,15 +1991,26 @@ export default function App() {
             sibling of ``.conversation`` (not a child) so it doesn't
             scroll with the content; positioned absolutely against the
             ``.main`` column at z:30, above the header blur. */}
-        <ScrollIndicator scrollRef={scrollRef} />
-        <div className="conversation" ref={scrollRef}>
-          <div className={`col${processing ? " streaming" : ""}`}>
-            {items.length === 0 && (
+        <ScrollIndicator element={scrollEl} />
+        {searchOpen && sessionId && items.length > 0 && (
+          <ChatSearchBar
+            client={client}
+            sessionId={sessionId}
+            historyIndexToItemIndex={historyIndexToItemIndex}
+            liveItemCount={items.length}
+            onJumpTo={onSearchJump}
+            onClose={() => setSearchOpen(false)}
+          />
+        )}
+        <div className="conversation-frame">
+        {items.length === 0 ? (
+          <div className="conversation">
+            <div className="col">
               <div className="welcome">
                 <div style={{ display: "flex", justifyContent: "center" }}>
                   <FlameIcon size={56} />
                 </div>
-                <h1>Ember Code</h1>
+                <h1>igni</h1>
                 <p>Your AI coding agent, in this project.</p>
                 <div className="welcome-caps">
                   {(
@@ -1643,75 +2039,103 @@ export default function App() {
                   Enter to send · Shift+Enter newline · / commands · @ files · $ shell
                 </p>
               </div>
-            )}
-            {items.map((item) => (
-              <ChatItemView
-                key={item.id}
-                item={item}
-                onEditUser={onEditUser}
-                onDeleteUser={onDeleteUser}
-                onStopTeam={() => client.cancel()}
-                onStopAgent={(runId) =>
-                  void client
-                    .rpc("cancel_agent_run", { run_id: runId })
-                    .catch((err) => console.warn("cancel_agent_run failed", err))
-                }
-                onRetryAgent={(agentName, newTask) => {
-                  // Send a follow-up user message asking the main
-                  // agent to respawn the specialist with the
-                  // (possibly tweaked) task. Free-form text — the
-                  // model can interpret context, decide which mode
-                  // to use, etc.
-                  const msg =
-                    `Please retry the ${agentName} sub-agent with this task:` +
-                    `\n\n${newTask}`;
-                  void runUserMessage(msg);
-                }}
-              />
-            ))}
-            {(processing || finalizing) && (
-              <div className="typing-indicator" aria-live="polite">
-                <span className="typing-dots">
-                  <span />
-                  <span />
-                  <span />
-                </span>
-                <span className="typing-label">
-                  {processing ? "Ember is replying…" : "Finalizing…"}
-                </span>
-                {processing && <span className="typing-hint">Esc to cancel</span>}
-              </div>
-            )}
-            {!stickToBottom && (
-              <button
-                type="button"
-                className="scroll-to-bottom"
-                title="Scroll to latest"
-                aria-label="Scroll to latest"
-                onClick={scrollToBottom}
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M8 3v9.5M3.8 8.3L8 12.5l4.2-4.2" />
-                </svg>
-              </button>
-            )}
+            </div>
           </div>
+        ) : (
+          <Virtuoso
+            ref={virtuosoRef}
+            className="conversation"
+            data={items}
+            // Keys items by id so React reuses DOM across reorders /
+            // edits. Falling back to index would defeat the memo on
+            // ChatItemView.
+            computeItemKey={(_idx, item) => item.id}
+            // Auto-follow the tail only while the user is already
+            // there; ``smooth`` is intentionally not used so streaming
+            // doesn't visibly chase tokens.
+            followOutput="auto"
+            // Virtuoso's default ``atBottomThreshold`` is 4px which
+            // misses the "at bottom" transition by a sub-pixel after
+            // every layout change (composer height grows on Send,
+            // streamed assistant content rewrites the last row, etc).
+            // ``followOutput="auto"`` then bails on the follow because
+            // its sample reads false. 50px is generous enough to
+            // ride out the layout shifts without papering over a real
+            // "I scrolled up to read history" intent — pinned by
+            // ``e2e/chat-scroll.spec.ts``.
+            atBottomThreshold={50}
+            atBottomStateChange={setStickToBottom}
+            scrollerRef={(el) => setScrollEl(el as HTMLElement | null)}
+            increaseViewportBy={{ top: 400, bottom: 800 }}
+            itemContent={(idx, item) => {
+              // ``streaming`` lights the blinking caret CSS on the
+              // live tail assistant row only.
+              const isStreamingTail =
+                processing && idx === items.length - 1 && item.kind === "assistant";
+              const isSearchTarget = item.id === highlightedItemId;
+              return (
+                <div
+                  className={`chat-row${isStreamingTail ? " streaming" : ""}${isSearchTarget ? " search-target" : ""}`}
+                >
+                  <ChatItemView
+                    item={item}
+                    copyResponseText={
+                      item.kind === "stats"
+                        ? findAssistantTextForStats(items, idx)
+                        : undefined
+                    }
+                    onEditUser={onEditUser}
+                    onDeleteUser={onDeleteUser}
+                    onStopTeam={onStopTeam}
+                    onStopAgent={onStopAgent}
+                    onRetryAgent={onRetryAgent}
+                    onApprovePlan={onApprovePlan}
+                    onRejectPlan={onRejectPlan}
+                  />
+                </div>
+              );
+            }}
+            components={virtuosoComponents}
+          />
+        )}
+        {items.length > 0 && !stickToBottom && (
+          <button
+            type="button"
+            className="scroll-to-bottom"
+            title="Scroll to latest"
+            aria-label="Scroll to latest"
+            onClick={scrollToBottom}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M8 3v9.5M3.8 8.3L8 12.5l4.2-4.2" />
+            </svg>
+          </button>
+        )}
         </div>
 
         <Composer
           hitlSlot={
             hitl ? (
-              <HitlDialog requirements={hitl} onResolve={(d) => void resolveHitl(d)} />
+              <HitlDialog
+                requirements={hitl}
+                onResolve={(d) => void resolveHitl(d)}
+                currentMode={status?.permission_mode}
+                onAcceptEditsThisRun={() => {
+                  // Mark so ``streaming_done`` reverts the flip.
+                  autoAcceptForRunRef.current = true;
+                  void runCommand("/accept on", false);
+                }}
+              />
             ) : null
           }
           client={client}
@@ -1728,19 +2152,79 @@ export default function App() {
           onTool={(cmd) => void runCommand(cmd, false)}
           onSubmit={(t) => void submit(t)}
           onStop={() => client.cancel()}
+          permissionMode={status?.permission_mode}
+          onPickMode={(mode) => {
+            // The split send button hands us one of the four
+            // ``PermissionEvaluator.mode`` values. Each maps to
+            // an existing slash command that flips the BE side.
+            // ``default`` is "leave the current non-default
+            // mode" — figure out which one is on and toggle it
+            // off; if we were already in default the picker
+            // wouldn't have fired (the menu hides the active
+            // option as a no-op).
+            //
+            // We call ``client.handleCommand`` directly instead
+            // of ``runCommand`` so the BE's confirmation chatter
+            // ("Permission mode: plan → acceptEdits...") doesn't
+            // land in the conversation. The user picked a mode
+            // from the UI — they don't need a system message
+            // narrating it. The ``permission_mode_changed`` push
+            // broadcast still updates the badge / button tint
+            // via the existing handler.
+            const current = status?.permission_mode ?? "default";
+            if (mode === current) return;
+            const cmd =
+              mode === "plan"
+                ? "/plan on"
+                : mode === "acceptEdits"
+                  ? "/accept on"
+                  : mode === "bypassPermissions"
+                    ? "/bypass on"
+                    : // mode === "default" — turn off whichever
+                      // non-default mode is currently active.
+                      current === "plan"
+                      ? "/plan off"
+                      : current === "acceptEdits"
+                        ? "/accept off"
+                        : current === "bypassPermissions"
+                          ? "/bypass off"
+                          : "";
+            if (!cmd) return;
+            void client.handleCommand(cmd).catch((e) => {
+              // Surface real errors (network, BE shutdown) but
+              // not the normal success-with-confirmation case.
+              append(
+                errorItem(
+                  `Mode switch failed: ${e instanceof Error ? e.message : String(e)}`,
+                ),
+              );
+            });
+          }}
         />
         <div className="statusline" style={{ marginTop: 0, paddingBottom: 8 }}>
           {status && (
             <>
               <SessionChip sessionId={sessionId} />
+              {/* Context meter sits next to the session chip —
+                  both are "this session's identity / footprint"
+                  signals and read more naturally side by side
+                  than separated by the mode controls. */}
               <CtxMeter
                 tokens={status.context_tokens}
                 max={status.max_context}
                 pct={ctxPct}
               />
+              {/* Mode visibility moved to the send-button
+                  picker itself — the left half tints per mode
+                  so the user gets the at-a-glance signal
+                  without a separate footer chip. */}
               <CodeIndexIndicator
                 client={client}
                 onOpen={() => setPanel({ kind: "codeindex" })}
+              />
+              <WatcherIndicator
+                client={client}
+                onOpen={() => setPanel({ kind: "watcher" })}
               />
             </>
           )}
@@ -1786,6 +2270,9 @@ export default function App() {
       )}
       {panel.kind === "schedule" && (
         <SchedulePanel client={client} onClose={() => setPanel({ kind: "none" })} />
+      )}
+      {panel.kind === "watcher" && (
+        <WatcherPanel client={client} onClose={() => setPanel({ kind: "none" })} />
       )}
       {panel.kind === "info" && (
         <InfoPanel

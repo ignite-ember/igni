@@ -106,13 +106,23 @@ def format_tool_args(tool_args: dict | None, tool_name: str = "") -> str:
     # 80 chars; the full task is still available in the agent's
     # session — the header is just a glanceable label.
     if tool_name in ("spawn_agent", "spawn_team"):
-        agent = tool_args.get("agent_name", tool_args.get("agent_names", ""))
+        # spawn_agent passes ``agent_name`` (scalar). spawn_team
+        # passes ``agent_names`` as a LIST — joining ``parts`` with
+        # a list element would TypeError. Coerce both shapes to a
+        # single display string before joining.
+        agent_raw = tool_args.get("agent_name") or tool_args.get("agent_names") or ""
+        if isinstance(agent_raw, (list, tuple)):
+            agent = ", ".join(str(n) for n in agent_raw)
+        else:
+            agent = str(agent_raw)
         task = str(tool_args.get("task", ""))
         mode = tool_args.get("mode", "")
         first_line = next((ln.strip() for ln in task.splitlines() if ln.strip()), "")
         if len(first_line) > 80:
             first_line = first_line[:77] + "..."
-        parts = [agent]
+        parts: list[str] = []
+        if agent:
+            parts.append(agent)
         if mode:
             parts.append(f"mode={mode}")
         if first_line:
@@ -196,14 +206,22 @@ def _format_edit_diff(tool: Any) -> tuple[Any, Any, list[tuple[str, str]]] | Non
     old_lines = old.splitlines()
     new_lines = new.splitlines()
 
-    # Find the real starting line number in the file.
+    # Find the real starting line number in the file. Try
+    # ``new`` first (post-edit / history re-render — the file
+    # already has the new content), then fall back to ``old``
+    # (live in-flight edit — file still has the pre-edit
+    # content). Without the ``old`` fallback, live edit cards
+    # always show "line 1" regardless of where the edit
+    # actually lands.
     start_line = 1
     file_path = args.get("file_path", "")
-    if file_path and new:
+    if file_path:
         try:
             with open(file_path) as f:
                 file_content = f.read()
-            idx = file_content.find(new)
+            idx = file_content.find(new) if new else -1
+            if idx < 0 and old:
+                idx = file_content.find(old)
             if idx >= 0:
                 start_line = file_content[:idx].count("\n") + 1
         except Exception:

@@ -18,6 +18,8 @@ PluginRoot = Literal[
     "user-ember",  # ~/.ember/plugins/
     "project-claude",  # <project>/.claude/plugins/
     "project-ember",  # <project>/.ember/plugins/
+    "managed-claude",  # sysadmin <managed>/.claude/plugins/
+    "managed-ember",  # sysadmin <managed>/.ember/plugins/
 ]
 
 
@@ -68,10 +70,20 @@ class PluginDefinition(BaseModel):
     has_hooks: bool = False
     has_mcp: bool = False
     has_tools: bool = False
+    has_lsp: bool = False
+    has_monitors: bool = False
 
     @property
     def name(self) -> str:
         return self.manifest.name
+
+    @property
+    def is_managed(self) -> bool:
+        """``True`` when the plugin was loaded from a managed
+        (sysadmin) root. Managed plugins can't be disabled from
+        the panel or via plugin state — they're enforced by the
+        OS-protected source location."""
+        return self.source.root in ("managed-claude", "managed-ember")
 
     @property
     def root_path(self) -> Path:
@@ -110,6 +122,11 @@ class PluginInfo(BaseModel):
     has_hooks: bool = False
     has_mcp: bool = False
     has_tools: bool = False
+    has_lsp: bool = False
+    has_monitors: bool = False
+    # ``True`` for plugins installed at the managed (sysadmin)
+    # tier — surfaced so the panel can lock the disable toggle.
+    managed: bool = False
     pin: str = ""
 
 

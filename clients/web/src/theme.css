@@ -1,4 +1,4 @@
-/* Ember Code chat UI.
+/* igni chat UI.
    Layout language: Claude-chat-like — calm neutral surfaces, one
    centered reading column, pill composer docked at the bottom.
    Brand accents from the portal LandingPage: ember orange #F97316 →
@@ -525,6 +525,20 @@ button {
   app-region: no-drag;
 }
 
+/* The ``.app-header`` is ``position: absolute`` and overlays the
+   top of ``.conversation``. The first user message's edit/delete
+   actions sit at ``top: -10px`` relative to the bubble — that puts
+   them inside the header's drag rectangle, where WebKit intercepts
+   hover/click at the compositor level before the DOM ever sees
+   them. Marking the conversation column itself as no-drag forces
+   every control inside it (message actions, file pills, tool-card
+   buttons, …) to receive events again. The header keeps its drag
+   region for window-moving since it's a sibling, not a parent. */
+:root[data-host="tauri"] .conversation {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
 /* ── Custom title bar (Tauri / macOS) ───────────────────────────────
    The Tauri shell uses ``TitleBarStyle::Overlay``: the webview
    extends to y=0 and the traffic-light buttons float on top in
@@ -665,9 +679,15 @@ button {
 .brand {
   display: flex;
   align-items: center;
-  gap: 9px;
-  font-weight: 700;
-  font-size: 15px;
+  /* Tight grouping: flame + wordmark + status dot all read as one
+     glyph cluster. */
+  gap: 5px;
+  /* Lowercase ``igni`` wordmark: bigger than the old "Ember Code"
+     text but lighter weight, so it reads as a typographic mark
+     rather than a bold UI label. */
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
 }
 
 .header-spacer {
@@ -719,8 +739,8 @@ button {
 }
 
 .dot {
-  width: 7px;
-  height: 7px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -750,6 +770,19 @@ button {
 
 /* ── Conversation column ────────────────────────────────────────── */
 
+/* Positioned wrapper: holds the Virtuoso scroller (or welcome) and
+   serves as the anchor for the absolute-positioned scroll-to-latest
+   button. Takes all available height between the header and the
+   composer so the button's ``bottom: 16px`` lands just above the
+   composer, never under it. */
+.conversation-frame {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
 .conversation {
   flex: 1;
   overflow-y: auto;
@@ -768,14 +801,18 @@ button {
      scrolling, which it should never do. */
   overscroll-behavior: contain;
 }
-/* Pad the inner column so the first message doesn't start its life
-   under the header. Sits inside the scroll content so it scrolls
-   away along with the messages — that's what lets content slide
-   *behind* the header for the blur to pick up. 54 px matches the
-   Tauri/mac ``min-height: 38px + 8 px padding``; non-Tauri renders
-   close enough for the visual overlap. */
+/* Pad the inner column so the first message AND its edit/delete
+   action chip (positioned at ``top: -10px`` of the bubble) clear
+   the header overlay entirely. Without enough padding the chip
+   lands inside the header rectangle where the OS-level drag region
+   intercepts events before any DOM listener — buttons silently
+   stop working on the topmost message. 78 px = ~58px header height
+   + 10 px chip offset + ~10 px safety margin. Sits inside the
+   scroll content so it scrolls away along with the messages —
+   that's what lets content slide *behind* the header for the blur
+   to pick up. */
 .conversation > .col {
-  padding-top: 54px;
+  padding-top: 78px;
 }
 
 /* ── Progressive header blur ───────────────────────────────────────
@@ -875,14 +912,19 @@ button {
   mask-image: linear-gradient(to bottom, #000 0%, #000 20%, transparent 40%);
 }
 
-/* Floating jump-to-latest button. Lives inside .col so its horizontal
-   center matches the composer / message column. Sticky to bottom of
-   the viewport, ``align-self: center`` puts it on the column's
-   centerline regardless of how wide .col is at this breakpoint. */
+/* Floating jump-to-latest button. Absolute-positioned inside the
+   ``.main`` column (anchored above the composer) so it OVERLAYS the
+   bottom of the conversation instead of sitting in flow.
+   Earlier this used ``position: sticky`` inside ``.col`` — that
+   worked while every message was rendered inside one big column
+   wrapper, but virtualisation made the button a sibling of the
+   Virtuoso scroller, where ``sticky`` falls back to ``relative``
+   and an opaque button started pushing the message column up. */
 .scroll-to-bottom {
-  position: sticky;
+  position: absolute;
   bottom: 16px;
-  align-self: center;
+  left: 50%;
+  transform: translateX(-50%);
   width: 36px;
   height: 36px;
   border-radius: 50%;
@@ -895,16 +937,17 @@ button {
   justify-content: center;
   padding: 0;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
-  transition: color 0.12s, border-color 0.12s, transform 0.12s;
+  transition:
+    color 0.12s,
+    border-color 0.12s,
+    transform 0.12s;
   z-index: 5;
-  /* Don't add to the column's vertical spacing (.col has gap: 18px). */
-  margin-top: 0;
 }
 
 .scroll-to-bottom:hover {
   color: var(--ember-orange);
   border-color: var(--ember-orange);
-  transform: translateY(calc(-1px));
+  transform: translateX(-50%) translateY(-1px);
 }
 
 .col {
@@ -934,11 +977,312 @@ button {
 }
 
 /* Blinking caret on the last assistant block while streaming. */
-.col.streaming > .msg-assistant:last-child::after {
+.col.streaming > .msg-assistant:last-child::after,
+.chat-row.streaming > .msg-assistant::after {
   content: "▍";
   color: var(--ember-orange);
   animation: caret-blink 1s steps(2) infinite;
   margin-left: 2px;
+}
+
+/* ── Virtualized chat row ──────────────────────────────────────────
+   Wrapper around each individual ChatItemView inside the Virtuoso
+   list. Mirrors ``.col``'s horizontal centering + max-width so the
+   layout reads identical to the pre-virtualization version. Each
+   row's ``padding-bottom`` reproduces the 18 px gap that the old
+   single ``.col`` got from ``gap: 18px`` — sibling-margin selectors
+   wouldn't work because Virtuoso wraps each row in its own
+   positioning div so ``.chat-row`` elements aren't adjacent
+   siblings. */
+.chat-row {
+  max-width: var(--col);
+  margin: 0 auto;
+  padding: 0 20px 18px;
+  display: flex;
+  flex-direction: column;
+}
+/* New-item ease-in animation, ported from the ``.col > *`` rule. */
+.chat-row > * {
+  animation: item-in 0.18s ease;
+}
+
+/* Visualization applied to the chat row a user lands on from the
+   ChatSearchBar. The class is removed after ~2.4 s in App.tsx so
+   re-targeting the same row re-triggers the animation cleanly.
+   The pulse + ring are applied to the DIRECT CHILD (the actual
+   message bubble) rather than the wider ``.chat-row`` wrapper so
+   ``box-shadow`` traces the bubble's existing border-radius
+   instead of drawing a too-wide rectangle around the padded row.
+   A short accent bar lives on ``.chat-row::before`` as a side
+   indicator — separate from the bubble glow.
+*/
+.chat-row.search-target {
+  position: relative;
+}
+/* Ring + pulse glow is reserved for bubble-shaped children
+   (currently ``.msg-user``). Assistant text and other full-width
+   markdown flows just get the left accent bar — a box-shadow ring
+   around full-width content reads as an oversized rectangle, not a
+   highlight of the actual message. */
+.chat-row.search-target > .msg-user {
+  animation: search-target-pulse 2.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.chat-row.search-target::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  bottom: 22px;
+  width: 4px;
+  border-radius: 3px;
+  background: var(--ember-orange);
+  box-shadow: 0 0 12px 1px color-mix(in srgb, var(--ember-orange) 60%, transparent);
+  animation: search-target-bar 2.4s cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: center;
+  pointer-events: none;
+}
+@keyframes search-target-pulse {
+  0% {
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, var(--ember-orange) 75%, transparent),
+      0 0 36px 6px color-mix(in srgb, var(--ember-orange) 30%, transparent);
+    transform: scale(1.012);
+  }
+  18% {
+    box-shadow:
+      0 0 0 1.5px color-mix(in srgb, var(--ember-orange) 45%, transparent),
+      0 0 24px 2px color-mix(in srgb, var(--ember-orange) 18%, transparent);
+    transform: scale(1);
+  }
+  45% {
+    box-shadow:
+      0 0 0 1.5px color-mix(in srgb, var(--ember-orange) 55%, transparent),
+      0 0 24px 4px color-mix(in srgb, var(--ember-orange) 22%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+    transform: scale(1);
+  }
+}
+@keyframes search-target-bar {
+  0% {
+    transform: scaleY(0);
+    opacity: 0;
+  }
+  12% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+  85% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scaleY(1);
+    opacity: 0;
+  }
+}
+
+/* Compact icon-only chip used for the find-in-conversation toggle —
+   sits in the header next to the project chip. ``.chip-search.active``
+   is applied while the search bar is open so the icon reads as a
+   toggle button instead of just a tap target. */
+.chip-search {
+  padding: 6px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+}
+.chip-search.active {
+  background: color-mix(in srgb, var(--ember-orange) 18%, transparent);
+  border-color: color-mix(in srgb, var(--ember-orange) 55%, transparent);
+  color: var(--ember-orange);
+  box-shadow: 0 0 12px 0 color-mix(in srgb, var(--ember-orange) 35%, transparent);
+}
+
+/* ── Find-in-conversation bar ──────────────────────────────────────
+   Docked above the chat list while open. The input has the same
+   visual language as the composer chip controls; results live in a
+   short scrollable list with the matched substring highlighted in
+   the ember accent. */
+.chat-search-bar {
+  position: absolute;
+  top: 58px;
+  left: 50%;
+  width: min(680px, 92%);
+  background: var(--bg-elevated, var(--bg));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: 14px;
+  box-shadow:
+    0 16px 40px rgba(0, 0, 0, 0.42),
+    0 4px 8px rgba(0, 0, 0, 0.22),
+    0 0 0 1px color-mix(in srgb, var(--ember-orange) 22%, transparent);
+  z-index: 25;
+  overflow: hidden;
+  /* Centering transform: at rest, the element is anchored by its
+     centerline. Every keyframe of ``search-bar-in`` re-includes
+     this -50% so the element stays centered throughout the
+     animation; without it, the bar snaps to ``left: 50%`` (its
+     LEFT edge at center, not centered) the instant the keyframes
+     finish — looks like a sideways jump after the slide-in. */
+  transform: translateX(-50%);
+  transform-origin: 50% -8px;
+  animation: search-bar-in 0.32s cubic-bezier(0.22, 1.18, 0.36, 1);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+@keyframes search-bar-in {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -14px) scale(0.94);
+    filter: blur(3px);
+    box-shadow:
+      0 0 0 1px transparent,
+      0 0 0 transparent;
+  }
+  55% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+    filter: blur(0);
+    box-shadow:
+      0 16px 40px rgba(0, 0, 0, 0.42),
+      0 4px 8px rgba(0, 0, 0, 0.22),
+      0 0 0 1px color-mix(in srgb, var(--ember-orange) 22%, transparent);
+  }
+}
+/* Subtle ember glow that pulses once on open to draw the eye. */
+.chat-search-bar::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: 0 0 32px 4px color-mix(in srgb, var(--ember-orange) 28%, transparent);
+  opacity: 0;
+  animation: search-bar-glow 0.9s ease-out 0.05s;
+}
+@keyframes search-bar-glow {
+  0%, 100% { opacity: 0; }
+  40% { opacity: 1; }
+}
+.chat-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+}
+.chat-search-icon {
+  display: flex;
+  align-items: center;
+  color: var(--fg-faint);
+  padding: 0 2px;
+}
+.chat-search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--fg);
+  font-size: 13.5px;
+  font-family: inherit;
+  padding: 4px 0;
+}
+.chat-search-input::placeholder {
+  color: var(--fg-faint);
+}
+.chat-search-status {
+  font-size: 11.5px;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding: 0 4px;
+}
+.chat-search-nav,
+.chat-search-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--fg-faint);
+  cursor: pointer;
+  padding: 0;
+}
+.chat-search-nav:hover:not(:disabled),
+.chat-search-close:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+}
+.chat-search-nav:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.chat-search-results {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.chat-search-result {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.chat-search-result:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.chat-search-result.active {
+  background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
+}
+.chat-search-result.unreachable {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.chat-search-role {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-faint);
+  min-width: 38px;
+}
+.chat-search-role-user {
+  color: color-mix(in srgb, var(--ember-orange) 75%, var(--fg-faint));
+}
+.chat-search-snippet {
+  flex: 1;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-search-snippet mark {
+  background: color-mix(in srgb, var(--ember-orange) 45%, transparent);
+  color: var(--fg);
+  padding: 0 1px;
+  border-radius: 2px;
+}
+.chat-search-time {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding-left: 8px;
 }
 
 @keyframes caret-blink {
@@ -959,10 +1303,13 @@ button {
 }
 
 .welcome h1 {
-  font-size: 30px;
+  /* Caption-style wordmark below the flame. Lowercase ``igni``
+     reads as the brand mark with the flame as the visual anchor. */
+  font-size: 42px;
   font-weight: 700;
-  letter-spacing: -0.02em;
-  margin: 18px 0 6px;
+  letter-spacing: -0.025em;
+  line-height: 1.05;
+  margin: 14px 0 8px;
 }
 
 .welcome p {
@@ -1090,6 +1437,16 @@ button {
   pointer-events: none;
   transition: opacity 0.12s;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  /* The .app-header floats at ``z-index: 10`` over the top of the
+     conversation column and (in Tauri) is tagged as a drag region.
+     Without a higher z-index here the topmost user bubble's edit/
+     delete chip sits *under* the header — both visually and in the
+     compositor's hit-test, so clicks would drag the window instead
+     of editing/deleting. Lift the chip above the header and tag it
+     no-drag so the buttons reliably receive hover + click. */
+  z-index: 11;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
   /* Confirm step renders 'Delete this and everything after?' + two
      buttons. The pill must stay a single horizontal line — otherwise
      the buttons wrap onto a new row and the trailing letter of
@@ -1202,11 +1559,14 @@ button {
   font-size: 15px;
 }
 
-.msg-assistant > :first-child {
+/* Markdown sits inside ``.msg-assistant-body`` (sibling of the copy
+   action row) so these zero-margin rules target the actual first/last
+   rendered markdown element, not the action row. */
+.msg-assistant-body > :first-child {
   margin-top: 0;
 }
 
-.msg-assistant > :last-child {
+.msg-assistant-body > :last-child {
   margin-bottom: 0;
 }
 
@@ -1215,6 +1575,229 @@ button {
 .msg-assistant h3 {
   letter-spacing: -0.01em;
   line-height: 1.3;
+}
+
+/* Links inside rendered markdown (assistant bubble, plan cards, compact
+   summaries, loop iterations). Without this, anchors fall back to the
+   user-agent default blue (#0000EE) which is unreadable on the dark
+   surface. ``--accent-blue`` is theme-aware (#6aa3f7 dark / #0969da
+   light) so the same rule works in both modes. */
+.msg-assistant-body a,
+.plan-card-body a,
+.compact-card-body a {
+  color: var(--accent-blue);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+
+.msg-assistant-body a:hover,
+.plan-card-body a:hover,
+.compact-card-body a:hover {
+  text-decoration-thickness: 2px;
+}
+
+/* Inline copy-response button sits to the right of the stats line
+   (``.agent-dispatch`` for ``kind: "stats"``). Hover-revealed so the
+   row stays calm by default; keeps the same faint mono look as the
+   stats text itself until you reach for it. */
+.agent-dispatch--with-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.msg-stats-copy {
+  /* Always-visible — matches the stats line's faint mono so it reads
+     as part of the same row, not a separate UI element. Brightens
+     only when you actually reach for it. Hover-reveal was too
+     jumpy on a narrow row. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.msg-stats-copy:hover,
+.msg-stats-copy:focus-visible {
+  color: var(--fg);
+  background: var(--bg-raised);
+}
+
+/* Each fenced code block gets a hover-revealed copy button via
+   ``MarkdownPre`` (react-markdown ``components.pre`` override). The
+   wrapper is a positioning context; the inner <pre> keeps all the
+   existing pre styling. */
+.code-block-wrap {
+  position: relative;
+  margin: 12px 0;
+}
+
+/* Mermaid-rendered SVG container. Mermaid produces its own SVG with
+   embedded styles tuned for a light background — we frame it with
+   our standard pre surface (var(--bg-inset)) and clip overly wide
+   diagrams with horizontal scroll. The SVG itself stays responsive
+   via the inline ``max-width: 100%`` rule below. */
+.mermaid-diagram {
+  position: relative;
+  margin: 12px 0;
+  padding: 16px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+}
+
+.mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Copy-source chip on diagram frames. Same look as
+   ``.code-block-copy`` so the affordance is consistent across
+   every rendered block type. */
+.diagram-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-inset);
+  color: var(--fg-muted);
+  cursor: pointer;
+  z-index: 1;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.diagram-copy:hover,
+.diagram-copy:focus-visible {
+  color: var(--fg);
+  border-color: var(--border);
+}
+
+/* Fallback rendering when mermaid fails to parse the source — shows
+   the raw text framed in danger-tinted border so the user can see
+   what went wrong without a console message. */
+.mermaid-error {
+  margin: 12px 0;
+  padding: 14px;
+  background: var(--bg-inset);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.code-block-wrap pre {
+  margin: 0;
+}
+
+/* Reserve a strip at the top ONLY when the collapse chevron is
+   present (i.e. the block was long enough to be collapsible).
+   Short blocks have no chevron — the copy button on the right
+   typically clears short trailing content, so the original 14px
+   ``.msg-assistant pre`` padding is fine. ``:has`` triggers when
+   the wrap contains a toggle button; specificity (0,3,1) wins
+   over ``.msg-assistant pre`` (0,1,1). */
+.msg-assistant .code-block-wrap:has(.code-block-toggle) pre {
+  padding-top: 38px;
+}
+
+/* Long code blocks start collapsed: clip the <pre> at a fixed
+   height, fade the bottom into the surface so the cut looks
+   intentional, and reveal a "Show more" pill under it. The
+   ``COLLAPSED_MAX_PX`` constant in ChatItems.tsx must stay in sync
+   with the px height set here so the JS overflow check and the
+   visual clip agree.
+
+   The fade overlay lives on the <pre> itself (not the wrapper) so
+   the pre's ``overflow: hidden`` + ``border-radius`` clip it
+   cleanly to the rounded bottom corners — when it lived on the
+   wrapper it floated outside the pre's actual edge and never
+   reached the corners. */
+.code-block-wrap--collapsed pre {
+  max-height: 220px;
+  overflow: hidden;
+  position: relative;
+  /* Anywhere on the clipped block expands it — invite that with the
+     pointer cursor. The chevron stays as the explicit affordance for
+     keyboard / screen-reader users. */
+  cursor: pointer;
+}
+
+.code-block-wrap--collapsed pre::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 90px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--bg-inset));
+}
+
+/* Collapse/expand chevron sits in the top-left of the code block,
+   mirroring the copy button in the top-right. Shares the code
+   block's background — only the border separates it from the
+   surrounding ``<pre>`` surface. */
+.code-block-toggle {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-inset);
+  color: var(--fg-muted);
+  cursor: pointer;
+  z-index: 1;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.code-block-toggle:hover,
+.code-block-toggle:focus-visible {
+  color: var(--fg);
+  border-color: var(--border);
+}
+
+.code-block-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-inset);
+  color: var(--fg-muted);
+  cursor: pointer;
+  z-index: 1;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.code-block-copy:hover,
+.code-block-copy:focus-visible {
+  color: var(--fg);
+  border-color: var(--border);
 }
 
 .msg-assistant pre {
@@ -1239,6 +1822,195 @@ button {
 .msg-assistant pre code {
   background: none;
   padding: 0;
+}
+
+/* highlight.js GitHub-Dark-Dimmed (imported in ChatItems.tsx) paints
+   tokens in pastel reds/blues/purples tuned for a #22272e bg. On the
+   light surface (`--bg-inset` = #f1efe9) those same hues read as
+   washed-out neon and tokens lose contrast. Remap to GitHub Light's
+   palette whenever a light theme is active. Selectors use attribute
+   specificity (0,2,0) so they win over hljs's class-only rules
+   regardless of import order. Light-theme scoping mirrors the
+   variable block at the top of this file. */
+:root[data-theme="light"] .hljs,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs {
+  color: #24292e;
+  background: transparent;
+}
+:root[data-theme="light"] .hljs-doctag,
+:root[data-theme="light"] .hljs-keyword,
+:root[data-theme="light"] .hljs-meta .hljs-keyword,
+:root[data-theme="light"] .hljs-template-tag,
+:root[data-theme="light"] .hljs-template-variable,
+:root[data-theme="light"] .hljs-type,
+:root[data-theme="light"] .hljs-variable.language_,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-doctag,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-keyword,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-meta .hljs-keyword,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-template-tag,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-template-variable,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-type,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-variable.language_ {
+  color: #d73a49;
+}
+:root[data-theme="light"] .hljs-title,
+:root[data-theme="light"] .hljs-title.class_,
+:root[data-theme="light"] .hljs-title.class_.inherited__,
+:root[data-theme="light"] .hljs-title.function_,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-title,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-title.class_,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-title.class_.inherited__,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-title.function_ {
+  color: #6f42c1;
+}
+:root[data-theme="light"] .hljs-attr,
+:root[data-theme="light"] .hljs-attribute,
+:root[data-theme="light"] .hljs-literal,
+:root[data-theme="light"] .hljs-meta,
+:root[data-theme="light"] .hljs-number,
+:root[data-theme="light"] .hljs-operator,
+:root[data-theme="light"] .hljs-variable,
+:root[data-theme="light"] .hljs-selector-attr,
+:root[data-theme="light"] .hljs-selector-class,
+:root[data-theme="light"] .hljs-selector-id,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-attr,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-attribute,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-literal,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-meta,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-number,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-operator,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-variable,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-selector-attr,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-selector-class,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-selector-id {
+  color: #005cc5;
+}
+:root[data-theme="light"] .hljs-regexp,
+:root[data-theme="light"] .hljs-string,
+:root[data-theme="light"] .hljs-meta .hljs-string,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-regexp,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-string,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-meta .hljs-string {
+  color: #032f62;
+}
+:root[data-theme="light"] .hljs-built_in,
+:root[data-theme="light"] .hljs-symbol,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-built_in,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-symbol {
+  color: #e36209;
+}
+:root[data-theme="light"] .hljs-comment,
+:root[data-theme="light"] .hljs-code,
+:root[data-theme="light"] .hljs-formula,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-comment,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-code,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-formula {
+  color: #6a737d;
+}
+:root[data-theme="light"] .hljs-name,
+:root[data-theme="light"] .hljs-quote,
+:root[data-theme="light"] .hljs-selector-tag,
+:root[data-theme="light"] .hljs-selector-pseudo,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-name,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-quote,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-selector-tag,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-selector-pseudo {
+  color: #22863a;
+}
+:root[data-theme="light"] .hljs-subst,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-subst {
+  color: #24292e;
+}
+:root[data-theme="light"] .hljs-section,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-section {
+  color: #005cc5;
+}
+:root[data-theme="light"] .hljs-bullet,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-bullet {
+  color: #735c0f;
+}
+:root[data-theme="light"] .hljs-addition,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-addition {
+  color: #22863a;
+  background-color: #f0fff4;
+}
+:root[data-theme="light"] .hljs-deletion,
+:root[data-theme="auto"][data-os-prefers-light="1"] .hljs-deletion {
+  color: #b31d28;
+  background-color: #ffeef0;
+}
+
+/* First-paint fallback for OS-prefers-light before JS has set
+   data-theme — mirrors the @media block at the top of this file. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .hljs {
+    color: #24292e;
+    background: transparent;
+  }
+  :root:not([data-theme="dark"]) .hljs-doctag,
+  :root:not([data-theme="dark"]) .hljs-keyword,
+  :root:not([data-theme="dark"]) .hljs-meta .hljs-keyword,
+  :root:not([data-theme="dark"]) .hljs-template-tag,
+  :root:not([data-theme="dark"]) .hljs-template-variable,
+  :root:not([data-theme="dark"]) .hljs-type,
+  :root:not([data-theme="dark"]) .hljs-variable.language_ {
+    color: #d73a49;
+  }
+  :root:not([data-theme="dark"]) .hljs-title,
+  :root:not([data-theme="dark"]) .hljs-title.class_,
+  :root:not([data-theme="dark"]) .hljs-title.class_.inherited__,
+  :root:not([data-theme="dark"]) .hljs-title.function_ {
+    color: #6f42c1;
+  }
+  :root:not([data-theme="dark"]) .hljs-attr,
+  :root:not([data-theme="dark"]) .hljs-attribute,
+  :root:not([data-theme="dark"]) .hljs-literal,
+  :root:not([data-theme="dark"]) .hljs-meta,
+  :root:not([data-theme="dark"]) .hljs-number,
+  :root:not([data-theme="dark"]) .hljs-operator,
+  :root:not([data-theme="dark"]) .hljs-variable,
+  :root:not([data-theme="dark"]) .hljs-selector-attr,
+  :root:not([data-theme="dark"]) .hljs-selector-class,
+  :root:not([data-theme="dark"]) .hljs-selector-id {
+    color: #005cc5;
+  }
+  :root:not([data-theme="dark"]) .hljs-regexp,
+  :root:not([data-theme="dark"]) .hljs-string,
+  :root:not([data-theme="dark"]) .hljs-meta .hljs-string {
+    color: #032f62;
+  }
+  :root:not([data-theme="dark"]) .hljs-built_in,
+  :root:not([data-theme="dark"]) .hljs-symbol {
+    color: #e36209;
+  }
+  :root:not([data-theme="dark"]) .hljs-comment,
+  :root:not([data-theme="dark"]) .hljs-code,
+  :root:not([data-theme="dark"]) .hljs-formula {
+    color: #6a737d;
+  }
+  :root:not([data-theme="dark"]) .hljs-name,
+  :root:not([data-theme="dark"]) .hljs-quote,
+  :root:not([data-theme="dark"]) .hljs-selector-tag,
+  :root:not([data-theme="dark"]) .hljs-selector-pseudo {
+    color: #22863a;
+  }
+  :root:not([data-theme="dark"]) .hljs-subst {
+    color: #24292e;
+  }
+  :root:not([data-theme="dark"]) .hljs-section {
+    color: #005cc5;
+  }
+  :root:not([data-theme="dark"]) .hljs-bullet {
+    color: #735c0f;
+  }
+  :root:not([data-theme="dark"]) .hljs-addition {
+    color: #22863a;
+    background-color: #f0fff4;
+  }
+  :root:not([data-theme="dark"]) .hljs-deletion {
+    color: #b31d28;
+    background-color: #ffeef0;
+  }
 }
 
 .msg-assistant table {
@@ -2002,6 +2774,14 @@ button {
   padding: 32px 28px 80px;
   font-family: var(--font-ui);
   color: var(--fg);
+  /* The dev sandbox lives outside the regular chat shell, which means
+     it doesn't benefit from the inner scroll panels the real UI sets
+     up. body has ``overflow: hidden`` to stop accidental rubber-
+     banding, so without our own scroll container here any content
+     past the viewport just gets clipped silently. Take the full
+     viewport height and own the scrolling ourselves. */
+  height: 100%;
+  overflow-y: auto;
 }
 
 .demo-head {
@@ -2153,6 +2933,390 @@ button {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* Plan-mode demo (``?demo=plan``) — each scenario gets a thin
+   surround so the components are visually distinct from the
+   explanatory copy. Not used by the real app. */
+.demo-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent-blue) 3%, transparent);
+}
+
+.demo-section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+
+.demo-section-blurb {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--fg);
+}
+
+.demo-section-blurb code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+/* ── Plan-mode UI (row 50) ────────────────────────────────────
+   The badge sits in the status line and only renders when
+   ``status.permission_mode === "plan"``; the card renders inline
+   in the chat when the agent calls ``exit_plan_mode``. */
+
+.plan-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-orange, #f59e0b) 18%, transparent);
+  color: var(--accent-orange, #b45309);
+  border: 1px solid color-mix(in srgb, var(--accent-orange, #f59e0b) 40%, transparent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+}
+
+.plan-badge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent-orange, #f59e0b);
+  /* Subtle pulse so the user notices the chip on first paint —
+     plan mode is a state change that affects every subsequent
+     tool call, worth a moment of attention. */
+  animation: plan-badge-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes plan-badge-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* Mode-badge variants (row 51 + future). Each tints both the
+   chip background AND the inner dot so the mode reads at a
+   glance: orange = read-only sandbox (plan), green = loosened
+   (acceptEdits), red = bypass / strict. Same pulse animation
+   across all so they share visual rhythm. */
+.mode-badge--accept {
+  background: color-mix(in srgb, var(--accent-green, #10b981) 18%, transparent);
+  color: var(--accent-green, #047857);
+  border-color: color-mix(in srgb, var(--accent-green, #10b981) 40%, transparent);
+}
+
+.mode-badge--accept .plan-badge-dot {
+  background: var(--accent-green, #10b981);
+}
+
+.mode-badge--bypass {
+  background: color-mix(in srgb, var(--accent-red, #ef4444) 18%, transparent);
+  color: var(--accent-red, #b91c1c);
+  border-color: color-mix(in srgb, var(--accent-red, #ef4444) 40%, transparent);
+}
+
+.mode-badge--bypass .plan-badge-dot {
+  background: var(--accent-red, #ef4444);
+}
+
+.mode-badge--dontask {
+  background: color-mix(in srgb, var(--accent-red, #ef4444) 14%, transparent);
+  color: var(--accent-red, #991b1b);
+  border-color: color-mix(in srgb, var(--accent-red, #ef4444) 36%, transparent);
+}
+
+.mode-badge--dontask .plan-badge-dot {
+  background: var(--accent-red, #ef4444);
+}
+
+/* Auto-approve switch — footer one-click toggle into
+   bypassPermissions mode. OFF state is calm (neutral pill, matches
+   the chip rhythm of its neighbours). ON state goes loud red so
+   the user can't forget the agent is running without prompts. */
+.auto-approve-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
+  padding: 0 10px 0 4px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.auto-approve-switch:hover {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg-muted) 50%, var(--border));
+}
+
+.auto-approve-switch:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
+.auto-approve-track {
+  position: relative;
+  display: inline-block;
+  width: 22px;
+  height: 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg-faint) 35%, transparent);
+  transition: background 0.18s;
+}
+
+.auto-approve-thumb {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--fg);
+  transition: transform 0.18s, background 0.18s;
+}
+
+.auto-approve-switch.is-on {
+  background: color-mix(in srgb, var(--accent-red, #ef4444) 18%, transparent);
+  color: var(--accent-red, #b91c1c);
+  border-color: color-mix(in srgb, var(--accent-red, #ef4444) 45%, transparent);
+}
+
+.auto-approve-switch.is-on .auto-approve-track {
+  background: color-mix(in srgb, var(--accent-red, #ef4444) 60%, transparent);
+}
+
+.auto-approve-switch.is-on .auto-approve-thumb {
+  transform: translateX(10px);
+  background: #fff;
+}
+
+.auto-approve-label {
+  white-space: nowrap;
+}
+
+.plan-card {
+  align-self: stretch;
+  border: 1px solid color-mix(in srgb, var(--accent-orange, #f59e0b) 35%, var(--border-soft));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent-orange, #f59e0b) 6%, transparent);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.plan-card--approved {
+  border-color: color-mix(in srgb, var(--accent-green, #10b981) 35%, var(--border-soft));
+  background: color-mix(in srgb, var(--accent-green, #10b981) 5%, transparent);
+}
+
+.plan-card--dismissed {
+  opacity: 0.7;
+}
+
+.plan-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.plan-card-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent-orange, #f59e0b) 22%, transparent);
+  color: var(--accent-orange, #b45309);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.plan-card-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--accent-orange, #b45309);
+}
+
+.plan-card--approved .plan-card-badge {
+  background: color-mix(in srgb, var(--accent-green, #10b981) 22%, transparent);
+  color: var(--accent-green, #047857);
+}
+
+.plan-card--approved .plan-card-title {
+  color: var(--accent-green, #047857);
+}
+
+.plan-card-body {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--fg);
+}
+
+.plan-card-body > :first-child {
+  margin-top: 0;
+}
+
+.plan-card-body > :last-child {
+  margin-bottom: 0;
+}
+
+/* Structured checklist that rides below the markdown plan when
+   the agent passed ``tasks=[...]`` to ``exit_plan_mode``. The
+   same DOM updates in place as ``todos_updated`` pushes mutate
+   item statuses during execution, so the user watches the plan
+   tick off live. */
+.plan-card-tasks {
+  list-style: none;
+  margin: 0;
+  padding: 8px 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px dashed color-mix(in srgb, var(--accent-orange, #f59e0b) 30%, var(--border-soft));
+}
+
+.plan-card--approved .plan-card-tasks {
+  border-top-color: color-mix(in srgb, var(--accent-green, #10b981) 30%, var(--border-soft));
+}
+
+.plan-card-task {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+
+.plan-card-task-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
+.plan-card-task--pending .plan-card-task-marker {
+  border: 1px solid var(--border-soft);
+  color: var(--fg-faint);
+}
+
+.plan-card-task--in_progress .plan-card-task-marker {
+  background: color-mix(in srgb, var(--accent-orange, #f59e0b) 22%, transparent);
+  color: var(--accent-orange, #b45309);
+  /* Same pulse cadence as the PlanBadge dot so the two
+     in-progress signals visually rhyme — the eye picks up
+     a single rhythm across the screen. */
+  animation: plan-badge-pulse 2.4s ease-in-out infinite;
+}
+
+.plan-card-task--completed .plan-card-task-marker {
+  background: color-mix(in srgb, var(--accent-green, #10b981) 22%, transparent);
+  color: var(--accent-green, #047857);
+}
+
+.plan-card-task--completed .plan-card-task-text {
+  text-decoration: line-through;
+  color: var(--fg-faint);
+}
+
+.plan-card-task--in_progress .plan-card-task-text {
+  font-weight: 600;
+}
+
+.plan-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.plan-card-btn {
+  font-family: var(--font-ui, inherit);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: filter 0.12s ease;
+}
+
+.plan-card-btn:hover {
+  filter: brightness(1.08);
+}
+
+.plan-card-btn:active {
+  filter: brightness(0.92);
+}
+
+.plan-card-btn--approve {
+  background: var(--accent-green, #10b981);
+  color: white;
+}
+
+.plan-card-btn--reject {
+  background: transparent;
+  color: var(--fg);
+  border-color: var(--border-soft);
+}
+
+.plan-card-footer {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.plan-card-footer--approved {
+  color: var(--accent-green, #047857);
+}
+
+.plan-card-footer--dismissed {
+  color: var(--fg-faint);
+}
+
+.plan-card-hint {
+  font-size: 11.5px;
+  color: var(--fg-faint);
+  line-height: 1.5;
 }
 
 .compact-card-head {
@@ -2565,6 +3729,185 @@ button {
   background: var(--bg-raised);
   color: var(--fg);
   border: 1px solid var(--border);
+}
+
+/* Split send button — left half opens the permission-mode
+   picker, right half sends. Same ember gradient as ``.send-btn``
+   so the affordance reads as "the send button, but with
+   options now."
+
+   ``overflow: visible`` is REQUIRED so the dropdown menu
+   anchored to ``bottom: 100%`` on ``.send-mode-menu`` can
+   escape the wrapper's box. The rounded pill shape is
+   produced by per-button ``border-radius`` instead of a
+   wrapper clip. */
+.send-split {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  height: 34px;
+  background: var(--ember-gradient);
+  border-radius: 9999px;
+  flex-shrink: 0;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.send-split:hover:not(:has(:disabled)) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(249, 115, 22, 0.35);
+}
+
+.send-split-mode {
+  appearance: none;
+  border: none;
+  /* Per-mode background tint set on ``.send-split[data-mode]``
+     below. ``transparent`` here is the fallback for the
+     default mode — it lets the parent's ember gradient bleed
+     through so Execute reads as the standard send affordance. */
+  background: transparent;
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0 10px 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-right: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 9999px 0 0 9999px;
+  white-space: nowrap;
+  transition: background 0.15s ease;
+}
+
+.send-split-mode:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* ── Per-mode tinting via the WHOLE wrapper ─────────────────
+   The wrapper itself paints a single 135° gradient from the
+   mode color (top-left) into the ember red (bottom-right).
+   That way the left half and the right half are colored by
+   the same continuous gradient — no seam at the divider,
+   the transition is smooth, and the right half still reads
+   as "orange send" because the gradient's end stop is the
+   ember red.
+
+   The button children stay ``background: transparent`` (set
+   above) so the wrapper's gradient shows through both halves.
+   Default mode keeps the original ``--ember-gradient`` (no
+   per-mode rule needed). */
+
+.send-split[data-mode="plan"] {
+  background: linear-gradient(135deg, #2563eb 0%, #dc2626 100%);
+}
+
+.send-split[data-mode="acceptEdits"] {
+  /* Yellow → red gradient. Pure amber/orange (``#d97706``)
+     was visually indistinguishable from the ember-orange
+     default because the ember gradient is itself orange-to-red
+     — auto-edit looked like a slightly darker Execute. Yellow
+     is the natural "permissive but watch the shell" signal and
+     clearly distinct from both Execute (orange) and Bypass (red). */
+  background: linear-gradient(135deg, #eab308 0%, #dc2626 100%);
+}
+
+.send-split[data-mode="bypassPermissions"] {
+  /* Bypass goes red-to-red — keep it ALL red so the
+     "danger" signal isn't softened by the orange end stop. */
+  background: linear-gradient(135deg, #ef4444 0%, #991b1b 100%);
+}
+
+/* The divider between the two halves needs to be invisible
+   over the seamless gradient. Drop the hard border line and
+   use a faint inset shadow instead — the eye reads it as a
+   subtle pill seam without breaking the gradient continuity. */
+.send-split[data-mode]:not([data-mode="default"]) .send-split-mode,
+.send-split[data-mode="default"] .send-split-mode {
+  border-right: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.send-split-mode-label {
+  line-height: 1;
+}
+
+.send-split-go {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  width: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  border-radius: 0 9999px 9999px 0;
+  transition: opacity 0.12s;
+}
+
+.send-split-go:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.send-split-go:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Compound selector (``.popup-menu.send-mode-menu``) beats
+   the base ``.popup-menu`` rule by specificity instead of by
+   source order — without this the base ``left: 0; right: 0``
+   pair forces the menu to stretch the wrapper's width, and
+   when combined with our ``width: 420px`` the browser drops
+   ``right`` and the menu grows RIGHTWARD off-screen. */
+.popup-menu.send-mode-menu {
+  position: absolute;
+  left: auto;
+  right: 0;
+  bottom: calc(100% + 6px);
+  width: 420px;
+  max-width: min(420px, calc(100vw - 32px));
+  z-index: 60;
+}
+
+/* Stack each mode item as label-on-top + description-below
+   (VSCode command-palette pattern). The base popup-item is
+   ``display: flex; align-items: baseline`` which puts label
+   and description on the same row — that caused the
+   right-edge clipping the user reported because long
+   descriptions had to fit alongside the label in a narrow
+   pill. Going vertical lets the description use the full
+   menu width and wrap naturally. */
+.send-mode-menu .popup-item {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 9px 12px;
+}
+
+.send-mode-menu .popup-item .cmd {
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* Highest specificity wins over the base ``.popup-item .desc``
+   nowrap+ellipsis rules — the four-class selector breaks the
+   source-order tie and lets the description wrap freely. */
+.send-mode-menu .popup-item .desc {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.4;
+  font-size: 12px;
+}
+
+.popup-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 29;
 }
 
 .statusline {
@@ -3227,6 +4570,45 @@ button {
 .tone-muted .codeindex-dot,
 .codeindex-dot.tone-muted {
   background: var(--fg-faint);
+}
+
+/* ── Watcher pill in the footer ───────────────────────────────── */
+
+/* Same geometry as ``.codeindex-pill`` so the two pills look like
+   siblings. The dot pulses while at least one process is running
+   — it's a "you have invisible work" signal; static would let
+   the user miss it. */
+.watcher-pill {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 9999px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-surface);
+  color: var(--fg);
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: var(--font-ui);
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.watcher-pill:hover {
+  border-color: var(--ember-orange);
+  background: color-mix(in srgb, var(--ember-orange) 6%, var(--bg-surface));
+}
+
+.watcher-pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #34c759;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #34c759 25%, transparent);
+  flex-shrink: 0;
+  animation: pulse-dot 1.8s ease infinite;
 }
 
 /* ── CodeIndex panel ──────────────────────────────────────────── */
@@ -6681,4 +8063,196 @@ button {
   color: var(--fg);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* ── Watcher panel (background processes) ────────────────────────────
+   Two-pane: list on top, tail pane below. The list is bounded so the
+   tail always has at least ~50% of the drawer; with many processes
+   the list scrolls internally before the tail surrenders space. */
+.watcher-count {
+  color: var(--fg-muted);
+  font-weight: 400;
+}
+
+.watcher-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+}
+
+.watcher-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+/* When a process is selected, the list is bounded so the tail
+   pane gets at least 60% of the drawer. Without a selection
+   the list takes the full height. */
+.watcher-layout--split .watcher-list {
+  max-height: 40%;
+}
+
+.watcher-layout--list-only .watcher-list {
+  flex: 1;
+  max-height: none;
+}
+
+.watcher-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.watcher-row:hover {
+  border-color: var(--border);
+}
+
+.watcher-row--selected {
+  border-color: var(--ember-orange);
+  background: color-mix(in srgb, var(--ember-orange) 6%, var(--bg-surface));
+}
+
+.watcher-row--stopped {
+  opacity: 0.65;
+}
+
+.watcher-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.watcher-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.watcher-status--running {
+  background: #34c759;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #34c759 25%, transparent);
+}
+
+.watcher-status--stopped {
+  background: var(--fg-muted);
+}
+
+.watcher-pid {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.watcher-elapsed {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-muted);
+  margin-left: auto;
+}
+
+.watcher-row .btn-danger {
+  padding: 2px 8px;
+  font-size: 11px;
+  background: transparent;
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.watcher-row .btn-danger:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
+.watcher-cmd {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watcher-lastline {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watcher-tail {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 8px;
+}
+
+.watcher-tail-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.watcher-filter {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-inset);
+  color: var(--fg);
+}
+
+.watcher-filter:focus {
+  outline: none;
+  border-color: var(--ember-orange);
+}
+
+.watcher-log {
+  flex: 1;
+  margin: 0;
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--fg);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.watcher-log-empty {
+  color: var(--fg-muted);
+  font-style: italic;
+}
+
+.watcher-tail-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: 13px;
+  border: 1px dashed var(--border-soft);
+  border-radius: 6px;
 }

@@ -1,4 +1,4 @@
-# Ember Code GUI clients
+# igni GUI clients
 
 One shared web UI, three thin native shells — all speaking the same
 FE↔BE protocol the TUI uses, over a loopback WebSocket added in
@@ -30,7 +30,7 @@ FE↔BE protocol the TUI uses, over a loopback WebSocket added in
   dialogs, slash commands, model picker, sessions. The WS URL comes
   from `?ws=` or `window.__EMBER_WS_URL__` (injected by shells).
 - **tauri/** — Tauri v2 standalone app; spawns the BE, opens the UI.
-- **vscode/** — extension command `Ember Code: Open Chat`; bundles the
+- **vscode/** — extension command `igni: Open Chat`; bundles the
   UI into a webview, spawns the BE for the workspace folder.
 - **jetbrains/** — tool window with JCEF; per-project BE service.
 

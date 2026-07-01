@@ -1,4 +1,4 @@
-# Ember Code — Full QA Checklist
+# igni — Full QA Checklist
 
 > Priority by feature importance:
 > - **P0** = Product unusable if broken (core loop, tools, permissions, sessions)
@@ -24,7 +24,8 @@
 - [x] "Fix the bug in [file]" — agent reads, edits, verifies
 - [x] "Refactor [function]" — agent reads, edits multiple files, runs tests
 - [x] Multi-agent task — orchestrator delegates to specialist agents
-- [x] Agent uses multiple tools in sequence (Read → Edit → Bash)
+- [x] Agent uses multiple tools in sequence (Bash → Edit → Bash)  <!-- Read tool not exposed to main team; see docs/TOOLS.md -->
+
 
 ### Error recovery & resilience
 - [x] Model API timeout — graceful error message, session continues
@@ -39,13 +40,14 @@
 - [x] Type message while agent is running — message queued, sent after agent finishes
 
 ### Tools (agents can't do anything without these)
-- [x] **Read** — reads file contents correctly
+
+<!-- Main team is shell-first — see docs/TOOLS.md. Read/Grep/Glob/LS are
+     registry-only (sub-agents can opt in via frontmatter). The main team
+     covers their use cases via Bash. -->
+
+- [x] **Bash** — executes shell commands (permission check fires). Also covers reads (`cat`), search (`rg`), list (`find`/`ls`).
 - [x] **Write** — creates/overwrites file (permission check fires)
 - [x] **Edit** — targeted string replacement works
-- [x] **Bash** — executes shell commands (permission check fires)
-- [x] **Glob** — pattern matching finds correct files
-- [x] **Grep** — regex search returns correct matches with context
-- [x] **LS** — lists directory contents
 - [x] **WebSearch** — returns search results
 - [x] **WebFetch** — fetches and extracts URL content
 - [ ] **CodeIndex** — semantic search works (if Ember Cloud connected)

@@ -1,6 +1,6 @@
 # Coming from Claude Code
 
-Already using Claude Code? Ember Code is designed to feel familiar while giving you more. Agent definitions, MCP configs, and hooks use the **same formats** — most things just work when you switch.
+Already using Claude Code? igni is designed to feel familiar while giving you more. Agent definitions, MCP configs, and hooks use the **same formats** — most things just work when you switch.
 
 ## What Just Works (Zero Migration)
 
@@ -12,7 +12,7 @@ Already using Claude Code? Ember Code is designed to feel familiar while giving 
 | Hooks | `.claude/settings.json` | Same event names, same JSON format, same exit codes |
 | Project instructions | `CLAUDE.md` | Read automatically (root + subdirectories) |
 
-Cross-tool support is **enabled by default** — Ember Code reads `CLAUDE.md` files, `.claude/agents/`, `.claude/skills/`, and `.claude/settings.json` out of the box. No configuration needed.
+Cross-tool support is **enabled by default** — igni reads `CLAUDE.md` files, `.claude/agents/`, `.claude/skills/`, and `.claude/settings.json` out of the box. No configuration needed.
 
 ---
 
@@ -35,10 +35,10 @@ Your existing Claude Code agents, skills, and `CLAUDE.md` files are picked up au
 
 **Claude Code:** You spawn sub-agents manually. The parent agent decides when to delegate. Sub-agents can't spawn their own sub-agents (depth limit: 1).
 
-**Ember Code:** An Orchestrator meta-agent automatically assembles teams for each task. It picks agents, chooses the team mode (route, coordinate, broadcast, tasks), and runs them. Every agent can spawn sub-teams — no depth limit.
+**igni:** An Orchestrator meta-agent automatically assembles teams for each task. It picks agents, chooses the team mode (route, coordinate, broadcast, tasks), and runs them. Every agent can spawn sub-teams — no depth limit.
 
 ```
-Claude Code:                       Ember Code:
+Claude Code:                       igni:
   You → Agent → Sub-agent            You → Orchestrator → Team
                                             (auto-assembled)
                                          ├─ Agent A
@@ -47,13 +47,13 @@ Claude Code:                       Ember Code:
                                                        └─ Agent E
 ```
 
-You don't need to tell Ember Code which agents to use. Just describe the task.
+You don't need to tell igni which agents to use. Just describe the task.
 
 ### 2. Team Modes
 
 Claude Code has one execution model: single agent loop with optional sub-agent spawning.
 
-Ember Code has four team modes, picked automatically per-task:
+igni has four team modes, picked automatically per-task:
 
 | Mode | What It Does | Example |
 |---|---|---|
@@ -64,7 +64,7 @@ Ember Code has four team modes, picked automatically per-task:
 
 ### 3. Agents as Extensible Data
 
-Both use `.md` files with YAML frontmatter. Ember Code adds **optional** extension fields:
+Both use `.md` files with YAML frontmatter. igni adds **optional** extension fields:
 
 ```yaml
 ---
@@ -79,16 +79,16 @@ can_orchestrate: true       # can this agent spawn sub-teams?
 ---
 ```
 
-Claude Code agents work in Ember Code. Ember Code agents work in Claude Code (extensions are ignored).
+Claude Code agents work in igni. igni agents work in Claude Code (extensions are ignored).
 
 ### 4. CodeIndex (Semantic Code Intelligence)
 
-Claude Code agents grep for patterns. Ember Code agents can also search by **meaning** via CodeIndex:
+Claude Code agents grep for patterns. igni agents can also search by **meaning** via CodeIndex:
 
 ```
 "How does authentication work?"
   Claude Code: grep for "auth", read matching files
-  Ember Code:  CodeIndex returns pre-processed summary with
+  igni:  CodeIndex returns pre-processed summary with
                security analysis, dependency graph, and references
 ```
 
@@ -96,7 +96,7 @@ See [CodeIndex](CODEINDEX.md) for details.
 
 ### 5. Default Model
 
-Claude Code defaults to Anthropic models (Claude). Ember Code defaults to **MiniMax M2.7** through the Ember Code hosted endpoint, but supports any model:
+Claude Code defaults to Anthropic models (Claude). igni defaults to **MiniMax M2.7** through the igni hosted endpoint, but supports any model:
 
 ```yaml
 # Use any OpenAI-compatible model
@@ -114,7 +114,7 @@ models:
 
 ### Settings Files
 
-| Claude Code | Ember Code | Notes |
+| Claude Code | igni | Notes |
 |---|---|---|
 | `~/.claude/settings.json` | `~/.ember/settings.json` | Global settings |
 | `.claude/settings.json` | `.ember/settings.json` | Project settings |
@@ -126,7 +126,7 @@ models:
 
 ### CLI Flags
 
-| Claude Code | Ember Code | Notes |
+| Claude Code | igni | Notes |
 |---|---|---|
 | `claude` | `ignite-ember` | Main command |
 | `--model claude-sonnet-4-6` | `--model MiniMax-M2.7` | Different default, both support overrides |
@@ -137,7 +137,7 @@ models:
 | `--permission-mode plan` | `--read-only` | Read-only mode |
 | `--permission-mode acceptEdits` | `--accept-edits` | Auto-approve file edits |
 | `--worktree` | `--worktree` | Isolated git worktree session |
-| `--effort low\|high` | Not applicable | Ember Code uses Agno reasoning instead |
+| `--effort low\|high` | Not applicable | igni uses Agno reasoning instead |
 | `--tools <list>` | Per-agent in `.md` file | Tool access is per-agent, not global |
 | N/A | `--no-tui` | Fall back to plain Rich CLI (TUI is the default) |
 | `--add-dir <path>` | `--add-dir <path>` | Additional directories (repeatable) |
@@ -145,7 +145,7 @@ models:
 
 ### Slash Commands
 
-| Claude Code | Ember Code | Notes |
+| Claude Code | igni | Notes |
 |---|---|---|
 | `/help` | `/help` | Same |
 | `/clear` | `/clear` | Same |
@@ -171,7 +171,7 @@ models:
 
 ### Permissions
 
-| Claude Code | Ember Code | Notes |
+| Claude Code | igni | Notes |
 |---|---|---|
 | `"allow": ["Bash(npm run *)"]` | `permissions.shell_restricted: "allow"` | Ember uses category-based + patterns |
 | `"deny": ["Read(.env)"]` | `safety.protected_paths: [".env"]` | Ember uses a dedicated protected paths list |
@@ -179,7 +179,7 @@ models:
 
 ### Memory & Storage
 
-| Claude Code | Ember Code | Notes |
+| Claude Code | igni | Notes |
 |---|---|---|
 | `~/.claude/projects/<id>/memory/` | Agno Memory (DB-backed) | Ember uses Agno's memory system |
 | File-based `MEMORY.md` | `~/.ember/memory.db` (SQLite) | Structured storage, not files |
@@ -217,7 +217,7 @@ models:
 
 ---
 
-## What Ember Code Adds
+## What igni Adds
 
 Features you get that Claude Code doesn't have:
 
@@ -244,9 +244,9 @@ Features you get that Claude Code doesn't have:
 
 ---
 
-## What Ember Code Doesn't Have (Yet)
+## What igni Doesn't Have (Yet)
 
-Features in Claude Code that Ember Code hasn't implemented:
+Features in Claude Code that igni hasn't implemented:
 
 | Feature | Status | Notes |
 |---|---|---|
@@ -268,7 +268,7 @@ You → Claude (single agent)
   5. All in one agent loop, one context window
 ```
 
-**Ember Code:**
+**igni:**
 ```
 You → Orchestrator
   → Assembles team: [planner, editor, reviewer] in coordinate mode
@@ -282,7 +282,7 @@ You → Orchestrator
   5. Editor runs tests (Bash)
 ```
 
-Same result. Ember Code's approach gives better results on complex tasks because:
+Same result. igni's approach gives better results on complex tasks because:
 - Each agent has a focused role and system prompt
 - CodeIndex provides architectural context that raw code search misses
 - The Reviewer catches issues the Editor might overlook

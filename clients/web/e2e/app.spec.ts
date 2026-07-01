@@ -538,8 +538,14 @@ test.describe("session bootstrap", () => {
       /Message Ember/,
       { timeout: 10_000 },
     );
-    // The session chip in the footer displays a short prefix of the
-    // session id. Confirm the value flowed end-to-end.
-    await expect(page.locator(".session-chip")).toContainText(/fixture-sess/);
+    // The session chip in the footer displays only the FIRST 8
+    // CHARS of the id (see ``StatusBits.tsx:_short``). The full
+    // id rides on the ``title`` attribute as ``Copy <id>`` for
+    // click-to-copy. Check both: the truncated text proves the
+    // chip rendered, the title proves the WHOLE id flowed
+    // end-to-end without silent truncation upstream.
+    const chip = page.locator(".session-chip");
+    await expect(chip).toContainText("fixture-");
+    await expect(chip).toHaveAttribute("title", /Copy fixture-sess-xyz/);
   });
 });

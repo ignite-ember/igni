@@ -53,7 +53,7 @@ export function UpdatePrompt({
       <div className="update-prompt" role="dialog" aria-modal="true">
         <div className="update-prompt-title">Update available</div>
         <div className="update-prompt-body">
-          Ember Code <strong>{info.latest_version}</strong> is ready to
+          igni <strong>{info.latest_version}</strong> is ready to
           install. You're currently on{" "}
           <strong>{info.current_version}</strong>.
         </div>

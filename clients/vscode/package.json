@@ -1,18 +1,18 @@
 {
   "name": "ember-code-vscode",
-  "displayName": "Ember Code",
+  "displayName": "igni",
   "description": "AI coding assistant with multi-agent orchestration — chat panel with zero-touch backend install",
-  "version": "0.6.4",
+  "version": "0.7.5",
   "publisher": "ignite-ember",
   "license": "Apache-2.0",
   "icon": "icon.png",
   "homepage": "https://ignite-ember.sh",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ignite-ember/ember__code"
+    "url": "https://github.com/ignite-ember/igni"
   },
   "bugs": {
-    "url": "https://github.com/ignite-ember/ember__code/issues"
+    "url": "https://github.com/ignite-ember/igni/issues"
   },
   "engines": {
     "vscode": "^1.90.0"
@@ -38,27 +38,27 @@
       {
         "command": "emberCode.open",
         "title": "Open Chat",
-        "category": "Ember Code"
+        "category": "igni"
       },
       {
         "command": "emberCode.addSelectionToChat",
         "title": "Add Selection to Ember Chat",
-        "category": "Ember Code"
+        "category": "igni"
       },
       {
         "command": "emberCode.addFileToChat",
         "title": "Add to Ember Chat",
-        "category": "Ember Code"
+        "category": "igni"
       },
       {
         "command": "emberCode.restart",
         "title": "Restart Backend",
-        "category": "Ember Code"
+        "category": "igni"
       },
       {
         "command": "emberCode.reinstall",
         "title": "Reinstall Backend (Clean)",
-        "category": "Ember Code"
+        "category": "igni"
       }
     ],
     "menus": {
@@ -86,7 +86,7 @@
       }
     ],
     "configuration": {
-      "title": "Ember Code",
+      "title": "igni",
       "properties": {
         "emberCode.pythonPath": {
           "type": "string",

@@ -1,5 +1,6 @@
 """Settings management with hierarchical config loading."""
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -7,6 +8,8 @@ import yaml
 from pydantic import BaseModel, Field
 
 from ember_code.core.config.defaults import DEFAULT_CONFIG
+
+logger = logging.getLogger(__name__)
 
 
 class ModelsConfig(BaseModel):
@@ -26,6 +29,10 @@ class ModelsConfig(BaseModel):
 
 
 class PermissionsConfig(BaseModel):
+    # Legacy per-category levels — interpreted by the older
+    # ``PermissionGuard``. Kept untouched for back-compat; the new
+    # ``PermissionEvaluator`` reads ``mode`` / ``deny`` / ``ask`` /
+    # ``allow`` instead.
     file_read: str = "allow"
     file_write: str = "ask"
     shell_execute: str = "ask"
@@ -34,6 +41,16 @@ class PermissionsConfig(BaseModel):
     web_fetch: str = "allow"
     git_push: str = "ask"
     git_destructive: str = "ask"
+    # Claude Code-style permission system (mirrors
+    # ``settings.json``'s ``permissions`` block). ``mode`` is one
+    # of ``default`` / ``dontAsk`` / ``acceptEdits`` /
+    # ``bypassPermissions`` / ``plan``. ``deny`` / ``ask`` /
+    # ``allow`` are lists of ``Tool`` or ``Tool(pattern)`` strings
+    # (e.g. ``"Bash(rm *)"``, ``"Read(./.env)"``).
+    mode: str = "default"
+    deny: list[str] = Field(default_factory=list)
+    ask: list[str] = Field(default_factory=list)
+    allow: list[str] = Field(default_factory=list)
 
 
 class SafetyConfig(BaseModel):
@@ -205,7 +222,7 @@ class DisplayConfig(BaseModel):
 
 
 class Settings(BaseModel):
-    """Complete Ember Code settings."""
+    """Complete igni settings."""
 
     api_url: str = "https://api.ignite-ember.sh"
     update_check_ttl: int = 86400
@@ -344,24 +361,116 @@ def _migrate_cloud_models(config: dict[str, Any]) -> None:
         user_registry[default_model] = {**default_cloud[default_model]}
 
 
+def _platform_managed_settings_path() -> Path | None:
+    """OS-specific path for the sysadmin-enforced managed policy file.
+
+    Mirrors Claude Code's managed-settings tier — a write-protected
+    location that overrides every other layer including CLI flags.
+    The intent is that a sysadmin (or MDM profile) drops a YAML file
+    here to enforce org-wide policy (e.g. ``permissions.mode: dontAsk``,
+    a pinned model, a blocked-commands list) that a user can't disable
+    just by adding a `--strict` flag or editing project config.
+
+    The file format is YAML (also accepts JSON, since JSON is a strict
+    subset of YAML). Returns ``None`` on unknown platforms — the
+    loader treats that as "no managed tier."
+    """
+    import sys
+
+    if sys.platform == "darwin":
+        return Path("/Library/Application Support/Ember/managed-settings.yaml")
+    if sys.platform.startswith("linux"):
+        return Path("/etc/ember/managed-settings.yaml")
+    if sys.platform == "win32":
+        import os
+
+        program_data = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
+        return Path(program_data) / "Ember" / "managed-settings.yaml"
+    return None
+
+
+def _load_managed_settings() -> dict:
+    """Load the managed-settings YAML/JSON file if one is deployed.
+
+    Thin wrapper so tests can monkey-patch the platform path lookup
+    without reaching into ``load_settings``. Returns ``{}`` when no
+    file exists or the platform has no defined managed-settings
+    location.
+    """
+    path = _platform_managed_settings_path()
+    if path is None:
+        return {}
+    return _load_yaml(path)
+
+
+# Top-level keys we lift from ``settings.json`` into the unified
+# ``Settings`` config. Other keys (notably ``hooks``) are owned by
+# dedicated loaders that read ``settings.json`` themselves — we
+# don't double-import them here. ``permissions`` is the one block
+# the CC-style settings file shares with the YAML config and
+# without lifting it the PermissionEvaluator never sees user-tier
+# deny rules (only ``ToolPermissions`` did, and it gates
+# ``requires_confirmation`` rather than blocking the call).
+_JSON_KEYS_TO_LIFT = ("permissions",)
+
+
+def _load_settings_json_fragment(path: Path) -> dict:
+    """Read ``settings.json`` at ``path`` and return ONLY the keys
+    we want merged into the unified config. Silently empty on
+    missing file or parse error — best-effort, mirrors the YAML
+    loader's behavior.
+    """
+    if not path.exists():
+        return {}
+    try:
+        import json as _json
+
+        data = _json.loads(path.read_text())
+    except Exception as exc:
+        logger.debug("settings.json load failed at %s: %s", path, exc)
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: data[k] for k in _JSON_KEYS_TO_LIFT if k in data}
+
+
 def load_settings(
     cli_overrides: dict[str, Any] | None = None,
     project_dir: Path | None = None,
 ) -> Settings:
-    """Load settings by merging: defaults -> user config -> project config -> project local -> CLI.
+    """Load settings by merging the 5-tier precedence stack.
 
     Priority (highest first):
-    1. CLI flags
-    2. .ember/config.local.yaml (project, gitignored)
-    3. .ember/config.yaml (project, committed)
-    4. ~/.ember/config.yaml (user global)
-    5. Built-in defaults
+    1. Managed policy (sysadmin-controlled, OS-specific path)
+    2. CLI flags
+    3. .ember/config.local.yaml (project, gitignored)
+    4. .ember/config.yaml (project, committed)
+    5. ~/.ember/config.yaml (user global)
+    6. Built-in defaults
+
+    Managed sits ABOVE CLI on purpose — the whole point is that a
+    user can't override an org policy by adding ``--auto-approve``
+    on the command line. Same precedence ordering as Claude Code's
+    managed > CLI > local > project > user stack.
     """
     config = DEFAULT_CONFIG.copy()
 
     # User global config
     user_config_path = Path.home() / ".ember" / "config.yaml"
     config = _deep_merge(config, _load_yaml(user_config_path))
+    # User global settings.json — CC-style file. We lift only the
+    # ``permissions`` block here; ``hooks`` is owned by its own
+    # loader. Without this, a ``permissions.deny`` rule the user
+    # wrote in ``~/.ember/settings.json`` never reached the
+    # ``PermissionEvaluator`` and bypass mode silently allowed
+    # commands the rule should have blocked.
+    config = _deep_merge(
+        config, _load_settings_json_fragment(Path.home() / ".ember" / "settings.json")
+    )
+    config = _deep_merge(
+        config,
+        _load_settings_json_fragment(Path.home() / ".ember" / "settings.local.json"),
+    )
 
     # Project config
     if project_dir is None:
@@ -369,14 +478,27 @@ def load_settings(
 
     project_config = project_dir / ".ember" / "config.yaml"
     config = _deep_merge(config, _load_yaml(project_config))
+    config = _deep_merge(
+        config, _load_settings_json_fragment(project_dir / ".ember" / "settings.json")
+    )
 
     # Project local config (gitignored)
     project_local = project_dir / ".ember" / "config.local.yaml"
     config = _deep_merge(config, _load_yaml(project_local))
+    config = _deep_merge(
+        config,
+        _load_settings_json_fragment(project_dir / ".ember" / "settings.local.json"),
+    )
 
     # CLI overrides
     if cli_overrides:
         config = _deep_merge(config, cli_overrides)
+
+    # Managed policy — last, so it wins over CLI. Sysadmin-controlled
+    # path that users can't write to without elevated privileges, by
+    # design (it's the "you can't ``--auto-approve`` your way out of
+    # the org policy" tier).
+    config = _deep_merge(config, _load_managed_settings())
 
     # Migrate Ember Cloud models to latest defaults
     _migrate_cloud_models(config)

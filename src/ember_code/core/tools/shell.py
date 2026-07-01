@@ -19,11 +19,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import io
 import logging
 import os
 import signal
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -35,50 +37,6 @@ logger = logging.getLogger(__name__)
 _MAX_BUFFER = 1_048_576
 # Maximum characters in a tool result returned to the AI
 _MAX_RESULT_CHARS = 30_000
-
-
-def _normalize_shell_args(args: list[str] | str) -> tuple[list[str], str]:
-    """Accept any of the shapes the model tends to emit and return ``(argv, cmd_str)``.
-
-    Models routinely send one of three shapes when asked to run a shell
-    command. We normalize all three to a proper argv list (suitable for
-    ``asyncio.create_subprocess_exec(*argv)``) plus a printable
-    command string.
-
-    Shapes handled:
-      1. ``["ls", "-la"]`` — proper argv. Pass through.
-      2. ``"ls -la"`` — single shell-style string. ``shlex.split`` it.
-      3. ``["ls -la"]`` — single-element list whose only element is a
-         whole shell command. Same as (2) — split it.
-      4. ``["ls -la", "cat foo"]`` — list of shell commands to run in
-         sequence. We join them with ``&&`` and run via ``sh -c``.
-    """
-    import shlex
-
-    # String form
-    if isinstance(args, str):
-        argv = shlex.split(args)
-        return argv, args
-
-    # List form — at this point ``args`` is a list[str].
-    if not args:
-        return [], ""
-
-    # Detect shape (3): ["ls -la"] — single element with whitespace.
-    if len(args) == 1 and any(ch.isspace() for ch in args[0]):
-        argv = shlex.split(args[0])
-        return argv, args[0]
-
-    # Detect shape (4): list of multiple commands, each containing
-    # whitespace (means each element is its own shell command, not a
-    # single argv token). Fall back to sh -c chained with ``&&``.
-    multi_cmd = len(args) > 1 and all(any(ch.isspace() for ch in a) for a in args)
-    if multi_cmd:
-        joined = " && ".join(args)
-        return ["sh", "-c", joined], joined
-
-    # Default: treat as proper argv. ``["ls", "-la"]`` lands here.
-    return list(args), " ".join(args)
 
 
 def _truncate(text: str, limit: int = _MAX_RESULT_CHARS) -> str:
@@ -105,12 +63,20 @@ class _ManagedProcess:
         "was_backgrounded",
         "_eviction_task",
         "_reader_task",
+        "_log_file",
     )
 
     def __init__(self, proc: asyncio.subprocess.Process, cmd: str):
         self.proc = proc
         self.cmd = cmd
         self.output: list[str] = []
+        # File handle opened lazily on first backgrounded line —
+        # foreground commands skip it (their output is consumed
+        # immediately by the calling tool's reply). See
+        # ``_reader``. Explicit annotation so mypy doesn't infer
+        # ``None`` and reject the later ``TextIOBase`` assignment
+        # in ``_reader`` when the file is opened.
+        self._log_file: io.TextIOBase | None = None
         # Buffer is mutated by the reader task and by ``read``/``read_new``;
         # both run on the event loop so a regular lock would be enough,
         # but ``threading.Lock`` is also safe to call from
@@ -151,6 +117,41 @@ class _ManagedProcess:
                     total = sum(len(line) for line in self.output)
                     if total > _MAX_BUFFER:
                         self.output = self.output[len(self.output) // 2 :]
+                # Fire line subscribers OUTSIDE the buffer lock —
+                # they're independent (the FE watcher's loop hop
+                # doesn't need the buffer to be consistent) and
+                # nothing the subscriber can do should be allowed to
+                # block other readers. ``was_backgrounded`` gates
+                # the emit: foreground commands don't get a watcher
+                # row, so streaming their lines would just be noise.
+                if self.was_backgrounded:
+                    _emit_line(self.proc.pid, line)
+                    # Tee to per-pid log file so an orphan
+                    # (BE restart) can still read history.
+                    # Opened lazily on first line — keeps the
+                    # foreground hot path free of file ops it
+                    # doesn't need. Best-effort; a write
+                    # failure is logged once and silently
+                    # dropped (we'd rather lose log lines than
+                    # block stdout drain).
+                    if self._log_file is None:
+                        from ember_code.core.tools import process_log
+
+                        self._log_file = process_log.open_log(
+                            self.proc.pid, process_log.get_default_project_dir()
+                        )
+                    if self._log_file is not None:
+                        try:
+                            self._log_file.write(line + "\n")
+                        except OSError as exc:
+                            logger.debug(
+                                "process log write failed for pid=%s: %s",
+                                self.proc.pid,
+                                exc,
+                            )
+                            with contextlib.suppress(Exception):
+                                self._log_file.close()
+                            self._log_file = None
         except (asyncio.CancelledError, ValueError):
             # CancelledError: stop_process cancelled us; the kill+wait
             # path takes over from here.
@@ -170,6 +171,12 @@ class _ManagedProcess:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(self.proc.wait(), timeout=2.0)
             self.finished = True
+            # Close the per-pid log file so the OS flushes and
+            # the inode can be cleaned up by the eviction TTL.
+            if self._log_file is not None:
+                with contextlib.suppress(Exception):
+                    self._log_file.close()
+                self._log_file = None
             if self.was_backgrounded:
                 _emit_completion(self)
 
@@ -233,12 +240,22 @@ class _ProcessRegistry:
             self._processes.pop(pid, None)
 
     def all_running(self) -> list[tuple[int, str, float]]:
-        """Return (pid, cmd, elapsed_seconds) for running processes."""
+        """Return (pid, cmd, elapsed_seconds) for running processes.
+
+        Orphans (rehydrated from a previous BE) store epoch
+        seconds in ``_started_epoch`` instead of monotonic in
+        ``started_at`` — the previous monotonic value belongs to
+        a process that no longer exists. Branch on the attribute
+        so both kinds report correct elapsed time.
+        """
         with self._lock:
             result = []
             for pid, mp in self._processes.items():
                 if mp.is_running():
-                    elapsed = time.monotonic() - mp.started_at
+                    if hasattr(mp, "_started_epoch"):
+                        elapsed = time.time() - mp._started_epoch  # type: ignore[attr-defined]
+                    else:
+                        elapsed = time.monotonic() - mp.started_at
                     result.append((pid, mp.cmd, elapsed))
             return result
 
@@ -262,6 +279,283 @@ class _ProcessRegistry:
 # Singleton registry shared across all tool instances
 _registry = _ProcessRegistry()
 
+
+# ── Cross-restart persistence (orphan tracking) ─────────────────────
+#
+# A BE restart drops the in-memory registry, but processes spawned
+# with ``start_new_session=True`` keep running. Without the DB-
+# backed store below, those orphans become invisible — port 3000
+# is still held but the watcher reports "0 processes".
+#
+# The store is initialised once at BE startup via
+# ``set_process_store``; until then the persistence calls no-op
+# silently (the shell tool is constructable in tests/headless
+# contexts without a project-scoped DB).
+
+_process_store: Any | None = None  # set to BackgroundProcessStore at boot
+
+
+def set_process_store(store: Any | None) -> None:
+    """Wire the registry to a :class:`BackgroundProcessStore`
+    instance. Called from ``BackendServer.startup`` with the
+    boot session's project-scoped store. Pass ``None`` to clear
+    (test isolation)."""
+    global _process_store
+    _process_store = store
+
+
+def _persist_add(pid: int, cmd: str) -> None:
+    """Fire-and-forget upsert of a freshly-registered process.
+    Called from the sync ``_ProcessRegistry.add`` path, so we
+    schedule the async write on the running loop and don't
+    await — losing the write to a freak race is preferable to
+    blocking spawn on a DB roundtrip.
+
+    A queued task that hasn't run yet when the BE exits leaks
+    the row in memory but never hits disk; the next BE startup
+    will simply not see that process. That's fine — we couldn't
+    track it either way."""
+    store = _process_store
+    if store is None:
+        return
+    try:
+        # ``get_running_loop`` raises RuntimeError if there's no
+        # running loop. ``get_event_loop`` is deprecated and,
+        # crucially on 3.11/3.12, silently CREATES a new loop
+        # when none is running — the ``ensure_future`` below
+        # schedules onto that phantom loop and the coroutine
+        # never runs, leaking DB locks and hanging pytest
+        # sessions for the full 6-hour job timeout.
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    try:
+        pgid = os.getpgid(pid)
+    except (ProcessLookupError, OSError):
+        pgid = None
+    # Local import to avoid an import cycle: process_store
+    # imports from core.db which transitively touches settings.
+    from ember_code.core.tools.process_store import (
+        BackgroundProcessRow,
+        now_epoch,
+    )
+
+    row = BackgroundProcessRow(pid=pid, cmd=cmd, pgid=pgid, started_at=now_epoch())
+    asyncio.ensure_future(store.upsert(row))
+
+
+def _persist_remove(pid: int) -> None:
+    """Fire-and-forget delete. Same semantics as ``_persist_add``."""
+    store = _process_store
+    if store is None:
+        return
+    try:
+        # ``get_running_loop`` raises RuntimeError if there's no
+        # running loop. ``get_event_loop`` is deprecated and,
+        # crucially on 3.11/3.12, silently CREATES a new loop
+        # when none is running — the ``ensure_future`` below
+        # schedules onto that phantom loop and the coroutine
+        # never runs, leaking DB locks and hanging pytest
+        # sessions for the full 6-hour job timeout.
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    asyncio.ensure_future(store.remove(pid))
+
+
+class _OrphanProcess:
+    """A process the previous BE lifetime spawned that survived
+    restart. Quacks like :class:`_ManagedProcess` so the registry
+    treats both kinds uniformly, but without a live ``proc`` —
+    the OS pipes are gone, so stdout can't be reattached.
+
+    What we CAN do: probe liveness via ``os.kill(pid, 0)``, show
+    the row + elapsed time, and kill via the saved ``pgid``. The
+    log tail returns a placeholder explaining the gap.
+
+    Used only at startup-rehydration time; a fresh spawn always
+    produces a real :class:`_ManagedProcess`.
+    """
+
+    __slots__ = (
+        "pid",
+        "cmd",
+        "pgid",
+        "_started_epoch",
+        "_finished",
+        "was_backgrounded",
+        "output",
+        "_reader_task",
+        "_eviction_task",
+    )
+
+    def __init__(self, pid: int, cmd: str, started_epoch: int, pgid: int | None) -> None:
+        self.pid = pid
+        self.cmd = cmd
+        self.pgid = pgid
+        self._started_epoch = started_epoch
+        self._finished = False
+        self.was_backgrounded = True
+        # Fields the registry / RPCs read but the orphan can't
+        # populate. Empty buffer + nil tasks keep duck-typing
+        # working without special cases at every call site.
+        self.output: list[str] = []
+        self._reader_task = None
+        self._eviction_task = None
+
+    # The registry reads ``proc.pid`` and ``proc.returncode``.
+    # Expose an object that matches the asyncio.subprocess
+    # surface on those two attributes.
+    @property
+    def proc(self):  # type: ignore[no-untyped-def]
+        return _OrphanProcStub(self.pid, returncode=None if not self._finished else -1)
+
+    def is_running(self) -> bool:
+        if self._finished:
+            return False
+        try:
+            os.kill(self.pid, 0)
+            return True
+        except (ProcessLookupError, PermissionError):
+            self._finished = True
+            return False
+        except OSError:
+            return False
+
+    def returncode(self) -> int | None:
+        # Unknown for orphans — the exit status was reaped by
+        # init / launchd, not us. ``None`` means "still running"
+        # per the asyncio contract; we return a sentinel ``-1``
+        # once dead so the FE renders "exit ?" not "running".
+        return None if self.is_running() else -1
+
+    def kill(self) -> None:
+        """Send SIGTERM to the orphan. Tries the process group
+        first (so child processes the orphan spawned go down
+        together) then the pid itself as a fallback."""
+        if self.pgid is not None:
+            with contextlib.suppress(ProcessLookupError, OSError):
+                os.killpg(self.pgid, signal.SIGTERM)
+        with contextlib.suppress(ProcessLookupError, OSError):
+            os.kill(self.pid, signal.SIGTERM)
+
+    def read(self, tail: int = 100) -> str:
+        # Read history from the per-pid log file that the
+        # previous BE's reader task tee'd to. If the file
+        # exists, that IS the output — same content the live
+        # FE saw before restart. If it's gone (eviction TTL,
+        # disk pruned, never written) fall back to a
+        # placeholder so the watcher pane has something to
+        # render.
+        from ember_code.core.tools import process_log
+
+        content = process_log.tail(
+            process_log.log_path(self.pid, process_log.get_default_project_dir()),
+            n=tail,
+        )
+        if content:
+            return content
+        started_h = time.strftime("%H:%M:%S", time.localtime(self._started_epoch))
+        return (
+            f"(no buffered output — this process was started by a previous "
+            f"BE lifetime at {started_h} and the per-pid log file is empty "
+            f"or has been pruned. The Kill button still works.)"
+        )
+
+    def read_new(self, max_lines: int = 200) -> str:
+        return ""
+
+    @property
+    def started_epoch(self) -> int:
+        return self._started_epoch
+
+
+@dataclass
+class _OrphanProcStub:
+    """Two-field stub that matches the bits of
+    ``asyncio.subprocess.Process`` the registry / RPCs read on
+    a real :class:`_ManagedProcess`. Kept in this module so the
+    test suite can construct one directly if needed."""
+
+    pid: int
+    returncode: int | None
+
+
+async def rehydrate_orphan_processes(project_dir: Any) -> int:
+    """Read persisted background-process rows from the project's
+    state.db, probe each pid for liveness, inject the alive ones
+    into the registry as :class:`_OrphanProcess` instances. Dead
+    rows are pruned from the DB during the same pass.
+
+    Returns the count of orphans surfaced — callers can log it
+    so the user can see "3 orphan processes restored from
+    previous session" in BE startup logs.
+
+    Called from :meth:`BackendServer.startup` after the
+    persistence layer is up. Safe to call multiple times: the
+    registry's ``add`` is idempotent on pid, and the probe
+    handles a pid already in-flight (it won't surface twice).
+    """
+    from ember_code.core.tools.process_store import BackgroundProcessStore
+
+    try:
+        store = BackgroundProcessStore(project_dir=project_dir)
+    except Exception as exc:
+        logger.debug("orphan rehydrate: store init failed: %s", exc)
+        return 0
+    set_process_store(store)
+
+    try:
+        rows = await store.list_all()
+    except Exception as exc:
+        logger.debug("orphan rehydrate: list_all failed: %s", exc)
+        return 0
+
+    surfaced = 0
+    for row in rows:
+        # Liveness probe — ``os.kill(pid, 0)`` is the canonical
+        # check. ProcessLookupError means dead; permission errors
+        # are treated as "alive but not ours" (still worth showing
+        # because we can at least try to kill via the pgid).
+        alive = True
+        try:
+            os.kill(row.pid, 0)
+        except ProcessLookupError:
+            alive = False
+        except PermissionError:
+            alive = True
+        except OSError:
+            alive = False
+
+        if not alive:
+            with contextlib.suppress(Exception):
+                await store.remove(row.pid)
+            continue
+
+        # Skip pids the in-process registry already tracks —
+        # shouldn't happen on a clean boot (the registry is
+        # fresh) but defends against the BE somehow already
+        # having spawned the same pid (impossible in practice).
+        if _registry.get(row.pid) is not None:
+            continue
+
+        orphan = _OrphanProcess(
+            pid=row.pid,
+            cmd=row.cmd,
+            started_epoch=row.started_at,
+            pgid=row.pgid,
+        )
+        _registry.add(orphan)  # type: ignore[arg-type]
+        surfaced += 1
+
+    if surfaced:
+        logger.info(
+            "orphan rehydrate: surfaced %d background process(es) from prior BE lifetime",
+            surfaced,
+        )
+    return surfaced
+
+
 # Tracks the currently running foreground process so it can be killed on cancel.
 _foreground_lock = threading.Lock()
 _foreground_process: _ManagedProcess | None = None
@@ -270,6 +564,17 @@ _foreground_process: _ManagedProcess | None = None
 
 _completion_subscribers_lock = threading.Lock()
 _completion_subscribers: list[Any] = []  # list[Callable[[dict], None]]
+
+# Per-line + lifecycle subscribers feed the FE watcher panel. The
+# watcher needs three signals — start (so a new row appears),
+# line (so the tail updates), exit (so the row goes to "stopped").
+# All three lists are independent so a caller can pick exactly the
+# slice they care about (the agent's notify-on-completion still uses
+# only ``_completion_subscribers``).
+_line_subscribers_lock = threading.Lock()
+_line_subscribers: list[Any] = []  # list[Callable[[dict], None]]
+_start_subscribers_lock = threading.Lock()
+_start_subscribers: list[Any] = []  # list[Callable[[dict], None]]
 
 
 def subscribe_to_process_completion(callback: Any) -> None:
@@ -285,6 +590,80 @@ def subscribe_to_process_completion(callback: Any) -> None:
 def unsubscribe_from_process_completion(callback: Any) -> None:
     with _completion_subscribers_lock, contextlib.suppress(ValueError):
         _completion_subscribers.remove(callback)
+
+
+def subscribe_to_process_line(callback: Any) -> None:
+    """Register ``callback({pid, line})`` for every stdout/stderr
+    line of every backgrounded process. The FE watcher panel uses
+    this to render a live tail without polling.
+
+    Subscribers must be cheap and non-blocking — the reader task
+    fires them on the event loop synchronously. Push the line onto
+    a queue or schedule a coroutine via ``call_soon_threadsafe``;
+    do NOT do any I/O here. Exceptions in one subscriber don't
+    sink the rest (mirrors completion semantics).
+    """
+    with _line_subscribers_lock:
+        if callback not in _line_subscribers:
+            _line_subscribers.append(callback)
+
+
+def unsubscribe_from_process_line(callback: Any) -> None:
+    with _line_subscribers_lock, contextlib.suppress(ValueError):
+        _line_subscribers.remove(callback)
+
+
+def subscribe_to_process_start(callback: Any) -> None:
+    """Register ``callback({pid, cmd, started_at_ts})`` — fired
+    once when a backgrounded process is registered. The FE watcher
+    uses this to add a row without polling ``list_processes``.
+    """
+    with _start_subscribers_lock:
+        if callback not in _start_subscribers:
+            _start_subscribers.append(callback)
+
+
+def unsubscribe_from_process_start(callback: Any) -> None:
+    with _start_subscribers_lock, contextlib.suppress(ValueError):
+        _start_subscribers.remove(callback)
+
+
+def _emit_start(mp: _ManagedProcess) -> None:
+    """Fire start subscribers. Called by the registry when a
+    backgrounded process is added. Also persists the row to the
+    project's state.db so the watcher can rehydrate it across
+    BE restarts (see :func:`rehydrate_orphan_processes`)."""
+    info = {
+        "pid": mp.proc.pid,
+        "cmd": mp.cmd,
+        "started_at": time.time(),
+    }
+    # Persist FIRST so a subscriber that crashes can't sink the
+    # restart recovery (subscribers are FE pushes; the DB row is
+    # load-bearing for orphan tracking).
+    _persist_add(mp.proc.pid, mp.cmd)
+    with _start_subscribers_lock:
+        subscribers = list(_start_subscribers)
+    for cb in subscribers:
+        try:
+            cb(info)
+        except Exception as exc:
+            logger.warning("process start subscriber raised: %s", exc)
+
+
+def _emit_line(pid: int, line: str) -> None:
+    """Fire line subscribers. Called by the reader task per line.
+    Hot path — locks held for as little as possible."""
+    with _line_subscribers_lock:
+        subscribers = list(_line_subscribers)
+    if not subscribers:
+        return
+    payload = {"pid": pid, "line": line}
+    for cb in subscribers:
+        try:
+            cb(payload)
+        except Exception as exc:
+            logger.warning("process line subscriber raised: %s", exc)
 
 
 # Default eviction delay (seconds) — 10 minutes after the most recent
@@ -311,6 +690,13 @@ def _arm_eviction_task(mp: _ManagedProcess, pid: int) -> None:
         if _registry.get(pid) is mp:
             _registry.remove(pid)
             logger.debug("evicted process pid=%d after TTL", pid)
+            # Per-pid log file follows the same TTL — the agent's
+            # in-memory buffer and the on-disk tail-able copy
+            # should go away together. Skipped if the registry
+            # row was already swapped (pid reuse edge case).
+            from ember_code.core.tools import process_log
+
+            process_log.cleanup(pid, process_log.get_default_project_dir())
 
     mp._eviction_task = asyncio.create_task(_evict())
 
@@ -330,6 +716,13 @@ def _emit_completion(mp: _ManagedProcess) -> None:
         "duration_seconds": time.monotonic() - mp.started_at,
         "output_tail": mp.read(tail=40),
     }
+    # Prune the persisted row before the FE-facing subscribers
+    # fire. Otherwise a BE restart between exit and the FE seeing
+    # the ``process_exited`` push would leave a dead pid in the
+    # store, surfacing as an orphan that's already gone (the
+    # liveness probe would catch it but a stale row is a smell
+    # we can avoid).
+    _persist_remove(mp.proc.pid)
     with _completion_subscribers_lock:
         subscribers = list(_completion_subscribers)
     for cb in subscribers:
@@ -389,12 +782,24 @@ class EmberShellTools(Toolkit):
 
     async def run_shell_command(
         self,
-        args: list[str] | str,
+        command: str,
         timeout: int = 7,
         background: bool = False,
         tail: int = 100,
     ) -> str:
         """Run a shell command and return its output.
+
+        Pass ONE shell command string — exactly as you would type it at
+        a terminal. The string is executed via ``/bin/sh -c``, so full
+        shell syntax works: pipes ``|``, redirection ``>`` / ``2>&1``,
+        chaining ``&&`` / ``||`` / ``;``, variable expansion ``$VAR``,
+        env-var prefixes (``PATH=X cmd``), command substitution
+        ``$(...)``, globs, and builtins like ``cd`` / ``export``.
+
+        DO NOT pass an argv list — pass a single string.
+            Good: ``"ls -la | wc -l"``
+            Good: ``"cd portal && npm run build"``
+            Bad:  ``["ls", "-la"]``
 
         For short-lived commands (ls, git, grep, cat, curl), waits up to
         `timeout` seconds and returns the output.
@@ -413,11 +818,7 @@ class EmberShellTools(Toolkit):
         backgrounded and its PID is returned.
 
         Args:
-            args: Either a proper argv list (``["ls", "-la"]``) OR a single
-                shell-style string (``"ls -la"``) OR a list whose elements
-                are themselves shell-style strings (``["ls -la", "cat foo"]``,
-                run sequentially via ``sh -c``). The runtime normalizes
-                whichever shape the model emits.
+            command: A single shell command string.
             timeout: Max seconds to wait for the command to finish. Default 7.
             background: If True, start in background and return PID immediately.
             tail: Number of output lines to return. Default 100.
@@ -425,12 +826,13 @@ class EmberShellTools(Toolkit):
         Returns:
             Command output, or a message with the PID for background processes.
         """
-        argv, cmd_str = _normalize_shell_args(args)
-        logger.info("Shell: running %s (timeout=%d, bg=%s)", cmd_str, timeout, background)
+        if isinstance(command, list):
+            command = " ".join(command)
+        logger.info("Shell: running %s (timeout=%d, bg=%s)", command, timeout, background)
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
+            proc = await asyncio.create_subprocess_shell(
+                command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=str(self.base_dir) if self.base_dir else None,
@@ -439,12 +841,13 @@ class EmberShellTools(Toolkit):
         except Exception as e:
             return f"Error starting command: {e}"
 
-        mp = _ManagedProcess(proc, cmd_str)
+        mp = _ManagedProcess(proc, command)
         mp._reader_task = asyncio.create_task(mp._reader())
         pid = _registry.add(mp)
 
         if background:
             mp.was_backgrounded = True
+            _emit_start(mp)
             # Auto-watch for a few seconds to capture startup output or crash.
             # ``asyncio.sleep`` instead of ``time.sleep`` so the event loop
             # can keep servicing other work (HITL drain, FE stream) during
@@ -454,8 +857,15 @@ class EmberShellTools(Toolkit):
             if not mp.is_running():
                 rc = mp.returncode()
                 _registry.remove(pid)
-                return f"Background process exited immediately (code {rc}):\n{output}"
-            status = f"Background process running (PID {pid}): {cmd_str}\n"
+                # Distinguish a clean fast completion (the command ran
+                # to completion inside the 3 s grace window) from a
+                # startup crash. The LLM consumes this string — calling
+                # a successful run "exited immediately" tends to nudge
+                # the model into a needless retry.
+                if rc != 0:
+                    return f"Background process exited with code {rc}:\n{output}"
+                return f"Background process finished during startup window (code 0):\n{output}"
+            status = f"Background process running (PID {pid}): {command}\n"
             if output:
                 status += f"\nStartup output:\n{output}\n"
             else:
@@ -482,6 +892,7 @@ class EmberShellTools(Toolkit):
 
         if timed_out:
             mp.was_backgrounded = True
+            _emit_start(mp)
             output = mp.read(tail=tail)
             return _truncate(
                 f"Command still running after {timeout}s — backgrounded as PID {pid}.\n"

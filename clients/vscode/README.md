@@ -1,4 +1,4 @@
-# Ember Code — VSCode extension
+# igni — VSCode extension
 
 Hosts the shared web UI (`clients/web`) in a webview panel; spawns the
 Python backend for the open workspace over a loopback WebSocket.
@@ -24,14 +24,14 @@ scripts/build-clients.sh
 2. Press **F5** — VSCode launches a new "Extension Development Host"
    window with the plugin loaded.
 3. In the host window, open any project folder, then run
-   **Ember Code: Open** from the command palette (`⇧⌘P`).
+   **igni: Open** from the command palette (`⇧⌘P`).
 
-Set `emberCode.pythonPath` (Settings → Extensions → Ember Code) if
+Set `emberCode.pythonPath` (Settings → Extensions → igni) if
 `ignite-ember` lives in a venv.
 
 ## Smoke-test checklist
 
-After F5 + `Ember Code: Open`:
+After F5 + `igni: Open`:
 
 - [ ] Webview shows the Ember UI (sidebar + composer, dark theme).
 - [ ] Status bar bottom-right shows a non-zero `ctx N · X%` counter.

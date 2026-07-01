@@ -1,4 +1,4 @@
-"""Tool registry and custom toolkits for Ember Code."""
+"""Tool registry and custom toolkits for igni."""
 
 from ember_code.core.tools.registry import ToolRegistry
 

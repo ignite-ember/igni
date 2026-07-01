@@ -23,8 +23,13 @@ def is_empty_call(**kwargs: Any) -> bool:
       - every typed-filter arg is ``None`` (or an empty list, for the
         list-shaped multi-value categories).
 
-    ``sections``, ``limit``, ``commit`` are output-control args that
-    don't narrow — they don't count toward narrowing input.
+    NOTE: caller responsibility — this helper doesn't know which
+    kwargs are output-control vs narrowing. The only call site
+    (``query_service.codeindex_query``) excludes ``sections`` /
+    ``limit`` / ``commit`` from the kwargs it forwards here; if you
+    add a new caller, do the same. Passing output-control kwargs
+    in would make a non-empty list count as narrowing and silently
+    defeat the detection. See ``tests/test_empty_guard.py``.
     """
     if kwargs.get("query_text"):
         return False

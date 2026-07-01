@@ -99,7 +99,7 @@ tasks.named("processResources") { dependsOn(generateEmberVersion) }
 
 intellijPlatform {
     pluginConfiguration {
-        name = "Ember Code"
+        name = "igni"
         ideaVersion {
             sinceBuild = "242"
             // Marketplace prefers an explicit upper bound. Bumped in
@@ -128,7 +128,7 @@ intellijPlatform {
         //
         // Generate one at
         // https://plugins.jetbrains.com/author/me/tokens — scope
-        // "Upload Plugin" for the ``Ember Code`` plugin. First-time
+        // "Upload Plugin" for the ``igni`` plugin. First-time
         // publish triggers JetBrains' moderation review (1-10
         // business days); subsequent updates pass through within
         // minutes.

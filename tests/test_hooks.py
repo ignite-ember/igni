@@ -25,6 +25,16 @@ class TestHookEvent:
             "SubagentStart",
             "SubagentStop",
             "Notification",
+            # Added for Claude-Code-style hook parity (closes part of
+            # row 1 in ``CLAUDE_CODE_PARITY.md``).
+            "PreCompact",
+            "PostCompact",
+            "InstructionsLoaded",
+            "TaskCreated",
+            "TaskCompleted",
+            "StopFailure",
+            "PermissionRequest",
+            "PermissionDenied",
         }
         actual = {e.value for e in HookEvent}
         assert actual == expected

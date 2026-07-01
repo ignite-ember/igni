@@ -6,7 +6,7 @@ Calls ``GET {version_endpoint}`` on the Ember server. The server returns:
         "latest_version": "0.2.0",
         "min_version": "0.1.0",
         "release_notes": "Bug fixes and knowledge sync improvements.",
-        "download_url": "https://github.com/ignite-ember/ember__code/releases"
+        "download_url": "https://github.com/ignite-ember/igni/releases"
     }
 
 The check runs asynchronously at session start and never blocks the user.

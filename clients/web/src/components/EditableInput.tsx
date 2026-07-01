@@ -24,6 +24,12 @@ export interface EditableInputHandle {
    *  sync runs in a useEffect so call this *after* the next render
    *  via requestAnimationFrame if you've just updated the value. */
   setCaretAt: (offset: number) => void;
+  /** Force the live DOM to match ``v``, bypassing the value-prop
+   *  reconcile path. The Composer uses this when it consumes a typed
+   *  trigger character (e.g. ``/`` flips to command mode + clears
+   *  text) — React sees no state change in those cases, so the
+   *  ``useEffect`` watcher wouldn't fire. */
+  setValue: (v: string) => void;
 }
 
 interface Props {
@@ -318,21 +324,37 @@ export const EditableInput = forwardRef<EditableInputHandle, Props>(function Edi
   ref,
 ) {
   const elRef = useRef<HTMLDivElement>(null);
+  // Tracks the most recent value our own ``handleInput`` reported up
+  // to the parent. When the next ``value`` prop comes back equal, we
+  // know the DOM is already authoritative and skip the reconcile —
+  // no DOM walk, no string compare, no risk of clobbering an
+  // in-flight keystroke.
+  const lastTypedRef = useRef<string | null>(null);
 
-  // Sync external value → DOM. Run on every render (no deps) so we
-  // catch the case where `value` stayed the same but the live DOM
-  // diverged — e.g., the user typed a "/" that mode-entry consumed
-  // back to "" (so React saw no change) while the contenteditable
-  // still has the literal "/" in it.
+  // Sync external value → DOM only when `value` actually changes.
+  // The previous implementation ran with no deps so it could catch
+  // round-trip consumes (user typed ``/`` → parent flipped modes and
+  // cleared text so React saw `value` stay the same while the DOM
+  // still held the ``/``). That cost a DOM rewrite + caret reset on
+  // every parent re-render and raced with rapid typing — the user
+  // could see "test" land as "tets" because a stale-value render
+  // would clobber the most recently typed character. The consume
+  // case is now handled imperatively via ``setValue`` on the ref.
   useEffect(() => {
     const el = elRef.current;
     if (!el) return;
+    // Value originated from our own input handler — the DOM is
+    // already correct; don't even walk it.
+    if (lastTypedRef.current === value) {
+      lastTypedRef.current = null;
+      return;
+    }
     if (readValue(el) === value) return;
     const wasFocused = document.activeElement === el;
     const caret = wasFocused ? readCaret(el) : null;
     writeValue(el, value);
     if (caret !== null) setCaret(el, Math.min(caret, value.length));
-  });
+  }, [value]);
 
   useImperativeHandle(
     ref,
@@ -354,6 +376,15 @@ export const EditableInput = forwardRef<EditableInputHandle, Props>(function Edi
         if (!el) return;
         setCaret(el, offset);
       },
+      setValue: (v: string) => {
+        const el = elRef.current;
+        if (!el) return;
+        if (readValue(el) === v) return;
+        const wasFocused = document.activeElement === el;
+        const caret = wasFocused ? readCaret(el) : null;
+        writeValue(el, v);
+        if (caret !== null) setCaret(el, Math.min(caret, v.length));
+      },
     }),
     [],
   );
@@ -361,17 +392,22 @@ export const EditableInput = forwardRef<EditableInputHandle, Props>(function Edi
   const handleInput = useCallback(() => {
     const el = elRef.current;
     if (!el) return;
-    const caret = readCaret(el);
     const next = readValue(el);
-    // Normalize the DOM so `@<token>` + whitespace becomes a pill
-    // in place. Compare against the current HTML to skip the
-    // rebuild when the DOM is already correct (avoids killing the
-    // selection on every keystroke).
-    const want = renderHtml(next);
-    if (el.innerHTML !== want) {
-      writeValue(el, next);
-      setCaret(el, Math.min(caret, next.length));
+    // Plain typing fast path: no ``@`` → no pill normalization
+    // could possibly be needed → skip the regex, the
+    // ``renderHtml`` allocation, and the ``innerHTML`` compare.
+    // Only when the value contains an unpilled ``@<token>`` do we
+    // walk the normalize branch; that's the only case where the
+    // browser-built DOM diverges from our canonical shape.
+    if (next.includes("@") && PILL_RE.test(next)) {
+      const caret = readCaret(el);
+      const want = renderHtml(next);
+      if (el.innerHTML !== want) {
+        writeValue(el, next);
+        setCaret(el, Math.min(caret, next.length));
+      }
     }
+    lastTypedRef.current = next;
     onValueChange(next, readCaret(el));
   }, [onValueChange]);
 

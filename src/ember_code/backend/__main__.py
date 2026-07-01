@@ -81,7 +81,7 @@ def main(
     additional_dirs: tuple[str, ...],
     debug: bool,
 ) -> None:
-    """Start the Ember Code backend server."""
+    """Start the igni backend server."""
     if socket_path is None and ws_port is None:
         raise click.UsageError("at least one of --socket or --ws-port is required")
     if debug:
@@ -361,6 +361,11 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
         # ── Session / status ──────────────────────────────────────
         RpcMethod.SHUTDOWN: lambda args: backend.shutdown(),
         RpcMethod.GET_CHAT_HISTORY: lambda args: backend.get_chat_history(args["session_id"]),
+        RpcMethod.SEARCH_CHAT: lambda args: backend.search_chat(
+            args["session_id"],
+            args["query"],
+            int(args.get("limit", 50)),
+        ),
         RpcMethod.UPLOAD_ATTACHMENT: lambda args: backend.upload_attachment(
             args["filename"], args["content_base64"]
         ),
@@ -447,6 +452,34 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
         RpcMethod.RELOAD_HOOKS: lambda args: backend.reload_hooks_rpc(),
         # ── Skills ────────────────────────────────────────────────
         RpcMethod.GET_SKILL_DETAILS: lambda args: backend.get_skill_details(),
+        # ── Slash commands (SDK enumeration) ─────────────────────
+        RpcMethod.GET_SLASH_COMMANDS: lambda args: backend.get_slash_commands(),
+        # ── Todo list (CC TodoWrite parity) ──────────────────────
+        RpcMethod.GET_TODOS: lambda args: backend.get_todos(),
+        # ── Watcher panel (background process tail + kill) ───────
+        RpcMethod.LIST_BACKGROUND_PROCESSES: lambda args: backend.list_background_processes(),
+        RpcMethod.READ_PROCESS_TAIL: lambda args: backend.read_process_tail(
+            pid=int(args.get("pid", 0)),
+            tail=int(args.get("tail", 200)),
+        ),
+        RpcMethod.STOP_BACKGROUND_PROCESS: lambda args: backend.stop_background_process(
+            pid=int(args.get("pid", 0)),
+        ),
+        # ── Latest plan (CC plan mode, row 50) ───────────────────
+        RpcMethod.GET_LATEST_PLAN: lambda args: backend.get_latest_plan(),
+        # Plan-card actions. ``Session.approve_plan`` /
+        # ``Session.dismiss_plan`` are async because they
+        # persist to ``session_data`` — the dispatcher awaits
+        # whatever the lambda returns, so handing back the
+        # coroutine is fine.
+        RpcMethod.APPROVE_PLAN: lambda args: backend._session.approve_plan(
+            run_id=str(args.get("run_id", "")),
+        ),
+        RpcMethod.DISMISS_PLAN: lambda args: backend._session.dismiss_plan(
+            run_id=str(args.get("run_id", "")),
+        ),
+        # ── Output styles (CC row 52) ────────────────────────────
+        RpcMethod.GET_OUTPUT_STYLES: lambda args: backend.get_output_styles(),
         # ── Knowledge ─────────────────────────────────────────────
         RpcMethod.GET_KNOWLEDGE_STATUS: lambda args: backend.get_knowledge_status(),
         RpcMethod.KNOWLEDGE_SEARCH: lambda args: backend.knowledge_search(args["query"]),
@@ -726,6 +759,41 @@ async def _run(
 
     backend.wire_orchestrate_progress(_on_progress)
 
+    # Plan-mode broadcasts — `set_permission_mode` and
+    # `exit_plan_mode` fire via `Session.broadcast(channel,
+    # payload)`. We hop onto the running event loop because
+    # ``broadcast`` is sync and may be called from a tool-call
+    # context that isn't itself awaiting. Channels:
+    # ``permission_mode_changed`` (badge update) and
+    # ``plan_submitted`` (inline plan card).
+    _plan_loop = asyncio.get_running_loop()
+
+    def _make_broadcast_callback(send_through: Any):
+        """Build a ``(channel, payload) → PushNotification`` shim bound to
+        a specific transport. Pooled sessions get one bound to their
+        ``SessionStampingTransport`` so the push gets the correct
+        ``session_id`` and the FE routes it to the right view.
+
+        Without per-runtime binding, broadcasts from pool-created
+        sessions would either fail (no callback registered) or land
+        unstamped on the boot transport and surface in the wrong view.
+        """
+
+        def _on_event(channel: str, payload: dict) -> None:
+            def _send() -> None:
+                asyncio.ensure_future(
+                    send_through.send(msg.PushNotification(channel=channel, payload=payload))
+                )
+
+            # Event loop closed during shutdown — drop the push.
+            with contextlib.suppress(RuntimeError):
+                _plan_loop.call_soon_threadsafe(_send)
+
+        return _on_event
+
+    if hasattr(backend, "_session") and hasattr(backend._session, "register_broadcast_callback"):
+        backend._session.register_broadcast_callback(_make_broadcast_callback(transport))
+
     # ── File-edit push notifications ─────────────────────────────
     # Edit tools call ``set_file_edit_listener`` from any thread the
     # toolkit happens to run on, so the listener can't directly
@@ -751,6 +819,61 @@ async def _run(
         _loop.call_soon_threadsafe(_schedule)
 
     set_file_edit_listener(_on_file_edit)
+
+    # ── Background-process watcher push channels ────────────────
+    # The shell tool's per-line / start / exit subscribers fire
+    # from the reader task on the event loop. We forward each as
+    # an unstamped PushNotification on the boot transport — every
+    # connected client sees the same registry (one BE = one
+    # registry; watcher state is process-global, not per-session).
+    # Without these forwards the FE's watcher panel would either
+    # have to poll ``list_background_processes`` (lag + load) or
+    # miss the exit signal entirely.
+    from ember_code.core.tools.shell import (
+        subscribe_to_process_completion,
+        subscribe_to_process_line,
+        subscribe_to_process_start,
+    )
+
+    def _push_process_event(channel: str, payload: dict) -> None:
+        """Schedule a PushNotification on the running loop. Mirrors
+        the file-edit forwarder shape — the subscriber callback
+        fires sync on the loop, but ``transport.send`` is async."""
+
+        def _schedule() -> None:
+            asyncio.ensure_future(
+                transport.send(msg.PushNotification(channel=channel, payload=payload))
+            )
+
+        with contextlib.suppress(RuntimeError):
+            _loop.call_soon_threadsafe(_schedule)
+
+    def _on_process_start(info: dict) -> None:
+        _push_process_event(
+            "process_started",
+            {"pid": info.get("pid"), "cmd": info.get("cmd"), "started_at": info.get("started_at")},
+        )
+
+    def _on_process_line(info: dict) -> None:
+        _push_process_event(
+            "process_line",
+            {"pid": info.get("pid"), "line": info.get("line")},
+        )
+
+    def _on_process_completion(info: dict) -> None:
+        _push_process_event(
+            "process_exited",
+            {
+                "pid": info.get("pid"),
+                "cmd": info.get("cmd"),
+                "exit_code": info.get("exit_code"),
+                "duration_seconds": info.get("duration_seconds"),
+            },
+        )
+
+    subscribe_to_process_start(_on_process_start)
+    subscribe_to_process_line(_on_process_line)
+    subscribe_to_process_completion(_on_process_completion)
 
     login_state: dict[str, Any] = {"task": None}
     rpc_table = _build_rpc_table(backend, transport, login_state)
@@ -881,6 +1004,13 @@ async def _run(
             stamped = SessionStampingTransport(transport, rt_backend)
             rt_table = _build_rpc_table(rt_backend, stamped, login_state)
             dir_registry.set_dir(rt_backend.session_id, rt_backend.project_dir)
+            # Wire pool-session broadcasts (plan_submitted,
+            # permission_mode_changed, …) through the stamped transport
+            # so they reach the FE with the right session_id. Without
+            # this, ``exit_plan_mode`` from a pooled session never
+            # produces a PlanCard.
+            if hasattr(rt_backend._session, "register_broadcast_callback"):
+                rt_backend._session.register_broadcast_callback(_make_broadcast_callback(stamped))
             return SessionRuntime(
                 backend=rt_backend,
                 rpc_table=rt_table,
@@ -1095,10 +1225,44 @@ async def _handle_message(
     if isinstance(message, msg.UserMessage):
         # Mirroring: every attached view paints the user bubble; the
         # sender recognises its own client_id and skips the echo.
+        # Send the ORIGINAL (un-wrapped) text so chat bubbles stay
+        # clean — the system-context wrapper below is for the LLM
+        # only, not for display.
         await transport.send(
             msg.UserMessageReceived(text=message.text, client_id=message.client_id)
         )
-        async for proto in backend.run_message(message.text, media=message.file_contents):
+        # One-shot ``/plan`` → ``enter_plan_mode`` nudge. When the
+        # user just typed ``/plan`` (slash command armed
+        # ``_plan_research_armed`` on the session), prepend a
+        # ``<system-context>`` instruction so the agent spawns the
+        # ``plan_researcher`` sub-agent on this exact request.
+        # Cleared after one use — subsequent turns in the same plan
+        # mode session don't get the hint again. FE strips
+        # ``<system-context>`` blocks on display, so the chat
+        # bubble shows only what the user typed.
+        agent_text = message.text
+        sess = getattr(backend, "_session", None)
+        # ``is True`` (not just truthy) because mocked sessions in
+        # tests use ``MagicMock`` which auto-spawns missing attrs
+        # as MagicMock instances — those evaluate truthy and would
+        # wrap every test message. The slash command sets the
+        # attribute to the real ``True``.
+        if sess is not None and getattr(sess, "_plan_research_armed", False) is True:
+            sess._plan_research_armed = False
+            agent_text = (
+                "<system-context>\n"
+                "Plan mode was just entered via the user's /plan slash "
+                "command. BEFORE doing any other work, call "
+                "`enter_plan_mode(task=...)` with the user's request "
+                "below as the ``task`` argument so the plan_researcher "
+                "sub-agent runs first and produces a structured "
+                "Findings + Proposed Plan + Open Questions report. "
+                "Do not skip this step — the researcher's report is "
+                "what makes the eventual ``exit_plan_mode`` call "
+                "grounded enough to pass the confidence validator.\n"
+                "</system-context>\n\n" + message.text
+            )
+        async for proto in backend.run_message(agent_text, media=message.file_contents):
             if req_id:
                 proto = proto.model_copy(update={"id": req_id})
             await transport.send(proto)

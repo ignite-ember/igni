@@ -7,6 +7,7 @@ and async ``func`` via ``inspect.isawaitable``.
 """
 
 import asyncio
+import contextlib
 import fnmatch
 import inspect
 import logging
@@ -14,9 +15,14 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ember_code.core.config.permission_eval import (
+    PermissionDecision,
+    PermissionEvaluator,
+)
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.hooks.executor import HookExecutor
 from ember_code.core.hooks.schemas import HookResult
+from ember_code.core.utils.rules_index import RulesIndex
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +36,12 @@ _WRITE_TOOL_FUNCTIONS = frozenset(
 )
 
 _SHELL_TOOL_FUNCTIONS = frozenset({"run_shell_command"})
+
+# Argument names from which we'll harvest a path to consult the
+# rules index after a successful tool call. Covers every
+# file-tool entrypoint in the toolkit (read / edit / save /
+# create / list-dir / grep) without needing per-tool wiring.
+_PATH_ARG_NAMES = ("file_path", "path", "filename", "directory", "dir")
 
 
 def _is_protected_path(path: str, protected_patterns: list[str]) -> bool:
@@ -51,6 +63,9 @@ class ToolEventHook:
         session_id: str = "",
         protected_paths: list[str] | None = None,
         blocked_commands: list[str] | None = None,
+        rules_index: RulesIndex | None = None,
+        project_dir: Path | None = None,
+        permission_evaluator: PermissionEvaluator | None = None,
     ):
         # Mark instance as coroutine function so Agno uses aexecute() path
         if hasattr(inspect, "markcoroutinefunction"):
@@ -62,6 +77,14 @@ class ToolEventHook:
         self._session_id = session_id
         self._protected_paths = protected_paths or []
         self._blocked_commands = blocked_commands or []
+        self._rules_index = rules_index
+        self._project_dir = project_dir
+        # Claude Code-style permission system runs ALONGSIDE the
+        # legacy ``protected_paths``/``blocked_commands`` lists —
+        # both contribute denies. A None evaluator skips the
+        # 6-step pipeline entirely (parity with pre-evaluator
+        # behavior).
+        self._permission_evaluator = permission_evaluator
         self._has_pre = bool(executor.hooks.get(HookEvent.PRE_TOOL_USE.value))
         self._has_post = bool(executor.hooks.get(HookEvent.POST_TOOL_USE.value))
         self._has_fail = bool(executor.hooks.get(HookEvent.POST_TOOL_USE_FAILURE.value))
@@ -77,7 +100,62 @@ class ToolEventHook:
         if args is None:
             args = {}
 
-        # Protected paths
+        # ── Step 1: PreToolUse hook ────────────────────────────────
+        # CC's permission pipeline puts hooks FIRST so they can
+        # ``permissionDecision: allow`` or ``deny`` and short-
+        # circuit the rest of the checks. The legacy
+        # protected-paths/blocked-commands lists run AFTER as a
+        # defense-in-depth safety net (a hook saying ``allow``
+        # can't unlock a hard-blocked ``.env`` write — that's a
+        # safety bug magnet we won't ship).
+        pre_decision = ""
+        if self._has_pre:
+            pre_result = await self._fire(
+                HookEvent.PRE_TOOL_USE.value,
+                name,
+                {"tool_name": name, "tool_args": _safe_args(args)},
+            )
+            pre_decision = (pre_result.permission_decision or "").lower()
+            if pre_decision == "deny":
+                await self._fire(
+                    HookEvent.PERMISSION_DENIED.value,
+                    name,
+                    {
+                        "session_id": self._session_id,
+                        "tool_name": name,
+                        "tool_args": _safe_args(args),
+                        "reason": "pre_tool_use_hook",
+                    },
+                )
+                return pre_result.message or f"Blocked: '{name}' denied by PreToolUse hook"
+            if pre_decision == "ask":
+                await self._fire(
+                    HookEvent.PERMISSION_REQUEST.value,
+                    name,
+                    {
+                        "session_id": self._session_id,
+                        "tool_name": name,
+                        "tool_args": _safe_args(args),
+                    },
+                )
+                return (
+                    pre_result.message
+                    or f"Blocked: '{name}' requires user approval, no canUseTool bridge is wired yet."
+                )
+            # Legacy ``should_continue=False`` block (no
+            # permission_decision) — keep the existing semantics.
+            if pre_decision == "" and not pre_result.should_continue:
+                return pre_result.message or "Blocked by PreToolUse hook"
+            # "allow" falls through but SKIPS the remaining
+            # permission checks below. "defer" / "" / empty just
+            # continue normally.
+
+        # ── Step 2: legacy protected-paths (defense-in-depth) ──
+        # ALWAYS runs — a PreToolUse "allow" cannot disarm the
+        # hard-coded safety list. Same threat model as CC's
+        # bypass-resistant scoped denies: hooks and modes should
+        # never be able to silently unlock writes to ``.env`` /
+        # ``*.key`` / etc.
         if self._protected_paths and name in _WRITE_TOOL_FUNCTIONS:
             file_path = args.get("file_path", "")
             if file_path and _is_protected_path(file_path, self._protected_paths):
@@ -85,7 +163,8 @@ class ToolEventHook:
                 logger.warning("Protected path blocked: %s via %s", file_path, name)
                 return msg
 
-        # Blocked commands
+        # ── Step 3: legacy blocked-commands (defense-in-depth) ─
+        # Same "always runs" property as protected-paths.
         if self._blocked_commands and name in _SHELL_TOOL_FUNCTIONS:
             cmd_args = args.get("args", [])
             cmd_str = (
@@ -97,15 +176,48 @@ class ToolEventHook:
                     logger.warning("Blocked command: %s", cmd_str)
                     return msg
 
-        # PreToolUse
-        if self._has_pre:
-            pre_result = await self._fire(
-                HookEvent.PRE_TOOL_USE.value,
-                name,
-                {"tool_name": name, "tool_args": _safe_args(args)},
-            )
-            if not pre_result.should_continue:
-                return pre_result.message or "Blocked by PreToolUse hook"
+        # ── Step 4: permission evaluator (6-mode pipeline) ──
+        # Skipped when the PreToolUse hook returned "allow" —
+        # this is the CC-compatible escape hatch for plugins
+        # that want to grant ad-hoc approval. Scoped denies in
+        # the evaluator are STILL honoured because they fire
+        # via the evaluator's own pipeline; the hook ``allow``
+        # only skips the evaluator's step, not its earlier deny
+        # check (which doesn't apply since we skip the whole
+        # step here — but the protected-paths above already
+        # caught the safety-critical cases).
+        if pre_decision != "allow" and self._permission_evaluator is not None:
+            decision = self._permission_evaluator.evaluate(name, args)
+            if decision is PermissionDecision.DENY:
+                await self._fire(
+                    HookEvent.PERMISSION_DENIED.value,
+                    name,
+                    {
+                        "session_id": self._session_id,
+                        "tool_name": name,
+                        "tool_args": _safe_args(args),
+                        "reason": "permission_evaluator",
+                    },
+                )
+                msg = f"Blocked: permission policy denied '{name}'."
+                logger.info("Permission DENY for %s", name)
+                return msg
+            if decision is PermissionDecision.ASK:
+                await self._fire(
+                    HookEvent.PERMISSION_REQUEST.value,
+                    name,
+                    {
+                        "session_id": self._session_id,
+                        "tool_name": name,
+                        "tool_args": _safe_args(args),
+                    },
+                )
+                msg = (
+                    f"Blocked: '{name}' requires user approval, no canUseTool bridge is wired yet."
+                )
+                logger.info("Permission ASK (treated as deny) for %s", name)
+                return msg
+            # ALLOW and DEFER both fall through to execution.
 
         # Execute the tool
         if func is None:
@@ -142,7 +254,72 @@ class ToolEventHook:
                 },
             )
 
+        # Discover & inject subdirectory rules for any new directory
+        # the agent just touched. Done AFTER PostToolUse so audit logs
+        # see the unmodified result, then we suffix the rules block
+        # for the model's next reasoning step. Quiet no-op when no
+        # rules index is wired or no new rules are pending.
+        result = await self._maybe_suffix_rules(args, result)
+
         return result
+
+    async def _maybe_suffix_rules(self, args: dict[str, Any], result: Any) -> Any:
+        """Append any newly-discovered rules files for the paths in
+        ``args`` to a string ``result``. Non-string results pass
+        through untouched (binary returns, structured dicts, …).
+
+        Also fires the ``InstructionsLoaded`` hook with the list of
+        rules files surfaced, so plugins can observe which rules
+        kicked in for which tool calls (debugging path-scoped /
+        subdir rules wiring is the headline use case).
+        """
+        if self._rules_index is None or not isinstance(result, str):
+            return result
+        candidate_paths: list[Path] = []
+        for key in _PATH_ARG_NAMES:
+            v = args.get(key)
+            if not isinstance(v, str) or not v:
+                continue
+            p = Path(v)
+            if not p.is_absolute() and self._project_dir is not None:
+                p = self._project_dir / p
+            candidate_paths.append(p)
+        if not candidate_paths:
+            return result
+        discovered: list[tuple[Path, str]] = []
+        for p in candidate_paths:
+            discovered.extend(self._rules_index.consume_path(p))
+        if not discovered:
+            return result
+        parts: list[str] = []
+        files_payload: list[str] = []
+        total_bytes = 0
+        for rules_path, content in discovered:
+            label = rules_path
+            if self._project_dir is not None:
+                with contextlib.suppress(ValueError):
+                    label = rules_path.relative_to(self._project_dir)
+            files_payload.append(str(label))
+            total_bytes += len(content.encode("utf-8"))
+            parts.append(
+                f'<discovered-rules path="{label}">\n{content.strip()}\n</discovered-rules>'
+            )
+        # InstructionsLoaded — observers see exactly which rules
+        # files surfaced for this tool call. Non-blocking by design;
+        # we don't honour ``should_continue`` here because the rules
+        # have already been inlined into the tool result.
+        await self._fire(
+            HookEvent.INSTRUCTIONS_LOADED.value,
+            "",
+            {
+                "session_id": self._session_id,
+                "source": "rules_index",
+                "files": files_payload,
+                "bytes": total_bytes,
+            },
+        )
+        block = "\n".join(parts)
+        return f"{result}\n\n{block}"
 
     async def _fire(self, event: str, target: str, payload: dict[str, Any]) -> HookResult:
         hooks = self._executor.get_matching_hooks(event, target)

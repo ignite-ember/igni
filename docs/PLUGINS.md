@@ -1,6 +1,6 @@
 # Plugins
 
-Ember Code supports **Claude-Code-compatible plugins**. A plugin is a directory bundling skills, agents, hooks, MCP servers, and custom tools — installed once, namespaced automatically, toggleable per session. Plugins built for Claude Code work in Ember Code unchanged.
+igni supports **Claude-Code-compatible plugins**. A plugin is a directory bundling skills, agents, hooks, MCP servers, and custom tools — installed once, namespaced automatically, toggleable per session. Plugins built for Claude Code work in igni unchanged.
 
 ## Quick start
 
@@ -14,7 +14,7 @@ The first command clones the repo into `~/.ember/plugins/some-plugin/` and pins 
 
 ## How plugins are discovered
 
-Ember Code scans four roots in priority order (later wins same-name collisions):
+igni scans four roots in priority order (later wins same-name collisions):
 
 | Priority | Path | Use case |
 |---:|---|---|
@@ -94,7 +94,7 @@ A marketplace is a git repo with `.claude-plugin/marketplace.json` listing plugi
 /plugin install @some-marketplace/some-plugin
 ```
 
-Ember Code reads Claude Code's `marketplace.json` schema, so any catalog built for Claude works here.
+igni reads Claude Code's `marketplace.json` schema, so any catalog built for Claude works here.
 
 ### Updating + removing
 
@@ -192,11 +192,11 @@ Or commit the directory under `<project>/.ember/plugins/my-plugin/` to ship it a
 
 ### Cross-tool compatibility
 
-Plugins built for Claude Code work in Ember Code with no changes — same manifest, same `skills/` / `agents/` / `hooks/` / `.mcp.json` shapes. Plugins built for Ember Code with `tools/<file>.py` Python tools are an Ember-specific extension and won't be picked up by Claude Code (which has no equivalent loader), but the rest of the plugin still works there.
+Plugins built for Claude Code work in igni with no changes — same manifest, same `skills/` / `agents/` / `hooks/` / `.mcp.json` shapes. Plugins built for igni with `tools/<file>.py` Python tools are an Ember-specific extension and won't be picked up by Claude Code (which has no equivalent loader), but the rest of the plugin still works there.
 
 ## Limitations (v1)
 
-- **LSP servers**, **background monitors**, plugin `bin/` executables on PATH, and plugin-bundled `settings.json` defaults are recognized by Claude Code but **not loaded** by Ember Code yet. The rest of the plugin still works.
+- **LSP servers**, **background monitors**, plugin `bin/` executables on PATH, and plugin-bundled `settings.json` defaults are recognized by Claude Code but **not loaded** by igni yet. The rest of the plugin still works.
 - **Hot reload** isn't supported. Enable/disable, install, update, remove all require a session restart to apply.
 - **Per-project disable** isn't supported — `~/.ember/plugins.json` is user-global.
 - **Private marketplace auth** relies on your ambient git credentials (SSH key, gh CLI, etc.). No token storage in v1.

@@ -53,7 +53,7 @@ export function Sidebar({
             ``.conversation`` overlap pattern. */}
         <div className="sidebar-top">
           <div className="sidebar-head">
-            {/* App identity (flame + "Ember Code") lives in the main
+            {/* App identity (flame + "igni") lives in the main
                 column's ``.app-header`` — repeating it in the sidebar
                 header makes the brand appear twice when the sidebar
                 is open. Keep this row for the controls only (theme

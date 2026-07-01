@@ -1,4 +1,4 @@
-# Ember Code — JetBrains plugin
+# igni — JetBrains plugin
 
 Tool window (right anchor) hosting the shared web UI (`clients/web`)
 in a JCEF browser, backed by a per-project Ember backend process over
@@ -29,11 +29,11 @@ gradle runIde
 ```
 
 This launches a sandbox IntelliJ IDEA Community with the plugin loaded.
-Open any project, then open the **Ember Code** tool window on the right.
+Open any project, then open the **igni** tool window on the right.
 
 ## Smoke-test checklist
 
-After `gradle runIde` + opening the Ember Code tool window:
+After `gradle runIde` + opening the igni tool window:
 
 - [ ] Panel shows the Ember UI (sidebar + composer, dark theme).
 - [ ] Status bar shows a non-zero `ctx N · X%` counter.

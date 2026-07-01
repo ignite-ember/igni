@@ -126,7 +126,7 @@ jobs:
       #
       # ``JETBRAINS_MARKETPLACE_TOKEN`` is an upload token created
       # at https://plugins.jetbrains.com/author/me/tokens with the
-      # "Upload Plugin" scope for the ``Ember Code`` plugin.
+      # "Upload Plugin" scope for the ``igni`` plugin.
       #
       # CRITICAL: JetBrains requires the FIRST upload of a new
       # plugin to go through the web UI at
@@ -333,22 +333,39 @@ jobs:
           npm ci
           npm run build
 
+      # Validate notarytool auth before doing 4 min of cargo build +
+      # 1 min of codesign just to discover the credentials are wrong.
+      # ``notarytool history`` is a cheap auth-only call; on bad
+      # creds it exits non-zero with a clear "Authentication failed"
+      # in ~5 seconds, fast-failing the run.
+      - name: Preflight notarytool credentials (macOS)
+        if: matrix.platform == 'macos-14'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          xcrun notarytool history --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" \
+            | head -20
+
       - name: Build + sign + upload Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Apple Developer signing is deferred until enrollment
-          # completes (see the local secrets README). When these
-          # secrets are unset, GH Actions interpolates them as
-          # empty strings — tauri-action passes those to ``security
-          # import ""`` which fails. Adding the env vars back is
-          # safe once the secrets are populated.
-          #
-          # APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD
-          # APPLE_SIGNING_IDENTITY / APPLE_ID
-          # APPLE_PASSWORD / APPLE_TEAM_ID
+          # Apple Developer ID *signing only*. We deliberately do NOT
+          # pass APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID here —
+          # those would trigger tauri-action's built-in
+          # ``notarytool submit --wait`` which blocks the whole job
+          # for however long Apple's queue takes with zero log
+          # output (the v0.7.0-rc.1 dry run hung ~30 min on it). We
+          # do notarization ourselves in the next step with per-poll
+          # progress logging.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         with:
           projectPath: clients/tauri
           tagName: ${{ github.ref_name }}
@@ -365,6 +382,176 @@ jobs:
           # points at the ``latest`` release alias so newly-published
           # binaries are picked up the next time the app checks.
           includeUpdaterJson: true
+
+      # Submit the signed .app to Apple's notarization service
+      # ourselves, with per-30s status logging. Replaces the
+      # ``tauri-action`` --wait flow that produced 30+ min of dead
+      # silence under load. After Apple accepts, staple the ticket
+      # to the .app so first-launch on offline machines still
+      # passes Gatekeeper, then regenerate ``.app.tar.gz`` from the
+      # stapled .app — the updater payload must include the staple
+      # for offline-update verification to work. The stale
+      # ``.app.tar.gz.sig`` produced by tauri-bundler against the
+      # pre-staple tarball is deleted so the next step's fallback
+      # re-mints it via minisign against the new tarball.
+      - name: Notarize + staple .app (macOS)
+        if: matrix.platform == 'macos-14'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # 180 min ceiling: notarize times across rc.3+rc.4 for this
+        # not-yet-warmed-up Developer ID landed at 70 / 70+ / 51 /
+        # 110+ minutes — wildly variable, with no apparent pattern.
+        # Once Apple has Accepted a handful of submissions from a
+        # given Dev ID the typical review drops to 2-10 min, but
+        # until then we have to pay the cold-start tax. Above 3h
+        # something is genuinely wrong on Apple's side.
+        timeout-minutes: 180
+        run: |
+          set -euo pipefail
+          APP=$(find clients/tauri/src-tauri/target -maxdepth 8 -path '*release/bundle/macos*' -name 'igni.app' -print -quit)
+          if [ -z "$APP" ]; then
+            echo "::error::igni.app not found"
+            find clients/tauri/src-tauri/target -path '*/release/bundle/macos/*' -maxdepth 8 -print || true
+            exit 1
+          fi
+          echo "App bundle: $APP"
+
+          # Build a notarization-submission zip via ditto (Apple's
+          # documented tool — preserves the bundle layout / symlinks
+          # / xattrs correctly; plain ``zip`` mangles them).
+          SUBMIT_ZIP="$RUNNER_TEMP/ember-code-submit.zip"
+          /usr/bin/ditto -c -k --keepParent "$APP" "$SUBMIT_ZIP"
+          echo "Submission zip: $(ls -la "$SUBMIT_ZIP")"
+
+          # Submit without --wait so we get the UUID immediately.
+          SUBMIT_JSON=$(xcrun notarytool submit "$SUBMIT_ZIP" \
+            --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" \
+            --output-format json --no-wait)
+          SUBMISSION_ID=$(echo "$SUBMIT_JSON" | jq -r '.id // empty')
+          if [ -z "$SUBMISSION_ID" ]; then
+            echo "::error::no submission id returned"
+            echo "$SUBMIT_JSON"
+            exit 1
+          fi
+          echo "Submission id: $SUBMISSION_ID"
+
+          # Poll status; log [Xm Ys] status every interval so the
+          # log grows visibly even if Apple is slow. 30s matches
+          # Apple's documented notarization status cadence.
+          INTERVAL=30
+          DEADLINE=$((SECONDS + 170 * 60))  # 170 min, under 180 min step timeout
+          STATUS=
+          while [ "$SECONDS" -lt "$DEADLINE" ]; do
+            INFO_JSON=$(xcrun notarytool info "$SUBMISSION_ID" \
+              --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" \
+              --output-format json 2>/dev/null || true)
+            STATUS=$(echo "$INFO_JSON" | jq -r '.status // "Unknown"')
+            printf '[%dm %02ds] notarytool status: %s\n' "$((SECONDS/60))" "$((SECONDS%60))" "$STATUS"
+            case "$STATUS" in
+              Accepted)         break ;;
+              Invalid|Rejected) break ;;
+              *)                sleep "$INTERVAL" ;;
+            esac
+          done
+
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "::error::Notarization ended with status: $STATUS"
+            echo "::group::notarytool log"
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" || true
+            echo "::endgroup::"
+            exit 1
+          fi
+
+          # Staple the ticket into the .app so it works offline.
+          xcrun stapler staple "$APP"
+          /usr/bin/codesign --verify --deep --strict --verbose=1 "$APP"
+          /usr/sbin/spctl --assess --type execute --verbose=1 "$APP"
+
+          # Regenerate the updater tarball from the *stapled* .app.
+          # tauri-bundler writes the .tar.gz alongside the .app at
+          # ``bundle/macos/igni_<arch>.app.tar.gz``; the suffix
+          # depends on the cargo --target, so rather than reconstruct
+          # we just find the existing one, blow it away, and re-emit
+          # using the same name. The companion ``.sig`` is also
+          # nuked so the next step's fallback path re-mints it via
+          # minisign against the new bytes.
+          OLD_TARBALL=$(find clients/tauri/src-tauri/target -name '*.app.tar.gz' -not -path '*.app/*' -print -quit || true)
+          if [ -n "$OLD_TARBALL" ]; then
+            echo "Regenerating tarball: $OLD_TARBALL"
+            # The .app and the tarball live in the same directory
+            # (``…/release/bundle/macos/``), so cd there and use
+            # bare basenames — the subshell cwd makes that
+            # unambiguous, and we sidestep the relative-path-after-
+            # cd footgun that failed v0.7.0-rc.2.
+            APP_DIR=$(dirname "$APP")
+            TARBALL_BASE=$(basename "$OLD_TARBALL")
+            ( cd "$APP_DIR" && tar -czf "$TARBALL_BASE" "$(basename "$APP")" )
+            rm -f "${OLD_TARBALL}.sig" "${OLD_TARBALL}.minisig"
+            ls -la "$OLD_TARBALL"
+          else
+            echo "::warning::no existing .app.tar.gz found; updater payload may be missing"
+          fi
+
+          # The .app inside the .dmg also needs to be the stapled
+          # version. Re-upload the DMG too; that happens in the
+          # existing "Strip DMG volume icon" step which re-builds
+          # and re-uploads via gh release upload --clobber.
+
+          # Replace the .app.tar.gz that tauri-action uploaded with
+          # the stapled version. tauri-bundler emits the tarball
+          # locally as ``<productName>.app.tar.gz`` (no arch suffix),
+          # but tauri-action RENAMES it to
+          # ``<productName>_<arch>.app.tar.gz`` (``_aarch64`` / ``_x64``)
+          # when uploading to the release — and ``latest.json`` URLs
+          # point at the arch-suffixed names. So if we upload the
+          # bare basename we publish a new ``igni.app.tar.gz`` asset
+          # and leave the OLD pre-staple ``igni_<arch>.app.tar.gz``
+          # asset untouched. The updater fetches the arch-suffixed
+          # (pre-staple) bytes and verification against our
+          # post-staple signature fails. Use ``file#displayName`` to
+          # clobber the right asset.
+          #
+          # IMPORTANT: reuse ``$OLD_TARBALL`` here instead of doing
+          # a second ``find`` — the v0.7.2 dry run hit a case where
+          # the post-tar find returned empty (race / FS state
+          # between the two find calls), the if-block silently
+          # skipped, the release kept the pre-staple bytes, and the
+          # updater broke. Same variable means same file means no
+          # divergence path.
+          if [ -n "$OLD_TARBALL" ]; then
+            if [[ "${{ matrix.args }}" == *aarch64* ]]; then
+              REMOTE_NAME="igni_aarch64.app.tar.gz"
+            else
+              REMOTE_NAME="igni_x64.app.tar.gz"
+            fi
+            # ``gh release upload "file#displayName"`` only sets the
+            # label in the UI — the asset's actual filename / URL
+            # uses the local basename. So we have to RENAME the file
+            # on disk first, then upload. v0.7.3 hit this exact bug:
+            # the upload created a brand-new ``igni.app.tar.gz``
+            # asset with the stapled bytes while
+            # ``igni_<arch>.app.tar.gz`` (which ``latest.json``
+            # points at) stayed as tauri-action's pre-staple upload.
+            STAGED="$RUNNER_TEMP/${REMOTE_NAME}"
+            cp "$OLD_TARBALL" "$STAGED"
+            echo "Re-uploading stapled tarball: $STAGED (renamed from $OLD_TARBALL)"
+            ls -la "$STAGED"
+            gh release upload "${{ github.ref_name }}" "$STAGED" --clobber --repo "$GITHUB_REPOSITORY"
+            # Drop the stale bare-basename asset that v0.7.0..v0.7.3
+            # created — ``latest.json`` points at the arch-suffixed
+            # name; the bare one is just confusing noise on the
+            # release page. ``|| true`` so we don't fail if it
+            # wasn't there in the first place (later runs).
+            gh release delete-asset "${{ github.ref_name }}" "igni.app.tar.gz" --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+            echo "  ✓ uploaded as ${REMOTE_NAME}"
+          else
+            echo "::error::OLD_TARBALL is empty — regen step didn't find a tarball; updater payload will be stale"
+            exit 1
+          fi
 
       # Stash IMMEDIATELY after tauri-action — before any other step
       # touches the bundle dir. Probe runs on the ``fix/updater-
@@ -489,6 +676,13 @@ jobs:
           AARCH64_JSON="$(printf '%s' "$AARCH64_SIG" | jq -Rs .)"
           X64_JSON="$(printf '%s' "$X64_SIG" | jq -Rs .)"
 
+          # tauri-bundler emits ``<productName>_<arch>.app.tar.gz`` —
+          # productName is ``igni`` per tauri.conf.json, so the assets
+          # are ``igni_aarch64.app.tar.gz`` and ``igni_x64.app.tar.gz``.
+          # (Pre-rename builds at v0.6.x used ``Ember.Code_<arch>...``;
+          # spaces in the old productName became dots in the
+          # filename. Bumping ``productName`` in tauri.conf.json
+          # changes this output; the URLs below must follow.)
           cat > /tmp/latest.json <<EOF
           {
             "version": "${VERSION}",
@@ -497,18 +691,20 @@ jobs:
             "platforms": {
               "darwin-aarch64": {
                 "signature": ${AARCH64_JSON},
-                "url": "${BASE_URL}/Ember.Code_aarch64.app.tar.gz"
+                "url": "${BASE_URL}/igni_aarch64.app.tar.gz"
               },
               "darwin-x86_64": {
                 "signature": ${X64_JSON},
-                "url": "${BASE_URL}/Ember.Code_x64.app.tar.gz"
+                "url": "${BASE_URL}/igni_x64.app.tar.gz"
               }
             }
           }
           EOF
           # Sanity-check the JSON before we ship it.
           jq . /tmp/latest.json >/dev/null
-          gh release upload "$TAG" /tmp/latest.json --clobber
+          # ``--repo`` is required because this job doesn't check out
+          # the repo (no .git), so ``gh`` can't detect the upstream.
+          gh release upload "$TAG" /tmp/latest.json --clobber --repo "$GITHUB_REPOSITORY"
           echo "latest.json uploaded:"
           cat /tmp/latest.json
 
@@ -693,7 +889,7 @@ jobs:
 
           # Simple formula: create venv, pip install from PyPI (uses wheels)
           cat > Formula/ignite-ember.rb << 'FORMULA'
-          class IgniteEmber < Formula
+          class igniteEmber < Formula
             include Language::Python::Virtualenv
 
             desc "AI coding assistant with multi-agent orchestration"
@@ -721,7 +917,7 @@ jobs:
             end
 
             test do
-              assert_match "Ember Code", shell_output("#{bin}/ignite-ember --version")
+              assert_match "igni", shell_output("#{bin}/ignite-ember --version")
             end
           end
           FORMULA

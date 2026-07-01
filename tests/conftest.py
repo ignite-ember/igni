@@ -16,6 +16,30 @@ if _ENV_FILE.is_file():
     load_dotenv(_ENV_FILE, override=False)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_user_settings(tmp_path_factory, monkeypatch):
+    """Globally redirect ``Path.home()``, ``Path.cwd()``, and the
+    ``HOME`` env var to temp directories so ``load_settings()``
+    can't read the developer's real ``~/.ember/settings.json`` or
+    the project's ``.ember/settings.local.json``. Both files
+    contain real permission rules (deny/ask/allow) the developer
+    set on their machine (e.g. ``Bash(echo *PERM_TEST_BLOCKED*)``
+    from the row-9 walkthrough, ``ask: [Edit]`` from an /accept
+    session) that otherwise leak into every test calling
+    ``load_settings`` without an explicit ``project_dir``. The
+    ``HOME`` env override covers code paths that use
+    ``os.path.expanduser`` (auth credentials path, etc.) instead
+    of ``Path.home`` so the two stay consistent. Tests that need
+    specific contents write files under the tmp home / tmp cwd
+    themselves; the default state is empty.
+    """
+    fake_home = tmp_path_factory.mktemp("home")
+    fake_cwd = tmp_path_factory.mktemp("cwd")
+    monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+    monkeypatch.setattr("pathlib.Path.cwd", lambda: fake_cwd)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+
 @pytest.fixture
 def tmp_dir(tmp_path):
     """Provide a temporary directory as Path."""

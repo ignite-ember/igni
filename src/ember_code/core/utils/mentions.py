@@ -8,14 +8,22 @@ _AT_MENTION_RE = re.compile(r"(?:^|(?<=\s))@(\S+)")
 
 
 def process_file_mentions(text: str) -> tuple[str, list[str]]:
-    """Strip @file mentions from message text and return referenced paths.
+    """Pick out @file mentions and surface them in a hint block.
 
-    Returns (cleaned_text, referenced_paths).  The ``@`` tokens are
-    removed from the body entirely, and the referenced paths are
-    surfaced via an ``<attached-files>`` hint block. The web FE
-    strips that wrapper from the displayed user bubble (and from
-    restored history), so what the user sees stays clean: just the
-    prompt they typed.
+    Returns (cleaned_text, referenced_paths). NOTE: the ``@<path>``
+    tokens stay in the body — they're not stripped. The literal
+    token is what the rendered user bubble shows inline (live AND
+    restored), so the user can see their reference. On top of that,
+    an ``<attached-files>`` wrapper is prepended carrying the
+    extracted path list — the agent reads that to decide which files
+    to actually open. The web FE strips the wrapper from the
+    displayed bubble (and from restored history), so what the user
+    sees stays clean: just the prompt they typed plus the inline
+    ``@<path>`` reference.
+
+    Email-style ``user@domain`` is NOT a mention — the regex
+    requires the ``@`` to be preceded by whitespace or
+    start-of-string.
     """
     paths: list[str] = []
 

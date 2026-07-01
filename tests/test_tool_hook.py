@@ -70,7 +70,16 @@ class TestPostToolUse:
         outfile = Path(tempfile.mktemp(suffix=".json"))
         hooks = {
             "PostToolUse": [
-                HookDefinition(type="command", command=f"cat > {outfile}", matcher="edit")
+                HookDefinition(
+                    type="command",
+                    command=f"cat > {outfile}",
+                    # CC-compatible exact matcher: bare alphanumeric
+                    # identifiers match the tool name exactly (no
+                    # substring). Use a pipe-list like
+                    # ``"edit_file|save_file"`` to match multiple,
+                    # or a regex like ``"^edit"`` for substring.
+                    matcher="edit_file",
+                )
             ]
         }
         hook = ToolEventHook(HookExecutor(hooks), session_id="s1")

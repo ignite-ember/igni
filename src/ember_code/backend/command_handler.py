@@ -84,6 +84,17 @@ class CommandResult:
         return cls(kind=CommandResultKind.ACTION, action=CommandAction.CLEAR)
 
     @classmethod
+    def fork(cls, new_session_id: str) -> "CommandResult":
+        # The new session id rides in ``content`` so the FE has
+        # everything it needs to switch + load history from one
+        # round-trip.
+        return cls(
+            kind=CommandResultKind.ACTION,
+            action=CommandAction.FORK,
+            content=new_session_id,
+        )
+
+    @classmethod
     def sessions(cls) -> "CommandResult":
         return cls(kind=CommandResultKind.ACTION, action=CommandAction.SESSIONS)
 
@@ -127,6 +138,10 @@ class CommandResult:
     def loop(cls) -> "CommandResult":
         return cls(kind=CommandResultKind.ACTION, action=CommandAction.LOOP)
 
+    @classmethod
+    def watcher(cls) -> "CommandResult":
+        return cls(kind=CommandResultKind.ACTION, action=CommandAction.WATCHER)
+
 
 class CommandHandler:
     """Handles slash commands, decoupled from the TUI rendering.
@@ -147,6 +162,16 @@ class CommandHandler:
         handler = self._COMMANDS.get(cmd)
         if handler:
             return await handler(self, args)
+
+        # Try markdown-authored custom commands (CC parity:
+        # ``.claude/commands/*.md``, ``.ember/commands/*.md`` at
+        # user and project tiers). Falls through to skill matching
+        # so user-authored Python skills still win over a same-name
+        # markdown file — the user explicitly imported the skill,
+        # whereas markdown files are best-effort drop-ins.
+        md_result = await self._handle_markdown_command(cmd, args)
+        if md_result is not None:
+            return md_result
 
         # Try skill match
         return await self._handle_skill(stripped)
@@ -281,7 +306,7 @@ class CommandHandler:
         ),
         "memory": (
             "## Memory & Learning\n\n"
-            "Ember Code learns your preferences automatically from conversations.\n\n"
+            "igni learns your preferences automatically from conversations.\n\n"
             "**Commands:**\n"
             "- `/memory` — show what Ember has learned about you\n"
             "- `/memory optimize` — consolidate memories\n\n"
@@ -756,6 +781,15 @@ class CommandHandler:
         # Default — open the panel.
         return CommandResult.hooks()
 
+    async def _cmd_watcher(self, _args: str) -> "CommandResult":
+        """Open the background-process watcher panel (right side
+        of the chat). View-only tail with a kill button per
+        process. The panel subscribes to the
+        ``process_started`` / ``process_line`` / ``process_exited``
+        push channels for real-time updates — no polling.
+        """
+        return CommandResult.watcher()
+
     async def _cmd_clear(self, _args: str) -> "CommandResult":
         # Generate new session_id so Agno starts fresh history.
         # The id MUST be propagated to main_team and persistence —
@@ -798,6 +832,28 @@ class CommandHandler:
             return CommandResult.error("Usage: /rename <new session name>")
         await self._session.persistence.rename(name)
         return CommandResult.info(f"Session renamed to: {name}")
+
+    async def _cmd_fork(self, args: str) -> "CommandResult":
+        """Clone the current session under a fresh id and switch to it.
+
+        Optional argument is the new session's display name; without
+        it the fork inherits the source's name (or stays nameless,
+        same as a freshly-created session that auto-names after the
+        first run completes).
+        """
+        name = args.strip() or None
+        try:
+            new_id = await self._session.persistence.fork(name=name)
+        except Exception as exc:
+            logger.warning("/fork failed: %s", exc)
+            return CommandResult.error(f"Fork failed: {exc}")
+        # Re-bind every component that holds the active session id so
+        # the next user turn lands in the fork, not the source.
+        self._session.session_id = new_id
+        self._session.session_named = bool(name)
+        self._session.main_team.session_id = new_id
+        self._session.persistence.session_id = new_id
+        return CommandResult.fork(new_id)
 
     async def _cmd_memory(self, args: str) -> "CommandResult":
         subcommand = args.strip().lower()
@@ -1075,7 +1131,7 @@ class CommandHandler:
                 )
             _open_in_browser(resolved.install_url)
             return CommandResult.markdown(
-                f"### Install Ember CodeIndex\nOpening your browser:\n`{resolved.install_url}`"
+                f"### Install igniIndex\nOpening your browser:\n`{resolved.install_url}`"
             )
 
         if subcommand == "status":
@@ -1420,6 +1476,289 @@ class CommandHandler:
             content="\n".join(lines),
         )
 
+    async def _cmd_plan(self, args: str) -> "CommandResult":
+        """Toggle the session in/out of plan mode (CC parity, row 50).
+
+        With no arguments, flips between ``plan`` (file edits
+        blocked, agent is expected to read + propose then call
+        ``exit_plan_mode``) and ``default``. With an explicit
+        ``on`` / ``off`` argument, sets the mode unambiguously —
+        useful for scripted / RPC callers.
+
+        The mode flip mutates the live
+        ``Session.permission_evaluator`` so it takes effect on
+        the very next tool call — no agent rebuild, no restart.
+        """
+        from ember_code.core.config.permission_eval import PermissionMode
+
+        normalized = args.strip().lower()
+        evaluator = getattr(self._session, "permission_evaluator", None)
+        if evaluator is None:
+            return CommandResult.error("Permission evaluator not initialised.")
+        current = evaluator.mode
+
+        if normalized in ("on", "enable", "start"):
+            target = PermissionMode.PLAN
+        elif normalized in ("off", "disable", "exit", "stop"):
+            target = PermissionMode.DEFAULT
+        elif normalized in ("", "toggle"):
+            # Toggle: plan ↔ default. Other modes (acceptEdits,
+            # bypassPermissions, dontAsk) all flip TO plan on
+            # toggle — entering plan from any non-plan mode is
+            # the only sensible read.
+            target = (
+                PermissionMode.DEFAULT if current is PermissionMode.PLAN else PermissionMode.PLAN
+            )
+        elif normalized in ("status", "show"):
+            return CommandResult(
+                kind=CommandResultKind.INFO,
+                content=f"Permission mode: **{current.value}**",
+            )
+        else:
+            return CommandResult.error(
+                f"Unknown /plan argument: {normalized!r}. Use /plan, /plan on, /plan off, or /plan status."
+            )
+
+        status_line = self._session.set_permission_mode(target.value)
+        if target is PermissionMode.PLAN:
+            # Arm a one-shot researcher nudge for the NEXT user
+            # message, but ONLY on the transition INTO plan mode.
+            # If the user types ``/plan`` while already in plan
+            # mode (e.g. to re-confirm), don't re-arm — the
+            # researcher already ran on this session's first
+            # post-``/plan`` turn and re-running it just spends
+            # tokens. Same reason we don't arm when the agent
+            # itself called ``enter_plan_mode`` (then the
+            # researcher fired through the tool path already).
+            if current is not PermissionMode.PLAN:
+                self._session._plan_research_armed = True
+            tail = (
+                "\n\nYou are now in **plan mode**. The agent can read, "
+                "search, and think but file edits and mutating shell "
+                "commands are blocked. The agent should call "
+                "`exit_plan_mode(plan)` when ready; use `/plan` again "
+                "to exit plan mode and let it execute."
+            )
+        else:
+            # Leaving plan mode also disarms the pending researcher
+            # nudge — if the user changed their mind between
+            # ``/plan`` and a follow-up message, we don't want a
+            # stale hint to fire on their next turn.
+            if hasattr(self._session, "_plan_research_armed"):
+                self._session._plan_research_armed = False
+            tail = "\n\nPlan mode exited. The agent can now execute as normal."
+        return CommandResult(
+            kind=CommandResultKind.MARKDOWN,
+            content=status_line + tail,
+        )
+
+    async def _cmd_output_style(self, args: str) -> "CommandResult":
+        """List / set / show the active output style (CC parity, row 52).
+
+        Subcommands:
+        * (empty) / ``list`` — list every discovered style with
+          its description, marking the active one.
+        * ``status`` / ``show`` — print just the active name.
+        * ``<name>`` / ``set <name>`` — switch to the named
+          style. Hot-patches the agent's instructions so the
+          next turn picks up the new tone without a rebuild.
+
+        Output styles are markdown files at
+        ``.ember/output-styles/<name>.md`` (project) or
+        ``~/.ember/output-styles/<name>.md`` (user), plus the
+        ``.claude/`` equivalents when cross-tool reads are
+        enabled. Each file's body is appended to the system
+        prompt — so a style can shift tone, verbosity, or
+        teaching mode without limiting tools or capabilities.
+        """
+        styles = self._session.output_styles
+        active = self._session._active_output_style
+
+        normalized = args.strip()
+        cmd, _, rest = normalized.partition(" ")
+        cmd = cmd.lower()
+
+        if normalized in ("", "list"):
+            if not styles:
+                return CommandResult(
+                    kind=CommandResultKind.INFO,
+                    content=(
+                        "No output styles configured. Drop a markdown file at "
+                        "`.ember/output-styles/<name>.md` (frontmatter: `name`, "
+                        "`description`; body is the system-prompt extension)."
+                    ),
+                )
+            lines = ["**Output styles**", ""]
+            for name in sorted(styles):
+                marker = " (active)" if name == active else ""
+                desc = styles[name].description or "_(no description)_"
+                lines.append(f"- `{name}`{marker} — {desc}")
+            lines.append("")
+            lines.append("Switch with `/output-style <name>`.")
+            return CommandResult(
+                kind=CommandResultKind.MARKDOWN,
+                content="\n".join(lines),
+            )
+
+        if normalized in ("status", "show"):
+            return CommandResult(
+                kind=CommandResultKind.INFO,
+                content=f"Active output style: **{active or '(none)'}**",
+            )
+
+        # Treat anything else as a style name to switch to —
+        # ``/output-style explanatory`` and the explicit
+        # ``/output-style set explanatory`` both land here.
+        target_name = rest.strip() if cmd == "set" else normalized
+
+        if not target_name:
+            return CommandResult.error(
+                "Usage: /output-style <name> (or `/output-style list` to see options)."
+            )
+
+        status_line = self._session.set_output_style(target_name)
+        if status_line.startswith("Error"):
+            return CommandResult.error(status_line)
+        return CommandResult(
+            kind=CommandResultKind.INFO,
+            content=status_line,
+        )
+
+    async def _cmd_accept(self, args: str) -> "CommandResult":
+        """Toggle the session in/out of acceptEdits mode (CC parity, row 51).
+
+        In ``acceptEdits`` mode the permission evaluator auto-
+        approves file-edit tools — no per-tool HITL prompt for
+        ``edit_file`` / ``save_file`` / ``create_file``. Use it
+        for trusted-loop workflows (running an autonomous loop
+        on tests, rapid prototyping) where the per-edit prompt
+        would be friction.
+
+        Arg semantics mirror ``/plan``:
+        * (empty) / ``toggle`` — flip default ↔ acceptEdits.
+          From any non-acceptEdits mode, enters acceptEdits.
+        * ``on`` / ``enable`` — set acceptEdits explicitly.
+        * ``off`` / ``disable`` — back to default.
+        * ``status`` / ``show`` — report current mode without
+          changing it.
+
+        Unlike plan mode, ``acceptEdits`` is LOOSENING the
+        sandbox — the agent intentionally does NOT get a tool
+        to flip itself in. Only the user can opt in via this
+        slash command. (Bypass-resistant scoped denies from
+        row 9 still hold — even in acceptEdits, a ``deny`` rule
+        like ``save_file(.env)`` still blocks.)
+        """
+        from ember_code.core.config.permission_eval import PermissionMode
+
+        normalized = args.strip().lower()
+        evaluator = getattr(self._session, "permission_evaluator", None)
+        if evaluator is None:
+            return CommandResult.error("Permission evaluator not initialised.")
+        current = evaluator.mode
+
+        if normalized in ("on", "enable", "start"):
+            target = PermissionMode.ACCEPT_EDITS
+        elif normalized in ("off", "disable", "exit", "stop"):
+            target = PermissionMode.DEFAULT
+        elif normalized in ("", "toggle"):
+            target = (
+                PermissionMode.DEFAULT
+                if current is PermissionMode.ACCEPT_EDITS
+                else PermissionMode.ACCEPT_EDITS
+            )
+        elif normalized in ("status", "show"):
+            return CommandResult(
+                kind=CommandResultKind.INFO,
+                content=f"Permission mode: **{current.value}**",
+            )
+        else:
+            return CommandResult.error(
+                f"Unknown /accept argument: {normalized!r}. "
+                "Use /accept, /accept on, /accept off, or /accept status."
+            )
+
+        status_line = self._session.set_permission_mode(target.value)
+        if target is PermissionMode.ACCEPT_EDITS:
+            tail = (
+                "\n\nYou are now in **acceptEdits mode**. File-edit "
+                "tools (`edit_file`, `save_file`, `create_file`) "
+                "auto-approve without per-tool HITL prompts — useful "
+                "for autonomous loops on trusted work. Scoped denies "
+                "still block specific files (e.g. `.env`); use "
+                "`/accept off` to leave the mode."
+            )
+        else:
+            tail = "\n\nacceptEdits exited. Edits now require approval per the default policy."
+        return CommandResult(
+            kind=CommandResultKind.MARKDOWN,
+            content=status_line + tail,
+        )
+
+    async def _cmd_bypass(self, args: str) -> "CommandResult":
+        """Toggle the session in/out of bypassPermissions mode.
+
+        In ``bypassPermissions`` mode the permission evaluator skips
+        the HITL prompt for ANY tool — shell, edits, MCP — letting
+        the agent run autonomously without per-tool approval. Used
+        from the footer "Auto-approve" switch for trusted loops.
+
+        Bypass-resistant scoped denies (e.g. ``save_file(.env)``)
+        still block; only the per-tool ``ask`` step is skipped.
+
+        Arg semantics mirror ``/accept`` / ``/plan``:
+        * (empty) / ``toggle`` — flip default ↔ bypassPermissions.
+        * ``on`` / ``enable`` — set bypassPermissions explicitly.
+        * ``off`` / ``disable`` — back to default.
+        * ``status`` / ``show`` — report current mode without changing.
+        """
+        from ember_code.core.config.permission_eval import PermissionMode
+
+        normalized = args.strip().lower()
+        evaluator = getattr(self._session, "permission_evaluator", None)
+        if evaluator is None:
+            return CommandResult.error("Permission evaluator not initialised.")
+        current = evaluator.mode
+
+        if normalized in ("on", "enable", "start"):
+            target = PermissionMode.BYPASS_PERMISSIONS
+        elif normalized in ("off", "disable", "exit", "stop"):
+            target = PermissionMode.DEFAULT
+        elif normalized in ("", "toggle"):
+            target = (
+                PermissionMode.DEFAULT
+                if current is PermissionMode.BYPASS_PERMISSIONS
+                else PermissionMode.BYPASS_PERMISSIONS
+            )
+        elif normalized in ("status", "show"):
+            return CommandResult(
+                kind=CommandResultKind.INFO,
+                content=f"Permission mode: **{current.value}**",
+            )
+        else:
+            return CommandResult.error(
+                f"Unknown /bypass argument: {normalized!r}. "
+                "Use /bypass, /bypass on, /bypass off, or /bypass status."
+            )
+
+        status_line = self._session.set_permission_mode(target.value)
+        if target is PermissionMode.BYPASS_PERMISSIONS:
+            tail = (
+                "\n\nYou are now in **bypassPermissions mode**. The "
+                "agent will run any tool without asking — useful for "
+                "autonomous loops on trusted work. Scoped denies still "
+                "block specific files (e.g. `.env`); use `/bypass off` "
+                "to leave the mode."
+            )
+        else:
+            tail = (
+                "\n\nbypassPermissions exited. Tools now require approval per the default policy."
+            )
+        return CommandResult(
+            kind=CommandResultKind.MARKDOWN,
+            content=status_line + tail,
+        )
+
     async def _cmd_compact(self, _args: str) -> "CommandResult":
         status, summary = await self._session.force_compact()
         # Pass status + summary as separate fields so the FE can render
@@ -1601,9 +1940,47 @@ class CommandHandler:
     async def _cmd_bug(self, _args: str) -> "CommandResult":
         import webbrowser
 
-        url = "https://github.com/vector-bridge/ember__code/issues"
+        url = "https://github.com/ignite-ember/igni/issues"
         webbrowser.open(url)
         return CommandResult.info(f"Opened {url}")
+
+    async def _handle_markdown_command(self, cmd: str, args: str) -> "CommandResult | None":
+        """Look up a markdown-authored command by name and, if
+        found, render its body into a prompt for the agent. Returns
+        ``None`` to fall through to the next dispatch tier.
+
+        Discovery happens per-invocation rather than at session
+        init — the cost is a handful of stat() calls + a small YAML
+        parse, dwarfed by the LLM round-trip that follows, and
+        avoids stale caching when a user is iterating on a command
+        file in another editor."""
+        from ember_code.core.utils.markdown_commands import discover_markdown_commands
+
+        name = cmd.lstrip("/")
+        if not name:
+            return None
+        try:
+            read_claude = self._session.settings.rules.cross_tool_support
+            commands = discover_markdown_commands(
+                self._session.project_dir,
+                read_claude=read_claude,
+            )
+        except Exception as exc:
+            logger.debug("Markdown command discovery failed: %s", exc)
+            return None
+        md = commands.get(name)
+        if md is None:
+            return None
+        try:
+            rendered = await md.render(args, project_dir=self._session.project_dir)
+        except Exception as exc:
+            logger.warning("Markdown command /%s render failed: %s", name, exc)
+            return CommandResult.error(f"/{name}: render failed: {exc}")
+        return CommandResult(
+            kind=CommandResultKind.INFO,
+            content=rendered,
+            action=CommandAction.RUN_PROMPT,
+        )
 
     async def _handle_skill(self, stripped: str) -> "CommandResult":
         """Try to match and execute a skill command.
@@ -1629,12 +2006,14 @@ class CommandHandler:
         "/quit": _cmd_quit,
         "/exit": _cmd_quit,
         "/help": _cmd_help,
+        "/watcher": _cmd_watcher,
         "/agents": _cmd_agents,
         "/skills": _cmd_skills,
         "/hooks": _cmd_hooks,
         "/clear": _cmd_clear,
         "/sessions": _cmd_sessions,
         "/rename": _cmd_rename,
+        "/fork": _cmd_fork,
         "/memory": _cmd_memory,
         "/knowledge": _cmd_knowledge,
         "/codeindex": _cmd_codeindex,
@@ -1650,6 +2029,10 @@ class CommandHandler:
         "/plugins": _cmd_plugins,
         "/compact": _cmd_compact,
         "/ctx": _cmd_ctx,
+        "/plan": _cmd_plan,
+        "/accept": _cmd_accept,
+        "/bypass": _cmd_bypass,
+        "/output-style": _cmd_output_style,
         "/bug": _cmd_bug,
         "/evals": _cmd_evals,
         "/sync-knowledge": _cmd_sync_knowledge,

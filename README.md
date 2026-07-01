@@ -1,20 +1,20 @@
-# Ember Code
+# igni
 
 **One spark ignites a team.** An AI coding assistant built with [Agno](https://github.com/agno-agi/agno) orchestration.
 
 [ignite-ember.sh](https://ignite-ember.sh)
 
-Inspired by [Claude Code](https://github.com/anthropics/claude-code), Ember Code is a terminal-based coding agent that assembles specialized AI teams on the fly. Describe your task — the Orchestrator picks the right agents, the right team mode, and runs them.
+Inspired by [Claude Code](https://github.com/anthropics/claude-code), igni is a terminal-based coding agent that assembles specialized AI teams on the fly. Describe your task — the Orchestrator picks the right agents, the right team mode, and runs them.
 
-## Why Ember Code?
+## Why igni?
 
-Claude Code uses a single agent loop — powerful but monolithic. Ember Code takes a different approach: **dynamic multi-agent orchestration**. Instead of one agent doing everything, Agno's team system decomposes tasks, routes them to specialized agents, and synthesizes results — all automatically.
+Claude Code uses a single agent loop — powerful but monolithic. igni takes a different approach: **dynamic multi-agent orchestration**. Instead of one agent doing everything, Agno's team system decomposes tasks, routes them to specialized agents, and synthesizes results — all automatically.
 
 ### The numbers
 
 Head-to-head benchmark on a 12-case software-engineering suite, 5 runs per system, deterministic grading. See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for the full breakdown.
 
-| | Ember Code (MiniMax-M2.7) + CodeIndex | Claude Code (Opus-4.7) |
+| | igni (MiniMax-M2.7) + CodeIndex | Claude Code (Opus-4.7) |
 |---|---:|---:|
 | Directly mergeable (✅) | **49 / 60 (82 %)** | 31 / 60 (52 %) |
 | Needs clarification (⚠) | **4 / 60 (7 %)** | 22 / 60 (37 %) |
@@ -23,13 +23,13 @@ Head-to-head benchmark on a 12-case software-engineering suite, 5 runs per syste
 | Cost per run | **~$0.05** | $4.01 |
 | Wall time mean | 2 331 s | **1 548 s** |
 
-**Ember Code wins by +18 ✅ trials at 1/80th the cost.** The gap is concentrated in the ⚠ band — Ember Code commits to a concrete answer where Claude Code stays in design-conversation mode. Both systems hit the same hard-wrong rate (12 %), so the win comes from converting partial/clarifying responses into directly-mergeable ones.
+**igni wins by +18 ✅ trials at 1/80th the cost.** The gap is concentrated in the ⚠ band — igni commits to a concrete answer where Claude Code stays in design-conversation mode. Both systems hit the same hard-wrong rate (12 %), so the win comes from converting partial/clarifying responses into directly-mergeable ones.
 
 The architectural choices that drive the gap: (1) **CodeIndex queried first, not files** — a pre-built semantic + metadata index lets the agent locate reuse targets and conventions by typed filter or HyDE-style code-shaped query, instead of grep-walking the repo. (2) **A mandatory "What already exists" preamble** — agent must name the reuse target, the closest near-miss it rejected, and the conventions to match before writing any code. (3) **A small, focused model with structured tools** — MiniMax-M2.7 + index access matches Opus-4.7 quality at 1/80th the price.
 
 ### Feature comparison
 
-| Feature | Claude Code | Ember Code |
+| Feature | Claude Code | igni |
 |---|---|---|
 | Architecture | Single agent loop | Multi-agent teams (Agno) |
 | Task routing | Manual sub-agent spawning | Automatic via Coordinate/Route modes |
@@ -85,11 +85,33 @@ See [Quickstart](QUICKSTART.md) for the full guide.
 
 ## Upgrading
 
+### Rebrand + signed desktop app (v0.7.0 → v0.7.1)
+
+- **Rebrand to `igni`.** Shorter, single-word product name — the Tauri window, the macOS Dock, the VSCode + JetBrains marketplace listings, the welcome screen, the agent's self-identification all read `igni`. Internal identifiers (PyPI package `ignite-ember`, Python module `ember_code`, Tauri bundle id `sh.ignite-ember.desktop`, VSCode/JetBrains plugin slugs) are preserved so existing installs keep auto-updating without breakage.
+- **`igni` CLI alias.** The terminal command is now `igni` (the old `ignite-ember` invocation still works for back-compat).
+- **Apple Developer ID signing + notarization** on the macOS desktop app. First-launch no longer triggers the "unidentified developer" Gatekeeper warning; the notarization ticket is stapled into the `.app` so offline first-launch works too. The auto-updater pulls a fully signed + notarized bundle.
+- **Mermaid diagrams in the chat.** Fenced ` ```mermaid ` blocks render as SVG (sequence / flowchart / state / ER / pie / gantt / mindmap / xy-chart / quadrant / timeline). Mermaid lazy-loads — first diagram in a session triggers the download.
+- **Collapsible code blocks.** Anything taller than ~220px starts collapsed behind a chevron with a fade overlay; click anywhere on the clip (or the chevron) to expand. Copy chip stays always-visible top-right.
+- **GitHub-Light syntax colors on light theme.** Stops the dark-dimmed `highlight.js` palette from painting neon-on-white when the user picks the light theme.
+- **Per-turn stats restored on resumed conversations.** Re-opening a session now shows the same `✦ in · think · out · duration` pill the live path emits — chars/4 estimates pulled from each persisted run's content (Agno's raw `input_tokens` reads non-monotonic across iterations and was useless to restore literally).
+- **Header drag-region fix.** The first user message's edit / delete chip is no longer captured by the Tauri shell's window-drag region — clicks reach the buttons.
+- **Updater signature bug fixed (v0.7.1).** The macOS auto-updater's tarball-signature pair now matches at the asset level: stapled bytes are uploaded under the arch-suffixed name `latest.json` references, so signature verification succeeds. Anyone who installed v0.7.0 before this fix should update to v0.7.1 — the auto-updater itself will pull it through cleanly.
+
+### GUI clients (v0.6.0 → v0.6.4)
+
+- **Tauri desktop app.** Native window hosting the shared web UI; spawns the Python backend over a Unix socket, kills it on app exit (with `EMBER_PARENT_PID` watchdog for crash safety). macOS / Windows / Linux installers from CI; signed auto-updater backed by minisign.
+- **VSCode extension.** WebView hosting the same shared UI; activates on workspace open with one command. Auto-installs `ignite-ember` via `uv` on first run — zero-touch.
+- **JetBrains plugin.** JCEF panel hosting the same UI. Plugin SDK build wired into the release pipeline; published to the JetBrains Marketplace.
+- **Shared web UI.** `clients/web` is the single React+TS surface; the three shells embed it. Single bundle, single React tree, single CSS — visual + behavioral parity across the three hosts.
+- **Backend multi-session reliability.** SQLite hardening (WAL + checkpoint tuning), idle session eviction, slow-client back-pressure, sync-in-async call-site audit. Removes the long-running-session memory-leak class.
+- **Release pipeline matured.** Marketplace publishing for VSCode + JetBrains; signed Tauri updater via minisign; per-tag draft → publish flow that avoids race-y duplicate releases under parallel matrix uploads. Pre-release tags (`-rc`) skip marketplace pushes + Homebrew updates so iteration doesn't pollute user-facing channels.
+- **UI polish (v0.6.1).** Header / sidebar use a backdrop blur stack so messages frost as they scroll under; custom scroll-indicator thumbs (the native scrollbar would have rendered inside the blur layer); dark-theme icon variants.
+
 **v0.5.0** is the "Beat Claude Code" release. Cumulative changes since v0.3.8:
 
 ### Benchmarks vs Claude Code (new in v0.5.0)
 
-- **Head-to-head benchmark suite.** 12 cases × 5 runs vs Claude Code on the same target codebase. Programmatic deterministic grading. Ember Code wins **49 / 60 ✅** vs **31 / 60 ✅** at one-eightieth of the per-run cost. Full breakdown in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+- **Head-to-head benchmark suite.** 12 cases × 5 runs vs Claude Code on the same target codebase. Programmatic deterministic grading. igni wins **49 / 60 ✅** vs **31 / 60 ✅** at one-eightieth of the per-run cost. Full breakdown in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 - **CodeIndex-first specialist agents.** New `*.codeindex.md` variants for `architect`, `debugger`, `explorer`, `reviewer`, `security`, `simplifier` — each with prompts tuned to query the index first instead of grepping. Auto-selected when a populated CodeIndex exists for the current commit.
 - **Mandatory "What already exists" preamble.** The main-agent prompt now requires every code-write response to start with a four-bullet section naming (a) the reuse target, (b) the closest near-miss it considered and rejected, (c) the conventions to match, (d) the parallel infrastructure it will *not* introduce. Forces contrastive reasoning before code is written.
 - **Encapsulation rule.** When a service class wraps a resource (db client, cache, queue, storage), new code must call methods on that class instead of inlining the raw client. Catches the "copy a private prefix into a new file and instantiate the client myself" anti-pattern.
@@ -145,7 +167,7 @@ See [Quickstart](QUICKSTART.md) for the full guide.
 - **Problem:** Learning features get stuck and never complete (caused by httpx connection pool issues in threads).
   - **Solution:** Run learning extraction as an async task on the main event loop instead of a separate thread.
 
-To upgrade Ember Code to the latest version:
+To upgrade igni to the latest version:
 
 ```bash
 brew upgrade ignite-ember/tap/ignite-ember
@@ -165,21 +187,11 @@ Features: streaming responses, agent tree visualization, token tracking, session
 
 ## IDE Integration
 
-Ember Code integrates with IDEs via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/):
+Dedicated extensions for **VS Code** and **JetBrains** (IntelliJ, PyCharm, WebStorm, etc.) ship the igni backend embedded in the extension — install from each marketplace and the chat surface lives inside your IDE; no MCP setup needed.
 
-```json
-{
-  "mcpServers": {
-    "ignite-ember": {
-      "type": "stdio",
-      "command": "ignite-ember",
-      "args": ["mcp", "serve"]
-    }
-  }
-}
-```
+In the other direction, igni acts as an MCP *client*: configure external MCP servers via `/mcp` or the MCP panel and their tools become available to the agent.
 
-Works with **VS Code**, **JetBrains** (IntelliJ, PyCharm, etc.), **Cursor**, and **Windsurf**. See [MCP docs](docs/MCP.md) for details.
+> *Exposing igni itself as an MCP server (so any MCP-compatible IDE — Cursor, Windsurf, etc. — can connect to it) is on the roadmap; the `ignite-ember mcp serve` subcommand isn't shipped yet.*
 
 ## Key Features
 
@@ -232,7 +244,7 @@ Agents can pause execution to request confirmation or user input before proceedi
 - [Hooks](docs/HOOKS.md) — Pre/post tool execution hooks
 - [Migration](docs/MIGRATION.md) — Coming from Claude Code or Codex
 - [Security](docs/SECURITY.md) — Threat model, permissions, and enterprise hardening
-- [Development](docs/DEVELOPMENT.md) — Contributing and extending Ember Code
+- [Development](docs/DEVELOPMENT.md) — Contributing and extending igni
 
 ## License
 

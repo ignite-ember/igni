@@ -1,5 +1,5 @@
 /**
- * EmberClient — WebSocket protocol client for the Ember Code backend.
+ * EmberClient — WebSocket protocol client for the igni backend.
  *
  * Responsibilities:
  *  - connect/reconnect to `python -m ember_code.backend --ws-port N`
@@ -67,6 +67,24 @@ export function resolveWsUrl(): string {
     ")",
   );
   return url;
+}
+
+export interface ChatSearchMatch {
+  /** Position in ``get_chat_history``'s output; caller maps to its
+   *  in-memory items index via the parallel mapping. */
+  history_index: number;
+  role: "user" | "assistant" | string;
+  run_id: string;
+  /** Snippet from the matched turn's content with ellipses on the
+   *  trimmed ends. UTF-16 / surrogate-safe by construction. */
+  snippet: string;
+  /** Match offset within ``snippet`` (not the full content). */
+  match_start: number;
+  match_end: number;
+  /** Epoch seconds (Agno-issued); 0 if the turn pre-dates the
+   *  ``created_at`` field. Formatted to a relative or locale-time
+   *  string per result row on the FE. */
+  created_at: number;
 }
 
 export type ConnectionState =
@@ -317,6 +335,28 @@ export class EmberClient {
     });
   }
 
+  /**
+   * Case-insensitive substring search over the persisted history of
+   * ``sessionId`` (Agno SQLite session). Cheap for any reasonable
+   * conversation length — the BE walks pre-deserialized turn dicts.
+   *
+   * ``history_index`` aligns with ``get_chat_history``'s emission
+   * order; the caller maps it to its in-memory items list through
+   * the parallel ``historyIndex → itemIndex`` map it builds at
+   * session-load time.
+   */
+  searchChat(
+    sessionId: string,
+    query: string,
+    limit = 50,
+  ): Promise<ChatSearchMatch[]> {
+    return this.rpc<ChatSearchMatch[]>("search_chat", {
+      session_id: sessionId,
+      query,
+      limit,
+    });
+  }
+
   /** $-prefix shell mode — captured output from the BE. */
   runShell(command: string): Promise<{ output: string; exit_code: number }> {
     return this.rpc("run_shell", { command });
@@ -328,6 +368,32 @@ export class EmberClient {
    */
   login(): Promise<{ started: boolean }> {
     return this.rpc("login", {});
+  }
+
+  /**
+   * Record the user's approval of the plan submitted in ``runId``.
+   * BE persists the decision (survives reload), flips
+   * ``permission_mode`` → default, then broadcasts ``plan_decided``
+   * so the PlanCard's footer text catches up. The wake-up
+   * message that tells the agent to execute the plan is sent
+   * separately by the caller — keeping it FE-driven so it lands
+   * in the chat transcript like a user-typed continuation.
+   */
+  approvePlan(
+    runId: string,
+  ): Promise<{ run_id: string; decision: string; mode_status: string }> {
+    return this.rpc("approve_plan", { run_id: runId });
+  }
+
+  /**
+   * Record the user's dismissal (Refine click). BE persists the
+   * decision and emits ``plan_decided``; permission mode stays
+   * in ``plan`` so the user can iterate.
+   */
+  dismissPlan(
+    runId: string,
+  ): Promise<{ run_id: string; decision: string; mode_status: string }> {
+    return this.rpc("dismiss_plan", { run_id: runId });
   }
 
   cancelLogin(): void {

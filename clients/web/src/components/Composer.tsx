@@ -17,6 +17,7 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/compact", description: "Summarize old context to free tokens" },
   { name: "/ctx", description: "Show context breakdown — floor vs conversation" },
   { name: "/sessions", description: "List and switch sessions" },
+  { name: "/fork", description: "Fork this session — continue in a new id" },
   { name: "/model", description: "Pick a model" },
   { name: "/login", description: "Log in to Ember Cloud" },
   { name: "/logout", description: "Log out" },
@@ -29,7 +30,38 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/hooks", description: "Configured hooks" },
   { name: "/loop", description: "Repeat a prompt until done" },
   { name: "/schedule", description: "Background scheduled tasks" },
+  { name: "/plan", description: "Toggle plan mode — agent proposes, you approve" },
+  { name: "/accept", description: "Auto-approve file edits" },
+  { name: "/bypass", description: "Skip permission prompts (scoped denies still apply)" },
+  { name: "/memory", description: "View or edit project memory" },
+  { name: "/rename", description: "Rename this session" },
+  { name: "/config", description: "Show current settings" },
+  { name: "/whoami", description: "Show the signed-in account" },
+  { name: "/output-style", description: "Switch the agent's output style" },
+  { name: "/plugin", description: "Install, update, remove plugins" },
+  { name: "/sync-knowledge", description: "Push project knowledge to Ember Cloud" },
+  { name: "/evals", description: "Run an evaluation suite" },
+  { name: "/bug", description: "Open the bug report form" },
+  { name: "/quit", description: "Exit the session" },
 ];
+
+/** Prefix-filter the slash-command pool for the autocomplete menu.
+ *  Mirrors what the composer's ``refreshMenu`` does for the slash
+ *  branch — extracted as a pure helper so the filter contract
+ *  (case-insensitive, prefix-only on the name after the leading
+ *  '/', capped at 12 results) is testable without driving the
+ *  contenteditable surface. Call with the full command pool
+ *  (built-ins + skills) and the query text AFTER the ``/``. */
+export function filterSlashCommands(
+  pool: SlashCommand[],
+  query: string,
+  limit: number = 12,
+): SlashCommand[] {
+  const q = query.toLowerCase();
+  return pool
+    .filter((c) => c.name.slice(1).toLowerCase().startsWith(q))
+    .slice(0, limit);
+}
 
 interface MenuState {
   kind: "slash" | "mention";
@@ -79,6 +111,8 @@ export function Composer({
   onTyping,
   onSubmit,
   onStop,
+  permissionMode,
+  onPickMode,
 }: {
   client: EmberClient;
   connected: boolean;
@@ -107,6 +141,17 @@ export function Composer({
   onTyping?: (text: string) => void;
   onSubmit: (text: string) => void;
   onStop: () => void;
+  /** Current ``PermissionEvaluator.mode`` value from the BE
+   *  (``default`` / ``plan`` / ``acceptEdits`` / ``bypassPermissions``).
+   *  Used to pre-select the active mode in the send-button
+   *  dropdown. */
+  permissionMode?: string;
+  /** Called when the user picks a different mode from the
+   *  send-button dropdown. The host (App.tsx) is responsible
+   *  for firing the matching slash command so the BE flips
+   *  ``permission_mode`` accordingly; the dropdown is purely a
+   *  trigger surface. */
+  onPickMode?: (mode: string) => void;
 }) {
   const draftKey = sessionId ? `draft:${sessionId}` : "";
   const [text, setText] = useState("");
@@ -225,6 +270,10 @@ export function Composer({
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [modelMenu, setModelMenu] = useState<{ name: string; current: boolean }[] | null>(null);
+  // Mode-picker dropdown for the split send button. ``true`` =
+  // open. Mode selection itself happens via ``onPickMode``;
+  // the popup just surfaces the options.
+  const [modeMenu, setModeMenu] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
   const [histIdx, setHistIdx] = useState(-1);
   const [draft, setDraft] = useState("");
@@ -302,12 +351,10 @@ export function Composer({
     // Slash menu: only when the input starts with '/' and the caret
     // is in the first token (mirrors TUI autocomplete behaviour).
     if (value.startsWith("/") && !value.slice(0, caret).includes(" ")) {
-      const q = value.slice(1, caret).toLowerCase();
-      const all = [...BUILTIN_COMMANDS, ...skills];
-      const entries = all
-        .filter((c) => c.name.slice(1).toLowerCase().startsWith(q))
-        .slice(0, 12)
-        .map((c) => ({ key: c.name, label: c.name, desc: c.description }));
+      const q = value.slice(1, caret);
+      const entries = filterSlashCommands([...BUILTIN_COMMANDS, ...skills], q).map(
+        (c) => ({ key: c.name, label: c.name, desc: c.description }),
+      );
       setMenu(
         entries.length ? { kind: "slash", entries, active: 0, tokenStart: 0 } : null,
       );
@@ -461,21 +508,57 @@ export function Composer({
         applyMenuChoice(entry);
         return;
       }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        // Don't let the app-level Esc (cancel run) fire — the user is
-        // just closing the autocomplete.
-        e.stopPropagation();
-        setMenu(null);
-        return;
-      }
     }
 
-    // Backspace on an empty input exits command/shell mode.
-    if (e.key === "Backspace" && mode !== "chat" && textRef.current === "") {
+    // Escape: universal "abandon what I'm typing" key. Handled
+    // OUTSIDE the ``if (menu)`` block above so a command-mode
+    // input WITHOUT an open menu (e.g. user typed ``/p`` then
+    // arrowed down then arrowed back up past the menu somehow,
+    // or the menu auto-closed because the query stopped matching)
+    // still has a way out without backspacing every character.
+    //
+    // Order of clearing:
+    //   1. If the menu is open, close it.
+    //   2. If we're in command/shell mode (regardless of text
+    //      content), exit to chat mode + clear the field.
+    //   3. If neither applies, let the event propagate so the
+    //      app-level Esc (cancel run) handler can fire.
+    if (e.key === "Escape") {
+      let consumed = false;
+      if (menu) {
+        setMenu(null);
+        consumed = true;
+      }
+      if (mode !== "chat") {
+        setMode("chat");
+        setText("");
+        ref.current?.setValue("");
+        onTyping?.("");
+        consumed = true;
+      }
+      if (consumed) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      // Falls through to the app-level Esc (cancel run).
+    }
+
+    // Backspace exits command/shell mode when there's nothing
+    // useful left to delete. Two thresholds:
+    //   - text already empty → exit (existing behavior).
+    //   - text is 1 char → backspace would empty it; exit on
+    //     the SAME press instead of leaving an empty command-
+    //     mode prompt that needs a second backspace to escape.
+    // Backspace with 2+ chars deletes one character normally so
+    // ``/list`` → ``/lis`` works for fixing typos.
+    if (e.key === "Backspace" && mode !== "chat" && textRef.current.length <= 1) {
       e.preventDefault();
       setMode("chat");
+      setText("");
+      ref.current?.setValue("");
       setMenu(null);
+      onTyping?.("");
       return;
     }
 
@@ -516,10 +599,6 @@ export function Composer({
       submit();
     }
   };
-
-  useEffect(() => {
-    autoGrow();
-  }, [text]);
 
   const openModelMenu = async () => {
     try {
@@ -723,6 +802,12 @@ export function Composer({
               const body = value.slice(1).replace(/^ /, "");
               setMode(m);
               setText(body);
+              // React would see no `text` change here (often "" → ""
+              // when the user just typed the trigger char), so the
+              // editor's value-prop reconcile won't fire. Force the
+              // DOM to match imperatively so the literal "/" or "$"
+              // doesn't linger in the editor.
+              ref.current?.setValue(body);
               onTyping?.(withPrefix(body, m));
               void refreshMenu(withPrefix(body, m), Math.max(caret, 1));
               return;
@@ -897,17 +982,121 @@ export function Composer({
               <StopIcon />
             </button>
           ) : (
-            <button
-              className="send-btn"
-              title="Send"
-              disabled={!connected || (!text.trim() && attachments.length === 0)}
-              onClick={submit}
-            >
-              <ArrowUpIcon />
-            </button>
+            <SendButton
+              connected={connected}
+              canSend={!!text.trim() || attachments.length > 0}
+              onSubmit={submit}
+              permissionMode={permissionMode ?? "default"}
+              onPickMode={onPickMode}
+              modeMenuOpen={modeMenu}
+              setModeMenuOpen={setModeMenu}
+            />
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Split send button — left half is a dropdown trigger that
+ *  reveals the four permission modes; right half is the actual
+ *  send action. The user can change the agent's permission
+ *  surface at the moment of sending instead of digging into
+ *  ``/plan`` / ``/accept`` / ``/bypass`` slash commands. The
+ *  left half is intentionally narrower than the right (~3:5
+ *  ratio) so the primary action — Send — stays the visually
+ *  dominant target.
+ */
+const MODE_OPTIONS: { value: string; label: string; desc: string }[] = [
+  {
+    value: "default",
+    label: "Execute",
+    desc: "Ask before each mutating tool. The safe default.",
+  },
+  {
+    value: "plan",
+    label: "Plan",
+    desc: "Read-only sandbox. Agent drafts a plan card; you approve before any edits run.",
+  },
+  {
+    value: "acceptEdits",
+    label: "Auto-edit",
+    desc: "Auto-approve file edits (Edit / Write / NotebookEdit). Shell + web tools still ask.",
+  },
+  {
+    value: "bypassPermissions",
+    label: "Bypass",
+    desc: "Auto-approve every tool, including shell. Explicit deny rules in settings still block.",
+  },
+];
+
+function SendButton({
+  connected,
+  canSend,
+  onSubmit,
+  permissionMode,
+  onPickMode,
+  modeMenuOpen,
+  setModeMenuOpen,
+}: {
+  connected: boolean;
+  canSend: boolean;
+  onSubmit: () => void;
+  permissionMode: string;
+  onPickMode?: (mode: string) => void;
+  modeMenuOpen: boolean;
+  setModeMenuOpen: (next: boolean) => void;
+}) {
+  const current =
+    MODE_OPTIONS.find((m) => m.value === permissionMode) ?? MODE_OPTIONS[0];
+  return (
+    <div className="send-split" data-mode={current.value}>
+      <button
+        type="button"
+        className="send-split-mode"
+        title={`Mode: ${current.desc}`}
+        onClick={() => setModeMenuOpen(!modeMenuOpen)}
+        aria-haspopup="menu"
+        aria-expanded={modeMenuOpen}
+      >
+        <span className="send-split-mode-label">{current.label}</span>
+        <ChevronIcon size={9} down={!modeMenuOpen} />
+      </button>
+      <button
+        type="button"
+        className="send-split-go"
+        title="Send"
+        disabled={!connected || !canSend}
+        onClick={onSubmit}
+      >
+        <ArrowUpIcon />
+      </button>
+      {modeMenuOpen && (
+        <>
+          {/* Backdrop closes the menu on outside click — same
+              pattern the model picker uses. */}
+          <div
+            className="popup-backdrop"
+            onClick={() => setModeMenuOpen(false)}
+          />
+          <div className="popup-menu send-mode-menu" role="menu">
+            {MODE_OPTIONS.map((m) => (
+              <div
+                key={m.value}
+                role="menuitem"
+                className={`popup-item ${m.value === current.value ? "active" : ""}`}
+                onClick={() => {
+                  setModeMenuOpen(false);
+                  if (m.value !== current.value) onPickMode?.(m.value);
+                }}
+              >
+                <span className="cmd">{m.label}</span>
+                <span className="desc">{m.desc}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

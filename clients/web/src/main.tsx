@@ -1,17 +1,30 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { ChatScrollDemo } from "./dev/ChatScrollDemo";
+import { HitlDemo } from "./dev/HitlDemo";
 import { OrchestrateDemo } from "./dev/OrchestrateDemo";
+import { PlanModeDemo } from "./dev/PlanModeDemo";
 import "./theme.css";
 
-// ``?demo=team`` opens a UI sandbox with hardcoded orchestrate
-// scenarios so we can iterate on the visual without spinning up a
-// real broadcast in PyCharm. Anything else loads the real app.
+// Demo URLs:
+//   ?demo=team           — orchestrate / team-progress UI sandbox
+//   ?demo=plan           — plan-mode (row 50) UI sandbox
+//   ?demo=hitl           — HITL permission dialog variants
+//   ?demo=chat-scroll    — headless Virtuoso scroll sandbox the
+//                          chat-scroll e2e tests drive
+// Anything else loads the real app.
 const params = new URLSearchParams(window.location.search);
 const demo = params.get("demo");
 
+function pickRoot() {
+  if (demo === "team") return <OrchestrateDemo />;
+  if (demo === "plan") return <PlanModeDemo />;
+  if (demo === "hitl") return <HitlDemo />;
+  if (demo === "chat-scroll") return <ChatScrollDemo />;
+  return <App />;
+}
+
 createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    {demo === "team" ? <OrchestrateDemo /> : <App />}
-  </StrictMode>,
+  <StrictMode>{pickRoot()}</StrictMode>,
 );

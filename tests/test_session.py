@@ -202,6 +202,28 @@ class TestSessionMessageHandling:
         result = await session.handle_message("test")
         assert "Error" in result
 
+    @pytest.mark.asyncio
+    async def test_handle_message_error_fires_stop_failure_hook(self, session):
+        """``handle_message`` errors out → ``StopFailure`` hook fires
+        with the error message + type so crash-reporting plugins can
+        observe in-band."""
+        session.main_team.arun = AsyncMock(side_effect=RuntimeError("LLM failed"))
+        await session.handle_message("test")
+        # Walk the recorded calls (set up in the fixture) for the
+        # StopFailure event. ``UserPromptSubmit`` also fired first;
+        # we only care about the failure one here.
+        events_fired = [c.kwargs.get("event") for c in session.hook_executor.execute.call_args_list]
+        assert "StopFailure" in events_fired
+        # Payload contract: error + error_type.
+        sf_call = next(
+            c
+            for c in session.hook_executor.execute.call_args_list
+            if c.kwargs.get("event") == "StopFailure"
+        )
+        payload = sf_call.kwargs["payload"]
+        assert "LLM failed" in payload["error"]
+        assert payload["error_type"] == "RuntimeError"
+
 
 class TestSessionCompaction:
     @pytest.fixture
@@ -227,10 +249,37 @@ class TestSessionCompaction:
         mock_agno_session.summary = None
         session.main_team.aget_session = AsyncMock(return_value=mock_agno_session)
         session.main_team.asave_session = AsyncMock()
+        # PreCompact/PostCompact hooks added — stub the executor so the
+        # await in compact_if_needed resolves with should_continue=True.
+        mock_hook_result = MagicMock()
+        mock_hook_result.should_continue = True
+        session.hook_executor.execute = AsyncMock(return_value=mock_hook_result)
         result = await session.compact_if_needed(8500, 10000)  # 85%
         assert result is True
         # Runs should have been cleared
         session.main_team.asave_session.assert_called_once()
+        # PreCompact AND PostCompact should have fired around the
+        # actual compaction.
+        events_fired = [c.kwargs.get("event") for c in session.hook_executor.execute.call_args_list]
+        assert "PreCompact" in events_fired
+        assert "PostCompact" in events_fired
+
+    @pytest.mark.asyncio
+    async def test_pre_compact_hook_can_cancel_auto(self, session):
+        """Returning ``should_continue=False`` from PreCompact must
+        skip the actual compaction (auto path)."""
+        mock_agno_session = MagicMock()
+        mock_agno_session.runs = []
+        session.main_team.aget_session = AsyncMock(return_value=mock_agno_session)
+        session.main_team.asave_session = AsyncMock()
+        veto = MagicMock()
+        veto.should_continue = False
+        veto.message = "blocked"
+        session.hook_executor.execute = AsyncMock(return_value=veto)
+        result = await session.compact_if_needed(8500, 10000)
+        assert result is False
+        # _compact never ran → no save call
+        session.main_team.asave_session.assert_not_called()
 
 
 class TestSessionLearning:
@@ -564,3 +613,401 @@ class TestRulesReachAgent:
             assert "SENTINEL_TRIPLE_CLAUDE" in joined
         finally:
             _stop_patches(patches)
+
+
+# ── Session._queue_rewake (asyncRewake callback target) ───────
+#
+# Background hooks that exit-2 fire ``_queue_rewake(text)`` → the
+# text buffers in ``_pending_reminders`` until the next
+# ``handle_message`` turn drains it (we can't interrupt an
+# in-flight response). The executor side is tested in
+# ``test_hook_async_rewake.py``; these lock down the Session-side
+# glue so a refactor of the rewake path can't silently regress.
+
+
+class TestSessionQueueRewake:
+    """Direct unit tests for ``Session._queue_rewake``."""
+
+    def _bare_session(self):
+        from ember_code.core.session.core import Session
+
+        session = Session.__new__(Session)
+        session._pending_reminders = []
+        return session
+
+    def test_empty_text_is_dropped(self):
+        # Defensive guard — a hook that exits 2 with no
+        # stdout/stderr would otherwise push an empty reminder
+        # that prepends ``\n\n`` to the next turn and confuses
+        # the agent. Empty → no-op.
+        session = self._bare_session()
+        session._queue_rewake("")
+        assert session._pending_reminders == []
+
+    def test_appends_single_reminder(self):
+        session = self._bare_session()
+        session._queue_rewake("the hook reported")
+        assert session._pending_reminders == ["the hook reported"]
+
+    def test_accumulates_in_call_order(self):
+        # Two background hooks landing in the same gap between
+        # turns must both surface to the agent, in the order
+        # they fired. asyncio's single-threaded scheduling
+        # makes ``list.append`` safe here — this test documents
+        # the contract so an accidental swap to a set would
+        # trip it.
+        session = self._bare_session()
+        session._queue_rewake("first")
+        session._queue_rewake("second")
+        session._queue_rewake("third")
+        assert session._pending_reminders == ["first", "second", "third"]
+
+
+# ── Session._mcp_resolver (mcp_tool hook target) ──────────────
+#
+# Resolver passed to ``HookExecutor`` so ``mcp_tool``-type hooks
+# can invoke MCP tools without the executor knowing about the
+# manager. Resolved at fire-time (not at construction) because
+# ``__init__`` builds the executor BEFORE ``mcp_manager`` is
+# wired. Returns ``None`` for every missing link so a broken MCP
+# setup degrades gracefully rather than crashing hook execution.
+
+
+class TestSessionMcpResolver:
+    """``Session._mcp_resolver(server, tool)`` walks
+    ``self.mcp_manager._clients[server].functions[tool]`` and
+    returns ``None`` at the first missing hop."""
+
+    def _bare_session(self):
+        from ember_code.core.session.core import Session
+
+        return Session.__new__(Session)
+
+    def test_returns_none_when_manager_absent(self):
+        # The manager attribute may be unset entirely (MCP
+        # compiled out, or session built before MCP init
+        # completes). ``getattr`` with default None makes the
+        # chain safe.
+        session = self._bare_session()
+        assert session._mcp_resolver("slack", "send") is None
+
+    def test_returns_none_when_manager_is_none(self):
+        session = self._bare_session()
+        session.mcp_manager = None
+        assert session._mcp_resolver("slack", "send") is None
+
+    def test_returns_none_when_server_not_in_clients(self):
+        # Manager present + has _clients, but the named server
+        # isn't connected. ``None`` keeps hook execution from
+        # crashing on a misconfigured settings.json.
+        session = self._bare_session()
+        manager = MagicMock()
+        manager._clients = {}
+        session.mcp_manager = manager
+        assert session._mcp_resolver("missing", "any") is None
+
+    def test_returns_none_when_tool_not_in_functions(self):
+        # Server connected, but doesn't expose the named tool
+        # (typo in settings.json, or tool removed upstream).
+        session = self._bare_session()
+        client = MagicMock()
+        client.functions = {"other_tool": object()}
+        manager = MagicMock()
+        manager._clients = {"slack": client}
+        session.mcp_manager = manager
+        assert session._mcp_resolver("slack", "send_message") is None
+
+    def test_returns_function_when_fully_resolved(self):
+        # Happy path — function found, returned for the executor
+        # to invoke. Identity equality matters: the executor
+        # awaits the SAME callable, no proxy/wrap.
+        session = self._bare_session()
+        target = MagicMock(name="send_message_fn")
+        client = MagicMock()
+        client.functions = {"send_message": target}
+        manager = MagicMock()
+        manager._clients = {"slack": client}
+        session.mcp_manager = manager
+        assert session._mcp_resolver("slack", "send_message") is target
+
+    def test_returns_none_when_client_has_no_functions_attr(self):
+        # Older client classes didn't expose ``functions``.
+        # ``getattr(..., None) or {}`` in the source covers it
+        # so the chain still returns None instead of raising
+        # AttributeError into the hook executor.
+        session = self._bare_session()
+        client = MagicMock(spec=[])  # spec=[] strips functions
+        manager = MagicMock()
+        manager._clients = {"slack": client}
+        session.mcp_manager = manager
+        assert session._mcp_resolver("slack", "send") is None
+
+
+# ── Session.broadcast + register_broadcast_callback ──────────
+#
+# Indirect coverage exists via output_styles and plan_mode tests
+# (they register a capture callback to inspect the channel
+# stream). These tests pin the contract itself: idempotent
+# re-register, exception isolation between callbacks, defensive
+# fallback when ``_broadcast_callbacks`` was never initialised,
+# call order + payload identity.
+
+
+class TestSessionBroadcast:
+    def _bare_session(self):
+        from ember_code.core.session.core import Session
+
+        session = Session.__new__(Session)
+        session._broadcast_callbacks = []
+        return session
+
+    def test_register_appends_callback(self):
+        session = self._bare_session()
+        cb = lambda ch, p: None  # noqa: E731
+        session.register_broadcast_callback(cb)
+        assert session._broadcast_callbacks == [cb]
+
+    def test_register_is_idempotent_on_same_callback(self):
+        # The /plan and /accept slash commands both call
+        # ``register_broadcast_callback`` on the same transport
+        # closure during session bootstrap. Idempotency means
+        # re-registering doesn't fan out the same event twice
+        # — load-bearing for the "callbacks fire once per
+        # broadcast" contract callers rely on.
+        session = self._bare_session()
+        cb = lambda ch, p: None  # noqa: E731
+        session.register_broadcast_callback(cb)
+        session.register_broadcast_callback(cb)
+        session.register_broadcast_callback(cb)
+        assert len(session._broadcast_callbacks) == 1
+
+    def test_register_distinct_callbacks_both_kept(self):
+        session = self._bare_session()
+        cb1 = lambda ch, p: None  # noqa: E731
+        cb2 = lambda ch, p: None  # noqa: E731
+        session.register_broadcast_callback(cb1)
+        session.register_broadcast_callback(cb2)
+        assert session._broadcast_callbacks == [cb1, cb2]
+
+    def test_broadcast_calls_every_registered_callback(self):
+        session = self._bare_session()
+        captured: list[tuple[str, dict]] = []
+        session.register_broadcast_callback(lambda ch, p: captured.append((ch, p)))
+        session.register_broadcast_callback(lambda ch, p: captured.append((ch, p)))
+        session.broadcast("plan_submitted", {"plan": "x"})
+        # Both callbacks fired with the same args.
+        assert captured == [
+            ("plan_submitted", {"plan": "x"}),
+            ("plan_submitted", {"plan": "x"}),
+        ]
+
+    def test_broadcast_preserves_call_order(self):
+        # The first-registered callback fires first. Tests that
+        # depend on capture-order (e.g. output_styles asserting
+        # the active style lands first) rely on this.
+        session = self._bare_session()
+        log: list[str] = []
+        session.register_broadcast_callback(lambda ch, p: log.append("first"))
+        session.register_broadcast_callback(lambda ch, p: log.append("second"))
+        session.register_broadcast_callback(lambda ch, p: log.append("third"))
+        session.broadcast("any", {})
+        assert log == ["first", "second", "third"]
+
+    def test_broadcast_forwards_payload_identity(self):
+        # The payload reaches the callback as the SAME object —
+        # no defensive copy. Callers can mutate the dict
+        # before/after broadcast and the callback sees it
+        # consistently. Pin this so a defensive ``copy.deepcopy``
+        # refactor surfaces as a deliberate behaviour change.
+        session = self._bare_session()
+        seen: list[object] = []
+        session.register_broadcast_callback(lambda ch, p: seen.append(p))
+        payload = {"plan": "x"}
+        session.broadcast("plan_submitted", payload)
+        assert seen[0] is payload
+
+    def test_callback_exception_does_not_block_others(self):
+        # The contract is "best-effort fan-out" — one buggy
+        # subscriber must not silence the rest. Pin so a
+        # refactor of the loop doesn't accidentally introduce
+        # short-circuiting on first exception.
+        session = self._bare_session()
+        log: list[str] = []
+
+        def boom(ch, p):
+            raise RuntimeError("subscriber crashed")
+
+        session.register_broadcast_callback(boom)
+        session.register_broadcast_callback(lambda ch, p: log.append("after-boom"))
+        # Must NOT raise.
+        session.broadcast("channel", {})
+        assert log == ["after-boom"]
+
+    def test_broadcast_with_no_callbacks_is_noop(self):
+        # Common case during session bootstrap before any
+        # transport has subscribed. Don't crash.
+        session = self._bare_session()
+        session.broadcast("any", {})  # no raise
+
+    def test_broadcast_without_callbacks_attribute_is_noop(self):
+        # Tests routinely build ``Session.__new__`` without
+        # running ``__init__`` — ``_broadcast_callbacks``
+        # doesn't exist yet. The defensive ``getattr`` in the
+        # source makes this a noop instead of an AttributeError.
+        # Load-bearing for the test suite's session-construct
+        # patterns.
+        from ember_code.core.session.core import Session
+
+        session = Session.__new__(Session)  # NO ``_broadcast_callbacks`` set
+        session.broadcast("any", {})  # no raise
+
+    def test_callbacks_can_register_during_broadcast_safely(self):
+        # Edge case — a callback that registers a NEW callback
+        # during the broadcast. The source iterates ``list(...)``
+        # which copies the snapshot, so new callbacks don't fire
+        # mid-broadcast (they wait for the next one). Pin this:
+        # absent the copy, mutating the list during iteration
+        # raises RuntimeError.
+        session = self._bare_session()
+        log: list[str] = []
+
+        def first(ch, p):
+            log.append("first")
+            session.register_broadcast_callback(lambda c, p: log.append("late"))
+
+        session.register_broadcast_callback(first)
+        session.broadcast("ev", {})
+        # ``first`` fires; ``late`` is registered but doesn't
+        # fire this round.
+        assert log == ["first"]
+        # ``late`` is now in the list for the next broadcast.
+        session.broadcast("ev2", {})
+        assert log == ["first", "first", "late"]
+
+
+class TestMainTeamToolkit:
+    """Pin the shell-first design of the main team's tool catalog
+    (CLAUDE_CODE_PARITY.md row 22 / commit 7e50705).
+
+    The main team intentionally has NO ``Read`` / ``Grep`` / ``Glob``
+    / ``LS`` — those overlap with ``Bash`` (``cat``, ``rg``, ``find``,
+    ``ls``) and confused the model into double-search behavior. They
+    stay in the registry so SUB-agents can opt in via their
+    ``tools:`` frontmatter, but they're not in the main team's
+    always-on set. A future refactor that re-adds them to the main
+    team must be a deliberate choice — this test makes silent
+    regression a failing test.
+    """
+
+    @staticmethod
+    def _stub_session(
+        *,
+        web: str = "ask",
+        fetch: str = "ask",
+        codeindex_available: bool = False,
+    ):
+        """Cheap stub: just enough state for
+        ``_resolve_main_tool_names`` to run, without booting Agno,
+        the DB, etc. The method only reads ``settings.permissions``
+        and ``_codeindex_available``."""
+        from unittest.mock import MagicMock
+
+        from ember_code.core.session.core import Session
+
+        session = Session.__new__(Session)
+        permissions = MagicMock()
+        permissions.web_search = web
+        permissions.web_fetch = fetch
+        settings = MagicMock()
+        settings.permissions = permissions
+        session.settings = settings
+        session._codeindex_available = codeindex_available
+        return session
+
+    @staticmethod
+    def _stub_registry():
+        """ToolRegistry stub — ``_resolve_main_tool_names`` only
+        uses ``.resolve([...])`` to probe whether a tool's
+        dependencies are importable. Return a no-op success so
+        every optional tool gets added when its permission/flag
+        gate allows it. Per-test variants override this to
+        simulate ``ImportError`` for missing extras."""
+        from unittest.mock import MagicMock
+
+        return MagicMock(resolve=MagicMock(return_value=[]))
+
+    def test_core_toolkit_is_shell_first(self):
+        session = self._stub_session()
+        names = session._resolve_main_tool_names(self._stub_registry())
+        # The 5 always-on tools — shell-first design.
+        for required in ("Write", "Edit", "Bash", "Schedule", "NotebookEdit"):
+            assert required in names, f"main team must always include {required}"
+
+    def test_main_toolkit_excludes_registry_only_tools(self):
+        # Hard contract: Read/Grep/Glob/LS/Python are registry-only
+        # (available to sub-agents that opt in). They MUST NOT
+        # appear in the main team's toolkit. A regression here
+        # silently re-introduces tool overlap with Bash.
+        session = self._stub_session(codeindex_available=True)
+        names = session._resolve_main_tool_names(self._stub_registry())
+        for forbidden in ("Read", "Grep", "Glob", "LS", "Python"):
+            assert forbidden not in names, (
+                f"{forbidden} is registry-only — sub-agents opt in via "
+                f"frontmatter; main team uses Bash for this. See "
+                f"CLAUDE_CODE_PARITY.md row 22."
+            )
+
+    def test_web_tools_omitted_when_denied(self):
+        # ``permissions.web_search: deny`` (e.g. ``--no-web`` CLI
+        # flag) hides the WebSearch toolkit from the agent's
+        # catalog entirely. Same for WebFetch.
+        session = self._stub_session(web="deny", fetch="deny")
+        names = session._resolve_main_tool_names(self._stub_registry())
+        assert "WebSearch" not in names
+        assert "WebFetch" not in names
+
+    def test_web_tools_included_when_allowed(self):
+        session = self._stub_session(web="ask", fetch="ask")
+        names = session._resolve_main_tool_names(self._stub_registry())
+        assert "WebSearch" in names
+        assert "WebFetch" in names
+
+    def test_web_tools_silently_skipped_on_import_error(self):
+        # Optional extras may not be installed (e.g. headless
+        # builds without DuckDuckGo). The registry raises
+        # ``ImportError``; ``_resolve_main_tool_names`` swallows
+        # it and just omits the tool — no crash, no warning to
+        # the user that doesn't want the dep anyway.
+        from unittest.mock import MagicMock
+
+        session = self._stub_session(web="ask", fetch="ask")
+        registry = MagicMock()
+        registry.resolve = MagicMock(side_effect=ImportError("no ddgs"))
+        names = session._resolve_main_tool_names(registry)
+        assert "WebSearch" not in names
+        assert "WebFetch" not in names
+        # Core tools still landed.
+        assert "Bash" in names
+
+    def test_codeindex_included_only_when_available(self):
+        without = self._stub_session(codeindex_available=False)
+        with_ = self._stub_session(codeindex_available=True)
+        names_without = without._resolve_main_tool_names(self._stub_registry())
+        names_with = with_._resolve_main_tool_names(self._stub_registry())
+        assert "CodeIndex" not in names_without
+        assert "CodeIndex" in names_with
+
+    def test_core_tools_constant_is_immutable(self):
+        # The 5-tool core is class-level + a tuple so a future
+        # contributor can't accidentally ``Session._MAIN_CORE_TOOLS
+        # .append("Read")`` and silently regress the design.
+        from ember_code.core.session.core import Session
+
+        assert isinstance(Session._MAIN_CORE_TOOLS, tuple)
+        assert Session._MAIN_CORE_TOOLS == (
+            "Write",
+            "Edit",
+            "Bash",
+            "Schedule",
+            "NotebookEdit",
+        )

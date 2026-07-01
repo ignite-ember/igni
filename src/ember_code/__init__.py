@@ -1,7 +1,7 @@
-"""Ember Code — Terminal-based AI coding assistant built on Agno."""
+"""igni — Terminal-based AI coding assistant built on Agno."""
 
 # Must run before anything that pulls in ``transformers`` /
 # ``sentence-transformers``. See the shim's docstring for why.
 from ember_code import _torchvision_shim as _torchvision_shim  # noqa: F401
 
-__version__ = "0.6.0"
+__version__ = "0.7.5"

@@ -29,7 +29,7 @@ import javax.swing.JPanel
 import java.awt.BorderLayout
 
 /**
- * "Ember Code" tool window — a JCEF browser hosting the shared web UI
+ * "igni" tool window — a JCEF browser hosting the shared web UI
  * (clients/web, bundled under /webui in plugin resources), connected
  * to the project's backend via `?ws=` query param.
  */
@@ -74,7 +74,7 @@ class EmberToolWindowFactory : ToolWindowFactory {
                         JBLabel(
                             "<html>Ember backend failed to start.<br>" +
                                 "${err?.message ?: "Unknown error"}<br><br>" +
-                                "Try <b>Tools → Ember Code → Reinstall Backend</b>.</html>",
+                                "Try <b>Tools → igni → Reinstall Backend</b>.</html>",
                             JBLabel.CENTER,
                         ),
                         BorderLayout.CENTER,
