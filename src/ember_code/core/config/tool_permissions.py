@@ -301,3 +301,92 @@ class ToolPermissions:
             self._rules.append((tool_name, arg_pattern, level))
         else:
             self._tool_levels[tool_name] = level
+
+
+# ── Rule-string builders (shared by TUI + web HITL flows) ──────────
+#
+# Live outside ``ToolPermissions`` so callers who only need to
+# compute a rule string (BE's ``resolve_hitl_batch``, the TUI's
+# ``hitl_handler``) don't have to instantiate a permissions
+# object. The TUI shipped an identical private copy — this is
+# the canonical home; new call sites should import from here.
+
+
+def build_rule(tool_name: str, tool_args: dict) -> str:
+    """Build a specific-argument rule string, e.g.
+    ``run_shell_command(python3 -m http.server 8000)``. Used when
+    the user picks "Always allow" — matches this exact invocation
+    only. Falls back to bare ``tool_name`` when no meaningful args
+    can be extracted."""
+    args_str = _format_args_for_rule(tool_args)
+    if args_str:
+        return f"{tool_name}({args_str})"
+    return tool_name
+
+
+def build_pattern_rule(tool_name: str, tool_args: dict) -> str:
+    """Build a broader "similar" rule from a tool call — matches
+    the same command family / directory / domain, not just this
+    exact invocation. Used when the user picks "Allow similar":
+    e.g. one ``python3 -m http.server 8000`` → whitelist all
+    ``python3 *`` calls; one ``file_read(src/a.py)`` → whitelist
+    ``src/*``; one ``web_fetch(https://x.com/a)`` → whitelist
+    ``domain:x.com``.
+
+    Emits raw fnmatch patterns (``python3 *``, ``src/*``) rather
+    than ``ToolPermissions``-legacy prefix syntax (``python3:*``,
+    ``path:src/*``). The raw form matches both:
+
+    * ``PermissionEvaluator.matches`` — used in the web/HITL
+      pre-check path via ``_generate_hitl_requirements`` — which
+      does a straight fnmatch on the primary arg, so
+      ``python3:*`` would never match ``python3 -m http.server``
+      (no literal colon).
+    * ``ToolPermissions._match_rule_args`` — used in the TUI
+      pre-dialog RPC path — which handles a bare pattern too
+      via its generic fnmatch fallback.
+
+    Before this change the two matchers disagreed and "Allow
+    similar" clicked in the web dialog persisted a rule that
+    only the TUI's check-permission RPC could see — the web
+    session's own evaluator kept re-prompting. Falls back to
+    bare ``tool_name`` when no pattern can be derived.
+    """
+    from pathlib import Path
+
+    if "args" in tool_args and isinstance(tool_args["args"], list):
+        cmd = tool_args["args"]
+        if cmd:
+            return f"{tool_name}({cmd[0]} *)"
+    if "command" in tool_args:
+        # ``run_shell_command(command="python3 -m http.server 8000")``
+        # → pattern on the leading token.
+        first = str(tool_args["command"]).strip().split()
+        if first:
+            return f"{tool_name}({first[0]} *)"
+    for key in ("path", "file_path"):
+        if key in tool_args:
+            parent = str(Path(str(tool_args[key])).parent)
+            if parent and parent != ".":
+                return f"{tool_name}({parent}/*)"
+    if "url" in tool_args:
+        from urllib.parse import urlparse
+
+        domain = urlparse(str(tool_args["url"])).netloc
+        if domain:
+            return f"{tool_name}(domain:{domain})"
+    return tool_name
+
+
+def _format_args_for_rule(args: dict) -> str:
+    """Short args representation used inside a specific-rule
+    string. Same shape the TUI shipped so existing rules
+    round-trip identically."""
+    if "args" in args and isinstance(args["args"], list):
+        return " ".join(str(a) for a in args["args"])
+    if "command" in args:
+        return str(args["command"])
+    for key in ("path", "file_path", "url", "query"):
+        if key in args:
+            return str(args[key])
+    return str(args)[:100]

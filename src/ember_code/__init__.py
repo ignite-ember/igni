@@ -4,4 +4,4 @@
 # ``sentence-transformers``. See the shim's docstring for why.
 from ember_code import _torchvision_shim as _torchvision_shim  # noqa: F401
 
-__version__ = "0.8.1"
+__version__ = "0.8.2"

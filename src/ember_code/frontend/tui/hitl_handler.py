@@ -1,6 +1,9 @@
 """HITLHandler — handles Human-in-the-Loop requirements.
 
-Pure FE — no core imports. Permission checks go through BackendClient RPC.
+Mostly FE — permission STATE goes through BackendClient RPC.
+The rule-string helpers are imported from ``core.config`` so
+the TUI and the server-side ``resolve_hitl_batch`` share one
+canonical implementation.
 """
 
 from __future__ import annotations
@@ -9,6 +12,12 @@ import contextlib
 import logging
 from typing import TYPE_CHECKING
 
+from ember_code.core.config.tool_permissions import (
+    build_pattern_rule as _build_pattern_rule,
+)
+from ember_code.core.config.tool_permissions import (
+    build_rule as _build_rule,
+)
 from ember_code.frontend.tui.widgets import PermissionDialog
 from ember_code.protocol.rpc import RpcMethod
 
@@ -153,31 +162,9 @@ def _format_args_detail(args: dict) -> str:
     return "\n".join(parts)
 
 
-def _build_rule(tool_name: str, tool_args: dict) -> str:
-    """Build a specific rule string from a tool call."""
-    args_str = _format_args_short(tool_args)
-    if args_str:
-        return f"{tool_name}({args_str})"
-    return tool_name
-
-
-def _build_pattern_rule(tool_name: str, tool_args: dict) -> str:
-    """Build a pattern rule from a tool call."""
-    from pathlib import Path
-
-    if "args" in tool_args and isinstance(tool_args["args"], list):
-        cmd = tool_args["args"]
-        if cmd:
-            return f"{tool_name}({cmd[0]}:*)"
-    for key in ("path", "file_path"):
-        if key in tool_args:
-            parent = str(Path(str(tool_args[key])).parent)
-            if parent and parent != ".":
-                return f"{tool_name}(path:{parent}/*)"
-    if "url" in tool_args:
-        from urllib.parse import urlparse
-
-        domain = urlparse(str(tool_args["url"])).netloc
-        if domain:
-            return f"{tool_name}(domain:{domain})"
-    return tool_name
+# Rule-string builders live in
+# ``ember_code.core.config.tool_permissions`` so the web /
+# VSCode / JetBrains HITL flows can share the same logic via
+# ``resolve_hitl_batch``. Imported at module top; the private
+# aliases keep existing call sites in this file working
+# unchanged.

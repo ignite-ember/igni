@@ -96,13 +96,20 @@ class TestBuildRule:
 
 
 class TestBuildPatternRule:
+    # v0.8.2 changed the emitted format from ``Bash(git:*)`` /
+    # ``Edit(path:src/*)`` to ``Bash(git *)`` / ``Edit(src/*)`` so
+    # the running session's PermissionEvaluator (raw fnmatch) can
+    # match them. The colon-prefix form only worked under the
+    # legacy ``ToolPermissions._match_rule_args`` code path, which
+    # is why "Allow similar" clicked in the web dialog kept
+    # re-prompting on the next call.
     def test_shell_pattern(self):
         result = _build_pattern_rule("Bash", {"args": ["git", "push"]})
-        assert result == "Bash(git:*)"
+        assert result == "Bash(git *)"
 
     def test_shell_single_arg(self):
         result = _build_pattern_rule("Bash", {"args": ["npm"]})
-        assert result == "Bash(npm:*)"
+        assert result == "Bash(npm *)"
 
     def test_shell_empty_args_list(self):
         result = _build_pattern_rule("Bash", {"args": []})
@@ -110,11 +117,11 @@ class TestBuildPatternRule:
 
     def test_file_path_pattern(self):
         result = _build_pattern_rule("Edit", {"file_path": "src/ember_code/tui/app.py"})
-        assert result == "Edit(path:src/ember_code/tui/*)"
+        assert result == "Edit(src/ember_code/tui/*)"
 
     def test_path_pattern(self):
         result = _build_pattern_rule("Read", {"path": "/home/user/project/main.py"})
-        assert result == "Read(path:/home/user/project/*)"
+        assert result == "Read(/home/user/project/*)"
 
     def test_path_root_file(self):
         result = _build_pattern_rule("Read", {"path": "file.py"})
@@ -134,7 +141,7 @@ class TestBuildPatternRule:
 
     def test_args_not_list_falls_through(self):
         result = _build_pattern_rule("Bash", {"args": "string", "path": "src/foo.py"})
-        assert "path:src/*" in result
+        assert "src/*" in result
 
 
 # ── HITLHandler.handle_protocol tests (RPC-based) ─────────────

@@ -1393,6 +1393,17 @@ class BackendServer:
                 yield msg.Error(text=f"Failed to {d.action} requirement {d.requirement_id}: {exc}")
                 continue
             main_resolved_reqs.append(req)
+            # Persist the user's decision when they picked a
+            # sticky option ("always" / "similar" / "deny"). Web
+            # / VSCode / JetBrains clients rely on this — only
+            # the TUI has its own save-then-confirm path (which
+            # remains an idempotent no-op alongside this). Before
+            # this branch shipped, "Always allow" from the web
+            # dialog did the exact same thing as "Allow once":
+            # confirmed this call, persisted nothing, re-prompted
+            # on the next call. See the v0.8.1 postmortem.
+            with contextlib.suppress(Exception):
+                self._maybe_persist_choice(d, req)
 
         # Merge in any auto-resolved (plan/acceptEdits/bypass/deny)
         # requirements that were decided in ``_handle_pause`` for the
@@ -1564,6 +1575,70 @@ class BackendServer:
 
         perms = ToolPermissions(project_dir=self._session.project_dir)
         perms.save_rule(rule, level)
+
+    def _maybe_persist_choice(self, decision: Any, req: Any) -> None:
+        """Persist the user's HITL choice as a permission rule
+        when they picked a sticky option ("always" / "similar" /
+        "deny"). The FE dialog knows the choice but doesn't
+        compute rule strings — that logic lives in the shared
+        ``tool_permissions`` module so every client stays in
+        lockstep. "once" is a no-op (the confirm/reject already
+        happened; no rule to persist).
+
+        Best-effort: silently no-ops on missing tool metadata
+        (older Agno versions might not populate
+        ``req.tool_execution``) or unsupported choice values.
+        The caller's ``contextlib.suppress`` also wraps this;
+        we don't let a bad decision blob strand the whole batch.
+        """
+        from ember_code.core.config.tool_permissions import (
+            ToolPermissions,
+            build_pattern_rule,
+            build_rule,
+        )
+
+        choice = str(getattr(decision, "choice", "") or "").lower()
+        if choice not in ("always", "similar", "deny"):
+            return
+        tool_execution = getattr(req, "tool_execution", None)
+        tool_name = str(getattr(tool_execution, "tool_name", "") or "")
+        tool_args = getattr(tool_execution, "tool_args", None) or {}
+        if not tool_name:
+            return
+        # ``FUNC_TO_TOOL`` maps Agno function names
+        # (``run_shell_command``) to our canonical tool names
+        # (``Bash``). Persisted rules use the canonical name so
+        # they read consistently with what a user would type by
+        # hand into settings.json.
+        from ember_code.core.config.tool_permissions import FUNC_TO_TOOL
+
+        canonical = FUNC_TO_TOOL.get(tool_name, tool_name)
+        if choice == "similar":
+            rule = build_pattern_rule(canonical, tool_args)
+        else:
+            rule = build_rule(canonical, tool_args)
+        level = "deny" if choice == "deny" else "allow"
+        perms = ToolPermissions(project_dir=self._session.project_dir)
+        perms.save_rule(rule, level)
+
+        # Disk-persist alone doesn't stop the next re-prompt: the
+        # session's ``PermissionEvaluator`` is built once from
+        # ``settings.permissions`` at startup and never re-reads
+        # ``settings.local.json``. Without this in-memory patch the
+        # next call to the same tool re-enters ``_generate_hitl_
+        # requirements`` → ``evaluator.evaluate()`` → still sees an
+        # empty ``.allow`` list → DEFER → dialog fires again. Exactly
+        # the "I clicked Always allow, still re-prompts" bug.
+        evaluator = getattr(self._session, "permission_evaluator", None)
+        if evaluator is not None:
+            from ember_code.core.config.permission_eval import PermissionRule
+
+            parsed = PermissionRule.parse(rule)
+            if parsed is not None:
+                target = evaluator.deny if level == "deny" else evaluator.allow
+                if parsed not in target:
+                    target.append(parsed)
+        logger.info("Persisted HITL rule from choice=%s: %s %s", choice, level, rule)
 
     # ── Model ─────────────────────────────────────────────────────
 
