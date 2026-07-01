@@ -105,17 +105,30 @@ async def test_async_rewake_does_not_block_foreground_execute() -> None:
     """``async_rewake`` hooks should NOT delay ``execute()`` — they
     run in the background even if not explicitly marked
     ``background``. Otherwise the agent would block on a hook it
-    was supposed to be woken by later."""
+    was supposed to be woken by later.
+
+    Uses a ``sleep 0.3`` (not the previous ``sleep 5``) so the
+    subprocess actually finishes before pytest's asyncio teardown
+    runs — Python 3.11/3.12's ``asyncio.run`` gathers still-
+    pending tasks at loop shutdown and blocks on them, which
+    hung this test's cleanup for the full CI job timeout. A
+    tighter assertion (< 0.15s) preserves the "was execute
+    non-blocking?" signal despite the shorter sleep: a
+    foreground call would have taken ~300ms.
+    """
     hook = HookDefinition(
         type="command",
-        command="sleep 5; exit 2",  # would block 5s if foreground
+        command="sleep 0.3; exit 2",  # would block ~300ms if foreground
         async_rewake=True,
     )
     executor = HookExecutor({"PreToolUse": [hook]}, rewake_callback=lambda _t: None)
-    start = asyncio.get_event_loop().time()
+    start = asyncio.get_running_loop().time()
     await executor.execute("PreToolUse", payload={})
-    elapsed = asyncio.get_event_loop().time() - start
-    assert elapsed < 1.0, f"expected fast return, took {elapsed:.2f}s"
+    elapsed = asyncio.get_running_loop().time() - start
+    assert elapsed < 0.15, f"expected fast return, took {elapsed:.2f}s"
+    # Give the background subprocess time to finish so pytest's
+    # asyncio teardown doesn't wait on it.
+    await _settle_background_tasks()
 
 
 @pytest.mark.asyncio
