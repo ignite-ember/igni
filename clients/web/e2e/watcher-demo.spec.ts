@@ -60,7 +60,7 @@ test("watcher panel shows live background processes", async ({
   await page.goto(`/?ws=${encodeURIComponent(liveWsUrl)}`);
   await expect(page.locator(".composer-editable")).toHaveAttribute(
     "data-placeholder",
-    /Message Ember/,
+    /Message (Ember|igni)/,
     { timeout: 30_000 },
   );
 

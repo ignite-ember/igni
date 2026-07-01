@@ -26,7 +26,7 @@ test("orphan process surfaces after BE restart", async ({ page, liveWsUrl }) => 
   await page.goto(`/?ws=${encodeURIComponent(liveWsUrl)}`);
   await expect(page.locator(".composer-editable")).toHaveAttribute(
     "data-placeholder",
-    /Message Ember/,
+    /Message (Ember|igni)/,
     { timeout: 30_000 },
   );
 

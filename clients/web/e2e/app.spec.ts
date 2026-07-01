@@ -25,7 +25,7 @@ test.describe("connection lifecycle", () => {
     // prompt once ``state === connected``. Same signal a user sees.
     await expect(page.locator(".composer-editable")).toHaveAttribute(
       "data-placeholder",
-      /Message Ember/,
+      /Message (Ember|igni)/,
     );
     // FE issues several RPCs on attach — at minimum get_session_id
     // (or attach_session) + count_context_tokens + get_status. We
@@ -64,7 +64,7 @@ test.describe("user message round-trip", () => {
   }) => {
     await page.goto(appUrl);
     const editor = page.locator(".composer-editable");
-    await expect(editor).toHaveAttribute("data-placeholder", /Message Ember/);
+    await expect(editor).toHaveAttribute("data-placeholder", /Message (Ember|igni)/);
 
     await editor.click();
     await editor.type("hello fixture");
@@ -92,7 +92,7 @@ test.describe("user message round-trip", () => {
     await page.goto(appUrl);
     await expect(page.locator(".composer-editable")).toHaveAttribute(
       "data-placeholder",
-      /Message Ember/,
+      /Message (Ember|igni)/,
     );
 
     const editor = page.locator(".composer-editable");
@@ -339,7 +339,7 @@ test.describe("push notifications", () => {
     await page.goto(appUrl);
     await expect(page.locator(".composer-editable")).toHaveAttribute(
       "data-placeholder",
-      /Message Ember/,
+      /Message (Ember|igni)/,
     );
 
     backend.pushEvent({
@@ -383,7 +383,7 @@ test.describe("first-launch onboarding", () => {
     // ready to receive input.
     await expect(page.locator(".composer-editable")).toHaveAttribute(
       "data-placeholder",
-      /Message Ember/,
+      /Message (Ember|igni)/,
       { timeout: 10_000 },
     );
 
@@ -471,7 +471,7 @@ test.describe("first-launch onboarding", () => {
     await page.goto(appUrl);
     await expect(page.locator(".composer-editable")).toHaveAttribute(
       "data-placeholder",
-      /Message Ember/,
+      /Message (Ember|igni)/,
       { timeout: 10_000 },
     );
 
@@ -535,7 +535,7 @@ test.describe("session bootstrap", () => {
     // type). If it never resolves we hang at "Connecting…".
     await expect(page.locator(".composer-editable")).toHaveAttribute(
       "data-placeholder",
-      /Message Ember/,
+      /Message (Ember|igni)/,
       { timeout: 10_000 },
     );
     // The session chip in the footer displays only the FIRST 8

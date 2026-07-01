@@ -172,9 +172,20 @@ async def test_deny_decision_blocks_and_fires_permission_denied() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ask_decision_fires_permission_request_and_blocks() -> None:
+async def test_ask_decision_fires_permission_request_and_executes() -> None:
+    """A PreToolUse ``ask`` fires the ``PermissionRequest`` event
+    (so plugins / logs see the ask) but falls through to execution.
+    Rationale: Agno's ``requires_confirmation`` HITL has already
+    prompted the user by the time this hook runs — blocking here
+    would double-ask, which surfaced as "no canUseTool bridge is
+    wired yet" and prevented users from running shell commands
+    after upgrading from an older version.
+
+    A real canUseTool RPC will flip this back to blocking-on-answer;
+    update this test then.
+    """
     result, calls = await _run_with_hook_decision("ask")
-    assert "approval" in result.lower() or "Blocked" in result
+    assert "ran x.py" in result
     requests = [c for c in calls if c[0] == "PermissionRequest"]
     assert len(requests) == 1
 

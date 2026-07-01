@@ -129,6 +129,16 @@ class ToolEventHook:
                 )
                 return pre_result.message or f"Blocked: '{name}' denied by PreToolUse hook"
             if pre_decision == "ask":
+                # Fire the audit event so plugins / logs see the
+                # request, but fall through to execution: by the
+                # time this hook fires, Agno's own HITL gate
+                # (``requires_confirmation`` on the tool) has
+                # already prompted the user and got their yes —
+                # blocking here would double-ask, which is what
+                # the "no canUseTool bridge" error surfaced. When
+                # a proper canUseTool RPC lands we'll block on
+                # its answer here instead of trusting Agno's
+                # earlier prompt.
                 await self._fire(
                     HookEvent.PERMISSION_REQUEST.value,
                     name,
@@ -138,9 +148,10 @@ class ToolEventHook:
                         "tool_args": _safe_args(args),
                     },
                 )
-                return (
-                    pre_result.message
-                    or f"Blocked: '{name}' requires user approval, no canUseTool bridge is wired yet."
+                logger.info(
+                    "PreToolUse hook asked for approval on %s; deferring to "
+                    "Agno's HITL confirmation (already ran).",
+                    name,
                 )
             # Legacy ``should_continue=False`` block (no
             # permission_decision) — keep the existing semantics.
@@ -203,6 +214,14 @@ class ToolEventHook:
                 logger.info("Permission DENY for %s", name)
                 return msg
             if decision is PermissionDecision.ASK:
+                # Same story as the PreToolUse ``ask`` branch
+                # above: fire the audit event but let the tool
+                # run. Agno's ``requires_confirmation`` HITL
+                # already prompted the user and got a yes by the
+                # time this hook fires (that's the ONLY reason
+                # we're in the tool_hook at all). A future
+                # canUseTool RPC will let this branch block on
+                # a real per-call decision.
                 await self._fire(
                     HookEvent.PERMISSION_REQUEST.value,
                     name,
@@ -212,12 +231,11 @@ class ToolEventHook:
                         "tool_args": _safe_args(args),
                     },
                 )
-                msg = (
-                    f"Blocked: '{name}' requires user approval, no canUseTool bridge is wired yet."
+                logger.info(
+                    "Permission ASK on %s — deferring to Agno's HITL (already confirmed by user).",
+                    name,
                 )
-                logger.info("Permission ASK (treated as deny) for %s", name)
-                return msg
-            # ALLOW and DEFER both fall through to execution.
+            # ALLOW, ASK, and DEFER all fall through to execution.
 
         # Execute the tool
         if func is None:

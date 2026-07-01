@@ -164,7 +164,7 @@ test.describe("real BE wire format", () => {
     // wouldn't fire and this would timeout.
     await expect(page.locator(".composer-editable")).toHaveAttribute(
       "data-placeholder",
-      /Message Ember/,
+      /Message (Ember|igni)/,
       { timeout: 30_000 },
     );
 

@@ -793,7 +793,7 @@ export function Composer({
                 ? "Command name (Backspace to return to chat)"
                 : shellMode
                   ? "Shell command (Backspace to return to chat)"
-                  : "Message Ember — / commands, @ files, $ shell"
+                  : "Message igni — / commands, @ files, $ shell"
           }
           onValueChange={(value, caret) => {
             setHistIdx(-1);

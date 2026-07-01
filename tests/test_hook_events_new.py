@@ -48,8 +48,17 @@ async def test_permission_denied_event_fires_on_deny_rule(tmp_path: Path) -> Non
 
 @pytest.mark.asyncio
 async def test_permission_request_event_fires_on_ask_rule(tmp_path: Path) -> None:
-    """Until the canUseTool bridge is wired, ``ask`` → block +
-    fire ``PermissionRequest`` for observers to react to."""
+    """``ask`` rules fire ``PermissionRequest`` for observers +
+    fall through to execution. Rationale: by the time this hook
+    runs, Agno's ``requires_confirmation`` HITL has already
+    prompted the user and got a yes — blocking here would
+    double-ask. The audit event still fires so plugins / logs
+    see the ask; the tool runs.
+
+    When a real canUseTool RPC lands, this branch will change
+    to block on the FE's answer instead of trusting Agno's
+    earlier prompt. Update this test then.
+    """
     executor = _RecordingExecutor()
     evaluator = PermissionEvaluator.from_strings(ask=["run_shell_command(npm *)"])
     hook = ToolEventHook(
@@ -67,7 +76,9 @@ async def test_permission_request_event_fires_on_ask_rule(tmp_path: Path) -> Non
         func=fake_tool,
         args={"command": "npm install"},
     )
-    assert "approval" in result.lower() or "Blocked" in result
+    # Tool actually ran — the "canUseTool bridge not wired"
+    # block is gone, deferring to Agno's HITL confirmation.
+    assert result == "ran"
     requests = [c for c in executor.calls if c[0] == "PermissionRequest"]
     assert len(requests) == 1
     assert requests[0][1]["tool_name"] == "run_shell_command"

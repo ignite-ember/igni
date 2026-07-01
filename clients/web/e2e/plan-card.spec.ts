@@ -37,7 +37,7 @@ test.describe("PlanCard ←→ BE contract", () => {
     await page.goto(appUrl);
     await expect(page.locator(".composer-editable")).toHaveAttribute(
       "data-placeholder",
-      /Message Ember/,
+      /Message (Ember|igni)/,
     );
 
     backend.pushEvent({
@@ -89,7 +89,7 @@ test.describe("PlanCard ←→ BE contract", () => {
     await page.goto(appUrl);
     await expect(page.locator(".composer-editable")).toHaveAttribute(
       "data-placeholder",
-      /Message Ember/,
+      /Message (Ember|igni)/,
     );
     backend.pushEvent({
       type: "push_notification",
@@ -153,7 +153,7 @@ test.describe("PlanCard ←→ BE contract", () => {
     await page.goto(appUrl);
     await expect(page.locator(".composer-editable")).toHaveAttribute(
       "data-placeholder",
-      /Message Ember/,
+      /Message (Ember|igni)/,
     );
     backend.pushEvent({
       type: "push_notification",
@@ -223,7 +223,7 @@ test.describe("PlanCard ←→ BE contract", () => {
     await page.goto(appUrl);
     await expect(page.locator(".composer-editable")).toHaveAttribute(
       "data-placeholder",
-      /Message Ember/,
+      /Message (Ember|igni)/,
     );
     backend.pushEvent({
       type: "push_notification",
@@ -276,7 +276,7 @@ test.describe("PlanCard ←→ BE contract", () => {
     await page.goto(appUrl);
     await expect(page.locator(".composer-editable")).toHaveAttribute(
       "data-placeholder",
-      /Message Ember/,
+      /Message (Ember|igni)/,
     );
 
     backend.pushEvent({

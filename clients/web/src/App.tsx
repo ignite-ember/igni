@@ -1274,7 +1274,7 @@ export default function App() {
                 <span />
               </span>
               <span className="typing-label">
-                {processing ? "Ember is replying…" : "Finalizing…"}
+                {processing ? "igni is replying…" : "Finalizing…"}
               </span>
               {processing && <span className="typing-hint">Esc to cancel</span>}
             </div>

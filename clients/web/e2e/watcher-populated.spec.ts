@@ -48,7 +48,7 @@ test("WatcherPanel populated render", async ({ page, backend, appUrl }) => {
   await page.goto(appUrl);
   await expect(page.locator(".composer-editable")).toHaveAttribute(
     "data-placeholder",
-    /Message Ember/,
+    /Message (Ember|igni)/,
   );
 
   // Open the panel by directly emitting a ``command_result`` push
