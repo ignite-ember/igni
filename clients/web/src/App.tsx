@@ -1800,20 +1800,15 @@ export default function App() {
           className="app-header"
           data-tauri-drag-region
         >
-          {/* Progressive blur stack — six stacked backdrop-filter
-              layers, each with a stronger blur and a shorter gradient
-              mask, build up a smooth top→bottom blur ramp so messages
-              that scroll up behind the header appear frosted. Sits
-              absolutely behind the header content via DOM order (the
-              interactive children below are painted on top). */}
-          <div className="app-header-blur" aria-hidden="true">
-            <div className="app-header-blur-layer" />
-            <div className="app-header-blur-layer" />
-            <div className="app-header-blur-layer" />
-            <div className="app-header-blur-layer" />
-            <div className="app-header-blur-layer" />
-            <div className="app-header-blur-layer" />
-          </div>
+          {/* Fade strip — a solid gradient panel painted behind the
+              header content (via ``z-index: -1``) so messages that
+              scroll up under the header disappear cleanly instead of
+              showing through. Replaces an earlier six-layer
+              backdrop-filter frosted-glass stack that was fine on
+              Tauri/Chrome but the dominant per-frame cost on JCEF's
+              software compositor. Also serves as the drag hit-area
+              in Tauri (hangs 28 px below the header via CSS). */}
+          <div className="app-header-fade" aria-hidden="true" />
           <button
             className="icon-btn"
             title="Toggle sessions"

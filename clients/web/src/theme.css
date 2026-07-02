@@ -229,82 +229,29 @@ button {
   overscroll-behavior: contain;
 }
 
-/* ── Sidebar progressive blur ───────────────────────────────────────
-   Sibling of ``.sidebar-top`` rather than a child, so backdrop-filter
-   samples ``.sidebar-list`` directly without crossing an extra
-   stacking context. Stronger radii than the main header (the user
-   wants the text "barely visible" behind the Sessions cluster) and
-   the heaviest layers cover more of the zone so items get heavy
-   frost the moment they enter, not just at the very top. */
-.sidebar-blur {
+/* ── Sidebar cluster fade ───────────────────────────────────────────
+   Solid gradient panel covering the top ~118 px of the sidebar.
+   Fully opaque at the top (behind the "Sessions" cluster) fading to
+   transparent at the bottom edge, so items scrolling up disappear
+   smoothly under the cluster instead of showing through it. Was a
+   six-layer ``backdrop-filter`` frosted-glass stack before; blur is
+   the wrong tool when the compositor is software-rasterised (JCEF),
+   and a static gradient composites once regardless. */
+.sidebar-fade {
   position: absolute;
-  /* Extends from the very top of the sidebar (so an overscroll
-     rubber-band can't reveal crisp items above the cluster) down
-     to the bottom edge of the cluster (~118 px). The visible blur
-     ramp still concentrates near the bottom via the layer masks
-     below — peak frost right where items enter the cluster, fading
-     to nothing by the time they reach the top of the app. */
   top: 0;
   left: 0;
   right: 0;
   height: 118px;
-  /* Sits between the scrollable list (z:1) and the cluster (z:10)
-     so items get frosted but the cluster's own text/widgets paint
-     over untouched. */
   z-index: 5;
   pointer-events: none;
-}
-.sidebar-blur-layer {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-/* Same six-layer ramp as ``.app-header-blur-layer`` — keeps the
-   feel consistent across the two surfaces. Radii cap at 16 px;
-   the masks hold the heavy layers across the upper portion of the
-   zone so overscrolled items stay frosted, and fade to crisp in
-   the bottom few percent so the first item (sitting flush at the
-   zone's bottom edge) is sharp at scroll-top. */
-/* Identical mask values to the header above — smooth ramp from
-   max blur at the top of the zone to crisp at the bottom. The
-   zone itself is taller (118 px vs the header's ~54 px), so the
-   visible gradient covers more vertical distance but follows the
-   same shape. */
-.sidebar-blur-layer:nth-child(1) {
-  backdrop-filter: blur(0.5px);
-  -webkit-backdrop-filter: blur(0.5px);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 95%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 95%, transparent 100%);
-}
-.sidebar-blur-layer:nth-child(2) {
-  backdrop-filter: blur(1px);
-  -webkit-backdrop-filter: blur(1px);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
-}
-.sidebar-blur-layer:nth-child(3) {
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 65%, transparent 85%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 65%, transparent 85%);
-}
-.sidebar-blur-layer:nth-child(4) {
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 50%, transparent 70%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 50%, transparent 70%);
-}
-.sidebar-blur-layer:nth-child(5) {
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 35%, transparent 55%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 35%, transparent 55%);
-}
-.sidebar-blur-layer:nth-child(6) {
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 20%, transparent 40%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 20%, transparent 40%);
+  background: linear-gradient(
+    to bottom,
+    var(--bg) 0%,
+    var(--bg) 78%,
+    color-mix(in srgb, var(--bg) 60%, transparent) 92%,
+    transparent 100%
+  );
 }
 
 /* WebKit scrollbar hide for both surfaces (Firefox uses
@@ -815,101 +762,29 @@ button {
   padding-top: 78px;
 }
 
-/* ── Progressive header blur ───────────────────────────────────────
-   The ``.app-header`` sits in document flow at the top of ``.main``
-   and we let the scrolling ``.conversation`` extend up *behind* it
-   (negative ``margin-top`` + matching ``padding-top``). Six stacked
-   layers inside the header build up a frosted-glass ramp: heaviest
-   blur at the top edge, fading to crisp at the bottom of the row —
-   so messages sliding up appear progressively blurred as they pass
-   under the brand / pills / chip. */
-.app-header-blur {
+/* ── Header fade strip ─────────────────────────────────────────────
+   Solid gradient panel painted behind the header content
+   (``z-index: -1``) so messages scrolling up under the header
+   disappear cleanly instead of showing through. Also hangs 28 px
+   below the header proper — that overhang is Tauri's drag hit-area
+   (``pointer-events: auto``) so users can grab the near-edge to
+   move the window without the interactive header widgets stealing
+   the mousedown. */
+.app-header-fade {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  /* Extends ~28 px past the header's bottom edge so the blur ramp
-     doesn't end abruptly at the brand row — content drifting just
-     below the header still picks up a faint frosted edge. */
   bottom: -28px;
-  /* Catch pointer events so the blur tail (which hangs below the
-     header's bounding box) acts as part of the drag handle —
-     mousedowns here bubble up to the header's onMouseDown and
-     start the window drag. The wrapper sits at ``z-index: -1`` so
-     interactive children (button / brand / chips) still hit-test
-     first; only otherwise-empty pixels reach this layer. */
   pointer-events: auto;
-  /* Layer children below are still ``inset: 0`` so they paint within
-     the header proper; the bottom 28 px of *this* wrapper is just a
-     hit-area extension with no visual blur. That's intentional —
-     painting beyond the header would clip against ``.main``'s
-     stacking and confuse the conversation layer. */
-  /* ``z-index: -1`` paints the blur stack *behind* the header's
-     non-positioned children (brand / pills / chip). Without this,
-     the positioned blur layers would draw on top of those children
-     per the CSS stacking rules and the foreground text itself
-     would look frosted. */
   z-index: -1;
-}
-/* Individual layers stay click-through; only the wrapper is a
-   hit target. Without this, each layer would steal the drag-region
-   computation and we'd lose the blur-tail drag handle. */
-.app-header-blur-layer {
-  pointer-events: none;
-}
-.app-header-blur-layer {
-  position: absolute;
-  inset: 0;
-}
-/* Mask design: monotonic ramp — full strength at the top of the
-   blur zone, holding through ~60 % of the distance, then fading
-   linearly to zero at the bottom. Stronger blurs fade out earlier
-   (their masks turn transparent at a smaller y%); the lightest
-   layer hangs on almost to the end so the trailing edge stays
-   smooth. Stacked, the result is heavy blur up top, plateau down
-   to ~60 %, then a soft taper to crisp. */
-/* Mask design: each layer's fade range is staggered so the
-   combined blur falls off smoothly across the whole zone instead
-   of plateauing at the top then cliff-dropping. Stronger layers
-   fade out earlier and faster; lighter layers hang on almost to
-   the bottom. Stacked, the per-y total goes 31.5 → 23 → 13 → 6
-   → 3 → 1 → 0 with no flat plateau and no hard edge — a real
-   1 → 0 ramp from chrome to crisp. */
-.app-header-blur-layer:nth-child(1) {
-  backdrop-filter: blur(0.5px);
-  -webkit-backdrop-filter: blur(0.5px);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 95%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 95%, transparent 100%);
-}
-.app-header-blur-layer:nth-child(2) {
-  backdrop-filter: blur(1px);
-  -webkit-backdrop-filter: blur(1px);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
-}
-.app-header-blur-layer:nth-child(3) {
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 65%, transparent 85%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 65%, transparent 85%);
-}
-.app-header-blur-layer:nth-child(4) {
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 50%, transparent 70%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 50%, transparent 70%);
-}
-.app-header-blur-layer:nth-child(5) {
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 35%, transparent 55%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 35%, transparent 55%);
-}
-.app-header-blur-layer:nth-child(6) {
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 20%, transparent 40%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 20%, transparent 40%);
+  background: linear-gradient(
+    to bottom,
+    var(--bg) 0%,
+    var(--bg) 62%,
+    color-mix(in srgb, var(--bg) 55%, transparent) 82%,
+    transparent 100%
+  );
 }
 
 /* Floating jump-to-latest button. Absolute-positioned inside the
