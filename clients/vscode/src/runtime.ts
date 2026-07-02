@@ -93,14 +93,25 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
   const expected = IGNITE_EMBER_VERSION;
 
   // ── Dev / user overrides ──
-  // Both ``EMBER_DEV_BACKEND`` and the ``emberCode.pythonPath``
-  // setting are opt-in escape hatches for contributors running
-  // against an editable checkout. They're deliberately gated on
-  // ``IGNITE_EMBER_DEV=1`` so an ambient env var left over from
-  // an old shell config (``~/.zshenv``, ``launchctl setenv``, or
-  // an OS-level plist) can't silently redirect a regular user
-  // to a stale interpreter — the exact footgun that hid a v0.3.8
-  // Homebrew CLI behind a v0.8.x plugin.
+  //
+  // Two different threat models here:
+  //
+  //   * ``EMBER_DEV_BACKEND`` is an ENV VAR. Env vars travel
+  //     through ``~/.zshenv`` / ``launchctl setenv`` / macOS
+  //     plists — a value set years ago can silently redirect
+  //     today's plugin to a stale interpreter, which is
+  //     exactly how the v0.3.8 Homebrew M2.5 bug happened.
+  //     Gate this behind an explicit ``IGNITE_EMBER_DEV=1``
+  //     ack so ambient state can't hijack the plugin.
+  //
+  //   * ``emberCode.pythonPath`` is a VSCODE SETTING. It only
+  //     ever comes from ``settings.json`` — user or workspace
+  //     — which means the user made an explicit deliberate
+  //     edit through the UI or hand-crafted JSON. There's no
+  //     ambient path that could set it accidentally, so
+  //     we don't require the extra ack. We still probe the
+  //     interpreter and log any version drift so the reader
+  //     sees what they're running.
   const devAck = isDevAcked();
   const devBackend = process.env.EMBER_DEV_BACKEND?.trim();
   const configured = opts.configuredPython?.trim();
@@ -130,21 +141,24 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
     }
   }
   if (configured) {
-    if (devAck) {
-      const actual = await probeCliVersion(configured);
-      return {
-        python: configured,
-        env: { ...proxyEnv },
-        actualCliVersion: actual,
-        expectedCliVersion: expected,
-        source: "dev_override",
-      };
-    } else {
+    // Setting-based override — no ack required (see comment
+    // above). Still probe + log if drift so the reader can see
+    // when their pinned interpreter is at a different version
+    // than the extension expects.
+    const actual = await probeCliVersion(configured);
+    if (actual && actual !== expected) {
       console.warn(
-        `emberCode.pythonPath="${configured}" set but IGNITE_EMBER_DEV is unset — ` +
-          "ignoring override and using the managed venv.",
+        `emberCode.pythonPath="${configured}" runs ignite-ember ${actual}, ` +
+          `extension pinned to ${expected}. Continuing.`,
       );
     }
+    return {
+      python: configured,
+      env: { ...proxyEnv },
+      actualCliVersion: actual,
+      expectedCliVersion: expected,
+      source: "dev_override",
+    };
   }
 
   await fs.promises.mkdir(opts.cacheDir, { recursive: true });
