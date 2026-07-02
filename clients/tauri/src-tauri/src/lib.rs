@@ -1005,11 +1005,24 @@ fn reposition_traffic_lights(window: &tauri::WebviewWindow, x: f64, y: f64) {
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build());
+
+    // Unlock WKWebView's internal 60 Hz cap on macOS so the app
+    // renders at the display's native refresh rate (up to 120 Hz
+    // on ProMotion). WebKit caps to 60 by default regardless of
+    // the display's ``maximumFramesPerSecond``; the plugin
+    // flips the private ``_setPreferredFramesPerSecond`` knob
+    // right after the WebView instantiates. No-op on non-mac
+    // targets — the ``cfg`` in ``Cargo.toml`` keeps the crate
+    // out of the Windows/Linux dependency graph entirely.
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_plugin_macos_fps::init());
+
+    builder
         .invoke_handler(tauri::generate_handler![
             set_app_title,
             reinstall_backend,

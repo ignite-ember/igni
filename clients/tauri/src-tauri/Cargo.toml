@@ -51,6 +51,14 @@ objc2-foundation = { version = "0.2", features = ["NSGeometry"] }
 # cluster. Background polling can't outrun the reset; a runloop
 # observer runs *after* AppKit's title-bar layout each iteration.
 core-foundation-sys = "0.8"
+# Unlock the WKWebView internal 60 Hz render cap so ProMotion
+# displays actually paint at their native refresh rate (up to
+# 120 Hz on M-series MacBooks / Studio Displays). WKWebView caps
+# to 60 by default regardless of the display's ``maximumFramesPerSecond``;
+# this plugin flips the private ``_setPreferredFramesPerSecond``
+# knob after the WebView is instantiated. Effective on macOS
+# 12+, no-op on displays that top out at 60 Hz anyway.
+tauri-plugin-macos-fps = "0.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # uv ships its Windows release as a .zip. Tar.gz on every other
