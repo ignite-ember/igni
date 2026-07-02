@@ -5434,35 +5434,85 @@ button {
    the only signal that varies between the three states; ``ok`` is
    the least visually loud so it doesn't compete with the session
    chip in the common case. */
+/* Fixed bottom-left FPS overlay. Sits above every panel and
+   dialog (very high z-index) but doesn't intercept clicks so
+   the app underneath remains fully interactive. Tone colours
+   mirror the BackendVersionChip's traffic-light palette so
+   contributors already fluent in one palette read the other
+   at a glance. */
+.fps-counter {
+  /* Bottom-left corner — away from the app's own top-right
+     chrome (sign-in pill, GitHub link, sidebar toggle) and the
+     bottom-right composer buttons. Small enough to be
+     unobtrusive; ``pointer-events: none`` so clicks pass
+     through to whatever's underneath. */
+  position: fixed;
+  bottom: 8px;
+  left: 8px;
+  z-index: 9999;
+  padding: 3px 8px;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  user-select: none;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.fps-counter-unit {
+  opacity: 0.65;
+  font-weight: 500;
+  margin-left: 1px;
+}
+
+.fps-counter-ok {
+  border: 1px solid color-mix(in srgb, var(--success) 60%, transparent);
+  color: color-mix(in srgb, var(--success) 90%, #fff);
+}
+
+.fps-counter-warn {
+  border: 1px solid color-mix(in srgb, var(--warning) 60%, transparent);
+  color: color-mix(in srgb, var(--warning) 90%, #fff);
+}
+
+.fps-counter-danger {
+  border: 1px solid color-mix(in srgb, var(--danger) 60%, transparent);
+  color: color-mix(in srgb, var(--danger) 85%, #fff);
+}
+
+/* Inline plain-text version, next to the ``igni`` wordmark.
+   No pill, no border, no background in ANY state — colour is
+   the only signal. Reads as a subtitle in the common case
+   (grey), catches the eye without shouting when something's
+   drifted (amber / red). */
 .backend-version-chip {
   display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
-  border-radius: 9999px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 1.4;
-  border: 1px solid transparent;
-  color: var(--fg-faint);
   cursor: default;
   white-space: nowrap;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .backend-version-chip.tone-ok {
   color: var(--fg-faint);
-  border-color: var(--border-soft);
 }
 
 .backend-version-chip.tone-warn {
   color: var(--warning);
-  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
-  background: color-mix(in srgb, var(--warning) 10%, transparent);
 }
 
 .backend-version-chip.tone-danger {
   color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 .ctx-meter {

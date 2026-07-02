@@ -101,7 +101,7 @@ describe("BackendVersionChip — tone", () => {
   it("renders tone-ok when actual == expected AND managed venv", () => {
     withSearch("?expected_cli=0.8.3&actual_cli=0.8.3&backend_source=managed_venv", () => {
       render(<BackendVersionChip />);
-      const chip = screen.getByText(/cli · v0\.8\.3/);
+      const chip = screen.getByText(/v0\.8\.3/);
       // Neutral tone class — least visually loud; the reader
       // shouldn't be alarmed by a "everything is fine" chip.
       expect(chip.className).toContain("tone-ok");
@@ -116,7 +116,7 @@ describe("BackendVersionChip — tone", () => {
     // out of the managed venv and might not remember they did.
     withSearch("?expected_cli=0.8.3&actual_cli=0.8.3&backend_source=dev_override", () => {
       render(<BackendVersionChip />);
-      const chip = screen.getByText(/cli · v0\.8\.3/);
+      const chip = screen.getByText(/v0\.8\.3/);
       expect(chip.className).toContain("tone-warn");
     });
   });
@@ -126,7 +126,7 @@ describe("BackendVersionChip — tone", () => {
     // they're on v0.8.3 but the backend is really v0.3.8.
     withSearch("?expected_cli=0.8.3&actual_cli=0.3.8&backend_source=managed_venv", () => {
       render(<BackendVersionChip />);
-      const chip = screen.getByText(/cli · v0\.3\.8/);
+      const chip = screen.getByText(/v0\.3\.8/);
       expect(chip.className).toContain("tone-danger");
     });
   });
@@ -139,7 +139,7 @@ describe("BackendVersionChip — tone", () => {
     withSearch("?expected_cli=0.8.3&actual_cli=unknown&backend_source=managed_venv", () => {
       render(<BackendVersionChip />);
       // Explicit — no "v" prefix, no fake number.
-      expect(screen.getByText("cli · <probe failed>")).toBeTruthy();
+      expect(screen.getByText("<probe failed>")).toBeTruthy();
     });
   });
 });
@@ -157,7 +157,7 @@ describe("BackendVersionChip — input sources", () => {
       },
       () => {
         render(<BackendVersionChip />);
-        expect(screen.getByText("cli · v0.8.3")).toBeTruthy();
+        expect(screen.getByText("v0.8.3")).toBeTruthy();
       },
     );
   });
@@ -177,7 +177,7 @@ describe("BackendVersionChip — input sources", () => {
         () => {
           render(<BackendVersionChip />);
           // URL says v0.8.3, so v0.8.3 is what we render.
-          expect(screen.getByText("cli · v0.8.3")).toBeTruthy();
+          expect(screen.getByText("v0.8.3")).toBeTruthy();
         },
       );
     });

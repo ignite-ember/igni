@@ -425,7 +425,13 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         "restart_backend",
         "Restart Backend",
         true,
-        Some("CmdOrCtrl+Shift+R"),
+        // Deliberately no accelerator. The previous
+        // ``CmdOrCtrl+Shift+R`` binding shadowed the near-
+        // universal "hard reload" shortcut, so users trying
+        // to reload the page instead killed the BE — very bad
+        // failure mode when debugging a stuck stream. The menu
+        // item is still one click away for the genuine case.
+        None::<&str>,
     )?;
     let reinstall_backend_item = MenuItem::with_id(
         app,

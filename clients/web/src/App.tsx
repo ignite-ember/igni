@@ -28,6 +28,7 @@ import { Composer, BUILTIN_COMMANDS, type SlashCommand } from "./components/Comp
 import { CodeIndexIndicator } from "./components/CodeIndexIndicator";
 import { WatcherIndicator } from "./components/WatcherIndicator";
 import { BackendVersionChip, CtxMeter, SessionChip } from "./components/StatusBits";
+import { FPSCounterOverlay } from "./components/FPSCounter";
 import { HitlDialog, type HitlDecision } from "./components/HitlDialog";
 import {
   ChevronIcon,
@@ -1760,6 +1761,14 @@ export default function App() {
 
   return (
     <div className="shell">
+      {/* Live FPS overlay — hidden by default. Toggle with
+          ``Ctrl+Alt+Shift+F`` (or ``Cmd+Alt+Shift+F`` on macOS).
+          State persists per-origin via localStorage so the
+          overlay stays put across reloads until the user turns
+          it off again. Documented in the plugin README so
+          contributors verifying rendering-pipeline changes can
+          find it, invisible to everyone else. */}
+      <FPSCounterOverlay />
       <Sidebar
         open={sidebarOpen}
         sessions={sessions}
@@ -1824,6 +1833,11 @@ export default function App() {
               title={`backend ${conn}`}
               style={{ cursor: "default" }}
             />
+            {/* Version last in the brand row — reads as
+                ``igni ● v0.9.0``. Renders only when a host
+                embedded the values (JB / Tauri / VSCode); the
+                component itself paints nothing otherwise. */}
+            <BackendVersionChip />
           </div>
           <div className="header-spacer" />
           {items.length > 0 && (
@@ -2205,11 +2219,6 @@ export default function App() {
           {status && (
             <>
               <SessionChip sessionId={sessionId} />
-              {/* Only renders in the JetBrains plugin (which injects
-                  version query params); no-op everywhere else. Sits
-                  next to the session chip so a version mismatch is
-                  visible without scrolling or opening a menu. */}
-              <BackendVersionChip />
               {/* Context meter sits next to the session chip —
                   both are "this session's identity / footprint"
                   signals and read more naturally side by side

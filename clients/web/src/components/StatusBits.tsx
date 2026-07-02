@@ -174,16 +174,19 @@ export function BackendVersionChip() {
   const dev = info.source === "dev_override";
   const tone = mismatch ? "danger" : dev ? "warn" : "ok";
 
+  // Compact form — sits next to the ``igni`` wordmark in the
+  // brand row, so it needs to read as a subtitle, not a pill.
+  // ``ok`` renders as bare grey text ("v0.9.0"); ``warn`` and
+  // ``danger`` keep the coloured pill so the failure states
+  // still stand out.
   const label =
-    info.actual === "unknown"
-      ? "cli · <probe failed>"
-      : `cli · v${info.actual}`;
+    info.actual === "unknown" ? "<probe failed>" : `v${info.actual}`;
 
   const title = mismatch
     ? `Running ignite-ember v${info.actual}, expected v${info.expected}. ` +
-      "Tools → igni → Diagnose Backend for details."
+      "Diagnose Backend for details."
     : dev
-      ? `EMBER_DEV_BACKEND override active — running the interpreter set in your ` +
+      ? `Dev override active — running the interpreter set in your ` +
         `environment (v${info.actual}). Managed venv is bypassed.`
       : `ignite-ember v${info.actual}, managed venv.`;
 
