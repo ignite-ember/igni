@@ -33,13 +33,10 @@ export function Sidebar({
         />
       )}
       <nav className={`sidebar ${open ? "" : "closed"}`}>
-        {/* Fade strip — a solid gradient panel painted between the
-            scrolling list (z:1) and the cluster (z:10). Replaces an
-            earlier ``backdrop-filter`` frosted-glass stack that ran
-            fine on Tauri/Chrome but crawled on JCEF's software
-            compositor. The gradient is composited once and stays put
-            during scroll, so cost is essentially zero. */}
-        <div className="sidebar-fade" aria-hidden="true" />
+        {/* Solid strip sitting between the scrollable list (z:1)
+            and the "Sessions" cluster (z:10) — hides items
+            scrolling into the cluster's 118 px zone. */}
+        <div className="sidebar-blur" aria-hidden="true" />
         {/* Floating top — head row, New-chat button, "Sessions" label.
             Pulled out of normal flow so the scrollable session list
             below extends up behind it. Mirrors the ``.app-header`` /

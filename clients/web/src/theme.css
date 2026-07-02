@@ -229,15 +229,13 @@ button {
   overscroll-behavior: contain;
 }
 
-/* ── Sidebar cluster fade ───────────────────────────────────────────
-   Solid gradient panel covering the top ~118 px of the sidebar.
-   Fully opaque at the top (behind the "Sessions" cluster) fading to
-   transparent at the bottom edge, so items scrolling up disappear
-   smoothly under the cluster instead of showing through it. Was a
-   six-layer ``backdrop-filter`` frosted-glass stack before; blur is
-   the wrong tool when the compositor is software-rasterised (JCEF),
-   and a static gradient composites once regardless. */
-.sidebar-fade {
+/* Solid opaque cover for the top ~118 px of the sidebar. Items
+   scrolling into this strip disappear at the bottom edge — the
+   "Sessions" cluster paints above (z:10) untouched. Was a
+   six-layer ``backdrop-filter`` blur ramp originally; even in
+   JCEF windowed mode it dropped the plugin to ~9 fps, so we
+   accept the flat look on every surface for consistency. */
+.sidebar-blur {
   position: absolute;
   top: 0;
   left: 0;
@@ -245,13 +243,7 @@ button {
   height: 118px;
   z-index: 5;
   pointer-events: none;
-  background: linear-gradient(
-    to bottom,
-    var(--bg) 0%,
-    var(--bg) 78%,
-    color-mix(in srgb, var(--bg) 60%, transparent) 92%,
-    transparent 100%
-  );
+  background: var(--bg);
 }
 
 /* WebKit scrollbar hide for both surfaces (Firefox uses
@@ -355,8 +347,6 @@ button {
   align-items: center;
   justify-content: center;
   background: rgba(0, 0, 0, 0.42);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
 }
 .update-prompt {
   width: min(420px, 90vw);
@@ -762,29 +752,22 @@ button {
   padding-top: 78px;
 }
 
-/* ── Header fade strip ─────────────────────────────────────────────
-   Solid gradient panel painted behind the header content
+/* Solid opaque background painted behind the header content
    (``z-index: -1``) so messages scrolling up under the header
-   disappear cleanly instead of showing through. Also hangs 28 px
-   below the header proper — that overhang is Tauri's drag hit-area
-   (``pointer-events: auto``) so users can grab the near-edge to
-   move the window without the interactive header widgets stealing
-   the mousedown. */
-.app-header-fade {
+   disappear at the panel's bottom edge. Was a six-layer
+   backdrop-filter blur stack originally — killed FPS on JCEF
+   even in windowed mode (measured 9 fps with blur enabled vs
+   120 fps with the flat panel). Matches the header's own
+   bounds exactly — earlier versions hung 28 px past the bottom
+   as a drag-tail, but that just made the opaque strip look
+   twice as tall as needed; the header row itself is drag
+   region enough on Tauri. */
+.app-header-blur {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: -28px;
+  inset: 0;
   pointer-events: auto;
   z-index: -1;
-  background: linear-gradient(
-    to bottom,
-    var(--bg) 0%,
-    var(--bg) 62%,
-    color-mix(in srgb, var(--bg) 55%, transparent) 82%,
-    transparent 100%
-  );
+  background: var(--bg);
 }
 
 /* Floating jump-to-latest button. Absolute-positioned inside the
@@ -1004,8 +987,6 @@ button {
   transform: translateX(-50%);
   transform-origin: 50% -8px;
   animation: search-bar-in 0.32s cubic-bezier(0.22, 1.18, 0.36, 1);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
 }
 @keyframes search-bar-in {
   0% {
@@ -5335,8 +5316,6 @@ button {
   letter-spacing: 0.02em;
   pointer-events: none;
   user-select: none;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
 }
 
 .fps-counter-unit {

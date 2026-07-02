@@ -101,9 +101,24 @@ class EmberToolWindowFactory : ToolWindowFactory {
                     } else {
                         "&host=jetbrains"
                     }
-                    val browser = JBCefBrowser(
-                        "$baseUrl/index.html?ws=ws%3A%2F%2F127.0.0.1%3A$port$versionQuery"
-                    )
+                    // Windowed mode (``setOffScreenRendering(false)``)
+                    // uses a heavyweight AWT canvas that hosts a real
+                    // native browser window, and paints at the OS
+                    // display rate. OSR (the default) pipes frames
+                    // through Chromium's ``windowless_frame_rate`` (30
+                    // by default) then hands them to the AWT paint
+                    // loop, which itself schedules at ~30 Hz on macOS
+                    // — the ``setWindowlessFrameRate`` runtime setter
+                    // changes the Chromium clock but the JBR paint
+                    // side stays at 30 Hz. Windowed mode bypasses
+                    // both. Trade-off: no transparent overlays over
+                    // the browser (fine — our tool window doesn't
+                    // paint anything above it) and slightly worse
+                    // integration with the IDE's own animation layer.
+                    val browser = com.intellij.ui.jcef.JBCefBrowserBuilder()
+                        .setOffScreenRendering(false)
+                        .setUrl("$baseUrl/index.html?ws=ws%3A%2F%2F127.0.0.1%3A$port$versionQuery")
+                        .build()
                     installHostBridge(project, browser)
                     BROWSERS[project] = browser
                     installThemeBridge(project, browser)
