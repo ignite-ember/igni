@@ -61,10 +61,23 @@ export interface RuntimeOptions {
 /** Result of [ensureBackendPython]: the Python to spawn the BE with,
  *  plus environment variables to layer onto the BE process.
  *  ``HF_HOME`` keeps HuggingFace's cache inside the managed
- *  directory so a clean reinstall really wipes everything. */
+ *  directory so a clean reinstall really wipes everything.
+ *
+ *  ``actualCliVersion`` is the ``ember_code.__version__`` reported
+ *  by the chosen interpreter, captured at bootstrap time so the
+ *  extension can propagate it into the webview URL — the shared
+ *  web bundle's ``BackendVersionChip`` reads the values off the
+ *  query string and renders a mismatch warning when the installed
+ *  CLI drifts from the pinned build. ``null`` on any probe failure.
+ */
+export type BackendSource = "managed_venv" | "dev_override";
+
 export interface BackendInstall {
   python: string;
   env: Record<string, string>;
+  actualCliVersion: string | null;
+  expectedCliVersion: string;
+  source: BackendSource;
 }
 
 /**
@@ -77,12 +90,61 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
   const log = opts.onProgress ?? (() => {});
 
   const proxyEnv = opts.proxyEnv ?? {};
+  const expected = IGNITE_EMBER_VERSION;
 
-  // ── Dev / user override ──
-  const dev = process.env.EMBER_DEV_BACKEND?.trim();
-  if (dev) return { python: dev, env: { ...proxyEnv } };
-  if (opts.configuredPython && opts.configuredPython.trim()) {
-    return { python: opts.configuredPython.trim(), env: { ...proxyEnv } };
+  // ── Dev / user overrides ──
+  // Both ``EMBER_DEV_BACKEND`` and the ``emberCode.pythonPath``
+  // setting are opt-in escape hatches for contributors running
+  // against an editable checkout. They're deliberately gated on
+  // ``IGNITE_EMBER_DEV=1`` so an ambient env var left over from
+  // an old shell config (``~/.zshenv``, ``launchctl setenv``, or
+  // an OS-level plist) can't silently redirect a regular user
+  // to a stale interpreter — the exact footgun that hid a v0.3.8
+  // Homebrew CLI behind a v0.8.x plugin.
+  const devAck = isDevAcked();
+  const devBackend = process.env.EMBER_DEV_BACKEND?.trim();
+  const configured = opts.configuredPython?.trim();
+
+  if (devBackend) {
+    if (devAck) {
+      const actual = await probeCliVersion(devBackend);
+      if (actual && actual !== expected) {
+        console.warn(
+          `EMBER_DEV_BACKEND at ${devBackend} runs ignite-ember ${actual}, ` +
+            `plugin pinned to ${expected}. Continuing (dev mode).`,
+        );
+      }
+      return {
+        python: devBackend,
+        env: { ...proxyEnv },
+        actualCliVersion: actual,
+        expectedCliVersion: expected,
+        source: "dev_override",
+      };
+    } else {
+      console.warn(
+        `EMBER_DEV_BACKEND=${devBackend} detected but IGNITE_EMBER_DEV is unset — ` +
+          "ignoring override and using the managed venv. " +
+          "Set IGNITE_EMBER_DEV=1 to opt in to the dev-mode override.",
+      );
+    }
+  }
+  if (configured) {
+    if (devAck) {
+      const actual = await probeCliVersion(configured);
+      return {
+        python: configured,
+        env: { ...proxyEnv },
+        actualCliVersion: actual,
+        expectedCliVersion: expected,
+        source: "dev_override",
+      };
+    } else {
+      console.warn(
+        `emberCode.pythonPath="${configured}" set but IGNITE_EMBER_DEV is unset — ` +
+          "ignoring override and using the managed venv.",
+      );
+    }
   }
 
   await fs.promises.mkdir(opts.cacheDir, { recursive: true });
@@ -106,15 +168,39 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
     ignite: IGNITE_EMBER_VERSION,
   });
   const haveMarker = await readFileOrNull(markerPath);
+  const markerMatches = haveMarker === wantMarker;
+
+  // Probe the venv's interpreter to catch a specific failure
+  // mode: marker file says one version, but the wheels on disk
+  // are a different version (manual pip upgrade, half-finished
+  // install, extension update that skipped the marker rewrite).
+  // Only act on a positive mismatch — probe returned a version
+  // AND it differs. Null probe = interpreter missing or wedged;
+  // fall back to marker/executable signals so a transient
+  // subprocess hiccup doesn't trigger a multi-minute reinstall
+  // on every startup.
+  const venvActualVersion = (await isExecutable(venvPython))
+    ? await probeCliVersion(venvPython)
+    : null;
+  const venvVersionMismatch =
+    venvActualVersion !== null && venvActualVersion !== IGNITE_EMBER_VERSION;
+  if (venvVersionMismatch && markerMatches) {
+    console.warn(
+      `Managed venv marker says ignite=${IGNITE_EMBER_VERSION} but the ` +
+        `interpreter reports ${venvActualVersion} — reinstalling.`,
+    );
+  }
+  const needsReinstall =
+    !(await isExecutable(venvPython)) || !markerMatches || venvVersionMismatch;
 
   // ── 1. uv binary ──
-  if (!(await isExecutable(uvPath)) || haveMarker !== wantMarker) {
+  if (!(await isExecutable(uvPath)) || needsReinstall) {
     log("Downloading uv (one-time, ~25 MB)…");
     await downloadUv(uvPath, proxyEnv);
   }
 
   // ── 2. Python + 3. venv + 4. ignite-ember + 5. prefetch ──
-  if (!(await isExecutable(venvPython)) || haveMarker !== wantMarker) {
+  if (needsReinstall) {
     if (await pathExists(venvDir)) {
       log("Refreshing managed venv…");
       await fs.promises.rm(venvDir, { recursive: true, force: true });
@@ -146,7 +232,71 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
     await fs.promises.writeFile(markerPath, wantMarker);
   }
 
-  return { python: venvPython, env: { HF_HOME: hfHome, ...proxyEnv } };
+  // Probe the (possibly-just-reinstalled) venv one more time so
+  // the returned ``BackendInstall`` carries the confirmed version.
+  // Skipped when the initial probe already matched and no
+  // reinstall happened.
+  const finalVersion = needsReinstall
+    ? await probeCliVersion(venvPython)
+    : venvActualVersion;
+
+  return {
+    python: venvPython,
+    env: { HF_HOME: hfHome, ...proxyEnv },
+    actualCliVersion: finalVersion,
+    expectedCliVersion: expected,
+    source: "managed_venv",
+  };
+}
+
+/** ``true`` when ``IGNITE_EMBER_DEV`` is set to a truthy value.
+ *  Accepts ``1`` or a case-insensitive ``true``; everything else
+ *  (including unset) means "override not acknowledged". */
+function isDevAcked(): boolean {
+  const v = process.env.IGNITE_EMBER_DEV;
+  return v === "1" || (typeof v === "string" && v.toLowerCase() === "true");
+}
+
+/** Return ``ember_code.__version__`` as reported by the given
+ *  Python interpreter, or ``null`` on any failure. 2s subprocess
+ *  timeout — the real observed cost for a cold import is 30-80ms;
+ *  the ceiling is a safety net against a wedged interpreter
+ *  blocking the whole bootstrap. Exposed so the extension's
+ *  "Diagnose Backend" command (and future callers) can reuse it
+ *  without duplicating the subprocess wiring.
+ */
+export async function probeCliVersion(python: string): Promise<string | null> {
+  if (!python || !(await isExecutable(python))) return null;
+  try {
+    const { spawn } = await import("child_process");
+    return await new Promise<string | null>((resolve) => {
+      const proc = spawn(
+        python,
+        ["-c", "import ember_code, sys; sys.stdout.write(ember_code.__version__)"],
+        { stdio: ["ignore", "pipe", "ignore"] },
+      );
+      let out = "";
+      const timer = setTimeout(() => {
+        proc.kill("SIGKILL");
+        resolve(null);
+      }, 2000);
+      proc.stdout?.on("data", (chunk: Buffer) => {
+        out += chunk.toString();
+      });
+      proc.on("error", () => {
+        clearTimeout(timer);
+        resolve(null);
+      });
+      proc.on("close", (code: number | null) => {
+        clearTimeout(timer);
+        if (code !== 0) return resolve(null);
+        const trimmed = out.trim();
+        resolve(trimmed.length > 0 ? trimmed : null);
+      });
+    });
+  } catch {
+    return null;
+  }
 }
 
 /**

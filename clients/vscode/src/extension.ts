@@ -26,10 +26,18 @@ import { ChildProcess, spawn } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
-import { ensureBackendPython, resetCache } from "./runtime";
+import { ensureBackendPython, probeCliVersion, resetCache } from "./runtime";
+import { IGNITE_EMBER_VERSION } from "./version.generated";
 
 let backend: ChildProcess | undefined;
 let backendPort: number | undefined;
+/** Version info captured at bootstrap so ``buildHtml`` can splice
+ *  it into ``<meta>`` tags for the shared ``BackendVersionChip``
+ *  in the web bundle. Undefined until the first backend start
+ *  succeeds; ``buildHtml`` renders no chip when it's absent. */
+let backendVersionInfo:
+  | { actual: string | null; expected: string; source: string }
+  | undefined;
 let panel: vscode.WebviewPanel | undefined;
 
 function startBackend(
@@ -50,6 +58,11 @@ function startBackend(
       proxyEnv: vscodeProxyEnv(),
       onProgress: progress,
     });
+    backendVersionInfo = {
+      actual: install.actualCliVersion,
+      expected: install.expectedCliVersion,
+      source: install.source,
+    };
 
     progress("Starting Ember backend…");
     return new Promise<number>((resolve, reject) => {
@@ -148,12 +161,41 @@ function buildHtml(webview: vscode.Webview, extensionUri: vscode.Uri, wsPort: nu
     `connect-src ws://127.0.0.1:${wsPort}`,
   ].join("; ");
 
+  // Version chip in the web bundle reads these <meta> tags (see
+  // ``BackendVersionChip`` / ``readBackendVersionParams``). Same
+  // three values the JB plugin passes via URL query params —
+  // VSCode webviews can't reliably use query params under the
+  // default CSP, so we deliver them here instead. Absent info
+  // (extension hot-reloaded before the first bootstrap finished)
+  // means no chip renders, which is fine.
+  const versionMetas = backendVersionInfo
+    ? [
+        `<meta name="ember-expected-cli" content="${escapeAttr(backendVersionInfo.expected)}">`,
+        `<meta name="ember-actual-cli" content="${escapeAttr(backendVersionInfo.actual ?? "unknown")}">`,
+        `<meta name="ember-backend-source" content="${escapeAttr(backendVersionInfo.source)}">`,
+      ].join("\n")
+    : "";
+
   html = html.replace(
     "<head>",
     `<head>\n<meta http-equiv="Content-Security-Policy" content="${csp}">` +
-      `\n<meta name="ember-ws-url" content="ws://127.0.0.1:${wsPort}">`,
+      `\n<meta name="ember-ws-url" content="ws://127.0.0.1:${wsPort}">` +
+      (versionMetas ? `\n${versionMetas}` : ""),
   );
   return html;
+}
+
+/** HTML-attribute-safe escape for values we splice into ``<meta
+ *  content="…">``. The values we're spliceing are semver-shaped
+ *  strings + a short enum, so realistic attackers get nothing here;
+ *  the escape is belt-and-suspenders in case a future rebrand
+ *  lets funkier characters through. */
+function escapeAttr(v: string): string {
+  return v
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 /**
@@ -511,7 +553,115 @@ export function activate(context: vscode.ExtensionContext) {
       await resetCache(context.globalStorageUri.fsPath);
       await vscode.commands.executeCommand("emberCode.open");
     }),
+
+    // ── Diagnose backend ────────────────────────────────────────
+    // Bug-triage dump — plugin/CLI versions, interpreter path,
+    // dev-override state, marker contents. Written to an
+    // ``igni: Diagnostics`` output channel (multi-line native
+    // dialogs on macOS collapse whitespace) and also placed on
+    // the clipboard so the user can paste it into a bug report
+    // without transcription.
+    vscode.commands.registerCommand("emberCode.doctor", async () => {
+      const report = await buildDiagnosticReport(context);
+      const channel = getDiagnosticsChannel();
+      channel.clear();
+      channel.appendLine(report);
+      channel.show(true);
+      try {
+        await vscode.env.clipboard.writeText(report);
+        vscode.window.showInformationMessage(
+          "Diagnostic report copied to clipboard.",
+        );
+      } catch {
+        // Clipboard failed — the channel view is still useful.
+      }
+    }),
   );
+}
+
+let diagnosticsChannel: vscode.OutputChannel | undefined;
+function getDiagnosticsChannel(): vscode.OutputChannel {
+  diagnosticsChannel ??= vscode.window.createOutputChannel("igni: Diagnostics");
+  return diagnosticsChannel;
+}
+
+async function buildDiagnosticReport(
+  context: vscode.ExtensionContext,
+): Promise<string> {
+  const cacheDir = context.globalStorageUri.fsPath;
+  const isWin = process.platform === "win32";
+  const venvPython = path.join(
+    cacheDir,
+    "venv",
+    isWin ? "Scripts/python.exe" : "bin/python",
+  );
+  const markerPath = path.join(cacheDir, "ember-install.json");
+
+  const configured = vscode.workspace
+    .getConfiguration("emberCode")
+    .get<string>("pythonPath", "")
+    .trim();
+  const devBackend = process.env.EMBER_DEV_BACKEND?.trim();
+  const devAck = process.env.IGNITE_EMBER_DEV;
+  const devActive =
+    devAck === "1" ||
+    (typeof devAck === "string" && devAck.toLowerCase() === "true");
+
+  const activePython =
+    devActive && devBackend
+      ? devBackend
+      : devActive && configured
+        ? configured
+        : venvPython;
+  const actual = (await probeCliVersion(activePython)) ?? "<probe failed>";
+  const expected = IGNITE_EMBER_VERSION;
+
+  let markerContents: string;
+  try {
+    markerContents = (await fs.promises.readFile(markerPath, "utf8")).trim();
+  } catch {
+    markerContents = "<missing>";
+  }
+
+  let venvPresent = false;
+  try {
+    const stat = await fs.promises.stat(venvPython);
+    venvPresent = stat.isFile();
+  } catch {
+    venvPresent = false;
+  }
+
+  const lines: string[] = [];
+  lines.push("igni VSCode extension · backend diagnostics");
+  lines.push("──────────────────────────────────────────");
+  lines.push(`Extension version        : ${expected}`);
+  lines.push(`Expected ignite-ember    : ${expected}`);
+  lines.push(`Actual ignite-ember      : ${actual}`);
+  if (actual !== expected && actual !== "<probe failed>") {
+    lines.push("                           ↑ MISMATCH — chat may fail");
+  }
+  lines.push("");
+  const usedOverride =
+    devActive && (!!devBackend || !!configured);
+  lines.push(
+    `Backend source           : ${usedOverride ? "dev override" : "managed venv"}`,
+  );
+  lines.push(`Interpreter path         : ${activePython}`);
+  lines.push(`Managed venv path        : ${venvPython}`);
+  lines.push(`Managed venv present     : ${venvPresent}`);
+  lines.push("");
+  lines.push(`EMBER_DEV_BACKEND        : ${devBackend ?? "<unset>"}`);
+  lines.push(`emberCode.pythonPath     : ${configured || "<unset>"}`);
+  lines.push(`IGNITE_EMBER_DEV         : ${devAck ?? "<unset>"}`);
+  if ((devBackend || configured) && !devActive) {
+    lines.push(
+      "                           ↑ override set without ack — ignored",
+    );
+  }
+  lines.push("");
+  lines.push(`Marker file              : ${markerPath}`);
+  lines.push(`Marker contents          : ${markerContents}`);
+  return lines.join("\n");
 }
 
 export function deactivate() {

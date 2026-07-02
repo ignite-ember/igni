@@ -81,7 +81,29 @@ class EmberToolWindowFactory : ToolWindowFactory {
                     )
                 } else {
                     val baseUrl = serveWebUi()
-                    val browser = JBCefBrowser("$baseUrl/index.html?ws=ws%3A%2F%2F127.0.0.1%3A$port")
+                    // Propagate the resolved / expected ``ignite-ember``
+                    // versions into the page URL so the web UI can
+                    // render a tiny "cli · vX.Y.Z" chip in the header
+                    // — the reader can *see* what's actually running
+                    // without spelunking through logs. When actual
+                    // and expected disagree the chip goes red;
+                    // clicking it can then invoke Tools → igni →
+                    // Diagnose Backend for the full report.
+                    val install = backend.lastInstall
+                    val versionQuery = if (install != null) {
+                        val actual = install.actualCliVersion ?: "unknown"
+                        val expected = install.expectedCliVersion
+                        val source = install.source.name.lowercase()
+                        "&host=jetbrains" +
+                            "&expected_cli=${java.net.URLEncoder.encode(expected, "UTF-8")}" +
+                            "&actual_cli=${java.net.URLEncoder.encode(actual, "UTF-8")}" +
+                            "&backend_source=$source"
+                    } else {
+                        "&host=jetbrains"
+                    }
+                    val browser = JBCefBrowser(
+                        "$baseUrl/index.html?ws=ws%3A%2F%2F127.0.0.1%3A$port$versionQuery"
+                    )
                     installHostBridge(project, browser)
                     BROWSERS[project] = browser
                     installThemeBridge(project, browser)

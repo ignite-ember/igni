@@ -91,8 +91,28 @@ object EmberRuntime {
      *  too when the IDE has a proxy configured — corporate users
      *  whose shell doesn't know about the IDE's proxy settings would
      *  otherwise see uv / pip / the BE itself fail with cryptic
-     *  network errors. */
-    data class BackendInstall(val python: Path, val env: Map<String, String>)
+     *  network errors.
+     *
+     *  ``actualCliVersion`` is the version string ``import
+     *  ember_code; ember_code.__version__`` reports from the chosen
+     *  interpreter, captured at bootstrap time so the tool window's
+     *  header chip and the Doctor action can render it without
+     *  spawning another subprocess. ``null`` when the version probe
+     *  fails (dev override at a Python without ``ember_code``
+     *  importable, sandbox denies subprocess, etc.). */
+    data class BackendInstall(
+        val python: Path,
+        val env: Map<String, String>,
+        val actualCliVersion: String? = null,
+        val expectedCliVersion: String,
+        val source: BackendSource,
+    )
+
+    /** How the interpreter was resolved. Used by the Doctor action
+     *  and the header chip to distinguish "you're on the plugin's
+     *  managed venv, all fine" from "an env var is redirecting you
+     *  somewhere else, watch out." */
+    enum class BackendSource { MANAGED_VENV, DEV_OVERRIDE }
 
     /**
      * Resolve a Python interpreter with ``ignite-ember`` installed
@@ -107,13 +127,54 @@ object EmberRuntime {
      * background thread (``EmberBackendService`` does).
      */
     fun ensureBackendPython(listener: (String) -> Unit): BackendInstall {
+        val expected = IGNITE_EMBER_VERSION
+
         // ── Dev override ──
-        System.getenv("EMBER_DEV_BACKEND")?.takeIf { it.isNotBlank() }?.let { dev ->
-            log.info("EMBER_DEV_BACKEND set; bypassing managed venv: $dev")
-            // No HF_HOME override in dev mode — devs use their normal
-            // ``~/.cache/huggingface`` so the model isn't re-downloaded
-            // per ember-code checkout.
-            return BackendInstall(Path.of(dev), emptyMap())
+        // Gated on ``IGNITE_EMBER_DEV=1`` in addition to
+        // ``EMBER_DEV_BACKEND`` so an ambient env var left over from
+        // an old install (via ``~/.zshenv`` or ``launchctl setenv``)
+        // can't silently redirect a regular user to a stale CLI.
+        // Devs opt in once (``export IGNITE_EMBER_DEV=1``) and both
+        // signals travel together intentionally.
+        val devPath = System.getenv("EMBER_DEV_BACKEND")?.takeIf { it.isNotBlank() }
+        val devAck = System.getenv("IGNITE_EMBER_DEV")?.takeIf { it == "1" || it.equals("true", ignoreCase = true) }
+        if (devPath != null && devAck != null) {
+            log.info("EMBER_DEV_BACKEND set; bypassing managed venv: $devPath")
+            // Version-check the override before trusting it. If the
+            // CLI reachable from that Python doesn't match the pinned
+            // version we log a warning and STILL use it — this is
+            // dev mode, the whole point is to run against a
+            // checkout that might be ahead of/behind the pin. But we
+            // record both versions so the header chip can render
+            // orange for "override active" and the Doctor action can
+            // explain the drift.
+            val devActual = probeCliVersion(Path.of(devPath))
+            if (devActual != null && devActual != expected) {
+                log.warn(
+                    "EMBER_DEV_BACKEND at $devPath runs ignite-ember $devActual, " +
+                        "plugin pinned to $expected. Continuing (dev mode)."
+                )
+            }
+            return BackendInstall(
+                python = Path.of(devPath),
+                env = emptyMap(),
+                actualCliVersion = devActual,
+                expectedCliVersion = expected,
+                source = BackendSource.DEV_OVERRIDE,
+            )
+        }
+        if (devPath != null && devAck == null) {
+            // ``EMBER_DEV_BACKEND`` is set but the explicit ack env
+            // var isn't. This is the footgun path — an old shell
+            // config or launchd plist quietly hijacking the plugin's
+            // interpreter. Log loudly and fall through to the
+            // managed venv so the user gets a working chat instead
+            // of a silent stale CLI.
+            log.warn(
+                "EMBER_DEV_BACKEND=$devPath detected but IGNITE_EMBER_DEV is unset — " +
+                    "ignoring override and using the managed venv. " +
+                    "Set IGNITE_EMBER_DEV=1 to opt in to the dev-mode override."
+            )
         }
 
         val cache = cacheRoot()
@@ -133,18 +194,51 @@ object EmberRuntime {
             "uv=$UV_VERSION;python=$PYTHON_VERSION;ignite=$IGNITE_EMBER_VERSION"
         val previousMarker = runCatching { Files.readString(markerPath).trim() }.getOrNull()
 
+        val venv = cache.resolve("venv")
+        val venvPython = venv.resolve(venvPythonRelPath())
+
+        // Marker-file drift is our primary "reinstall needed"
+        // signal, but the marker can lie: it stays put even if the
+        // venv was manually pip-upgraded / rolled back / half-
+        // installed. Ask the interpreter what version it actually
+        // has and treat any mismatch as a marker miss. Cheap
+        // (~50 ms subprocess) and catches the entire class of
+        // "plugin thinks it's at 0.8.3 but venv is at 0.5.x"
+        // reports.
+        // Probe the venv's interpreter to catch a specific failure
+        // mode: marker file says one version, but the wheels on disk
+        // are a different version (manual pip upgrade, half-finished
+        // install, plugin update that skipped the marker rewrite,
+        // etc.). We only ACT on a positive mismatch — probe returned
+        // a version string AND it differs. A null probe means the
+        // interpreter is missing or wedged; in that case fall back
+        // to the marker/executable-existence signals so a temporary
+        // subprocess hiccup doesn't trigger a multi-minute
+        // reinstall on every startup.
+        val venvActualVersion =
+            if (Files.isExecutable(venvPython)) probeCliVersion(venvPython) else null
+        val venvVersionMismatch =
+            venvActualVersion != null && venvActualVersion != IGNITE_EMBER_VERSION
+        val needsReinstall =
+            !Files.isExecutable(venvPython) ||
+                previousMarker != currentMarker ||
+                venvVersionMismatch
+        if (venvVersionMismatch && previousMarker == currentMarker) {
+            log.warn(
+                "Managed venv marker says ignite=$IGNITE_EMBER_VERSION but the " +
+                    "interpreter reports $venvActualVersion — reinstalling."
+            )
+        }
+
         // ── Step 1: uv binary ──
         val uv = cache.resolve(uvBinName())
-        if (!Files.isExecutable(uv) || previousMarker != currentMarker) {
+        if (!Files.isExecutable(uv) || needsReinstall) {
             listener("Downloading uv (one-time, ~25 MB)…")
             downloadUv(uv)
         }
 
-        val venv = cache.resolve("venv")
-        val venvPython = venv.resolve(venvPythonRelPath())
-
         // ── Steps 2-4: pinned Python + venv + ignite-ember ──
-        if (!Files.isExecutable(venvPython) || previousMarker != currentMarker) {
+        if (needsReinstall) {
             // Old venv lingering from a previous plugin version — drop
             // it before re-creating so we don't mix wheels.
             if (Files.exists(venv)) {
@@ -185,13 +279,52 @@ object EmberRuntime {
             Files.writeString(markerPath, currentMarker)
         }
 
+        // Probe the (possibly-just-reinstalled) venv one more time
+        // so the returned ``BackendInstall`` carries the confirmed
+        // version. Skipped when the initial probe already matched
+        // and no reinstall happened.
+        val finalVersion =
+            if (needsReinstall) probeCliVersion(venvPython) else venvActualVersion
+
         return BackendInstall(
             python = venvPython,
             env = buildMap {
                 put("HF_HOME", hfHome.toString())
                 putAll(ideProxyEnv())
             },
+            actualCliVersion = finalVersion,
+            expectedCliVersion = expected,
+            source = BackendSource.MANAGED_VENV,
         )
+    }
+
+    /** Return ``ember_code.__version__`` as reported by the given
+     *  Python interpreter, or ``null`` on any failure (import
+     *  error, subprocess timeout, missing package, sandboxing).
+     *  Kept quick — 2s timeout is well above the observed 30-80 ms
+     *  for a cold import + print, and short enough that a broken
+     *  interpreter can't block the whole bootstrap. */
+    internal fun probeCliVersion(python: Path): String? {
+        if (!Files.isExecutable(python)) return null
+        return try {
+            val proc = ProcessBuilder(
+                python.toString(),
+                "-c",
+                "import ember_code, sys; sys.stdout.write(ember_code.__version__)",
+            )
+                .redirectErrorStream(true)
+                .start()
+            val out = proc.inputStream.bufferedReader().use { it.readText() }.trim()
+            if (!proc.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                proc.destroyForcibly()
+                return null
+            }
+            if (proc.exitValue() != 0) return null
+            out.takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            log.info("probeCliVersion($python) failed: $e")
+            null
+        }
     }
 
     /**

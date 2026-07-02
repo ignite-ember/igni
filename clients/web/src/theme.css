@@ -5429,6 +5429,42 @@ button {
   margin-left: 2px;
 }
 
+/* Backend-version chip — inline monospace pill sized to match the
+   session chip so the statusline reads as a single row. Colour is
+   the only signal that varies between the three states; ``ok`` is
+   the least visually loud so it doesn't compete with the session
+   chip in the common case. */
+.backend-version-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  border: 1px solid transparent;
+  color: var(--fg-faint);
+  cursor: default;
+  white-space: nowrap;
+}
+
+.backend-version-chip.tone-ok {
+  color: var(--fg-faint);
+  border-color: var(--border-soft);
+}
+
+.backend-version-chip.tone-warn {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+}
+
+.backend-version-chip.tone-danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
 .ctx-meter {
   display: inline-flex;
   align-items: center;

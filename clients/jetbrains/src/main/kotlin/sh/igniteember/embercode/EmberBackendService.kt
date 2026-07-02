@@ -33,6 +33,16 @@ class EmberBackendService(private val project: Project) : Disposable {
     var wsPort: Int? = null
         private set
 
+    /** The last [EmberRuntime.BackendInstall] that ``ensureStarted``
+     *  produced. Captured so the tool-window factory can propagate
+     *  the resolved / expected ``ignite-ember`` versions into the
+     *  JCEF page URL, letting the web UI render a header chip that
+     *  shows the actual running version (and a mismatch warning
+     *  when the bootstrap ends up on a stale interpreter). */
+    @Volatile
+    var lastInstall: EmberRuntime.BackendInstall? = null
+        private set
+
     /** Bootstrap progress hook. The tool window subscribes so the
      *  panel can render "Downloading uv…" / "Installing Python…"
      *  instead of a stale "Starting backend…" while the user waits
@@ -52,6 +62,7 @@ class EmberBackendService(private val project: Project) : Disposable {
                 val install = EmberRuntime.ensureBackendPython { msg ->
                     progressListener?.invoke(msg)
                 }
+                lastInstall = install
                 progressListener?.invoke("Starting Ember backend…")
 
                 val proc = ProcessBuilder(

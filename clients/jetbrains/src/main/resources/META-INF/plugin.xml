@@ -172,6 +172,10 @@
                     class="sh.igniteember.embercode.actions.ReinstallBackendAction"
                     text="Reinstall Backend (Clean)"
                     description="Wipe the managed Python cache and bootstrap from scratch"/>
+            <action id="EmberCode.Doctor"
+                    class="sh.igniteember.embercode.actions.DoctorAction"
+                    text="Diagnose Backend"
+                    description="Dump plugin, CLI, and env information for bug reports"/>
         </group>
     </actions>
 </idea-plugin>

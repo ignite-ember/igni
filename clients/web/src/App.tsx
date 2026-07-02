@@ -27,7 +27,7 @@ import { ChatSearchBar } from "./components/ChatSearchBar";
 import { Composer, BUILTIN_COMMANDS, type SlashCommand } from "./components/Composer";
 import { CodeIndexIndicator } from "./components/CodeIndexIndicator";
 import { WatcherIndicator } from "./components/WatcherIndicator";
-import { CtxMeter, SessionChip } from "./components/StatusBits";
+import { BackendVersionChip, CtxMeter, SessionChip } from "./components/StatusBits";
 import { HitlDialog, type HitlDecision } from "./components/HitlDialog";
 import {
   ChevronIcon,
@@ -2205,6 +2205,11 @@ export default function App() {
           {status && (
             <>
               <SessionChip sessionId={sessionId} />
+              {/* Only renders in the JetBrains plugin (which injects
+                  version query params); no-op everywhere else. Sits
+                  next to the session chip so a version mismatch is
+                  visible without scrolling or opening a menu. */}
+              <BackendVersionChip />
               {/* Context meter sits next to the session chip —
                   both are "this session's identity / footprint"
                   signals and read more naturally side by side

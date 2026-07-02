@@ -216,12 +216,27 @@ if (window.__TAURI__ && window.__TAURI__.event) {
 /// port. ``progress`` is invoked with short status strings during
 /// the (potentially multi-minute) first-launch bootstrap; the
 /// caller surfaces them in the loading webview.
+/// Snapshot of the version data captured at bootstrap time —
+/// travels alongside the WS port so ``bootstrap_and_open`` can
+/// splice it into the WKWebView URL and the shared
+/// ``BackendVersionChip`` in the web bundle renders correctly.
+pub struct BackendVersionInfo {
+    pub actual: Option<String>,
+    pub expected: String,
+    pub source: &'static str,
+}
+
 fn spawn_backend(
     project_dir: &str,
     progress: &(dyn Fn(&str) + Sync),
-) -> Result<(Child, u16), String> {
+) -> Result<(Child, u16, BackendVersionInfo), String> {
     progress("Preparing Ember backend…");
     let install = runtime::ensure_backend_python(progress)?;
+    let version_info = BackendVersionInfo {
+        actual: install.actual_cli_version.clone(),
+        expected: install.expected_cli_version.clone(),
+        source: install.source.as_str(),
+    };
 
     progress("Starting Ember backend…");
     let mut cmd = Command::new(&install.python);
@@ -270,7 +285,7 @@ fn spawn_backend(
         }
     });
 
-    Ok((child, port))
+    Ok((child, port, version_info))
 }
 
 /// Resolve the project directory. Falls back to ``~/Documents``
@@ -419,6 +434,13 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         None::<&str>,
     )?;
+    let diagnose_backend_item = MenuItem::with_id(
+        app,
+        "diagnose_backend",
+        "Diagnose Backend",
+        true,
+        None::<&str>,
+    )?;
     let close_window = PredefinedMenuItem::close_window(app, None)?;
     let file_menu = Submenu::with_items(
         app,
@@ -428,6 +450,7 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &new_chat,
             &restart_backend,
             &reinstall_backend_item,
+            &diagnose_backend_item,
             &PredefinedMenuItem::separator(app)?,
             &close_window,
         ],
@@ -572,6 +595,104 @@ fn set_app_title(
     window.set_title(&title).map_err(|e| e.to_string())
 }
 
+/// Build a triage dump — plugin version, pinned vs installed
+/// ``ignite-ember`` versions, interpreter path, dev-override env
+/// state, marker contents — and pop it in a native message dialog.
+/// One-click bug-report triage: same purpose as the JetBrains
+/// plugin's ``DoctorAction``.
+///
+/// Runs on a background thread because the version probe spawns
+/// a subprocess; blocking the main thread would freeze the app.
+fn diagnose_backend(app: AppHandle) {
+    std::thread::spawn(move || {
+        let report = build_diagnostic_report();
+        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+        app.dialog()
+            .message(&report)
+            .title("igni · Backend Diagnostics")
+            .kind(MessageDialogKind::Info)
+            .buttons(MessageDialogButtons::Ok)
+            .show(|_| {});
+    });
+}
+
+fn build_diagnostic_report() -> String {
+    let expected = env!("CARGO_PKG_VERSION");
+    let cache = runtime::cache_root_or_display();
+    let venv_python = runtime::venv_python_path(&cache);
+    let marker_path = cache.join("ember-install.json");
+
+    let dev_backend = std::env::var("EMBER_DEV_BACKEND").ok();
+    let ember_python = std::env::var("EMBER_PYTHON").ok();
+    let dev_ack = std::env::var("IGNITE_EMBER_DEV").ok();
+    let dev_active = dev_ack
+        .as_deref()
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+
+    let active_python = if dev_active && dev_backend.as_deref().is_some_and(|s| !s.is_empty()) {
+        std::path::PathBuf::from(dev_backend.as_deref().unwrap())
+    } else if dev_active && ember_python.as_deref().is_some_and(|s| !s.is_empty()) {
+        std::path::PathBuf::from(ember_python.as_deref().unwrap())
+    } else {
+        venv_python.clone()
+    };
+    let actual = runtime::probe_cli_version(&active_python)
+        .unwrap_or_else(|| "<probe failed>".to_string());
+
+    let marker_contents = std::fs::read_to_string(&marker_path)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "<missing>".to_string());
+
+    let mut out = String::new();
+    out.push_str("igni Tauri app · backend diagnostics\n");
+    out.push_str("─────────────────────────────────────\n");
+    out.push_str(&format!("App version              : {}\n", expected));
+    out.push_str(&format!("Expected ignite-ember    : {}\n", expected));
+    out.push_str(&format!("Actual ignite-ember      : {}\n", actual));
+    if actual != expected && actual != "<probe failed>" {
+        out.push_str("                           ↑ MISMATCH — chat may fail\n");
+    }
+    out.push('\n');
+    let backend_source = if dev_active
+        && (dev_backend.as_deref().is_some_and(|s| !s.is_empty())
+            || ember_python.as_deref().is_some_and(|s| !s.is_empty()))
+    {
+        "dev override"
+    } else {
+        "managed venv"
+    };
+    out.push_str(&format!("Backend source           : {}\n", backend_source));
+    out.push_str(&format!("Interpreter path         : {}\n", active_python.display()));
+    out.push_str(&format!("Managed venv path        : {}\n", venv_python.display()));
+    out.push_str(&format!(
+        "Managed venv present     : {}\n",
+        runtime::is_executable_path(&venv_python)
+    ));
+    out.push('\n');
+    out.push_str(&format!(
+        "EMBER_DEV_BACKEND        : {}\n",
+        dev_backend.as_deref().unwrap_or("<unset>")
+    ));
+    out.push_str(&format!(
+        "EMBER_PYTHON             : {}\n",
+        ember_python.as_deref().unwrap_or("<unset>")
+    ));
+    out.push_str(&format!(
+        "IGNITE_EMBER_DEV         : {}\n",
+        dev_ack.as_deref().unwrap_or("<unset>")
+    ));
+    if (dev_backend.as_deref().is_some_and(|s| !s.is_empty())
+        || ember_python.as_deref().is_some_and(|s| !s.is_empty()))
+        && !dev_active
+    {
+        out.push_str("                           ↑ override env var set without ack — ignored\n");
+    }
+    out.push('\n');
+    out.push_str(&format!("Marker file              : {}\n", marker_path.display()));
+    out.push_str(&format!("Marker contents          : {}\n", marker_contents));
+    out
+}
+
 /// Reinstall the managed Python toolchain from scratch — wired to
 /// the "Reinstall Backend (Clean)" Tools-menu item and to the
 /// ``--reinstall`` CLI flag. Wipes the cache then restarts the BE.
@@ -617,7 +738,7 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
         }
     });
 
-    let (child, port) = spawn_backend(project_dir, &progress)?;
+    let (child, port, version_info) = spawn_backend(project_dir, &progress)?;
     app.manage(BackendHandle(Mutex::new(Some(child))));
 
     // Initial title: project-dir basename, Finder-style. The FE
@@ -632,7 +753,22 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
 
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.set_title(&folder);
-        let target = format!("index.html?ws=ws%3A%2F%2F127.0.0.1%3A{port}");
+        // Splice version + host params into the URL so the shared
+        // web bundle's ``BackendVersionChip`` reads them off the
+        // query string. Same shape the JetBrains plugin uses —
+        // one component, three surfaces. Version strings are just
+        // digits + dots + hyphens (semver-shaped), all URL-safe,
+        // so no percent-encoding needed here.
+        let actual = version_info.actual.as_deref().unwrap_or("unknown");
+        let expected = version_info.expected.as_str();
+        let source = version_info.source;
+        let target = format!(
+            "index.html?ws=ws%3A%2F%2F127.0.0.1%3A{port}\
+             &host=tauri\
+             &expected_cli={expected}\
+             &actual_cli={actual}\
+             &backend_source={source}"
+        );
         let _ = w.eval(&format!("location.href = {}", serde_json::json!(target)));
         // Traffic-light position is maintained by the
         // CFRunLoopObserver installed in ``setup`` — no extra work
@@ -1022,6 +1158,9 @@ pub fn run() {
                 if let Err(e) = reinstall_backend(app.clone()) {
                     eprintln!("reinstall_backend failed: {e}");
                 }
+            }
+            "diagnose_backend" => {
+                diagnose_backend(app.clone());
             }
             id => {
                 if let Some(w) = app.get_webview_window("main") {

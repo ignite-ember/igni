@@ -888,8 +888,14 @@ jobs:
           cd /tmp/homebrew-tap
 
           # Simple formula: create venv, pip install from PyPI (uses wheels)
+          # NOTE: Homebrew derives the class name from the formula file
+          # via ``Formula.class_s``: ``ignite-ember`` → ``IgniteEmber``
+          # (PascalCase, hyphens dropped). A lowercase leading letter
+          # makes it invalid Ruby and Homebrew silently refuses to load
+          # the formula — the reason releases v0.7.0 through v0.8.3
+          # never propagated to ``brew upgrade`` users.
           cat > Formula/ignite-ember.rb << 'FORMULA'
-          class igniteEmber < Formula
+          class IgniteEmber < Formula
             include Language::Python::Virtualenv
 
             desc "AI coding assistant with multi-agent orchestration"
@@ -929,8 +935,26 @@ jobs:
           sed -i "s|PLACEHOLDER_SHA|${SHA}|" Formula/ignite-ember.rb
           sed -i "s|PLACEHOLDER_VERSION|${VERSION}|" Formula/ignite-ember.rb
 
+          # Belt-and-suspenders: parse the generated Ruby before we
+          # push it, so a future rebrand can't silently ship an
+          # unparseable formula again. ``ruby -c`` returns non-zero on
+          # any syntax error; combined with the class-name comment
+          # above this catches both the specific past regression and
+          # anything else that breaks parsing.
+          if ! ruby -c Formula/ignite-ember.rb; then
+            echo "::error::Generated Homebrew formula is not valid Ruby — aborting"
+            exit 1
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/ignite-ember.rb
+          # ``git commit`` fails with exit 1 when nothing is staged,
+          # which would fail the job on a re-run of the same tag.
+          # Skip cleanly instead — the tap is already up-to-date.
+          if git diff --cached --quiet; then
+            echo "Formula unchanged for ${VERSION}; nothing to push."
+            exit 0
+          fi
           git commit -m "Update ignite-ember to ${VERSION}"
           git push
