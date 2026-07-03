@@ -1,0 +1,20 @@
+Marketplace screenshots for the VS Code extension listing.
+
+Current set:
+  chat-in-editor.png  — hero. igni panel open beside a source file,
+                        demonstrating the "chat next to your editor"
+                        workflow. Full-width VS Code, project tree
+                        visible, chat streaming a response.
+  chat-response.png   — supporting. Close-up on the panel with a full
+                        markdown answer including code snippets so
+                        prospective users can read the actual output
+                        quality on the listing.
+
+Anything else you drop here is included in the packaged .vsix (there
+is no ``.vscodeignore`` filtering these out) and the listing README
+resolves relative paths against the extension package root.
+
+Prefer PNG (marketplace does not render SVG). Retina-scale, ~1600px
+wide max — the marketplace downscales cleanly. Animated GIFs work
+for hero shots and outperform static PNGs on conversion, but keep
+them under ~5MB or the pre-loader punishes them.

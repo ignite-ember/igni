@@ -3,16 +3,177 @@
     <name>igni</name>
     <vendor url="https://ignite-ember.sh">Ignite Ember</vendor>
     <description><![CDATA[
-        igni AI coding assistant — chat tool window backed by a
-        managed local Ember backend. <br>
-        <br>
-        Nothing to install: the plugin downloads <code>uv</code> on
-        first launch and uses it to provision Python and
-        <code>ignite-ember</code> into a per-user cache. Network
-        access is required on first run only.
+        <p>
+          <b>igni</b> is an AI coding assistant that lives in a chat
+          tool window alongside your editor. It reads your project,
+          runs multi-agent workflows in parallel (research, plan,
+          implement, review), and drives real edits through the same
+          tool surface you use — file edits, shell commands, semantic
+          code search, MCP integrations — with an approval dialogue
+          on every tool call.
+        </p>
+
+        <h3>What you can do</h3>
+        <ul>
+          <li><b>Chat with your codebase</b> — <code>@</code>-mention
+              files to attach them, run slash commands to drive
+              structured actions, refactor across multiple files in
+              one turn.</li>
+          <li><b>Plan mode</b> — the agent researches your code and
+              proposes a plan before touching anything. Approve as-is
+              or refine.</li>
+          <li><b>Multi-agent orchestration</b> — spawn parallel
+              sub-agents so a large task decomposes into concurrent
+              research + implementation + review, each streaming
+              progress into the same chat.</li>
+          <li><b>Session per project</b> — chat history persists per
+              repository. Fork a session to explore an alternative
+              approach without losing the original thread.</li>
+          <li><b>Cross-window sync</b> — open the plugin in JetBrains
+              and the VSCode extension side-by-side; both talk to
+              the same backend for the project, so what you type in
+              one appears live in the other.</li>
+          <li><b>Model-agnostic</b> — Claude, OpenAI, Gemini, Groq,
+              MiniMax, and any model reachable via API. Switch mid-
+              session with <code>/model</code>.</li>
+          <li><b>Follows your IDE theme</b> — Darcula, Light, High
+              Contrast, or any custom look-and-feel. The chat panel
+              re-paints the moment you switch themes in
+              Preferences.</li>
+        </ul>
+
+        <h3>Zero-touch install</h3>
+        <p>
+          Nothing to install by hand. On first launch the plugin
+          downloads <code>uv</code> and uses it to provision Python
+          and <code>ignite-ember</code> into a per-user cache. From
+          there, network use is whatever your configured model
+          provider needs — Anthropic, OpenAI, etc.
+        </p>
+
+        <p>
+          Open via <b>Tools → igni → Open Chat</b> or
+          <code>⌘E</code> / <code>Ctrl+E</code>. Right-click any file
+          or selection to attach it to the chat.
+        </p>
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>0.9.2</h3>
+        <ul>
+          <li><b>Shared backend per project.</b> Open the plugin in
+              JetBrains and the VSCode extension side-by-side on the
+              same repo — both now talk to the same Python backend
+              (via a discovery lockfile at
+              <code>&lt;project&gt;/.ember/backend.lock</code>). What
+              you type in one window streams live into the other's
+              chat. Also halves memory use vs the old spawn-per-IDE
+              behaviour.</li>
+          <li><b>Version-mismatch guard.</b> If two clients on
+              different plugin versions try to share a backend, the
+              second one now surfaces a clear notification instead
+              of silently corrupting state.</li>
+          <li><b>Fixed cross-view "Finalizing…" stuck state.</b>
+              When another view's run finished, this view could
+              latch on the tail indicator forever. Rewrote the
+              observer's busy-state reducer with a proper test
+              harness pinning down the regression.</li>
+          <li><b>Session listing hardening.</b> Canonicalised
+              <code>--project-dir</code> so <code>/tmp</code> vs
+              <code>/private/tmp</code> and unresolved symlinks
+              converge on one DB. Removed the 20-session cap.
+              Refused stale FE session_ids from other projects
+              (the "why does the sidebar show a chat from a
+              different repo" bug).</li>
+        </ul>
+        <h3>0.9.1</h3>
+        <ul>
+          <li><b>JetBrains plugin now runs at 120 fps.</b> Switched
+              JCEF to windowed mode — bypasses the JBR OSR paint
+              pipeline that was AWT-gated at ~30 Hz on macOS. Scroll
+              + streaming feels fluid instead of choppy.</li>
+          <li><b>Native IDE theme integration.</b> The tool window
+              background now sources from IntelliJ's
+              <code>Panel.background</code>, so the chat reads as
+              native IDE chrome under Darcula, Light, High Contrast,
+              or any custom LAF — no more differently-shaded patch.
+              Theme flips live when you switch in Preferences.</li>
+          <li>Removed the sun/moon picker inside the panel — the IDE
+              owns light/dark now, so a second control was just
+              fighting the <code>LafManagerListener</code> signal.</li>
+          <li>Dropped a 12-layer backdrop-filter blur ramp from the
+              header + sidebar — it was the dominant per-frame cost
+              on JCEF's software compositor. Flat panels look nearly
+              identical and cost nothing.</li>
+          <li>Optional live FPS overlay via
+              <code>⌘⌥⇧F</code> (or Tools → igni → Toggle FPS Counter).</li>
+        </ul>
+        <h3>0.9.0</h3>
+        <ul>
+          <li><b>Backend version verification across all clients.</b>
+              A new "cli · vX.Y.Z" chip in the header shows the
+              actual running <code>ignite-ember</code> version. Warn
+              tone when a dev-override env is active; danger tone on
+              hard mismatch between what the plugin expected and
+              what the runtime reports.</li>
+          <li><b>Diagnose Backend action.</b> Tools → igni → Diagnose
+              Backend dumps plugin version, resolved CLI path,
+              actual CLI version, and bootstrap env for one-click
+              bug reports.</li>
+          <li>Managed-venv marker check catches the case where the
+              cached CLI drifts from the pin and offers a clean
+              reinstall.</li>
+        </ul>
+        <h3>0.8.3</h3>
+        <ul>
+          <li><b>HITL "Always allow" actually stops asking.</b>
+              After approving with "Always allow similar", the same
+              tool call would still hit the permission prompt on the
+              next invocation because the tool_hook chain re-blocked
+              in the ASK branch after the evaluator flipped to
+              ALLOW. Fixed at the hook layer.</li>
+        </ul>
+        <h3>0.8.2</h3>
+        <ul>
+          <li><b>HITL "Always allow" now persists across calls.</b>
+              The session's in-memory PermissionEvaluator was
+              built once at startup and never re-read
+              <code>settings.local.json</code>, so approvals
+              written to disk were only picked up next launch.
+              Also fixed a rule-string format mismatch between the
+              persisted decisions and the evaluator's fnmatch.</li>
+        </ul>
+        <h3>0.8.1</h3>
+        <ul>
+          <li>Async tools now correctly declare
+              <code>requires_confirmation</code>, so tools that
+              historically slipped past the permission dialog
+              (write, edit, save) are gated the same as sync ones.</li>
+        </ul>
+        <h3>0.8.0</h3>
+        <ul>
+          <li><b>Watcher panel.</b> Live view of every background
+              task the agent has running — long shells, watch
+              loops, scheduled jobs — with per-item Stop.</li>
+          <li><b>Persisted plan decisions.</b> Approve or dismiss a
+              plan and the card stays in that state across reloads
+              and session switches. No more "did I approve this?"
+              re-approvals.</li>
+          <li><b>Split send button.</b> Primary click sends;
+              dropdown carries a "Send in plan mode" alternate
+              action for a one-shot planned turn without flipping
+              your session's default mode.</li>
+        </ul>
+        <h3>0.7.1 – 0.7.5</h3>
+        <ul>
+          <li>Release-pipeline hardening: several rounds of updater
+              signature fixes for the Tauri desktop shell + PyPI
+              metadata refresh. No user-facing plugin changes for
+              JetBrains beyond the bundled
+              <code>ignite-ember</code> bump. Users on any 0.7.x
+              upgrade cleanly.</li>
+        </ul>
+
         <h3>0.6.4</h3>
         <ul>
           <li>Auto-updater finally works on macOS. Required two
