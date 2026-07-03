@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { ScrollIndicator } from "./ScrollIndicator";
 import { ThemeToggle } from "./ThemeToggle";
+import { host } from "../lib/host";
 
 export interface SessionEntry {
   session_id: string;
@@ -48,9 +49,12 @@ export function Sidebar({
                 header makes the brand appear twice when the sidebar
                 is open. Keep this row for the controls only (theme
                 toggle today, settings later). The spacer pushes them
-                to the right so the row stays visually anchored. */}
+                to the right so the row stays visually anchored.
+                JB owns the theme via ``LafManagerListener`` →
+                ``ember:theme``, so we skip our own picker there —
+                users switch light/dark through PyCharm/IntelliJ. */}
             <div className="sidebar-head-spacer" />
-            <ThemeToggle />
+            {host.kind !== "jetbrains" && host.kind !== "vscode" && <ThemeToggle />}
           </div>
           <div style={{ padding: "6px 12px" }}>
             <button className="btn" style={{ width: "100%" }} onClick={onNewChat}>

@@ -96,6 +96,23 @@
   }
 }
 
+/* VSCode webview host — VSCode injects a full palette of
+   ``--vscode-*`` custom properties into every webview matching
+   the user's active colour theme. Aliasing our own ``--bg`` to
+   ``--vscode-sideBar-background`` (the ambient panel colour,
+   not the editor's brighter document canvas) makes the tool
+   window read as native VSCode chrome instead of a hard-coded
+   palette patch. The dark/light polarity signal from
+   ``vscode.window.activeColorTheme.kind`` still drives the
+   rest of the palette via ``[data-theme]``, so foreground
+   colours, borders, and highlight tokens stay in sync.
+   Placed after both theme branches so source-order beats the
+   ``[data-theme="light"]`` and dark-media declarations above
+   without needing ``!important``. */
+:root[data-host="vscode"] {
+  --bg: var(--vscode-sideBar-background, var(--bg));
+}
+
 * {
   box-sizing: border-box;
 }

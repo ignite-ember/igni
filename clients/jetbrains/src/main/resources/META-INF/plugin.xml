@@ -176,6 +176,13 @@
                     class="sh.igniteember.embercode.actions.DoctorAction"
                     text="Diagnose Backend"
                     description="Dump plugin, CLI, and env information for bug reports"/>
+            <action id="EmberCode.ToggleFpsCounter"
+                    class="sh.igniteember.embercode.actions.ToggleFpsCounterAction"
+                    text="Toggle FPS Counter"
+                    description="Show or hide the live FPS overlay in the igni panel">
+                <keyboard-shortcut keymap="$default" first-keystroke="meta alt shift F"/>
+                <keyboard-shortcut keymap="$default" first-keystroke="control alt shift F"/>
+            </action>
         </group>
     </actions>
 </idea-plugin>

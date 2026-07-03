@@ -5,7 +5,15 @@ import { ChatScrollDemo } from "./dev/ChatScrollDemo";
 import { HitlDemo } from "./dev/HitlDemo";
 import { OrchestrateDemo } from "./dev/OrchestrateDemo";
 import { PlanModeDemo } from "./dev/PlanModeDemo";
+import { host } from "./lib/host";
 import "./theme.css";
+
+// Stamp ``data-host`` on <html> so host-conditional CSS
+// (VSCode's ``--vscode-*`` bridge, JB/Tauri layout tweaks) has
+// something to key off. Tauri also stamps this itself from its
+// INIT_SCRIPT — running twice is harmless, the values agree —
+// but VSCode and JCEF don't, so we do it here for them.
+document.documentElement.dataset.host = host.kind;
 
 // Demo URLs:
 //   ?demo=team           — orchestrate / team-progress UI sandbox

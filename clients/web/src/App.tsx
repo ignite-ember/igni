@@ -245,6 +245,19 @@ export default function App() {
         // never set and the OS-detected default takes over.
         const dark = Boolean(payload.dark);
         document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+        // Match the host's actual panel background so the tool
+        // window doesn't paint a differently-shaded patch inside
+        // Darcula / High Contrast / custom themes. ``--bg`` is the
+        // one custom property every panel / composer / dialog
+        // sources their background from; overriding it as an
+        // inline style on ``:root`` beats the CSS-file default
+        // via specificity.
+        const bg = typeof payload.bg === "string" ? payload.bg : null;
+        if (bg) {
+          document.documentElement.style.setProperty("--bg", bg);
+        } else {
+          document.documentElement.style.removeProperty("--bg");
+        }
       }
     };
     const onCustom = (e: Event) => {

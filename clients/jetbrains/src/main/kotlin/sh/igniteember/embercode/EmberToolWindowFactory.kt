@@ -595,17 +595,25 @@ class EmberToolWindowFactory : ToolWindowFactory {
     }
 
     /** Read the current LAF's background luminance and push
-     *  ``data-theme=dark|light`` to the web client. Luminance
-     *  threshold (~50%) is robust across the dozen+ IntelliJ themes
-     *  without needing to enumerate them by name. */
+     *  ``data-theme=dark|light`` PLUS the raw ``Panel.background``
+     *  color to the web client. The polarity flag drives the
+     *  bulk of the palette (dark vs light branches in
+     *  ``theme.css``) while the raw bg gets applied as a CSS
+     *  custom property so the tool window's own background
+     *  matches the surrounding IDE chrome exactly — no more
+     *  "patch of the wrong colour" against Darcula / High
+     *  Contrast / any custom theme. Luminance threshold at
+     *  ~50% is robust across the dozen+ shipped themes without
+     *  needing to enumerate them by name. */
     private fun pushTheme(project: Project) {
         val bg = javax.swing.UIManager.getColor("Panel.background") ?: return
         val luma = (bg.red * 0.299 + bg.green * 0.587 + bg.blue * 0.114)
         val dark = luma < 128
+        val hex = String.format("#%02x%02x%02x", bg.red, bg.green, bg.blue)
         pushEvent(
             project,
             "ember:theme",
-            """{"dark":$dark}""",
+            """{"dark":$dark,"bg":"$hex"}""",
         )
     }
 
@@ -638,6 +646,22 @@ class EmberToolWindowFactory : ToolWindowFactory {
                   window.dispatchEvent(ev);
                 })();
             """.trimIndent()
+            cef.executeJavaScript(script, cef.url, 0)
+        }
+
+        /** Toggle the FPS counter overlay in the web UI. The web
+         *  bundle installs ``window.__igni_toggleFps`` at mount;
+         *  the FPS overlay's own ``Cmd+Alt+Shift+F`` keyboard
+         *  path doesn't work in JCEF because IntelliJ swallows
+         *  the keystroke before it reaches the DOM — so we
+         *  route the toggle through an IDE ``AnAction`` that
+         *  calls this function. */
+        fun toggleFpsOverlay(project: Project) {
+            val browser = BROWSERS[project] ?: return
+            val cef = browser.cefBrowser ?: return
+            val script =
+                "if (typeof window.__igni_toggleFps === 'function') " +
+                    "window.__igni_toggleFps();"
             cef.executeJavaScript(script, cef.url, 0)
         }
     }

@@ -49,12 +49,72 @@ export function FPSCounter() {
   );
 }
 
-// Always-on wrapper for now. The earlier keyboard-toggle path
-// (``Cmd+Alt+Shift+F``) didn't fire in JCEF — the plugin's
-// action system likely swallows the combo before it reaches the
-// web view's ``keydown`` listener. Making it opt-in through an
-// IntelliJ ``AnAction`` that toggles a CSS class on the JCEF
-// document is the proper fix; that's follow-up work.
+const FPS_STORAGE_KEY = "ember_fps_visible";
+const FPS_TOGGLE_EVENT = "ember:toggle-fps";
+
+function readFpsVisible(): boolean {
+  try {
+    return localStorage.getItem(FPS_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeFpsVisible(v: boolean) {
+  try {
+    localStorage.setItem(FPS_STORAGE_KEY, v ? "1" : "0");
+  } catch {
+    /* localStorage may throw under strict-CSP webviews */
+  }
+}
+
+// Hidden by default. Toggled by:
+//  - ``Ctrl/Cmd + Alt + Shift + F`` in surfaces where the web
+//    view actually receives the ``keydown`` (Tauri, plain
+//    browser, VSCode webview).
+//  - ``window.__igni_toggleFps()`` (a global installed on the
+//    ``window`` object at mount time) from IntelliJ's action
+//    system in the JB plugin, where JCEF swallows the
+//    keystroke before the DOM ever sees it. See
+//    ``ToggleFpsCounterAction`` in the JB plugin.
+// State persists in ``localStorage`` per-origin.
 export function FPSCounterOverlay() {
-  return <FPSCounter />;
+  const [visible, setVisible] = useState<boolean>(() => readFpsVisible());
+
+  useEffect(() => {
+    const toggle = () => {
+      setVisible((prev) => {
+        const next = !prev;
+        writeFpsVisible(next);
+        return next;
+      });
+    };
+
+    const onKey = (e: KeyboardEvent) => {
+      const modOk = e.shiftKey && e.altKey && (e.ctrlKey || e.metaKey);
+      if (!modOk) return;
+      // ``e.code`` — physical key. macOS remaps ``Alt+F`` to
+      // ``ƒ`` at the character level, so ``e.key === "f"`` fails.
+      if (e.code !== "KeyF") return;
+      e.preventDefault();
+      toggle();
+    };
+
+    const onCustomEvent = () => toggle();
+
+    // Install the global entrypoint so JB's ``AnAction`` can
+    // reach us via ``JBCefBrowser.cefBrowser.executeJavaScript``.
+    const w = window as unknown as { __igni_toggleFps?: () => void };
+    w.__igni_toggleFps = toggle;
+
+    window.addEventListener("keydown", onKey, { capture: true });
+    window.addEventListener(FPS_TOGGLE_EVENT, onCustomEvent);
+    return () => {
+      window.removeEventListener("keydown", onKey, { capture: true });
+      window.removeEventListener(FPS_TOGGLE_EVENT, onCustomEvent);
+      if (w.__igni_toggleFps === toggle) delete w.__igni_toggleFps;
+    };
+  }, []);
+
+  return visible ? <FPSCounter /> : null;
 }
