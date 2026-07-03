@@ -64,6 +64,44 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Wait for PyPI CDN to propagate
+        # On tag pushes, release-readiness runs almost immediately
+        # after ``publish-pypi``, and the PyPI CDN (JSON index +
+        # sdist file) needs 1–5 minutes to expose a fresh version.
+        # Polling the JSON index is cheap and returns 200 as soon
+        # as the release row is queryable — gate the smoke script
+        # on that so ``uv pip install ignite-ember==X.Y.Z`` doesn't
+        # race the propagation and fail unsatisfiable. Skipped when
+        # ``use_local=true`` (manual dispatch with local sdist).
+        # Only gate on PyPI when we're actually installing a freshly-
+        # tagged version. On the nightly ``schedule`` run there's no
+        # tag ref — the smoke script reads pyproject and installs
+        # whatever's already published, so waiting would be a no-op
+        # (or worse, wait for a bogus version derived from
+        # ``refs/heads/main``).
+        if: ${{ inputs.use_local != true && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.version != '')) }}
+        run: |
+          # Derive the version being smoked. On tag push we use the
+          # tag ref; the pyproject stays in lockstep via CI so
+          # either source works, but the tag is authoritative.
+          if [[ -n "${{ inputs.version }}" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF##*/v}"
+          fi
+          URL="https://pypi.org/pypi/ignite-ember/${VERSION}/json"
+          echo "waiting for $URL"
+          for i in $(seq 1 20); do
+            if curl -fsSL -o /dev/null "$URL"; then
+              echo "pypi visible after $((i*30 - 30))s"
+              exit 0
+            fi
+            echo "  attempt $i/20 — not yet, waiting 30s"
+            sleep 30
+          done
+          echo "::error::PyPI never returned 200 for ignite-ember==$VERSION after 10 minutes"
+          exit 1
+
       - name: Run onboarding smoke (POSIX)
         env:
           UV_HTTP_TIMEOUT: "120"
@@ -94,6 +132,42 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Wait for PyPI CDN to propagate
+        # Windows equivalent of the smoke-posix wait step. Same
+        # rationale — bash + curl equivalents rewritten in pwsh
+        # because ``curl.exe`` isn't reliably on the default
+        # Windows runner PATH and ``Invoke-WebRequest`` is native.
+        # Only gate on PyPI when we're actually installing a freshly-
+        # tagged version. On the nightly ``schedule`` run there's no
+        # tag ref — the smoke script reads pyproject and installs
+        # whatever's already published, so waiting would be a no-op
+        # (or worse, wait for a bogus version derived from
+        # ``refs/heads/main``).
+        if: ${{ inputs.use_local != true && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.version != '')) }}
+        shell: pwsh
+        run: |
+          if ("${{ inputs.version }}") {
+            $version = "${{ inputs.version }}"
+          } else {
+            $version = "$env:GITHUB_REF" -replace '^refs/tags/v', ''
+          }
+          $url = "https://pypi.org/pypi/ignite-ember/$version/json"
+          Write-Host "waiting for $url"
+          for ($i = 1; $i -le 20; $i++) {
+            try {
+              $r = Invoke-WebRequest -Uri $url -UseBasicParsing -Method Head -TimeoutSec 15 -ErrorAction Stop
+              if ($r.StatusCode -eq 200) {
+                Write-Host "pypi visible after $((($i - 1) * 30))s"
+                exit 0
+              }
+            } catch {
+              Write-Host "  attempt $i/20 — not yet, waiting 30s"
+              Start-Sleep -Seconds 30
+            }
+          }
+          Write-Error "PyPI never returned 200 for ignite-ember==$version after 10 minutes"
+          exit 1
 
       - name: Run onboarding smoke (Windows)
         shell: pwsh

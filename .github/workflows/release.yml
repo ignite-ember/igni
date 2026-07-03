@@ -861,20 +861,46 @@ jobs:
           echo "pypi_version=$NORM" >> "$GITHUB_OUTPUT"
           echo "raw=$RAW pypi=$NORM"
 
+      - name: Wait for PyPI CDN to propagate
+        # ``publish-pypi`` completes the moment Warehouse accepts the
+        # upload, but the ``files.pythonhosted.org`` CDN needs 1–5
+        # minutes to expose the sdist. Polling the JSON index is
+        # cheap and gives an unambiguous signal (returns 200 as soon
+        # as the version's release row is queryable), so we gate the
+        # download step on that instead of blindly retrying curl.
+        run: |
+          VERSION="${{ steps.version.outputs.pypi_version }}"
+          URL="https://pypi.org/pypi/ignite-ember/${VERSION}/json"
+          for i in $(seq 1 20); do
+            if curl -fsSL -o /dev/null "$URL"; then
+              echo "pypi visible after $((i*30 - 30))s"
+              exit 0
+            fi
+            echo "  attempt $i/20 — not yet, waiting 30s"
+            sleep 30
+          done
+          echo "::error::PyPI JSON index never returned 200 for ignite-ember==$VERSION after 10 minutes"
+          exit 1
+
       - name: Download sdist and compute SHA
         id: sha
         run: |
           VERSION="${{ steps.version.outputs.pypi_version }}"
           URL="https://files.pythonhosted.org/packages/source/i/ignite-ember/ignite_ember-${VERSION}.tar.gz"
-          for i in 1 2 3 4 5; do
-            if curl -fsSL -o sdist.tar.gz "$URL" 2>/dev/null; then
+          # JSON index is up (previous step gated on that), but the
+          # sdist file itself can lag a beat longer on the CDN. Keep
+          # a shorter retry loop here as a safety net rather than the
+          # sole propagation gate.
+          for i in $(seq 1 10); do
+            if curl -fsSL -o sdist.tar.gz "$URL"; then
               SHA=$(sha256sum sdist.tar.gz | awk '{print $1}')
               echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            sleep 15
+            echo "  attempt $i/10 — sdist not yet on CDN, waiting 30s"
+            sleep 30
           done
-          echo "::error::Failed to download sdist from PyPI after 5 attempts"
+          echo "::error::sdist file never appeared on files.pythonhosted.org after 5 minutes"
           exit 1
 
       - name: Update Homebrew tap
