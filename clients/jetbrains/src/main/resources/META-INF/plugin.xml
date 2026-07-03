@@ -59,6 +59,42 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>0.9.5</h3>
+        <ul>
+          <li><b>Fixed the dark tool window in 2025.x IDEs.</b>
+              PyCharm / IntelliJ 2025.3 moved JCEF out-of-process
+              (a shared <code>cef_server</code> sidecar), and our
+              windowed-mode browser request was being silently
+              dropped there — the chat panel mounted but never
+              painted, leaving a solid dark rectangle. The plugin
+              now detects remote-mode at runtime and falls back to
+              OSR with the display's native refresh rate.</li>
+          <li><b>120 Hz rendering enabled by default.</b> On first
+              launch we flip <code>ide.browser.jcef.out-of-process.enabled</code>
+              to <code>false</code> so JCEF runs in-process and
+              windowed browsers work at your display's refresh rate
+              (120 Hz on ProMotion MacBooks). One-time, IDE-wide.
+              To revert to the sandboxed default: <b>Tools → igni
+              → Disable 120 Hz Rendering (Restart)</b>.</li>
+          <li><b>Calmer chat panel in dark IDE themes.</b> The send
+              button was rendering the ember orange-to-red gradient
+              in Darcula / New UI dark chrome, reading as "brand
+              promo" rather than a primary action. It now uses a
+              subtle raised chip that follows the IDE theme, with a
+              thicker white arrow matching the mode-label
+              weight. VSCode dark themes get the same treatment.
+              Web, Tauri, and light themes keep the ember gradient.</li>
+          <li><b>Panels match IDE chrome.</b> CodeIndex / MCP /
+              Watcher / Plugins drawers now paint on the IDE's own
+              <code>Panel.background</code> (JetBrains) or
+              <code>sideBar.background</code> (VSCode) instead of
+              a brand-brown card. Composer input, chips, and org
+              tags keep their brand tones — only the outer canvas
+              swaps.</li>
+          <li>Notification group renamed from "EmberCode" to "igni"
+              in Preferences → Notifications so the entry matches
+              the plugin's brand.</li>
+        </ul>
         <h3>0.9.2</h3>
         <ul>
           <li><b>Shared backend per project.</b> Open the plugin in
@@ -291,9 +327,15 @@
             icon="/icons/emberToolWindow.svg"
             factoryClass="sh.igniteember.embercode.EmberToolWindowFactory"/>
         <notificationGroup
-            id="EmberCode"
+            id="igni"
             displayType="BALLOON"
             isLogByDefault="true"/>
+        <!-- One-shot suggestion on first project open under remote-
+             CEF: offer to flip JCEF to in-process for display-refresh
+             rendering. Dismissed state is stored application-wide so
+             we never nag twice. See EmberFirstLaunchActivity. -->
+        <postStartupActivity
+            implementation="sh.igniteember.embercode.EmberFirstLaunchActivity"/>
     </extensions>
 
     <actions>
@@ -337,6 +379,16 @@
                     class="sh.igniteember.embercode.actions.DoctorAction"
                     text="Diagnose Backend"
                     description="Dump plugin, CLI, and env information for bug reports"/>
+            <!-- Text + description are set dynamically in
+                 Enable120HzAction.update() based on whether JCEF is
+                 currently in-process (120 Hz mode) or out-of-process
+                 (60 Hz mode). The values below are the fallback
+                 shown when the action list is built before update()
+                 fires for the first time. -->
+            <action id="EmberCode.Toggle120Hz"
+                    class="sh.igniteember.embercode.actions.Enable120HzAction"
+                    text="Toggle 120 Hz Rendering (Restart)"
+                    description="Switch between in-process JCEF (120 Hz) and out-of-process JCEF (60 Hz, sandboxed)"/>
             <action id="EmberCode.ToggleFpsCounter"
                     class="sh.igniteember.embercode.actions.ToggleFpsCounterAction"
                     text="Toggle FPS Counter"

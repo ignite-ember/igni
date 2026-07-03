@@ -95,12 +95,12 @@ class EmberBackendService(private val project: Project) : Disposable {
                                 "this plugin is ${install.expectedCliVersion}. Close " +
                                 "the other client (or restart it on the matching " +
                                 "version) and reopen the igni tool window."
-                        // ``NotificationGroup`` id "EmberCode" is
+                        // ``NotificationGroup`` id "igni" is
                         // registered in ``plugin.xml`` — surfaces as
                         // a balloon in the bottom-right so the user
                         // notices without having to open the log.
                         NotificationGroupManager.getInstance()
-                            .getNotificationGroup("EmberCode")
+                            .getNotificationGroup("igni")
                             .createNotification("igni: version mismatch", text, NotificationType.ERROR)
                             .notify(project)
                         future.completeExceptionally(IllegalStateException(text))

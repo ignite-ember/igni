@@ -113,6 +113,7 @@
   --bg: var(--vscode-sideBar-background, var(--bg));
 }
 
+
 * {
   box-sizing: border-box;
 }
@@ -3728,6 +3729,44 @@ button {
   cursor: default;
 }
 
+/* ── IDE dark themes: calmer send button ──────────────────────
+   The ember orange-to-red gradient reads as brand promo in
+   the calm dark chrome of both JetBrains (Darcula / New UI)
+   and VSCode dark themes, not as a primary action. Retone
+   every mode (default / plan / acceptEdits / bypass) to a
+   single subtle raised chip: ``--bg-raised`` background so
+   the button rides the same theme variables as the composer
+   surface. White icon matching the ``Execute`` label.
+   The mode's *name* still sits in the left half of the pill
+   as text, so the safety signal (Plan / Bypass / …) isn't
+   lost — it's just delivered by the word instead of a color.
+   Scoped to IDE hosts only via ``:is(...)`` so web + Tauri
+   keep the ember gradient. */
+:root[data-theme="dark"]:is([data-host="jetbrains"], [data-host="vscode"]) .send-btn:not(.stop),
+:root[data-theme="dark"]:is([data-host="jetbrains"], [data-host="vscode"]) .send-split[data-mode] {
+  background: var(--bg-raised);
+}
+
+/* Thicker arrow stroke on the IDE-dark send button.
+   The shared ``strokeProps`` in Icons.tsx sets ``stroke-width:
+   1.6`` for every icon. At 1.6px + anti-aliasing on a small
+   pill button the arrow reads spindly next to the bolder
+   ``Execute`` label text; 2.4 gives them matched visual
+   weight. Scoped so we don't beef up every icon in the app. */
+:root[data-theme="dark"]:is([data-host="jetbrains"], [data-host="vscode"]) .send-btn:not(.stop) svg,
+:root[data-theme="dark"]:is([data-host="jetbrains"], [data-host="vscode"]) .send-split[data-mode] .send-split-go svg {
+  stroke-width: 2.4;
+}
+
+:root[data-theme="dark"]:is([data-host="jetbrains"], [data-host="vscode"]) .send-btn:not(.stop):hover:not(:disabled),
+:root[data-theme="dark"]:is([data-host="jetbrains"], [data-host="vscode"]) .send-split[data-mode]:hover:not(:has(:disabled)) {
+  /* Hover: nudge slightly toward the foreground, plus a soft
+     dark shadow. No orange glow — this is a secondary button
+     now, not a promo pill. */
+  background: color-mix(in srgb, var(--bg-raised) 70%, var(--fg));
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
 /* Compound selector (``.popup-menu.send-mode-menu``) beats
    the base ``.popup-menu`` rule by specificity instead of by
    source order — without this the base ``left: 0; right: 0``
@@ -4021,6 +4060,25 @@ button {
   display: flex;
   flex-direction: column;
   animation: panel-pop 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+
+/* IDE hosts — drawer's page canvas matches the IDE chrome,
+   not the brand brown. Inner chips / input rectangles / org
+   tag / branch rows keep their own ``--bg-surface`` /
+   ``--bg-raised`` fills so the brand tones still show
+   through where the design expects them; only the outer
+   canvas swaps.
+
+   - JetBrains: ``--bg`` is the IDE's ``Panel.background``
+     (pushed via ``LafManagerListener`` in the plugin).
+   - VSCode: ``--bg`` is already aliased at the top of this
+     file to ``--vscode-sideBar-background`` so the drawer
+     sits on the same tone as the surrounding sidebar chrome.
+
+   Web / Tauri keep the branded card treatment — no need to
+   flatten there, the drawer is a modal over a brand page. */
+:root:is([data-host="jetbrains"], [data-host="vscode"]) .drawer {
+  background: var(--bg);
 }
 
 @keyframes panel-pop {

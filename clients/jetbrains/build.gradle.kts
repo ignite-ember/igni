@@ -18,7 +18,19 @@ val pyprojectVersion: String = run {
     Regex("""version\s*=\s*"([^"]+)"""").find(line)?.groupValues?.get(1)
         ?: error("could not parse version from: $line")
 }
-version = pyprojectVersion
+// ``-PpluginSubversion=N`` on the gradle command line ships this
+// plugin build as ``<pyprojectVersion>.N`` while keeping the pinned
+// ``ignite-ember`` pip version at ``<pyprojectVersion>`` (that
+// package is what the plugin bootstraps on first launch; bumping the
+// suffix here would send the runtime looking for a PyPI release
+// that doesn't exist). Used for JetBrains-only hotfixes between
+// full-repo releases — pick up a plugin fix without cutting a new
+// Python package.
+val pluginSubversion: String = (findProperty("pluginSubversion") as? String)
+    ?.trim().orEmpty()
+val pluginVersion: String =
+    if (pluginSubversion.isEmpty()) pyprojectVersion else "$pyprojectVersion.$pluginSubversion"
+version = pluginVersion
 
 repositories {
     mavenCentral()

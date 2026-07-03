@@ -101,24 +101,44 @@ class EmberToolWindowFactory : ToolWindowFactory {
                     } else {
                         "&host=jetbrains"
                     }
-                    // Windowed mode (``setOffScreenRendering(false)``)
-                    // uses a heavyweight AWT canvas that hosts a real
-                    // native browser window, and paints at the OS
-                    // display rate. OSR (the default) pipes frames
-                    // through Chromium's ``windowless_frame_rate`` (30
-                    // by default) then hands them to the AWT paint
-                    // loop, which itself schedules at ~30 Hz on macOS
-                    // — the ``setWindowlessFrameRate`` runtime setter
-                    // changes the Chromium clock but the JBR paint
-                    // side stays at 30 Hz. Windowed mode bypasses
-                    // both. Trade-off: no transparent overlays over
-                    // the browser (fine — our tool window doesn't
-                    // paint anything above it) and slightly worse
-                    // integration with the IDE's own animation layer.
-                    val browser = com.intellij.ui.jcef.JBCefBrowserBuilder()
-                        .setOffScreenRendering(false)
+                    // Two code paths for the browser mount:
+                    //
+                    // - **In-process JCEF** (2024.2, and the sandbox we
+                    //   build against): windowed mode
+                    //   (``setOffScreenRendering(false)``) hosts a
+                    //   real native browser canvas inside a heavy-
+                    //   weight AWT peer, painting on display VSync
+                    //   directly. Straight 120 Hz on ProMotion.
+                    // - **Remote / split JCEF** (2025.x+, where
+                    //   Chromium runs in a separate ``cef_server``
+                    //   process): windowed browsers are *unsupported*
+                    //   — the platform logs
+                    //   ``Trying to create windowed browser when
+                    //   remote-mode is enabled … will be ignored`` and
+                    //   the panel silently never paints (dark
+                    //   rectangle). Must use OSR.
+                    //
+                    // ``setWindowlessFramerate`` sets Chromium's OSR
+                    // compositor tick target. In-process JCEF ignores
+                    // it (windowed mode paints on VSync); remote JCEF
+                    // uses it as the ceiling for how fast Chromium
+                    // emits frames into the shared-memory relay to
+                    // the IDE-side Swing paint pump. Target the
+                    // physical display refresh so we don't waste
+                    // cycles rendering frames the Swing side can't
+                    // pump through anyway.
+                    //
+                    // ``JBCefApp.isRemoteEnabled`` is package-private
+                    // (public in newer builds but not in our 2024.2.4
+                    // compile target), so we probe it reflectively.
+                    val hz = displayRefreshHz()
+                    val builder = com.intellij.ui.jcef.JBCefBrowserBuilder()
                         .setUrl("$baseUrl/index.html?ws=ws%3A%2F%2F127.0.0.1%3A$port$versionQuery")
-                        .build()
+                        .setWindowlessFramerate(hz)
+                    if (!isRemoteCefEnabled()) {
+                        builder.setOffScreenRendering(false)
+                    }
+                    val browser = builder.build()
                     installHostBridge(project, browser)
                     BROWSERS[project] = browser
                     installThemeBridge(project, browser)
@@ -131,6 +151,22 @@ class EmberToolWindowFactory : ToolWindowFactory {
                 panel.repaint()
             }
         }
+    }
+
+    /**
+     * Current default display's refresh rate, clamped into a sane
+     * range. Fed into ``JBCefBrowserBuilder.setWindowlessFramerate``
+     * so Chromium's OSR clock matches the physical display — 120 Hz
+     * on ProMotion MacBooks, 60 Hz elsewhere. Some virtualised
+     * displays report 0; fall back to 60 rather than freezing the
+     * compositor.
+     */
+    private fun displayRefreshHz(): Int = try {
+        val hz = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
+            .defaultScreenDevice.displayMode.refreshRate
+        if (hz > 0) hz.coerceIn(60, 240) else 60
+    } catch (_: Throwable) {
+        60
     }
 
     /**
@@ -280,6 +316,18 @@ class EmberToolWindowFactory : ToolWindowFactory {
                     "function(c, m){ if (typeof opts.onFailure === 'function') opts.onFailure(c, m); }",
                 )};
             };
+            // Force ``data-host="jetbrains"`` on <html>. ``main.tsx``
+            // snapshots ``host.kind`` once at module load; if
+            // ``onLoadStart`` doesn't beat that (which is not
+            // guaranteed in remote-CEF, and definitely doesn't for
+            // ``onLoadEnd``), the snapshot lands as "web" and every
+            // CSS rule scoped to ``:root[data-host="jetbrains"]``
+            // silently no-ops. Setting it from the shim itself is
+            // race-proof: whenever the shim runs, ``data-host`` is
+            // correct within the same tick.
+            if (document && document.documentElement) {
+                document.documentElement.dataset.host = 'jetbrains';
+            }
         """.trimIndent()
 
         // Inject as early as possible. ``onLoadStart`` fires before
@@ -394,7 +442,7 @@ class EmberToolWindowFactory : ToolWindowFactory {
                 val title = parseJsonField(raw, "title") ?: "Ember"
                 val body = parseJsonField(raw, "body") ?: ""
                 NotificationGroupManager.getInstance()
-                    .getNotificationGroup("EmberCode")
+                    .getNotificationGroup("igni")
                     .createNotification(title, body, NotificationType.INFORMATION)
                     .notify(project)
             }
