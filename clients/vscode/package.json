@@ -107,7 +107,7 @@
     "compile": "npm run sync:version && tsc -p .",
     "compile:test": "tsc -p tsconfig.test.json",
     "build": "npm run build:ui && npm run compile",
-    "package": "npm run build && vsce package --no-dependencies",
+    "package": "npm run build && vsce package --no-dependencies --baseImagesUrl https://raw.githubusercontent.com/ignite-ember/igni/main/clients/vscode/",
     "watch": "tsc -w -p .",
     "test": "npm run compile && npm run compile:test && node out/test/runTest.js"
   },
