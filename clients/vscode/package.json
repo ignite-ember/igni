@@ -2,7 +2,7 @@
   "name": "ember-code-vscode",
   "displayName": "igni",
   "description": "AI coding assistant with multi-agent orchestration — chat panel with zero-touch backend install",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "publisher": "ignite-ember",
   "license": "Apache-2.0",
   "icon": "icon.png",
