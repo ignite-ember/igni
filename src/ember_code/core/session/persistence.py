@@ -15,8 +15,13 @@ class SessionPersistence:
         self.db = db
         self.session_id = session_id
 
-    async def list_sessions(self, limit: int = 20) -> list[dict[str, Any]]:
-        """List recent sessions from the Agno database."""
+    async def list_sessions(self, limit: int | None = None) -> list[dict[str, Any]]:
+        """List sessions from the Agno database.
+
+        ``limit=None`` (the default) returns every session for this
+        project. Callers can pass an int to cap; the CLI's
+        pre-launch session preview does this to keep boot time flat.
+        """
         if not self.db:
             return []
         try:

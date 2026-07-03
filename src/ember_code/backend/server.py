@@ -1486,8 +1486,10 @@ class BackendServer:
     # ── Session management ────────────────────────────────────────
 
     async def list_sessions(self) -> msg.SessionListResult:
-        """List available sessions."""
-        raw = await self._session.persistence.list_sessions(limit=20)
+        """List all sessions for this project. No cap — the FE has
+        virtualisation and a filter box; truncating server-side just
+        hides work from the user without telling them."""
+        raw = await self._session.persistence.list_sessions(limit=None)
         return msg.SessionListResult(sessions=raw)
 
     async def maybe_auto_name_session(self) -> str | None:

@@ -96,7 +96,14 @@ def main(
         logging.getLogger("ember_code").setLevel(logging.DEBUG)
 
     extra_dirs = [Path(d) for d in additional_dirs] if additional_dirs else None
-    asyncio.run(_run(socket_path, Path(project_dir), resume_session_id, extra_dirs, ws_port))
+    # Canonicalise the project dir so two clients pointing at the
+    # "same" folder via slightly different paths (``/tmp`` vs
+    # ``/private/tmp`` on macOS, symlink resolution, trailing slash)
+    # both land on the same ``.ember/state.db`` and see identical
+    # session lists. ``strict=False`` lets us keep going if the
+    # directory doesn't yet exist — startup will create it below.
+    resolved_project = Path(project_dir).resolve(strict=False)
+    asyncio.run(_run(socket_path, resolved_project, resume_session_id, extra_dirs, ws_port))
 
 
 async def _check_update() -> dict | None:
