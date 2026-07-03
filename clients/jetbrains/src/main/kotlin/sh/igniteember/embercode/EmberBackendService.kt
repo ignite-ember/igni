@@ -1,11 +1,18 @@
 package sh.igniteember.embercode
 
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 import java.io.BufferedReader
+import java.io.IOException
 import java.io.InputStreamReader
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.nio.file.Files
+import java.nio.file.Paths
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
@@ -63,6 +70,45 @@ class EmberBackendService(private val project: Project) : Disposable {
                     progressListener?.invoke(msg)
                 }
                 lastInstall = install
+
+                // Check for a running BE on this project (typical:
+                // user has both JB and VSCode open on the same repo,
+                // or two JB windows). Reuse the existing WebSocket
+                // instead of spawning a duplicate so both clients
+                // share in-memory session state and see each other's
+                // chat updates live.
+                val discovered = discoverExistingBackend(
+                    projectDir = projectDir,
+                    expectedWireVersion = install.expectedCliVersion,
+                )
+                when (discovered) {
+                    is DiscoveryResult.Ok -> {
+                        wsPort = discovered.port
+                        progressListener?.invoke("Reusing running Ember backend on port ${discovered.port}")
+                        future.complete(discovered.port)
+                        return@Thread
+                    }
+                    is DiscoveryResult.VersionMismatch -> {
+                        val text =
+                            "Another igni client is running for this " +
+                                "project on version ${discovered.runningVersion}, but " +
+                                "this plugin is ${install.expectedCliVersion}. Close " +
+                                "the other client (or restart it on the matching " +
+                                "version) and reopen the igni tool window."
+                        // ``NotificationGroup`` id "EmberCode" is
+                        // registered in ``plugin.xml`` — surfaces as
+                        // a balloon in the bottom-right so the user
+                        // notices without having to open the log.
+                        NotificationGroupManager.getInstance()
+                            .getNotificationGroup("EmberCode")
+                            .createNotification("igni: version mismatch", text, NotificationType.ERROR)
+                            .notify(project)
+                        future.completeExceptionally(IllegalStateException(text))
+                        return@Thread
+                    }
+                    is DiscoveryResult.Spawn -> { /* fall through */ }
+                }
+
                 progressListener?.invoke("Starting Ember backend…")
 
                 val proc = ProcessBuilder(
@@ -170,5 +216,89 @@ class EmberBackendService(private val project: Project) : Disposable {
         }
         process = null
         wsPort = null
+    }
+
+    /** Outcome of the ``.ember/backend.lock`` probe. */
+    private sealed class DiscoveryResult {
+        /** Live BE at ``port`` matches our wire version — connect. */
+        data class Ok(val port: Int) : DiscoveryResult()
+
+        /** Live BE at the lockfile but wrong version — refuse. */
+        data class VersionMismatch(val runningVersion: String) : DiscoveryResult()
+
+        /** No lock, or stale (dead pid / unreachable port) — spawn. */
+        object Spawn : DiscoveryResult()
+    }
+
+    /** Read ``<project>/.ember/backend.lock`` and classify. Mirrors
+     *  the Python side at ``src/ember_code/backend/lockfile.py``. */
+    private fun discoverExistingBackend(
+        projectDir: String,
+        expectedWireVersion: String,
+    ): DiscoveryResult {
+        val lockPath = Paths.get(projectDir, ".ember", "backend.lock")
+        if (!Files.exists(lockPath)) return DiscoveryResult.Spawn
+
+        val raw = try {
+            Files.readString(lockPath)
+        } catch (e: IOException) {
+            log.info("lockfile read failed: ${e.message}")
+            return DiscoveryResult.Spawn
+        }
+        // Cheap regex JSON parse — the payload is a flat object of
+        // three known keys, no need to pull in a JSON library for it.
+        val pid = Regex("\"pid\"\\s*:\\s*(\\d+)").find(raw)?.groupValues?.get(1)?.toLongOrNull()
+        val port = Regex("\"port\"\\s*:\\s*(\\d+)").find(raw)?.groupValues?.get(1)?.toIntOrNull()
+        val version = Regex("\"wire_version\"\\s*:\\s*\"([^\"]+)\"").find(raw)?.groupValues?.get(1)
+
+        if (pid == null || port == null || version == null) {
+            log.info("lockfile at $lockPath is malformed; removing")
+            try {
+                Files.deleteIfExists(lockPath)
+            } catch (_: IOException) { /* fine */ }
+            return DiscoveryResult.Spawn
+        }
+
+        if (!isPidAlive(pid)) {
+            log.info("lockfile pid $pid is dead; removing")
+            try {
+                Files.deleteIfExists(lockPath)
+            } catch (_: IOException) { /* fine */ }
+            return DiscoveryResult.Spawn
+        }
+
+        if (!isPortReachable(port)) {
+            log.info("lockfile pid $pid alive but port $port unreachable; removing")
+            try {
+                Files.deleteIfExists(lockPath)
+            } catch (_: IOException) { /* fine */ }
+            return DiscoveryResult.Spawn
+        }
+
+        if (version != expectedWireVersion) {
+            // Keep the lockfile — the running BE is legitimately
+            // owned by a different-version client.
+            return DiscoveryResult.VersionMismatch(runningVersion = version)
+        }
+        return DiscoveryResult.Ok(port = port)
+    }
+
+    private fun isPidAlive(pid: Long): Boolean {
+        return try {
+            ProcessHandle.of(pid).map { it.isAlive }.orElse(false)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun isPortReachable(port: Int, host: String = "127.0.0.1", timeoutMs: Int = 500): Boolean {
+        return try {
+            Socket().use { s ->
+                s.connect(InetSocketAddress(host, port), timeoutMs)
+                true
+            }
+        } catch (_: IOException) {
+            false
+        }
     }
 }

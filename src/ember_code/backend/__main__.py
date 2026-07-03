@@ -896,6 +896,32 @@ async def _run(
         # for auto-assign. Shells parse this to point their webview.
         ready["ws_port"] = ws_transport.port
         ready["ws_url"] = f"ws://127.0.0.1:{ws_transport.port}"
+        # Publish the port + version at ``<project>/.ember/backend.lock``
+        # so a second client opening the same project can discover
+        # this BE and connect to it instead of spawning a duplicate.
+        # See ``clients/vscode/src/extension.ts`` +
+        # ``clients/jetbrains/.../EmberBackendService.kt`` for the
+        # discovery half. Removed on graceful shutdown below.
+        from ember_code.backend.lockfile import Lockfile
+
+        try:
+            wire_version = (Path(__file__).parent.parent / "__init__.py").read_text()
+            # Parse ``__version__ = "X.Y.Z"`` — one-liner without
+            # importing the package (avoids circular during boot).
+            import re as _re
+
+            m = _re.search(r'__version__\s*=\s*"([^"]+)"', wire_version)
+            wire_version = m.group(1) if m else "0.0.0"
+        except OSError:
+            wire_version = "0.0.0"
+        backend_lock = Lockfile(project_dir)
+        try:
+            backend_lock.write(pid=os.getpid(), port=ws_transport.port, wire_version=wire_version)
+        except OSError as exc:
+            logger.warning("could not write backend lockfile: %s", exc)
+            backend_lock = None  # type: ignore[assignment]
+    else:
+        backend_lock = None  # type: ignore[assignment]
     if socket_path is not None:
         ready["socket"] = str(socket_path)
     print(_json.dumps(ready), flush=True)
@@ -1086,6 +1112,29 @@ async def _run(
                 # Register BEFORE creation so the factory picks the
                 # directory up.
                 dir_registry.set_dir(session_id, wd.resolve())
+            elif session_id:
+                # No explicit ``project_dir`` — the caller is restoring
+                # a previously-bound session (typical: FE reconnecting
+                # after a page reload). Refuse the attach if that
+                # session belongs to a different project than this
+                # BE was launched with. Without this check, a stale
+                # FE session_id from a prior run in another repo
+                # silently opens THAT repo's ``state.db`` inside the
+                # current BE, and the sidebar starts listing sessions
+                # from the wrong project.
+                existing_dir = dir_registry.get_dir(session_id)
+                if existing_dir and Path(existing_dir).resolve() != project_dir.resolve():
+                    await transport.send(
+                        msg.RPCResponse(
+                            id=message.id or "",
+                            error=(
+                                f"session {session_id} belongs to a different "
+                                f"project ({existing_dir}); this backend is "
+                                f"bound to {project_dir}"
+                            ),
+                        )
+                    )
+                    return
             if not session_id:
                 import uuid as _uuid
 
@@ -1145,6 +1194,22 @@ async def _run(
                     RpcMethod.DELETE_CLIENT_STATE,
                 ):
                     await _client_state_rpc(message)
+                    return
+                # ``SessionList`` is a project-scoped query — "what
+                # sessions exist in THIS project's ``state.db``" — not
+                # a session-scoped one. Routing it through
+                # ``pool.get_or_create(session_id)`` picks a runtime
+                # bound to whatever project that session was created
+                # in, which for a stale FE session_id can be a
+                # different project than the one the user actually
+                # opened. Result: the sidebar shows sessions from a
+                # different repo. Force listing to run on the boot
+                # runtime — the one bound to the BE's ``--project-dir``.
+                if isinstance(message, msg.SessionList):
+                    rt = default_runtime
+                    await _handle_message(
+                        message, rt.backend, rt.transport, rt.rpc_table, rt.queue, login_state
+                    )
                     return
                 rt = await pool.get_or_create(message.session_id or "")
                 rt.remember_id()
@@ -1212,6 +1277,14 @@ async def _run(
             # Startup failed before the pool existed.
             await backend.shutdown()
         await transport.close()
+        # Remove the discovery lockfile so the next client that
+        # opens this project spawns a fresh BE instead of trying to
+        # connect to a dead port. ``remove`` is idempotent — safe
+        # to call even if the lockfile was never written (e.g.
+        # Unix-socket-only start).
+        if backend_lock is not None:  # noqa: F821 — set above
+            with contextlib.suppress(Exception):
+                backend_lock.remove()  # noqa: F821
         logger.info("Backend shut down")
 
 

@@ -24,6 +24,7 @@
 
 import { ChildProcess, spawn } from "child_process";
 import * as fs from "fs";
+import * as net from "net";
 import * as path from "path";
 import * as vscode from "vscode";
 import { ensureBackendPython, probeCliVersion, resetCache } from "./runtime";
@@ -39,6 +40,90 @@ let backendVersionInfo:
   | { actual: string | null; expected: string; source: string }
   | undefined;
 let panel: vscode.WebviewPanel | undefined;
+
+// ``<project>/.ember/backend.lock`` — see the Python side at
+// ``src/ember_code/backend/lockfile.py`` for the write half and the
+// shape spec.
+interface LockfilePayload {
+  pid: number;
+  port: number;
+  wire_version: string;
+  created_at: number;
+}
+
+type DiscoverResult =
+  | { status: "ok"; port: number }
+  | { status: "spawn" }
+  | { status: "version_mismatch"; runningVersion: string };
+
+function isPidAlive(pid: number): boolean {
+  if (pid <= 0) return false;
+  try {
+    // ``kill(pid, 0)`` is the canonical no-op probe: succeeds if the
+    // process exists, throws ESRCH if not, EPERM if it exists but
+    // we can't signal it (still counts as alive for our purpose —
+    // same-user processes never hit EPERM).
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "EPERM") return true;
+    return false;
+  }
+}
+
+function isPortReachable(port: number, host = "127.0.0.1", timeoutMs = 500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = new net.Socket();
+    let settled = false;
+    const finish = (result: boolean) => {
+      if (settled) return;
+      settled = true;
+      sock.destroy();
+      resolve(result);
+    };
+    sock.setTimeout(timeoutMs);
+    sock.once("connect", () => finish(true));
+    sock.once("timeout", () => finish(false));
+    sock.once("error", () => finish(false));
+    sock.connect(port, host);
+  });
+}
+
+async function discoverExistingBackend(
+  projectDir: string,
+  expectedWireVersion: string,
+): Promise<DiscoverResult> {
+  const lockPath = path.join(projectDir, ".ember", "backend.lock");
+  let raw: string;
+  try {
+    raw = await fs.promises.readFile(lockPath, "utf-8");
+  } catch {
+    return { status: "spawn" };
+  }
+  let payload: LockfilePayload;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    // Corrupted lockfile — treat as stale, spawn.
+    await fs.promises.unlink(lockPath).catch(() => undefined);
+    return { status: "spawn" };
+  }
+  if (!isPidAlive(payload.pid)) {
+    await fs.promises.unlink(lockPath).catch(() => undefined);
+    return { status: "spawn" };
+  }
+  if (!(await isPortReachable(payload.port))) {
+    await fs.promises.unlink(lockPath).catch(() => undefined);
+    return { status: "spawn" };
+  }
+  if (payload.wire_version !== expectedWireVersion) {
+    // Keep the lockfile — the running BE is legitimately owned.
+    // Surface upstream so the user gets a notification.
+    return { status: "version_mismatch", runningVersion: payload.wire_version };
+  }
+  return { status: "ok", port: payload.port };
+}
 
 function startBackend(
   context: vscode.ExtensionContext,
@@ -63,6 +148,33 @@ function startBackend(
       expected: install.expectedCliVersion,
       source: install.source,
     };
+
+    // Check for a running backend on this project (another IDE
+    // window / another instance of this extension). When one is
+    // found and healthy, reuse its port instead of spawning a
+    // duplicate — both clients then talk to the same Python
+    // process and see each other's chat updates live. See
+    // ``src/ember_code/backend/lockfile.py`` for the write side.
+    const discovered = await discoverExistingBackend(projectDir, install.expectedCliVersion);
+    if (discovered.status === "ok") {
+      progress(`Reusing running Ember backend on port ${discovered.port}`);
+      return discovered.port;
+    }
+    if (discovered.status === "version_mismatch") {
+      // Refuse to connect — the running BE speaks a different wire
+      // version and mixing traffic would corrupt state. Surface to
+      // the user; they can close the other window (or restart it
+      // to bring it in sync) and reopen igni.
+      const msg =
+        `Another igni instance is running for this project on ` +
+        `version ${discovered.runningVersion}, but this client is ` +
+        `${install.expectedCliVersion}. Close the other client (or ` +
+        `restart it on the matching version) and reopen igni.`;
+      vscode.window.showErrorMessage(msg);
+      throw new Error(msg);
+    }
+    // ``status === "spawn"`` — either no lockfile or the recorded
+    // BE is dead. Fall through to the normal spawn path.
 
     progress("Starting Ember backend…");
     return new Promise<number>((resolve, reject) => {

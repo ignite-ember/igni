@@ -20,6 +20,7 @@ import {
   type ChatItem,
   type OrchestrateEvent,
 } from "./chat/model";
+import { nextObserverBusyState } from "./chat/observerBusy";
 import { ClientStateStore, ensureClientId } from "./clientState";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ChatItemView } from "./components/ChatItems";
@@ -1134,25 +1135,28 @@ export default function App() {
             ),
           );
         }
-      } else if (m.type === "streaming_done" || m.type === "stream_end") {
-        // A run initiated by ANOTHER view finished its content.
-        setProc(false);
-        setFinalizing(true);
-      } else if (m.type === "run_completed") {
-        // Cross-view tail done — release the finalizing indicator.
-        setFinalizing(false);
-        setItems((prev) => applyEvent(prev, m, streamRef.current));
-      } else if (m.type === "run_started") {
-        // A run initiated by another view began — reflect busy state
-        // so submits from this view queue instead of racing. A fresh
-        // run wipes any leftover tail indicator from the prior one.
-        setProc(true);
-        setFinalizing(false);
-        setItems((prev) => applyEvent(prev, m, streamRef.current));
       } else {
-        // Remaining streamed events (content deltas, tool cards...)
-        // from runs other views started: render them identically.
-        setItems((prev) => applyEvent(prev, m, streamRef.current));
+        // Cross-view busy-indicator update. The state machine —
+        // including the ``stream_end`` quirk where it fires after
+        // ``run_completed`` and MUST NOT re-arm finalizing — lives
+        // in ``chat/observerBusy.ts`` and is exercised by direct
+        // reducer tests. ``processingRef`` holds the synchronous
+        // current ``proc`` so we can pass an accurate ``prev`` in
+        // (only ``run_completed`` actually reads ``prev.proc``;
+        // the other transitions produce prev-independent output).
+        const next = nextObserverBusyState(
+          { proc: processingRef.current, finalizing: false },
+          m,
+        );
+        setProc(next.proc);
+        setFinalizing(next.finalizing);
+        // Item rendering (content deltas, tool cards, stats line,
+        // etc.) is orthogonal to the busy indicator — always apply
+        // except for the pure-terminator events that carry no
+        // renderable payload.
+        if (m.type !== "streaming_done" && m.type !== "stream_end") {
+          setItems((prev) => applyEvent(prev, m, streamRef.current));
+        }
       }
     });
     client.connect();

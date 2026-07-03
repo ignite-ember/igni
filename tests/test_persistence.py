@@ -70,6 +70,32 @@ class TestSessionPersistence:
         assert result == []
 
     @pytest.mark.asyncio
+    async def test_list_sessions_default_limit_is_none(self):
+        """Regression: earlier revisions hard-coded ``limit=20``,
+        silently hiding older sessions from the FE. The default is
+        now ``None`` (all) — the FE virtualises the list itself."""
+        db = MagicMock()
+        db.get_sessions = AsyncMock(return_value=[])
+        p = SessionPersistence(db=db, session_id="s1")
+
+        await p.list_sessions()
+
+        db.get_sessions.assert_awaited_once()
+        assert db.get_sessions.await_args.kwargs["limit"] is None
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_explicit_limit_forwarded(self):
+        """Callers that need capped output (CLI's boot-time preview
+        passes ``limit=1``) still get honored."""
+        db = MagicMock()
+        db.get_sessions = AsyncMock(return_value=[])
+        p = SessionPersistence(db=db, session_id="s1")
+
+        await p.list_sessions(limit=1)
+
+        assert db.get_sessions.await_args.kwargs["limit"] == 1
+
+    @pytest.mark.asyncio
     async def test_auto_name_calls_aset_session_name(self):
         executor = MagicMock()
         executor.aset_session_name = AsyncMock()
