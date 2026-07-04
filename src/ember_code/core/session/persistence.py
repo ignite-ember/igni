@@ -233,6 +233,47 @@ class SessionPersistence:
             logger.debug("Failed to load todos: %s", exc)
         return []
 
+    async def load_visualizations(self) -> list[dict]:
+        """Read the persisted visualization list for this session.
+
+        Each entry has the shape written by ``save_visualizations``:
+        ``{spec_id, spec, title, source_agent, run_id, created_at}``.
+        Returns [] on fresh session or any DB / shape error.
+        """
+        if not self.db:
+            return []
+        try:
+            from agno.db.base import SessionType
+
+            session = await self.db.get_session(
+                session_id=self.session_id,
+                session_type=SessionType.AGENT,
+                deserialize=True,
+            )
+            if session and session.session_data:
+                raw = session.session_data.get("visualizations")
+                if isinstance(raw, list):
+                    return [entry for entry in raw if isinstance(entry, dict)]
+        except Exception as exc:
+            logger.debug("Failed to load visualizations: %s", exc)
+        return []
+
+    async def save_visualizations(self, visualizations: list[dict]) -> None:
+        """Atomic-replace persisted visualization list. Called after
+        each ``save_visualization`` RPC completes so the card is
+        available on session restore.
+
+        Same merge semantics as ``save_todos`` — the wider
+        ``session_data`` blob (session_name, todos, plan_decisions)
+        is preserved.
+        """
+        if not self.db:
+            return
+        try:
+            await self._upsert_session_data_key("visualizations", list(visualizations))
+        except Exception as exc:
+            logger.debug("Failed to save visualizations: %s", exc)
+
     async def save_todos(self, todos: list[dict]) -> None:
         """Atomic-replace persisted todo snapshot in
         ``session_data``.

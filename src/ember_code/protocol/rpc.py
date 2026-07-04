@@ -116,6 +116,25 @@ class RpcMethod(StrEnum):
     # after every turn — there's no push channel yet.
     GET_TODOS = "get_todos"
 
+    # ── Visualization actions (json-render round-trip) ───────────
+    # User interacted with a component inside a ``<JsonRenderView>``
+    # card (e.g. clicked a Button, changed a Select). The FE
+    # forwards the action name + params here so agents can react.
+    # BE stashes the last N events into ``session._visualization_actions``
+    # and pushes ``visualization_action_dispatched`` so any
+    # listener (or a future agent tool that polls for actions) can
+    # observe them. Returns ``{ok: bool, action, params}``.
+    DISPATCH_VISUALIZATION_ACTION = "dispatch_visualization_action"
+
+    # ── Visualization persistence ────────────────────────────────
+    # After the visualizer sub-agent finishes and the FE has the
+    # final spec, it calls this RPC to persist the card so a
+    # session reload restores it. Stored on
+    # ``session.visualizations`` and written to session_data;
+    # ``get_chat_history`` inlines them by run_id + created_at so
+    # they land at the correct chronological position.
+    SAVE_VISUALIZATION = "save_visualization"
+
     # ── Background-process watcher panel ─────────────────────────
     # The FE's right-side watcher panel surfaces every
     # backgrounded ``run_shell_command`` for view-only tail +

@@ -13,6 +13,7 @@ from ember_code.core.tools.notebook import NotebookTools
 from ember_code.core.tools.schedule import ScheduleTools
 from ember_code.core.tools.search import GlobTools, GrepTools
 from ember_code.core.tools.shell import EmberShellTools
+from ember_code.core.tools.visualize import BroadcastFn, VisualizeTools
 from ember_code.core.tools.web import WebTools
 
 logger = logging.getLogger(__name__)
@@ -38,11 +39,17 @@ class ToolRegistry:
         permissions: ToolPermissions | None = None,
         cloud_token: str | None = None,
         cloud_server_url: str | None = None,
+        broadcast: BroadcastFn | None = None,
     ):
         self.base_dir = Path(base_dir) if base_dir else Path.cwd()
         self.permissions = permissions or ToolPermissions(project_dir=self.base_dir)
         self._cloud_token = cloud_token
         self._cloud_server_url = cloud_server_url or "https://api.ignite-ember.sh"
+        # Session broadcast — only needed by tools that push structured
+        # payloads to attached clients (currently only ``Visualize``).
+        # ``None`` in headless / test contexts; those tools then no-op
+        # on emit instead of raising.
+        self._broadcast = broadcast
         self._factories: dict[str, Callable] = {
             "Read": self._make_read,
             "Write": self._make_write,
@@ -58,6 +65,7 @@ class ToolRegistry:
             "Schedule": self._make_schedule,
             "NotebookEdit": self._make_notebook,
             "CodeIndex": self._make_codeindex,
+            "Visualize": self._make_visualize,
         }
 
     @property
@@ -239,6 +247,14 @@ class ToolRegistry:
                 "codeindex_commits",
             ]
         return CodeIndexTools(**kwargs)
+
+    def _make_visualize(self, confirm: bool = False):
+        # ``confirm`` unused — Visualize only sends a one-way UI payload
+        # to the FE, there's nothing to gate. The broadcast callable is
+        # bound at registry construction so sub-agent builds that don't
+        # have session context (headless / tests) get a no-op tool
+        # instead of an import-time failure.
+        return VisualizeTools(broadcast=self._broadcast)
 
     def load_custom_tools(
         self,

@@ -487,6 +487,29 @@ export type ChatItem =
    *  reports the corrected ``count_context_tokens`` — Agno's
    *  ``input_tokens`` from RunCompleted sums across model iterations
    *  and inflates 2-3× compared to the actual session size. */
+  /** A json-render UI spec emitted by the visualizer sub-agent via the
+   *  ``visualization`` push channel. Rendered inline via
+   *  ``<JsonRenderView spec={...} />``. Payloads travel one-way from
+   *  BE→FE; the FE never sends them back.
+   *
+   *  ``specId`` is the BE-stamped dedupe key (one per visualizer
+   *  run). Repeated visualize() calls with the same ``specId`` update
+   *  the existing card in place instead of appending a new one — the
+   *  streaming-update path. Different id = different card. */
+  | {
+      kind: "visualization";
+      id: number;
+      specId: string;
+      /** The json-render flat-tree spec. Passed through verbatim to
+       *  ``@json-render/react``'s ``Renderer`` — this component treats
+       *  the object reference as immutable (memoized on identity). */
+      spec: unknown;
+      /** Optional short label shown above the card. */
+      title: string;
+      /** Which agent emitted the spec (currently always ``visualizer``,
+       *  but kept as a string so future callers can attribute). */
+      sourceAgent: string;
+    }
   | {
       kind: "stats";
       id: number;
@@ -526,6 +549,15 @@ export function planItem(plan: string, tasks: PlanTask[] = [], runId = ""): Chat
 
 export function attachmentsItem(files: { name: string; path: string }[]): ChatItem {
   return { kind: "attachments", id: nid(), files };
+}
+
+export function visualizationItem(
+  spec: unknown,
+  title: string,
+  sourceAgent: string,
+  specId: string,
+): ChatItem {
+  return { kind: "visualization", id: nid(), specId, spec, title, sourceAgent };
 }
 
 /** Pull file paths out of a restored user message — used to rebuild
@@ -920,6 +952,22 @@ export function restoredItem(turn: Record<string, unknown>): ChatItem | null {
       }
     }
     return item;
+  }
+  if (role === "visualization") {
+    // Synthetic turn injected by ``get_chat_history`` from
+    // ``session.visualizations`` — restores the json-render card
+    // inline at the run it belonged to. The spec was already
+    // saved by the FE via ``save_visualization`` after the
+    // visualizer sub-agent completed.
+    const spec = turn.spec;
+    const specId = String(turn.spec_id ?? "");
+    if (!specId || !spec || typeof spec !== "object") return null;
+    return visualizationItem(
+      spec,
+      String(turn.title ?? ""),
+      String(turn.source_agent ?? "visualizer"),
+      specId,
+    );
   }
   return null;
 }

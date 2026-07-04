@@ -5,8 +5,10 @@ import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark-dimmed.css";
 import { formatStats, type ChatItem } from "../chat/model";
 import type { DiffRow } from "../protocol/messages";
+import type { Spec } from "@json-render/core";
 import { ChevronIcon } from "./Icons";
 import { FilePill } from "./FilePill";
+import { JsonRenderView } from "./JsonRenderView";
 import { host } from "../lib/host";
 
 function CopyIcon() {
@@ -1398,6 +1400,7 @@ export const ChatItemView = memo(function ChatItemView({
   onRetryAgent,
   onApprovePlan,
   onRejectPlan,
+  onDispatchVisualizationAction,
 }: {
   item: ChatItem;
   /** Raw markdown text of the assistant turn this stats item closes.
@@ -1427,6 +1430,15 @@ export const ChatItemView = memo(function ChatItemView({
    *  buttons hide; the user types their feedback as a normal
    *  message and the agent iterates. */
   onRejectPlan?: (id: number) => void;
+  /** Round-trip dispatcher for interactive components inside a
+   *  ``visualization`` card. Called with the action name + params
+   *  json-render resolved from the spec's ``on`` bindings; forwards
+   *  to the BE via ``dispatch_visualization_action`` RPC. When
+   *  omitted, actions log locally and no-op. */
+  onDispatchVisualizationAction?: (
+    action: string,
+    params: Record<string, unknown>,
+  ) => Promise<unknown>;
 }) {
   switch (item.kind) {
     case "attachments":
@@ -1489,5 +1501,14 @@ export const ChatItemView = memo(function ChatItemView({
       return <div className="msg-error">{item.text}</div>;
     case "shell":
       return <ShellBlock item={item} />;
+    case "visualization":
+      return (
+        <JsonRenderView
+          spec={item.spec as Spec}
+          title={item.title}
+          sourceAgent={item.sourceAgent}
+          onDispatchAction={onDispatchVisualizationAction}
+        />
+      );
   }
 });

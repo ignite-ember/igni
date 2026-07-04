@@ -463,6 +463,19 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
         RpcMethod.GET_SLASH_COMMANDS: lambda args: backend.get_slash_commands(),
         # ── Todo list (CC TodoWrite parity) ──────────────────────
         RpcMethod.GET_TODOS: lambda args: backend.get_todos(),
+        # ── Visualization actions (json-render round-trip) ───────
+        RpcMethod.DISPATCH_VISUALIZATION_ACTION: lambda args: backend.dispatch_visualization_action(
+            action=str(args.get("action", "")),
+            params=args.get("params") or {},
+        ),
+        # ── Visualization persistence (restore across reloads) ───
+        RpcMethod.SAVE_VISUALIZATION: lambda args: backend.save_visualization(
+            spec_id=str(args.get("spec_id", "")),
+            spec=args.get("spec") or {},
+            title=str(args.get("title", "")),
+            source_agent=str(args.get("source_agent", "")),
+            run_id=str(args.get("run_id", "")),
+        ),
         # ── Watcher panel (background process tail + kill) ───────
         RpcMethod.LIST_BACKGROUND_PROCESSES: lambda args: backend.list_background_processes(),
         RpcMethod.READ_PROCESS_TAIL: lambda args: backend.read_process_tail(

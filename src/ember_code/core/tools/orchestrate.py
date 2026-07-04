@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import copy
+import json
 import logging
 import threading
 import time
@@ -155,6 +156,27 @@ async def _run_agent_streaming(
     # the delta alone yields token-per-line junk; we have to buffer
     # the stream and slice the tail.
     content_buf: str = ""
+    # ── Visualizer streaming ──────────────────────────────────────────
+    # The visualizer sub-agent has no tools; its whole response body is
+    # a JSONL RFC-6902 patch stream (json-render's SpecStream protocol).
+    # We parse each newline-terminated line as a patch and forward it
+    # to the FE via ``visualization_patch`` orchestrate events, so the
+    # card fills in progressively instead of after a big-blob one-shot.
+    #
+    # ``vis_active`` is True when the running sub-agent is the
+    # visualizer (or one nested under it). ``vis_buf`` accumulates
+    # partial-line text between deltas so we don't false-positive on a
+    # patch that was split across two RunContentEvents.
+    # ``vis_spec_id`` is a stable per-run id used by the FE to route
+    # every patch from this stream into the SAME card.
+    vis_active: bool = bool(path) and path[-1] == "visualizer"
+    vis_buf: str = ""
+    vis_spec_id: str = uuid.uuid4().hex[:12] if vis_active else ""
+    # Track how much of ``content_buf`` we've already consumed for
+    # patch parsing. When a run is JSONL-only, we DON'T let it also
+    # pollute the parent's "response" text — the whole thing is UI, not
+    # prose. Non-JSONL runs pass through unchanged.
+    vis_prose: list[str] = []
     current_run_id: str | None = None
     # Captured from RunStartedEvent. ``acontinue_run`` requires this —
     # without it Agno errors with "No runs found for run ID …" because
@@ -204,6 +226,7 @@ async def _run_agent_streaming(
         """
         nonlocal current_tool, last_update, last_preview, content_buf
         nonlocal current_run_id, current_session_id, completed_content
+        nonlocal vis_buf
 
         # Capture ``run_id`` / ``session_id`` from *any* event that
         # carries them — not just ``RunStartedEvent``. Agno only yields
@@ -372,6 +395,39 @@ async def _run_agent_streaming(
             c = event.content or ""
             if c:
                 content_buf += str(c)
+
+                # Visualizer streaming path: the sub-agent emits its
+                # response as JSONL RFC-6902 patches. We split by
+                # newline as the stream arrives; each complete line
+                # that parses as JSON is forwarded to the FE as a
+                # patch. Non-JSON lines are treated as prose (part of
+                # the summary the parent agent sees).
+                if vis_active:
+                    vis_buf += str(c)
+                    while "\n" in vis_buf:
+                        line, vis_buf = vis_buf.split("\n", 1)
+                        stripped = line.strip()
+                        if not stripped:
+                            continue
+                        try:
+                            patch = json.loads(stripped)
+                        except json.JSONDecodeError:
+                            # Non-JSON line — prose. Keep it for the
+                            # parent's summary.
+                            vis_prose.append(stripped)
+                            continue
+                        if isinstance(patch, dict):
+                            _emit(
+                                {
+                                    "type": "visualization_patch",
+                                    "agent_path": agent_path_id,
+                                    "spec_id": vis_spec_id,
+                                    "patch": patch,
+                                }
+                            )
+                        else:
+                            vis_prose.append(stripped)
+
                 now = time.monotonic()
                 if now - last_update > 0.5:
                     last_update = now
@@ -399,6 +455,29 @@ async def _run_agent_streaming(
                 next_stream = follow_up
                 break
         stream = next_stream
+
+    # Flush any trailing visualizer patch line that arrived without a
+    # closing newline (rare — models usually terminate the last JSONL
+    # line, but Agno's stream close can trim). Try to parse it once.
+    if vis_active and vis_buf.strip():
+        tail = vis_buf.strip()
+        try:
+            patch = json.loads(tail)
+        except json.JSONDecodeError:
+            vis_prose.append(tail)
+        else:
+            if isinstance(patch, dict):
+                _emit(
+                    {
+                        "type": "visualization_patch",
+                        "agent_path": agent_path_id,
+                        "spec_id": vis_spec_id,
+                        "patch": patch,
+                    }
+                )
+            else:
+                vis_prose.append(tail)
+        vis_buf = ""
 
     # Read the final answer back from Agno's session DB. ``Agent`` does
     # not expose a ``run_response`` attribute (we tried — it errors with
@@ -448,6 +527,15 @@ async def _run_agent_streaming(
             path,
             len(final),
         )
+    # For the visualizer sub-agent, the response body is JSONL patches
+    # that already streamed to the FE as ``visualization_patch`` events.
+    # Do NOT include the raw JSONL in the reply the PARENT agent sees —
+    # it would pollute the parent's context with 40+ patch lines for no
+    # benefit. Replace with a short synthesized summary (using the
+    # prose lines we captured alongside patches, or a canned fallback).
+    if vis_active:
+        prose = "\n".join(vis_prose).strip()
+        final = prose or "Emitted visualization to the client."
     return final, log
 
 

@@ -150,6 +150,13 @@ class Session:
 
         self.plan_store = PlanStore()
 
+        # Per-session visualization list. Each entry:
+        # ``{spec_id, spec, title, source_agent, run_id, created_at}``.
+        # Populated when the FE saves a visualizer card via
+        # ``save_visualization`` RPC; consumed by
+        # ``get_chat_history`` so the card survives a reload.
+        self.visualizations: list[dict] = []
+
         # Plan-mode validation state. ``_plan_mode_attempt``
         # counts how many times the agent has submitted to
         # ``exit_plan_mode`` since the last ``enter_plan_mode``
@@ -326,7 +333,11 @@ class Session:
         # ``acontinue_run`` looks up the run by ``(run_id, session_id)``
         # in the agent's db; without one HITL resume fails with
         # "No runs found for run ID …".
-        self.pool = AgentPool(db=self.db)
+        # ``self.broadcast`` is threaded into the pool so sub-agent
+        # tools that push structured payloads to attached clients
+        # (currently ``Visualize``) can reach the session's callback
+        # list without needing an explicit session reference.
+        self.pool = AgentPool(db=self.db, broadcast=self.broadcast)
         self.pool.load_definitions(
             settings, self.project_dir, codeindex_available=self._codeindex_available
         )
@@ -837,7 +848,7 @@ class Session:
         # contributions, rebuild. The old pool's runtime state
         # (active runs) lives on Agno's db, which we share, so it's
         # safe to swap.
-        new_pool = AgentPool(db=self.db)
+        new_pool = AgentPool(db=self.db, broadcast=self.broadcast)
         new_pool.load_definitions(
             self.settings,
             self.project_dir,
@@ -1118,6 +1129,7 @@ class Session:
             ),
             cloud_token=self._cloud.access_token,
             cloud_server_url=self._cloud_server_url,
+            broadcast=self.broadcast,
         )
         tool_names = self._resolve_main_tool_names(registry)
         tools = registry.resolve(tool_names)

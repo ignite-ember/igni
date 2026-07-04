@@ -17,9 +17,11 @@ import {
   planItem,
   shellItem,
   userItem,
+  visualizationItem,
   type ChatItem,
   type OrchestrateEvent,
 } from "./chat/model";
+import { applySpecPatch, type JsonPatch, type Spec } from "@json-render/core";
 import { nextObserverBusyState } from "./chat/observerBusy";
 import { ClientStateStore, ensureClientId } from "./clientState";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
@@ -556,6 +558,14 @@ export default function App() {
   // ``/accept off`` so the next user turn starts in default mode.
   const autoAcceptForRunRef = useRef(false);
 
+  // Latch the current top-level run_id so ``visualization`` push
+  // handlers can associate the saved card with the run that
+  // produced it — the BE positions restored visualizations right
+  // after the last turn of the matching run. Cleared on
+  // ``run_completed`` so a stale id doesn't attach to a later
+  // orphan push. See ``get_chat_history``'s visualization splice.
+  const currentRunIdRef = useRef<string>("");
+
   // ── Streamed event handler (run + HITL-resume streams) ───────────
   const onStreamEvent = useCallback(
     (m: ServerMessage) => {
@@ -598,6 +608,11 @@ export default function App() {
         // flag from the previous run so the indicator lifecycle
         // resets cleanly (processing is already true via setProc).
         setFinalizing(false);
+        // Latch the top-level run_id (no parent) so visualization
+        // saves can associate cards with the run.
+        if (!m.parent_run_id && m.run_id) {
+          currentRunIdRef.current = m.run_id;
+        }
       }
       setItems((prev) => applyEvent(prev, m, streamRef.current));
       // After a top-level run finishes, Agno's reported ``input_tokens``
@@ -611,6 +626,11 @@ export default function App() {
         // Tail drained — drop the "finalizing" indicator unless a new
         // run has already started (which clears it on its own).
         setFinalizing(false);
+        // Clear the latched run_id so a stale value doesn't
+        // attach to any late push. A new run_started will set it.
+        if (currentRunIdRef.current === m.run_id) {
+          currentRunIdRef.current = "";
+        }
         const runId = m.run_id;
         void client
           .rpc<number>("count_context_tokens")
@@ -938,6 +958,71 @@ export default function App() {
           const path = String((m.payload as { path?: unknown }).path ?? "");
           if (path) void host.notifyFileEdited(path);
         } else if (m.channel === "orchestrate_event") {
+          // Visualizer streaming path: the visualizer sub-agent emits
+          // its whole response as JSONL RFC-6902 patches, which
+          // orchestrate.py forwards on this channel as
+          // ``{type: "visualization_patch", spec_id, patch}``. Apply
+          // each patch to the card's spec state (creating the card on
+          // the first patch, updating in place after). No orchestrate
+          // team-card touch — visualizer runs go straight to their
+          // own card.
+          const rawEv = m.payload as {
+            type?: unknown;
+            spec_id?: unknown;
+            patch?: unknown;
+          };
+          if (
+            rawEv.type === "visualization_patch" &&
+            typeof rawEv.spec_id === "string" &&
+            rawEv.patch &&
+            typeof rawEv.patch === "object"
+          ) {
+            const specId = rawEv.spec_id;
+            const patch = rawEv.patch as JsonPatch;
+            setItems((prev) => {
+              const idx = prev.findIndex(
+                (it) => it.kind === "visualization" && it.specId === specId,
+              );
+              if (idx >= 0) {
+                const existing = prev[idx] as Extract<
+                  ChatItem,
+                  { kind: "visualization" }
+                >;
+                const base: Spec =
+                  (existing.spec as Spec | null) ?? {
+                    root: "",
+                    elements: {},
+                  };
+                let nextSpec: Spec;
+                try {
+                  // applySpecPatch mutates + returns; spread for a
+                  // new reference React can shallow-compare.
+                  nextSpec = { ...applySpecPatch(base, patch) };
+                } catch (e) {
+                  // eslint-disable-next-line no-console
+                  console.warn("visualization_patch apply failed", patch, e);
+                  return prev;
+                }
+                const next = prev.slice();
+                next[idx] = { ...existing, spec: nextSpec };
+                return next;
+              }
+              // First patch for this spec_id — bootstrap the card.
+              let seed: Spec = { root: "", elements: {} };
+              try {
+                seed = { ...applySpecPatch(seed, patch) };
+              } catch (e) {
+                // eslint-disable-next-line no-console
+                console.warn("visualization_patch seed failed", patch, e);
+              }
+              return [
+                ...prev,
+                visualizationItem(seed, "", "visualizer", specId),
+              ];
+            });
+            return; // Fully handled; don't fall through to team-card logic
+          }
+
           // Structured tree-event from orchestrate.py. The BE stamps a
           // stable ``card_id`` on every event of a single ``spawn_team``
           // / ``spawn_agent`` invocation — we route by id so the card
@@ -1134,6 +1219,73 @@ export default function App() {
                 : it,
             ),
           );
+        } else if (m.channel === "visualization") {
+          // Visualizer sub-agent emitted a json-render spec via
+          // ``VisualizeTools.visualize``. Payload shape:
+          // ``{ spec: {...}, spec_id: str, title?: string, source_agent?: string }``.
+          //
+          // Dedup by ``spec_id``: the visualizer's toolkit generates a
+          // stable id per sub-agent run, so repeated calls within a
+          // single run UPDATE the same card instead of appending a
+          // new one. That's the on-ramp for streaming — one card per
+          // stream, updated in place as data arrives.
+          const p = m.payload as {
+            spec?: unknown;
+            spec_id?: unknown;
+            title?: unknown;
+            source_agent?: unknown;
+          };
+          const spec = p.spec;
+          if (
+            spec &&
+            typeof spec === "object" &&
+            "root" in (spec as Record<string, unknown>) &&
+            "elements" in (spec as Record<string, unknown>)
+          ) {
+            const specId =
+              typeof p.spec_id === "string" && p.spec_id ? p.spec_id : "";
+            const title = typeof p.title === "string" ? p.title : "";
+            const sourceAgent =
+              typeof p.source_agent === "string" ? p.source_agent : "visualizer";
+            setItems((prev) => {
+              // Find an existing visualization card with the same
+              // spec_id; if present, replace its spec/title in place.
+              const idx = specId
+                ? prev.findIndex(
+                    (it) => it.kind === "visualization" && it.specId === specId,
+                  )
+                : -1;
+              if (idx >= 0) {
+                const next = prev.slice();
+                const existing = next[idx] as Extract<
+                  ChatItem,
+                  { kind: "visualization" }
+                >;
+                next[idx] = { ...existing, spec, title, sourceAgent };
+                return next;
+              }
+              return [...prev, visualizationItem(spec, title, sourceAgent, specId)];
+            });
+            // Persist so a session reload restores this card inline
+            // via ``get_chat_history``. Idempotent on ``spec_id`` —
+            // multiple pushes for the same run just replace the
+            // stored entry, not accumulate duplicates. Best-effort:
+            // a failed save logs but doesn't break the live render.
+            if (specId) {
+              void client
+                .rpc("save_visualization", {
+                  spec_id: specId,
+                  spec,
+                  title,
+                  source_agent: sourceAgent,
+                  run_id: currentRunIdRef.current,
+                })
+                .catch((e) => {
+                  // eslint-disable-next-line no-console
+                  console.warn("save_visualization failed", e);
+                });
+            }
+          }
         }
       } else {
         // Cross-view busy-indicator update. The state machine —
@@ -1456,6 +1608,29 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [items],
   );
+  // Round-trip for interactive components inside a
+  // ``<JsonRenderView>`` card (Button click, Select change, etc.).
+  // See ``JsonRenderView`` — every named action funnels through the
+  // ``handlers`` Proxy to this callback, which RPCs the BE so any
+  // agent that cares can observe the event on
+  // ``session._visualization_actions``.
+  const onDispatchVisualizationAction = useCallback(
+    async (action: string, params: Record<string, unknown>) => {
+      try {
+        return await client.rpc<{ ok: boolean; action: string; params: unknown }>(
+          "dispatch_visualization_action",
+          { action, params },
+        );
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn("dispatch_visualization_action failed", e);
+        return undefined;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
   const onRejectPlan = useCallback(
     (id: number) => {
       const card = items.find(
@@ -2113,6 +2288,7 @@ export default function App() {
                     onRetryAgent={onRetryAgent}
                     onApprovePlan={onApprovePlan}
                     onRejectPlan={onRejectPlan}
+                    onDispatchVisualizationAction={onDispatchVisualizationAction}
                   />
                 </div>
               );

@@ -438,7 +438,26 @@ class BackendServer:
         await self._rehydrate_plan_store()
         await self._rehydrate_plan_decisions()
         await self._rehydrate_todos()
+        await self._rehydrate_visualizations()
         await self._rehydrate_orphan_processes()
+
+    async def _rehydrate_visualizations(self) -> None:
+        """Load persisted visualization cards back onto the session.
+        ``get_chat_history`` reads ``session.visualizations`` to
+        emit ``role: "visualization"`` turns so the FE can restore
+        the cards inline on session reload. Best-effort — a missing
+        persistence layer or malformed row just yields an empty
+        list and the session opens without prior visualizations."""
+        persistence = getattr(self._session, "persistence", None)
+        if persistence is None:
+            return
+        try:
+            entries = await persistence.load_visualizations()
+        except Exception as exc:
+            logger.debug("visualization rehydrate failed: %s", exc)
+            return
+        if isinstance(entries, list):
+            self._session.visualizations = [e for e in entries if isinstance(e, dict)]
 
     async def _rehydrate_orphan_processes(self) -> None:
         """Surface every backgrounded shell process that survived
@@ -2558,6 +2577,49 @@ class BackendServer:
                     turn["state"] = "pending"
                 else:
                     turn["state"] = "dismissed"
+
+        # Splice persisted visualization cards into the history at
+        # the run they belong to. We insert AFTER the last turn of
+        # the matching run so the card lands next to the agent's
+        # reply about it. Visualizations without a matching run_id
+        # (created outside a top-level run) get appended at the end
+        # so they don't vanish. Best-effort: any restore issue just
+        # drops the card rather than failing the whole history.
+        visualizations = getattr(self._session, "visualizations", None) or []
+        if visualizations:
+            # Build a run_id → last-turn-index map by scanning ``out``.
+            last_by_run: dict[str, int] = {}
+            for i, t in enumerate(out):
+                rid = str(t.get("run_id") or "")
+                if rid:
+                    last_by_run[rid] = i
+            # Group visualizations by target insertion index (or -1
+            # for "no matching run", i.e. append). Sort each group
+            # by created_at so ordering is stable.
+            insertions: dict[int, list[dict]] = {}
+            for entry in visualizations:
+                if not isinstance(entry, dict):
+                    continue
+                rid = str(entry.get("run_id") or "")
+                turn_out = {
+                    "role": "visualization",
+                    "spec_id": str(entry.get("spec_id") or ""),
+                    "spec": entry.get("spec") or {},
+                    "title": str(entry.get("title") or ""),
+                    "source_agent": str(entry.get("source_agent") or "visualizer"),
+                    "run_id": rid,
+                    "created_at": int(entry.get("created_at") or 0),
+                }
+                target = last_by_run.get(rid, -1)
+                insertions.setdefault(target, []).append(turn_out)
+            # Splice from the end so earlier indices stay stable.
+            for target in sorted(insertions.keys(), reverse=True):
+                group = sorted(insertions[target], key=lambda t: t["created_at"])
+                if target < 0:
+                    out.extend(group)
+                else:
+                    out[target + 1 : target + 1] = group
+
         return out
 
     async def search_chat(self, session_id: str, query: str, limit: int = 50) -> list[dict]:
@@ -3625,6 +3687,103 @@ class BackendServer:
         if store is None:
             return []
         return store.snapshot()
+
+    async def save_visualization(
+        self,
+        spec_id: str,
+        spec: dict,
+        title: str = "",
+        source_agent: str = "visualizer",
+        run_id: str = "",
+    ) -> dict:
+        """Persist a finalized visualization card so a session
+        reload restores it inline in the chat.
+
+        Called by the FE after the visualizer sub-agent finishes
+        (``agent_completed`` orchestrate event) and the card's spec
+        has fully applied. Dedups on ``spec_id`` — a second call
+        with the same id REPLACES the prior entry, so partial
+        updates don't accumulate garbage.
+
+        Stored on ``session.visualizations`` and persisted via
+        ``persistence.save_visualizations``. ``get_chat_history``
+        interleaves entries with runs by matching ``run_id``.
+        """
+        if not spec_id or not isinstance(spec, dict):
+            return {"ok": False, "error": "spec_id and spec are required"}
+        # Server-side timestamp so ordering is stable across
+        # clients with skewed clocks; ms since epoch matches the
+        # ``created_at`` shape ``get_chat_history`` already emits.
+        import time as _time
+
+        now_ms = int(_time.time() * 1000)
+        entry = {
+            "spec_id": spec_id,
+            "spec": spec,
+            "title": str(title or ""),
+            "source_agent": str(source_agent or "visualizer"),
+            "run_id": str(run_id or ""),
+            "created_at": now_ms,
+        }
+        buf: list[dict] = list(getattr(self._session, "visualizations", []) or [])
+        # Replace prior entry with the same spec_id (idempotent
+        # save) so the FE can call this at any point during a run
+        # without appending duplicates.
+        replaced = False
+        for i, existing in enumerate(buf):
+            if isinstance(existing, dict) and existing.get("spec_id") == spec_id:
+                buf[i] = entry
+                replaced = True
+                break
+        if not replaced:
+            buf.append(entry)
+        self._session.visualizations = buf
+        persistence = getattr(self._session, "persistence", None)
+        if persistence is not None:
+            with contextlib.suppress(Exception):
+                await persistence.save_visualizations(buf)
+        return {"ok": True, "spec_id": spec_id}
+
+    def dispatch_visualization_action(
+        self, action: str, params: dict | None = None
+    ) -> dict:
+        """User interacted with a component inside a rendered
+        json-render spec (Button click, Select change, etc.).
+
+        The FE forwards the action name + params here. We do two
+        things: record the event on the session so a future agent
+        tool can query it, and broadcast a
+        ``visualization_action_dispatched`` push so anything else
+        (log panels, dev tools) can observe. Returns
+        ``{ok, action, params}`` for the FE's tool result.
+
+        We deliberately don't route this into the running agent
+        directly — action bindings are a small, cheap event
+        channel, and coupling them to an in-flight agent's tool
+        call would require a resume protocol we don't need yet.
+        """
+        p = dict(params or {})
+        # Stash the last 32 on the session so any query-shaped
+        # accessor can read them. Bounded so the ring doesn't grow
+        # forever on a chatty UI (e.g. a Slider firing on every
+        # drag tick). 32 is generous for the "one-off action after
+        # the user reviews a card" use case.
+        MAX_ACTIONS = 32
+        buf = getattr(self._session, "_visualization_actions", None)
+        if buf is None:
+            buf = []
+            self._session._visualization_actions = buf
+        buf.append({"action": action, "params": p})
+        if len(buf) > MAX_ACTIONS:
+            del buf[: len(buf) - MAX_ACTIONS]
+        broadcast = getattr(self._session, "broadcast", None)
+        if broadcast is not None:
+            with contextlib.suppress(Exception):
+                broadcast(
+                    "visualization_action_dispatched",
+                    {"action": action, "params": p},
+                )
+        return {"ok": True, "action": action, "params": p}
 
     # ── Background-process watcher RPCs (row N/A — internal) ─
     # The agent's ``run_shell_command(background=True)`` registers

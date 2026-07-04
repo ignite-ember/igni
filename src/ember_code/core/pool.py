@@ -245,6 +245,7 @@ def build_agent(
     mcp_clients: dict[str, Any] | None = None,
     knowledge_mgr: Any | None = None,
     db: Any | None = None,
+    broadcast: Any | None = None,
 ) -> Agent:
     """Build an Agno Agent from an AgentDefinition.
 
@@ -266,7 +267,15 @@ def build_agent(
     tools: list[Any] = []
     if definition.tools:
         permissions = ToolPermissions(project_dir=Path(base_dir) if base_dir else None)
-        registry = ToolRegistry(base_dir=base_dir, permissions=permissions)
+        # ``broadcast`` is threaded in for tools like ``Visualize`` that
+        # push structured payloads to attached clients. When ``None``
+        # (headless / tests) the tool no-ops on emit — see
+        # ``VisualizeTools.visualize``.
+        registry = ToolRegistry(
+            base_dir=base_dir,
+            permissions=permissions,
+            broadcast=broadcast,
+        )
         tools = registry.resolve(definition.tools)
 
     # ── Schedule tools (shared across all agents) ───────────────
@@ -361,7 +370,7 @@ class AgentPool:
     to force eager construction (e.g. after MCP servers connect).
     """
 
-    def __init__(self, db: Any | None = None):
+    def __init__(self, db: Any | None = None, broadcast: Any | None = None):
         self._definitions: dict[str, tuple[AgentDefinition, int]] = {}
         self._agents: dict[str, Agent] = {}
         self._settings: Settings | None = None
@@ -375,6 +384,10 @@ class AgentPool:
         # persisted alongside the team's runs and Agno can find them on
         # ``acontinue_run``.
         self._db: Any | None = db
+        # Session broadcast callable, threaded through to sub-agent
+        # tools that push payloads to attached clients (``Visualize``).
+        # ``None`` in tests / headless: those tools no-op on emit.
+        self._broadcast: Any | None = broadcast
 
     # ── Phase 1: Load definitions ─────────────────────────────────
 
@@ -533,6 +546,7 @@ class AgentPool:
             mcp_clients=self._mcp_clients,
             knowledge_mgr=self._knowledge_mgr,
             db=self._db,
+            broadcast=self._broadcast,
         )
 
     # ── Convenience: load + build in one call ─────────────────────
