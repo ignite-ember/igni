@@ -19,8 +19,12 @@ happens for both the boot path and a pool-equivalent path.
 from __future__ import annotations
 
 import asyncio
+import inspect
 from typing import Any
 
+import ember_code.backend.__main__ as main_mod
+from ember_code.backend.session_pool import SessionStampingTransport
+from ember_code.core.session.core import Session
 from ember_code.protocol import messages as msg
 
 
@@ -126,8 +130,6 @@ class TestBroadcastCallbackShape:
         # the PushNotification's session_id is set; the FE filters
         # views by session_id and would otherwise drop the push or
         # render it in the wrong view.
-        from ember_code.backend.session_pool import SessionStampingTransport
-
         class _Backend:
             session_id = "sess-pool-7"
 
@@ -151,8 +153,6 @@ class TestPostRunDeferral:
     above it. These tests pin the queue + drain contract."""
 
     def test_queue_holds_until_drain(self) -> None:
-        from ember_code.core.session.core import Session
-
         session = Session.__new__(Session)
         session._broadcast_callbacks = []
         session._pending_post_run_broadcasts = []
@@ -172,8 +172,6 @@ class TestPostRunDeferral:
         assert session._pending_post_run_broadcasts == []
 
     def test_drain_with_empty_queue_is_noop(self) -> None:
-        from ember_code.core.session.core import Session
-
         session = Session.__new__(Session)
         session._broadcast_callbacks = []
         session._pending_post_run_broadcasts = []
@@ -187,8 +185,6 @@ class TestPostRunDeferral:
         # Tests / headless callers may build the session via __new__
         # without the queue list. The method must fall back to
         # immediate broadcast so the event isn't silently dropped.
-        from ember_code.core.session.core import Session
-
         session = Session.__new__(Session)
         session._broadcast_callbacks = []
         # Deliberately do NOT set _pending_post_run_broadcasts.
@@ -208,10 +204,6 @@ class TestMainWiring:
     bloat this test without adding signal."""
 
     def test_helper_defined_and_called_for_both_paths(self) -> None:
-        import inspect
-
-        import ember_code.backend.__main__ as main_mod
-
         src = inspect.getsource(main_mod._run)
         # The factory exists.
         assert "_make_broadcast_callback" in src, (

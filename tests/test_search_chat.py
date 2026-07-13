@@ -19,11 +19,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ember_code.backend.__main__ import _build_rpc_table
 from ember_code.backend.server import (
     _SEARCH_CHAT_SNIPPET_HALF_WIDTH,
     BackendServer,
     _search_history,
 )
+from ember_code.protocol.rpc import RpcMethod
 
 
 def _turn(
@@ -261,9 +263,6 @@ class TestSearchChatWrapper:
     async def test_dispatch_table_routes_search_chat(self):
         """Wiring check: ``RpcMethod.SEARCH_CHAT`` resolves to the
         backend's method through the actual dispatch table."""
-        from ember_code.backend.__main__ import _build_rpc_table
-        from ember_code.protocol.rpc import RpcMethod
-
         backend = self._backend([_turn("foo NEEDLE bar")])
         table = _build_rpc_table(backend, transport=MagicMock(), login_state={})
         handler = table.get(RpcMethod.SEARCH_CHAT)

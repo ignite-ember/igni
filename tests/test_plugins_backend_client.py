@@ -46,7 +46,12 @@ def test_get_plugin_details_forwards_to_rpc() -> None:
     rpc.return_value = [{"name": "alpha"}]
     result = _run(client.get_plugin_details())
     rpc.assert_awaited_once_with(RpcMethod.GET_PLUGIN_DETAILS)
-    assert result == [{"name": "alpha"}]
+    # Iter 264: client parses the wire dict into ``PluginInfo`` at
+    # the boundary so callers get a typed model directly. The forward
+    # still uses the same wire shape; we just check the parsed name
+    # rather than expecting the raw dict back.
+    assert len(result) == 1
+    assert result[0].name == "alpha"
 
 
 def test_get_plugin_details_returns_empty_when_rpc_returns_none() -> None:
@@ -124,10 +129,15 @@ def test_remove_plugin_forwards_name() -> None:
 
 def test_get_marketplaces_forwards() -> None:
     client, rpc = _make_client_with_mock_rpc()
-    rpc.return_value = [{"name": "m1"}]
+    rpc.return_value = [{"name": "m1", "url": "https://x"}]
     result = _run(client.get_marketplaces())
     rpc.assert_awaited_once_with(RpcMethod.GET_MARKETPLACES)
-    assert result == [{"name": "m1"}]
+    # Iter 271: client parses the wire dict into ``MarketplaceInfo``
+    # at the boundary. Wire-forwarding contract unchanged; the
+    # assertion checks parsed attributes rather than the raw dict.
+    assert len(result) == 1
+    assert result[0].name == "m1"
+    assert result[0].url == "https://x"
 
 
 def test_get_marketplaces_normalizes_none_to_empty_list() -> None:

@@ -21,6 +21,7 @@ from unittest.mock import MagicMock, patch
 from ember_code.backend.server import BackendServer
 from ember_code.core.plugins.loader import PluginLoader
 from ember_code.core.plugins.state import PluginsState, load_state, save_state
+from ember_code.core.session.core import PluginReloadCounts
 
 # ── Helpers ─────────────────────────────────────────────────────────
 
@@ -74,16 +75,13 @@ def _make_backend(
     session.plugin_loader = loader
     session.plugin_state = state
     session.settings.storage.data_dir = str(tmp_path / "ember")
-    # Default ``reload_plugins`` to a real count dict so the
-    # install/update/remove paths' f-string messages don't
+    # Default ``reload_plugins`` to a real :class:`PluginReloadCounts`
+    # so the install/update/remove paths' f-string messages don't
     # interpolate a MagicMock repr. Individual tests override this
     # when they want to assert on specific counts.
-    session.reload_plugins.return_value = {
-        "plugins": 0,
-        "skills": 0,
-        "agents": 0,
-        "hooks": 0,
-    }
+    session.reload_plugins.return_value = PluginReloadCounts(
+        plugins=0, skills=0, agents=0, hooks=0
+    )
 
     backend = BackendServer.__new__(BackendServer)
     backend._session = session
@@ -204,12 +202,9 @@ def test_install_plugin_url_delegates_to_installer(tmp_path: Path) -> None:
         # install confirmation's f-string is deterministic — the
         # session is a MagicMock and would otherwise return a
         # MagicMock for the subscripted access.
-        backend._session.reload_plugins.return_value = {
-            "plugins": 0,
-            "skills": 0,
-            "agents": 0,
-            "hooks": 0,
-        }
+        backend._session.reload_plugins.return_value = PluginReloadCounts(
+            plugins=0, skills=0, agents=0, hooks=0
+        )
         result = backend.install_plugin("https://x/y.git")
     # Bare-URL installs pass ``subdir=None`` since the plugin lives
     # at the clone root.
@@ -248,12 +243,9 @@ def test_install_plugin_marketplace_ref(tmp_path: Path) -> None:
             ),
             fake_entry,
         )
-        backend._session.reload_plugins.return_value = {
-            "plugins": 0,
-            "skills": 0,
-            "agents": 0,
-            "hooks": 0,
-        }
+        backend._session.reload_plugins.return_value = PluginReloadCounts(
+            plugins=0, skills=0, agents=0, hooks=0
+        )
         backend.install_plugin("@m/p")
     installer.install.assert_called_once_with(
         "https://resolved.git",
@@ -285,12 +277,9 @@ def test_install_plugin_explicit_ref_wins_over_catalog_branch(tmp_path: Path) ->
             ),
             fake_entry,
         )
-        backend._session.reload_plugins.return_value = {
-            "plugins": 0,
-            "skills": 0,
-            "agents": 0,
-            "hooks": 0,
-        }
+        backend._session.reload_plugins.return_value = PluginReloadCounts(
+            plugins=0, skills=0, agents=0, hooks=0
+        )
         backend.install_plugin("@m/p", install_ref="user-pin")
     # User-supplied ``install_ref`` overrides the resolver's ref —
     # see ``install_plugin``'s "honors explicit choice" branch.

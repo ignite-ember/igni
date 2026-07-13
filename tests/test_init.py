@@ -5,7 +5,16 @@ import stat
 from pathlib import Path
 from unittest.mock import patch
 
-from ember_code.core.init import BUILT_IN_HOOKS, initialize_project
+import pytest
+import yaml
+
+import ember_code.core.init as init_mod
+from ember_code.core.init import (
+    BUILT_IN_HOOKS,
+    BuiltInHookSpec,
+    HookDefinition,
+    initialize_project,
+)
 
 # All tests patch Path.home() so that ~/.ember/ writes go to tmp_path
 # instead of the real home directory.
@@ -83,8 +92,6 @@ class TestHomeModelMigration:
         ``default`` field, which named the now-deleted entry, is
         cleared so cloud discovery (or the resolver's first-in-
         registry fallback) picks something current."""
-        import yaml
-
         path = self._write_home_config(
             tmp_path,
             "models:\n"
@@ -110,8 +117,6 @@ class TestHomeModelMigration:
         recognised the same way (Ember Cloud URL + ``cloud_token``)
         and stripped — we never want a shadowed copy of a
         cloud-discovered entry sitting in home config."""
-        import yaml
-
         path = self._write_home_config(
             tmp_path,
             "models:\n"
@@ -154,8 +159,6 @@ class TestHomeModelMigration:
         """Home config with both a bundled cloud entry and a custom
         one: bundled is dropped, custom is kept, ``default`` stays
         because it pointed at the custom entry."""
-        import yaml
-
         path = self._write_home_config(
             tmp_path,
             "models:\n"
@@ -194,8 +197,6 @@ class TestHomeModelMigration:
 
 class TestAgentCopy:
     def test_copies_builtin_agents(self, tmp_path):
-        import ember_code.core.init as init_mod
-
         original = init_mod.PACKAGE_DIR
 
         fake_root = tmp_path / "fake_root"
@@ -220,8 +221,6 @@ class TestAgentCopy:
             init_mod.PACKAGE_DIR = original
 
     def test_does_not_overwrite_existing_agents(self, tmp_path):
-        import ember_code.core.init as init_mod
-
         original = init_mod.PACKAGE_DIR
 
         fake_root = tmp_path / "fake_root"
@@ -246,8 +245,6 @@ class TestAgentCopy:
 
 class TestSkillCopy:
     def test_copies_builtin_skills(self, tmp_path):
-        import ember_code.core.init as init_mod
-
         original = init_mod.PACKAGE_DIR
 
         fake_root = tmp_path / "fake_root"
@@ -273,8 +270,6 @@ class TestSkillCopy:
             init_mod.PACKAGE_DIR = original
 
     def test_ignores_non_skill_directories(self, tmp_path):
-        import ember_code.core.init as init_mod
-
         original = init_mod.PACKAGE_DIR
 
         fake_root = tmp_path / "fake_root"
@@ -300,7 +295,7 @@ class TestHookProvisioning:
             initialize_project(tmp_path)
         hooks_dir = tmp_path / ".ember" / "hooks"
         for hook in BUILT_IN_HOOKS:
-            script = hooks_dir / hook["filename"]
+            script = hooks_dir / hook.filename
             assert script.exists()
             assert script.stat().st_mode & stat.S_IXUSR  # executable
 
@@ -348,8 +343,6 @@ class TestChecksumUpdate:
     """Tests for checksum-based update of built-in agents/skills."""
 
     def _setup_fake_root(self, tmp_path, agent_content="v1 content"):
-        import ember_code.core.init as init_mod
-
         fake_root = tmp_path / "fake_root"
         (fake_root / "bundled_agents").mkdir(parents=True)
         (fake_root / "bundled_agents" / "editor.md").write_text(agent_content)
@@ -467,3 +460,66 @@ class TestChecksumUpdate:
             assert (project / ".ember" / ".checksums.json").exists()
         finally:
             init_mod.PACKAGE_DIR = original
+
+
+class TestBuiltInHookSchema:
+    """Post-refactor ``BUILT_IN_HOOKS`` is a tuple of Pydantic
+    :class:`BuiltInHookSpec` instances (Rule 1 — no raw dicts for
+    structured data). These tests lock in the model shape and the
+    wire-serialisation contract that ``_provision_hooks`` depends on.
+    """
+
+    def test_hooks_are_pydantic_specs(self):
+        assert isinstance(BUILT_IN_HOOKS, tuple)
+        assert BUILT_IN_HOOKS  # non-empty
+        for spec in BUILT_IN_HOOKS:
+            assert isinstance(spec, BuiltInHookSpec)
+            assert isinstance(spec.definition, HookDefinition)
+
+    def test_hook_spec_is_frozen(self):
+        # Immutability matters — the module-level tuple is imported
+        # widely and callers shouldn't be able to mutate one entry
+        # and silently poison every other importer.
+        spec = BUILT_IN_HOOKS[0]
+        with pytest.raises(Exception):
+            spec.filename = "hijacked.sh"  # type: ignore[misc]
+
+    def test_hook_definition_dumps_with_type_alias(self):
+        # The Python field is named ``kind`` to avoid shadowing the
+        # builtin, but the wire format (``settings.json``) expects
+        # ``type``. ``model_dump(by_alias=True)`` must restore the
+        # wire name — that's what ``_provision_hooks`` writes.
+        definition = HookDefinition(
+            type="command",
+            command=".ember/hooks/x.sh",
+            matcher="Bash",
+            timeout=15000,
+        )
+        dumped = definition.model_dump(by_alias=True)
+        assert dumped["type"] == "command"
+        assert dumped["command"] == ".ember/hooks/x.sh"
+        assert dumped["matcher"] == "Bash"
+        assert dumped["timeout"] == 15000
+        assert dumped["background"] is False
+
+    def test_hook_definition_background_defaults_false(self):
+        d = HookDefinition(type="command", command="x", matcher="Bash", timeout=1)
+        assert d.background is False
+
+    def test_hook_definition_background_true(self):
+        d = HookDefinition(
+            type="command", command="x", matcher="Bash", timeout=1, background=True
+        )
+        assert d.background is True
+
+    def test_registered_definition_uses_wire_type_field(self, tmp_path):
+        # End-to-end: after ``initialize_project`` the settings.json
+        # entry must round-trip with the wire alias applied (``type``
+        # present, ``kind`` absent).
+        with _patch_home(tmp_path):
+            initialize_project(tmp_path)
+        settings = json.loads((tmp_path / ".ember" / "settings.json").read_text())
+        for event_hooks in settings["hooks"].values():
+            for entry in event_hooks:
+                assert "type" in entry
+                assert "kind" not in entry

@@ -6,10 +6,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from ember_code.backend.command_handler import CommandHandler
 from ember_code.core.evals.assertions import check_file_assertion, check_unexpected_tool_calls
 from ember_code.core.evals.loader import EvalCase, EvalSuite, load_eval_file
 from ember_code.core.evals.reporter import format_results
-from ember_code.core.evals.runner import CaseResult, SuiteResult, run_eval_case
+from ember_code.core.evals.runner import (
+    CaseResult,
+    SuiteResult,
+    ToolTraceEntry,
+    _check_tool_arg_assertions,
+    run_eval_case,
+)
+from ember_code.core.session.commands import dispatch
 
 # ── Loader tests ──────────────────────────────────────────────
 
@@ -397,8 +405,6 @@ class TestFormatResults:
 class TestEvalsCommand:
     @pytest.mark.asyncio
     async def test_evals_dispatch(self):
-        from ember_code.core.session.commands import dispatch
-
         session = MagicMock()
         session.pool = MagicMock()
         session.settings = MagicMock()
@@ -416,8 +422,6 @@ class TestEvalsCommand:
 
     @pytest.mark.asyncio
     async def test_evals_with_agent_filter(self):
-        from ember_code.core.session.commands import dispatch
-
         session = MagicMock()
         session.pool = MagicMock()
         session.settings = MagicMock()
@@ -438,6 +442,87 @@ class TestEvalsCommand:
             )
 
     def test_evals_registered(self):
-        from ember_code.backend.command_handler import CommandHandler
-
         assert "/evals" in CommandHandler._COMMANDS
+
+
+class TestToolTraceEntry:
+    """Post-refactor ``CaseResult.tool_trace`` holds
+    :class:`ToolTraceEntry` (Pydantic) instead of raw ``dict``.
+    Locks in the model shape and the ``_check_tool_arg_assertions``
+    contract that now consumes it."""
+
+    def test_defaults(self):
+        entry = ToolTraceEntry(name="save_file")
+        assert entry.name == "save_file"
+        assert entry.args is None
+        assert entry.result_preview == ""
+        assert entry.error is False
+
+    def test_extra_fields_rejected(self):
+        # ``extra="forbid"`` — a stray field means Agno's schema
+        # drifted and we want it to fail loud, not silently ignored.
+        with pytest.raises(Exception):
+            ToolTraceEntry(name="x", unknown_field="value")  # type: ignore[call-arg]
+
+    def test_dump_matches_legacy_dict_shape(self):
+        # Previous shape: {"name","args","result_preview","error"} —
+        # ``model_dump()`` MUST produce that same shape so any
+        # downstream JSON-reporter integration doesn't see key drift.
+        entry = ToolTraceEntry(
+            name="save_file",
+            args={"path": "/tmp/x"},
+            result_preview="ok",
+            error=False,
+        )
+        assert entry.model_dump() == {
+            "name": "save_file",
+            "args": {"path": "/tmp/x"},
+            "result_preview": "ok",
+            "error": False,
+        }
+
+    def test_check_tool_arg_assertion_matches_pydantic_trace(self):
+        # End-to-end for the check function: pydantic trace + plain
+        # dict assertions → assertion matches when args contain the
+        # required key/value pair.
+        trace = [
+            ToolTraceEntry(name="spawn_team", args={"mode": "coordinate"}),
+            ToolTraceEntry(name="save_file", args={"path": "/tmp/x"}),
+        ]
+        passed, detail = _check_tool_arg_assertions(
+            trace,
+            [{"tool": "spawn_team", "args_must_contain": {"mode": "coordinate"}}],
+        )
+        assert passed is True
+        assert "all tool-arg assertions matched" in detail
+
+    def test_check_tool_arg_assertion_reports_missing(self):
+        # No matching call → clear failure message.
+        trace = [ToolTraceEntry(name="save_file", args={"path": "/tmp/x"})]
+        passed, detail = _check_tool_arg_assertions(
+            trace,
+            [{"tool": "spawn_team", "args_must_contain": {"mode": "coordinate"}}],
+        )
+        assert passed is False
+        assert "missing tool-arg matches" in detail
+        assert "spawn_team" in detail
+
+    def test_check_tool_arg_assertion_skips_missing_tool_field(self):
+        # Malformed assertion (no ``tool`` key) is silently skipped —
+        # matches the pre-refactor behaviour where such rows never
+        # matched anything.
+        trace = [ToolTraceEntry(name="save_file", args={})]
+        passed, detail = _check_tool_arg_assertions(
+            trace, [{"args_must_contain": {"x": 1}}]
+        )
+        assert passed is True
+
+    def test_check_tool_arg_assertion_handles_none_args(self):
+        # ``args=None`` (no args captured) must not crash the check.
+        trace = [ToolTraceEntry(name="save_file", args=None)]
+        passed, detail = _check_tool_arg_assertions(
+            trace, [{"tool": "save_file", "args_must_contain": {"path": "/x"}}]
+        )
+        # Should be a clean failure ("no match"), not an exception.
+        assert passed is False
+        assert "save_file" in detail

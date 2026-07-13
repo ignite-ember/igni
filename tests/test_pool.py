@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ember_code.core.pool import AgentDefinition, AgentPool, build_agent, parse_agent_file
+from ember_code.core.pool import AgentPriority
 
 
 class TestAgentParser:
@@ -77,6 +78,7 @@ class TestAgentParser:
         assert defn.can_orchestrate is True
         assert defn.mcp_servers == []
         assert defn.temperature is None
+        assert defn.max_tokens is None
 
     def test_parse_optional_fields(self, tmp_path):
         md = tmp_path / "full.md"
@@ -88,6 +90,7 @@ class TestAgentParser:
             "can_orchestrate: false\n"
             "max_turns: 5\n"
             "temperature: 0.7\n"
+            "max_tokens: 32000\n"
             "---\n"
             "Prompt body here.\n"
         )
@@ -96,6 +99,13 @@ class TestAgentParser:
         assert defn.can_orchestrate is False
         assert defn.max_turns == 5
         assert defn.temperature == 0.7
+        # Regression: without this wire-through, the visualizer
+        # sub-agent hit the provider default output cap (4-8k) and
+        # its tool_call arguments got truncated mid-stream ("JSON
+        # getting cut off" — the model retries in a single line and
+        # loses the same way). The frontmatter override is what
+        # gives it headroom.
+        assert defn.max_tokens == 32000
 
 
 class TestAgentPool:
@@ -265,8 +275,6 @@ class TestAgentResolutionOrder:
             pool.get_definition("claude-only")
 
     def test_priority_constants_are_ordered(self):
-        from ember_code.core.pool import AgentPriority
-
         assert AgentPriority.USER_CLAUDE < AgentPriority.USER_EMBER
         assert AgentPriority.USER_EMBER < AgentPriority.PROJECT_CLAUDE
         assert AgentPriority.PROJECT_CLAUDE < AgentPriority.PROJECT_LOCAL

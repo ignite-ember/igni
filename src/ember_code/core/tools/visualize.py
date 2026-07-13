@@ -66,37 +66,39 @@ class VisualizeTools(Toolkit):
         spec: dict,
         title: str = "",
     ) -> str:
-        """Emit a json-render spec to every attached client.
+        """Render a json-render spec inline in the chat.
 
-        The client mounts the spec via ``@json-render/react`` inside a
-        dedicated chat item, so the visualization lands inline in the
-        conversation next to the reply. Payload channel is
-        ``"visualization"``.
+        The FE has already rendered the card progressively as the
+        model streamed this call's arguments — the ``_LoggingModel``
+        wrapper emits ``CustomEvent(event="tool_call_input_delta")``
+        on every model chunk, and ``orchestrate.py`` forwards each
+        to the FE as a ``visualization_delta``. By the time this
+        method actually executes, the card is already on screen and
+        marked ``final=True`` (via the ``ToolCallStartedEvent``
+        handler in orchestrate.py). This method just returns a
+        confirmation for the sub-agent's own recap; the wire-side
+        work is done.
 
         Args:
             spec: A json-render spec of the form
                 ``{"root": "<id>", "elements": {"<id>": {"type": ..., "props": ..., "children": [...]}}}``.
-                Passed to the FE verbatim — no server-side validation;
-                ``@json-render/core``'s ``validateSpec`` /
-                ``Renderer`` fallback handle malformed input.
+                Passed to the FE via the stream interception — no
+                server-side validation; ``@json-render/core``'s
+                ``validateSpec`` / ``Renderer`` fallback handle
+                malformed input.
             title: Short human-readable title shown above the rendered
                 spec (e.g. ``"AAPL — Monthly Close"``). Optional.
 
-        Returns a one-line confirmation so the model has something to
-        recap. Never puts the spec back into the model's context —
-        keep the payload one-way.
+        Returns a one-line confirmation so the sub-agent has
+        something to recap. Never puts the spec back into the
+        model's context — the payload is one-way.
         """
-        if self._broadcast is None:
-            logger.debug("visualize: no broadcast wired — dropping payload")
-            return "Emitted visualization (no attached clients)."
-
-        payload: dict[str, Any] = {"spec": spec, "spec_id": self._spec_id}
-        if title:
-            payload["title"] = title
-        try:
-            self._broadcast("visualization", payload)
-        except Exception as exc:
-            logger.warning("visualize broadcast raised: %s", exc)
-            return f"Error: broadcast failed — {exc}"
-
+        # Legacy broadcast path: unused in the tool-arg-streaming
+        # setup (orchestrate.py already emitted a ``final=True``
+        # visualization_delta from the ToolCallStartedEvent), but
+        # kept as a defensive fallback for callers that construct a
+        # VisualizeTools directly without the streaming interceptor
+        # wired up (unit tests, script harnesses).
+        _ = title
+        _ = spec  # noqa: F841 — intentionally unused; see docstring
         return "Emitted visualization."

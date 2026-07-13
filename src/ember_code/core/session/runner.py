@@ -3,10 +3,13 @@
 import time
 from pathlib import Path
 
+from ember_code.backend.command_handler import CommandHandler
 from ember_code.core.config.settings import Settings
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.session.core import Session
-from ember_code.core.utils.display import print_response, print_run_stats
+from ember_code.core.utils.display import print_info, print_response, print_run_stats
+from ember_code.core.utils.media import resolve_file_references
+from ember_code.core.utils.mentions import process_file_mentions
 
 
 async def run_single_message(
@@ -32,12 +35,8 @@ async def run_single_message(
 
     # Slash commands — handle without sending to LLM
     if message.startswith("/"):
-        from ember_code.backend.command_handler import CommandHandler
-
         handler = CommandHandler(session)
         result = await handler.handle(message)
-        from ember_code.core.utils.display import print_info
-
         if result.content:
             print_info(result.content)
         await session.hook_executor.execute(
@@ -47,21 +46,13 @@ async def run_single_message(
         return
 
     # Process @file mentions — strip @ prefix and add read hint
-    from ember_code.core.utils.mentions import process_file_mentions
-
     message, mentioned_files = process_file_mentions(message)
     if mentioned_files:
-        from ember_code.core.utils.display import print_info as _print_info
-
-        _print_info(f"Referenced: {', '.join(mentioned_files)}")
+        print_info(f"Referenced: {', '.join(mentioned_files)}")
 
     # Resolve bare filenames to absolute paths
-    from ember_code.core.utils.media import resolve_file_references
-
     message, resolved_files = resolve_file_references(message, project_dir=session.project_dir)
     if resolved_files:
-        from ember_code.core.utils.display import print_info
-
         print_info(f"Resolved: {', '.join(resolved_files)}")
 
     start_time = time.monotonic()

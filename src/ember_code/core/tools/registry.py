@@ -5,9 +5,12 @@ from collections.abc import Callable
 from pathlib import Path
 
 from agno.tools.file import FileTools
+from agno.tools.python import PythonTools
 from agno.tools.shell import ShellTools
 
 from ember_code.core.config.tool_permissions import ToolPermissions
+from ember_code.core.tools.codeindex import CodeIndexTools
+from ember_code.core.tools.custom_loader import load_custom_tools as _load_custom_tools
 from ember_code.core.tools.edit import EmberEditTools
 from ember_code.core.tools.notebook import NotebookTools
 from ember_code.core.tools.schedule import ScheduleTools
@@ -218,8 +221,6 @@ class ToolRegistry:
         return ScheduleTools(project_dir=str(self.base_dir) if self.base_dir else None)
 
     def _make_python(self, confirm: bool = False):
-        from agno.tools.python import PythonTools
-
         kwargs: dict = dict(base_dir=str(self.base_dir))
         if confirm:
             kwargs["requires_confirmation_tools"] = ["run_python_code"]
@@ -236,8 +237,6 @@ class ToolRegistry:
         return NotebookTools(**kwargs)
 
     def _make_codeindex(self, confirm: bool = False):
-        from ember_code.core.tools.codeindex import CodeIndexTools
-
         kwargs: dict = dict(project_dir=str(self.base_dir))
         if confirm:
             kwargs["requires_confirmation_tools"] = [
@@ -269,9 +268,7 @@ class ToolRegistry:
         2. <project>/.ember/tools/ (project tools)
         3. Plugin tools (``plugin_tool_dirs``, namespaced ``custom_<plugin>_<file>``)
         """
-        from ember_code.core.tools.custom_loader import load_custom_tools as _load
-
-        return _load(
+        return _load_custom_tools(
             project_dir or self.base_dir,
             plugin_tool_dirs=plugin_tool_dirs,
         )

@@ -8,6 +8,7 @@ from ember_code.core.config.settings import Settings
 
 # Reuse the shared patching infrastructure from test_session
 from tests.test_session import _session_patches, _start_patches, _stop_patches
+from ember_code.core.session.core import Session
 
 
 class TestStopHookBlocking:
@@ -17,8 +18,6 @@ class TestStopHookBlocking:
     def session(self, tmp_path):
         patches = _session_patches()
         _start_patches(patches)
-
-        from ember_code.core.session.core import Session
 
         s = Session(Settings(), project_dir=tmp_path)
 

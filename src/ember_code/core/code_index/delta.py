@@ -45,7 +45,7 @@ from ember_code.core.code_index.schema.items import CodeIndexItem
 
 if TYPE_CHECKING:
     from ember_code.core.code_index.index import CodeIndex
-    from ember_code.core.code_index.pg.file_reference import FileReferenceService
+    from ember_code.core.code_index.db.file_reference import FileReferenceService
 
 logger = logging.getLogger(__name__)
 

@@ -1,4 +1,31 @@
-"""Custom tool loader — discovers @tool-decorated functions from .ember/tools/."""
+"""Custom tool loader — discovers @tool-decorated functions from .ember/tools/.
+
+Security model
+--------------
+This module executes arbitrary Python code found in the user's
+``~/.ember/tools/*.py`` and ``<project>/.ember/tools/*.py`` files
+via ``importlib.util.spec_from_file_location`` + ``exec_module``.
+There is intentionally NO sandboxing: the tool files come from
+directories the user themselves put code in, on the machine they
+run ember-code on. Treating them as untrusted would require full
+process isolation (subprocess + seccomp / gVisor / etc.), which is
+out of scope for a CLI developer tool.
+
+What we *do* guard against:
+
+* Only ``*.py`` files whose name does not start with ``_`` are
+  loaded — matches the CC / plugin-loader convention.
+* Files that raise on import are logged + skipped, not fatal.
+* Plugin-contributed tool dirs get a namespaced toolkit name
+  (``custom_<plugin>_<file>``) so a rogue plugin can't shadow the
+  user's own tools.
+
+What we do NOT guard against: a malicious tool file can do anything
+the calling user can do. This matches Claude Code, JetBrains
+Marketplace plugins, and every other extensible IDE — the trust
+boundary is the file-system permissions on those directories, not
+this loader.
+"""
 
 import importlib.util
 import logging

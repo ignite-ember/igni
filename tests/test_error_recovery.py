@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from ember_code.backend.server import BackendServer
+from ember_code.protocol import messages as msg
 from ember_code.protocol.messages import Error
 
 
@@ -17,8 +19,6 @@ class TestBackendRunMessageErrors:
     @pytest.mark.asyncio
     async def test_agno_exception_yields_error(self):
         """Agno runtime error should yield an Error protocol message."""
-        from ember_code.backend.server import BackendServer
-
         with patch("ember_code.backend.server.BackendServer.__init__", return_value=None):
             server = BackendServer.__new__(BackendServer)
             server._session = MagicMock()
@@ -59,8 +59,6 @@ class TestBackendRunMessageErrors:
     @pytest.mark.asyncio
     async def test_hook_blocks_message(self):
         """UserPromptSubmit hook blocking should yield error, not crash."""
-        from ember_code.backend.server import BackendServer
-
         with patch("ember_code.backend.server.BackendServer.__init__", return_value=None):
             server = BackendServer.__new__(BackendServer)
             server._session = MagicMock()
@@ -97,8 +95,6 @@ class TestBackendCancelRun:
 
     def test_cancel_run_no_crash_when_no_team(self):
         """cancel_run should not crash even if no team/run active."""
-        from ember_code.backend.server import BackendServer
-
         with patch("ember_code.backend.server.BackendServer.__init__", return_value=None):
             server = BackendServer.__new__(BackendServer)
             server._session = MagicMock()
@@ -127,8 +123,6 @@ class TestToolExceptionRecovery:
         event.run_id = "run-1"
 
         # Check if isinstance would match (it won't with our mock, so test serializer directly)
-        from ember_code.protocol import messages as msg
-
         error_msg = msg.ToolError(error="File not found", run_id="run-1")
         assert error_msg.type == "tool_error"
         assert error_msg.error == "File not found"

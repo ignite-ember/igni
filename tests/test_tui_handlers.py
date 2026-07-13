@@ -1,11 +1,16 @@
 """Tests for TUI handler classes: InputHandler, CommandHandler, RunController queue, QueueInjectorHook."""
 
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from ember_code.backend.command_handler import CommandHandler, CommandResult
+from ember_code.core.queue_hook import (
+    QueueInjectorHook,
+    QueuePersisterHook,
+    create_queue_hook,
+)
 from ember_code.frontend.tui.format_helpers import format_tool_args
 from ember_code.frontend.tui.input_handler import (
     SHORTCUT_HELP,
@@ -15,6 +20,7 @@ from ember_code.frontend.tui.input_handler import (
     process_file_mentions,
     shortcut_label,
 )
+from ember_code.frontend.tui.run_controller import RunController
 
 # ── format_tool_args ─────────────────────────────────────────────
 
@@ -392,8 +398,6 @@ class TestCommandHandler:
 
     @pytest.mark.asyncio
     async def test_memory_list_with_learnings(self, mock_session):
-        from unittest.mock import AsyncMock
-
         profile = MagicMock()
         profile.name = "Dmytro"
         profile.preferred_name = "Dmytro"
@@ -463,8 +467,6 @@ class TestRunControllerQueue:
     """Tests for the message queue in RunController."""
 
     def _make_controller(self):
-        from ember_code.frontend.tui.run_controller import RunController
-
         ctrl = RunController.__new__(RunController)
         ctrl._queue = []
         ctrl._processing = False
@@ -528,8 +530,6 @@ class TestQueueInjectorHook:
     """Tests for the tool hook that injects queued messages mid-run."""
 
     def _make_hook(self, queue=None, on_inject=None, on_queue_changed=None):
-        from ember_code.core.queue_hook import QueueInjectorHook
-
         return QueueInjectorHook(
             queue=queue if queue is not None else [],
             on_inject=on_inject,
@@ -600,12 +600,6 @@ class TestQueueInjectorHook:
         hook.reset()
 
     def test_create_queue_hook_factory(self):
-        from ember_code.core.queue_hook import (
-            QueueInjectorHook,
-            QueuePersisterHook,
-            create_queue_hook,
-        )
-
         queue = []
         injector, persister = create_queue_hook(queue)
         assert isinstance(injector, QueueInjectorHook)

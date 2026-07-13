@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ember_code.backend.__main__ import _build_rpc_table
 from ember_code.backend.server import BackendServer
 from ember_code.core.tools.todo import (
     TodoItem,
@@ -22,6 +23,7 @@ from ember_code.core.tools.todo import (
     TodoTools,
     _coerce_items,
 )
+from ember_code.protocol.rpc import RpcMethod
 
 # ── Pure data layer ───────────────────────────────────────────
 
@@ -212,9 +214,6 @@ class TestGetTodosRpc:
 
     @pytest.mark.asyncio
     async def test_dispatch_table_routes_get_todos(self):
-        from ember_code.backend.__main__ import _build_rpc_table
-        from ember_code.protocol.rpc import RpcMethod
-
         session = MagicMock()
         session.todo_store = TodoStore()
         session.todo_store.set([TodoItem("planned", "pending")])

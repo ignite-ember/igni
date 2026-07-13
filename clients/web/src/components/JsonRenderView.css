@@ -265,18 +265,37 @@
   stroke-linecap: round;
 }
 .jr-linechart-dot { fill: var(--ember-orange); }
-.jr-linechart-grid, .jr-barchart-grid {
+.jr-linechart-grid, .jr-barchart-grid, .jr-candlestick-grid {
   stroke: var(--border-soft);
   stroke-width: 1;
 }
-.jr-linechart-ytick, .jr-barchart-ytick,
-.jr-linechart-xtick, .jr-barchart-xtick {
+.jr-linechart-ytick, .jr-barchart-ytick, .jr-candlestick-ytick,
+.jr-linechart-xtick, .jr-barchart-xtick, .jr-candlestick-xtick {
   font-size: 10px;
   fill: var(--fg-muted);
   font-family: var(--font-mono);
 }
-.jr-linechart-ytick, .jr-barchart-ytick { text-anchor: end; }
+.jr-linechart-ytick, .jr-barchart-ytick, .jr-candlestick-ytick { text-anchor: end; }
 .jr-barchart-bar { fill: var(--ember-orange); }
+.jr-candlestick {
+  width: 100%;
+  height: 260px;
+}
+
+.viz-render-error {
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: var(--radius-sm);
+  color: var(--danger);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+.viz-render-error code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg);
+}
 
 .jr-chart-axes {
   display: flex;

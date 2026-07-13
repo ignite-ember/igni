@@ -3,10 +3,24 @@
 Covers everything that can be unit tested without a real TUI or external services.
 """
 
+import contextlib
+import subprocess
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from ember_code.backend.command_handler import CommandHandler
+from ember_code.backend.server import BackendServer
+from ember_code.core.config.settings import Settings, load_settings
+from ember_code.core.init import initialize_project
+from ember_code.core.pool import AgentDefinition, AgentPool
+from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
+from ember_code.core.scheduler.store import TaskStore
+from ember_code.core.utils.context import load_project_context
+from ember_code.core.utils.media import attach_resolved_files, resolve_file_references
+from ember_code.core.worktree import WorktreeManager
+from ember_code.frontend.tui.input_handler import InputHandler
 
 # ── P0: Config loading gaps ──────────────────────────────────────
 
@@ -15,8 +29,6 @@ class TestConfigLocalYaml:
     """Test .ember/config.local.yaml loading."""
 
     def test_local_config_overrides_project(self, tmp_path):
-        from ember_code.core.config.settings import load_settings
-
         # Create project config
         ember_dir = tmp_path / ".ember"
         ember_dir.mkdir()
@@ -35,8 +47,6 @@ class TestUserRulesMd:
     """Test ~/.ember/rules.md loading."""
 
     def test_user_rules_loaded(self, tmp_path):
-        from ember_code.core.utils.context import load_project_context
-
         # Create user rules
         home_ember = tmp_path / ".ember"
         home_ember.mkdir(parents=True)
@@ -57,8 +67,6 @@ class TestMCPCrashRecovery:
 
     @pytest.mark.asyncio
     async def test_mcp_disconnect_error_handled(self):
-        from ember_code.backend.server import BackendServer
-
         with patch("ember_code.backend.server.BackendServer.__init__", return_value=None):
             server = BackendServer.__new__(BackendServer)
             server._session = MagicMock()
@@ -68,8 +76,6 @@ class TestMCPCrashRecovery:
             server._session.rebuild_mcp = MagicMock()
 
             # Should not raise — error handled gracefully
-            import contextlib
-
             with contextlib.suppress(RuntimeError):
                 await server.mcp_disconnect("crashed-server")
 
@@ -81,8 +87,6 @@ class TestAgentModelOverride:
     """Agent with model: field should use that model."""
 
     def test_agent_definition_parses_model(self):
-        from ember_code.core.pool import AgentDefinition
-
         defn = AgentDefinition(
             name="test",
             description="test agent",
@@ -92,8 +96,6 @@ class TestAgentModelOverride:
         assert defn.model == "gpt-4"
 
     def test_agent_definition_default_model(self):
-        from ember_code.core.pool import AgentDefinition
-
         defn = AgentDefinition(
             name="test",
             description="test agent",
@@ -109,21 +111,15 @@ class TestOrchestrationLimits:
     """Max agents and timeout should be enforced."""
 
     def test_max_total_agents_in_settings(self):
-        from ember_code.core.config.settings import Settings
-
         settings = Settings()
         assert settings.orchestration.max_total_agents > 0
         assert settings.orchestration.max_total_agents == 20  # default
 
     def test_max_nesting_depth_in_settings(self):
-        from ember_code.core.config.settings import Settings
-
         settings = Settings()
         assert settings.orchestration.max_nesting_depth > 0
 
     def test_sub_team_timeout_in_settings(self):
-        from ember_code.core.config.settings import Settings
-
         settings = Settings()
         assert hasattr(settings.orchestration, "sub_team_timeout")
 
@@ -138,8 +134,6 @@ class TestAgentsCommand:
         was replaced by the panel. Agent data flows through the
         ``get_agent_details`` RPC + ``AgentsPanelWidget``, not the
         slash result's ``content`` field."""
-        from ember_code.backend.command_handler import CommandHandler
-
         session = MagicMock()
         session.pool.list_agents.return_value = []
         session.pool.list_ephemeral.return_value = []
@@ -158,8 +152,6 @@ class TestFileResolutionAndAttachment:
     """File references are resolved to paths; vision models get attachments."""
 
     def test_resolve_bare_filename(self, tmp_path):
-        from ember_code.core.utils.media import resolve_file_references
-
         img = tmp_path / "photo.png"
         img.write_bytes(b"\x89PNG")
         text, resolved = resolve_file_references("analyze photo.png", project_dir=tmp_path)
@@ -167,15 +159,11 @@ class TestFileResolutionAndAttachment:
         assert str(tmp_path / "photo.png") in text
 
     def test_no_media_in_plain_text(self):
-        from ember_code.core.utils.media import resolve_file_references
-
         text, resolved = resolve_file_references("just a normal message")
         assert resolved == []
         assert text == "just a normal message"
 
     def test_attach_resolved_files_image(self, tmp_path):
-        from ember_code.core.utils.media import attach_resolved_files
-
         img = tmp_path / "photo.jpg"
         img.write_bytes(b"\xff\xd8")
         result = attach_resolved_files([str(img)])
@@ -184,8 +172,6 @@ class TestFileResolutionAndAttachment:
         assert len(result["images"]) == 1
 
     def test_attach_resolved_files_pdf(self, tmp_path):
-        from ember_code.core.utils.media import attach_resolved_files
-
         pdf = tmp_path / "doc.pdf"
         pdf.write_bytes(b"%PDF")
         result = attach_resolved_files([str(pdf)])
@@ -193,8 +179,6 @@ class TestFileResolutionAndAttachment:
         assert "files" in result
 
     def test_attach_resolved_files_non_media(self):
-        from ember_code.core.utils.media import attach_resolved_files
-
         result = attach_resolved_files(["/some/path/script.py"])
         assert result is None
 
@@ -207,9 +191,6 @@ class TestScheduleShowCancel:
 
     @pytest.mark.asyncio
     async def test_schedule_show_existing(self, tmp_path):
-        from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
-        from ember_code.core.scheduler.store import TaskStore
-
         store = TaskStore(db_path=tmp_path / "state.db")
         task = ScheduledTask(
             id="t1",
@@ -225,9 +206,6 @@ class TestScheduleShowCancel:
 
     @pytest.mark.asyncio
     async def test_schedule_cancel(self, tmp_path):
-        from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
-        from ember_code.core.scheduler.store import TaskStore
-
         store = TaskStore(db_path=tmp_path / "state.db")
         task = ScheduledTask(
             id="t2",
@@ -243,8 +221,6 @@ class TestScheduleShowCancel:
 
     @pytest.mark.asyncio
     async def test_schedule_show_nonexistent(self, tmp_path):
-        from ember_code.core.scheduler.store import TaskStore
-
         store = TaskStore(db_path=tmp_path / "state.db")
         result = await store.get("nonexistent_zzzz")
         assert result is None
@@ -255,8 +231,6 @@ class TestScheduleShowCancel:
 
 class TestMaxEphemeralLimit:
     def test_register_respects_limit(self, tmp_path):
-        from ember_code.core.pool import AgentPool
-
         pool = AgentPool()
         pool.init_ephemeral(tmp_path)
 
@@ -278,8 +252,6 @@ class TestMaxEphemeralLimit:
 class TestWorktreeIntegration:
     def test_worktree_manager_creates(self, tmp_path):
         """Worktree creation should work in a git repo."""
-        import subprocess
-
         # Init a git repo
         subprocess.run(["git", "init", str(tmp_path)], capture_output=True)
         subprocess.run(
@@ -295,8 +267,6 @@ class TestWorktreeIntegration:
             },
         )
 
-        from ember_code.core.worktree import WorktreeManager
-
         wm = WorktreeManager(tmp_path)
         info = wm.create()
         assert info.worktree_path.exists()
@@ -309,8 +279,6 @@ class TestWorktreeIntegration:
 class TestBugCommand:
     @pytest.mark.asyncio
     async def test_bug_opens_browser(self):
-        from ember_code.backend.command_handler import CommandHandler
-
         session = MagicMock()
         session.skill_pool.match_user_command.return_value = None
 
@@ -328,8 +296,6 @@ class TestBugCommand:
 class TestHelpContent:
     @pytest.mark.asyncio
     async def test_help_mentions_skills(self):
-        from ember_code.backend.command_handler import CommandHandler
-
         session = MagicMock()
         session.skill_pool.list_skills.return_value = [
             MagicMock(name="commit", description="Create commit", argument_hint="message"),
@@ -344,8 +310,6 @@ class TestHelpContent:
 
     @pytest.mark.asyncio
     async def test_help_topic_schedule(self):
-        from ember_code.backend.command_handler import CommandHandler
-
         session = MagicMock()
         session.skill_pool.match_user_command.return_value = None
 
@@ -360,8 +324,6 @@ class TestHelpContent:
 class TestCommandAutocomplete:
     def test_known_commands_list(self):
         """CommandHandler should have a dispatch table of known commands."""
-        from ember_code.backend.command_handler import CommandHandler
-
         # The _COMMANDS dict should have all slash commands
         assert hasattr(CommandHandler, "_COMMANDS")
         commands = CommandHandler._COMMANDS
@@ -377,8 +339,6 @@ class TestCommandAutocomplete:
         assert "/quit" in commands
 
     def test_input_handler_instantiates(self):
-        from ember_code.frontend.tui.input_handler import InputHandler
-
         handler = InputHandler(skill_pool=MagicMock())
         # Should instantiate without error
         assert handler is not None
@@ -389,8 +349,6 @@ class TestCommandAutocomplete:
 
 class TestInitializationTracking:
     def test_home_and_project_markers_independent(self, tmp_path):
-        from ember_code.core.init import initialize_project
-
         home = tmp_path / "home"
         home_ember = home / ".ember"
         home_ember.mkdir(parents=True)

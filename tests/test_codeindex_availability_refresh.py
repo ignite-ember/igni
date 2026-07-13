@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from ember_code.core.config.settings import Settings
+from ember_code.core.pool import AgentDefinition, AgentPool, AgentPriority
 from ember_code.core.session.core import Session
 
 
@@ -179,8 +181,6 @@ class TestRefreshActuallySwitchesPromptVariants:
         path.write_text(f"---\nname: {name}\ndescription: {name}\n---\n{body}\n")
 
     def test_refresh_switches_prompt_to_codeindex_variant(self, tmp_path, monkeypatch):
-        from ember_code.core.pool import AgentPool
-
         project = tmp_path / "proj"
         # Two variants of the same agent — only one is loaded at a
         # time, picked by ``codeindex_available``.
@@ -194,8 +194,6 @@ class TestRefreshActuallySwitchesPromptVariants:
             "explorer",
             "CODEINDEX-VARIANT: codeindex_query and codeindex_tree are available.",
         )
-
-        from ember_code.core.config.settings import Settings
 
         settings = Settings()
 
@@ -243,9 +241,6 @@ class TestRefreshActuallySwitchesPromptVariants:
         clears base-priority entries to force prompt-variant
         re-picking, but ephemerals are higher-priority and live
         outside the ``.ember/agents/`` reload path."""
-        from ember_code.core.config.settings import Settings
-        from ember_code.core.pool import AgentDefinition, AgentPool, AgentPriority
-
         project = tmp_path / "proj"
         self._write_agent(project / ".ember" / "agents" / "explorer.md", "explorer", "plain")
 

@@ -21,9 +21,15 @@ All skip cleanly when ``EMBER_TEST_LLM_API_KEY`` is unset.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 
+import httpx
 import pytest
+from agno.agent import Agent
+from agno.exceptions import RunCancelledException
+from agno.run.cancel import acancel_run
+from agno.team.team import Team
 
 # Suite-wide skip — every test here needs a live LLM. Cleaner than
 # decorating each test individually.
@@ -51,15 +57,11 @@ class TestMultiIterationRun:
 
     @pytest.mark.asyncio
     async def test_chained_tool_calls_in_one_run(self):
-        from agno.agent import Agent
-
         # Track every tool firing through a tool_hook so we can assert order
         # and frequency without relying on Agno internals.
         call_log: list[str] = []
 
         async def hook(name: str = "", func=None, args=None, **_kwargs):
-            import inspect
-
             call_log.append(name)
             if func is None:
                 return None
@@ -144,9 +146,6 @@ class TestBroadcastTeam:
         each member's RunOutput. The leader's synthesized text isn't
         reliable (it paraphrases), so we look at the structural record.
         """
-        from agno.agent import Agent
-        from agno.team.team import Team
-
         security = Agent(
             name="security_expert",
             model=_model(),
@@ -208,10 +207,6 @@ class TestStreamingCancellation:
 
     @pytest.mark.asyncio
     async def test_cancel_midstream_cleans_up(self):
-        from agno.agent import Agent
-        from agno.exceptions import RunCancelledException
-        from agno.run.cancel import acancel_run
-
         agent = Agent(
             model=_model(),
             instructions=(
@@ -295,8 +290,6 @@ class TestStreamingCancellation:
         # 6. The model's httpx client closes cleanly even though the body
         #    was half-read at cancel time. This is the leak path that
         #    motivated ``_close_model_http_client`` in the backend.
-        import httpx
-
         client = getattr(agent.model, "http_client", None)
         if isinstance(client, httpx.AsyncClient):
             await asyncio.wait_for(client.aclose(), timeout=3.0)
@@ -311,10 +304,6 @@ class TestStreamingCancellation:
         unflushed HTTP body. Catch that regression by capping wall-clock
         time from cancel-fired to iterator-exit.
         """
-        from agno.agent import Agent
-        from agno.exceptions import RunCancelledException
-        from agno.run.cancel import acancel_run
-
         agent = Agent(
             model=_model(),
             instructions=(

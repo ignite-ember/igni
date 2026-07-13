@@ -24,7 +24,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ember_code.backend.command_handler import CommandHandler
+from ember_code.frontend.tui.backend_client import BackendClient
 from ember_code.protocol import messages as msg
+from ember_code.protocol.messages import CommandAction
 
 
 class TestPickerPathAwaitsRPC:
@@ -37,8 +40,6 @@ class TestPickerPathAwaitsRPC:
     async def test_switch_model_awaits_backend(self):
         """A test double records the send order — the switch RPC
         must resolve BEFORE the function returns."""
-        from ember_code.frontend.tui.backend_client import BackendClient
-
         client = BackendClient.__new__(BackendClient)
         events: list[str] = []
 
@@ -69,10 +70,6 @@ class TestSlashCommandTriggersRefresh:
     async def test_direct_switch_sets_model_switched_action(self):
         """Drive the command handler directly with a known model
         name and assert the result action."""
-        from unittest.mock import MagicMock
-
-        from ember_code.backend.command_handler import CommandHandler
-
         handler = CommandHandler.__new__(CommandHandler)
         session = MagicMock()
         session.settings.models.registry = {"MiniMax-M2.7": {}}
@@ -81,8 +78,6 @@ class TestSlashCommandTriggersRefresh:
         handler._session = session
 
         result = await handler._cmd_model("MiniMax-M2.7")
-
-        from ember_code.protocol.messages import CommandAction
 
         assert result.action == CommandAction.MODEL_SWITCHED
         assert "MiniMax-M2.7" in result.content
@@ -96,16 +91,12 @@ class TestSlashCommandTriggersRefresh:
         """Negative case: ``/model <bogus>`` returns an error and
         no ``model_switched`` action — the FE must not refresh
         the bar against a model that didn't actually swap."""
-        from ember_code.backend.command_handler import CommandHandler
-
         handler = CommandHandler.__new__(CommandHandler)
         session = MagicMock()
         session.settings.models.registry = {"MiniMax-M2.7": {}}
         handler._session = session
 
         result = await handler._cmd_model("does-not-exist")
-
-        from ember_code.protocol.messages import CommandAction
 
         assert result.kind == "error"
         assert result.action != CommandAction.MODEL_SWITCHED

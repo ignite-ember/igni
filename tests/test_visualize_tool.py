@@ -1,21 +1,23 @@
-"""Tests for ``VisualizeTools`` — the json-render one-way emitter.
+"""Tests for ``VisualizeTools`` — the visualizer sub-agent's
+render tool.
+
+Note on architecture: the tool's ``visualize`` method itself is a
+near-no-op. The visualization payload has ALREADY been streamed to
+the FE by the time this method runs — see
+``_LoggingModel.process_response_stream`` +
+``orchestrate.py``'s ``CustomEvent`` handler for the pipeline that
+turns each streaming tool_call arg fragment into a
+``visualization_delta`` event, and the ``ToolCallStartedEvent``
+branch that emits the final ``final=True`` delta once args are
+complete. This tool exists so the sub-agent has an actual tool to
+CALL (the whole point of switching from content-stream to tool
+call), and so ``VisualizeTools`` shows up in ``ToolRegistry``.
 
 Covers:
-- ``VisualizeTools.visualize`` broadcasts on the ``visualization``
-  channel with the correct payload shape, including a stable
-  ``spec_id`` for FE-side dedup.
-- ``VisualizeTools.visualize`` no-ops (doesn't raise) when no
-  broadcast is wired — headless / test contexts stay quiet.
-- Multiple calls in one instance share the ``spec_id`` — that's the
-  on-ramp for streaming: the FE updates one card in place.
-- The ``Visualize`` tool is discoverable via ``ToolRegistry`` and
-  correctly forwards the registry's ``broadcast`` into the toolkit.
-- End-to-end AAPL demo: a real spec broadcasts as expected.
-
-Note: no server-side validation tests here — validation is intentionally
-delegated to ``@json-render/core``'s ``validateSpec`` / ``Renderer``
-fallback on the client. Reimplementing schema validation in Python
-would drift from the library.
+- Tool is discoverable via ``ToolRegistry`` under the ``Visualize`` name.
+- ``visualize()`` returns a friendly confirmation string for any spec
+  shape; no exceptions on unusual input.
+- Registry wiring is idempotent (no per-broadcast state to leak).
 """
 
 from __future__ import annotations
@@ -27,14 +29,13 @@ from ember_code.core.tools.registry import ToolRegistry
 from ember_code.core.tools.visualize import VisualizeTools
 
 
-# ── Broadcast contract ────────────────────────────────────────────
-
-
 class TestVisualizeTool:
     @pytest.mark.asyncio
-    async def test_valid_spec_broadcasts_on_visualization_channel(self):
-        pushes: list[tuple[str, dict]] = []
-        tool = VisualizeTools(broadcast=lambda ch, payload: pushes.append((ch, payload)))
+    async def test_returns_confirmation_string(self):
+        # The tool's runtime job is to give the model something to
+        # recap; the wire-side rendering is already done by the
+        # ``CustomEvent`` interceptor.
+        tool = VisualizeTools()
         spec = {
             "root": "r",
             "elements": {
@@ -43,72 +44,34 @@ class TestVisualizeTool:
         }
         result = await tool.visualize(spec, title="Hi")
         assert "Emitted visualization" in result
-        assert len(pushes) == 1
-        channel, payload = pushes[0]
-        assert channel == "visualization"
-        assert payload["title"] == "Hi"
-        assert payload["spec"] == spec
-        assert isinstance(payload["spec_id"], str) and payload["spec_id"]
 
     @pytest.mark.asyncio
-    async def test_repeated_calls_share_spec_id(self):
-        # Streaming path: multiple calls per sub-agent run must land
-        # on the same FE card. The toolkit's per-instance spec_id
-        # guarantees that — the FE dedups on it.
-        pushes: list[tuple[str, dict]] = []
-        tool = VisualizeTools(broadcast=lambda ch, payload: pushes.append((ch, payload)))
-        spec1 = {"root": "r", "elements": {"r": {"type": "Text", "props": {}}}}
-        spec2 = {"root": "r", "elements": {"r": {"type": "Card", "props": {}}}}
-        await tool.visualize(spec1)
-        await tool.visualize(spec2, title="second")
-        assert len(pushes) == 2
-        assert pushes[0][1]["spec_id"] == pushes[1][1]["spec_id"]
-
-    @pytest.mark.asyncio
-    async def test_distinct_instances_get_distinct_spec_ids(self):
-        # Fresh toolkit = fresh spec_id, so two visualizer sub-agent
-        # runs in the same session don't collide on the FE.
-        t1 = VisualizeTools(broadcast=lambda _c, _p: None)
-        t2 = VisualizeTools(broadcast=lambda _c, _p: None)
-        pushes: list[tuple[str, dict]] = []
-        t1._broadcast = lambda c, p: pushes.append((c, p))  # noqa: SLF001
-        t2._broadcast = lambda c, p: pushes.append((c, p))  # noqa: SLF001
+    async def test_handles_empty_title(self):
+        tool = VisualizeTools()
         spec = {"root": "r", "elements": {"r": {"type": "Text", "props": {}}}}
-        await t1.visualize(spec)
-        await t2.visualize(spec)
-        assert pushes[0][1]["spec_id"] != pushes[1][1]["spec_id"]
+        # Empty title should not raise; the FE renders without a
+        # heading in that case.
+        result = await tool.visualize(spec, title="")
+        assert "Emitted visualization" in result
 
     @pytest.mark.asyncio
-    async def test_no_broadcast_returns_friendly_message(self):
-        # Headless / tests / disconnected clients: no broadcast wired.
-        # Must NOT raise — the tool degrades to a no-op with a message
-        # so the model doesn't loop retrying.
+    async def test_handles_minimal_spec(self):
+        # A degenerate spec (just root + one leaf) still parses at
+        # the tool level. Any deeper validation lives on the FE via
+        # ``@json-render/core`` — we don't reinvent it here.
+        tool = VisualizeTools()
+        result = await tool.visualize({"root": "r", "elements": {"r": {"type": "Text", "props": {}}}})
+        assert "Emitted visualization" in result
+
+    @pytest.mark.asyncio
+    async def test_no_broadcast_is_no_op(self):
+        # The legacy broadcast wire is now unused (the streaming
+        # interceptor does the delivery). Constructing with
+        # ``broadcast=None`` must still succeed and be silent —
+        # older callers might still pass one.
         tool = VisualizeTools(broadcast=None)
-        spec = {"root": "r", "elements": {"r": {"type": "Text", "props": {}}}}
-        result = await tool.visualize(spec)
-        assert "no attached clients" in result.lower()
-
-    @pytest.mark.asyncio
-    async def test_broadcast_omits_empty_title(self):
-        pushes: list[tuple[str, dict]] = []
-        tool = VisualizeTools(broadcast=lambda ch, payload: pushes.append((ch, payload)))
-        spec = {"root": "r", "elements": {"r": {"type": "Text", "props": {}}}}
-        await tool.visualize(spec, title="")
-        assert "title" not in pushes[0][1]
-
-    @pytest.mark.asyncio
-    async def test_broadcast_failure_surfaces_as_error(self):
-        def boom(_ch, _payload):
-            raise RuntimeError("kaboom")
-
-        tool = VisualizeTools(broadcast=boom)
-        spec = {"root": "r", "elements": {"r": {"type": "Text", "props": {}}}}
-        result = await tool.visualize(spec)
-        assert result.startswith("Error:")
-        assert "kaboom" in result
-
-
-# ── Registry integration ──────────────────────────────────────────
+        result = await tool.visualize({"root": "r", "elements": {"r": {"type": "Text", "props": {}}}})
+        assert "Emitted visualization" in result
 
 
 class TestRegistryWiring:
@@ -129,76 +92,17 @@ class TestRegistryWiring:
         assert isinstance(tools[0], VisualizeTools)
 
     @pytest.mark.asyncio
-    async def test_registry_threaded_broadcast_reaches_tool(self):
-        pushes: list[tuple[str, dict]] = []
-
-        def bcast(ch, payload):
-            pushes.append((ch, payload))
-
+    async def test_registry_wired_tool_still_executes(self):
+        # Broadcast-wired vs unwired: both must run to completion.
+        # This is a smoke test for the registry integration path,
+        # not the delivery mechanism (which is elsewhere).
         reg = ToolRegistry(
             base_dir="/tmp",
             permissions=ToolPermissions(project_dir=None),
-            broadcast=bcast,
+            broadcast=lambda _c, _p: None,
         )
         (tool,) = reg.resolve(["Visualize"])
-        spec = {"root": "r", "elements": {"r": {"type": "Text", "props": {}}}}
-        await tool.visualize(spec)
-        assert len(pushes) == 1
-        assert pushes[0][0] == "visualization"
-
-
-# ── End-to-end demo ───────────────────────────────────────────────
-
-
-class TestAAPLDemo:
-    """The canonical Apple stock demo — the same spec the
-    visualizer.md example shows. Kept as a test so a schema drift
-    breaks CI, not the demo in prod."""
-
-    AAPL_2023_MONTHLY = [
-        {"x": "Jan", "y": 143.00},
-        {"x": "Feb", "y": 147.41},
-        {"x": "Mar", "y": 164.90},
-        {"x": "Apr", "y": 169.68},
-        {"x": "May", "y": 177.25},
-        {"x": "Jun", "y": 193.97},
-        {"x": "Jul", "y": 196.45},
-        {"x": "Aug", "y": 187.87},
-        {"x": "Sep", "y": 171.21},
-        {"x": "Oct", "y": 170.77},
-        {"x": "Nov", "y": 189.95},
-        {"x": "Dec", "y": 192.53},
-    ]
-
-    def _spec(self):
-        return {
-            "root": "root",
-            "elements": {
-                "root": {
-                    "type": "Card",
-                    "props": {"title": "AAPL — Monthly Close", "subtitle": "2023"},
-                    "children": ["chart"],
-                },
-                "chart": {
-                    "type": "LineGraph",
-                    "props": {
-                        "yPrefix": "$",
-                        "xLabel": "Month",
-                        "yLabel": "Close",
-                        "data": self.AAPL_2023_MONTHLY,
-                    },
-                    "children": [],
-                },
-            },
-        }
-
-    @pytest.mark.asyncio
-    async def test_aapl_spec_broadcasts_end_to_end(self):
-        pushes: list[tuple[str, dict]] = []
-        tool = VisualizeTools(broadcast=lambda c, p: pushes.append((c, p)))
-        result = await tool.visualize(self._spec(), title="AAPL 2023")
+        result = await tool.visualize(
+            {"root": "r", "elements": {"r": {"type": "Text", "props": {}}}}
+        )
         assert "Emitted visualization" in result
-        assert pushes and pushes[0][0] == "visualization"
-        payload = pushes[0][1]
-        assert payload["title"] == "AAPL 2023"
-        assert len(payload["spec"]["elements"]["chart"]["props"]["data"]) == 12

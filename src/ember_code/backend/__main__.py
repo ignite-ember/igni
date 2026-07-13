@@ -10,15 +10,96 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import gc
+import json
 import logging
 import os
+import re
 import signal
+import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
 import click
 
+from ember_code.backend.lockfile import Lockfile
+from ember_code.core.session.client_state import ClientStateStore
+from ember_code.core.session.session_directories import SessionDirectoryStore
+from ember_code.core.utils.file_index import FileIndex
+from ember_code.core.utils.update_checker import _PKG_NAME, check_for_update
+from ember_code.protocol import messages as msg
+from ember_code.protocol.messages import Message
+from ember_code.protocol.rpc import RpcMethod, validate_rpc_table
+from pydantic import BaseModel
+
 logger = logging.getLogger(__name__)
+
+
+class DirListResult(BaseModel):
+    """Wire shape for :func:`_list_dirs` — GUI folder browser."""
+
+    path: str
+    parent: str
+    dirs: list[str]
+    home: str
+    error: str
+
+
+class PickDirResult(BaseModel):
+    """Wire shape for :func:`_pick_dir_native` — OS folder picker."""
+
+    path: str
+    cancelled: bool
+    error: str
+
+
+class RunShellResult(BaseModel):
+    """Wire shape for :func:`_run_shell` — ``$``-prefix shell mode."""
+
+    output: str
+    exit_code: int
+
+
+class UpdateAvailable(BaseModel):
+    """Wire shape for :func:`_check_update` — package updater
+    notice. ``None`` when no update is available (return type is
+    ``UpdateAvailable | None``)."""
+
+    available: bool
+    current_version: str
+    latest_version: str
+    download_url: str
+    pkg_name: str
+
+
+class LoginStarted(BaseModel):
+    """Wire shape for :func:`_login` — one-field ack that a login
+    task is now in flight; the actual result arrives asynchronously
+    via a ``login_result`` push notification."""
+
+    started: bool
+
+
+class FileCompletion(BaseModel):
+    """Wire shape for :func:`_complete_files` — @-mention picker
+    hits + a running total (used to render "N more matches" when
+    the limit was reached)."""
+
+    matches: list[str]
+    total: int
+
+
+class SkillDefinition(BaseModel):
+    """Wire shape for one entry in
+    :func:`_get_skill_definitions`. Consumed by the FE
+    autocomplete + SDK skill picker; ``prompt`` may be empty for
+    manifest-only skills (name+description declared but body not
+    yet on disk)."""
+
+    name: str
+    description: str
+    prompt: str
 
 # Strong refs to fire-and-forget naming tasks (create_task results are
 # weakly held by the loop and can be GC'd mid-flight otherwise).
@@ -106,21 +187,17 @@ def main(
     asyncio.run(_run(socket_path, resolved_project, resume_session_id, extra_dirs, ws_port))
 
 
-async def _check_update() -> dict | None:
+async def _check_update() -> UpdateAvailable | None:
     try:
-        from ember_code.core.utils.update_checker import check_for_update
-
         info = await check_for_update()
         if info and info.available:
-            from ember_code.core.utils.update_checker import _PKG_NAME
-
-            return {
-                "available": True,
-                "current_version": info.current_version,
-                "latest_version": info.latest_version,
-                "download_url": info.download_url,
-                "pkg_name": _PKG_NAME,
-            }
+            return UpdateAvailable(
+                available=True,
+                current_version=info.current_version,
+                latest_version=info.latest_version,
+                download_url=info.download_url,
+                pkg_name=_PKG_NAME,
+            )
     except Exception:
         pass
     return None
@@ -131,9 +208,8 @@ async def _check_update() -> dict | None:
 
 def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) -> dict[str, Any]:
     """Build method dispatch for RPCRequest messages."""
-    from ember_code.protocol import messages as msg
 
-    async def _login(args: dict) -> dict:
+    async def _login(args: dict) -> LoginStarted:
         # Cancel any previous login attempt
         old = login_state.get("task")
         if old and not old.done():
@@ -168,12 +244,16 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
                 )
 
         login_state["task"] = asyncio.create_task(_do_login())
-        return {"started": True}
+        return LoginStarted(started=True)
 
-    async def _get_skill_definitions(args: dict) -> list[dict]:
+    async def _get_skill_definitions(args: dict) -> list[SkillDefinition]:
         pool = backend.get_skill_pool()
         return [
-            {"name": s.name, "description": s.description, "prompt": getattr(s, "prompt", "")}
+            SkillDefinition(
+                name=s.name,
+                description=s.description,
+                prompt=getattr(s, "prompt", ""),
+            )
             for s in pool.list_skills()
         ]
 
@@ -184,9 +264,7 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
 
     _file_index_cache: dict[str, Any] = {}
 
-    async def _complete_files(args: dict) -> dict:
-        from ember_code.core.utils.file_index import FileIndex
-
+    async def _complete_files(args: dict) -> FileCompletion:
         idx = _file_index_cache.get("idx")
         if idx is None:
             idx = FileIndex(backend.project_dir)
@@ -195,9 +273,9 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
         query = str(args.get("query", ""))
         limit = int(args.get("limit", 50))
         matches, total = idx.match_with_total(query, limit=limit)
-        return {"matches": matches, "total": total}
+        return FileCompletion(matches=matches, total=total)
 
-    async def _list_dirs(args: dict) -> dict:
+    async def _list_dirs(args: dict) -> DirListResult:
         """Subdirectory listing for the GUI folder browser.
 
         Same trust level as ``run_shell`` (local user over loopback).
@@ -205,7 +283,7 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
         for picking project roots, not spelunking.
         """
 
-        def _scan() -> dict:
+        def _scan() -> DirListResult:
             raw = str(args.get("path") or Path.home())
             show_hidden = bool(args.get("show_hidden", False))
             base = Path(raw).expanduser()
@@ -220,24 +298,24 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
                     key=str.lower,
                 )
             except (OSError, PermissionError) as exc:
-                return {
-                    "path": str(base),
-                    "parent": str(base.parent),
-                    "dirs": [],
-                    "home": str(Path.home()),
-                    "error": str(exc),
-                }
-            return {
-                "path": str(base),
-                "parent": str(base.parent) if base != base.parent else "",
-                "dirs": dirs,
-                "home": str(Path.home()),
-                "error": "",
-            }
+                return DirListResult(
+                    path=str(base),
+                    parent=str(base.parent),
+                    dirs=[],
+                    home=str(Path.home()),
+                    error=str(exc),
+                )
+            return DirListResult(
+                path=str(base),
+                parent=str(base.parent) if base != base.parent else "",
+                dirs=dirs,
+                home=str(Path.home()),
+                error="",
+            )
 
         return await asyncio.to_thread(_scan)
 
-    async def _pick_dir_native(args: dict) -> dict:
+    async def _pick_dir_native(args: dict) -> PickDirResult:
         """Open the OS folder picker on this machine, return the path.
 
         The BE always runs on the user's machine (loopback-only
@@ -247,7 +325,6 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
         the user may take their time; the FE uses a long RPC timeout
         for this call.
         """
-        import sys
 
         async def _run_cmd(cmd: list[str]) -> tuple[int | None, str]:
             proc = await asyncio.create_subprocess_exec(
@@ -270,9 +347,9 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
                 script += f' default location POSIX file "{escaped}"'
             rc, out = await _run_cmd(["osascript", "-e", f"POSIX path of ({script})"])
             if rc == 0 and out:
-                return {"path": out.rstrip("/") or "/", "cancelled": False, "error": ""}
+                return PickDirResult(path=out.rstrip("/") or "/", cancelled=False, error="")
             # osascript exits non-zero on user cancel.
-            return {"path": "", "cancelled": True, "error": ""}
+            return PickDirResult(path="", cancelled=True, error="")
 
         if sys.platform.startswith("linux"):
             zenity_cmd = ["zenity", "--file-selection", "--directory"]
@@ -287,9 +364,9 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
                 except FileNotFoundError:
                     continue
                 if rc == 0 and out:
-                    return {"path": out, "cancelled": False, "error": ""}
-                return {"path": "", "cancelled": True, "error": ""}
-            return {"path": "", "cancelled": False, "error": "no native dialog available"}
+                    return PickDirResult(path=out, cancelled=False, error="")
+                return PickDirResult(path="", cancelled=True, error="")
+            return PickDirResult(path="", cancelled=False, error="no native dialog available")
 
         if sys.platform == "win32":
             selected = (
@@ -303,17 +380,17 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
             )
             rc, out = await _run_cmd(["powershell", "-NoProfile", "-Command", ps])
             if rc == 0 and out:
-                return {"path": out, "cancelled": False, "error": ""}
-            return {"path": "", "cancelled": True, "error": ""}
+                return PickDirResult(path=out, cancelled=False, error="")
+            return PickDirResult(path="", cancelled=True, error="")
 
-        return {"path": "", "cancelled": False, "error": f"unsupported platform: {sys.platform}"}
+        return PickDirResult(path="", cancelled=False, error=f"unsupported platform: {sys.platform}")
 
-    async def _run_shell(args: dict) -> dict:
+    async def _run_shell(args: dict) -> RunShellResult:
         """$-prefix shell mode. Captured (non-interactive) by design —
         parity with the TUI's inline shell for the common cases."""
         command = str(args.get("command", "")).strip()
         if not command:
-            return {"output": "", "exit_code": 0}
+            return RunShellResult(output="", exit_code=0)
         proc = await asyncio.create_subprocess_shell(
             command,
             cwd=str(backend.project_dir),
@@ -324,13 +401,11 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
             out, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
         except asyncio.TimeoutError:
             proc.kill()
-            return {"output": "(timed out after 120s)", "exit_code": -1}
-        return {
-            "output": out.decode(errors="replace")[-100_000:],
-            "exit_code": proc.returncode,
-        }
-
-    from ember_code.protocol.rpc import RpcMethod, validate_rpc_table
+            return RunShellResult(output="(timed out after 120s)", exit_code=-1)
+        return RunShellResult(
+            output=out.decode(errors="replace")[-100_000:],
+            exit_code=proc.returncode or 0,
+        )
 
     table: dict[str, Any] = {
         # ── MCP ────────────────────────────────────────────────────
@@ -468,14 +543,6 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
             action=str(args.get("action", "")),
             params=args.get("params") or {},
         ),
-        # ── Visualization persistence (restore across reloads) ───
-        RpcMethod.SAVE_VISUALIZATION: lambda args: backend.save_visualization(
-            spec_id=str(args.get("spec_id", "")),
-            spec=args.get("spec") or {},
-            title=str(args.get("title", "")),
-            source_agent=str(args.get("source_agent", "")),
-            run_id=str(args.get("run_id", "")),
-        ),
         # ── Watcher panel (background process tail + kill) ───────
         RpcMethod.LIST_BACKGROUND_PROCESSES: lambda args: backend.list_background_processes(),
         RpcMethod.READ_PROCESS_TAIL: lambda args: backend.read_process_tail(
@@ -560,7 +627,6 @@ def _build_rpc_table(backend: Any, transport: Any, login_state: dict[str, Any]) 
 
 def _start_scheduler_with_push(backend: Any, transport: Any) -> None:
     """Start the scheduler with push notification callbacks."""
-    from ember_code.protocol import messages as msg
 
     def on_started(task_id: str, description: str) -> None:
         asyncio.ensure_future(
@@ -597,7 +663,6 @@ async def _run(
 ) -> None:
     from ember_code.backend.server import BackendServer
     from ember_code.core.config.settings import load_settings
-    from ember_code.protocol import messages as msg
 
     settings = load_settings(project_dir=project_dir)
 
@@ -658,10 +723,8 @@ async def _run(
     # without waiting for the 5-minute sweep interval, and useful in
     # production triage to confirm a long-lived BE can still reclaim.
     def _release_handler():
-        import gc as _gc
-
-        before = _gc.get_count()
-        collected = _gc.collect()
+        before = gc.get_count()
+        collected = gc.collect()
         logger.info(
             "SIGUSR1: forced gc.collect — collected %d objects (generation counts before: %s)",
             collected,
@@ -901,8 +964,6 @@ async def _run(
     # Signal ready AFTER init + wiring so the FE can immediately
     # send requests (e.g. refresh_cache).  Knowledge may still be
     # loading in a background thread — that's fine.
-    import json as _json
-
     ready: dict[str, Any] = {"status": "ready"}
     if ws_transport is not None:
         # The actual bound port — meaningful when --ws-port 0 asked
@@ -915,15 +976,11 @@ async def _run(
         # See ``clients/vscode/src/extension.ts`` +
         # ``clients/jetbrains/.../EmberBackendService.kt`` for the
         # discovery half. Removed on graceful shutdown below.
-        from ember_code.backend.lockfile import Lockfile
-
         try:
             wire_version = (Path(__file__).parent.parent / "__init__.py").read_text()
             # Parse ``__version__ = "X.Y.Z"`` — one-liner without
             # importing the package (avoids circular during boot).
-            import re as _re
-
-            m = _re.search(r'__version__\s*=\s*"([^"]+)"', wire_version)
+            m = re.search(r'__version__\s*=\s*"([^"]+)"', wire_version)
             wire_version = m.group(1) if m else "0.0.0"
         except OSError:
             wire_version = "0.0.0"
@@ -937,7 +994,7 @@ async def _run(
         backend_lock = None  # type: ignore[assignment]
     if socket_path is not None:
         ready["socket"] = str(socket_path)
-    print(_json.dumps(ready), flush=True)
+    print(json.dumps(ready), flush=True)
 
     # Start knowledge loading AFTER READY — model download is GIL-heavy
     # and would block the main thread if started during __init__.
@@ -991,8 +1048,6 @@ async def _run(
             SessionRuntime,
             SessionStampingTransport,
         )
-        from ember_code.core.session.session_directories import SessionDirectoryStore
-        from ember_code.protocol.rpc import RpcMethod
 
         # Global session → project-dir registry: sessions can live in
         # different repos ("TUI opened in different directories", one
@@ -1003,8 +1058,6 @@ async def _run(
         # Per-client UI state — survives reloads, shared across all
         # clients (web, JetBrains, VSCode) since each holds the same
         # opaque ``client_id`` and the BE is the source of truth.
-        from ember_code.core.session.client_state import ClientStateStore
-
         client_state = ClientStateStore.from_data_dir(settings.storage.data_dir)
 
         default_runtime = SessionRuntime(
@@ -1119,9 +1172,7 @@ async def _run(
                     )
                     return
                 if not session_id:
-                    import uuid as _uuid
-
-                    session_id = str(_uuid.uuid4())[:8]
+                    session_id = str(uuid.uuid4())[:8]
                 # Register BEFORE creation so the factory picks the
                 # directory up.
                 dir_registry.set_dir(session_id, wd.resolve())
@@ -1149,9 +1200,7 @@ async def _run(
                     )
                     return
             if not session_id:
-                import uuid as _uuid
-
-                session_id = str(_uuid.uuid4())[:8]
+                session_id = str(uuid.uuid4())[:8]
             rt = await pool.get_or_create(session_id)
             await transport.send(
                 msg.RPCResponse(
@@ -1309,9 +1358,6 @@ async def _handle_message(
     queue: list[str],
     login_state: dict[str, Any] | None = None,
 ) -> None:
-    from ember_code.protocol import messages as msg
-    from ember_code.protocol.messages import Message
-
     req_id = message.id or ""
 
     # ── Streaming: run_message ──

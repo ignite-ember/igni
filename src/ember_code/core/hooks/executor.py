@@ -7,7 +7,7 @@ import logging
 import os
 import re
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 
@@ -217,17 +217,28 @@ class HookExecutor:
     ) -> Awaitable[HookResult] | None:
         """Pick the per-type coroutine for ``hook`` — separated from
         the ``execute`` foreground/background fan-out so adding a
-        new handler type is a single ``elif`` here instead of two."""
-        if hook.type == "command":
-            return self._run_command_hook(hook, payload)
-        if hook.type == "http":
-            return self._run_http_hook(hook, payload)
-        if hook.type == "prompt":
-            return self._run_prompt_hook(hook)
-        if hook.type == "mcp_tool":
-            return self._run_mcp_tool_hook(hook, event, payload)
-        logger.debug("Unknown hook type %r — skipping", hook.type)
-        return None
+        new handler type is a single entry in ``_TYPE_HANDLERS``
+        instead of two ``elif`` branches."""
+        handler = self._TYPE_HANDLERS.get(hook.type)
+        if handler is None:
+            logger.debug("Unknown hook type %r — skipping", hook.type)
+            return None
+        return handler(self, hook, event, payload)
+
+    # Per-type dispatch table. Each entry normalizes to
+    # ``(self, hook, event, payload) -> Awaitable[HookResult]`` so
+    # the dispatch is a plain dict lookup. Types whose handler
+    # signature is narrower (``prompt`` reads only ``hook``) get a
+    # lambda adapter here; the ``_run_*`` methods themselves keep
+    # their focused signatures.
+    _TYPE_HANDLERS: ClassVar[
+        dict[str, Callable[["HookExecutor", HookDefinition, str, dict[str, Any]], Awaitable[HookResult]]]
+    ] = {
+        "command": lambda self, hook, event, payload: self._run_command_hook(hook, payload),
+        "http": lambda self, hook, event, payload: self._run_http_hook(hook, payload),
+        "prompt": lambda self, hook, event, payload: self._run_prompt_hook(hook),
+        "mcp_tool": lambda self, hook, event, payload: self._run_mcp_tool_hook(hook, event, payload),
+    }
 
     async def _run_prompt_hook(self, hook: HookDefinition) -> HookResult:
         """``prompt`` handler — no side effect, just injects the

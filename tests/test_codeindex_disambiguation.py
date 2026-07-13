@@ -21,6 +21,7 @@ import pytest
 
 from ember_code.core.code_index.enums import Relation
 from ember_code.core.tools.codeindex.disambiguation import DisambiguationService
+from ember_code.core.code_index.schema.items import CodeIndexResult
 
 
 def _edge(from_uuid: str, to_uuid: str, relation: str, **meta) -> SimpleNamespace:
@@ -306,8 +307,6 @@ async def test_build_group_dedupes_self_loops_between_directions() -> None:
 
     async def _search_among_stub(*, query, candidate_ids, **_):
         # Echo candidates back in order with name/path metadata.
-        from ember_code.core.code_index.schema.items import CodeIndexResult
-
         return [
             CodeIndexResult(
                 item_id=cid,

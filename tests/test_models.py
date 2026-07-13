@@ -8,6 +8,7 @@ from ember_code.core.config.models import (
     ModelRegistry,
 )
 from ember_code.core.config.settings import ModelsConfig, Settings, load_settings
+from ember_code.core.config.permissions import PermissionGuard
 
 
 @pytest.fixture
@@ -118,8 +119,6 @@ class TestModelRegistry:
         assert "fake" in registry.PROVIDERS
 
     def test_generate_pattern_command(self):
-        from ember_code.core.config.permissions import PermissionGuard
-
         assert PermissionGuard._generate_pattern("npm test") == "npm *"
         assert PermissionGuard._generate_pattern("pytest tests/") == "pytest *"
 

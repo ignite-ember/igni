@@ -21,16 +21,32 @@ from the asyncio event loop; no locks needed.
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
+import time
 import uuid
-from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     from agno.run.base import RunRequirement
 
 
-@dataclass
-class _PendingEntry:
+class _PendingEntry(BaseModel):
+    """One in-flight sub-agent HITL requirement.
+
+    Rule 1 compliance — was a ``@dataclass`` before. Uses
+    ``arbitrary_types_allowed`` because ``requirement`` is Agno's
+    ``RunRequirement`` (dynamic) and ``event`` is an
+    :class:`asyncio.Event` (not a Pydantic type). Mutable — the
+    ``surfaced`` flag flips once and the event resolves once, both
+    inside the coordinator's own methods.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     requirement: Any  # RunRequirement
     run_id: str
     # Chain of agents that produced this requirement, parent → leaf.
@@ -38,9 +54,9 @@ class _PendingEntry:
     # ``["architect", "reviewer"]`` if the architect spawned a reviewer
     # that then asked for permission. Surfaced to the FE so the dialog
     # can show *which* specialist is asking, not just the tool name.
-    agent_path: list[str] = field(default_factory=list)
+    agent_path: list[str] = Field(default_factory=list)
     surfaced: bool = False  # True once forwarded to FE via list_new_pending
-    event: asyncio.Event = field(default_factory=asyncio.Event)
+    event: asyncio.Event = Field(default_factory=asyncio.Event)
 
 
 class SubAgentHITLCoordinator:
@@ -62,12 +78,7 @@ class SubAgentHITLCoordinator:
         agent_path: list[str] | None = None,
     ) -> str:
         """Called from the sub-agent stream handler when its run pauses."""
-        import logging as _log
-        import os as _os
-        import time as _t
-        from pathlib import Path as _Path
-
-        _log.getLogger("ember_code.llm_calls").info(
+        logging.getLogger("ember_code.llm_calls").info(
             "coord.push_requirement: id_self=%s run_id=%s path=%s",
             id(self),
             run_id,
@@ -75,9 +86,9 @@ class SubAgentHITLCoordinator:
         )
         # Direct trace — see backend/server.py for why we bypass logging.
         try:
-            with open(_Path(_os.path.expanduser("~/.ember/hitl_trace.log")), "a") as _f:
-                _f.write(
-                    f"{_t.strftime('%H:%M:%S')} pid={_os.getpid()} "
+            with open(Path(os.path.expanduser("~/.ember/hitl_trace.log")), "a") as trace_f:
+                trace_f.write(
+                    f"{time.strftime('%H:%M:%S')} pid={os.getpid()} "
                     f"coord.push_requirement: coord_id={id(self)} run_id={run_id} path={agent_path}\n"
                 )
         except Exception:

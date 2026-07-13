@@ -9,7 +9,7 @@ from __future__ import annotations
 from sqlalchemy import delete, or_, select
 from sqlalchemy.dialects.sqlite import insert
 
-from ember_code.core.code_index.pg.models import FileReferenceModel
+from ember_code.core.code_index.db.models import FileReferenceModel
 from ember_code.core.code_index.schema.file_reference import FileReference
 from ember_code.core.db.database import Database
 

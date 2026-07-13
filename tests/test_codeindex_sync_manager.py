@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ember_code.core.code_index import sync_manager as sm
 from ember_code.core.code_index.delta import DeltaStats
 from ember_code.core.code_index.fetcher import (
     ChangesetFetchError,
@@ -24,7 +25,6 @@ from ember_code.core.config.settings import Settings
 
 def _patch_preflight(monkeypatch, result: PreflightResult) -> None:
     """Default helper: short-circuit ChangesetFetcher.preflight to return ``result``."""
-    from ember_code.core.code_index import sync_manager as sm
 
     async def _fake(self, *, repository_id, commit_sha, client=None):
         return result
@@ -169,8 +169,6 @@ class TestSyncSuccessAndErrors:
             credentials=_stub_credentials(),
         )
 
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(monkeypatch, _OK)
         captured = {}
 
@@ -207,8 +205,6 @@ class TestSyncSuccessAndErrors:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(monkeypatch, _OK)
 
         async def boom(self, **_kwargs):
@@ -230,8 +226,6 @@ class TestSyncSuccessAndErrors:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(monkeypatch, _OK)
 
         async def kaboom(self, **_kwargs):
@@ -277,8 +271,6 @@ class TestSnapshotVsDeltaRouting:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(monkeypatch, PreflightResult(status=PreflightStatus.OK, parent_sha=None))
         delta_called = AsyncMock(return_value=DeltaStats(items_upserted=1))
         snapshot_called = AsyncMock(return_value=DeltaStats(items_upserted=99))
@@ -312,8 +304,6 @@ class TestSnapshotVsDeltaRouting:
             resolver=resolver,
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         preflight = AsyncMock()
         delta_called = AsyncMock(return_value=DeltaStats(items_upserted=1))
         snapshot_called = AsyncMock(return_value=DeltaStats(items_upserted=99))
@@ -345,8 +335,6 @@ class TestSnapshotVsDeltaRouting:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(monkeypatch, PreflightResult(status=PreflightStatus.OK, parent_sha=None))
         snapshot_called = AsyncMock(return_value=DeltaStats(items_upserted=99))
         monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply", AsyncMock())
@@ -376,8 +364,6 @@ class TestSnapshotVsDeltaRouting:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(monkeypatch, PreflightResult(status=PreflightStatus.OK, parent_sha=None))
         snapshot_called = AsyncMock(return_value=DeltaStats(items_upserted=1))
         monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply", AsyncMock())
@@ -418,8 +404,6 @@ class TestSnapshotVsDeltaRouting:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(monkeypatch, PreflightResult(status=PreflightStatus.OK, parent_sha=None))
 
         snapshots: list[tuple[bool, int, int, str]] = []
@@ -473,8 +457,6 @@ class TestSnapshotVsDeltaRouting:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(monkeypatch, PreflightResult(status=PreflightStatus.OK, parent_sha=None))
 
         async def boom(self, **_kwargs):
@@ -499,8 +481,6 @@ class TestSnapshotVsDeltaRouting:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(
             monkeypatch,
             PreflightResult(status=PreflightStatus.OK, parent_sha="parentsha"),
@@ -528,8 +508,6 @@ class TestSnapshotVsDeltaRouting:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(
             monkeypatch,
             PreflightResult(status=PreflightStatus.OK, parent_sha="parentsha"),
@@ -555,8 +533,6 @@ class TestSnapshotVsDeltaRouting:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(
             monkeypatch,
             PreflightResult(status=PreflightStatus.OK, parent_sha="parentsha"),
@@ -644,8 +620,6 @@ class TestConcurrentSyncSerializes:
             await asyncio.sleep(0.02)
             in_flight -= 1
             return DeltaStats(items_upserted=1)
-
-        from ember_code.core.code_index import sync_manager as sm
 
         _patch_preflight(monkeypatch, _OK)
         # ``_OK.parent_sha=None`` + ``has_commit=False`` → snapshot
@@ -790,8 +764,6 @@ class TestPreflightBranching:
         endpoint and surface a confusing error."""
         _patch_preflight(monkeypatch, PreflightResult(status=PreflightStatus.IN_PROGRESS))
 
-        from ember_code.core.code_index import sync_manager as sm
-
         called = False
 
         async def fail_pull(*_args, **_kwargs):
@@ -818,8 +790,6 @@ class TestWatcherInProgressRetry:
 
     @pytest.mark.asyncio
     async def test_in_progress_sha_polled_again_after_retry_interval(self, tmp_path, monkeypatch):
-        from ember_code.core.code_index import sync_manager as sm
-
         # Make the retry interval tiny so the test runs in milliseconds.
         monkeypatch.setattr(sm, "IN_PROGRESS_RETRY_SECONDS", 0.05)
 
@@ -856,8 +826,6 @@ class TestWatcherInProgressRetry:
     @pytest.mark.asyncio
     async def test_in_progress_state_cleared_when_head_moves(self, tmp_path, monkeypatch):
         """If the user switches branches mid-poll, drop the stale retry state."""
-        from ember_code.core.code_index import sync_manager as sm
-
         monkeypatch.setattr(sm, "IN_PROGRESS_RETRY_SECONDS", 5.0)  # never fires in this test
 
         mgr = _make_mgr(

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from ember_code.core.skills.loader import SkillPool
 from ember_code.core.skills.parser import SkillDefinition, SkillParser
+from ember_code.core.skills.loader import SkillPriority
 
 
 class TestSkillParser:
@@ -247,8 +248,6 @@ class TestSkillResolutionOrder:
         home, project = self._build_layout(tmp_path)
         # Stub a bundled skill by writing into the actual bundled_skills dir
         # would be invasive; instead verify the priority constants directly.
-        from ember_code.core.skills.loader import SkillPriority
-
         assert SkillPriority.USER_CLAUDE > SkillPriority.BUNDLED
 
     def test_local_beats_project_claude(self, tmp_path, monkeypatch):

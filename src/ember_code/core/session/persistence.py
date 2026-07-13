@@ -1,9 +1,16 @@
 """Session persistence — listing, naming, and resuming sessions."""
 
+import asyncio
 import logging
 import time
 import uuid
 from typing import Any
+
+from agno.db.base import SessionType
+from agno.session.agent import AgentSession
+
+from ember_code.core.session.event_log_schema import SessionEvent
+from ember_code.core.tools.todo import TodoItemWire
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +21,42 @@ class SessionPersistence:
     def __init__(self, db: Any, session_id: str):
         self.db = db
         self.session_id = session_id
+        # Serializes ``session_data`` writes so concurrent callers
+        # (event-log append, todo save, plan-decisions save) can't
+        # clobber each other. Every ``_upsert_session_data_key``
+        # invocation is a load-modify-write against Agno's session
+        # row; without the lock, two writes racing on the merge step
+        # would both start from the same pre-image and the second to
+        # ``upsert_session`` would win — silently dropping the first
+        # write's key. Cheap: ``asyncio.Lock`` is uncontended on the
+        # hot path (single-writer sessions), only bites in the rare
+        # multi-persist-in-flight case.
+        self._session_data_lock = asyncio.Lock()
+
+    @staticmethod
+    def _session_to_wire(s: Any) -> dict[str, Any]:
+        """Serialize one Agno session row to the wire shape the
+        FE consumes: ``{session_id, name, created_at, updated_at,
+        run_count, summary, agent_name}``."""
+        run_count = len(s.runs) if s.runs else 0
+        summary = ""
+        if s.summary and hasattr(s.summary, "summary"):
+            summary = s.summary.summary or ""
+        agent_name = ""
+        if s.agent_data and isinstance(s.agent_data, dict):
+            agent_name = s.agent_data.get("name", "")
+        name = ""
+        if s.session_data and isinstance(s.session_data, dict):
+            name = s.session_data.get("session_name", "")
+        return {
+            "session_id": s.session_id,
+            "name": name,
+            "created_at": s.created_at or 0,
+            "updated_at": s.updated_at or 0,
+            "run_count": run_count,
+            "summary": summary,
+            "agent_name": agent_name,
+        }
 
     async def list_sessions(self, limit: int | None = None) -> list[dict[str, Any]]:
         """List sessions from the Agno database.
@@ -21,12 +64,19 @@ class SessionPersistence:
         ``limit=None`` (the default) returns every session for this
         project. Callers can pass an int to cap; the CLI's
         pre-launch session preview does this to keep boot time flat.
+
+        Skips sub-agent scratch sessions (visualizer, editor, every
+        specialist in the pool). Sub-agents share the top-level DB
+        so paused runs can be resumed via ``acontinue_run`` — see
+        ``AgentPool.__init__``'s ``_db`` — but they should NEVER
+        appear as chats in the user-facing session list. The
+        top-level session is built with ``Agent(name="ember")``
+        (see ``_build_main_agent``), so ``agent_id == "ember"``
+        is the discriminator. Anything else is scratch.
         """
         if not self.db:
             return []
         try:
-            from agno.db.base import SessionType
-
             sessions = await self.db.get_sessions(
                 session_type=SessionType.AGENT,
                 limit=limit,
@@ -39,27 +89,10 @@ class SessionPersistence:
 
             results = []
             for s in sessions:
-                run_count = len(s.runs) if s.runs else 0
-                summary = ""
-                if s.summary and hasattr(s.summary, "summary"):
-                    summary = s.summary.summary or ""
-                agent_name = ""
-                if s.agent_data and isinstance(s.agent_data, dict):
-                    agent_name = s.agent_data.get("name", "")
-                name = ""
-                if s.session_data and isinstance(s.session_data, dict):
-                    name = s.session_data.get("session_name", "")
-                results.append(
-                    {
-                        "session_id": s.session_id,
-                        "name": name,
-                        "created_at": s.created_at or 0,
-                        "updated_at": s.updated_at or 0,
-                        "run_count": run_count,
-                        "summary": summary,
-                        "agent_name": agent_name,
-                    }
-                )
+                agent_id = getattr(s, "agent_id", "") or ""
+                if agent_id and agent_id != "ember":
+                    continue
+                results.append(self._session_to_wire(s))
             return results
         except Exception as exc:
             logger.debug("Failed to list sessions: %s", exc)
@@ -82,7 +115,6 @@ class SessionPersistence:
         if not self.db:
             return
         try:
-            from agno.db.base import SessionType
 
             await self.db.rename_session(
                 session_id=self.session_id,
@@ -109,7 +141,6 @@ class SessionPersistence:
         """
         if not self.db:
             raise RuntimeError("session store unavailable")
-        from agno.db.base import SessionType
 
         source = await self.db.get_session(
             session_id=self.session_id,
@@ -145,7 +176,6 @@ class SessionPersistence:
         if not self.db:
             return ""
         try:
-            from agno.db.base import SessionType
 
             session = await self.db.get_session(
                 session_id=self.session_id,
@@ -168,7 +198,6 @@ class SessionPersistence:
         if not self.db:
             return {}
         try:
-            from agno.db.base import SessionType
 
             session = await self.db.get_session(
                 session_id=self.session_id,
@@ -191,16 +220,16 @@ class SessionPersistence:
         """Read the persisted todo snapshot for this session.
 
         Each entry has the same wire shape ``todo_write``
-        broadcasts: ``{content, status, activeForm}``. Returns
-        an empty list when nothing's been written yet (fresh
-        session) or on any DB / shape error — callers fall back
-        to the plan's original task list, which is at least
-        consistent with the user's last hand-approved state.
+        broadcasts (see :class:`TodoItemWire`): ``{content,
+        status, activeForm}``. Returns an empty list when
+        nothing's been written yet (fresh session) or on any DB
+        / shape error — callers fall back to the plan's original
+        task list, which is at least consistent with the user's
+        last hand-approved state.
         """
         if not self.db:
             return []
         try:
-            from agno.db.base import SessionType
 
             session = await self.db.get_session(
                 session_id=self.session_id,
@@ -210,40 +239,28 @@ class SessionPersistence:
             if session and session.session_data:
                 raw = session.session_data.get("todos")
                 if isinstance(raw, list):
-                    out: list[dict] = []
-                    for entry in raw:
-                        if not isinstance(entry, dict):
-                            continue
-                        content = str(entry.get("content", "")).strip()
-                        if not content:
-                            continue
-                        status = str(entry.get("status", "pending"))
-                        if status not in ("pending", "in_progress", "completed"):
-                            continue
-                        active_form = str(entry.get("activeForm", "") or "")
-                        out.append(
-                            {
-                                "content": content,
-                                "status": status,
-                                "activeForm": active_form,
-                            }
-                        )
-                    return out
+                    return _coerce_todo_snapshot(raw)
         except Exception as exc:
             logger.debug("Failed to load todos: %s", exc)
         return []
 
-    async def load_visualizations(self) -> list[dict]:
-        """Read the persisted visualization list for this session.
+    async def load_event_log(self) -> list[dict]:
+        """Read the persisted append-only event log for this
+        session. Each entry has the :class:`SessionEvent` shape
+        ``{seq, run_id, timestamp_ms, type, payload}``.
 
-        Each entry has the shape written by ``save_visualizations``:
-        ``{spec_id, spec, title, source_agent, run_id, created_at}``.
-        Returns [] on fresh session or any DB / shape error.
+        Every persisted entry is round-tripped through
+        :meth:`SessionEvent.from_wire` before being returned —
+        stale / schema-drifted rows drop silently instead of
+        surfacing as a ``KeyError`` deep in the splicer, and the
+        output dicts come from one Pydantic definition (Rule 1).
+        Returns [] on fresh session or any DB / shape error —
+        callers treat missing log as "no non-message state to
+        replay".
         """
         if not self.db:
             return []
         try:
-            from agno.db.base import SessionType
 
             session = await self.db.get_session(
                 session_id=self.session_id,
@@ -251,28 +268,36 @@ class SessionPersistence:
                 deserialize=True,
             )
             if session and session.session_data:
-                raw = session.session_data.get("visualizations")
+                raw = session.session_data.get("event_log")
                 if isinstance(raw, list):
-                    return [entry for entry in raw if isinstance(entry, dict)]
+                    out: list[dict] = []
+                    for entry in raw:
+                        if not isinstance(entry, dict):
+                            continue
+                        evt = SessionEvent.from_wire(entry)
+                        if evt is not None:
+                            out.append(evt.model_dump())
+                    return out
         except Exception as exc:
-            logger.debug("Failed to load visualizations: %s", exc)
+            logger.debug("Failed to load event log: %s", exc)
         return []
 
-    async def save_visualizations(self, visualizations: list[dict]) -> None:
-        """Atomic-replace persisted visualization list. Called after
-        each ``save_visualization`` RPC completes so the card is
-        available on session restore.
+    async def save_event_log(self, event_log: list[dict]) -> None:
+        """Atomic-replace the session's event log. Called by
+        :meth:`Session.append_event` after every append.
 
-        Same merge semantics as ``save_todos`` — the wider
-        ``session_data`` blob (session_name, todos, plan_decisions)
-        is preserved.
+        Same merge semantics as :meth:`save_todos` — the wider
+        ``session_data`` blob (session_name, todos,
+        plan_decisions) is preserved. Best-effort: DB write
+        failures log and return; the in-memory log still reaches
+        live clients.
         """
         if not self.db:
             return
         try:
-            await self._upsert_session_data_key("visualizations", list(visualizations))
+            await self._upsert_session_data_key("event_log", list(event_log))
         except Exception as exc:
-            logger.debug("Failed to save visualizations: %s", exc)
+            logger.debug("Failed to save event log: %s", exc)
 
     async def save_todos(self, todos: list[dict]) -> None:
         """Atomic-replace persisted todo snapshot in
@@ -346,40 +371,48 @@ class SessionPersistence:
         upsert-with-merge logic live in one place — extending to
         a third key (e.g. ``mcp_overrides``) is a one-line
         addition then. Callers handle their own exception
-        logging at the public-method level."""
-        from agno.db.base import SessionType
-        from agno.session.agent import AgentSession
+        logging at the public-method level.
 
-        session = await self.db.get_session(
-            session_id=self.session_id,
-            session_type=SessionType.AGENT,
-            deserialize=True,
-        )
-        if session is None:
-            # Fresh session that's never been through Agno's
-            # run path yet. Create a minimal AgentSession so
-            # the upsert lands as an INSERT — every other field
-            # is Optional in Agno's dataclass, and the run path
-            # will fill them in on the first ``run_message``.
-            now = int(time.time())
-            session = AgentSession(
+        Serialized via ``self._session_data_lock`` so two callers
+        writing different keys concurrently can't clobber each
+        other on the merge step.
+        """
+
+        async with self._session_data_lock:
+            session = await self.db.get_session(
                 session_id=self.session_id,
-                session_data={key: value},
-                created_at=now,
-                updated_at=now,
+                session_type=SessionType.AGENT,
+                deserialize=True,
             )
-        else:
-            sd = dict(session.session_data or {})
-            sd[key] = value
-            session.session_data = sd
-        await self.db.upsert_session(session, deserialize=True)
+            if session is None:
+                # Fresh session that's never been through Agno's
+                # run path yet. Create a minimal AgentSession so
+                # the upsert lands as an INSERT — every other field
+                # is Optional in Agno's dataclass, and the run path
+                # will fill them in on the first ``run_message``.
+                now = int(time.time())
+                session = AgentSession(
+                    session_id=self.session_id,
+                    session_data={key: value},
+                    created_at=now,
+                    updated_at=now,
+                )
+            else:
+                sd = dict(session.session_data or {})
+                sd[key] = value
+                session.session_data = sd
+            await self.db.upsert_session(session, deserialize=True)
 
 
 def _coerce_todo_snapshot(todos: list[dict]) -> list[dict]:
     """Filter to the wire shape ``{content, status, activeForm}``
     with valid statuses. Used by :meth:`SessionPersistence.save_todos`
-    to keep the storage-layer concern (no malformed entries) out
-    of the high-level public method."""
+    (drop malformed writes) and :meth:`SessionPersistence.load_todos`
+    (drop malformed reads from the DB).
+
+    Every survivor round-trips through :class:`TodoItemWire` so the
+    output dicts come from one Pydantic definition (Rule 1) —
+    if the wire shape ever changes, this stays in lockstep."""
     out: list[dict] = []
     for entry in todos:
         if not isinstance(entry, dict):
@@ -391,5 +424,11 @@ def _coerce_todo_snapshot(todos: list[dict]) -> list[dict]:
         if status not in ("pending", "in_progress", "completed"):
             continue
         active_form = str(entry.get("activeForm", "") or "")
-        out.append({"content": content, "status": status, "activeForm": active_form})
+        out.append(
+            TodoItemWire(
+                content=content,
+                status=status,
+                active_form=active_form,
+            ).model_dump(by_alias=True)
+        )
     return out

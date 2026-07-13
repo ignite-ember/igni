@@ -23,8 +23,14 @@ contract end to end:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
+from ember_code.backend.server import BackendServer
+from ember_code.core.config.permission_eval import PermissionMode
+from ember_code.core.session.core import Session
 from ember_code.core.tools.plan import PlanStore
 
 # ── PlanStore.decisions ─────────────────────────────────────
@@ -127,8 +133,6 @@ class _StubPermissionEvaluator:
     """Just enough surface for ``set_permission_mode``."""
 
     def __init__(self) -> None:
-        from ember_code.core.config.permission_eval import PermissionMode
-
         self.mode = PermissionMode.PLAN
 
 
@@ -155,8 +159,6 @@ def _build_session() -> object:
     ``approve_plan`` / ``dismiss_plan`` touch. Skips Agno
     initialisation — keeps the test fast and isolated from
     schema drift in the storage layer."""
-    from ember_code.core.session.core import Session
-
     session = Session.__new__(Session)
     session._broadcast_callbacks = []
     session._pending_post_run_broadcasts = []
@@ -171,8 +173,8 @@ class TestSessionApproveDismiss:
         session = _build_session()
         result = await session.approve_plan("run-123")
         assert session.plan_store.get_decision("run-123") == "approved"
-        assert result["run_id"] == "run-123"
-        assert result["decision"] == "approved"
+        assert result.run_id == "run-123"
+        assert result.decision == "approved"
 
     async def test_approve_persists(self) -> None:
         # session_data write must happen — without this the
@@ -184,8 +186,6 @@ class TestSessionApproveDismiss:
         assert saved and saved[-1] == {"run-123": "approved"}
 
     async def test_approve_flips_mode_to_default(self) -> None:
-        from ember_code.core.config.permission_eval import PermissionMode
-
         session = _build_session()
         await session.approve_plan("run-123")
         assert session.permission_evaluator.mode is PermissionMode.DEFAULT
@@ -211,8 +211,6 @@ class TestSessionApproveDismiss:
     async def test_dismiss_does_NOT_flip_mode(self) -> None:
         # Refine = "stay in plan mode, let me iterate". A mode
         # flip here would defeat the entire point of the button.
-        from ember_code.core.config.permission_eval import PermissionMode
-
         session = _build_session()
         await session.dismiss_plan("run-789")
         assert session.permission_evaluator.mode is PermissionMode.PLAN
@@ -244,7 +242,7 @@ class TestSessionApproveDismiss:
         received: list[tuple[str, dict]] = []
         session._broadcast_callbacks.append(lambda c, p: received.append((c, p)))
         result = await session.approve_plan("run-1")
-        assert result["decision"] == "approved"
+        assert result.decision == "approved"
         assert session.plan_store.get_decision("run-1") == "approved"
         assert any(c == "plan_decided" for c, _ in received)
 
@@ -271,11 +269,6 @@ class TestNeverApprovedRegression:
     """
 
     async def test_mode_flip_without_decision_keeps_pending(self) -> None:
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock, MagicMock
-
-        from ember_code.backend.server import BackendServer
-
         # Build a single-plan history with no recorded decision.
         plan_call = {
             "id": "call_plan_1",
@@ -335,11 +328,6 @@ class TestNeverApprovedRegression:
     async def test_recorded_approval_survives_rehydration(self) -> None:
         # The other half — once a decision IS recorded, it
         # surfaces on reload regardless of current mode.
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock, MagicMock
-
-        from ember_code.backend.server import BackendServer
-
         plan_call = {
             "id": "call_plan_1",
             "type": "function",
@@ -396,11 +384,6 @@ class TestNeverApprovedRegression:
     async def test_historical_plan_without_decision_marks_dismissed(self) -> None:
         # Two plans, neither decided. The OLDER one is treated
         # as dismissed (user moved on); the LATEST stays pending.
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock, MagicMock
-
-        from ember_code.backend.server import BackendServer
-
         def _run(run_id: str, plan_text: str, ts: int) -> SimpleNamespace:
             call = {
                 "id": f"call_{run_id}",
@@ -472,8 +455,6 @@ class TestPostRunBroadcastRunIdStamp:
     loop stamps it at drain time."""
 
     def test_drain_stamps_run_id_into_payload(self) -> None:
-        from ember_code.core.session.core import Session
-
         session = Session.__new__(Session)
         session._broadcast_callbacks = []
         session._pending_post_run_broadcasts = []
@@ -489,8 +470,6 @@ class TestPostRunBroadcastRunIdStamp:
         # Drain called from a context that doesn't have a
         # run_id (degenerate / cancelled). Payload passes
         # through untouched.
-        from ember_code.core.session.core import Session
-
         session = Session.__new__(Session)
         session._broadcast_callbacks = []
         session._pending_post_run_broadcasts = []
@@ -506,8 +485,6 @@ class TestPostRunBroadcastRunIdStamp:
         # If the caller explicitly set run_id in the payload,
         # the drain respects it. Belt and suspenders for tools
         # that already know their run_id at queue time.
-        from ember_code.core.session.core import Session
-
         session = Session.__new__(Session)
         session._broadcast_callbacks = []
         session._pending_post_run_broadcasts = []

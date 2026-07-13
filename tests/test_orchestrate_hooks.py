@@ -100,8 +100,10 @@ class TestSubagentStartStop:
         )
 
         with (
-            patch("agno.team.team.Team"),
-            patch("ember_code.core.config.models.ModelRegistry") as MockReg,
+            # Post-refactor these are at ``orchestrate.py``'s module
+            # top (iter 30) — patch the local bindings.
+            patch("ember_code.core.tools.orchestrate.Team"),
+            patch("ember_code.core.tools.orchestrate.ModelRegistry") as MockReg,
             patch(
                 "ember_code.core.tools.orchestrate._run_team_streaming",
                 new=AsyncMock(return_value=("team done", [])),

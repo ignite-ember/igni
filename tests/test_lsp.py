@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ember_code.core.lsp import manager as manager_mod
 from ember_code.core.lsp.client import LspClient, LspClientError
 from ember_code.core.lsp.config import LspServerConfig, _parse_servers_dict, load_lsp_config
 from ember_code.core.lsp.manager import LspServerManager
@@ -304,8 +305,6 @@ class TestLspServerManager:
         configs = {"x": LspServerConfig(name="x", command="x")}
         manager = LspServerManager(configs, tmp_path)
 
-        from ember_code.core.lsp import manager as manager_mod
-
         start_count = 0
 
         class _FakeClient:
@@ -334,8 +333,6 @@ class TestLspServerManager:
         configs = {"x": LspServerConfig(name="x", command="not-a-real-binary-xyz")}
         manager = LspServerManager(configs, tmp_path)
 
-        from ember_code.core.lsp import manager as manager_mod
-
         class _BrokenClient:
             def __init__(self, *a, **kw):
                 pass
@@ -355,8 +352,6 @@ class TestLspServerManager:
     async def test_query_routes_through_ensure(self, tmp_path, monkeypatch):
         configs = {"x": LspServerConfig(name="x", command="x")}
         manager = LspServerManager(configs, tmp_path)
-
-        from ember_code.core.lsp import manager as manager_mod
 
         captured = []
 
@@ -383,8 +378,6 @@ class TestLspServerManager:
     async def test_shutdown_all_clears_clients(self, tmp_path, monkeypatch):
         configs = {"x": LspServerConfig(name="x", command="x")}
         manager = LspServerManager(configs, tmp_path)
-
-        from ember_code.core.lsp import manager as manager_mod
 
         shutdown_calls = []
 

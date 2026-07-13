@@ -28,6 +28,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from agno.tools import Toolkit
+from pydantic import BaseModel
+
+from ember_code.core.tools.orchestrate import OrchestrateTools
+from ember_code.core.tools.todo import _coerce_items
 
 if TYPE_CHECKING:
     from ember_code.core.session.core import Session
@@ -134,6 +138,17 @@ def _validate_plan_confidence(
 _VALID_DECISIONS = ("approved", "dismissed")
 
 
+class PlanSnapshot(BaseModel):
+    """Wire shape for :meth:`PlanStore.snapshot` — the latest plan
+    the agent submitted plus the bounded history. Consumed by
+    :meth:`BackendServer.get_latest_plan`; the FE renders ``latest``
+    in the plan card and lets the user browse ``history`` in a
+    detail view."""
+
+    latest: str
+    history: list[str]
+
+
 @dataclass
 class PlanStore:
     """Holds the most recent plan the agent submitted plus a
@@ -212,9 +227,9 @@ class PlanStore:
         serializes."""
         return dict(self.decisions)
 
-    def snapshot(self) -> dict:
+    def snapshot(self) -> PlanSnapshot:
         """Wire shape for the panel / `get_latest_plan` RPC."""
-        return {"latest": self.latest, "history": list(self.history)}
+        return PlanSnapshot(latest=self.latest, history=list(self.history))
 
 
 class PlanTool(Toolkit):
@@ -343,8 +358,6 @@ class PlanTool(Toolkit):
         ``task`` and return its response text. Returns ``""`` on
         any failure (no researcher available, spawn error, etc.)
         so ``enter_plan_mode`` can fall back to manual research."""
-        from ember_code.core.tools.orchestrate import OrchestrateTools
-
         # Find the OrchestrateTools instance already wired onto
         # the session's main agent. We reuse it instead of
         # constructing a fresh one because it carries the
@@ -459,8 +472,6 @@ class PlanTool(Toolkit):
         task_snapshot: list = []
         validation_errors: list[str] = []
         if tasks:
-            from ember_code.core.tools.todo import _coerce_items
-
             items, errs = _coerce_items(tasks)
             validation_errors = errs
             if items and hasattr(self._session, "todo_store"):

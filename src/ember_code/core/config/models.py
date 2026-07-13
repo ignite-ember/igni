@@ -8,6 +8,16 @@ from typing import Any
 import httpx
 from agno.models.openai.like import OpenAILike
 
+from ember_code.core.auth.credentials import CloudCredentials
+from ember_code.core.config.api_keys import resolve_api_key
+from ember_code.core.config.model_stream import (
+    _aemit_tool_arg_deltas,
+    _emit_tool_arg_delta_events,
+    _emit_tool_arg_deltas,
+    _ToolCallAccumulator,
+    _ToolCallAccumulatorStore,
+    _ToolCallFragment,
+)
 from ember_code.core.config.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -35,9 +45,6 @@ if not _llm_logger.handlers:
     _httpcore_logger = logging.getLogger("httpcore")
     _httpcore_logger.addHandler(_llm_handler)
     _httpcore_logger.setLevel(logging.DEBUG)
-
-
-DEFAULT_CONTEXT_WINDOW = 128_000
 
 
 _NO_MODEL_ERROR = (
@@ -125,8 +132,47 @@ def _sanitize_messages(messages: list) -> list:
     return messages
 
 
+# Tool-call argument streaming lives in ``model_stream.py`` so this
+# file stays focused on the model registry / logging-model pair.
+# The imports at module top re-export the streaming symbols on the
+# ``ember_code.core.config.models`` import path so existing tests
+# and callers keep working.
+
+
 class _LoggingModel(OpenAILike):
-    """Thin wrapper that logs calls and sanitizes messages for non-vision models."""
+    """Thin wrapper that logs calls, sanitizes messages for non-vision
+    models, AND emits ``CustomEvent`` deltas as tool-call arguments
+    stream.
+
+    Tool-arg streaming
+    ------------------
+    Agno's ``_parse_provider_response_delta`` passes ``choice_delta.tool_calls``
+    through on every stream chunk, and ``_populate_stream_data`` yields
+    a ``ModelResponse`` with those deltas. But the agent-layer
+    ``handle_model_response_chunk`` only reads ``.content`` /
+    ``.reasoning_content`` from delta chunks and never inspects
+    ``.tool_calls`` — so partial tool arguments are silently
+    accumulated in ``stream_data.response_tool_calls`` and only
+    surface AFTER the whole tool call completes (as
+    ``ToolCallStartedEvent``).
+
+    That kills progressive rendering for tools whose value IS the
+    argument shape — the visualizer sub-agent's ``visualize({spec:
+    {...}})`` call being the driving case. We want the FE to render
+    the spec as its tokens land.
+
+    Fix: wrap ``process_response_stream`` /
+    ``aprocess_response_stream`` (the polymorphic yield point whose
+    return type is ``Iterator[ModelResponse]`` but which is documented
+    to accept ``RunOutputEvent`` bubble-up). On each ``ModelResponse``
+    that carries tool_call deltas, we ALSO yield a
+    ``CustomEvent(event='tool_call_input_delta', ...)`` carrying the
+    accumulated arguments string per (tool_call_id | tool_index).
+    The FE-facing agent stream then sees the CustomEvent alongside
+    the existing ``RunContentEvent`` / ``ToolCallStartedEvent``
+    lifecycle. Agno's normal accumulator sees ``ModelResponse``
+    untouched — so the tool still executes normally when done.
+    """
 
     _vision: bool = False
 
@@ -155,6 +201,13 @@ class _LoggingModel(OpenAILike):
         async for chunk in super().ainvoke_stream(*args, **kwargs):
             yield chunk
 
+    def process_response_stream(self, *args, **kwargs):
+        yield from _emit_tool_arg_deltas(super().process_response_stream(*args, **kwargs))
+
+    async def aprocess_response_stream(self, *args, **kwargs):
+        async for ev in _aemit_tool_arg_deltas(super().aprocess_response_stream(*args, **kwargs)):
+            yield ev
+
     def _log_call(self, method: str, args: tuple, stream: bool, kwargs: dict | None = None) -> None:
         n_messages = len(args[0]) if args else len((kwargs or {}).get("messages", []))
         url = getattr(self, "base_url", None) or "default"
@@ -180,63 +233,14 @@ class _LoggingModel(OpenAILike):
         )
 
 
-class ContextWindowResolver:
-    """Resolves the context window size for a model.
-
-    Resolution order:
-    1. Explicit ``context_window`` in the registry entry.
-    2. Dynamic fetch from the provider's ``/models`` endpoint.
-    3. Fallback to ``DEFAULT_CONTEXT_WINDOW`` (128k).
-    """
-
-    def __init__(self) -> None:
-        self._cache: dict[str, int] = {}
-
-    def resolve(self, model_id: str, entry: dict[str, Any] | None = None) -> int:
-        """Return the context window size for *model_id* (synchronous)."""
-        if entry and "context_window" in entry:
-            return int(entry["context_window"])
-        if model_id in self._cache:
-            return self._cache[model_id]
-        return DEFAULT_CONTEXT_WINDOW
-
-    async def aresolve(self, model_id: str, entry: dict[str, Any] | None = None) -> int:
-        """Return the context window size, with async API fallback."""
-        if entry and "context_window" in entry:
-            return int(entry["context_window"])
-        if model_id in self._cache:
-            return self._cache[model_id]
-
-        # Try fetching from the provider's /models endpoint
-        if entry and "url" in entry:
-            fetched = await self._fetch_from_api(
-                model_id=model_id,
-                base_url=entry["url"],
-                api_key=entry.get("api_key") or os.environ.get(entry.get("api_key_env", ""), ""),
-            )
-            if fetched:
-                self._cache[model_id] = fetched
-                return fetched
-
-        return DEFAULT_CONTEXT_WINDOW
-
-    async def _fetch_from_api(self, model_id: str, base_url: str, api_key: str = "") -> int | None:
-        """Fetch context window from an OpenAI-compatible ``/models/{id}`` endpoint."""
-        url = f"{base_url.rstrip('/')}/models/{model_id}"
-        headers = {}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(url, headers=headers)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    for key in ("context_window", "context_length", "max_model_len"):
-                        if key in data:
-                            return int(data[key])
-        except Exception as e:
-            logger.debug("Could not fetch context window for %s: %s", model_id, e)
-        return None
+# Context-window resolution lives in ``context_window.py`` — this
+# file focuses on the model registry / logging-model pair. The
+# re-export below preserves the old ``ember_code.core.config.models``
+# import path.
+from ember_code.core.config.context_window import (  # noqa: E402
+    DEFAULT_CONTEXT_WINDOW,
+    ContextWindowResolver,
+)
 
 
 class ModelRegistry:
@@ -273,10 +277,74 @@ class ModelRegistry:
         self.context_windows = ContextWindowResolver()
 
         # Resolve cloud credentials for inference routing
-        from ember_code.core.auth.credentials import CloudCredentials
-
         self._cloud_token = CloudCredentials(settings.auth.credentials_file).access_token
         self._cloud_server_url = settings.api_url if self._cloud_token else None
+
+    def _build_gemini_kwargs(self, entry: dict[str, Any], api_key: str | None) -> dict[str, Any]:
+        """Gemini uses its own SDK with a slimmer kwarg surface than
+        OpenAI-like providers (no ``base_url``, no ``http_client``)."""
+        kwargs: dict[str, Any] = {"id": entry["model_id"]}
+        if api_key:
+            kwargs["api_key"] = api_key
+        if "temperature" in entry:
+            kwargs["temperature"] = entry["temperature"]
+        if "max_tokens" in entry:
+            kwargs["max_tokens"] = entry["max_tokens"]
+        return kwargs
+
+    def _build_openai_like_kwargs(
+        self, entry: dict[str, Any], api_key: str | None
+    ) -> dict[str, Any]:
+        """OpenAI-like providers (OpenAI, xAI, Ember Cloud gateway,
+        etc.) share a broad kwarg surface: base_url, api_key,
+        temperature, max_tokens, timeout + http_client.
+
+        Models with explicit credentials use them directly.
+        Otherwise, authenticated users route through the Ember Cloud
+        gateway. URL and API key resolve independently:
+        - URL: from model entry, or Ember Cloud gateway as fallback
+        - Key: from model entry, or Ember Cloud token as fallback
+        """
+        kwargs: dict[str, Any] = {"id": entry["model_id"]}
+
+        if "url" in entry:
+            kwargs["base_url"] = entry["url"]
+
+        if api_key == "cloud_token":
+            kwargs["api_key"] = self._cloud_token or "not-set"
+        elif api_key:
+            kwargs["api_key"] = api_key
+        else:
+            kwargs["api_key"] = "not-set"
+
+        if "temperature" in entry:
+            kwargs["temperature"] = entry["temperature"]
+        if "max_tokens" in entry:
+            kwargs["max_tokens"] = entry["max_tokens"]
+
+        # Request timeout — prevents indefinite hangs when the server
+        # or upstream provider stops responding. Configurable per
+        # model via ``timeout`` in the registry entry; defaults to
+        # 60s. The same value goes on BOTH the OpenAI-SDK ``timeout``
+        # kwarg AND the underlying ``httpx.AsyncClient`` we pass in —
+        # without setting it on the AsyncClient too, the SDK-level
+        # timeout is shadowed by httpx's defaults and hung
+        # connections can wedge forever.
+        timeout_s = entry.get("timeout", 60)
+        kwargs["timeout"] = timeout_s
+
+        # Short keepalive expiry avoids stale connections that hang
+        # when reused after idle periods (e.g. between user
+        # messages).
+        kwargs["http_client"] = httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout_s),
+            limits=httpx.Limits(
+                max_connections=10,
+                max_keepalive_connections=5,
+                keepalive_expiry=30,
+            ),
+        )
+        return kwargs
 
     def get_model(self, name: str | None = None) -> OpenAILike:
         """Get an Agno model instance by registry name.
@@ -314,64 +382,11 @@ class ModelRegistry:
 
         api_key = self._resolve_api_key(entry)
 
-        # Gemini uses its own SDK — different constructor kwargs
         if provider_name == "gemini":
-            kwargs: dict[str, Any] = {"id": entry["model_id"]}
-            if api_key:
-                kwargs["api_key"] = api_key
-            if "temperature" in entry:
-                kwargs["temperature"] = entry["temperature"]
-            if "max_tokens" in entry:
-                kwargs["max_tokens"] = entry["max_tokens"]
-            return provider_cls(**kwargs)
+            return provider_cls(**self._build_gemini_kwargs(entry, api_key))
 
-        # OpenAI-like providers
-        kwargs = {"id": entry["model_id"]}
-
-        # Models with explicit credentials use them directly.
-        # Otherwise, authenticated users route through Ember Cloud gateway.
-        # Resolve URL and API key independently:
-        # - URL: from model entry, or Ember Cloud gateway as fallback
-        # - Key: from model entry, or Ember Cloud token as fallback
-        if "url" in entry:
-            kwargs["base_url"] = entry["url"]
-
-        if api_key == "cloud_token":
-            # Resolve to Ember Cloud login credentials
-            kwargs["api_key"] = self._cloud_token or "not-set"
-        elif api_key:
-            kwargs["api_key"] = api_key
-        else:
-            kwargs["api_key"] = "not-set"
-
-        if "temperature" in entry:
-            kwargs["temperature"] = entry["temperature"]
-        if "max_tokens" in entry:
-            kwargs["max_tokens"] = entry["max_tokens"]
-
-        # Request timeout — prevents indefinite hangs when the server or
-        # upstream provider stops responding. Configurable per model via
-        # ``timeout`` in the registry entry; defaults to 60s. The same
-        # value goes on BOTH the OpenAI-SDK ``timeout`` kwarg AND the
-        # underlying ``httpx.AsyncClient`` we pass in — without setting
-        # it on the AsyncClient too, the SDK-level timeout is shadowed
-        # by httpx's defaults and hung connections can wedge forever.
-        timeout_s = entry.get("timeout", 60)
-        kwargs["timeout"] = timeout_s
-
-        # Short keepalive expiry avoids stale connections that hang
-        # when reused after idle periods (e.g. between user messages).
-        kwargs["http_client"] = httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout_s),
-            limits=httpx.Limits(
-                max_connections=10,
-                max_keepalive_connections=5,
-                keepalive_expiry=30,
-            ),
-        )
-
-        # Use logging wrapper to trace all LLM API calls
-        model = _LoggingModel(**kwargs)
+        # OpenAI-like providers wrapped in the logging trace model.
+        model = _LoggingModel(**self._build_openai_like_kwargs(entry, api_key))
         model._vision = entry.get("vision", False)
         return model
 
@@ -450,16 +465,12 @@ class ModelRegistry:
     @staticmethod
     def _resolve_api_key(entry: dict[str, Any]) -> str | None:
         """Resolve API key: direct value, env var, command, or stored credentials."""
-        from ember_code.core.config.api_keys import resolve_api_key
-
         key = resolve_api_key(entry)
         if key:
             return key
 
         # Fall back to stored login credentials for Ember-hosted models
         if "ignite-ember.sh" in entry.get("url", ""):
-            from ember_code.core.auth.credentials import CloudCredentials
-
             return CloudCredentials().access_token
 
         return None

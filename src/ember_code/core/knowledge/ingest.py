@@ -14,6 +14,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from agno.knowledge.reader.arxiv_reader import ArxivReader
+from agno.knowledge.reader.pdf_reader import PDFReader
+from agno.knowledge.reader.text_reader import TextReader
+from agno.knowledge.reader.website_reader import WebsiteReader
+from agno.knowledge.reader.wikipedia_reader import WikipediaReader
+from agno.knowledge.reader.youtube_reader import YouTubeReader
+
 from ember_code.core.knowledge.index import KnowledgeIndex
 
 logger = logging.getLogger(__name__)
@@ -131,23 +138,13 @@ def _reader_for_url(url: str):
     path = urlparse(url).path.lower()
 
     if "youtube.com" in host or host == "youtu.be":
-        from agno.knowledge.reader.youtube_reader import YouTubeReader
-
         return YouTubeReader()
     if "wikipedia.org" in host:
-        from agno.knowledge.reader.wikipedia_reader import WikipediaReader
-
         return WikipediaReader()
     if "arxiv.org" in host:
-        from agno.knowledge.reader.arxiv_reader import ArxivReader
-
         return ArxivReader()
     if path.endswith(".pdf"):
-        from agno.knowledge.reader.pdf_reader import PDFReader
-
         return PDFReader()
-    from agno.knowledge.reader.website_reader import WebsiteReader
-
     return WebsiteReader()
 
 
@@ -217,8 +214,6 @@ _PATH_READERS: dict[str, str] = {
 def _reader_for_path(path: Path):
     spec = _PATH_READERS.get(path.suffix.lower())
     if spec is None:
-        from agno.knowledge.reader.text_reader import TextReader
-
         return TextReader()
 
     module_name, _, class_name = spec.partition(".")

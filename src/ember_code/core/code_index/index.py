@@ -27,6 +27,7 @@ import asyncio
 import logging
 import shutil
 import subprocess
+from collections import Counter
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -37,12 +38,17 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy
 from agno.knowledge.document.base import Document
 from pydantic import BaseModel
 
+from ember_code.core.code_index.db.file_reference import FileReferenceService
+from ember_code.core.code_index.delta import apply_delta
 from ember_code.core.code_index.manifest import Manifest
 from ember_code.core.code_index.paths import (
+    code_index_dir,
     commit_chroma_path,
+    state_db_path,
 )
 from ember_code.core.code_index.project import resolve_project_id
 from ember_code.core.code_index.schema.items import CodeIndexItem, CodeIndexResult
+from ember_code.core.db.database import Database
 from ember_code.core.embeddings import EmbeddingFunction
 
 logger = logging.getLogger(__name__)
@@ -95,6 +101,19 @@ class CommitNotFoundError(Exception):
     def __init__(self, sha: str):
         super().__init__(f"No chroma index found for commit {sha}")
         self.sha = sha
+
+
+class HeadStats(BaseModel):
+    """Wire shape for :meth:`CodeIndex.head_stats` — per-commit
+    coverage summary consumed by the CodeIndex panel donut.
+
+    ``files_indexed`` is the count of unique files that have at
+    least one ``type=="file"`` doc in the commit's chroma;
+    ``languages_indexed`` maps ``file_extension`` (lowercased,
+    ``"(other)"`` fallback) to the file count per extension."""
+
+    files_indexed: int
+    languages_indexed: dict[str, int]
 
 
 class _BestChunkHit(BaseModel):
@@ -223,8 +242,6 @@ class CodeIndex:
 
     async def apply_delta(self, jsonl_path: str | Path):
         """Apply a producer-emitted JSONL changeset to this project."""
-        from ember_code.core.code_index.delta import apply_delta
-
         return await apply_delta(
             index=self,
             file_refs=self._file_reference_service(),
@@ -234,10 +251,6 @@ class CodeIndex:
     def _file_reference_service(self):
         """Lazily build a ``FileReferenceService`` against the per-project SQLite."""
         if self._file_refs is None:
-            from ember_code.core.code_index.paths import state_db_path
-            from ember_code.core.code_index.pg.file_reference import FileReferenceService
-            from ember_code.core.db.database import Database
-
             db = Database(state_db_path(self.project, data_dir=self.data_dir))
             self._file_refs = FileReferenceService(db)
         return self._file_refs
@@ -650,8 +663,6 @@ class CodeIndex:
         handles to the path. Typical placement: at session startup,
         before the initial ``sync_now``.
         """
-        from ember_code.core.code_index.paths import code_index_dir
-
         base = code_index_dir(self.project, data_dir=self.data_dir)
         if not base.is_dir():
             return []
@@ -678,26 +689,23 @@ class CodeIndex:
         chunks = await asyncio.to_thread(_get_or_create_collection, client, CHUNKS_COLLECTION)
         return docs, chunks
 
-    async def head_stats(self, sha: str) -> dict[str, Any]:
+    async def head_stats(self, sha: str) -> HeadStats:
         """Quick per-commit stats for the CodeIndex panel.
 
-        Returns ``{files_indexed, languages_indexed}``. The index
-        stores items at three granularities (``folder`` / ``file`` /
-        ``entity``), so a naive ``docs.count()`` would conflate files
-        with the functions and classes inside them — producing
-        Coverage values above 100%. We filter to ``type == "file"``
-        and dedupe by path so the numbers are directly comparable to
-        ``git ls-files``.
+        The index stores items at three granularities (``folder`` /
+        ``file`` / ``entity``), so a naive ``docs.count()`` would
+        conflate files with the functions and classes inside them —
+        producing Coverage values above 100%. We filter to
+        ``type == "file"`` and dedupe by path so the numbers are
+        directly comparable to ``git ls-files``.
         """
-        from collections import Counter
-
         chroma_dir = commit_chroma_path(self.project, sha, data_dir=self.data_dir)
         if not chroma_dir.exists():
-            return {"files_indexed": 0, "languages_indexed": {}}
+            return HeadStats(files_indexed=0, languages_indexed={})
         docs, _ = await self._collections(sha)
         total = await asyncio.to_thread(docs.count)
         if total == 0:
-            return {"files_indexed": 0, "languages_indexed": {}}
+            return HeadStats(files_indexed=0, languages_indexed={})
         # Fetch only file-typed docs' metadatas — folders/entities
         # are noise for file-count purposes. ``where`` filters at the
         # chroma layer so we don't pull entity rows over the wire on
@@ -719,10 +727,10 @@ class CodeIndex:
                 seen_paths.add(path)
             ext = (m.get("file_extension") or "").lower()
             ext_counts[ext or "(other)"] += 1
-        return {
-            "files_indexed": len(seen_paths) if seen_paths else sum(ext_counts.values()),
-            "languages_indexed": dict(ext_counts),
-        }
+        return HeadStats(
+            files_indexed=len(seen_paths) if seen_paths else sum(ext_counts.values()),
+            languages_indexed=dict(ext_counts),
+        )
 
     @staticmethod
     async def _resolve_parent_ids_for(docs: Any, where: dict[str, Any]) -> list[str]:

@@ -8,6 +8,10 @@ add slash-command bridges, scheduled-task runners, and admin tooling.
 """
 
 import asyncio
+import logging
+import sys
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 import click
 
@@ -70,10 +74,6 @@ def cli(
 
     # ── Debug logging ──────────────────────────────────────────────
     if debug:
-        import logging
-        from logging.handlers import RotatingFileHandler
-        from pathlib import Path
-
         log_path = Path.home() / ".ember" / "debug.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         handler = RotatingFileHandler(
@@ -199,8 +199,6 @@ def cli(
     worktree_manager = None
 
     if worktree:
-        from pathlib import Path
-
         from ember_code.core.worktree import WorktreeManager
 
         wm = WorktreeManager(Path.cwd())
@@ -212,8 +210,6 @@ def cli(
     # ── Additional directories ───────────────────────────────────
     additional_dirs = None
     if add_dir:
-        from pathlib import Path
-
         additional_dirs = [Path(d).resolve() for d in add_dir]
 
     # ── Store for cleanup ────────────────────────────────────────
@@ -223,8 +219,6 @@ def cli(
 
     # -- Pipe mode --
     if pipe:
-        import sys
-
         text = sys.stdin.read().strip()
         if message:
             text = f"{message}\n\n{text}" if text else message

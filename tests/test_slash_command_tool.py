@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ember_code.backend import command_handler as cmd_mod
 from ember_code.core.tools.slash import SlashCommandTool
 
 
@@ -150,8 +151,6 @@ class TestErrorHandling:
         """If the underlying CommandHandler raises, the tool
         returns an error string instead of propagating — keeps
         the agent loop alive."""
-        from ember_code.backend import command_handler as cmd_mod
-
         class _Boom:
             def __init__(self, *_a, **_kw):
                 pass
@@ -188,8 +187,6 @@ class TestNotDestructive:
 
     @pytest.mark.asyncio
     async def test_clear_does_not_invoke_handler(self, tmp_path, monkeypatch):
-        from ember_code.backend import command_handler as cmd_mod
-
         handler_called = False
 
         class _Tracking:

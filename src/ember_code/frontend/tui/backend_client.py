@@ -11,8 +11,20 @@ import contextlib
 import logging
 import uuid
 from collections.abc import AsyncIterator, Callable
+from types import SimpleNamespace
 from typing import Any
 
+from ember_code.backend.server_context import PendingMessage
+from ember_code.core.plugins.models import MarketplaceInfo, PluginInfo
+from ember_code.core.pool import AgentInfo
+from ember_code.core.skills.parser import SkillInfo
+from ember_code.frontend.tui.widgets._codeindex_panel import CodeIndexStatusInfo
+from ember_code.frontend.tui.widgets._hooks_panel import HookInfo
+from ember_code.frontend.tui.widgets._knowledge_panel import (
+    KnowledgeSearchHit,
+    KnowledgeStatusInfo,
+)
+from ember_code.frontend.tui.widgets._loop_panel import LoopStatusInfo
 from ember_code.protocol import messages as msg
 from ember_code.protocol.messages import Message
 from ember_code.protocol.rpc import RpcMethod
@@ -28,8 +40,6 @@ class RemoteSkillPool:
         self._definitions = definitions
 
     def list_skills(self) -> list[Any]:
-        from types import SimpleNamespace
-
         return [SimpleNamespace(**d) for d in self._definitions]
 
     def match_user_command(self, text: str) -> Any | None:
@@ -76,62 +86,87 @@ class BackendClient:
         self._reader_task = asyncio.create_task(self._reader_loop())
 
     async def _reader_loop(self) -> None:
-        """Background task: read messages from BE, dispatch by correlation ID."""
+        """Background task: read messages from BE, dispatch by
+        correlation ID or message type.
+
+        Five dispatch buckets, checked in this order:
+
+        1. ``StreamEnd`` — sentinel on the matching queue.
+        2. ``PushNotification`` — routes to a channel handler
+           if one is registered (login pushes, orchestrate
+           progress, etc.).
+        3. Correlated streaming response — enqueue for the
+           awaiting ``_stream`` generator.
+        4. Correlated request/response — resolve the awaiting
+           future.
+        5. Mirroring events from other attached views (multi-
+           view sessions on the same BE — Typing, echoes,
+           HITL resolutions, Welcome).
+        """
         try:
             async for message in self._transport.receive():
-                msg_id = message.id
-
-                # StreamEnd → signal end of streaming response
-                if isinstance(message, msg.StreamEnd):
-                    queue = self._pending_streams.pop(msg_id, None)
-                    if queue:
-                        await queue.put(None)  # sentinel
-                    continue
-
-                # Push notification → dispatch to handler
-                if isinstance(message, msg.PushNotification):
-                    handler = self._push_handlers.get(message.channel)
-                    if handler:
-                        try:
-                            handler(message.payload)
-                        except Exception as exc:
-                            logger.debug("Push handler error (%s): %s", message.channel, exc)
-                    continue
-
-                # Streaming response → put in queue
-                if msg_id and msg_id in self._pending_streams:
-                    await self._pending_streams[msg_id].put(message)
-                    continue
-
-                # Request/response → resolve future
-                if msg_id and msg_id in self._pending:
-                    self._pending.pop(msg_id).set_result(message)
-                    continue
-
-                # Mirroring events from other attached views (web
-                # tabs on the same BE): live drafts, message echoes,
-                # remote HITL resolutions.
-                if isinstance(
-                    message,
-                    (msg.Typing, msg.UserMessageReceived, msg.RequirementResolved, msg.Welcome),
-                ):
-                    if self._mirror_handler is not None:
-                        try:
-                            self._mirror_handler(message)
-                        except Exception as exc:
-                            logger.debug("Mirror handler error: %s", exc)
-                    continue
-
-                logger.debug("Unmatched message: %s (id=%s)", type(message).__name__, msg_id)
-
+                if not self._dispatch_message(message):
+                    logger.debug(
+                        "Unmatched message: %s (id=%s)",
+                        type(message).__name__,
+                        message.id,
+                    )
         except Exception as exc:
             logger.error("Reader loop error: %s", exc)
-            # Fail all pending futures
-            for fut in self._pending.values():
-                if not fut.done():
-                    fut.set_exception(ConnectionError("BE connection lost"))
-            for queue in self._pending_streams.values():
-                await queue.put(None)
+            self._fail_pending_on_disconnect()
+
+    async def _dispatch_message(self, message: Message) -> bool:
+        """Route ``message`` to the right handler bucket. Returns
+        True when the message matched one of the five buckets;
+        False when nothing claimed it (caller logs at DEBUG)."""
+        msg_id = message.id
+
+        if isinstance(message, msg.StreamEnd):
+            queue = self._pending_streams.pop(msg_id, None)
+            if queue:
+                await queue.put(None)  # sentinel
+            return True
+
+        if isinstance(message, msg.PushNotification):
+            handler = self._push_handlers.get(message.channel)
+            if handler:
+                try:
+                    handler(message.payload)
+                except Exception as exc:
+                    logger.debug("Push handler error (%s): %s", message.channel, exc)
+            return True
+
+        if msg_id and msg_id in self._pending_streams:
+            await self._pending_streams[msg_id].put(message)
+            return True
+
+        if msg_id and msg_id in self._pending:
+            self._pending.pop(msg_id).set_result(message)
+            return True
+
+        if isinstance(
+            message,
+            (msg.Typing, msg.UserMessageReceived, msg.RequirementResolved, msg.Welcome),
+        ):
+            if self._mirror_handler is not None:
+                try:
+                    self._mirror_handler(message)
+                except Exception as exc:
+                    logger.debug("Mirror handler error: %s", exc)
+            return True
+
+        return False
+
+    async def _fail_pending_on_disconnect(self) -> None:
+        """Fail every awaiting future / stream queue when the
+        reader loop dies. Called only from the reader loop's
+        outer except block — never expected to run on the happy
+        path."""
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_exception(ConnectionError("BE connection lost"))
+        for queue in self._pending_streams.values():
+            await queue.put(None)
 
     async def _rpc(self, method: RpcMethod, **args: Any) -> Any:
         """Send an RPC request and wait for the response.
@@ -155,6 +190,39 @@ class BackendClient:
             return response.result
         # Direct message response (e.g., Info, StatusUpdate)
         return response
+
+    # ── Typed RPC helpers ─────────────────────────────────────────
+    #
+    # Most methods on this class fit one of three patterns:
+    #   1. RPC → ``msg.Info`` (mutation returning a status line)
+    #   2. RPC → ``list[dict]`` (typed panel data)
+    #   3. RPC → ``dict`` (structured status snapshot)
+    #
+    # Rather than duplicating the isinstance-guard + fallback in
+    # every method body (was ~2 extra LoC each × 50+ methods), these
+    # helpers do the coercion once. Each thin wrapper becomes a
+    # one-liner: ``return await self._rpc_info(RpcMethod.X, **kwargs)``.
+
+    async def _rpc_info(self, method: RpcMethod, **args: Any) -> msg.Info:
+        """RPC call whose response is expected to be ``msg.Info``.
+        Coerces non-Info responses (e.g. dict, raw str, error) to
+        an ``Info`` with a stringified body so the caller can render
+        it uniformly."""
+        result = await self._rpc(method, **args)
+        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+
+    async def _rpc_list(self, method: RpcMethod, **args: Any) -> list:
+        """RPC call whose response is a list. Returns ``[]`` when the
+        BE returns ``None`` (missing / feature-disabled) — same
+        semantic as an empty list, and lets the caller iterate
+        without a None-guard."""
+        return await self._rpc(method, **args) or []
+
+    async def _rpc_dict(self, method: RpcMethod, **args: Any) -> dict:
+        """RPC call whose response is a dict. Returns ``{}`` on
+        None-response for the same iteration-safety reason as
+        :meth:`_rpc_list`."""
+        return await self._rpc(method, **args) or {}
 
     def set_mirror_handler(self, handler: Callable[[Message], None]) -> None:
         """Receive mirroring events from other views on the same BE."""
@@ -291,12 +359,15 @@ class BackendClient:
     async def get_chat_history(self, session_id: str) -> list[dict]:
         return await self._rpc(RpcMethod.GET_CHAT_HISTORY, session_id=session_id) or []
 
-    async def get_pending_messages(self, session_id: str) -> list[dict]:
+    async def get_pending_messages(self, session_id: str) -> list[PendingMessage]:
         """User messages whose runs never completed — surfaced on
         ``--continue`` so the interrupted prompt renders alongside
         normal chat history. See ``BackendServer.get_pending_messages``
-        for the persistence model."""
-        return await self._rpc(RpcMethod.GET_PENDING_MESSAGES, session_id=session_id) or []
+        for the persistence model. Parses each wire dict into
+        :class:`PendingMessage` at the boundary (parse-at-the-wire,
+        matches the iters 256-269 pattern)."""
+        raw = await self._rpc(RpcMethod.GET_PENDING_MESSAGES, session_id=session_id) or []
+        return [PendingMessage(**r) for r in raw if isinstance(r, dict)]
 
     # ── Model ────────────────────────────────────────────────────
 
@@ -354,12 +425,10 @@ class BackendClient:
         return result
 
     async def mcp_connect(self, server_name: str) -> msg.Info:
-        result = await self._rpc(RpcMethod.MCP_CONNECT, server_name=server_name)
-        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+        return await self._rpc_info(RpcMethod.MCP_CONNECT, server_name=server_name)
 
     async def mcp_disconnect(self, server_name: str) -> msg.Info:
-        result = await self._rpc(RpcMethod.MCP_DISCONNECT, server_name=server_name)
-        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+        return await self._rpc_info(RpcMethod.MCP_DISCONNECT, server_name=server_name)
 
     def get_mcp_status(self) -> list[tuple[str, bool]]:
         # Sync call — use cached or fire async
@@ -382,130 +451,147 @@ class BackendClient:
 
     # ── Agents ─────────────────────────────────────────────────────
 
-    async def get_agent_details(self) -> list[dict]:
-        result = await self._rpc(RpcMethod.GET_AGENT_DETAILS)
-        return result or []
+    async def get_agent_details(self) -> list[AgentInfo]:
+        """RPC: agent-pool snapshot for the agents panel. Parses
+        the wire dicts into :class:`AgentInfo` here so every
+        caller reads a typed model — same parse-at-the-wire
+        pattern as the panel-header RPCs (iters 256-258)."""
+        raw = await self._rpc_list(RpcMethod.GET_AGENT_DETAILS)
+        return [AgentInfo(**d) for d in raw if isinstance(d, dict)]
 
     async def promote_ephemeral_agent(self, name: str) -> msg.Info:
-        result = await self._rpc(RpcMethod.PROMOTE_EPHEMERAL_AGENT, name=name)
-        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+        return await self._rpc_info(RpcMethod.PROMOTE_EPHEMERAL_AGENT, name=name)
 
     async def discard_ephemeral_agent(self, name: str) -> msg.Info:
-        result = await self._rpc(RpcMethod.DISCARD_EPHEMERAL_AGENT, name=name)
-        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+        return await self._rpc_info(RpcMethod.DISCARD_EPHEMERAL_AGENT, name=name)
 
     # ── Skills ─────────────────────────────────────────────────────
 
-    async def get_skill_details(self) -> list[dict]:
-        result = await self._rpc(RpcMethod.GET_SKILL_DETAILS)
-        return result or []
+    async def get_skill_details(self) -> list[SkillInfo]:
+        """RPC: skill-pool snapshot for the skills panel. Parses
+        the wire dicts into :class:`SkillInfo` here — same shape
+        as :meth:`get_agent_details` from iter 262."""
+        raw = await self._rpc_list(RpcMethod.GET_SKILL_DETAILS)
+        return [SkillInfo(**d) for d in raw if isinstance(d, dict)]
 
     # ── Hooks ──────────────────────────────────────────────────────
 
-    async def get_hooks_details(self) -> list[dict]:
-        result = await self._rpc(RpcMethod.GET_HOOKS_DETAILS)
-        return result or []
+    async def get_hooks_details(self) -> list[HookInfo]:
+        """RPC: flat hook-list snapshot for the hooks panel.
+        Parses each wire dict to :class:`HookInfo` — same
+        parse-at-the-wire pattern as :meth:`get_agent_details`
+        (iter 262) and siblings."""
+        raw = await self._rpc_list(RpcMethod.GET_HOOKS_DETAILS)
+        return [HookInfo(**r) for r in raw if isinstance(r, dict)]
 
     async def reload_hooks(self) -> msg.Info:
-        result = await self._rpc(RpcMethod.RELOAD_HOOKS)
-        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+        return await self._rpc_info(RpcMethod.RELOAD_HOOKS)
 
     # ── Knowledge ──────────────────────────────────────────────────
 
-    async def get_knowledge_status(self) -> dict:
-        result = await self._rpc(RpcMethod.GET_KNOWLEDGE_STATUS)
-        return result or {}
+    async def get_knowledge_status(self) -> KnowledgeStatusInfo:
+        """RPC: KB panel-header snapshot. Parses the wire dict into
+        :class:`KnowledgeStatusInfo` here — same parse-at-the-wire
+        pattern as :meth:`loop_status` / :meth:`codeindex_status`."""
+        result = await self._rpc_dict(RpcMethod.GET_KNOWLEDGE_STATUS)
+        return KnowledgeStatusInfo(**result) if result else KnowledgeStatusInfo()
 
-    async def knowledge_search(self, query: str) -> list[dict]:
-        result = await self._rpc(RpcMethod.KNOWLEDGE_SEARCH, query=query)
-        return result or []
+    async def knowledge_search(self, query: str) -> list[KnowledgeSearchHit]:
+        """RPC: KB search results. Parses each wire dict into
+        :class:`KnowledgeSearchHit` — same parse-at-the-wire
+        pattern as the panel-header status RPCs (iters 256-258)."""
+        raw = await self._rpc_list(RpcMethod.KNOWLEDGE_SEARCH, query=query)
+        return [KnowledgeSearchHit(**r) for r in raw if isinstance(r, dict)]
 
     async def knowledge_add(self, source: str) -> msg.Info:
-        result = await self._rpc(RpcMethod.KNOWLEDGE_ADD, source=source)
-        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+        return await self._rpc_info(RpcMethod.KNOWLEDGE_ADD, source=source)
 
     # ── CodeIndex ──────────────────────────────────────────────────
 
-    async def codeindex_status(self) -> dict:
-        result = await self._rpc(RpcMethod.CODEINDEX_STATUS)
-        return result or {}
+    async def codeindex_status(self) -> CodeIndexStatusInfo:
+        """RPC: CodeIndex panel-header snapshot. Parses the wire dict
+        into :class:`CodeIndexStatusInfo` here so every caller gets
+        a typed model — same parse-at-the-wire shape as
+        :meth:`loop_status`."""
+        result = await self._rpc_dict(RpcMethod.CODEINDEX_STATUS)
+        return CodeIndexStatusInfo(**result) if result else CodeIndexStatusInfo()
 
     async def codeindex_sync(self, sha: str | None = None) -> dict:
-        result = await self._rpc(RpcMethod.CODEINDEX_SYNC, sha=sha)
-        return result or {}
+        return await self._rpc_dict(RpcMethod.CODEINDEX_SYNC, sha=sha)
 
     async def codeindex_resync(self, sha: str | None = None) -> dict:
-        result = await self._rpc(RpcMethod.CODEINDEX_RESYNC, sha=sha)
-        return result or {}
+        return await self._rpc_dict(RpcMethod.CODEINDEX_RESYNC, sha=sha)
 
-    async def codeindex_clean(self) -> dict:
-        result = await self._rpc(RpcMethod.CODEINDEX_CLEAN)
-        return result or {}
+    async def codeindex_clean(self) -> list[str]:
+        """RPC: drop old commits, return the SHAs that were dropped.
+        BE-side handler returns a 1-field payload
+        ``{"dropped": [...]}``; the client wrapper peels the list
+        so the caller gets the shape it actually reads."""
+        result = await self._rpc_dict(RpcMethod.CODEINDEX_CLEAN)
+        if not result:
+            return []
+        dropped = result.get("dropped") or []
+        return [str(s) for s in dropped]
 
-    async def codeindex_install(self) -> dict:
-        result = await self._rpc(RpcMethod.CODEINDEX_INSTALL)
-        return result or {}
+    async def codeindex_install(self) -> str:
+        """RPC: portal URL for the GitHub-App install flow. The
+        BE-side handler returns a 1-field payload
+        ``{"install_url": <str>}``; the client wrapper extracts the
+        string directly so the caller doesn't have to remember the
+        key name. Empty string when the BE couldn't produce a
+        URL."""
+        result = await self._rpc_dict(RpcMethod.CODEINDEX_INSTALL)
+        return str(result.get("install_url") or "") if result else ""
 
     # ── Plugins ─────────────────────────────────────────────────────
 
-    async def get_plugin_details(self) -> list[dict]:
-        result = await self._rpc(RpcMethod.GET_PLUGIN_DETAILS)
-        return result or []
+    async def get_plugin_details(self) -> list[PluginInfo]:
+        """RPC: installed-plugin snapshot for the plugins panel.
+        Parses each wire dict to :class:`PluginInfo` — same
+        parse-at-the-wire pattern as :meth:`get_agent_details`
+        (iter 262) and :meth:`get_skill_details` (iter 263)."""
+        raw = await self._rpc_list(RpcMethod.GET_PLUGIN_DETAILS)
+        return [PluginInfo(**d) for d in raw if isinstance(d, dict)]
 
     async def set_plugin_enabled(self, name: str, enabled: bool) -> msg.Info:
-        result = await self._rpc(
-            RpcMethod.SET_PLUGIN_ENABLED,
-            name=name,
-            enabled=enabled,
-        )
-        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+        return await self._rpc_info(RpcMethod.SET_PLUGIN_ENABLED, name=name, enabled=enabled)
 
     async def install_plugin(
         self,
         ref: str,
         install_ref: str | None = None,
     ) -> msg.Info:
-        result = await self._rpc(
-            RpcMethod.INSTALL_PLUGIN,
-            ref=ref,
-            install_ref=install_ref,
-        )
-        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+        return await self._rpc_info(RpcMethod.INSTALL_PLUGIN, ref=ref, install_ref=install_ref)
 
     async def update_plugin(
         self,
         name: str,
         install_ref: str | None = None,
     ) -> msg.Info:
-        result = await self._rpc(
-            RpcMethod.UPDATE_PLUGIN,
-            name=name,
-            install_ref=install_ref,
-        )
-        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+        return await self._rpc_info(RpcMethod.UPDATE_PLUGIN, name=name, install_ref=install_ref)
 
     async def remove_plugin(self, name: str) -> msg.Info:
-        result = await self._rpc(RpcMethod.REMOVE_PLUGIN, name=name)
-        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+        return await self._rpc_info(RpcMethod.REMOVE_PLUGIN, name=name)
 
-    async def get_marketplaces(self) -> list[dict]:
-        result = await self._rpc(RpcMethod.GET_MARKETPLACES)
-        return result or []
+    async def get_marketplaces(self) -> list[MarketplaceInfo]:
+        """RPC: registered-marketplace snapshot. Parses each wire
+        dict to :class:`MarketplaceInfo`; the nested ``plugins``
+        list of :class:`MarketplacePluginInfo` gets parsed
+        automatically by Pydantic's field typing."""
+        raw = await self._rpc_list(RpcMethod.GET_MARKETPLACES)
+        return [MarketplaceInfo(**m) for m in raw if isinstance(m, dict)]
 
     async def add_marketplace(self, url: str) -> msg.Info:
-        result = await self._rpc(RpcMethod.ADD_MARKETPLACE, url=url)
-        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+        return await self._rpc_info(RpcMethod.ADD_MARKETPLACE, url=url)
 
     async def remove_marketplace(self, name: str) -> msg.Info:
-        result = await self._rpc(RpcMethod.REMOVE_MARKETPLACE, name=name)
-        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+        return await self._rpc_info(RpcMethod.REMOVE_MARKETPLACE, name=name)
 
     async def refresh_marketplaces(
         self,
         name: str | None = None,
     ) -> msg.Info:
-        result = await self._rpc(RpcMethod.REFRESH_MARKETPLACES, name=name)
-        return result if isinstance(result, msg.Info) else msg.Info(text=str(result))
+        return await self._rpc_info(RpcMethod.REFRESH_MARKETPLACES, name=name)
 
     def get_mcp_servers(self) -> list[dict]:
         fut = asyncio.ensure_future(self._rpc(RpcMethod.GET_MCP_SERVERS))
@@ -533,8 +619,6 @@ class BackendClient:
 
     def cancel_login(self) -> None:
         """Tell the BE to cancel the in-progress login flow."""
-        from ember_code.protocol import messages as msg
-
         asyncio.ensure_future(self._transport.send(msg.CancelLogin()))
 
     def reload_cloud_credentials(self) -> msg.StatusUpdate:
@@ -584,11 +668,17 @@ class BackendClient:
         result = await self._rpc(RpcMethod.CANCEL_PENDING_LOOP)
         return bool(result)
 
-    async def loop_status(self) -> dict:
+    async def loop_status(self) -> LoopStatusInfo:
         """RPC: snapshot the active ``/loop`` state for the panel
-        header. Cheap (just three session fields); safe to poll."""
+        header. Cheap (just three session fields); safe to poll.
+
+        Parses the wire dict into :class:`LoopStatusInfo` here so
+        every caller gets a typed model — the panel and the loop
+        handlers no longer have to spread the dict at each site."""
         result = await self._rpc(RpcMethod.LOOP_STATUS)
-        return result or {}
+        if isinstance(result, dict):
+            return LoopStatusInfo(**result)
+        return LoopStatusInfo()
 
     async def loop_resume(self) -> str:
         """RPC: flip a paused loop to pumping. Returns the prompt
@@ -666,8 +756,6 @@ class BackendClient:
         return result if isinstance(result, msg.Info) else msg.Info(text=str(result or ""))
 
     async def get_scheduled_tasks(self, include_done: bool = True) -> list:
-        from types import SimpleNamespace
-
         tasks = await self._rpc(RpcMethod.GET_SCHEDULED_TASKS, include_done=include_done) or []
         return [SimpleNamespace(**t) if isinstance(t, dict) else t for t in tasks]
 

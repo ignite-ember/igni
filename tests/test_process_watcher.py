@@ -22,6 +22,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+from ember_code.backend.__main__ import _build_rpc_table
 from ember_code.backend.server import BackendServer
 from ember_code.core.tools import shell as shell_mod
 from ember_code.protocol.rpc import RpcMethod
@@ -31,12 +32,13 @@ from ember_code.protocol.rpc import RpcMethod
 
 class TestLineSubscriber:
     def setup_method(self) -> None:
-        # Test isolation: clear the module-level subscriber lists
-        # before each test so a leftover callback from a previous
-        # test doesn't fire here.
-        shell_mod._line_subscribers.clear()
-        shell_mod._start_subscribers.clear()
-        shell_mod._completion_subscribers.clear()
+        # Test isolation: reset the process-event bus before each
+        # test so a leftover callback from a previous test doesn't
+        # fire here. Post-refactor the three parallel subscriber
+        # lists are consolidated into ``shell_mod._event_bus`` (a
+        # :class:`ProcessEventBus`); ``.reset()`` drops all
+        # subscribers across all event types in one call.
+        shell_mod._event_bus.reset()
 
     def test_subscribe_then_emit_fires_callback(self) -> None:
         received: list[dict] = []
@@ -95,7 +97,7 @@ class TestLineSubscriber:
 
 class TestStartSubscriber:
     def setup_method(self) -> None:
-        shell_mod._start_subscribers.clear()
+        shell_mod._event_bus.reset()
 
     def test_emit_start_publishes_pid_cmd_ts(self) -> None:
         received: list[dict] = []
@@ -248,32 +250,24 @@ class TestWatcherRpcDispatch:
         return backend
 
     def test_list_dispatch_calls_method(self) -> None:
-        from ember_code.backend.__main__ import _build_rpc_table
-
         backend = self._make_backend()
         table = _build_rpc_table(backend, MagicMock(), {})
         table[RpcMethod.LIST_BACKGROUND_PROCESSES]({})
         backend.list_background_processes.assert_called_once_with()
 
     def test_read_dispatch_extracts_pid_and_tail(self) -> None:
-        from ember_code.backend.__main__ import _build_rpc_table
-
         backend = self._make_backend()
         table = _build_rpc_table(backend, MagicMock(), {})
         table[RpcMethod.READ_PROCESS_TAIL]({"pid": "42", "tail": "50"})
         backend.read_process_tail.assert_called_once_with(pid=42, tail=50)
 
     def test_read_dispatch_defaults_tail_to_200(self) -> None:
-        from ember_code.backend.__main__ import _build_rpc_table
-
         backend = self._make_backend()
         table = _build_rpc_table(backend, MagicMock(), {})
         table[RpcMethod.READ_PROCESS_TAIL]({"pid": 42})
         backend.read_process_tail.assert_called_once_with(pid=42, tail=200)
 
     async def test_stop_dispatch_extracts_pid(self) -> None:
-        from ember_code.backend.__main__ import _build_rpc_table
-
         backend = self._make_backend()
         table = _build_rpc_table(backend, MagicMock(), {})
         result = table[RpcMethod.STOP_BACKGROUND_PROCESS]({"pid": 99})
@@ -287,8 +281,6 @@ class TestWatcherRpcDispatch:
         # ``_build_rpc_table`` closes over its ``backend`` arg, so
         # a pool runtime's table must hit the pool backend, never
         # the boot one.
-        from ember_code.backend.__main__ import _build_rpc_table
-
         boot = self._make_backend()
         pool = self._make_backend()
         # Boot table built but not stored — we only fire against

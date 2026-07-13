@@ -26,9 +26,11 @@ import sys
 import textwrap
 import time
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ember_code.backend.server import BackendServer
 from ember_code.core.session.pending_messages import (
     PendingMessage,
     PendingMessageStore,
@@ -252,8 +254,6 @@ class TestGetPendingMessagesRPC:
 
     @pytest.mark.asyncio
     async def test_returns_pending_in_chat_history_shape(self, tmp_path):
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         server._pending_store = PendingMessageStore(tmp_path / "state.db")
         server._pending_store.record_received("sess-x", "first interrupted")
@@ -267,15 +267,13 @@ class TestGetPendingMessagesRPC:
         _backdate_pending_rows(tmp_path / "state.db")
 
         rows = await server.get_pending_messages("sess-x")
-        assert [r["content"] for r in rows] == ["first interrupted", "second interrupted"]
-        assert all(r["role"] == "user" for r in rows)
-        assert all("received_at" in r for r in rows)
-        assert all("message_id" in r for r in rows)
+        assert [r.content for r in rows] == ["first interrupted", "second interrupted"]
+        assert all(r.role == "user" for r in rows)
+        assert all(hasattr(r, "received_at") for r in rows)
+        assert all(hasattr(r, "message_id") for r in rows)
 
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_pending(self, tmp_path):
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         server._pending_store = PendingMessageStore(tmp_path / "state.db")
 
@@ -292,10 +290,6 @@ class TestPendingNotDiscardedUntilConsumed:
 
     @pytest.mark.asyncio
     async def test_detect_keeps_pending_alive(self, tmp_path):
-        from unittest.mock import AsyncMock, MagicMock
-
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         server._interrupted_run_summary = None
         server._pending_message_ids_to_drop = []
@@ -318,7 +312,7 @@ class TestPendingNotDiscardedUntilConsumed:
         _backdate_pending_rows(tmp_path / "state.db")
         rows = await server.get_pending_messages("sess")
         assert len(rows) == 1
-        assert rows[0]["content"] == "lost question"
+        assert rows[0].content == "lost question"
         # Drop list is queued for the next ``run_message``.
         assert len(server._pending_message_ids_to_drop) == 1
 
@@ -332,10 +326,6 @@ class TestInterruptedDetectionUsesPendingStore:
 
     @pytest.mark.asyncio
     async def test_pending_message_only_path_builds_summary(self, tmp_path):
-        from unittest.mock import AsyncMock, MagicMock
-
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         server._interrupted_run_summary = None
         server._session = MagicMock()
@@ -365,10 +355,6 @@ class TestInterruptedDetectionUsesPendingStore:
         ``get_pending_messages``. Actual ``discard`` happens inside
         ``_run_message_locked`` when the agent consumes the
         summary."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         server._interrupted_run_summary = None
         server._pending_message_ids_to_drop = []
@@ -400,10 +386,6 @@ class TestPeriodicCheckpoint:
 
     @pytest.mark.asyncio
     async def test_fires_at_interval_until_cancelled(self):
-        from unittest.mock import AsyncMock
-
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         calls = 0
 
@@ -429,10 +411,6 @@ class TestPeriodicCheckpoint:
         """A flaky checkpoint must not kill the task — otherwise
         a single SQLite hiccup mid-run silently disables
         durability for the rest of the run."""
-        from unittest.mock import AsyncMock
-
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         calls = 0
 

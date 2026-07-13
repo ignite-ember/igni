@@ -16,6 +16,7 @@ import pytest
 
 from ember_code.backend.command_handler import CommandHandler
 from ember_code.core.session.persistence import SessionPersistence
+from ember_code.protocol.messages import CommandAction
 
 
 def _make_source_session(
@@ -187,8 +188,6 @@ class TestForkSlashCommand:
         handler = CommandHandler(session)
         result = await handler.handle("/fork")
         # CommandResult signals the fork to the FE.
-        from ember_code.protocol.messages import CommandAction
-
         assert result.action == CommandAction.FORK
         # All three holders point at the new id.
         assert session.session_id == "forkedid"

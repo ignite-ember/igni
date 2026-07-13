@@ -51,11 +51,11 @@ import contextlib
 import logging
 import re
 import shlex
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
@@ -84,14 +84,19 @@ _AT_FILE_RE = re.compile(r"@([^\s)]+)")
 _SHELL_TIMEOUT_SECONDS = 30
 
 
-@dataclass(frozen=True)
-class MarkdownCommand:
-    """A single markdown-authored command discovered on disk."""
+class MarkdownCommand(BaseModel):
+    """A single markdown-authored command discovered on disk.
+
+    Immutable (``frozen=True``) so callers can share instances
+    across the tool-call boundary without defensive copies.
+    """
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     name: str
     path: Path
     description: str = ""
-    allowed_tools: tuple[str, ...] = field(default_factory=tuple)
+    allowed_tools: tuple[str, ...] = Field(default_factory=tuple)
     argument_hint: str = ""
     model: str | None = None
     body: str = ""
@@ -103,6 +108,26 @@ class MarkdownCommand:
         text = await _substitute_shell(text, cwd=project_dir or self.path.parent)
         text = _substitute_files(text, source=self.path, project_dir=project_dir)
         return text
+
+    @classmethod
+    def discover(
+        cls, project_dir: Path, *, read_claude: bool = True
+    ) -> dict[str, MarkdownCommand]:
+        """Walk all configured roots and return ``name → command``.
+
+        Later roots override earlier ones on name collisions — project
+        commands beat user-global, ember beats claude (within the same
+        tier). The leading-slash isn't part of the key (users invoke
+        ``/review`` but the dict is keyed ``review``)."""
+        out: dict[str, MarkdownCommand] = {}
+        for root in _commands_dirs(project_dir, read_claude=read_claude):
+            if not root.is_dir():
+                continue
+            for path in sorted(root.glob("*.md")):
+                cmd = _load_command_file(path)
+                if cmd is not None:
+                    out[cmd.name] = cmd
+        return out
 
 
 # ── Discovery ────────────────────────────────────────────────────
@@ -141,6 +166,20 @@ def _parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     return meta, body
 
 
+def _parse_allowed_tools(raw: Any) -> tuple[str, ...]:
+    """Normalize the ``allowed-tools`` frontmatter field into a tuple.
+
+    Accepts either the CC comma-separated string form (``"Read, Bash"``)
+    or a native YAML list (``["Read", "Bash"]``). Anything else
+    collapses to an empty tuple so authorship mistakes fail closed
+    rather than granting unintended permissions."""
+    if isinstance(raw, str):
+        return tuple(t.strip() for t in raw.split(",") if t.strip())
+    if isinstance(raw, list):
+        return tuple(str(t).strip() for t in raw if str(t).strip())
+    return ()
+
+
 def _load_command_file(path: Path) -> MarkdownCommand | None:
     """Read one ``.md`` file and return a ``MarkdownCommand``, or
     ``None`` if the file is unreadable. The command name is the
@@ -154,18 +193,11 @@ def _load_command_file(path: Path) -> MarkdownCommand | None:
         logger.debug("Markdown command read %s failed: %s", path, exc)
         return None
     meta, body = _parse_frontmatter(content)
-    allowed_raw = meta.get("allowed-tools", "")
-    if isinstance(allowed_raw, str):
-        allowed = tuple(t.strip() for t in allowed_raw.split(",") if t.strip())
-    elif isinstance(allowed_raw, list):
-        allowed = tuple(str(t).strip() for t in allowed_raw if str(t).strip())
-    else:
-        allowed = ()
     return MarkdownCommand(
         name=path.stem,
         path=path.resolve(),
         description=str(meta.get("description", "")).strip(),
-        allowed_tools=allowed,
+        allowed_tools=_parse_allowed_tools(meta.get("allowed-tools", "")),
         argument_hint=str(meta.get("argument-hint", "")).strip(),
         model=str(meta["model"]).strip() if meta.get("model") else None,
         body=body,
@@ -176,21 +208,11 @@ def discover_markdown_commands(
     project_dir: Path,
     read_claude: bool = True,
 ) -> dict[str, MarkdownCommand]:
-    """Walk all configured roots and return ``name → command``.
-
-    Later roots override earlier ones on name collisions — project
-    commands beat user-global, ember beats claude (within the same
-    tier). The leading-slash isn't part of the key (users invoke
-    ``/review`` but the dict is keyed ``review``)."""
-    out: dict[str, MarkdownCommand] = {}
-    for root in _commands_dirs(project_dir, read_claude=read_claude):
-        if not root.is_dir():
-            continue
-        for path in sorted(root.glob("*.md")):
-            cmd = _load_command_file(path)
-            if cmd is not None:
-                out[cmd.name] = cmd
-    return out
+    """Thin wrapper around :meth:`MarkdownCommand.discover` retained
+    for existing module-level call sites (``backend/server.py``,
+    ``backend/command_handler.py``, several tests that patch by
+    dotted path). New code should call the classmethod directly."""
+    return MarkdownCommand.discover(project_dir, read_claude=read_claude)
 
 
 # ── Token substitution ──────────────────────────────────────────
@@ -215,10 +237,13 @@ async def _substitute_shell(text: str, *, cwd: Path) -> str:
         *(_run_shell(m.group(1), cwd=cwd) for m in matches),
         return_exceptions=False,
     )
+    # ``re.sub`` calls ``replace`` in match order, so a single-
+    # pass iterator over ``results`` returns each captured stdout
+    # to the correct token without an O(N) start-offset scan.
+    result_iter = iter(results)
 
-    def replace(m: re.Match[str]) -> str:
-        idx = next(i for i, mm in enumerate(matches) if mm.start() == m.start())
-        return results[idx]
+    def replace(_m: re.Match[str]) -> str:
+        return next(result_iter)
 
     return _SHELL_TOKEN_RE.sub(replace, text)
 
@@ -249,6 +274,45 @@ async def _run_shell(cmd: str, *, cwd: Path) -> str:
     return out.decode("utf-8", errors="replace").rstrip("\n")
 
 
+def _resolve_at_path(token: str, source: Path) -> tuple[Path, str]:
+    """Resolve an ``@token`` to a candidate ``Path`` + trailing
+    punctuation that should be re-appended to the inlined file
+    body. Kept as a pure helper so the caller stays flat."""
+    # Trailing punctuation (``,`` ``.`` ``;`` etc.) is almost always
+    # sentence flow, not part of the path. Strip it back to the
+    # file separator so ``See @README.md.`` works.
+    path_str = token.rstrip(",.;:!?)\"'")
+    trailing = token[len(path_str) :]
+    if path_str.startswith("~"):
+        return Path(path_str).expanduser(), trailing
+    if path_str.startswith("/"):
+        return Path(path_str), trailing
+    return source.parent / path_str, trailing
+
+
+def _at_path_allowed(resolved: Path, source: Path, project_dir: Path | None) -> bool:
+    """Enforce the project-boundary rule for ``@path`` substitution.
+
+    User-home command files (source outside ``project_dir``) can
+    reference anywhere — they're explicitly authored by the user.
+    Project command files must reference paths inside the project
+    to prevent an ``@/etc/passwd`` from silently exfiltrating."""
+    if project_dir is None:
+        return True
+    project_root = project_dir.resolve()
+    try:
+        resolved.relative_to(project_root)
+        return True
+    except ValueError:
+        # Out-of-project ref. Block only when the source itself is
+        # under the project (i.e. a project-authored command).
+        try:
+            source.resolve().relative_to(project_root)
+            return False
+        except ValueError:
+            return True
+
+
 def _substitute_files(text: str, *, source: Path, project_dir: Path | None) -> str:
     """Inline ``@path`` references. Paths resolve in order:
     user-home expansion, absolute, then relative to the command
@@ -257,41 +321,13 @@ def _substitute_files(text: str, *, source: Path, project_dir: Path | None) -> s
 
     def replace(m: re.Match[str]) -> str:
         token = m.group(1)
-        # Trailing punctuation (``,`` ``.`` ``;`` etc.) is almost
-        # always sentence flow, not part of the path. Strip it
-        # back to the file separator so ``See @README.md.`` works.
-        path_str = token.rstrip(",.;:!?)\"'")
-        trailing = token[len(path_str) :]
-        candidate: Path
-        if path_str.startswith("~"):
-            candidate = Path(path_str).expanduser()
-        elif path_str.startswith("/"):
-            candidate = Path(path_str)
-        else:
-            candidate = source.parent / path_str
+        candidate, trailing = _resolve_at_path(token, source)
         try:
             resolved = candidate.resolve()
             if not resolved.is_file():
                 return m.group(0)
-            # Defense in depth: when a project_dir is known, refuse
-            # paths that escape it (an ``@/etc/passwd`` should not
-            # silently exfiltrate). User-home command files have
-            # no project_dir scoping — they're explicitly authored
-            # by the user, so they can reference anywhere.
-            if project_dir is not None:
-                try:
-                    resolved.relative_to(project_dir.resolve())
-                except ValueError:
-                    # Out-of-project reference from a PROJECT
-                    # command — block. From a user command, the
-                    # ``source.parent`` is in ``~/.ember/commands``
-                    # which won't be under project_dir either, so
-                    # we only enforce when source IS under project.
-                    try:
-                        source.resolve().relative_to(project_dir.resolve())
-                        return m.group(0)
-                    except ValueError:
-                        pass
+            if not _at_path_allowed(resolved, source, project_dir):
+                return m.group(0)
             return resolved.read_text() + trailing
         except (OSError, UnicodeDecodeError):
             return m.group(0)

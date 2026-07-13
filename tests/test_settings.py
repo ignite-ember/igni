@@ -1,5 +1,7 @@
 """Tests for config/settings.py."""
 
+from pathlib import Path
+
 import pytest
 
 from ember_code.core.config.settings import (
@@ -169,8 +171,6 @@ class TestLoadSettings:
         # ``Path.home()`` to a per-test tmp dir, so writing
         # ``Path.home() / .ember / config.yaml`` writes inside the
         # fake home without touching the developer's real config.
-        from pathlib import Path
-
         user_ember = Path.home() / ".ember"
         user_ember.mkdir(parents=True)
         (user_ember / "config.yaml").write_text("models:\n  default: user-global-model\n")
@@ -178,8 +178,6 @@ class TestLoadSettings:
         assert s.models.default == "user-global-model"
 
     def test_project_beats_user_global(self, tmp_path):
-        from pathlib import Path
-
         user_ember = Path.home() / ".ember"
         user_ember.mkdir(parents=True)
         (user_ember / "config.yaml").write_text("models:\n  default: user-global\n")
@@ -205,8 +203,6 @@ class TestFiveTierPrecedence:
         """Helper: stage every tier with values keyed to a label
         so each test can verify which one wins for that value.
         Returns once all tiers are present."""
-        from pathlib import Path
-
         # Tier 5: user global
         user_ember = Path.home() / ".ember"
         user_ember.mkdir(parents=True, exist_ok=True)
@@ -253,8 +249,6 @@ class TestFiveTierPrecedence:
         assert s.models.default == "local-x"
 
     def test_project_wins_when_only_user_and_project(self, tmp_path) -> None:
-        from pathlib import Path
-
         user_ember = Path.home() / ".ember"
         user_ember.mkdir(parents=True, exist_ok=True)
         (user_ember / "config.yaml").write_text("models:\n  default: user-only\n")

@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from ember_code.core.mcp.config import MCPConfigLoader, MCPServerConfig, MCPTransport
+from ember_code.frontend.tui.widgets._mcp_panel import MCPServerInfo
 
 
 class TestMCPServerConfig:
@@ -65,8 +66,6 @@ class TestMCPTransport:
 
 class TestMCPServerInfo:
     def test_defaults(self):
-        from ember_code.frontend.tui.widgets._mcp_panel import MCPServerInfo
-
         info = MCPServerInfo(name="test", connected=True)
         assert info.transport == MCPTransport.stdio
         assert info.tool_names == []
@@ -74,14 +73,10 @@ class TestMCPServerInfo:
         assert info.policy_blocked is False
 
     def test_accepts_string_transport(self):
-        from ember_code.frontend.tui.widgets._mcp_panel import MCPServerInfo
-
         info = MCPServerInfo(name="test", connected=False, transport="sse")
         assert info.transport == MCPTransport.sse
 
     def test_with_tools(self):
-        from ember_code.frontend.tui.widgets._mcp_panel import MCPServerInfo
-
         info = MCPServerInfo(
             name="playwright",
             connected=True,
@@ -91,8 +86,6 @@ class TestMCPServerInfo:
         assert len(info.tool_names) == 3
 
     def test_policy_blocked(self):
-        from ember_code.frontend.tui.widgets._mcp_panel import MCPServerInfo
-
         info = MCPServerInfo(name="blocked", connected=False, policy_blocked=True)
         assert info.policy_blocked is True
 

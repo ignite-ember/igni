@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from ember_code.core.code_index.pg.commit_metadata import CommitMetadataService
-from ember_code.core.code_index.pg.file_reference import FileReferenceService
+from ember_code.core.code_index.db.commit_metadata import CommitMetadataService
+from ember_code.core.code_index.db.file_reference import FileReferenceService
 from ember_code.core.db.database import Database
 
 

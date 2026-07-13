@@ -6,7 +6,6 @@ and connect manually using the MCP SDK's ``stdio_client`` with
 corruption caused by subprocess stderr mixing with Textual's output.
 """
 
-import json
 import logging
 import os
 import tempfile
@@ -14,8 +13,23 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+# Optional deps — ``agno[mcp]`` isn't a hard requirement of the base
+# install. The module still loads without them; ``connect`` reports
+# a clean "not installed" error when the manager tries to use them.
+# Matches the ``pwd`` pattern in ``frontend/tui/app.py`` (iter 22).
+try:
+    from agno.tools.mcp import MCPTools
+    from mcp import ClientSession
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+except ImportError:  # pragma: no cover — exercised by test_connect_import_error
+    MCPTools = None  # type: ignore[assignment,misc]
+    ClientSession = None  # type: ignore[assignment,misc]
+    StdioServerParameters = None  # type: ignore[assignment,misc]
+    stdio_client = None  # type: ignore[assignment]
+
 from ember_code.core.mcp.approval import MCPApprovalManager
 from ember_code.core.mcp.config import MCPConfigLoader, MCPPolicy
+from ember_code.core.mcp.tool_state import MCPToolStateStore
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +53,34 @@ class MCPClientManager:
             policy if policy is not None else MCPPolicy.from_managed_settings()
         )
         self._project_dir: Path | None = Path(project_dir) if project_dir else None
-        self._disabled_tools: dict[str, set[str]] = self._load_disabled()
+        # Disabled-tools persistence extracted to ``MCPToolStateStore``
+        # so this manager stays focused on connection lifecycle.
+        self._tool_state = MCPToolStateStore(self._project_dir)
+        self._disabled_tools: dict[str, set[str]] = self._tool_state.load()
+
+    def _check_connect_gate(self, name: str, config: Any) -> str | None:
+        """Run every "should this connect proceed" check. Returns
+        ``None`` on green-light or the reason string if any gate
+        rejects. Gates fire in order: managed-policy deny, managed-
+        policy not-allowed, user first-use approval, MCP SDK
+        availability. Callers record the reason on ``self._errors``
+        and short-circuit."""
+        if self._policy.is_denied(name):
+            logger.warning("MCP '%s' blocked by managed policy (denied)", name)
+            return f"Server '{name}' is blocked by admin policy"
+
+        if not self._policy.is_allowed(name):
+            logger.warning("MCP '%s' blocked by managed policy (not allowed)", name)
+            return f"Server '{name}' is not in the allowed list"
+
+        if not self._approval.check_approval(name, config.source_path):
+            logger.info("MCP '%s' denied by user approval prompt", name)
+            return "User denied MCP server connection"
+
+        if MCPTools is None:
+            logger.warning("MCP connect '%s' failed: missing dependencies", name)
+            return "MCP dependencies not installed (pip install agno[mcp])"
+        return None
 
     async def connect(self, name: str) -> Any | None:
         """Connect to an MCP server by name.
@@ -54,26 +95,12 @@ class MCPClientManager:
             self._errors[name] = "No config found"
             return None
 
-        # --- MCP policy enforcement ---
-        if self._policy.is_denied(name):
-            self._errors[name] = f"Server '{name}' is blocked by admin policy"
-            logger.warning("MCP '%s' blocked by managed policy (denied)", name)
-            return None
-
-        if not self._policy.is_allowed(name):
-            self._errors[name] = f"Server '{name}' is not in the allowed list"
-            logger.warning("MCP '%s' blocked by managed policy (not allowed)", name)
-            return None
-
-        # --- First-use approval ---
-        if not self._approval.check_approval(name, config.source_path):
-            self._errors[name] = "User denied MCP server connection"
-            logger.info("MCP '%s' denied by user approval prompt", name)
+        gate_error = self._check_connect_gate(name, config)
+        if gate_error is not None:
+            self._errors[name] = gate_error
             return None
 
         try:
-            from agno.tools.mcp import MCPTools
-
             if config.type == "sse":
                 if not config.url:
                     self._errors[name] = "SSE transport requires a 'url' field"
@@ -105,10 +132,6 @@ class MCPClientManager:
             self._clients[name] = mcp_tools
             self._apply_disabled(name)
             return mcp_tools
-        except ImportError:
-            self._errors[name] = "MCP dependencies not installed (pip install agno[mcp])"
-            logger.warning("MCP connect '%s' failed: missing dependencies", name)
-            return None
         except Exception as exc:
             self._errors[name] = str(exc)
             logger.warning("MCP connect '%s' failed: %s", name, exc)
@@ -122,10 +145,6 @@ class MCPClientManager:
         log file instead of ``sys.stderr`` (which Textual uses for
         TUI rendering).
         """
-        from agno.tools.mcp import MCPTools
-        from mcp import ClientSession
-        from mcp.client.stdio import StdioServerParameters, stdio_client
-
         errlog = open(_MCP_ERRLOG_PATH, "a")  # noqa: SIM115 — must stay open for MCP session lifetime
         params = StdioServerParameters(
             command=config.command,
@@ -291,41 +310,10 @@ class MCPClientManager:
         return [s for s in self._policy.required if s not in connected]
 
     # ── per-tool enable/disable ───────────────────────────────────
-
-    def _state_path(self) -> Path | None:
-        if self._project_dir is None:
-            return None
-        return self._project_dir / ".ember" / "mcp-tool-state.json"
-
-    def _load_disabled(self) -> dict[str, set[str]]:
-        path = self._state_path()
-        if not path or not path.exists():
-            return {}
-        try:
-            data = json.loads(path.read_text() or "{}")
-        except (OSError, json.JSONDecodeError) as exc:
-            logger.debug("MCP tool state read failed (%s): %s", path, exc)
-            return {}
-        out: dict[str, set[str]] = {}
-        for server, tools in (data.get("disabled") or {}).items():
-            if isinstance(tools, list):
-                out[server] = {str(t) for t in tools}
-        return out
-
-    def _save_disabled(self) -> None:
-        path = self._state_path()
-        if not path:
-            return
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            payload = {
-                "disabled": {
-                    server: sorted(tools) for server, tools in self._disabled_tools.items() if tools
-                }
-            }
-            path.write_text(json.dumps(payload, indent=2) + "\n")
-        except OSError as exc:
-            logger.warning("MCP tool state write failed (%s): %s", path, exc)
+    # File-backed disabled-tools list lives in ``self._tool_state``
+    # (a :class:`MCPToolStateStore`). This section only owns the
+    # in-memory application logic that filters an active MCP
+    # client's live ``functions`` dict.
 
     def _apply_disabled(self, name: str) -> None:
         """Filter the live MCPTools.functions dict to hide disabled
@@ -360,5 +348,5 @@ class MCPClientManager:
             disabled.add(tool)
         if not disabled:
             self._disabled_tools.pop(server, None)
-        self._save_disabled()
+        self._tool_state.save(self._disabled_tools)
         self._apply_disabled(server)

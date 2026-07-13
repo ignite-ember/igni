@@ -73,7 +73,7 @@ class TestDispatch:
     async def test_dispatch_config(self):
         session = _make_session()
         with (
-            patch("ember_code.core.auth.credentials.load_credentials", return_value=None),
+            patch("ember_code.backend.command_handler.load_credentials", return_value=None),
             patch("ember_code.core.session.commands.print_markdown") as mock_print,
         ):
             result = await dispatch(session, "/config")

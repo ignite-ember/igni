@@ -32,7 +32,26 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
+
 from ember_code.core.monitors.config import MonitorConfig
+
+
+class MonitorSnapshot(BaseModel):
+    """Status-line summary for one monitor.
+
+    ``status`` is one of ``running`` / ``stopped`` / ``failed``.
+    ``pid`` and ``exit_code`` are nullable because a not-yet-started
+    monitor has neither."""
+
+    name: str
+    command: str
+    status: str
+    pid: int | None
+    uptime_seconds: float
+    exit_code: int | None
+    crash_count: int
+    restart: str
 
 logger = logging.getLogger(__name__)
 
@@ -97,18 +116,18 @@ class MonitorHandle:
         tail = list(self._output)[-lines:]
         return tail
 
-    def snapshot(self) -> dict[str, Any]:
-        """Status-line summary for ``MonitorManager.list_monitors``."""
-        return {
-            "name": self.name,
-            "command": self.config.command,
-            "status": self._status,
-            "pid": self.pid,
-            "uptime_seconds": round(self.uptime_seconds, 2),
-            "exit_code": self._exit_code,
-            "crash_count": self._crash_count,
-            "restart": self.config.restart,
-        }
+    def snapshot(self) -> MonitorSnapshot:
+        """Status-line summary for ``MonitorManager.snapshot_all``."""
+        return MonitorSnapshot(
+            name=self.name,
+            command=self.config.command,
+            status=self._status,
+            pid=self.pid,
+            uptime_seconds=round(self.uptime_seconds, 2),
+            exit_code=self._exit_code,
+            crash_count=self._crash_count,
+            restart=self.config.restart,
+        )
 
     # ── Lifecycle ─────────────────────────────────────────────
 
@@ -232,25 +251,25 @@ class MonitorManager:
     def list_names(self) -> list[str]:
         return sorted(self._configs.keys())
 
-    def snapshot_all(self) -> list[dict[str, Any]]:
+    def snapshot_all(self) -> list[MonitorSnapshot]:
         """Status snapshot for every configured monitor (even ones
-        we haven't started yet — they show ``status: "stopped"``)."""
-        out: list[dict[str, Any]] = []
+        we haven't started yet — they show ``status="stopped"``)."""
+        out: list[MonitorSnapshot] = []
         for name in self.list_names():
             handle = self._handles.get(name)
             if handle is None:
                 cfg = self._configs[name]
                 out.append(
-                    {
-                        "name": name,
-                        "command": cfg.command,
-                        "status": "stopped",
-                        "pid": None,
-                        "uptime_seconds": 0.0,
-                        "exit_code": None,
-                        "crash_count": 0,
-                        "restart": cfg.restart,
-                    }
+                    MonitorSnapshot(
+                        name=name,
+                        command=cfg.command,
+                        status="stopped",
+                        pid=None,
+                        uptime_seconds=0.0,
+                        exit_code=None,
+                        crash_count=0,
+                        restart=cfg.restart,
+                    )
                 )
             else:
                 out.append(handle.snapshot())

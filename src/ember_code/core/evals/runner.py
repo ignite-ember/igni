@@ -1,5 +1,8 @@
 """Eval runner — orchestrates agent runs and Agno eval checks."""
 
+import copy
+import importlib
+import inspect
 import logging
 import shutil
 import sys
@@ -8,8 +11,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from agno.eval.accuracy import AccuracyEval
+from agno.eval.reliability import ReliabilityEval
+from pydantic import BaseModel, ConfigDict, Field
 
+from ember_code.core.config.models import ModelRegistry
 from ember_code.core.evals.assertions import check_file_assertion, check_unexpected_tool_calls
 from ember_code.core.evals.loader import EvalCase, EvalSuite
 
@@ -91,6 +97,23 @@ def _expand_expected_tool_names(names: list[str]) -> list[str]:
     return out
 
 
+class ToolTraceEntry(BaseModel):
+    """One tool invocation captured during an eval run.
+
+    ``args`` stays typed as ``dict[str, Any] | None`` because the
+    wire shape from Agno's ``ToolExecution.tool_args`` is a free-form
+    JSON object — we don't own that schema, and every tool has a
+    different args model. ``result_preview`` is truncated to 400
+    chars in ``run_eval_case`` before landing here."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    args: dict[str, Any] | None = None
+    result_preview: str = ""
+    error: bool = False
+
+
 class CaseResult(BaseModel):
     """Result of running a single eval case.
 
@@ -104,8 +127,11 @@ class CaseResult(BaseModel):
 
     # ── Agent run trace (captured even on pass — useful for analysis) ─
     response_text: str = ""
-    tool_trace: list[dict] = Field(default_factory=list)
-    """Each entry: {name, args, result_preview, error}. Order matches call order."""
+    tool_trace: list[ToolTraceEntry] = Field(default_factory=list)
+    """Order matches Agno's call order. Migrated to :class:`ToolTraceEntry`
+    for Rule-1 compliance; ``model_dump()`` on the ``CaseResult`` serialises
+    each entry back to the same dict shape the previous ``list[dict]``
+    produced, so downstream JSON reporters see no shape change."""
 
     # ── Per-check results ────────────────────────────────────────────
     reliability_passed: bool | None = None
@@ -194,8 +220,6 @@ class SuiteResult(BaseModel):
         # Get judge model for accuracy evals
         judge_model = None
         try:
-            from ember_code.core.config.models import ModelRegistry
-
             registry = ModelRegistry(settings)
             judge_name = getattr(settings, "evals", None)
             judge_name = getattr(judge_name, "judge_model", None) if judge_name else None
@@ -206,17 +230,15 @@ class SuiteResult(BaseModel):
         # Run each case. Per-case progress prints help when the runner is
         # launched as a background process and stdout is otherwise silent
         # for minutes at a time.
-        import time as _time
-
         total = len(suite.cases)
         for idx, case in enumerate(suite.cases, start=1):
             print(
                 f"  [case {idx}/{total}] {case.name} starting...",
                 flush=True,
             )
-            t0 = _time.monotonic()
+            t0 = time.monotonic()
             case_result = await run_eval_case(case, agent, judge_model)
-            elapsed = _time.monotonic() - t0
+            elapsed = time.monotonic() - t0
             verdict = "PASS" if case_result.passed else "FAIL"
             print(
                 f"  [case {idx}/{total}] {case.name} → {verdict} in {elapsed:.1f}s",
@@ -251,15 +273,16 @@ class SuiteResult(BaseModel):
 
 
 def _check_tool_arg_assertions(
-    tool_trace: list[dict],
+    tool_trace: list[ToolTraceEntry],
     assertions: list[dict],
 ) -> tuple[bool, str]:
     """Verify each assertion matches at least one call in the trace.
 
-    An assertion is ``{tool: <name>, args_must_contain: {<key>: <val>, ...}}``.
-    It passes when *some* call to ``tool`` has every key/value present in
-    its ``args`` dict. Used for "did spawn_team get called with
-    mode='coordinate'?"-style checks.
+    An assertion is ``{tool: <name>, args_must_contain: {<key>: <val>, ...}}``
+    on the wire — see :attr:`EvalCase.tool_arg_assertions` for the
+    loader-side type. It passes when *some* call to ``tool`` has every
+    key/value present in its ``args`` dict. Used for "did spawn_team
+    get called with mode='coordinate'?"-style checks.
     """
     failures: list[str] = []
     for a in assertions:
@@ -269,9 +292,9 @@ def _check_tool_arg_assertions(
             continue
         matched = False
         for call in tool_trace:
-            if call.get("name") != target_tool:
+            if call.name != target_tool:
                 continue
-            args = call.get("args") or {}
+            args = call.args or {}
             if all(args.get(k) == v for k, v in required.items()):
                 matched = True
                 break
@@ -292,9 +315,6 @@ async def _run_setup_module(module_path: str, work_dir: Path, project_dir: Path)
     work_dir (where the agent runs) and project_dir (the repo root,
     so the setup can find sibling fixture files like a snapshot).
     """
-    import importlib
-    import inspect
-
     # Make the project's evals/ importable so suites in
     # ``evals/<name>.yaml`` can reference ``evals.<name>.setup``.
     if str(project_dir) not in sys.path:
@@ -374,8 +394,6 @@ async def _run_reliability(
         # The from_history filter is applied upstream in
         # ``run_eval_case`` so every check sees the same scrubbed
         # ``response.messages``. No additional filtering needed here.
-        from agno.eval.reliability import ReliabilityEval
-
         rel = ReliabilityEval(
             agent_response=response,
             expected_tool_calls=expected,
@@ -456,9 +474,7 @@ def _strip_errored_tool_calls(messages: list) -> list:
                 # Build a shallow copy of the message with filtered tool_calls.
                 # Falls back to the original if we can't copy cleanly.
                 try:
-                    import copy as _copy
-
-                    m2 = _copy.copy(m)
+                    m2 = copy.copy(m)
                     m2.tool_calls = kept if kept else None
                     cleaned.append(m2)
                     continue
@@ -481,8 +497,6 @@ async def _run_accuracy(
     needed to actually understand why the agent under-scored.
     """
     try:
-        from agno.eval.accuracy import AccuracyEval
-
         acc = AccuracyEval(
             agent=agent,
             input=case.input,
@@ -516,6 +530,147 @@ async def _run_accuracy(
         return False, None, f"accuracy eval error: {exc}", ""
 
 
+async def _execute_case_arun(
+    case: EvalCase,
+    agent: Any,
+    session_id: str | None,
+) -> Any:
+    """Fire the agent's ``arun`` for the case (with any prior turns
+    on the same session first), then post-process the response:
+    strip ``from_history=True`` messages so downstream checks only
+    see the final turn's tool calls.
+
+    Raises when ``arun`` fails — the caller records the error and
+    returns a clean ERROR result. Never mutates the input agent.
+    """
+    run_kwargs: dict = {"stream": False}
+    if session_id is not None:
+        run_kwargs["session_id"] = session_id
+    # Multi-turn: send each prior message first on the same
+    # session, then send the actual input. We only judge the
+    # response to the last turn — prior turns are setup. We don't
+    # sleep between turns; the model produces a complete response
+    # per arun, and Agno persists it before returning.
+    for prior in case.prior_messages:
+        await agent.arun(prior, **run_kwargs)
+    response = await agent.arun(case.input, **run_kwargs)
+
+    # Strip ``from_history=True`` messages so every downstream check
+    # — tool_trace extraction, unexpected_tool_calls, ReliabilityEval
+    # — sees only the final turn's tool calls. Prior_messages are
+    # sent on the same session_id, and Agno reloads them into
+    # ``response.messages`` with ``from_history=True``. Without
+    # this filter, multi-turn cases get false-fails on tools the
+    # agent called in turn 1.
+    msgs = list(getattr(response, "messages", None) or [])
+    current_only = [m for m in msgs if not getattr(m, "from_history", False)]
+    if len(current_only) != len(msgs):
+        response = copy.copy(response)
+        response.messages = current_only
+    return response
+
+
+def _extract_tool_trace(response: Any) -> list[ToolTraceEntry]:
+    """Walk ``response.tools`` (a list of ToolExecution dataclasses)
+    and build a serialisable trace. Truncates result previews to
+    ~400 chars so the JSON dump stays readable.
+
+    Coerces ``tool_args`` to a plain dict — MagicMocks in tests
+    (and any hypothetical Agno version drift) can leak non-dict
+    objects; rejecting them here lets the schema validator catch
+    shape drift up front instead of downstream ``args.get(...)``
+    crashes in the tool-arg assertion check.
+    """
+    trace: list[ToolTraceEntry] = []
+    tools = getattr(response, "tools", None) or []
+    for t in tools:
+        tname = getattr(t, "tool_name", None)
+        if not tname:
+            continue
+        raw_result = getattr(t, "result", None)
+        preview = ""
+        if raw_result is not None:
+            s = str(raw_result)
+            preview = s if len(s) <= 400 else s[:397] + "..."
+        raw_args = getattr(t, "tool_args", None)
+        args = raw_args if isinstance(raw_args, dict) else None
+        trace.append(
+            ToolTraceEntry(
+                name=tname,
+                args=args,
+                result_preview=preview,
+                error=bool(getattr(t, "tool_call_error", False)),
+            )
+        )
+    return trace
+
+
+async def _apply_case_assertions(
+    case: EvalCase,
+    result: CaseResult,
+    response: Any,
+    output_text: str,
+    agent: Any,
+    judge_model: Any | None,
+    work_dir: Path | None,
+) -> None:
+    """Run every assertion type against the response + tool trace,
+    populating ``result.*_passed`` / ``result.*_detail`` fields.
+    Sets ``result.passed`` at the end based on the AND of every
+    check that ran (checks that weren't requested don't count)."""
+    all_passed = True
+
+    # 1. ReliabilityEval — expected tool calls (allowlist).
+    if case.expected_tool_calls:
+        expanded = _expand_expected_tool_names(case.expected_tool_calls)
+        passed, detail = await _run_reliability(response, expanded)
+        result.reliability_passed = passed
+        result.reliability_detail = detail
+        if not passed:
+            all_passed = False
+
+    # 2. Unexpected tool calls (blocklist — custom check).
+    if case.unexpected_tool_calls:
+        expanded = _expand_tool_names(case.unexpected_tool_calls)
+        passed, detail = check_unexpected_tool_calls(response, expanded)
+        result.unexpected_passed = passed
+        result.unexpected_detail = detail
+        if not passed:
+            all_passed = False
+
+    # 3. AccuracyEval — output quality.
+    if case.expected_output and judge_model:
+        passed, score, detail, reason = await _run_accuracy(
+            agent,
+            case,
+            output_text,
+            judge_model,
+        )
+        result.accuracy_passed = passed
+        result.accuracy_score = score
+        result.accuracy_reason = reason
+        if not passed:
+            all_passed = False
+
+    # 3b. Tool-arg assertions (e.g. "spawn_team called with mode=coordinate").
+    if case.tool_arg_assertions:
+        passed, detail = _check_tool_arg_assertions(result.tool_trace, case.tool_arg_assertions)
+        result.tool_arg_passed = passed
+        result.tool_arg_detail = detail
+        if not passed:
+            all_passed = False
+
+    # 4. File assertions.
+    if case.file_assertions:
+        for assertion in case.file_assertions:
+            passed, detail = check_file_assertion(assertion, work_dir=work_dir)
+            result.file_results.append((assertion.get("type", ""), passed, detail))
+            if not passed:
+                all_passed = False
+
+    result.passed = all_passed
+
+
 async def run_eval_case(
     case: EvalCase,
     agent: Any,
@@ -536,121 +691,25 @@ async def run_eval_case(
     start = time.monotonic()
 
     try:
-        # Run the agent. If this raises (rate-limit, network, etc.) we
-        # capture the error and return a clean ERROR result instead of
-        # crashing the whole suite.
-        run_kwargs: dict = {"stream": False}
-        if session_id is not None:
-            run_kwargs["session_id"] = session_id
         try:
-            # Multi-turn: send each prior message first on the same
-            # session, then send the actual input. We only judge the
-            # response to the last turn — prior turns are setup. We
-            # don't sleep between turns; the model produces a complete
-            # response per arun, and Agno persists it before returning.
-            for prior in case.prior_messages:
-                await agent.arun(prior, **run_kwargs)
-            response = await agent.arun(case.input, **run_kwargs)
+            response = await _execute_case_arun(case, agent, session_id)
         except Exception as run_exc:
             result.error = f"agent.arun failed: {run_exc}"
             result.elapsed = time.monotonic() - start
             return result
-        # Strip ``from_history=True`` messages so every downstream check
-        # — tool_trace extraction, unexpected_tool_calls, ReliabilityEval
-        # — sees only the final turn's tool calls. Prior_messages are
-        # sent on the same session_id, and Agno reloads them into
-        # ``response.messages`` with ``from_history=True``. Without
-        # this filter, multi-turn cases get false-fails on tools the
-        # agent called in turn 1.
-        msgs = list(getattr(response, "messages", None) or [])
-        current_only = [m for m in msgs if not getattr(m, "from_history", False)]
-        if len(current_only) != len(msgs):
-            from copy import copy as _shallow_copy
 
-            response = _shallow_copy(response)
-            response.messages = current_only
-
-        output_text = ""
         content = getattr(response, "content", None)
         if isinstance(content, str):
             output_text = content
         elif content is not None:
             output_text = str(content)
+        else:
+            output_text = ""
         result.response_text = output_text
-
-        # Capture the full tool trace from response.tools (a list of
-        # ToolExecution dataclasses). Truncate result previews so the
-        # JSON dump stays readable.
-        tools = getattr(response, "tools", None) or []
-        for t in tools:
-            tname = getattr(t, "tool_name", None)
-            if not tname:
-                continue
-            raw_result = getattr(t, "result", None)
-            preview = ""
-            if raw_result is not None:
-                s = str(raw_result)
-                preview = s if len(s) <= 400 else s[:397] + "..."
-            result.tool_trace.append(
-                {
-                    "name": tname,
-                    "args": getattr(t, "tool_args", None),
-                    "result_preview": preview,
-                    "error": bool(getattr(t, "tool_call_error", False)),
-                }
-            )
-
-        all_passed = True
-
-        # 1. ReliabilityEval — expected tool calls (allowlist)
-        if case.expected_tool_calls:
-            expanded = _expand_expected_tool_names(case.expected_tool_calls)
-            passed, detail = await _run_reliability(response, expanded)
-            result.reliability_passed = passed
-            result.reliability_detail = detail
-            if not passed:
-                all_passed = False
-
-        # 2. Unexpected tool calls (blocklist — custom check)
-        if case.unexpected_tool_calls:
-            expanded = _expand_tool_names(case.unexpected_tool_calls)
-            passed, detail = check_unexpected_tool_calls(response, expanded)
-            result.unexpected_passed = passed
-            result.unexpected_detail = detail
-            if not passed:
-                all_passed = False
-
-        # 3. AccuracyEval — output quality
-        if case.expected_output and judge_model:
-            passed, score, detail, reason = await _run_accuracy(
-                agent,
-                case,
-                output_text,
-                judge_model,
-            )
-            result.accuracy_passed = passed
-            result.accuracy_score = score
-            result.accuracy_reason = reason
-            if not passed:
-                all_passed = False
-
-        # 3b. Tool-arg assertions (e.g. "spawn_team called with mode=coordinate")
-        if case.tool_arg_assertions:
-            passed, detail = _check_tool_arg_assertions(result.tool_trace, case.tool_arg_assertions)
-            result.tool_arg_passed = passed
-            result.tool_arg_detail = detail
-            if not passed:
-                all_passed = False
-
-        # 4. File assertions
-        if case.file_assertions:
-            for assertion in case.file_assertions:
-                passed, detail = check_file_assertion(assertion, work_dir=work_dir)
-                result.file_results.append((assertion.get("type", ""), passed, detail))
-                if not passed:
-                    all_passed = False
-
-        result.passed = all_passed
+        result.tool_trace = _extract_tool_trace(response)
+        await _apply_case_assertions(
+            case, result, response, output_text, agent, judge_model, work_dir
+        )
 
     except Exception as exc:
         result.error = str(exc)

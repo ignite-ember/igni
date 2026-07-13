@@ -1,6 +1,7 @@
 """Tests for config/tool_permissions.py — permission resolution with argument rules."""
 
 import json
+from unittest.mock import patch
 
 from ember_code.core.config.tool_permissions import (
     FUNC_TO_TOOL,
@@ -133,8 +134,6 @@ class TestToolPermissions:
         home_ember.mkdir()
 
         perms = ToolPermissions(project_dir=tmp_path)
-        from unittest.mock import patch
-
         with patch("ember_code.core.config.tool_permissions.Path.home", return_value=tmp_path):
             perms.save_rule("Bash(git push)", "allow")
 

@@ -8,7 +8,6 @@ and async ``func`` via ``inspect.isawaitable``.
 
 import asyncio
 import contextlib
-import fnmatch
 import inspect
 import logging
 from collections.abc import Callable
@@ -21,21 +20,15 @@ from ember_code.core.config.permission_eval import (
 )
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.hooks.executor import HookExecutor
+from ember_code.core.hooks.safety_lists import (
+    _is_protected_path,
+    check_blocked_commands,
+    check_protected_paths,
+)
 from ember_code.core.hooks.schemas import HookResult
 from ember_code.core.utils.rules_index import RulesIndex
 
 logger = logging.getLogger(__name__)
-
-_WRITE_TOOL_FUNCTIONS = frozenset(
-    {
-        "save_file",
-        "edit_file",
-        "edit_file_replace_all",
-        "create_file",
-    }
-)
-
-_SHELL_TOOL_FUNCTIONS = frozenset({"run_shell_command"})
 
 # Argument names from which we'll harvest a path to consult the
 # rules index after a successful tool call. Covers every
@@ -43,15 +36,7 @@ _SHELL_TOOL_FUNCTIONS = frozenset({"run_shell_command"})
 # create / list-dir / grep) without needing per-tool wiring.
 _PATH_ARG_NAMES = ("file_path", "path", "filename", "directory", "dir")
 
-
-def _is_protected_path(path: str, protected_patterns: list[str]) -> bool:
-    filename = Path(path).name
-    for pattern in protected_patterns:
-        if fnmatch.fnmatch(filename, pattern):
-            return True
-        if fnmatch.fnmatch(path, pattern):
-            return True
-    return False
+__all__ = ["ToolEventHook", "_is_protected_path"]
 
 
 class ToolEventHook:
@@ -89,167 +74,138 @@ class ToolEventHook:
         self._has_post = bool(executor.hooks.get(HookEvent.POST_TOOL_USE.value))
         self._has_fail = bool(executor.hooks.get(HookEvent.POST_TOOL_USE_FAILURE.value))
 
-    async def __call__(
-        self,
-        name: str = "",
-        func: Callable | None = None,
-        args: dict[str, Any] | None = None,
-        agent: Any = None,
-        **kwargs: Any,
-    ) -> Any:
-        if args is None:
-            args = {}
+    async def _run_pre_hook(
+        self, name: str, args: dict[str, Any]
+    ) -> tuple[str, str | None]:
+        """Fire ``PreToolUse`` and interpret its result.
 
-        # ── Step 1: PreToolUse hook ────────────────────────────────
-        # CC's permission pipeline puts hooks FIRST so they can
-        # ``permissionDecision: allow`` or ``deny`` and short-
-        # circuit the rest of the checks. The legacy
-        # protected-paths/blocked-commands lists run AFTER as a
-        # defense-in-depth safety net (a hook saying ``allow``
-        # can't unlock a hard-blocked ``.env`` write — that's a
-        # safety bug magnet we won't ship).
-        pre_decision = ""
-        if self._has_pre:
-            pre_result = await self._fire(
-                HookEvent.PRE_TOOL_USE.value,
+        Returns ``(pre_decision, block_message)``:
+
+        * ``pre_decision`` — normalised decision string
+          (``"allow" / "deny" / "ask" / ""``). Callers read this
+          to decide whether the permission evaluator step should
+          be skipped.
+        * ``block_message`` — non-None when the request MUST be
+          short-circuited. ``__call__`` returns it directly to the
+          model.
+
+        CC's permission pipeline puts hooks FIRST so they can
+        ``permissionDecision: allow`` or ``deny`` and short-
+        circuit the rest of the checks. The legacy
+        protected-paths/blocked-commands lists run AFTER as a
+        defense-in-depth safety net (a hook saying ``allow`` can't
+        unlock a hard-blocked ``.env`` write — that's a safety
+        bug magnet we won't ship).
+        """
+        if not self._has_pre:
+            return "", None
+        pre_result = await self._fire(
+            HookEvent.PRE_TOOL_USE.value,
+            name,
+            {"tool_name": name, "tool_args": _safe_args(args)},
+        )
+        pre_decision = (pre_result.permission_decision or "").lower()
+        if pre_decision == "deny":
+            await self._fire(
+                HookEvent.PERMISSION_DENIED.value,
                 name,
-                {"tool_name": name, "tool_args": _safe_args(args)},
+                {
+                    "session_id": self._session_id,
+                    "tool_name": name,
+                    "tool_args": _safe_args(args),
+                    "reason": "pre_tool_use_hook",
+                },
             )
-            pre_decision = (pre_result.permission_decision or "").lower()
-            if pre_decision == "deny":
-                await self._fire(
-                    HookEvent.PERMISSION_DENIED.value,
-                    name,
-                    {
-                        "session_id": self._session_id,
-                        "tool_name": name,
-                        "tool_args": _safe_args(args),
-                        "reason": "pre_tool_use_hook",
-                    },
-                )
-                return pre_result.message or f"Blocked: '{name}' denied by PreToolUse hook"
-            if pre_decision == "ask":
-                # Same rationale as the evaluator's ASK branch
-                # below — Agno's PauseRequirement handles ASK via
-                # the HITL dialog; re-blocking here would undo a
-                # user's just-clicked approval. Fire the event
-                # for observability, then fall through. If the
-                # hook set an explicit ``message``, honour it as
-                # a block (custom hook semantics stay intact).
-                await self._fire(
-                    HookEvent.PERMISSION_REQUEST.value,
-                    name,
-                    {
-                        "session_id": self._session_id,
-                        "tool_name": name,
-                        "tool_args": _safe_args(args),
-                    },
-                )
-                if pre_result.message:
-                    return pre_result.message
-                logger.info(
-                    "PreToolUse hook returned ASK for %s — falling through to HITL",
-                    name,
-                )
-            # Legacy ``should_continue=False`` block (no
-            # permission_decision) — keep the existing semantics.
-            if pre_decision == "" and not pre_result.should_continue:
-                return pre_result.message or "Blocked by PreToolUse hook"
-            # "allow" falls through but SKIPS the remaining
-            # permission checks below. "defer" / "" / empty just
-            # continue normally.
-
-        # ── Step 2: legacy protected-paths (defense-in-depth) ──
-        # ALWAYS runs — a PreToolUse "allow" cannot disarm the
-        # hard-coded safety list. Same threat model as CC's
-        # bypass-resistant scoped denies: hooks and modes should
-        # never be able to silently unlock writes to ``.env`` /
-        # ``*.key`` / etc.
-        if self._protected_paths and name in _WRITE_TOOL_FUNCTIONS:
-            file_path = args.get("file_path", "")
-            if file_path and _is_protected_path(file_path, self._protected_paths):
-                msg = f"Blocked: '{file_path}' is a protected path and cannot be written to."
-                logger.warning("Protected path blocked: %s via %s", file_path, name)
-                return msg
-
-        # ── Step 3: legacy blocked-commands (defense-in-depth) ─
-        # Same "always runs" property as protected-paths.
-        if self._blocked_commands and name in _SHELL_TOOL_FUNCTIONS:
-            cmd_args = args.get("args", [])
-            cmd_str = (
-                " ".join(str(a) for a in cmd_args) if isinstance(cmd_args, list) else str(cmd_args)
+            return pre_decision, (
+                pre_result.message or f"Blocked: '{name}' denied by PreToolUse hook"
             )
-            for blocked in self._blocked_commands:
-                if blocked in cmd_str:
-                    msg = f"Blocked: command matches blocked pattern '{blocked}'."
-                    logger.warning("Blocked command: %s", cmd_str)
-                    return msg
+        if pre_decision == "ask":
+            # Same rationale as the evaluator's ASK branch below —
+            # Agno's PauseRequirement handles ASK via the HITL
+            # dialog; re-blocking here would undo a user's
+            # just-clicked approval. Fire the event for
+            # observability, then fall through. If the hook set
+            # an explicit ``message``, honour it as a block
+            # (custom hook semantics stay intact).
+            await self._fire(
+                HookEvent.PERMISSION_REQUEST.value,
+                name,
+                {
+                    "session_id": self._session_id,
+                    "tool_name": name,
+                    "tool_args": _safe_args(args),
+                },
+            )
+            if pre_result.message:
+                return pre_decision, pre_result.message
+            logger.info(
+                "PreToolUse hook returned ASK for %s — falling through to HITL",
+                name,
+            )
+        # Legacy ``should_continue=False`` block (no
+        # permission_decision) — keep the existing semantics.
+        if pre_decision == "" and not pre_result.should_continue:
+            return pre_decision, (pre_result.message or "Blocked by PreToolUse hook")
+        return pre_decision, None
 
-        # ── Step 4: permission evaluator (6-mode pipeline) ──
-        # Skipped when the PreToolUse hook returned "allow" —
-        # this is the CC-compatible escape hatch for plugins
-        # that want to grant ad-hoc approval. Scoped denies in
-        # the evaluator are STILL honoured because they fire
-        # via the evaluator's own pipeline; the hook ``allow``
-        # only skips the evaluator's step, not its earlier deny
-        # check (which doesn't apply since we skip the whole
-        # step here — but the protected-paths above already
-        # caught the safety-critical cases).
-        if pre_decision != "allow" and self._permission_evaluator is not None:
-            decision = self._permission_evaluator.evaluate(name, args)
-            if decision is PermissionDecision.DENY:
-                await self._fire(
-                    HookEvent.PERMISSION_DENIED.value,
-                    name,
-                    {
-                        "session_id": self._session_id,
-                        "tool_name": name,
-                        "tool_args": _safe_args(args),
-                        "reason": "permission_evaluator",
-                    },
-                )
-                msg = f"Blocked: permission policy denied '{name}'."
-                logger.info("Permission DENY for %s", name)
-                return msg
-            if decision is PermissionDecision.ASK:
-                # ASK is Agno's territory now. Tools at ask level
-                # carry ``requires_confirmation=True`` (wired in
-                # v0.8.1's toolkit init), so by the time the tool
-                # call reaches this hook, Agno's PauseRequirement
-                # has already fired the HITL dialog and the user
-                # has explicitly approved. Re-blocking here would
-                # undo that approval — the exact "I clicked Allow
-                # similar and it still says 'no canUseTool bridge'"
-                # regression.
-                #
-                # We keep the PERMISSION_REQUEST event fire so
-                # observability hooks / plugins can still see ASK
-                # traffic, but we FALL THROUGH to the actual tool
-                # call instead of returning a block string. The
-                # legacy "no canUseTool bridge" fallback would
-                # only be correct in a headless / non-interactive
-                # runtime where nothing else handles ASK — none
-                # of the four client surfaces (Tauri / TUI /
-                # VSCode / JetBrains) fits that shape.
-                await self._fire(
-                    HookEvent.PERMISSION_REQUEST.value,
-                    name,
-                    {
-                        "session_id": self._session_id,
-                        "tool_name": name,
-                        "tool_args": _safe_args(args),
-                    },
-                )
-                logger.info(
-                    "Permission ASK for %s — falling through to HITL (already resolved by Agno)",
-                    name,
-                )
-            # ALLOW and DEFER both fall through to execution.
+    async def _apply_permission_evaluator(
+        self, name: str, args: dict[str, Any]
+    ) -> str | None:
+        """Run the 6-mode permission evaluator. Returns a block
+        message on DENY (with the deny event fired), None on
+        ALLOW / DEFER / ASK.
 
-        # Execute the tool
-        if func is None:
+        ASK is Agno's territory now: tools at ASK level carry
+        ``requires_confirmation=True`` (wired in v0.8.1's toolkit
+        init), so by the time the tool call reaches this hook
+        Agno's PauseRequirement has already fired the HITL
+        dialog and the user has explicitly approved. Re-blocking
+        here would undo that approval — the exact "I clicked
+        Allow similar and it still says 'no canUseTool bridge'"
+        regression. We keep the ``PERMISSION_REQUEST`` event fire
+        so observability hooks / plugins can still see ASK
+        traffic, but we FALL THROUGH to the actual tool call.
+        """
+        if self._permission_evaluator is None:
             return None
+        decision = self._permission_evaluator.evaluate(name, args)
+        if decision is PermissionDecision.DENY:
+            await self._fire(
+                HookEvent.PERMISSION_DENIED.value,
+                name,
+                {
+                    "session_id": self._session_id,
+                    "tool_name": name,
+                    "tool_args": _safe_args(args),
+                    "reason": "permission_evaluator",
+                },
+            )
+            logger.info("Permission DENY for %s", name)
+            return f"Blocked: permission policy denied '{name}'."
+        if decision is PermissionDecision.ASK:
+            await self._fire(
+                HookEvent.PERMISSION_REQUEST.value,
+                name,
+                {
+                    "session_id": self._session_id,
+                    "tool_name": name,
+                    "tool_args": _safe_args(args),
+                },
+            )
+            logger.info(
+                "Permission ASK for %s — falling through to HITL (already resolved by Agno)",
+                name,
+            )
+        # ALLOW and DEFER both fall through to execution.
+        return None
 
+    async def _execute_with_post_hooks(
+        self, name: str, func: Callable, args: dict[str, Any]
+    ) -> Any:
+        """Run the tool, fire PostToolUse or PostToolUseFailure,
+        then suffix any newly-discovered subdirectory rules to a
+        string result. Raises on tool exception AFTER firing the
+        failure hook."""
         error = None
         result = None
         try:
@@ -259,7 +215,6 @@ class ToolEventHook:
         except Exception as e:
             error = e
 
-        # PostToolUseFailure
         if error is not None:
             if self._has_fail:
                 await self._fire(
@@ -269,7 +224,6 @@ class ToolEventHook:
                 )
             raise error
 
-        # PostToolUse
         if self._has_post:
             await self._fire(
                 HookEvent.POST_TOOL_USE.value,
@@ -282,13 +236,63 @@ class ToolEventHook:
             )
 
         # Discover & inject subdirectory rules for any new directory
-        # the agent just touched. Done AFTER PostToolUse so audit logs
-        # see the unmodified result, then we suffix the rules block
-        # for the model's next reasoning step. Quiet no-op when no
-        # rules index is wired or no new rules are pending.
-        result = await self._maybe_suffix_rules(args, result)
+        # the agent just touched. Done AFTER PostToolUse so audit
+        # logs see the unmodified result, then we suffix the rules
+        # block for the model's next reasoning step. Quiet no-op
+        # when no rules index is wired or no new rules are pending.
+        return await self._maybe_suffix_rules(args, result)
 
-        return result
+    async def __call__(
+        self,
+        name: str = "",
+        func: Callable | None = None,
+        args: dict[str, Any] | None = None,
+        agent: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        if args is None:
+            args = {}
+
+        # ── Step 1: PreToolUse hook (may allow / deny / ask) ───
+        pre_decision, pre_block = await self._run_pre_hook(name, args)
+        if pre_block is not None:
+            return pre_block
+
+        # ── Step 2: legacy protected-paths (defense-in-depth) ──
+        # ALWAYS runs — a PreToolUse "allow" cannot disarm the
+        # hard-coded safety list. Same threat model as CC's
+        # bypass-resistant scoped denies: hooks and modes should
+        # never be able to silently unlock writes to ``.env`` /
+        # ``*.key`` / etc. Helper in ``safety_lists.py``.
+        protected_block = check_protected_paths(name, args, self._protected_paths)
+        if protected_block is not None:
+            return protected_block
+
+        # ── Step 3: legacy blocked-commands (defense-in-depth) ─
+        # Same "always runs" property as protected-paths.
+        blocked_msg = check_blocked_commands(name, args, self._blocked_commands)
+        if blocked_msg is not None:
+            return blocked_msg
+
+        # ── Step 4: permission evaluator (6-mode pipeline) ──
+        # Skipped when the PreToolUse hook returned "allow" —
+        # this is the CC-compatible escape hatch for plugins
+        # that want to grant ad-hoc approval. Scoped denies in
+        # the evaluator are STILL honoured because they fire via
+        # the evaluator's own pipeline; the hook ``allow`` only
+        # skips the evaluator's step, not its earlier deny check
+        # (which doesn't apply since we skip the whole step here
+        # — but the protected-paths above already caught the
+        # safety-critical cases).
+        if pre_decision != "allow":
+            eval_block = await self._apply_permission_evaluator(name, args)
+            if eval_block is not None:
+                return eval_block
+
+        # ── Step 5: execute tool + post hooks + rules suffix ──
+        if func is None:
+            return None
+        return await self._execute_with_post_hooks(name, func, args)
 
     async def _maybe_suffix_rules(self, args: dict[str, Any], result: Any) -> Any:
         """Append any newly-discovered rules files for the paths in

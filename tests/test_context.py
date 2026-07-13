@@ -1,8 +1,14 @@
 """Tests for utils/context.py — hierarchical rules loading."""
 
+import logging
 from pathlib import Path
 
 import pytest
+
+from ember_code.core.config.settings import (
+    _platform_managed_settings_path as _real_settings_path,
+)
+from ember_code.core.utils.context import load_project_rules_dirs
 
 from ember_code.core.utils import context as context_module
 from ember_code.core.utils.context import (
@@ -290,8 +296,6 @@ class TestProjectRulesDirs:
     — committed shared rules, symmetric to the user-level pattern."""
 
     def _load(self, project_dir, working_dir=None, read_claude_md=True):
-        from ember_code.core.utils.context import load_project_rules_dirs
-
         return load_project_rules_dirs(
             project_dir, working_dir=working_dir, read_claude_md=read_claude_md
         )
@@ -610,10 +614,6 @@ class TestPlatformManagedRulesDir:
         the managed settings file — by design, both live side by
         side so a sysadmin can drop a full policy bundle in one
         place."""
-        from ember_code.core.config.settings import (
-            _platform_managed_settings_path as _real_settings_path,
-        )
-
         rules_dir = _REAL_MANAGED_RULES_DIR()
         settings_path = _real_settings_path()
         if rules_dir is None:
@@ -743,20 +743,25 @@ def _redirect_memory_dirs(monkeypatch, tmp_path, *, with_claude=False):
     that only writes an ember-native MEMORY.md doesn't
     accidentally pick up whatever's in the user's real
     ``~/.claude/projects/.../memory/`` (which the slug derivation
-    won't normally produce a hit for, but be safe)."""
+    won't normally produce a hit for, but be safe).
+
+    Patches BOTH ``context`` and ``context_memory`` — the actual
+    implementations moved to ``context_memory`` in the refactor,
+    but ``context`` re-exports the names for legacy callers. Tests
+    load the re-exports; ``load_memory_index`` looks up the source
+    module's names. Patching only one leaves the other in place
+    and the redirect silently doesn't apply."""
+    from ember_code.core.utils import context_memory as context_memory_module
+
     ember_dir = tmp_path / "ember_memory"
     claude_dir = tmp_path / "claude_memory" if with_claude else tmp_path / "no_claude_memory"
 
-    monkeypatch.setattr(
-        context_module,
-        "_ember_project_memory_dir",
-        lambda _pd, _d=ember_dir: _d,
-    )
-    monkeypatch.setattr(
-        context_module,
-        "_claude_project_memory_dir",
-        lambda _pd, _d=claude_dir: _d,
-    )
+    ember_fn = lambda _pd, _d=ember_dir: _d  # noqa: E731
+    claude_fn = lambda _pd, _d=claude_dir: _d  # noqa: E731
+
+    for mod in (context_module, context_memory_module):
+        monkeypatch.setattr(mod, "_ember_project_memory_dir", ember_fn)
+        monkeypatch.setattr(mod, "_claude_project_memory_dir", claude_fn)
     return ember_dir, claude_dir
 
 
@@ -767,8 +772,6 @@ class TestProjectMemorySlug:
     project without any migration step."""
 
     def test_unix_path(self):
-        from pathlib import Path
-
         # Use a real path that exists so .resolve() doesn't surprise us.
         # The slug shape is what matters, not what the path points at.
         slug = _project_memory_slug(Path("/Users/x/proj"))
@@ -780,8 +783,6 @@ class TestProjectMemorySlug:
         sub = tmp_path / "sub"
         sub.mkdir()
         monkeypatch.chdir(sub)
-        from pathlib import Path
-
         slug_abs = _project_memory_slug(sub)
         slug_rel = _project_memory_slug(Path("."))
         assert slug_abs == slug_rel
@@ -789,8 +790,6 @@ class TestProjectMemorySlug:
     def test_dir_paths_match_published_convention(self):
         """The ember and claude memory dirs are siblings under
         their respective home-dir bases."""
-        from pathlib import Path
-
         ember = _ember_project_memory_dir(Path("/Users/x/proj"))
         claude = _claude_project_memory_dir(Path("/Users/x/proj"))
         assert ember.parts[-3:] == ("projects", "-Users-x-proj", "memory")
@@ -952,8 +951,6 @@ class TestEnsureMemoryDir:
         function logs + returns the intended path without
         raising. Better to fail late on the agent's first save
         than to crash session boot."""
-        import logging
-
         home = tmp_path / "home"
         monkeypatch.setattr(Path, "home", lambda: home)
 

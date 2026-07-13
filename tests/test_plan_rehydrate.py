@@ -14,7 +14,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock  # noqa: F401  (used in tests)
 
-from ember_code.backend.server import BackendServer
+from ember_code.backend.server import BackendServer, _split_assistant_content_for_restore
 from ember_code.core.tools.plan import PlanStore
 
 
@@ -184,8 +184,8 @@ class TestPlanRehydrate:
             todo_store=SimpleNamespace(snapshot=lambda: []),
         )
         result = server.get_latest_plan()
-        assert result["state"] == "pending"
-        assert result["latest"] == "some plan text"
+        assert result.state == "pending"
+        assert result.latest == "some plan text"
 
     def test_get_latest_plan_empty_state_when_no_plan(self) -> None:
         server = BackendServer.__new__(BackendServer)
@@ -194,8 +194,8 @@ class TestPlanRehydrate:
             todo_store=SimpleNamespace(snapshot=lambda: []),
         )
         result = server.get_latest_plan()
-        assert result["state"] == ""
-        assert result["latest"] == ""
+        assert result.state == ""
+        assert result.latest == ""
 
     async def test_get_chat_history_emits_plan_turn_inline(self) -> None:
         # The agent submits a plan → assistant message has tool_calls,
@@ -203,8 +203,6 @@ class TestPlanRehydrate:
         # replace the tool result with a ``role: "plan"`` turn so the
         # FE PlanCard lands at the exit_plan_mode position, NOT at
         # the very end of the chat list.
-        from ember_code.backend.server import BackendServer
-
         assistant_msg = SimpleNamespace(
             role="assistant",
             content="",
@@ -281,26 +279,18 @@ class TestPlanRehydrate:
         )
 
     def test_split_assistant_no_think_tags(self) -> None:
-        from ember_code.backend.server import _split_assistant_content_for_restore
-
         assert _split_assistant_content_for_restore("Hello world.") == [
             ("assistant", "Hello world.")
         ]
 
     def test_split_assistant_only_whitespace(self) -> None:
-        from ember_code.backend.server import _split_assistant_content_for_restore
-
         assert _split_assistant_content_for_restore("   ") == []
 
     def test_split_assistant_inline_think_block(self) -> None:
-        from ember_code.backend.server import _split_assistant_content_for_restore
-
         parts = _split_assistant_content_for_restore("<think>reasoning here</think>Final answer.")
         assert parts == [("thinking", "reasoning here"), ("assistant", "Final answer.")]
 
     def test_split_assistant_text_then_think_then_text(self) -> None:
-        from ember_code.backend.server import _split_assistant_content_for_restore
-
         parts = _split_assistant_content_for_restore("Starting now. <think>checking</think>Done.")
         assert parts == [
             ("assistant", "Starting now."),
@@ -309,8 +299,6 @@ class TestPlanRehydrate:
         ]
 
     def test_split_assistant_only_think_block(self) -> None:
-        from ember_code.backend.server import _split_assistant_content_for_restore
-
         # A cancelled run can leave nothing but a think block — no
         # assistant text should be emitted.
         assert _split_assistant_content_for_restore("<think>just thoughts</think>") == [
@@ -318,15 +306,11 @@ class TestPlanRehydrate:
         ]
 
     def test_split_assistant_unclosed_trailing_think(self) -> None:
-        from ember_code.backend.server import _split_assistant_content_for_restore
-
         # Cancelled mid-thought — extract up to end-of-content.
         parts = _split_assistant_content_for_restore("Partial. <think>was still")
         assert parts == [("assistant", "Partial."), ("thinking", "was still")]
 
     async def test_get_chat_history_extracts_inline_think_tags(self) -> None:
-        from ember_code.backend.server import BackendServer
-
         assistant_msg = SimpleNamespace(
             role="assistant",
             content="<think>let me reason</think>The answer is 42.",
@@ -366,8 +350,6 @@ class TestPlanRehydrate:
         # Same as the above shape but the session is still in plan
         # mode → the LATEST plan must restore as "pending" (user
         # hasn't approved yet), not "approved".
-        from ember_code.backend.server import BackendServer
-
         assistant_msg = SimpleNamespace(
             role="assistant",
             content="",

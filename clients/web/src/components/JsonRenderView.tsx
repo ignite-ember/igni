@@ -50,7 +50,7 @@ function toStrRecord(input: unknown): Record<string, string> {
 }
 
 function LineChart({
-  data,
+  data: rawData,
   yPrefix = "",
   ySuffix = "",
   width = 640,
@@ -62,6 +62,16 @@ function LineChart({
   width?: number;
   height?: number;
 }) {
+  // Filter out partial-stream rows so partial-json's placeholders
+  // don't produce NaN SVG attrs (which render as broken paths and
+  // can crash the renderer's reconciler on edge cases).
+  const data = rawData.filter(
+    (d): d is SeriesPoint =>
+      d != null &&
+      d.x != null &&
+      typeof d.y === "number" &&
+      Number.isFinite(d.y),
+  );
   if (!data.length) return <div className="jr-empty">no data</div>;
   const padL = 46,
     padR = 12,
@@ -126,7 +136,7 @@ function LineChart({
 }
 
 function BarChart({
-  data,
+  data: rawData,
   yPrefix = "",
   ySuffix = "",
   width = 640,
@@ -138,6 +148,13 @@ function BarChart({
   width?: number;
   height?: number;
 }) {
+  const data = rawData.filter(
+    (d): d is SeriesPoint =>
+      d != null &&
+      d.x != null &&
+      typeof d.y === "number" &&
+      Number.isFinite(d.y),
+  );
   if (!data.length) return <div className="jr-empty">no data</div>;
   const padL = 46,
     padR = 12,
@@ -185,6 +202,170 @@ function BarChart({
             <text x={x + barW / 2} y={height - 8} className="jr-barchart-xtick" textAnchor="middle">
               {String(d.x)}
             </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+// ── Candlestick chart ───────────────────────────────────────────────
+
+type OHLCPoint = {
+  x: string | number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v?: number;
+};
+
+function CandlestickChart({
+  data,
+  yPrefix = "",
+  ySuffix = "",
+  upColor = "#22c55e",
+  downColor = "#dc2626",
+  width = 640,
+  height = 260,
+  hasVolume,
+}: {
+  data: OHLCPoint[];
+  yPrefix?: string;
+  ySuffix?: string;
+  upColor?: string;
+  downColor?: string;
+  width?: number;
+  height?: number;
+  hasVolume: boolean;
+}) {
+  // Guard against partial-stream data: prune any row that's
+  // missing required OHLC fields (we're mid-stream and the last
+  // element likely hasn't finished streaming). Without this,
+  // NaN propagates into SVG attrs and the render breaks.
+  const clean = data.filter(
+    (d): d is OHLCPoint =>
+      d != null &&
+      typeof d.o === "number" &&
+      typeof d.h === "number" &&
+      typeof d.l === "number" &&
+      typeof d.c === "number" &&
+      Number.isFinite(d.o) &&
+      Number.isFinite(d.h) &&
+      Number.isFinite(d.l) &&
+      Number.isFinite(d.c),
+  );
+  if (!clean.length) return <div className="jr-empty">no data</div>;
+  const padL = 52,
+    padR = 12,
+    padT = 12,
+    padB = 26;
+  const priceH = hasVolume ? Math.round((height - padT - padB) * 0.72) : height - padT - padB;
+  const volH = hasVolume ? height - padT - padB - priceH - 6 : 0;
+  const innerW = width - padL - padR;
+  const bandW = innerW / clean.length;
+  const candleW = Math.max(2, bandW * 0.62);
+
+  // Price y-scale spans all lows and highs.
+  const lows = clean.map((d) => d.l);
+  const highs = clean.map((d) => d.h);
+  const yMin = Math.min(...lows);
+  const yMax = Math.max(...highs);
+  const yRange = yMax - yMin || 1;
+  // Small vertical padding so the extremes don't touch the border.
+  const yPad = yRange * 0.05;
+  const yLo = yMin - yPad;
+  const yHi = yMax + yPad;
+  const yFullRange = yHi - yLo || 1;
+
+  const priceBottom = padT + priceH;
+
+  const yToPx = (v: number) =>
+    priceBottom - ((v - yLo) / yFullRange) * priceH;
+
+  // Volume scaling — separate scale, non-negative.
+  const vols = hasVolume ? clean.map((d) => d.v ?? 0) : [];
+  const vMax = hasVolume ? Math.max(...vols, 1) : 1;
+  const volTop = priceBottom + 6;
+  const vToH = (v: number) => (v / vMax) * volH;
+
+  // Y-axis ticks (5 evenly spaced).
+  const ticks = Array.from({ length: 5 }, (_, i) => yLo + (yFullRange * i) / 4);
+
+  const xTickEvery = Math.max(1, Math.ceil(clean.length / 8));
+
+  return (
+    <svg
+      className="jr-candlestick"
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      role="img"
+      aria-label="candlestick chart"
+    >
+      {ticks.map((v, i) => {
+        const y = yToPx(v);
+        return (
+          <g key={`yt-${i}`}>
+            <line x1={padL} x2={width - padR} y1={y} y2={y} className="jr-candlestick-grid" />
+            <text x={padL - 6} y={y + 3} className="jr-candlestick-ytick">
+              {yPrefix}
+              {Number.isInteger(v) ? v : v.toFixed(2)}
+              {ySuffix}
+            </text>
+          </g>
+        );
+      })}
+      {clean.map((d, i) => {
+        const isUp = d.c >= d.o;
+        const color = isUp ? upColor : downColor;
+        const cx = padL + i * bandW + bandW / 2;
+        const bodyTopY = yToPx(Math.max(d.o, d.c));
+        const bodyBottomY = yToPx(Math.min(d.o, d.c));
+        const bodyH = Math.max(1, bodyBottomY - bodyTopY);
+        const wickTopY = yToPx(d.h);
+        const wickBottomY = yToPx(d.l);
+        const showXTick = i % xTickEvery === 0;
+        return (
+          <g key={`c-${i}`}>
+            {/* wick */}
+            <line
+              x1={cx}
+              x2={cx}
+              y1={wickTopY}
+              y2={wickBottomY}
+              stroke={color}
+              strokeWidth={1}
+            />
+            {/* body */}
+            <rect
+              x={cx - candleW / 2}
+              y={bodyTopY}
+              width={candleW}
+              height={bodyH}
+              fill={color}
+              stroke={color}
+              strokeWidth={1}
+            />
+            {hasVolume && (
+              <rect
+                x={cx - candleW / 2}
+                y={volTop + volH - vToH(d.v ?? 0)}
+                width={candleW}
+                height={vToH(d.v ?? 0)}
+                fill={color}
+                opacity={0.4}
+              />
+            )}
+            {showXTick && (
+              <text
+                x={cx}
+                y={height - 8}
+                className="jr-candlestick-xtick"
+                textAnchor="middle"
+              >
+                {String(d.x)}
+              </text>
+            )}
           </g>
         );
       })}
@@ -470,6 +651,30 @@ const { registry } = defineRegistry(catalog, {
         )}
       </div>
     ),
+
+    Candlestick: ({ props }) => {
+      const hasVolume = props.data.some(
+        (d: OHLCPoint) => typeof d.v === "number",
+      );
+      return (
+        <div className="jr-chart">
+          <CandlestickChart
+            data={props.data}
+            yPrefix={props.yPrefix}
+            ySuffix={props.ySuffix}
+            upColor={props.upColor}
+            downColor={props.downColor}
+            hasVolume={hasVolume}
+          />
+          {(props.xLabel || props.yLabel) && (
+            <div className="jr-chart-axes">
+              {props.yLabel && <span className="jr-chart-y">{props.yLabel}</span>}
+              {props.xLabel && <span className="jr-chart-x">{props.xLabel}</span>}
+            </div>
+          )}
+        </div>
+      );
+    },
 
     Metric: ({ props }) => {
       const { label, value, prefix, suffix, delta } = props;
@@ -917,6 +1122,21 @@ interface JsonRenderViewProps {
   onDispatchAction?: DispatchAction;
 }
 
+/** Fingerprint the spec's content so a growing progressive-stream
+ *  update forces the Renderer to remount instead of relying on
+ *  ElementRenderer's aggressive memoization to notice a new
+ *  reference. Includes ``JSON.stringify`` length so a mid-stream
+ *  data-array growth (same keys, more values) also triggers a fresh
+ *  mount — otherwise ``LineGraph.data`` gets frozen at the first
+ *  parseable snapshot and never redraws. Cheap: json-render specs
+ *  are small (KB-range) and only re-serialized when the reference
+ *  changes upstream. */
+function specFingerprint(spec: Spec): string {
+  const keys = Object.keys(spec.elements).sort().join(",");
+  const len = JSON.stringify(spec).length;
+  return `${spec.root}|${keys}|${len}`;
+}
+
 function JsonRenderViewInner({
   spec,
   title,
@@ -964,7 +1184,12 @@ function JsonRenderViewInner({
         </div>
       )}
       <JSONUIProvider registry={registry} handlers={handlers}>
-        <Renderer spec={spec} registry={registry} fallback={fallback} />
+        <Renderer
+          key={specFingerprint(spec)}
+          spec={spec}
+          registry={registry}
+          fallback={fallback}
+        />
       </JSONUIProvider>
     </div>
   );

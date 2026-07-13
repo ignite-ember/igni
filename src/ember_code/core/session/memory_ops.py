@@ -3,6 +3,10 @@
 import logging
 from typing import Any
 
+from agno.agent import Agent
+from agno.memory import MemoryManager
+from agno.memory.strategies.types import MemoryOptimizationStrategyType
+
 from ember_code.core.config.models import ModelRegistry
 from ember_code.core.config.settings import Settings
 
@@ -21,18 +25,11 @@ class SessionMemoryManager:
         """Create an Agno MemoryManager for memory operations."""
         if not self.db:
             return None
-        try:
-            from agno.memory import MemoryManager
-
-            model = ModelRegistry(self.settings).get_model()
-            return MemoryManager(model=model, db=self.db)
-        except ImportError:
-            return None
+        model = ModelRegistry(self.settings).get_model()
+        return MemoryManager(model=model, db=self.db)
 
     def _create_reader_agent(self) -> Any:
         """Create a temporary agent for reading memories."""
-        from agno.agent import Agent
-
         model = ModelRegistry(self.settings).get_model()
         return Agent(name="_memory_reader", model=model, db=self.db)
 
@@ -61,8 +58,6 @@ class SessionMemoryManager:
         if not manager:
             return {"error": "Memory manager not available"}
         try:
-            from agno.memory.strategies.types import MemoryOptimizationStrategyType
-
             agent = self._create_reader_agent()
             before = await agent.aget_user_memories(user_id=self.user_id)
             count_before = len(before) if before else 0

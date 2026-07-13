@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -17,7 +18,7 @@ from ember_code.core.code_index.index import (
     _flatten_item_metadata,
 )
 from ember_code.core.code_index.manifest import Manifest
-from ember_code.core.code_index.paths import commit_chroma_path
+from ember_code.core.code_index.paths import code_index_dir, commit_chroma_path
 from ember_code.core.code_index.schema.items import CodeIndexItem
 
 
@@ -73,8 +74,6 @@ class TestManifest:
         m = Manifest(project=tmp_path / "p", data_dir=str(tmp_path / "data"))
         m.upsert_commit("abc")
         original = m.load().commits["abc"].last_used_at
-        import time
-
         time.sleep(1.1)
         m.touch("abc")
         assert m.load().commits["abc"].last_used_at != original
@@ -146,8 +145,6 @@ class TestPrepareCommit:
     async def test_idempotent_on_existing_commit(self, index):
         await index.prepare_commit("sha_0")
         first_used = index.manifest.load().commits["sha_0"].last_used_at
-        import time
-
         time.sleep(1.1)
         await index.prepare_commit("sha_0")
         assert index.manifest.load().commits["sha_0"].last_used_at != first_used
@@ -221,8 +218,6 @@ class TestSweepStaleDirs:
 
     @pytest.mark.asyncio
     async def test_removes_dirs_not_in_manifest(self, index):
-        from ember_code.core.code_index.paths import code_index_dir
-
         # Two tracked commits.
         await index.prepare_commit("alive_a")
         await index.prepare_commit("alive_b")
@@ -250,8 +245,6 @@ class TestSweepStaleDirs:
 
     @pytest.mark.asyncio
     async def test_ignores_non_chroma_entries(self, index):
-        from ember_code.core.code_index.paths import code_index_dir
-
         await index.prepare_commit("alive")
         base = code_index_dir(index.project, data_dir=index.data_dir)
         # Sibling files / unrelated dirs must survive — manifest.json

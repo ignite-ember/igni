@@ -169,6 +169,39 @@ export const catalog = reactSchema.createCatalog({
         ],
       },
     },
+    Candlestick: {
+      description:
+        "OHLC candlestick chart. Ideal for stock/asset price series where you have open, high, low, close per period. Volume bars are drawn under the price panel when present. Rising candles use `upColor` (default green), falling candles use `downColor` (default red).",
+      props: z.object({
+        data: z
+          .array(
+            z.object({
+              x: z.union([z.string(), z.number()]).describe("Period label (date, index, or category)"),
+              o: z.number().describe("Open price"),
+              h: z.number().describe("High price"),
+              l: z.number().describe("Low price"),
+              c: z.number().describe("Close price"),
+              v: z.number().optional().describe("Volume, optional"),
+            }),
+          )
+          .describe("Ordered OHLC(V) rows, one per period"),
+        xLabel: z.string().optional(),
+        yLabel: z.string().optional(),
+        yPrefix: z.string().optional().describe('Prepended to y-axis tick labels, e.g. "$"'),
+        ySuffix: z.string().optional(),
+        upColor: z.string().optional().describe("Color for candles where close >= open"),
+        downColor: z.string().optional().describe("Color for candles where close < open"),
+      }),
+      example: {
+        data: [
+          { x: "Mon", o: 100, h: 108, l: 98, c: 105, v: 1200 },
+          { x: "Tue", o: 105, h: 110, l: 102, c: 103, v: 950 },
+          { x: "Wed", o: 103, h: 112, l: 103, c: 111, v: 1400 },
+        ],
+        yPrefix: "$",
+        xLabel: "Day",
+      },
+    },
     Metric: {
       description:
         "Single KPI tile. delta > 0 renders green ▲, delta < 0 renders red ▼, 0 or absent renders neutral.",

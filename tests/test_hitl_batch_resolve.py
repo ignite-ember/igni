@@ -22,6 +22,7 @@ import pytest
 
 from ember_code.backend.server import BackendServer
 from ember_code.protocol import messages as msg
+from ember_code.frontend.tui.backend_client import BackendClient
 
 
 def _make_backend_with_pending(*pendings) -> tuple[BackendServer, list]:
@@ -314,8 +315,6 @@ class TestBackendClientBatch:
 
     @pytest.mark.asyncio
     async def test_builds_hitl_response_batch_envelope(self):
-        from ember_code.frontend.tui.backend_client import BackendClient
-
         client = BackendClient.__new__(BackendClient)
         sent = []
 

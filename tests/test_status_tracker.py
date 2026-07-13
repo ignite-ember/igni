@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 from ember_code.frontend.tui.status_tracker import StatusTracker
+from ember_code.protocol.messages import StatusUpdate
 
 
 def _make_tracker(bar: MagicMock | None = None) -> StatusTracker:
@@ -46,8 +47,6 @@ class TestStartEndRun:
 
 class TestUpdateStatusBar:
     def test_delegates_model_and_cloud(self):
-        from ember_code.protocol.messages import StatusUpdate
-
         bar = MagicMock()
         tracker = _make_tracker(bar=bar)
         backend = MagicMock()
@@ -66,8 +65,6 @@ class TestUpdateStatusBar:
         tracker.update_status_bar()  # should not raise
 
     def test_cloud_org_empty(self):
-        from ember_code.protocol.messages import StatusUpdate
-
         bar = MagicMock()
         tracker = _make_tracker(bar=bar)
         backend = MagicMock()

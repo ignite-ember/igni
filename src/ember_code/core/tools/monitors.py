@@ -39,7 +39,7 @@ class MonitorTools(Toolkit):
         snap = self._manager.snapshot_all()
         if not snap:
             return "No monitors configured for this session."
-        return json.dumps(snap, indent=2)
+        return json.dumps([s.model_dump() for s in snap], indent=2)
 
     def monitor_output(self, name: str, lines: int = 40) -> str:
         """Return the last ``lines`` lines of merged

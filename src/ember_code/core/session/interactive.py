@@ -19,6 +19,9 @@ from ember_code.core.utils.display import (
     print_warning,
     print_welcome,
 )
+from ember_code.core.utils.media import resolve_file_references
+from ember_code.core.utils.mentions import process_file_mentions
+from ember_code.core.utils.update_checker import check_for_update
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +64,6 @@ async def run_session_interactive(
 
     # ── Update check (non-blocking, best-effort) ─────────────────
     try:
-        from ember_code.core.utils.update_checker import check_for_update
-
         update_info = await check_for_update()
         if update_info.available:
             print_warning(update_info.message)
@@ -127,13 +128,9 @@ async def run_session_interactive(
                 continue
 
             # ── Handle the message via orchestrator ─────────────────
-            from ember_code.core.utils.mentions import process_file_mentions
-
             message, mentioned_files = process_file_mentions(message)
             if mentioned_files:
                 print_info(f"Referenced: {', '.join(mentioned_files)}")
-
-            from ember_code.core.utils.media import resolve_file_references
 
             message, resolved_files = resolve_file_references(
                 message, project_dir=session.project_dir

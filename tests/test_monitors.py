@@ -13,6 +13,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -21,7 +22,7 @@ from ember_code.core.monitors.config import (
     _parse_monitors_dict,
     load_monitor_config,
 )
-from ember_code.core.monitors.manager import MonitorManager
+from ember_code.core.monitors.manager import MonitorHandle, MonitorManager
 from ember_code.core.tools.monitors import MonitorTools
 
 # ── Config parsing ────────────────────────────────────────────
@@ -169,7 +170,7 @@ class TestMonitorManager:
                 break
             await asyncio.sleep(0.05)
         snap = manager.snapshot_all()
-        assert snap[0]["status"] == "stopped"
+        assert snap[0].status == "stopped"
         await manager.shutdown_all()
 
     @pytest.mark.asyncio
@@ -266,9 +267,9 @@ class TestMonitorManager:
         manager = MonitorManager({"x": cfg}, tmp_path)
         snap = manager.snapshot_all()
         assert len(snap) == 1
-        assert snap[0]["name"] == "x"
-        assert snap[0]["status"] == "stopped"
-        assert snap[0]["pid"] is None
+        assert snap[0].name == "x"
+        assert snap[0].status == "stopped"
+        assert snap[0].pid is None
 
     @pytest.mark.asyncio
     async def test_shutdown_all_idempotent(self, tmp_path):
@@ -313,8 +314,6 @@ class TestMonitorTools:
         # Pre-populate the buffer to avoid spawning a real
         # process in this pure-tool test.
         handle = manager._handles
-        from ember_code.core.monitors.manager import MonitorHandle
-
         h = MonitorHandle(cfg, project_dir=tmp_path)
         h._output.append("line 1")
         h._output.append("line 2")
@@ -329,8 +328,6 @@ class TestMonitorTools:
         integer-typed params — we coerce defensively."""
         cfg = MonitorConfig(name="x", command="echo")
         manager = MonitorManager({"x": cfg}, tmp_path)
-        from ember_code.core.monitors.manager import MonitorHandle
-
         h = MonitorHandle(cfg, project_dir=tmp_path)
         h._output.append("hi")
         manager._handles["x"] = h
@@ -347,8 +344,6 @@ class TestMonitorTools:
 
     @pytest.mark.asyncio
     async def test_restart_calls_manager(self, tmp_path):
-        from unittest.mock import AsyncMock, MagicMock
-
         manager = MagicMock()
         manager.restart = AsyncMock(return_value="Restarted x.")
         tool = MonitorTools(manager)
@@ -358,8 +353,6 @@ class TestMonitorTools:
 
     @pytest.mark.asyncio
     async def test_stop_calls_manager(self, tmp_path):
-        from unittest.mock import AsyncMock, MagicMock
-
         manager = MagicMock()
         manager.stop = AsyncMock(return_value="Stopped x.")
         tool = MonitorTools(manager)
@@ -368,8 +361,6 @@ class TestMonitorTools:
 
     @pytest.mark.asyncio
     async def test_restart_surfaces_manager_exception(self):
-        from unittest.mock import AsyncMock, MagicMock
-
         manager = MagicMock()
         manager.restart = AsyncMock(side_effect=RuntimeError("boom"))
         tool = MonitorTools(manager)

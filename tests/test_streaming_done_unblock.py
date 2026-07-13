@@ -27,7 +27,11 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from agno.run.base import RunStatus
+from agno.run.team import RunCompletedEvent, RunContentCompletedEvent
 
+from ember_code.backend.server import BackendServer
+from ember_code.frontend.tui.run_controller import RunController
 from ember_code.protocol import messages as msg
 from ember_code.protocol.serializer import serialize_event
 
@@ -36,8 +40,6 @@ class TestStreamingDoneSerializer:
     def test_run_content_completed_serializes_to_streaming_done(self):
         """The Agno content-stream-done event is the one that maps
         to ``StreamingDone``. Tool/text events must not."""
-        from agno.run.team import RunContentCompletedEvent
-
         event = RunContentCompletedEvent(
             session_id="sess",
             run_id="r1",
@@ -49,8 +51,6 @@ class TestStreamingDoneSerializer:
     def test_run_completed_still_serializes_to_run_completed(self):
         """Regression guard: the new branch must not steal the
         existing ``RunCompletedEvent`` → ``RunCompleted`` mapping."""
-        from agno.run.team import RunCompletedEvent
-
         event = RunCompletedEvent(
             session_id="sess",
             run_id="r2",
@@ -71,8 +71,6 @@ class TestBackendSerialLock:
         after the test even on failure — otherwise the polluted
         method leaks into other tests in the file and hangs them.
         """
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         server._run_lock = asyncio.Lock()
         order: list[tuple[str, str]] = []
@@ -112,8 +110,6 @@ class TestIncrementalCheckpoint:
         whatever Agno currently holds in ``cached_session`` — that's
         the in-flight ``TeamSession`` whose ``runs[-1]`` has
         ``status=running``."""
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         team = MagicMock()
         cached = MagicMock(name="cached_session")
@@ -128,8 +124,6 @@ class TestIncrementalCheckpoint:
     async def test_checkpoint_noop_when_session_not_yet_cached(self):
         """Very early events can fire before Agno has assembled its
         cached session — the helper must just shrug and return."""
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         team = MagicMock()
         team.cached_session = None
@@ -144,8 +138,6 @@ class TestIncrementalCheckpoint:
         """A flaky persistence layer must not abort the live stream
         — the agent's still talking and the checkpoint is a
         durability optimisation, not a correctness requirement."""
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         team = MagicMock()
         team.cached_session = MagicMock()
@@ -165,10 +157,6 @@ class TestInterruptedRunDetection:
         """When the previous session's latest run has
         ``status=running``, the BE stashes a summary string for the
         next user message to consume."""
-        from agno.run.base import RunStatus
-
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         server._interrupted_run_summary = None
         server._session = MagicMock()
@@ -200,10 +188,6 @@ class TestInterruptedRunDetection:
         """The happy path: a session resumed after a clean shutdown
         has ``status=completed`` on its latest run and the BE must
         not inject any nudge."""
-        from agno.run.base import RunStatus
-
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         server._interrupted_run_summary = None
         server._session = MagicMock()
@@ -222,8 +206,6 @@ class TestInterruptedRunDetection:
     @pytest.mark.asyncio
     async def test_no_runs_at_all_leaves_summary_none(self):
         """Fresh session with no runs persisted — nothing to resume."""
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         server._interrupted_run_summary = None
         server._session = MagicMock()
@@ -241,8 +223,6 @@ class TestInterruptedRunDetection:
     async def test_aget_session_failure_swallowed(self):
         """A flaky DB on startup must not block the whole session
         boot — we'd rather start fresh than crash."""
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         server._interrupted_run_summary = None
         server._session = MagicMock()
@@ -262,8 +242,6 @@ class TestRunGenerationGuard:
     ``_run`` has just set it ``True``."""
 
     def test_initial_generation_is_zero(self):
-        from ember_code.frontend.tui.run_controller import RunController
-
         ctrl = RunController.__new__(RunController)
         ctrl._run_generation = 0
         assert ctrl._run_generation == 0
@@ -271,8 +249,6 @@ class TestRunGenerationGuard:
     def test_generation_increments_per_run_invocation(self):
         """Each call into the ``_run`` body bumps the counter so
         callers can detect whether they're still the latest."""
-        from ember_code.frontend.tui.run_controller import RunController
-
         ctrl = RunController.__new__(RunController)
         ctrl._run_generation = 0
 
@@ -290,8 +266,6 @@ class TestRunGenerationGuard:
         """The whole point of the guard: an old turn finishing its
         tail while a newer turn is mid-flight must NOT clear
         ``_processing``. Simulates the race directly."""
-        from ember_code.frontend.tui.run_controller import RunController
-
         ctrl = RunController.__new__(RunController)
         ctrl._run_generation = 0
         ctrl._processing = False
@@ -320,8 +294,6 @@ class TestRunGenerationGuard:
         """Sanity check: when there's no newer turn, the finally
         DOES clear state. Otherwise the guard would just break
         normal single-turn cleanup."""
-        from ember_code.frontend.tui.run_controller import RunController
-
         ctrl = RunController.__new__(RunController)
         ctrl._run_generation = 0
         ctrl._processing = False
@@ -362,8 +334,6 @@ class TestRunMessageIntegration:
         * passes the ``StreamingDone`` through unchanged so the FE
           can act on it (Phase 1 unblock)
         """
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         server._run_lock = asyncio.Lock()
         server._processing = False
@@ -425,8 +395,6 @@ class TestRunMessageIntegration:
         the generator fully exhausts. If a second ``run_message``
         attempted to acquire the lock between StreamingDone and the
         stream-close, two ``team.arun`` calls would race."""
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         server._run_lock = asyncio.Lock()
         server._processing = False
@@ -505,8 +473,6 @@ class TestRunMessageIntegration:
         next user message and cleared, so a subsequent message in
         the same session doesn't keep nudging the agent that it
         was interrupted."""
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         server._run_lock = asyncio.Lock()
         server._processing = False
@@ -567,8 +533,6 @@ class TestFEStreamingDoneHandler:
 
     @pytest.mark.asyncio
     async def test_streaming_done_clears_processing(self):
-        from ember_code.frontend.tui.run_controller import RunController
-
         ctrl = RunController.__new__(RunController)
         ctrl._processing = True
         ctrl._queue = []
@@ -596,10 +560,6 @@ class TestAutoDropPartialOnCompletion:
         Then a run completes → next detect call sees
         status=completed → summary clears.
         """
-        from agno.run.base import RunStatus
-
-        from ember_code.backend.server import BackendServer
-
         server = BackendServer.__new__(BackendServer)
         server._interrupted_run_summary = None
         server._session = MagicMock()

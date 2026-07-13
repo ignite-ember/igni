@@ -33,6 +33,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from ember_code.backend.server import BackendServer
+from ember_code.core.config.permission_eval import PermissionDecision, PermissionEvaluator
 
 
 def _make_server(project_dir: Path, with_evaluator: bool = False) -> BackendServer:
@@ -44,8 +45,6 @@ def _make_server(project_dir: Path, with_evaluator: bool = False) -> BackendServ
     ``with_evaluator=True`` attaches a real ``PermissionEvaluator``
     to ``self._session.permission_evaluator`` so tests can verify
     the in-memory patch that stops the next-call re-prompt loop."""
-    from ember_code.core.config.permission_eval import PermissionEvaluator
-
     server = BackendServer.__new__(BackendServer)
     evaluator = PermissionEvaluator.from_strings() if with_evaluator else None
     server._session = SimpleNamespace(
@@ -157,8 +156,6 @@ class TestInMemoryEvaluatorPatch:
     evaluator get the new rule immediately."""
 
     def test_always_appends_to_evaluator_allow(self, tmp_path: Path) -> None:
-        from ember_code.core.config.permission_eval import PermissionDecision
-
         server = _make_server(tmp_path, with_evaluator=True)
         req = _requirement_for("run_shell_command", {"command": "python3 -m http.server 8000"})
         # Before: evaluator hasn't seen this command → DEFER.
@@ -183,8 +180,6 @@ class TestInMemoryEvaluatorPatch:
         )
 
     def test_similar_pattern_matches_family_via_evaluator(self, tmp_path: Path) -> None:
-        from ember_code.core.config.permission_eval import PermissionDecision
-
         server = _make_server(tmp_path, with_evaluator=True)
         req = _requirement_for("run_shell_command", {"command": "python3 -m http.server 8000"})
         server._maybe_persist_choice(SimpleNamespace(choice="similar"), req)
@@ -199,8 +194,6 @@ class TestInMemoryEvaluatorPatch:
         )
 
     def test_deny_appends_to_evaluator_deny(self, tmp_path: Path) -> None:
-        from ember_code.core.config.permission_eval import PermissionDecision
-
         server = _make_server(tmp_path, with_evaluator=True)
         req = _requirement_for("run_shell_command", {"command": "rm -rf /"})
         server._maybe_persist_choice(SimpleNamespace(choice="deny"), req)

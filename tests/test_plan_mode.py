@@ -17,14 +17,19 @@ Three layers:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ember_code.backend.__main__ import _build_rpc_table
 from ember_code.backend.command_handler import CommandHandler
 from ember_code.backend.server import BackendServer
 from ember_code.core.config.permission_eval import PermissionEvaluator, PermissionMode
-from ember_code.core.tools.plan import PlanStore, PlanTool
+from ember_code.core.session.core import Session
+from ember_code.core.tools.orchestrate import OrchestrateTools
+from ember_code.core.tools.plan import PlanStore, PlanTool, _MAX_PLAN_ATTEMPTS
+from ember_code.core.tools.todo import TodoItem, TodoStore, TodoTools
+from ember_code.protocol.rpc import RpcMethod
 
 # ── PlanStore ─────────────────────────────────────────────
 
@@ -62,7 +67,8 @@ class TestPlanStore:
         store.set_plan("a")
         store.set_plan("b")
         snap = store.snapshot()
-        assert snap == {"latest": "b", "history": ["a"]}
+        assert snap.latest == "b"
+        assert snap.history == ["a"]
 
 
 # ── PlanTool ──────────────────────────────────────────────
@@ -117,8 +123,6 @@ class TestPlanTool:
         """When the agent passes ``tasks=[...]`` alongside the
         plan, the same call populates the TodoStore so the
         PlanCard can render a live checklist next to the prose."""
-        from ember_code.core.tools.todo import TodoStore
-
         session = MagicMock()
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
@@ -141,8 +145,6 @@ class TestPlanTool:
     async def test_exit_plan_mode_without_tasks_leaves_todo_store_alone(self):
         """Tasks are optional — submitting a prose-only plan
         must not blast the TodoStore."""
-        from ember_code.core.tools.todo import TodoItem, TodoStore
-
         session = MagicMock()
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
@@ -159,9 +161,6 @@ class TestPlanTool:
         structured tasks alongside the plan markdown so the FE
         seeds the PlanCard checklist on first render."""
         # Real session stand-in to exercise the broadcast.
-        from ember_code.core.session.core import Session
-        from ember_code.core.tools.todo import TodoStore
-
         session = Session.__new__(Session)
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
@@ -184,8 +183,6 @@ class TestPlanTool:
         """Malformed task rows are dropped (so the rest still
         applies) and the errors come back in the reply so the
         agent can correct the next call."""
-        from ember_code.core.tools.todo import TodoStore
-
         session = MagicMock()
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
@@ -209,9 +206,6 @@ class TestExitPlanModeValidation:
     ``_MAX_PLAN_ATTEMPTS`` so we don't ping-pong forever."""
 
     def _session_with_codeindex(self):
-        from ember_code.core.session.core import Session
-        from ember_code.core.tools.todo import TodoStore
-
         session = Session.__new__(Session)
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
@@ -271,8 +265,6 @@ class TestExitPlanModeValidation:
         gives up and accepts whatever came in — better to
         surface a thin plan to the user (who can refine) than
         infinite-loop the agent."""
-        from ember_code.core.tools.plan import _MAX_PLAN_ATTEMPTS
-
         session = self._session_with_codeindex()
         session._plan_mode_attempt = _MAX_PLAN_ATTEMPTS - 1  # last allowed attempt
         tool = PlanTool(session)
@@ -299,9 +291,6 @@ class TestEnterPlanModeSpawnsResearcher:
     its report."""
 
     def _session(self):
-        from ember_code.core.session.core import Session
-        from ember_code.core.tools.todo import TodoStore
-
         session = Session.__new__(Session)
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
@@ -330,10 +319,6 @@ class TestEnterPlanModeSpawnsResearcher:
         """With ``task=``, the tool spawns the plan_researcher
         through OrchestrateTools and returns its report in the
         reply."""
-        from unittest.mock import AsyncMock
-
-        from ember_code.core.tools.orchestrate import OrchestrateTools
-
         session = self._session()
 
         # Build a real-shaped fake — use a subclass of OrchestrateTools
@@ -380,9 +365,6 @@ class TestTodoWriteBroadcastsState:
         """Every ``todo_write`` call fires a ``todos_updated``
         push so the FE's PlanCard checklist ticks off in place
         as the agent executes."""
-        from ember_code.core.session.core import Session
-        from ember_code.core.tools.todo import TodoStore, TodoTools
-
         session = Session.__new__(Session)
         session.todo_store = TodoStore()
         session._broadcast_callbacks = []
@@ -405,9 +387,6 @@ class TestTodoWriteBroadcastsState:
         """``todo_write([])`` (clear) ALSO fires the push so the
         FE empties the checklist — otherwise a "clear" mid-
         execution leaves the UI showing stale tasks."""
-        from ember_code.core.session.core import Session
-        from ember_code.core.tools.todo import TodoStore, TodoTools
-
         session = Session.__new__(Session)
         session.todo_store = TodoStore()
         session._broadcast_callbacks = []
@@ -428,8 +407,6 @@ class TestEnterPlanMode:
         """Build a stand-in session that has a real evaluator +
         the real ``set_permission_mode`` bound. ``PlanTool`` calls
         ``set_permission_mode`` and ``broadcast`` on the session."""
-        from ember_code.core.session.core import Session
-
         session = Session.__new__(Session)
         session.permission_evaluator = PermissionEvaluator.from_strings(mode="default")
         session._broadcast_callbacks = []
@@ -513,8 +490,6 @@ class TestEnterPlanMode:
 
 class TestSetPermissionMode:
     def _session_with_evaluator(self, initial="default"):
-        from ember_code.core.session.core import Session
-
         session = Session.__new__(Session)
         session.permission_evaluator = PermissionEvaluator.from_strings(mode=initial)
         return session
@@ -539,8 +514,6 @@ class TestSetPermissionMode:
         assert session.permission_evaluator.mode is PermissionMode.DEFAULT
 
     def test_no_evaluator_returns_error(self):
-        from ember_code.core.session.core import Session
-
         session = Session.__new__(Session)
         msg = session.set_permission_mode("plan")
         assert "Error" in msg
@@ -551,8 +524,6 @@ class TestSetPermissionMode:
 
 class TestPlanSlashCommand:
     def _make_session(self, initial_mode="default"):
-        from ember_code.core.session.core import Session
-
         session = Session.__new__(Session)
         session.permission_evaluator = PermissionEvaluator.from_strings(mode=initial_mode)
         # Bind ``set_permission_mode`` since we constructed via
@@ -675,8 +646,6 @@ class TestAcceptSlashCommand:
     Mirrors the ``/plan`` shape — toggle / on / off / status."""
 
     def _make_session(self, initial_mode="default"):
-        from ember_code.core.session.core import Session
-
         session = Session.__new__(Session)
         session.permission_evaluator = PermissionEvaluator.from_strings(mode=initial_mode)
         session._broadcast_callbacks = []
@@ -762,8 +731,6 @@ class TestBypassSlashCommand:
     ``PermissionEvaluator.mode``."""
 
     def _make_session(self, initial_mode="default"):
-        from ember_code.core.session.core import Session
-
         session = Session.__new__(Session)
         session.permission_evaluator = PermissionEvaluator.from_strings(mode=initial_mode)
         session._broadcast_callbacks = []
@@ -862,11 +829,11 @@ class TestGetLatestPlanRpc:
         backend = BackendServer.__new__(BackendServer)
         backend._session = session
         snap = backend.get_latest_plan()
-        assert snap["latest"] == ""
-        assert snap["history"] == []
-        assert snap["tasks"] == []
+        assert snap.latest == ""
+        assert snap.history == []
+        assert snap.tasks == []
         # No plan → state is empty (nothing to render).
-        assert snap["state"] == ""
+        assert snap.state == ""
 
     def test_returns_latest_and_history(self):
         session = MagicMock()
@@ -876,8 +843,8 @@ class TestGetLatestPlanRpc:
         backend = BackendServer.__new__(BackendServer)
         backend._session = session
         snap = backend.get_latest_plan()
-        assert snap["latest"] == "second plan"
-        assert snap["history"] == ["first plan"]
+        assert snap.latest == "second plan"
+        assert snap.history == ["first plan"]
 
     def test_no_plan_store_does_not_crash(self):
         """Defensive: legacy / partially-initialised sessions
@@ -887,15 +854,12 @@ class TestGetLatestPlanRpc:
         backend = BackendServer.__new__(BackendServer)
         backend._session = session
         snap = backend.get_latest_plan()
-        assert snap["latest"] == ""
-        assert snap["history"] == []
-        assert snap["tasks"] == []
-        assert snap["state"] == ""
+        assert snap.latest == ""
+        assert snap.history == []
+        assert snap.tasks == []
+        assert snap.state == ""
 
     def test_dispatch_table_routes_get_latest_plan(self):
-        from ember_code.backend.__main__ import _build_rpc_table
-        from ember_code.protocol.rpc import RpcMethod
-
         session = MagicMock()
         session.plan_store = PlanStore()
         session.plan_store.set_plan("test plan")
@@ -906,7 +870,7 @@ class TestGetLatestPlanRpc:
         handler = table.get(RpcMethod.GET_LATEST_PLAN)
         assert handler is not None
         result = handler({})
-        assert result["latest"] == "test plan"
+        assert result.latest == "test plan"
 
 
 # ── End-to-end: plan-mode lifecycle ───────────────────────
@@ -918,8 +882,6 @@ class TestPlanModeLifecycle:
         """Enter plan mode via ``/plan``, submit a plan via the
         tool, then exit via ``/plan``. Verifies the three pieces
         work as one workflow."""
-        from ember_code.core.session.core import Session
-
         session = Session.__new__(Session)
         session.permission_evaluator = PermissionEvaluator.from_strings(mode="default")
         session.plan_store = PlanStore()

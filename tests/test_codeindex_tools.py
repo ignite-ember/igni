@@ -9,7 +9,9 @@ import pytest
 
 from ember_code.core.code_index.enums import (
     FileSystemType,
+    Kind,
     QualityLevel,
+    Relation,
     SecurityLevel,
 )
 from ember_code.core.code_index.index import CodeIndex
@@ -102,8 +104,6 @@ class TestBuildWhere:
         assert {"quality": "poor"} in clauses
 
     def test_kind_handled_as_enum_value(self):
-        from ember_code.core.code_index.enums import Kind
-
         assert _build_where(_CategoricalFilters(kind=Kind.DOCS)) == {"kind": "docs"}
 
     def test_needs_refactoring_bool(self):
@@ -315,8 +315,6 @@ class TestTree:
 
     @pytest.mark.asyncio
     async def test_relations_filter(self, tools, index):
-        from ember_code.core.code_index.enums import Relation
-
         item = _make_item("a.py", "x")
         await index.add_item("c1", item)
         file_refs = index._file_reference_service()

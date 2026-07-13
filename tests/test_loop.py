@@ -27,6 +27,7 @@ from ember_code.backend.command_handler import CommandHandler
 from ember_code.backend.server import BackendServer
 from ember_code.core.loop.limits import LOOP_DEFAULT_MAX_ITERATIONS, LOOP_HARD_CAP
 from ember_code.core.loop.prompt import wrap_iteration_prompt
+from ember_code.core.session.loop_ops import LoopAdvance
 from ember_code.core.tools.loop import LoopTools
 
 # ── Helpers ─────────────────────────────────────────────────────────
@@ -107,7 +108,7 @@ class _FakeSession:
             self.loop_iterations_remaining = max_iter
         return self.loop_run_id
 
-    async def advance_loop(self) -> dict | None:
+    async def advance_loop(self) -> LoopAdvance | None:
         if self.pending_loop_prompt is None:
             return None
         if self.loop_paused:
@@ -116,13 +117,13 @@ class _FakeSession:
             if self.loop_cap_explicit:
                 total = self.loop_iteration_index
                 await self.cancel_loop()
-                return {"completed": True, "total_iterations": total}
+                return LoopAdvance(completed=True, total_iterations=total)
             if self.loop_iteration_index >= LOOP_HARD_CAP:
                 await self.pause_loop()
-                return {
-                    "safety_cap_paused": True,
-                    "iteration": self.loop_iteration_index,
-                }
+                return LoopAdvance(
+                    safety_cap_paused=True,
+                    iteration=self.loop_iteration_index,
+                )
             self.loop_iterations_remaining = min(
                 LOOP_DEFAULT_MAX_ITERATIONS,
                 LOOP_HARD_CAP - self.loop_iteration_index,
@@ -136,19 +137,19 @@ class _FakeSession:
             if self.loop_cap_explicit
             else None
         )
-        out = {
-            "prompt": wrap_iteration_prompt(
+        auto_extended = bool(self._auto_extended_this_advance)
+        if auto_extended:
+            self._auto_extended_this_advance = False
+        return LoopAdvance(
+            prompt=wrap_iteration_prompt(
                 self.pending_loop_prompt, self.loop_iteration_index, cap
             ),
-            "display_prompt": self.pending_loop_prompt,
-            "iteration": self.loop_iteration_index,
-            "remaining": self.loop_iterations_remaining,
-            "cap_explicit": self.loop_cap_explicit,
-        }
-        if self._auto_extended_this_advance:
-            out["auto_extended"] = True
-            self._auto_extended_this_advance = False
-        return out
+            display_prompt=self.pending_loop_prompt,
+            iteration=self.loop_iteration_index,
+            remaining=self.loop_iterations_remaining,
+            cap_explicit=self.loop_cap_explicit,
+            auto_extended=auto_extended,
+        )
 
     async def cancel_loop(self) -> bool:
         if self.pending_loop_prompt is None:
@@ -484,11 +485,11 @@ async def test_pop_iteration_returns_descriptor_and_decrements():
     # iterations) — the original prompt is preserved verbatim
     # inside the wrapper. ``display_prompt`` carries the unwrapped
     # form for chat rendering.
-    assert desc["iteration"] == 1
-    assert desc["remaining"] == 2
-    assert "do X" in desc["prompt"]
-    assert '<loop-iteration index="1" total="3">' in desc["prompt"]
-    assert desc["display_prompt"] == "do X"
+    assert desc.iteration == 1
+    assert desc.remaining == 2
+    assert "do X" in desc.prompt
+    assert '<loop-iteration index="1" total="3">' in desc.prompt
+    assert desc.display_prompt == "do X"
     assert sess.loop_iterations_remaining == 2
     assert sess.loop_iteration_index == 1
     # Session keeps the *unwrapped* prompt for the panel display.
@@ -513,16 +514,17 @@ async def test_pop_iteration_full_lifecycle_to_cap():
     d1 = await backend.pop_pending_loop_iteration()
     d2 = await backend.pop_pending_loop_iteration()
     d3 = await backend.pop_pending_loop_iteration()
-    assert (d1["iteration"], d1["remaining"]) == (1, 2)
-    assert (d2["iteration"], d2["remaining"]) == (2, 1)
-    assert (d3["iteration"], d3["remaining"]) == (3, 0)
+    assert (d1.iteration, d1.remaining) == (1, 2)
+    assert (d2.iteration, d2.remaining) == (2, 1)
+    assert (d3.iteration, d3.remaining) == (3, 0)
     for d, n in ((d1, 1), (d2, 2), (d3, 3)):
-        assert "tick" in d["prompt"]
-        assert f'<loop-iteration index="{n}" total="3">' in d["prompt"]
+        assert "tick" in d.prompt
+        assert f'<loop-iteration index="{n}" total="3">' in d.prompt
 
     # 4th pop hits the cap — returns the completion marker and clears.
     d4 = await backend.pop_pending_loop_iteration()
-    assert d4 == {"completed": True, "total_iterations": 3}
+    assert d4.completed is True
+    assert d4.total_iterations == 3
     assert sess.pending_loop_prompt is None
     assert sess.loop_iterations_remaining == 0
 
@@ -543,11 +545,13 @@ async def test_pop_iteration_completion_marker_only_fires_once():
     backend = _FakeBackend(sess)
 
     # First pop = iteration 1 descriptor.
-    assert (await backend.pop_pending_loop_iteration())["iteration"] == 1
+    first = await backend.pop_pending_loop_iteration()
+    assert first is not None
+    assert first.iteration == 1
     # Second pop = completion marker (cap exhausted).
     second = await backend.pop_pending_loop_iteration()
     assert second is not None
-    assert second.get("completed") is True
+    assert second.completed is True
     # Third pop = nothing.
     assert await backend.pop_pending_loop_iteration() is None
     assert await backend.pop_pending_loop_iteration() is None
@@ -600,15 +604,17 @@ async def test_full_flow_command_arms_rpc_drains_cap_terminates():
     # 2. The continuation RPC fires iteration 2 (1 was already
     # booked by ``immediate=True``). After this, remaining=0.
     d2 = await backend.pop_pending_loop_iteration()
-    assert "ping" in d2["prompt"]
-    assert '<loop-iteration index="2" total="2">' in d2["prompt"]
-    assert d2["iteration"] == 2
-    assert d2["remaining"] == 0
+    assert "ping" in d2.prompt
+    assert '<loop-iteration index="2" total="2">' in d2.prompt
+    assert d2.iteration == 2
+    assert d2.remaining == 0
 
     # 3. Next RPC tick — cap exhausted, returns the completion
     # marker (so the FE renders the summary) and clears state.
     completion = await backend.pop_pending_loop_iteration()
-    assert completion == {"completed": True, "total_iterations": 2}
+    assert completion is not None
+    assert completion.completed is True
+    assert completion.total_iterations == 2
     assert sess.pending_loop_prompt is None
 
     # 4. A subsequent tick returns None — completion is one-shot.
@@ -642,7 +648,7 @@ async def test_user_input_cancellation_via_rpc():
     assert sess.loop_iteration_index == 1
     # The next continuation pop produces iteration 2.
     desc = await backend.pop_pending_loop_iteration()
-    assert desc is not None and desc["iteration"] == 2
+    assert desc is not None and desc.iteration == 2
 
     # User types something else → FE invokes cancel.
     assert await backend.cancel_pending_loop() is True
@@ -812,10 +818,10 @@ async def test_implicit_cap_auto_extends_at_cap_hit() -> None:
     desc = await backend.pop_pending_loop_iteration()
 
     assert desc is not None
-    assert desc.get("completed") is None or desc.get("completed") is False
-    assert desc["auto_extended"] is True
+    assert desc.completed is False
+    assert desc.auto_extended is True
     # The loop didn't terminate — iteration 4 is firing.
-    assert desc["iteration"] == 4
+    assert desc.iteration == 4
     assert sess.pending_loop_prompt == "p"
 
 
@@ -833,7 +839,8 @@ async def test_explicit_cap_terminates_at_cap_hit() -> None:
 
     desc = await backend.pop_pending_loop_iteration()
 
-    assert desc == {"completed": True, "total_iterations": 3}
+    assert desc.completed is True
+    assert desc.total_iterations == 3
     assert sess.pending_loop_prompt is None
 
 
@@ -853,10 +860,8 @@ async def test_implicit_cap_pauses_at_hard_cap() -> None:
 
     desc = await backend.pop_pending_loop_iteration()
 
-    assert desc == {
-        "safety_cap_paused": True,
-        "iteration": LOOP_HARD_CAP,
-    }
+    assert desc.safety_cap_paused is True
+    assert desc.iteration == LOOP_HARD_CAP
     assert sess.loop_paused is True
     # Loop state survives — prompt + counter unchanged so resume
     # picks up exactly where the cap stopped it.
@@ -918,9 +923,9 @@ async def test_implicit_cap_descriptor_omits_total_attr() -> None:
 
     desc = await backend.pop_pending_loop_iteration()
     assert desc is not None
-    assert '<loop-iteration index="1">' in desc["prompt"]
-    assert "total=" not in desc["prompt"]
-    assert desc["cap_explicit"] is False
+    assert '<loop-iteration index="1">' in desc.prompt
+    assert "total=" not in desc.prompt
+    assert desc.cap_explicit is False
 
 
 # ── Help is registered ──────────────────────────────────────────────

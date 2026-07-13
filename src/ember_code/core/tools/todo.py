@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from agno.tools import Toolkit
+from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     from ember_code.core.session.core import Session
@@ -43,6 +44,20 @@ logger = logging.getLogger(__name__)
 
 TodoStatus = Literal["pending", "in_progress", "completed"]
 _VALID_STATUSES: frozenset[str] = frozenset(("pending", "in_progress", "completed"))
+
+
+class TodoItemWire(BaseModel):
+    """Wire shape for one todo row — CC-parity ``activeForm``
+    camelCase alias so the SDK-facing payload matches Claude Code
+    verbatim. Constructed via keyword-args with the Python-side
+    ``active_form`` snake case; ``.model_dump(by_alias=True)``
+    produces the camelCase dict for broadcasts / persistence."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    content: str
+    status: str
+    active_form: str = Field("", alias="activeForm")
 
 
 @dataclass(frozen=True)
@@ -76,13 +91,17 @@ class TodoStore:
 
     def snapshot(self) -> list[dict]:
         """Serialise to the wire shape (``activeForm`` camelCase,
-        matching how CC's tool payload looks on the SDK)."""
+        matching how CC's tool payload looks on the SDK). The
+        shape is defined once by :class:`TodoItemWire`; the
+        list-comp constructs and dumps via ``by_alias=True`` so
+        any future field addition/rename goes through the model,
+        not a hand-rolled dict."""
         return [
-            {
-                "content": item.content,
-                "status": item.status,
-                "activeForm": item.active_form,
-            }
+            TodoItemWire(
+                content=item.content,
+                status=item.status,
+                active_form=item.active_form,
+            ).model_dump(by_alias=True)
             for item in self.items
         ]
 

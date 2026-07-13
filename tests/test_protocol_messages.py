@@ -6,8 +6,11 @@ Covers all message types, round-trip serialization, and the Agno event serialize
 from unittest.mock import MagicMock
 
 import pytest
+from agno.run.agent import RunContentEvent, RunStartedEvent
 
 from ember_code.protocol import messages as msg
+from ember_code.protocol.serializer import serialize_event
+from ember_code.transport.unix_socket import deserialize_message
 
 
 class TestAllMessageTypes:
@@ -123,8 +126,6 @@ class TestUnixSocketDeserialization:
     """Test the deserializer used by Unix socket transport."""
 
     def test_all_be_to_fe_types(self):
-        from ember_code.transport.unix_socket import deserialize_message
-
         types = [
             msg.ContentDelta,
             msg.ToolStarted,
@@ -150,8 +151,6 @@ class TestUnixSocketDeserialization:
             assert restored.type == original.type
 
     def test_all_fe_to_be_types(self):
-        from ember_code.transport.unix_socket import deserialize_message
-
         types = [
             msg.UserMessage,
             msg.QueueMessage,
@@ -175,10 +174,6 @@ class TestAgnoEventSerializer:
     """Test the Agno event → protocol message serializer."""
 
     def test_content_event(self):
-        from agno.run.agent import RunContentEvent
-
-        from ember_code.protocol.serializer import serialize_event
-
         event = RunContentEvent(content="hello world")
         proto = serialize_event(event)
         assert isinstance(proto, msg.ContentDelta)
@@ -186,19 +181,11 @@ class TestAgnoEventSerializer:
         assert proto.is_thinking is False
 
     def test_empty_content_returns_none(self):
-        from agno.run.agent import RunContentEvent
-
-        from ember_code.protocol.serializer import serialize_event
-
         event = RunContentEvent(content="")
         proto = serialize_event(event)
         assert proto is None
 
     def test_run_started_event(self):
-        from agno.run.agent import RunStartedEvent
-
-        from ember_code.protocol.serializer import serialize_event
-
         event = RunStartedEvent(agent_name="editor", run_id="r1", model="gpt-4")
         proto = serialize_event(event)
         assert isinstance(proto, msg.RunStarted)
@@ -206,8 +193,6 @@ class TestAgnoEventSerializer:
         assert proto.run_id == "r1"
 
     def test_unknown_event_returns_none(self):
-        from ember_code.protocol.serializer import serialize_event
-
         class FakeEvent:
             pass
 
@@ -216,8 +201,6 @@ class TestAgnoEventSerializer:
 
     def test_fallback_content_event(self):
         """Events with string .content attribute should be treated as content."""
-        from ember_code.protocol.serializer import serialize_event
-
         event = MagicMock(spec=[])
         event.content = "fallback text"
         proto = serialize_event(event)

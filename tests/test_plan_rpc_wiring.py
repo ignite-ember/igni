@@ -32,6 +32,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from ember_code.backend.__main__ import _build_rpc_table
+from ember_code.backend.server import BackendServer
+from ember_code.core.tools.plan import PlanStore
+from ember_code.core.tools.todo import TodoStore
 from ember_code.protocol.rpc import RpcMethod
 
 
@@ -178,9 +181,6 @@ class TestStartupRehydratesPlanDecisions:
     """
 
     async def test_startup_calls_rehydrate_plan_decisions(self):
-        from ember_code.backend.server import BackendServer
-        from ember_code.core.tools.plan import PlanStore
-
         server = BackendServer.__new__(BackendServer)
         # Stub everything startup touches besides our target.
         server._session = SimpleNamespace(
@@ -205,10 +205,6 @@ class TestStartupRehydratesPlanDecisions:
     async def test_startup_calls_rehydrate_todos(self):
         # Same shape for todos — todo execution state must
         # survive restart, which means startup has to load it.
-        from ember_code.backend.server import BackendServer
-        from ember_code.core.tools.plan import PlanStore
-        from ember_code.core.tools.todo import TodoStore
-
         server = BackendServer.__new__(BackendServer)
         todo_store = TodoStore()
         server._session = SimpleNamespace(
@@ -242,10 +238,6 @@ class TestStartupRehydratesPlanDecisions:
         # I/O blip), startup must NOT crash. The user lands in
         # a session that pretends no decisions were ever made
         # — degraded but functional, same as a fresh boot.
-        from ember_code.backend.server import BackendServer
-        from ember_code.core.tools.plan import PlanStore
-        from ember_code.core.tools.todo import TodoStore
-
         server = BackendServer.__new__(BackendServer)
         server._session = SimpleNamespace(
             load_persisted_loop_state=AsyncMock(),

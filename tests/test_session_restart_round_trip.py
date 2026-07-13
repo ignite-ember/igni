@@ -31,6 +31,7 @@ from ember_code.backend.server import BackendServer
 from ember_code.core.session.persistence import SessionPersistence
 from ember_code.core.tools.plan import PlanStore
 from ember_code.core.tools.todo import TodoStore
+from agno.session.agent import AgentSession
 
 
 def _make_db(tmp_path: Path):
@@ -204,8 +205,6 @@ class TestFullRestartRoundTrip:
         # status changed to ``"banana"``). The cleaning at
         # ``load_todos`` drops the bad entry; restart should
         # surface a sensible (partial / empty) state, not crash.
-
-        from agno.session.agent import AgentSession
 
         db = _make_db(tmp_path)
         # Hand-craft a corrupted session_data and upsert directly.

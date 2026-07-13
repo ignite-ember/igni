@@ -34,8 +34,12 @@ instance — the persister reads it, writes user messages, then clears
 it for the next run.
 """
 
+import asyncio
+import inspect
 from collections.abc import Callable
 from typing import Any
+
+from agno.models.message import Message
 
 USER_NOTE_HEADER = "USER MESSAGE WHILE YOU WERE WORKING"
 
@@ -67,9 +71,6 @@ class QueueInjectorHook:
         on_inject: Callable[[str], None] | None = None,
         on_queue_changed: Callable[[], None] | None = None,
     ):
-        import asyncio
-        import inspect
-
         if hasattr(inspect, "markcoroutinefunction"):
             inspect.markcoroutinefunction(self)
         else:
@@ -106,8 +107,6 @@ class QueueInjectorHook:
         because Agno's ``_build_hook_args`` only recognises specific names:
         ``func``, ``function``, ``function_call``, ``name``, ``args``, etc.
         """
-        import inspect
-
         # Execute the actual tool via the chain.
         if args is None:
             args = {}
@@ -190,12 +189,6 @@ class QueuePersisterHook:
         # ``run_output.messages`` is the list Agno will persist with the
         # session. Append our user-role messages so they show up in
         # /sessions, history filters, and learning extraction.
-        try:
-            from agno.models.message import Message
-        except ImportError:  # pragma: no cover — defensive
-            self._injector.clear_injected_this_run()
-            return
-
         if getattr(run_output, "messages", None) is None:
             run_output.messages = []
         for text in injected:

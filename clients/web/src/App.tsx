@@ -21,8 +21,16 @@ import {
   type ChatItem,
   type OrchestrateEvent,
 } from "./chat/model";
-import { applySpecPatch, type JsonPatch, type Spec } from "@json-render/core";
+import { applyVisualizationDelta } from "./chat/visualizationStream";
 import { nextObserverBusyState } from "./chat/observerBusy";
+import {
+  isProcessing,
+  phaseFromProcFinalizing,
+  phaseLabel,
+  phaseToProcFinalizing,
+  shouldShowSpinner,
+  type RunPhase,
+} from "./chat/runPhase";
 import { ClientStateStore, ensureClientId } from "./clientState";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ChatItemView } from "./components/ChatItems";
@@ -143,13 +151,23 @@ export default function App() {
   const client = useMemo(() => new EmberClient(), []);
   const [conn, setConn] = useState<ConnectionState>("connecting");
   const [items, setItems] = useState<ChatItem[]>([]);
-  const [processing, setProcessing] = useState(false);
-  // True between ``streaming_done`` and ``run_completed`` — the BE
-  // tail (memory writeback, stats roll-up) is still draining. Input
-  // is already unblocked (``processing`` is false), but we keep the
-  // "Ember is replying…" indicator visible so the UI doesn't claim
-  // "done" while the tokens line is still settling.
-  const [finalizing, setFinalizing] = useState(false);
+  // Single source of truth for run lifecycle. Every derived UI flag
+  // (``processing``, ``finalizing``, spinner-visible, composer-enabled)
+  // reads from this ONE state. Cancel is a single transition — the
+  // whole reason this refactor exists is that the previous model had
+  // ``processing`` and ``finalizing`` as independent booleans each
+  // set/cleared from 3+ sites, and the cancel path missed
+  // ``finalizing`` → STOP-button bug (spinner stuck forever).
+  //
+  // Transitions:
+  //   idle       ← app boot, run_completed, run_error, cancelled
+  //   starting   ← submit initiated, before first stream event
+  //   streaming  ← run_started, content deltas flowing
+  //   finalizing ← streaming_done (BE tail draining)
+  //   done       ← run_completed (top-level, non-parent)
+  //   cancelled  ← client.cancel() — replaces both flags immediately
+  //   errored    ← run_error
+  const [runPhase, setRunPhaseState] = useState<RunPhase>("idle");
   const [status, setStatus] = useState<StatusUpdate | null>(null);
   const [hitl, setHitl] = useState<HITLRequest[] | null>(null);
   const [panel, setPanel] = useState<PanelState>({ kind: "none" });
@@ -463,7 +481,15 @@ export default function App() {
   }, [projectDir, status?.cloud_org]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
-  const processingRef = useRef(false);
+  // Synchronous mirror of ``runPhase`` for handlers that can't wait
+  // for React's next render (Escape-key handler, submit handler, WS
+  // event handler). Kept in sync inside ``setRunPhase``.
+  const runPhaseRef = useRef<RunPhase>("idle");
+  // Derived from runPhase. ``processing`` still consumed by the
+  // Composer + stats/tokens views below. ``finalizing`` no longer
+  // needed as a separate variable — the JSX reads runPhase directly
+  // through ``shouldShowSpinner`` + ``phaseLabel``.
+  const processing = isProcessing(runPhase);
 
   // Bind window-drag via a native mousedown listener — React's
   // synthetic onMouseDown was firing but Tauri's drag-region path
@@ -531,9 +557,12 @@ export default function App() {
     [],
   );
 
-  const setProc = useCallback((v: boolean) => {
-    processingRef.current = v;
-    setProcessing(v);
+  // Single-point setter for the run lifecycle. Every setter site in
+  // this file goes through here so ``runPhaseRef`` stays in lockstep
+  // with the React state. See ``chat/runPhase.ts`` for the model.
+  const setRunPhase = useCallback((p: RunPhase) => {
+    runPhaseRef.current = p;
+    setRunPhaseState(p);
   }, []);
 
   const refreshStatus = useCallback(async () => {
@@ -558,14 +587,6 @@ export default function App() {
   // ``/accept off`` so the next user turn starts in default mode.
   const autoAcceptForRunRef = useRef(false);
 
-  // Latch the current top-level run_id so ``visualization`` push
-  // handlers can associate the saved card with the run that
-  // produced it — the BE positions restored visualizations right
-  // after the last turn of the matching run. Cleared on
-  // ``run_completed`` so a stale id doesn't attach to a later
-  // orphan push. See ``get_chat_history``'s visualization splice.
-  const currentRunIdRef = useRef<string>("");
-
   // ── Streamed event handler (run + HITL-resume streams) ───────────
   const onStreamEvent = useCallback(
     (m: ServerMessage) => {
@@ -573,9 +594,8 @@ export default function App() {
         // Same contract as the TUI: unblock input when content ends,
         // even though the BE tail (memory, compression) still drains.
         // Hand off to ``finalizing`` so the indicator stays visible
-        // through the tail — see the state declaration above.
-        setProc(false);
-        setFinalizing(true);
+        // through the tail — see ``chat/runPhase.ts`` for the model.
+        setRunPhase("finalizing");
         // Revert the auto-accept-for-this-run flip the shortcut put
         // in place. Runs ``/accept off`` silently so the chat list
         // doesn't show a fake typed slash command.
@@ -604,15 +624,10 @@ export default function App() {
         return;
       }
       if (m.type === "run_started") {
-        // Fresh run starting on this view — wipe any leftover tail
-        // flag from the previous run so the indicator lifecycle
-        // resets cleanly (processing is already true via setProc).
-        setFinalizing(false);
-        // Latch the top-level run_id (no parent) so visualization
-        // saves can associate cards with the run.
-        if (!m.parent_run_id && m.run_id) {
-          currentRunIdRef.current = m.run_id;
-        }
+        // Fresh run starting on this view. The submit path already
+        // set phase="starting"; transition to "streaming" now that
+        // the BE confirmed it's live.
+        setRunPhase("streaming");
       }
       setItems((prev) => applyEvent(prev, m, streamRef.current));
       // After a top-level run finishes, Agno's reported ``input_tokens``
@@ -623,14 +638,11 @@ export default function App() {
       // the web stats line by patching the just-emitted stats item
       // with the corrected number.
       if (m.type === "run_completed" && !m.parent_run_id && m.run_id) {
-        // Tail drained — drop the "finalizing" indicator unless a new
-        // run has already started (which clears it on its own).
-        setFinalizing(false);
-        // Clear the latched run_id so a stale value doesn't
-        // attach to any late push. A new run_started will set it.
-        if (currentRunIdRef.current === m.run_id) {
-          currentRunIdRef.current = "";
-        }
+        // Tail drained — transition to done. If a new run has
+        // already started, run_started will bump us back to
+        // streaming; this line just ensures the terminal transition
+        // isn't skipped when the FE was already in "finalizing".
+        setRunPhase("done");
         const runId = m.run_id;
         void client
           .rpc<number>("count_context_tokens")
@@ -650,7 +662,7 @@ export default function App() {
           });
       }
     },
-    [client, refreshStatus, setProc, addToast],
+    [client, refreshStatus, setRunPhase, addToast],
   );
 
   // Persisted history + interrupted-message markers for a session,
@@ -959,67 +971,27 @@ export default function App() {
           if (path) void host.notifyFileEdited(path);
         } else if (m.channel === "orchestrate_event") {
           // Visualizer streaming path: the visualizer sub-agent emits
-          // its whole response as JSONL RFC-6902 patches, which
-          // orchestrate.py forwards on this channel as
-          // ``{type: "visualization_patch", spec_id, patch}``. Apply
-          // each patch to the card's spec state (creating the card on
-          // the first patch, updating in place after). No orchestrate
-          // team-card touch — visualizer runs go straight to their
-          // own card.
+          // its whole response as one JSON object (a json-render spec),
+          // and orchestrate.py forwards the ACCUMULATED string on
+          // this channel as ``{type: "visualization_delta", spec_id,
+          // json, final?}`` throttled to ~50ms. We partial-parse the
+          // JSON on each delta so the card fills in progressively as
+          // tokens arrive.
           const rawEv = m.payload as {
             type?: unknown;
             spec_id?: unknown;
-            patch?: unknown;
+            json?: unknown;
           };
           if (
-            rawEv.type === "visualization_patch" &&
+            rawEv.type === "visualization_delta" &&
             typeof rawEv.spec_id === "string" &&
-            rawEv.patch &&
-            typeof rawEv.patch === "object"
+            typeof rawEv.json === "string"
           ) {
             const specId = rawEv.spec_id;
-            const patch = rawEv.patch as JsonPatch;
-            setItems((prev) => {
-              const idx = prev.findIndex(
-                (it) => it.kind === "visualization" && it.specId === specId,
-              );
-              if (idx >= 0) {
-                const existing = prev[idx] as Extract<
-                  ChatItem,
-                  { kind: "visualization" }
-                >;
-                const base: Spec =
-                  (existing.spec as Spec | null) ?? {
-                    root: "",
-                    elements: {},
-                  };
-                let nextSpec: Spec;
-                try {
-                  // applySpecPatch mutates + returns; spread for a
-                  // new reference React can shallow-compare.
-                  nextSpec = { ...applySpecPatch(base, patch) };
-                } catch (e) {
-                  // eslint-disable-next-line no-console
-                  console.warn("visualization_patch apply failed", patch, e);
-                  return prev;
-                }
-                const next = prev.slice();
-                next[idx] = { ...existing, spec: nextSpec };
-                return next;
-              }
-              // First patch for this spec_id — bootstrap the card.
-              let seed: Spec = { root: "", elements: {} };
-              try {
-                seed = { ...applySpecPatch(seed, patch) };
-              } catch (e) {
-                // eslint-disable-next-line no-console
-                console.warn("visualization_patch seed failed", patch, e);
-              }
-              return [
-                ...prev,
-                visualizationItem(seed, "", "visualizer", specId),
-              ];
-            });
+            const jsonStr = rawEv.json;
+            setItems((prev) =>
+              applyVisualizationDelta(prev, { spec_id: specId, json: jsonStr }),
+            );
             return; // Fully handled; don't fall through to team-card logic
           }
 
@@ -1266,25 +1238,6 @@ export default function App() {
               }
               return [...prev, visualizationItem(spec, title, sourceAgent, specId)];
             });
-            // Persist so a session reload restores this card inline
-            // via ``get_chat_history``. Idempotent on ``spec_id`` —
-            // multiple pushes for the same run just replace the
-            // stored entry, not accumulate duplicates. Best-effort:
-            // a failed save logs but doesn't break the live render.
-            if (specId) {
-              void client
-                .rpc("save_visualization", {
-                  spec_id: specId,
-                  spec,
-                  title,
-                  source_agent: sourceAgent,
-                  run_id: currentRunIdRef.current,
-                })
-                .catch((e) => {
-                  // eslint-disable-next-line no-console
-                  console.warn("save_visualization failed", e);
-                });
-            }
           }
         }
       } else {
@@ -1292,16 +1245,14 @@ export default function App() {
         // including the ``stream_end`` quirk where it fires after
         // ``run_completed`` and MUST NOT re-arm finalizing — lives
         // in ``chat/observerBusy.ts`` and is exercised by direct
-        // reducer tests. ``processingRef`` holds the synchronous
-        // current ``proc`` so we can pass an accurate ``prev`` in
-        // (only ``run_completed`` actually reads ``prev.proc``;
-        // the other transitions produce prev-independent output).
-        const next = nextObserverBusyState(
-          { proc: processingRef.current, finalizing: false },
-          m,
-        );
-        setProc(next.proc);
-        setFinalizing(next.finalizing);
+        // reducer tests. Adapter: our source of truth is
+        // ``runPhaseRef``; convert to the reducer's
+        // ``{proc, finalizing}`` shape at the boundary and translate
+        // back — the observer reducer is A-tier and we intentionally
+        // don't change its interface.
+        const prev = phaseToProcFinalizing(runPhaseRef.current);
+        const next = nextObserverBusyState(prev, m);
+        setRunPhase(phaseFromProcFinalizing(next, runPhaseRef.current));
         // Item rendering (content deltas, tool cards, stats line,
         // etc.) is orthogonal to the busy indicator — always apply
         // except for the pure-terminator events that carry no
@@ -1327,10 +1278,15 @@ export default function App() {
     return () => clearInterval(t);
   }, [conn, refreshStatus]);
 
-  // Esc cancels the in-flight run (TUI parity).
+  // Esc cancels the in-flight run (TUI parity). Cancel is a SINGLE
+  // state transition — see ``chat/runPhase.ts``. Setting phase
+  // locally to "cancelled" immediately clears the spinner (fixing
+  // the STOP-button bug where "Finalizing…" stayed visible
+  // forever). The WS message tells the BE to actually stop.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && processingRef.current && !hitl) {
+      if (e.key === "Escape" && shouldShowSpinner(runPhaseRef.current) && !hitl) {
+        setRunPhase("cancelled");
         client.cancel();
       }
     };
@@ -1435,7 +1391,7 @@ export default function App() {
       // that lived on the single column wrapper before virtualization.
       Header: () => <div aria-hidden="true" style={{ height: 78 }} />,
       Footer: () =>
-        processing || finalizing ? (
+        shouldShowSpinner(runPhase) ? (
           <div className="chat-row">
             <div className="typing-indicator" aria-live="polite">
               <span className="typing-dots">
@@ -1444,14 +1400,14 @@ export default function App() {
                 <span />
               </span>
               <span className="typing-label">
-                {processing ? "igni is replying…" : "Finalizing…"}
+                {phaseLabel(runPhase)}
               </span>
-              {processing && <span className="typing-hint">Esc to cancel</span>}
+              {isProcessing(runPhase) && <span className="typing-hint">Esc to cancel</span>}
             </div>
           </div>
         ) : null,
     }),
-    [processing, finalizing],
+    [runPhase],
   );
 
   // ── Loop continuation (TUI parity: refire after each run) ────────
@@ -1477,7 +1433,7 @@ export default function App() {
 
   const runUserMessage = useCallback(
     async (text: string) => {
-      setProc(true);
+      setRunPhase("starting");
       // Fresh turn: close any dangling thinking state from a
       // cancelled run; keep usesThinkTags (model didn't change).
       streamRef.current.inThinking = false;
@@ -1487,10 +1443,16 @@ export default function App() {
         await client.runMessage(text, (m) => {
           if (gen === viewGenRef.current) onStreamEvent(m);
         });
+        // If we exited without a run_completed / cancel / error
+        // event landing (shouldn't happen but defensive), still
+        // transition to done so the spinner clears.
+        if (runPhaseRef.current === "starting" || runPhaseRef.current === "streaming") {
+          setRunPhase("done");
+        }
       } catch (e) {
         append(errorItem(String(e)));
+        setRunPhase("errored");
       } finally {
-        setProc(false);
         void refreshStatus(); // keep the ctx counter live after each run
         notifyDone();
         void continueLoopIfPending();
@@ -1554,7 +1516,13 @@ export default function App() {
   // every ChatItemView; if they were inline arrows, React.memo's
   // shallow compare would always miss and every item would re-render
   // on every App state change (status, processing, stream events).
-  const onStopTeam = useCallback(() => client.cancel(), [client]);
+  // STOP button for the team card. Same rules as the Esc keybinding
+  // above — set phase locally first so the spinner clears
+  // immediately, then send the WS cancel.
+  const onStopTeam = useCallback(() => {
+    setRunPhase("cancelled");
+    client.cancel();
+  }, [client, setRunPhase]);
   const onStopAgent = useCallback(
     (runId: string) =>
       void client
@@ -1841,7 +1809,7 @@ export default function App() {
         return;
       }
       append(userItem(text));
-      if (processingRef.current) {
+      if (isProcessing(runPhaseRef.current)) {
         client.queueMessage(text);
         append(infoItem("Queued — will run after the current turn."));
         return;
@@ -1855,16 +1823,22 @@ export default function App() {
   const resolveHitl = useCallback(
     async (decisions: HitlDecision[]) => {
       setHitl(null);
-      setProc(true);
+      // Resuming from a HITL pause — same phase-model transition as
+      // a fresh submit. The BE will re-emit run events which drive
+      // the rest of the state machine.
+      setRunPhase("streaming");
       const gen = viewGenRef.current;
       try {
         await client.resolveHitlBatch(decisions, (m) => {
           if (gen === viewGenRef.current) onStreamEvent(m);
         });
+        if (runPhaseRef.current === "streaming") {
+          setRunPhase("done");
+        }
       } catch (e) {
         append(errorItem(String(e)));
+        setRunPhase("errored");
       } finally {
-        setProc(false);
         void refreshStatus(); // keep the ctx counter live after each run
         notifyDone();
         void continueLoopIfPending();
@@ -2349,7 +2323,10 @@ export default function App() {
           onPickModel={(name) => void pickModel(name)}
           onTool={(cmd) => void runCommand(cmd, false)}
           onSubmit={(t) => void submit(t)}
-          onStop={() => client.cancel()}
+          onStop={() => {
+            setRunPhase("cancelled");
+            client.cancel();
+          }}
           permissionMode={status?.permission_mode}
           onPickMode={(mode) => {
             // The split send button hands us one of the four

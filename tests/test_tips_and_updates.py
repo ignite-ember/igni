@@ -6,7 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from ember_code.core.config.settings import GuardrailsConfig, KnowledgeConfig, Settings
+from ember_code.core.config.settings import (
+    GuardrailsConfig,
+    KnowledgeConfig,
+    PermissionsConfig,
+    Settings,
+)
 from ember_code.core.utils.tips import CONTEXTUAL_TIPS, GENERAL_TIPS, get_tip, random_tip
 from ember_code.core.utils.update_checker import (
     UpdateInfo,
@@ -65,8 +70,6 @@ class TestTips:
         (tmp_path / "ember.md").write_text("# test")
         (tmp_path / ".ember" / "agents").mkdir(parents=True)
         (tmp_path / ".ember" / "agents" / "custom.md").write_text("---\nname: custom\n---")
-        from ember_code.core.config.settings import PermissionsConfig
-
         settings = Settings(
             knowledge=KnowledgeConfig(enabled=True, share=True),
             guardrails=GuardrailsConfig(pii_detection=True, prompt_injection=True, moderation=True),

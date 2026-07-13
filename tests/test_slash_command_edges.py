@@ -181,7 +181,7 @@ class TestConfigCommand:
     async def test_config_shows_model(self):
         """'/config' should show current model."""
         session = _make_session()
-        with patch("ember_code.core.auth.credentials.load_credentials", return_value=None):
+        with patch("ember_code.backend.command_handler.load_credentials", return_value=None):
             handler = CommandHandler(session)
             result = await handler.handle("/config")
         assert isinstance(result, CommandResult)

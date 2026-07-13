@@ -25,15 +25,19 @@ These tests pin the fix:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import signal
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 import pytest
 
 from ember_code.backend.server import BackendServer
+from ember_code.core.tools import process_log
+from ember_code.core.tools import process_store as ps_mod
 from ember_code.core.tools import shell as shell_mod
 from ember_code.core.tools.process_store import (
     BackgroundProcessRow,
@@ -138,10 +142,6 @@ class TestOrphanProcess:
         # part ("no buffered output" + "Kill button").
         # Force the lookup into a tmp dir so we don't read from
         # a real project's log file by accident.
-        import tempfile
-
-        from ember_code.core.tools import process_log
-
         with tempfile.TemporaryDirectory() as tmp:
             process_log.set_default_project_dir(tmp)
             try:
@@ -204,8 +204,6 @@ class TestRehydrateOrphanProcesses:
         )
 
         # Patch the resolver so rehydrate uses our tmp DB.
-        from ember_code.core.tools import process_store as ps_mod
-
         original_resolver = ps_mod._resolve_db_path
         ps_mod._resolve_db_path = lambda *_, **__: tmp_path / "state.db"
         try:
@@ -227,8 +225,6 @@ class TestRehydrateOrphanProcesses:
             BackgroundProcessRow(pid=dead_pid, cmd="ghost", pgid=dead_pid, started_at=0)
         )
 
-        from ember_code.core.tools import process_store as ps_mod
-
         original_resolver = ps_mod._resolve_db_path
         ps_mod._resolve_db_path = lambda *_, **__: tmp_path / "state.db"
         try:
@@ -243,8 +239,6 @@ class TestRehydrateOrphanProcesses:
         assert rows == []
 
     async def test_empty_db_is_noop(self, tmp_path: Path) -> None:
-        from ember_code.core.tools import process_store as ps_mod
-
         original_resolver = ps_mod._resolve_db_path
         ps_mod._resolve_db_path = lambda *_, **__: tmp_path / "state.db"
         try:
@@ -294,8 +288,6 @@ class TestStopOrphanProcess:
         assert shell_mod._registry.get(12345) is None
         # And scheduled the DB delete. The fire-and-forget task
         # runs on the loop; give it a tick to flush.
-        import asyncio
-
         await asyncio.sleep(0.05)
         rows = await store.list_all()
         assert rows == []

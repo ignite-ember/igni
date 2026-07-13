@@ -557,7 +557,14 @@ export function visualizationItem(
   sourceAgent: string,
   specId: string,
 ): ChatItem {
-  return { kind: "visualization", id: nid(), specId, spec, title, sourceAgent };
+  return {
+    kind: "visualization",
+    id: nid(),
+    specId,
+    spec,
+    title,
+    sourceAgent,
+  };
 }
 
 /** Pull file paths out of a restored user message — used to rebuild
@@ -954,17 +961,17 @@ export function restoredItem(turn: Record<string, unknown>): ChatItem | null {
     return item;
   }
   if (role === "visualization") {
-    // Synthetic turn injected by ``get_chat_history`` from
-    // ``session.visualizations`` — restores the json-render card
-    // inline at the run it belonged to. The spec was already
-    // saved by the FE via ``save_visualization`` after the
-    // visualizer sub-agent completed.
+    // Synthetic viz turn spliced by ``get_chat_history`` from the
+    // BE session event log — restores the json-render card inline
+    // at the run + tool call it belonged to. The spec is the
+    // final one the visualizer sub-agent produced (BE-driven, no
+    // FE persist RPC).
     const spec = turn.spec;
     const specId = String(turn.spec_id ?? "");
     if (!specId || !spec || typeof spec !== "object") return null;
     return visualizationItem(
       spec,
-      String(turn.title ?? ""),
+      "",
       String(turn.source_agent ?? "visualizer"),
       specId,
     );

@@ -26,7 +26,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from ember_code.backend.server import BackendServer
-from ember_code.core.tools.todo import TodoStore, TodoTools
+from ember_code.core.tools.todo import TodoStore, TodoTools, _coerce_items
 
 
 class _CapturingPersistence:
@@ -138,8 +138,6 @@ class TestRehydrateTodos:
         server = BackendServer.__new__(BackendServer)
         store = TodoStore()
         # Pre-seed as if ``_rehydrate_plan_store`` already ran.
-        from ember_code.core.tools.todo import _coerce_items
-
         seed_items, _ = _coerce_items(
             [
                 {"content": "Task A", "status": "pending"},
@@ -177,8 +175,6 @@ class TestRehydrateTodos:
         # checklist.
         server = BackendServer.__new__(BackendServer)
         store = TodoStore()
-        from ember_code.core.tools.todo import _coerce_items
-
         seed_items, _ = _coerce_items([{"content": "Task A", "status": "pending"}])
         store.set(seed_items)
 
@@ -196,8 +192,6 @@ class TestRehydrateTodos:
         # rather than crash the boot.
         server = BackendServer.__new__(BackendServer)
         store = TodoStore()
-        from ember_code.core.tools.todo import _coerce_items
-
         seed_items, _ = _coerce_items([{"content": "Task A", "status": "pending"}])
         store.set(seed_items)
 
@@ -255,8 +249,6 @@ class TestEndToEndRestartSurvives:
         # the plan's original args (everything pending) — we
         # simulate that step by pre-seeding the store the same
         # way.
-        from ember_code.core.tools.todo import _coerce_items
-
         restarted_store = TodoStore()
         plan_args_seed, _ = _coerce_items(
             [

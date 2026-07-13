@@ -17,8 +17,10 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from ember_code.backend.server import BackendServer
+from ember_code.core.code_index.fetcher import PreflightStatus
 from ember_code.core.code_index.manifest import ManifestState
 from ember_code.core.code_index.resolver import DiscoveryStatus, ResolvedRepository
+from ember_code.core.code_index.sync_manager import SyncResult
 
 
 def _make_backend(*, sync: MagicMock, code_index: MagicMock) -> BackendServer:
@@ -56,6 +58,9 @@ def _stub_sync(
         status=DiscoveryStatus.REGISTERED, repository_id="repo-uuid"
     )
     sync.resolver.remote_url.return_value = "https://github.com/acme/repo"
+    # Empty activity list so the typed ``CodeIndexStatus`` doesn't
+    # try to coerce a MagicMock into ``last_sync_at: str``.
+    sync.recent_activity.return_value = []
     return sync
 
 
@@ -75,7 +80,7 @@ class TestCodeIndexStatusApplyProgress:
 
         status = await backend.codeindex_status()
 
-        assert status["sync_in_progress"] is True
+        assert status.sync_in_progress is True
 
     async def test_progress_pct_derived_from_apply_counters(self):
         """``sync_progress_pct`` is computed live from
@@ -91,8 +96,8 @@ class TestCodeIndexStatusApplyProgress:
 
         status = await backend.codeindex_status()
 
-        assert status["sync_progress_pct"] == 50
-        assert status["sync_step"] == "math_utils.py::evaluate"
+        assert status.sync_progress_pct == 50
+        assert status.sync_step == "math_utils.py::evaluate"
 
     async def test_apply_counters_passed_through_raw(self):
         """The TUI also reads the raw N/M so it can render
@@ -108,9 +113,9 @@ class TestCodeIndexStatusApplyProgress:
 
         status = await backend.codeindex_status()
 
-        assert status["apply_done"] == 14
-        assert status["apply_total"] == 28
-        assert status["apply_step"] == "security_helpers.py"
+        assert status.apply_done == 14
+        assert status.apply_total == 28
+        assert status.apply_step == "security_helpers.py"
 
     async def test_apply_fields_zeroed_when_not_applying(self):
         """After ``_applying`` flips back to False, the apply fields
@@ -123,10 +128,10 @@ class TestCodeIndexStatusApplyProgress:
 
         status = await backend.codeindex_status()
 
-        assert status["sync_in_progress"] is False
-        assert status["apply_done"] == 0
-        assert status["apply_total"] == 0
-        assert status["apply_step"] == ""
+        assert status.sync_in_progress is False
+        assert status.apply_done == 0
+        assert status.apply_total == 0
+        assert status.apply_step == ""
 
     async def test_apply_progress_takes_precedence_over_stale_preflight(self):
         """When both a stale preflight in-progress result and a fresh
@@ -141,9 +146,6 @@ class TestCodeIndexStatusApplyProgress:
             current_sha="abc1234",
         )
         # Pretend the preflight had reported a different percent.
-        from ember_code.core.code_index.fetcher import PreflightStatus
-        from ember_code.core.code_index.sync_manager import SyncResult
-
         sync._last_sync_result = SyncResult(
             commit_sha="abc1234",
             preflight_status=PreflightStatus.IN_PROGRESS,
@@ -155,8 +157,8 @@ class TestCodeIndexStatusApplyProgress:
         status = await backend.codeindex_status()
 
         # Local apply's 7/28 = 25%, not the preflight's stale 88%.
-        assert status["sync_progress_pct"] == 25
-        assert status["sync_step"] == "hello.py"
+        assert status.sync_progress_pct == 25
+        assert status.sync_step == "hello.py"
 
     async def test_progress_pct_uses_step_default_when_label_missing(self):
         """If ``apply_step`` is empty (callback fired before the first
@@ -167,7 +169,7 @@ class TestCodeIndexStatusApplyProgress:
 
         status = await backend.codeindex_status()
 
-        assert status["sync_step"] == "indexing"
+        assert status.sync_step == "indexing"
 
     async def test_zero_total_does_not_compute_pct(self):
         """Guard against division-by-zero: while ``_applying`` is True
@@ -180,4 +182,4 @@ class TestCodeIndexStatusApplyProgress:
 
         # sync_progress_pct stays falsy (None) — the panel hides the
         # percent slot when this is missing.
-        assert not status.get("sync_progress_pct")
+        assert not status.sync_progress_pct

@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ember_code.core.pool import AgentPool
+from ember_code.core.tools.orchestrate import OrchestrateTools
 
 
 class TestEphemeralInit:
@@ -320,8 +321,6 @@ class TestCreateAgentTool:
         pool._base_dir = str(tmp_path)
         pool.init_ephemeral(tmp_path)
 
-        from ember_code.core.tools.orchestrate import OrchestrateTools
-
         tools = OrchestrateTools(
             pool=pool,
             settings=settings,
@@ -345,8 +344,6 @@ class TestCreateAgentTool:
         pool._settings = settings
         pool._base_dir = str(tmp_path)
         pool.init_ephemeral(tmp_path, max_ephemeral=0)
-
-        from ember_code.core.tools.orchestrate import OrchestrateTools
 
         tools = OrchestrateTools(pool=pool, settings=settings)
 

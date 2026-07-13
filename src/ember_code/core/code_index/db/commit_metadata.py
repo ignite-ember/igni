@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.sqlite import insert
 
-from ember_code.core.code_index.pg.models import CommitMetadataModel
+from ember_code.core.code_index.db.models import CommitMetadataModel
 from ember_code.core.db.database import Database
 
 

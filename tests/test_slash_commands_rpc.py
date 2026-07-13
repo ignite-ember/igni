@@ -13,8 +13,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ember_code.backend.__main__ import _build_rpc_table
 from ember_code.backend.server import BackendServer
 from ember_code.core.skills.parser import SkillDefinition
+from ember_code.protocol.rpc import RpcMethod
 
 
 def _write(p: Path, text: str) -> None:
@@ -193,8 +195,6 @@ class TestRpcIntegration:
     at server startup."""
 
     def test_get_slash_commands_enum_value(self):
-        from ember_code.protocol.rpc import RpcMethod
-
         assert RpcMethod.GET_SLASH_COMMANDS.value == "get_slash_commands"
 
     @pytest.mark.asyncio
@@ -203,9 +203,6 @@ class TestRpcIntegration:
         ``get_slash_commands`` entry calls through to the backend
         method we wrote. Stops a future refactor from breaking
         the wire-level contract silently."""
-        from ember_code.backend.__main__ import _build_rpc_table
-        from ember_code.protocol.rpc import RpcMethod
-
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
         (tmp_path / "home").mkdir()
         backend = _make_backend(tmp_path)

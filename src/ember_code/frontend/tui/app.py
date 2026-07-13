@@ -11,10 +11,15 @@ import asyncio
 import contextlib
 import logging
 import os
+import random
+import signal
+import subprocess
 import sys
+import webbrowser
 from pathlib import Path
 from typing import Any
 
+from rich.markup import escape
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -23,8 +28,31 @@ from textual.css.query import NoMatches
 from textual.timer import Timer
 from textual.widgets import Static
 
+# ``pwd`` is POSIX-only; on Windows the import fails and the module
+# stays ``None``. Callers guard with ``if pwd is not None`` before
+# touching it — same pattern Python's own stdlib uses (see
+# ``os.path.expanduser`` in cpython/Modules/posixmodule.c).
+try:
+    import pwd
+except ImportError:  # pragma: no cover — Windows only
+    pwd = None  # type: ignore[assignment]
+
 from ember_code import __version__
 from ember_code.core.utils.file_index import FileIndex
+from ember_code.frontend.tui import (
+    agent_handlers,
+    codeindex_handlers,
+    input_handlers,
+    keybinding_handlers,
+    knowledge_handlers,
+    lifecycle_handlers,
+    loop_handlers,
+    mcp_handlers,
+    mode_handlers,
+    picker_handlers,
+    plugin_handlers,
+    scheduler_handlers,
+)
 from ember_code.frontend.tui.conversation_view import ConversationView
 from ember_code.frontend.tui.hitl_handler import HITLHandler
 from ember_code.frontend.tui.input_handler import InputHandler, extract_at_mention, shortcut_label
@@ -323,8 +351,6 @@ class EmberApp(App):
     @staticmethod
     def _get_full_name() -> str:
         """Get the user's full name from the system."""
-        import subprocess
-
         try:
             if sys.platform == "darwin":
                 result = subprocess.run(
@@ -335,9 +361,9 @@ class EmberApp(App):
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     return result.stdout.strip()
-            import pwd
-
-            return pwd.getpwuid(os.getuid()).pw_gecos.split(",")[0] or os.getlogin()
+            if pwd is not None:
+                return pwd.getpwuid(os.getuid()).pw_gecos.split(",")[0] or os.getlogin()
+            return os.getlogin()
         except Exception:
             try:
                 return os.getlogin()
@@ -446,1071 +472,270 @@ class EmberApp(App):
             raise
 
     async def _on_mount_inner(self) -> None:
-        # Use ANSI colors so the terminal's own palette is respected.
-        self.ansi_color = True
-        # ``ansi-dark`` is the registered ANSI-respecting theme on
-        # Textual 8.2+ (the prior name ``textual-ansi`` was retired).
-        # Guard on ``available_themes`` so a future rename can't
-        # bring the app down — if the theme isn't there, the default
-        # styling is fine; ``ansi_color = True`` above is what
-        # actually makes Textual respect the terminal palette.
-        if "ansi-dark" in self.available_themes:
-            self.theme = "ansi-dark"
-
-        container = self.query_one("#conversation", ScrollableContainer)
-
-        # Show loading indicator while BE starts
-        loading = Static("[dim]Starting backend...[/dim]", id="loading-msg")
-        await container.mount(loading)
-
-        # Spawn BE as a separate subprocess — no Textual fd restrictions
-        from ember_code.frontend.tui.process_manager import BackendProcess
-
-        self._process_mgr = BackendProcess(
-            project_dir=self._project_dir,
-            resume_session_id=self.resume_session_id,
-            additional_dirs=self._additional_dirs,
-            settings=self.settings,
-            debug=self._debug,
-        )
-        self._backend = await self._process_mgr.start()
-
-        # Mirroring: render events from other views attached to the
-        # same BE (web tabs over --ws-port). Remote drafts go to the
-        # tip bar; remote user messages appear as dim info lines.
-        self._backend.set_mirror_handler(self._on_mirror_event)
-
-        # Replace loading indicator with welcome content
-        await container.remove_children()
-        self._conversation = ConversationView(container, display_config=self.settings.display)
-
-        await container.mount(Static(self._build_welcome_content(), id="welcome-box"))
-        await container.mount(Static(self._build_capabilities_text(), id="capabilities"))
-
-        self._file_index = FileIndex(self._project_dir)
-        self._input_handler = InputHandler(
-            self._backend.get_skill_pool(), file_index=self._file_index
-        )
-        # CommandHandler is now inside BackendServer — commands route through _backend.handle_command()
-
-        # Initialise managers
-        self._status = StatusTracker(self)
-        self._hitl = HITLHandler(self, self._conversation)
-        self._controller = RunController(
-            self,
-            self._conversation,
-            self._status,
-            self._hitl,
-        )
-        self._sessions = SessionManager(
-            self,
-            self._conversation,
-            self._status,
-        )
-
-        # Resolve context window for the active model
-        # Context window comes from settings — no model registry needed in FE
-        self._status.max_context_tokens = self.settings.models.max_context_window
-
-        self._status.update_status_bar()
-
-        # Load previous messages if resuming a session
-        if self.resume_session_id:
-            await self._sessions._load_history(self.resume_session_id)
-
-        # Show a random tip
-        self._start_tip_rotation()
-
-        self.query_one("#user-input", PromptInput).focus()
-
-        # ── Login push handlers (permanent — widget checks if mounted) ──
-        self._backend._push_handlers["login_status"] = self._on_login_status_push
-        self._backend._push_handlers["login_result"] = self._on_login_result_push
-
-        # ── Scheduler ──────────────────────────────────────────────────
-        self._start_scheduler()
-
-        # ── Fire SessionStart hook ────────────────────────────────────
-        asyncio.create_task(self._backend.fire_session_start_hook())
-
-        # ── Non-blocking background init ──────────────────────────────
-        asyncio.create_task(self._check_for_update())
-        asyncio.create_task(self._init_mcp_background())
-        asyncio.create_task(self._file_index.ensure_loaded())
-        asyncio.create_task(self._auto_sync_knowledge())
-        # Cloud-discovered models live only in memory — without an
-        # on-mount refresh, ``_has_usable_model`` reports False on
-        # every fresh launch even when the user has a valid token
-        # and a previously-selected default. Surfaced as "No model
-        # configured" on the very first message; ``/login`` or
-        # ``/model`` would silently fix it because both refresh the
-        # registry as a side-effect. Mirror their refresh here so
-        # the first message just works.
-        asyncio.create_task(self._refresh_cloud_models_on_startup())
-
-        # CodeIndex status-bar slot — eager refresh + recurring
-        # poll so the badge reflects current state even before the
-        # user opens the ``/codeindex`` panel. Survives panel close
-        # (independent from the 2s panel poll which only runs while
-        # the panel is mounted).
-        asyncio.create_task(self._refresh_codeindex_badge())
-        self.set_interval(
-            self._CODEINDEX_STATUSBAR_POLL_SECONDS,
-            self._refresh_codeindex_badge,
-        )
-
-        if self.initial_message:
-            task = asyncio.create_task(
-                self._controller.process_message(self.initial_message),
-            )
-            self._controller.set_current_task(task)
+        """See :func:`tui.lifecycle_handlers.on_mount_inner`."""
+        await lifecycle_handlers.on_mount_inner(self)
 
     async def _init_mcp_background(self) -> None:
-        """Connect user-configured MCP servers in the background."""
-        logger.info("FE: MCP background init starting")
-        try:
-            await self._backend.ensure_mcp()
-            statuses = (
-                await self._backend._rpc(RpcMethod.GET_MCP_STATUS)
-                if hasattr(self._backend, "_rpc")
-                else self._backend.get_mcp_status()
-            )
-            if statuses:
-                # Same per-server log as the BE side — gives a
-                # complete picture in ``debug.log`` of "connected
-                # at T1 (BE)" → "FE saw it at T2".
-                connected_names = [n for n, c in statuses if c]
-                logger.info(
-                    "FE: MCP background init done — %d/%d connected: %s",
-                    len(connected_names),
-                    len(statuses),
-                    connected_names,
-                )
-                for name, connected in statuses:
-                    self._status.set_ide_status(name, connected)
-            else:
-                logger.info("FE: MCP background init done — no servers configured")
-        except Exception as exc:
-            # Upgraded from DEBUG to WARNING so this is visible
-            # without the user re-running with ``--debug``.
-            logger.warning("FE: MCP background init failed: %s", exc, exc_info=True)
+        """See :func:`tui.lifecycle_handlers.init_mcp_background`."""
+        await lifecycle_handlers.init_mcp_background(self)
 
     async def _refresh_cloud_models_on_startup(self) -> None:
-        """Repopulate ``settings.models.registry`` from cloud discovery.
-
-        ``models.registry`` lives only in memory; nothing persists it
-        across CLI runs. ``settings.models.default`` IS persisted (it's
-        written to ``~/.ember/config.yaml`` on ``/model`` selection),
-        so the status bar reads the previously-chosen model and
-        renders ready. But the run controller's pre-flight
-        ``_has_usable_model`` iterates the registry — finds it empty
-        on a fresh launch — and rejects the first message with the
-        cryptic "No model configured" prompt. Running ``/login`` or
-        ``/model`` "fixes" it because each refresh-on-open call also
-        merges cloud entries; this task mirrors that side-effect at
-        mount time so the first message just works.
-
-        Fire-and-forget, bounded by ``fetch_cloud_models``'s built-in
-        3-second timeout. Soft-fail on any error (no token, network
-        down, 403 from the org check) — the user can still reach
-        ``/login`` from the TUI to recover.
-        """
-        try:
-            from ember_code.core.auth.credentials import CloudCredentials
-            from ember_code.core.config.cloud_models import (
-                fetch_cloud_models,
-                merge_into_registry,
-            )
-
-            cloud_token = CloudCredentials(self.settings.auth.credentials_file).access_token
-            if not cloud_token:
-                return
-            # ``fetch_cloud_models`` is sync (3s timeout). Push to a
-            # thread so the event loop stays free while it blocks.
-            loop = asyncio.get_event_loop()
-            entries = await loop.run_in_executor(
-                None, fetch_cloud_models, self.settings.api_url, cloud_token
-            )
-            if entries:
-                added = merge_into_registry(
-                    self.settings.models.registry, entries, self.settings.api_url
-                )
-                if added:
-                    logger.info("FE: merged %d cloud model(s) on startup", added)
-        except Exception as exc:
-            logger.warning("FE: cloud-models startup refresh failed: %s", exc, exc_info=True)
+        """See :func:`tui.lifecycle_handlers.refresh_cloud_models_on_startup`."""
+        await lifecycle_handlers.refresh_cloud_models_on_startup(self)
 
     async def _auto_sync_knowledge(self) -> None:
-        """Auto-sync knowledge file → DB on startup if enabled."""
-        try:
-            result = await self._backend.auto_sync_knowledge()
-            if result:
-                self._conversation.append_info(result)
-        except Exception as e:
-            logger.warning("Auto knowledge sync failed: %s", e)
+        """See :func:`tui.lifecycle_handlers.auto_sync_knowledge`."""
+        await lifecycle_handlers.auto_sync_knowledge(self)
 
     async def on_unmount(self) -> None:
-        """Clean up scheduler and BE subprocess on app exit."""
-        import os
-        import sys
-
-        if self._scheduler_runner:
-            self._scheduler_runner.stop()
-
-        # Redirect fd 2 → /dev/null BEFORE stopping BE.
-        # MCP stdio cleanup triggers anyio cancel scope errors that
-        # print after the TUI exits.
-        try:
-            sys.stderr.flush()
-            devnull_fd = os.open(os.devnull, os.O_WRONLY)
-            os.dup2(devnull_fd, 2)
-            os.close(devnull_fd)
-        except OSError:
-            pass
-
-        if self._process_mgr:
-            await self._process_mgr.stop()
+        """See :func:`tui.lifecycle_handlers.on_unmount`."""
+        await lifecycle_handlers.on_unmount(self)
 
     # ── Input events ──────────────────────────────────────────────
 
     @on(PromptInput.Changed, "#user-input")
     def _on_input_changed(self, event: PromptInput.Changed) -> None:
-        text_area = event.text_area
-        text = text_area.text
-
-        # ── Mirroring: broadcast the live draft to other views ───
-        # (web tabs attached to the same BE). Throttled inside the
-        # client; fire-and-forget. getattr: keystrokes can arrive
-        # before the backend finishes starting.
-        backend = getattr(self, "_backend", None)
-        if backend is not None:
-            with contextlib.suppress(Exception):
-                backend.notify_typing(text)
-
-        # ── Mode toggles (/, !, $) ─────────────────────────────
-        if not self._shell_mode and not self._command_mode and text in ("/", "!", "$"):
-            if text == "/":
-                self._command_mode = True
-                self._update_command_mode_indicator()
-            else:
-                self._shell_mode = True
-                self._update_shell_mode_indicator()
-            text_area.clear()
-            return
-        if (
-            not self._shell_mode
-            and not self._command_mode
-            and (text.startswith("! ") or text.startswith("$ "))
-        ):
-            self._shell_mode = True
-            text_area.clear()
-            text_area.insert(text[2:])
-            self._update_shell_mode_indicator()
-            return
-
-        # ── @file mention detection ──────────────────────────────
-        row, col = text_area.cursor_location
-        mention_query = extract_at_mention(row, col, text_area.document.get_line)
-        if mention_query is not None and self._input_handler:
-            matches = self._input_handler.get_file_completions(mention_query)
-            self._show_file_picker(matches)
-            # Hide slash autocomplete if it happens to be visible.
-            if self._autocomplete_mounted:
-                with contextlib.suppress(NoMatches):
-                    self.query_one("#autocomplete", Static).display = False
-            return
-
-        # Hide file picker only when it's actually mounted — saves the
-        # query_one tree walk on every regular keystroke.
-        if self._file_picker_mounted:
-            self._hide_file_picker()
-
-        # ── Slash command autocomplete ───────────────────────────
-        # Same guard: only walk the tree if the widget is mounted.
-        widget: Static | None = None
-        if self._autocomplete_mounted:
-            try:
-                widget = self.query_one("#autocomplete", Static)
-            except NoMatches:
-                widget = None
-                self._autocomplete_mounted = False
-
-        if self._input_handler:
-            # In command mode, text has no / prefix — add it for autocomplete
-            completion_text = f"/{text}" if self._command_mode else text
-            matches = self._input_handler.get_completions(completion_text)
-            if self._command_mode:
-                # Strip / from suggestions since indicator already shows it
-                matches = [m.lstrip("/") for m in matches]
-            if matches:
-                hint = "  ".join(matches)
-                if widget:
-                    widget.update(f"[dim]{hint}[/dim]")
-                    widget.display = True
-                else:
-                    self._mount_autocomplete(hint)
-                return
-
-        if widget:
-            widget.display = False
+        """See :func:`tui.input_handlers.on_input_changed`."""
+        input_handlers.on_input_changed(self, event)
 
     def _mount_autocomplete(self, hint: str) -> None:
-        try:
-            area = self.query_one("#footer", Vertical)
-            area.mount(Static(f"[dim]{hint}[/dim]", id="autocomplete"))
-            self._autocomplete_mounted = True
-        except Exception:
-            pass
+        """See :func:`tui.input_handlers.mount_autocomplete`."""
+        input_handlers.mount_autocomplete(self, hint)
 
     # ── File picker helpers ────────────────────────────────────
 
     def _show_file_picker(self, matches: list[str]) -> None:
-        """Show or update the file picker dropdown."""
-        input_widget = self.query_one("#user-input", PromptInput)
-        input_widget.suppress_submit = True
-        if self._file_picker_mounted:
-            try:
-                picker = self.query_one(FilePickerDropdown)
-                picker.update_matches(matches)
-                return
-            except NoMatches:
-                self._file_picker_mounted = False
-        picker = FilePickerDropdown(matches)
-        try:
-            footer = self.query_one("#footer", Vertical)
-            prompt_row = self.query_one("#prompt-row")
-            footer.mount(picker, before=prompt_row)
-            self._file_picker_mounted = True
-        except Exception:
-            pass
+        """See :func:`tui.input_handlers.show_file_picker`."""
+        input_handlers.show_file_picker(self, matches)
 
     def _hide_file_picker(self) -> None:
-        """Remove the file picker dropdown if present.
-
-        Guarded by ``_file_picker_mounted`` at the only hot caller
-        (``_on_input_changed``), so the bare ``query_one`` calls here
-        only fire when the picker was actually mounted — never on a
-        regular keystroke in a long conversation.
-        """
-        with contextlib.suppress(NoMatches):
-            self.query_one(FilePickerDropdown).remove()
-        with contextlib.suppress(NoMatches):
-            self.query_one("#user-input", PromptInput).suppress_submit = False
-        self._file_picker_mounted = False
+        """See :func:`tui.input_handlers.hide_file_picker`."""
+        input_handlers.hide_file_picker(self)
 
     def _insert_file_mention(self, path: str) -> None:
-        """Replace the @query with the selected file path."""
-        input_widget = self.query_one("#user-input", PromptInput)
-        row, col = input_widget.cursor_location
-        line = input_widget.document.get_line(row)
-
-        # Find the @ position by scanning backward
-        at_pos = col - 1
-        while at_pos >= 0 and line[at_pos] != "@":
-            at_pos -= 1
-
-        if at_pos < 0:
-            return
-
-        # Rebuild the full text with the replacement
-        full_text = input_widget.text
-        lines = full_text.split("\n")
-        old_line = lines[row]
-        # Replace from after @ to cursor position with the full path
-        new_line = old_line[: at_pos + 1] + path + " " + old_line[col:]
-        lines[row] = new_line
-        new_text = "\n".join(lines)
-
-        # Calculate new cursor position (after path + space)
-        new_col = at_pos + 1 + len(path) + 1
-
-        input_widget.clear()
-        input_widget.insert(new_text)
-        input_widget.move_cursor((row, new_col))
+        """See :func:`tui.input_handlers.insert_file_mention`."""
+        input_handlers.insert_file_mention(self, path)
 
     @on(PromptInput.Submitted)
     async def _on_input_submitted(self, event: PromptInput.Submitted) -> None:
-        """Handle Enter — PromptInput posts Submitted with the text."""
-        input_widget = self.query_one("#user-input", PromptInput)
-        if self._input_handler:
-            submitted = self._input_handler.on_submit(event.text)
-            if submitted:
-                input_widget.clear()
-                with contextlib.suppress(NoMatches):
-                    self.query_one("#autocomplete", Static).display = False
-
-                # Command mode — prepend / and exit
-                if self._command_mode:
-                    submitted = f"/{submitted}"
-                    self._exit_command_mode()
-
-                # Auto-expand a partial slash command when exactly one
-                # built-in or skill matches (e.g. `/codei` → `/codeindex`).
-                if submitted.startswith("/") and not submitted.startswith("//"):
-                    submitted = self._input_handler.expand_unique_command(submitted)
-
-                # Shell mode — run as command, stay in shell mode
-                if self._shell_mode:
-                    self._shell_task = asyncio.create_task(self._run_shell_inline(submitted))
-                    return
-
-                # ! or $ prefix from chat mode — one-off shell command
-                if submitted.startswith(("!", "$")) and len(submitted) > 1:
-                    self._shell_task = asyncio.create_task(
-                        self._run_shell_inline(submitted[1:].strip())
-                    )
-                    return
-
-                task = asyncio.create_task(
-                    self._controller.process_message(submitted),
-                )
-                if not self._controller.processing:
-                    self._controller.set_current_task(task)
+        """See :func:`tui.input_handlers.on_input_submitted`."""
+        await input_handlers.on_input_submitted(self, event)
 
     # ── Command mode ─────────────────────────────────────────
 
     def _update_command_mode_indicator(self) -> None:
-        """Update the prompt indicator and placeholder for command mode."""
-        try:
-            indicator = self.query_one("#prompt-indicator", Static)
-            input_widget = self.query_one("#user-input", PromptInput)
-            if self._command_mode:
-                indicator.update("[bold cyan]/ [/bold cyan]")
-                input_widget.placeholder = "Command name (Esc to return to chat)"
-            else:
-                indicator.update("> ")
-                input_widget.placeholder = "Type a message or /help"
-        except NoMatches:
-            pass
+        """See :func:`tui.mode_handlers.update_command_mode_indicator`."""
+        mode_handlers.update_command_mode_indicator(self)
 
     def _exit_command_mode(self) -> None:
-        """Exit command mode and return to chat."""
-        self._command_mode = False
-        self._update_command_mode_indicator()
-        with contextlib.suppress(NoMatches):
-            self.query_one("#user-input", PromptInput).clear()
+        """See :func:`tui.mode_handlers.exit_command_mode`."""
+        mode_handlers.exit_command_mode(self)
 
     # ── Shell mode ────────────────────────────────────────────
 
     def _update_shell_mode_indicator(self) -> None:
-        """Update the prompt indicator and placeholder for shell mode."""
-        try:
-            indicator = self.query_one("#prompt-indicator", Static)
-            input_widget = self.query_one("#user-input", PromptInput)
-            if self._shell_mode:
-                indicator.update("[bold $warning]$ [/bold $warning]")
-                input_widget.placeholder = "Shell command (Esc to return to chat)"
-            else:
-                indicator.update("> ")
-                input_widget.placeholder = "Type a message or /help"
-        except NoMatches:
-            pass
+        """See :func:`tui.mode_handlers.update_shell_mode_indicator`."""
+        mode_handlers.update_shell_mode_indicator(self)
 
     def _exit_shell_mode(self) -> None:
-        """Exit shell mode and return to chat."""
-        self._shell_mode = False
-        self._update_shell_mode_indicator()
-        with contextlib.suppress(NoMatches):
-            self.query_one("#user-input", PromptInput).clear()
+        """See :func:`tui.mode_handlers.exit_shell_mode`."""
+        mode_handlers.exit_shell_mode(self)
 
     # ── Inline shell execution ───────────────────────────────
 
     async def _run_shell_inline(self, cmd: str) -> None:
-        """Run a shell command inline, show output, and add to conversation context.
-
-        The command and output are stored so the AI sees them as context
-        in the next message, but no AI response is triggered.
-        """
-        if not cmd:
-            return
-
-        self._conversation.append_user(f"$ {cmd}")
-
-        import os
-        import signal
-
-        # Mount a live output widget that updates as lines arrive
-        output_widget = Static("[dim]...[/dim]", classes="info-message")
-        self._conversation.append(output_widget)
-        lines: list[str] = []
-
-        try:
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                cwd=str(self._project_dir) if self._project_dir else None,
-                start_new_session=True,
-            )
-            self._shell_proc = proc
-
-            try:
-                assert proc.stdout is not None
-                while True:
-                    try:
-                        raw = await asyncio.wait_for(proc.stdout.readline(), timeout=0.5)
-                    except asyncio.TimeoutError:
-                        if proc.returncode is not None:
-                            break
-                        continue
-                    if not raw:
-                        break
-                    line = raw.decode(errors="replace").rstrip()
-                    lines.append(line)
-                    # Show last 50 lines in the live widget (escape Rich markup)
-                    from rich.markup import escape
-
-                    visible = escape("\n".join(lines[-50:]))
-                    output_widget.update(f"[dim]{visible}[/dim]")
-                    # Auto-scroll
-                    try:
-                        container = self.query_one("#conversation")
-                        container.scroll_end(animate=False)
-                    except NoMatches:
-                        pass
-                await proc.wait()
-            except asyncio.CancelledError:
-                with contextlib.suppress(ProcessLookupError, OSError):
-                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                with contextlib.suppress(ProcessLookupError, OSError):
-                    proc.kill()
-                lines.append("(cancelled)")
-
-            exit_code = proc.returncode or 0
-        except Exception as e:
-            lines.append(f"(error: {e})")
-            exit_code = -1
-        finally:
-            self._shell_proc = None
-
-        # Final update with all output
-        from rich.markup import escape
-
-        output = "\n".join(lines)
-        if output:
-            output_widget.update(f"[dim]{escape(output)}[/dim]")
-        else:
-            output_widget.update("[dim](no output)[/dim]")
-        if exit_code != 0 and exit_code != -1:
-            self._conversation.append_info(f"Exit code: {exit_code}")
-
-        # Store for AI context
-        self._shell_context.append(f"$ {cmd}\n{output}")
+        """See :func:`tui.mode_handlers.run_shell_inline`."""
+        await mode_handlers.run_shell_inline(self, cmd)
 
     async def on_key(self, event) -> None:
-        # Cached input widget — every keypress used to do a fresh
-        # ``query_one`` here, which on a long conversation walks the
-        # whole widget tree. Combined with the picker lookup below
-        # and the autocomplete lookups in ``_on_input_changed``, the
-        # per-keystroke tree walks compounded into seconds of lag.
-        input_widget = self._user_input_widget
-        if input_widget is None:
-            try:
-                input_widget = self.query_one("#user-input", PromptInput)
-            except NoMatches:
-                return
-            self._user_input_widget = input_widget
-        if not input_widget.has_focus:
-            return
-
-        # ── Command/shell mode: backspace on empty input exits mode ──
-        if event.key == "backspace" and not input_widget.text:
-            if self._command_mode:
-                event.prevent_default()
-                event.stop()
-                self._exit_command_mode()
-                return
-            if self._shell_mode:
-                event.prevent_default()
-                event.stop()
-                self._exit_shell_mode()
-                return
-
-        # ── File picker navigation (takes priority) ─────────────
-        # Same guard as ``_on_input_changed``: only walk the tree if
-        # we know the picker is mounted.
-        picker: FilePickerDropdown | None = None
-        if self._file_picker_mounted:
-            try:
-                picker = self.query_one(FilePickerDropdown)
-            except NoMatches:
-                self._file_picker_mounted = False
-
-        if picker and picker.has_matches:
-            if event.key == "up":
-                event.prevent_default()
-                event.stop()
-                picker.move_up()
-                return
-            if event.key == "down":
-                event.prevent_default()
-                event.stop()
-                picker.move_down()
-                return
-            if event.key in ("tab", "enter"):
-                event.prevent_default()
-                event.stop()
-                selected = picker.get_selected()
-                if selected:
-                    self._insert_file_mention(selected)
-                self._hide_file_picker()
-                return
-            if event.key == "escape":
-                event.prevent_default()
-                event.stop()
-                self._hide_file_picker()
-                return
-
-        # ── Input history navigation ─────────────────────────────
-        if event.key == "up" and self._input_handler and input_widget.cursor_location[0] == 0:
-            entry = self._input_handler.on_up(input_widget.text)
-            if entry is not None:
-                event.prevent_default()
-                input_widget.clear()
-                input_widget.insert(entry)
-                return
-
-        if event.key == "down" and self._input_handler:
-            # Only history-navigate when cursor is on the last line
-            last_line = input_widget.text.count("\n")
-            if input_widget.cursor_location[0] >= last_line:
-                entry = self._input_handler.on_down()
-                if entry is not None:
-                    event.prevent_default()
-                    input_widget.clear()
-                    input_widget.insert(entry)
-                    return
+        """See :func:`tui.keybinding_handlers.on_key`."""
+        await keybinding_handlers.on_key(self, event)
 
     # ── Command result rendering ──────────────────────────────────
 
     def render_command_result(self, result: CommandResult) -> None:
-        action = result.action
-        if action == CommandAction.QUIT:
-            self.exit()
-        elif action == CommandAction.CLEAR:
-            self._sessions.clear()
-            self._conversation.append_info("Conversation cleared.")
-        elif action == CommandAction.SESSIONS:
-            asyncio.create_task(self._sessions.show_picker())
-        elif action == CommandAction.MODEL:
-            self._show_model_picker()
-        elif action == CommandAction.MODEL_SWITCHED:
-            # ``/model <name>`` direct switch — the BE already
-            # rebuilt the team; just refresh the status-bar so the
-            # footer model slot matches the chat info line.
-            self._status.update_status_bar()
-            self._conversation.append_info(result.content)
-            return
-        elif action == CommandAction.LOGIN:
-            self._show_login()
-        elif action == CommandAction.LOGOUT:
-            if hasattr(self, "_backend"):
-                status = self._backend.clear_cloud_credentials()
-                self._status.set_cloud_status(status.cloud_connected, status.cloud_org)
-            else:
-                self._status.set_cloud_status(False)
-            self._status.update_status_bar()
-            self._conversation.append_info(result.content)
-            return
-        elif action == CommandAction.HELP:
-            self._show_help_panel()
-        elif action == CommandAction.MCP:
-            asyncio.create_task(self._show_mcp_panel())
-        elif action == CommandAction.AGENTS:
-            asyncio.create_task(self._show_agents_panel())
-        elif action == CommandAction.SKILLS:
-            asyncio.create_task(self._show_skills_panel())
-        elif action == CommandAction.KNOWLEDGE:
-            asyncio.create_task(self._show_knowledge_panel())
-        elif action == CommandAction.CODEINDEX:
-            asyncio.create_task(self._show_codeindex_panel())
-        elif action == CommandAction.LOOP:
-            asyncio.create_task(self._show_loop_panel())
-        elif action == CommandAction.HOOKS:
-            asyncio.create_task(self._show_hooks_panel())
-        elif action == CommandAction.PLUGINS:
-            asyncio.create_task(self._show_plugins_panel())
-        elif action == CommandAction.SCHEDULE:
-            asyncio.create_task(self.action_toggle_tasks())
-        elif action == CommandAction.RUN_PROMPT:
-            # Feed the prompt directly into the run loop, bypassing
-            # ``process_message``. We skip ``process_message`` because
-            # its cancel-on-non-/loop guard would kill an active
-            # ``/loop`` we just configured — the loop body itself
-            # doesn't start with ``/loop``. Loop iterations 2+
-            # already bypass via ``_check_loop_continuation``; iteration
-            # 1 (driven by this ``run_prompt`` dispatch) needs the
-            # same treatment. Skill-fired prompts are also internal
-            # work, not user input, so the same bypass is correct.
-            # ``display_content`` is the unwrapped prompt for chat
-            # rendering — the loop slash command sets it so the
-            # user sees the bare prompt rather than the
-            # ``<loop-iteration>`` wrapper.
-            display = getattr(result, "display_content", "") or None
-            asyncio.create_task(self._controller._run(result.content, display=display))
-        elif action == CommandAction.COMPACT:
-            self._status.reset()
-            self._status.update_context_usage()
-            self._status.update_status_bar()
-            self._conversation.append_info(result.content or "Context compacted.")
-        elif result.kind == CommandResultKind.MARKDOWN:
-            self._conversation.append_markdown(result.content)
-        elif result.kind == CommandResultKind.INFO:
-            self._conversation.append_info(result.content)
-        elif result.kind == CommandResultKind.ERROR:
-            self._conversation.append_error(result.content)
+        """See :func:`tui.keybinding_handlers.render_command_result`."""
+        keybinding_handlers.render_command_result(self, result)
 
     # ── Session picker events ─────────────────────────────────────
 
     @on(SessionPickerWidget.Selected)
     async def _on_session_selected(self, event: SessionPickerWidget.Selected) -> None:
-        await self._sessions.switch_to(event.session_id)
+        """See :func:`tui.picker_handlers.on_session_selected`."""
+        await picker_handlers.on_session_selected(self, event.session_id)
 
     @on(SessionPickerWidget.Cancelled)
     def _on_session_cancelled(self, _event: SessionPickerWidget.Cancelled) -> None:
-        self.query_one("#user-input", PromptInput).focus()
+        """See :func:`tui.picker_handlers.on_session_cancelled`."""
+        picker_handlers.on_session_cancelled(self)
 
     # ── Model picker ────────────────────────────────────────────────
 
     def _show_model_picker(self) -> None:
-        # Show models that have credentials: explicit API key, env var,
-        # key command, or Ember Cloud auth (for models hosted on ignite-ember.sh)
-        from ember_code.core.auth.credentials import CloudCredentials
-        from ember_code.core.config.cloud_models import fetch_cloud_models, merge_into_registry
-
-        cloud_token = CloudCredentials(self.settings.auth.credentials_file).access_token
-
-        # Refresh the cloud catalogue on open. Synchronous + bounded
-        # (3s) — opening the picker shouldn't hang the TUI even on a
-        # flaky network. ``merge_into_registry`` is no-op-on-duplicate
-        # so user-edited entries survive. The Session backend does the
-        # same refresh independently on its side; doing it here too
-        # keeps the TUI display fresh without an extra RPC round-trip.
-        if cloud_token:
-            cloud_entries = fetch_cloud_models(self.settings.api_url, cloud_token)
-            if cloud_entries:
-                merge_into_registry(
-                    self.settings.models.registry, cloud_entries, self.settings.api_url
-                )
-
-        models = sorted(
-            name
-            for name, cfg in self.settings.models.registry.items()
-            if (cfg.get("api_key") == "cloud_token" and cloud_token)
-            or (cfg.get("api_key") and cfg.get("api_key") != "cloud_token")
-            or cfg.get("api_key_env")
-            or cfg.get("api_key_cmd")
-        )
-        if not models:
-            self._conversation.append_error("No models configured with API keys.")
-            return
-        current = self.settings.models.default
-        picker = ModelPickerWidget(models=models, current_model=current)
-        self.mount(picker)
-        picker.focus()
+        """See :func:`tui.picker_handlers.show_model_picker`."""
+        picker_handlers.show_model_picker(self)
 
     @on(ModelPickerWidget.Selected)
     async def _on_model_selected(self, event: ModelPickerWidget.Selected) -> None:
-        # ``switch_model`` is async-await now; the prior fire-and-
-        # forget version raced the status-bar update below and left
-        # the footer showing the OLD model name until the next
-        # render. Awaiting here keeps the bar and the chat info
-        # line agree.
-        if hasattr(self, "_backend"):
-            await self._backend.switch_model(event.model_name)
-        self.settings.models.default = event.model_name
-        self._status.update_status_bar()
-        self._conversation.append_info(f"Switched to model: {event.model_name}")
-        self.query_one("#user-input", PromptInput).focus()
+        """See :func:`tui.picker_handlers.on_model_selected`."""
+        await picker_handlers.on_model_selected(self, event.model_name)
 
     @on(ModelPickerWidget.Cancelled)
     def _on_model_cancelled(self, _event: ModelPickerWidget.Cancelled) -> None:
-        self.query_one("#user-input", PromptInput).focus()
+        """See :func:`tui.picker_handlers.on_model_cancelled`."""
+        picker_handlers.on_model_cancelled(self)
 
     # ── Login ────────────────────────────────────────────────────────
 
     def _show_login(self) -> None:
-        # Remove any existing login widget
-        try:
-            old = self.query_one(LoginWidget)
-            old.cancel()
-        except NoMatches:
-            pass
-        widget = LoginWidget(backend=self._backend)
-        self.mount(widget)
-        widget.focus()
-        # Tell BE to start the login flow
-        asyncio.create_task(self._backend.start_login())
+        """See :func:`tui.picker_handlers.show_login`."""
+        picker_handlers.show_login(self)
 
     @on(LoginWidget.LoggedIn)
     def _on_logged_in(self, event: LoginWidget.LoggedIn) -> None:
-        # Reload cloud credentials via backend
-        if hasattr(self, "_backend"):
-            status = self._backend.reload_cloud_credentials()
-            self._status.set_cloud_status(status.cloud_connected, status.cloud_org)
-            self._status.update_status_bar()
-
-        self._conversation.append_info(f"Logged in as {event.email}")
-        self.query_one("#user-input", PromptInput).focus()
+        """See :func:`tui.picker_handlers.on_logged_in`."""
+        picker_handlers.on_logged_in(self, event.email)
 
     @on(LoginWidget.Cancelled)
     def _on_login_cancelled(self, _event: LoginWidget.Cancelled) -> None:
-        self.query_one("#user-input", PromptInput).focus()
+        """See :func:`tui.picker_handlers.on_login_cancelled`."""
+        picker_handlers.on_login_cancelled(self)
 
     def _on_login_status_push(self, payload: dict) -> None:
-        """Handle login_status push — forward to LoginWidget if mounted."""
-        try:
-            widget = self.query_one(LoginWidget)
-            widget.update_status(payload.get("text", ""))
-        except NoMatches:
-            pass
+        """See :func:`tui.picker_handlers.on_login_status_push`."""
+        picker_handlers.on_login_status_push(self, payload)
 
     def _on_login_result_push(self, payload: dict) -> None:
-        """Handle login_result push — forward to LoginWidget if mounted."""
-        try:
-            widget = self.query_one(LoginWidget)
-            widget.show_result(payload.get("success", False), payload.get("result", ""))
-        except NoMatches:
-            pass
+        """See :func:`tui.picker_handlers.on_login_result_push`."""
+        picker_handlers.on_login_result_push(self, payload)
 
-    # ── MCP panel ───────────────────────────────────────────────────
+    # ── Help panel ───────────────────────────────────────────────────
 
     def _show_help_panel(self) -> None:
-        """Mount the interactive help panel."""
-        panel = HelpPanelWidget()
-        self.mount(panel)
-        panel.focus()
+        """See :func:`tui.picker_handlers.show_help_panel`."""
+        picker_handlers.show_help_panel(self)
 
     @on(HelpPanelWidget.PanelClosed)
     def _on_help_panel_closed(self, _event: HelpPanelWidget.PanelClosed) -> None:
-        self.query_one("#user-input", PromptInput).focus()
+        """See :func:`tui.picker_handlers.on_help_panel_closed`."""
+        picker_handlers.on_help_panel_closed(self)
+
+    # ── MCP panel ───────────────────────────────────────────────────
 
     async def _show_mcp_panel(self) -> None:
-        """Gather MCP server info and mount the panel."""
-        servers = await self._build_mcp_server_list()
-        panel = MCPPanelWidget(servers=servers)
-        self.mount(panel)
-        panel.focus()
+        """See :func:`tui.mcp_handlers.show_mcp_panel`."""
+        await mcp_handlers.show_mcp_panel(self)
 
     async def _build_mcp_server_list(self) -> list[MCPServerInfo]:
-        servers: list[MCPServerInfo] = []
-        details = (
-            await self._backend._rpc(RpcMethod.GET_MCP_SERVER_DETAILS)
-            if hasattr(self._backend, "_rpc")
-            else await self._backend.get_mcp_server_details()
-        )
-        for info in details or []:
-            servers.append(
-                MCPServerInfo(
-                    name=info["name"],
-                    connected=info["connected"],
-                    transport=info["transport"],
-                    tool_names=info["tool_names"],
-                    tool_descriptions=info["tool_descriptions"],
-                    error=info["error"],
-                    policy_blocked=info["policy_blocked"],
-                )
-            )
-        return servers
+        """See :func:`tui.mcp_handlers.build_mcp_server_list`."""
+        return await mcp_handlers.build_mcp_server_list(self)
 
     @on(MCPPanelWidget.ServerToggleRequested)
     async def _on_mcp_toggle(self, event: MCPPanelWidget.ServerToggleRequested) -> None:
         asyncio.create_task(self._toggle_mcp(event.name, event.enable))
 
     async def _toggle_mcp(self, name: str, enable: bool) -> None:
-        """Toggle MCP server in background — doesn't block the TUI."""
-        if enable:
-            self._conversation.append_info(f"MCP '{name}': connecting...")
-            try:
-                result = await self._backend.mcp_connect(name)
-                self._conversation.append_info(
-                    result.text if hasattr(result, "text") else str(result)
-                )
-            except Exception as exc:
-                self._conversation.append_info(f"MCP '{name}': failed: {exc}")
-        else:
-            try:
-                result = await self._backend.mcp_disconnect(name)
-                self._conversation.append_info(
-                    result.text if hasattr(result, "text") else str(result)
-                )
-            except Exception as exc:
-                logger.debug("MCP disconnect error: %s", exc)
-        # Refresh status and panel
-        try:
-            statuses = (
-                await self._backend._rpc(RpcMethod.GET_MCP_STATUS)
-                if hasattr(self._backend, "_rpc")
-                else self._backend.get_mcp_status()
-            )
-            for sname, connected in statuses or []:
-                self._status.set_ide_status(sname, connected)
-            panel = self.query_one(MCPPanelWidget)
-            panel.refresh_servers(await self._build_mcp_server_list())
-        except Exception:
-            pass
+        """See :func:`tui.mcp_handlers.toggle_mcp`."""
+        await mcp_handlers.toggle_mcp(self, name, enable)
 
     @on(MCPPanelWidget.PanelClosed)
     def _on_mcp_panel_closed(self, _event: MCPPanelWidget.PanelClosed) -> None:
-        self.query_one("#user-input", PromptInput).focus()
+        """See :func:`tui.mcp_handlers.on_mcp_panel_closed`."""
+        mcp_handlers.on_mcp_panel_closed(self)
 
     # ── Agents panel ──────────────────────────────────────────────
 
     async def _show_agents_panel(self) -> None:
-        """Fetch agent details and mount the panel."""
-        agents = await self._build_agent_list()
-        panel = AgentsPanelWidget(agents=agents)
-        self.mount(panel)
-        panel.focus()
+        """See :func:`tui.agent_handlers.show_agents_panel`."""
+        await agent_handlers.show_agents_panel(self)
 
     async def _build_agent_list(self) -> list[AgentInfo]:
-        details = await self._backend.get_agent_details()
-        return [AgentInfo(**d) for d in details]
+        """See :func:`tui.agent_handlers.build_agent_list`."""
+        return await agent_handlers.build_agent_list(self)
 
     async def _refresh_agents_panel(self) -> None:
-        try:
-            panel = self.query_one(AgentsPanelWidget)
-        except Exception:
-            return
-        panel.refresh_agents(await self._build_agent_list())
+        """See :func:`tui.agent_handlers.refresh_agents_panel`."""
+        await agent_handlers.refresh_agents_panel(self)
 
     @on(AgentsPanelWidget.PromoteRequested)
     async def _on_agent_promote(
         self,
         event: AgentsPanelWidget.PromoteRequested,
     ) -> None:
-        result = await self._backend.promote_ephemeral_agent(event.name)
-        self._conversation.append_info(result.text)
-        await self._refresh_agents_panel()
+        """See :func:`tui.agent_handlers.on_agent_promote`."""
+        await agent_handlers.on_agent_promote(self, event.name)
 
     @on(AgentsPanelWidget.DiscardRequested)
     async def _on_agent_discard(
         self,
         event: AgentsPanelWidget.DiscardRequested,
     ) -> None:
-        result = await self._backend.discard_ephemeral_agent(event.name)
-        self._conversation.append_info(result.text)
-        await self._refresh_agents_panel()
+        """See :func:`tui.agent_handlers.on_agent_discard`."""
+        await agent_handlers.on_agent_discard(self, event.name)
 
     @on(AgentsPanelWidget.PanelClosed)
     def _on_agents_panel_closed(
         self,
         _event: AgentsPanelWidget.PanelClosed,
     ) -> None:
-        self.query_one("#user-input", PromptInput).focus()
+        """See :func:`tui.agent_handlers.on_agents_panel_closed`."""
+        agent_handlers.on_agents_panel_closed(self)
 
     # ── Skills panel ──────────────────────────────────────────────
 
     async def _show_skills_panel(self) -> None:
-        skills = await self._build_skill_list()
-        panel = SkillsPanelWidget(skills=skills)
-        self.mount(panel)
-        panel.focus()
+        """See :func:`tui.agent_handlers.show_skills_panel`."""
+        await agent_handlers.show_skills_panel(self)
 
     async def _build_skill_list(self) -> list[SkillInfo]:
-        details = await self._backend.get_skill_details()
-        return [SkillInfo(**d) for d in details]
+        """See :func:`tui.agent_handlers.build_skill_list`."""
+        return await agent_handlers.build_skill_list(self)
 
     @on(SkillsPanelWidget.RunRequested)
     async def _on_skill_run(
         self,
         event: SkillsPanelWidget.RunRequested,
     ) -> None:
-        # Close the panel before firing the skill so its output streams
-        # into the conversation without being visually shadowed.
-        try:
-            panel = self.query_one(SkillsPanelWidget)
-            panel.remove()
-        except Exception:
-            pass
-        # Route through the controller so the skill renders the same
-        # way a typed ``/skill-name`` slash command would.
-        await self._controller.process_message(f"/{event.name}")
+        """See :func:`tui.agent_handlers.on_skill_run`."""
+        await agent_handlers.on_skill_run(self, event.name)
 
     @on(SkillsPanelWidget.PanelClosed)
     def _on_skills_panel_closed(
         self,
         _event: SkillsPanelWidget.PanelClosed,
     ) -> None:
-        self.query_one("#user-input", PromptInput).focus()
+        """See :func:`tui.agent_handlers.on_skills_panel_closed`."""
+        agent_handlers.on_skills_panel_closed(self)
 
     # ── Knowledge panel ──────────────────────────────────────────
 
     async def _show_knowledge_panel(self) -> None:
-        status_dict = await self._backend.get_knowledge_status()
-        status = KnowledgeStatusInfo(**status_dict)
-        panel = KnowledgePanelWidget(status=status)
-        self.mount(panel)
-        # Focus the search input so the user can type immediately —
-        # the panel IS the search UI; opening it puts the cursor where
-        # the next keystroke is meaningful.
-        try:
-            panel.query_one("#kb-input").focus()
-        except Exception:
-            panel.focus()
+        """See :func:`tui.knowledge_handlers.show_knowledge_panel`."""
+        await knowledge_handlers.show_knowledge_panel(self)
 
     @on(KnowledgePanelWidget.SearchRequested)
     async def _on_knowledge_search(
         self,
         event: KnowledgePanelWidget.SearchRequested,
     ) -> None:
-        try:
-            panel = self.query_one(KnowledgePanelWidget)
-        except Exception:
-            return
-        # Flip the status line to "Searching…" so the panel doesn't
-        # look frozen during the embed+ANN round-trip. try/finally so
-        # an RPC failure still restores the static status.
-        preview = event.query if len(event.query) <= 40 else event.query[:40] + "…"
-        panel.set_busy(f"Searching for '{preview}'…")
-        try:
-            raw = await self._backend.knowledge_search(event.query)
-            hits = [KnowledgeSearchHit(**r) for r in raw]
-            panel.set_results(hits)
-        finally:
-            panel.set_busy(None)
+        """See :func:`tui.knowledge_handlers.on_knowledge_search`."""
+        await knowledge_handlers.on_knowledge_search(self, event.query)
 
     @on(KnowledgePanelWidget.AddRequested)
     async def _on_knowledge_add(
         self,
         event: KnowledgePanelWidget.AddRequested,
     ) -> None:
-        try:
-            panel = self.query_one(KnowledgePanelWidget)
-        except Exception:
-            panel = None
-
-        # Ingest can take seconds (URL fetch + chunk + embed). Flip the
-        # status line so the user sees activity. URLs and long paths
-        # are trimmed in the label.
-        preview = event.source if len(event.source) <= 50 else event.source[:50] + "…"
-        if panel is not None:
-            panel.set_busy(f"Ingesting {preview}…")
-        try:
-            result = await self._backend.knowledge_add(event.source)
-            self._conversation.append_info(result.text)
-            # Refresh status header — doc count likely changed.
-            if panel is not None:
-                try:
-                    status_dict = await self._backend.get_knowledge_status()
-                    panel.set_status(KnowledgeStatusInfo(**status_dict))
-                    # Clear the input for the next add.
-                    from textual.widgets import Input as _Input
-
-                    panel.query_one("#kb-input", _Input).value = ""
-                except Exception:
-                    pass
-        finally:
-            if panel is not None:
-                panel.set_busy(None)
+        """See :func:`tui.knowledge_handlers.on_knowledge_add`."""
+        await knowledge_handlers.on_knowledge_add(self, event.source)
 
     @on(KnowledgePanelWidget.PanelClosed)
     def _on_knowledge_panel_closed(
         self,
         _event: KnowledgePanelWidget.PanelClosed,
     ) -> None:
-        self.query_one("#user-input", PromptInput).focus()
+        """See :func:`tui.knowledge_handlers.on_knowledge_panel_closed`."""
+        knowledge_handlers.on_knowledge_panel_closed(self)
 
     # ── CodeIndex status bar (always-on) ─────────────────────────
 
@@ -1554,258 +779,52 @@ class EmberApp(App):
     _CODEINDEX_STATUS_POLL_SECONDS = 2.0
 
     async def _show_codeindex_panel(self) -> None:
-        """Open the CodeIndex panel. One status RPC populates the
-        header; the 2s background poll keeps the indexed-state /
-        sync-% display fresh while the panel is mounted. There is
-        no implicit search RPC on open — the panel is a status
-        display, not a query surface."""
-        status_dict = await self._backend.codeindex_status()
-        status = CodeIndexStatusInfo(**status_dict)
-        panel = CodeIndexPanelWidget(status=status)
-        self.mount(panel)
-        # The widget self-focuses in ``on_mount`` — it has no
-        # focusable children (no Input), so a parent-side
-        # ``panel.focus()`` here would race with the async mount.
-        # Start the live status poll. Stored on ``self`` so the
-        # ``PanelClosed`` handler can stop it — leaking the interval
-        # would keep pinging the backend after the panel disappears.
-        self._codeindex_status_poll = self.set_interval(
-            self._CODEINDEX_STATUS_POLL_SECONDS,
-            self._poll_codeindex_status,
-        )
+        """See :func:`tui.codeindex_handlers.show_codeindex_panel`."""
+        await codeindex_handlers.show_codeindex_panel(self)
 
     async def _poll_codeindex_status(self) -> None:
-        """Live-refresh the panel header.
-
-        Skipped when a busy indicator is up — overwriting the busy
-        label mid-RPC would erase the spinner the user is watching.
-        Also skipped when the panel has been unmounted (race with
-        ``PanelClosed``).
-        """
-        try:
-            panel = self.query_one(CodeIndexPanelWidget)
-        except Exception:
-            return
-        if panel._busy_label:
-            return
-        try:
-            status_dict = await self._backend.codeindex_status()
-        except Exception:
-            # Transport hiccup mid-poll shouldn't kill the interval —
-            # next tick will retry. Logged at debug; not surfaced to
-            # the user since this is a background refresh.
-            logger.debug("codeindex status poll failed", exc_info=True)
-            return
-        status = CodeIndexStatusInfo(**status_dict)
-        panel.set_status(status)
-        # While the panel is open the panel-poll is tighter than
-        # the always-on status-bar poll (2s vs 5s) — feed the same
-        # snapshot through so the badge updates at the panel's
-        # cadence instead of waiting on its own slower tick.
-        self._status.set_codeindex_status(status)
+        """See :func:`tui.codeindex_handlers.poll_codeindex_status`."""
+        await codeindex_handlers.poll_codeindex_status(self)
 
     @on(CodeIndexPanelWidget.SyncRequested)
     async def _on_codeindex_sync(
         self,
         _event: CodeIndexPanelWidget.SyncRequested,
     ) -> None:
-        try:
-            panel = self.query_one(CodeIndexPanelWidget)
-        except Exception:
-            return
-        panel.set_busy("Syncing changeset…")
-        try:
-            result = await self._backend.codeindex_sync(None)
-            # Surface outcome to the conversation so the user has a
-            # durable log line of every sync — the panel header
-            # refresh below only reflects the new state.
-            if result.get("link_start_url"):
-                import webbrowser as _wb
-
-                _wb.open(result["link_start_url"])
-                self._conversation.append_info(
-                    f"CodeIndex needs setup. Opened {result['link_start_url']} in your browser. "
-                    "Re-run sync after finishing the install."
-                )
-            elif result.get("error"):
-                self._conversation.append_error(f"Sync failed: {result['error']}")
-            elif result.get("skipped"):
-                self._conversation.append_info(
-                    f"Sync skipped: {result.get('reason', '')}".rstrip(": ")
-                )
-            else:
-                sha = (result.get("commit_sha") or "")[:8]
-                self._conversation.append_info(
-                    f"Synced {sha}: {result.get('items_upserted', 0)} upserts, "
-                    f"{result.get('items_deleted', 0)} deletes, "
-                    f"{result.get('references_upserted', 0)} refs."
-                )
-            # Refresh header — head + commit count likely moved.
-            status_dict = await self._backend.codeindex_status()
-            status = CodeIndexStatusInfo(**status_dict)
-            panel.set_status(status)
-            # Push the same snapshot through to the always-on
-            # status-bar slot so the user doesn't wait up to 5s for
-            # the next background tick to reflect the new state.
-            self._status.set_codeindex_status(status)
-        finally:
-            panel.set_busy(None)
+        """See :func:`tui.codeindex_handlers.on_codeindex_sync`."""
+        await codeindex_handlers.on_codeindex_sync(self)
 
     @on(CodeIndexPanelWidget.ResyncRequested)
     async def _on_codeindex_resync(
         self,
         _event: CodeIndexPanelWidget.ResyncRequested,
     ) -> None:
-        """Wipe local chroma for HEAD and pull a fresh snapshot.
-
-        Recovery path for indexes that have drifted from the cloud
-        definition — same backend behaviour as ``/codeindex resync``.
-        The apply phase embeds every chunk through sentence-transformers
-        which can run for ~30-90s on a fresh checkout; we poll the
-        backend's apply-progress fields twice a second and rewrite the
-        busy label so the UI doesn't look frozen during that window.
-        """
-        try:
-            panel = self.query_one(CodeIndexPanelWidget)
-        except Exception:
-            return
-
-        panel.set_busy("Resyncing (full snapshot)…")
-
-        async def _poll_progress() -> None:
-            while True:
-                try:
-                    await asyncio.sleep(0.5)
-                    status = await self._backend.codeindex_status()
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    continue  # transient RPC blips shouldn't kill the ticker
-                done = int(status.get("apply_done") or 0)
-                total = int(status.get("apply_total") or 0)
-                step = (status.get("apply_step") or "").strip()
-                if total <= 0:
-                    continue  # apply hasn't started counting yet
-                pct = int(done * 100 / total)
-                label = f"Resyncing {pct}% — {done}/{total} items"
-                if step:
-                    short = step if len(step) <= 40 else step[:37] + "…"
-                    label += f" · {short}"
-                panel.set_busy(label)
-
-        ticker = asyncio.create_task(_poll_progress())
-        try:
-            result = await self._backend.codeindex_resync(None)
-            if result.get("link_start_url"):
-                import webbrowser as _wb
-
-                _wb.open(result["link_start_url"])
-                self._conversation.append_info(
-                    f"CodeIndex needs setup. Opened {result['link_start_url']} in your browser. "
-                    "Re-run resync after finishing the install."
-                )
-            elif result.get("error"):
-                self._conversation.append_error(f"Resync failed: {result['error']}")
-            elif result.get("skipped"):
-                self._conversation.append_info(
-                    f"Resync skipped: {result.get('reason', '')}".rstrip(": ")
-                )
-            else:
-                sha = (result.get("commit_sha") or "")[:8]
-                prefix = "Wiped local index. " if result.get("forgot") else ""
-                self._conversation.append_info(
-                    f"{prefix}Resynced {sha} via snapshot: "
-                    f"{result.get('items_upserted', 0)} upserts, "
-                    f"{result.get('references_upserted', 0)} refs."
-                )
-            status_dict = await self._backend.codeindex_status()
-            status = CodeIndexStatusInfo(**status_dict)
-            panel.set_status(status)
-            self._status.set_codeindex_status(status)
-        finally:
-            ticker.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await ticker
-            panel.set_busy(None)
+        """See :func:`tui.codeindex_handlers.on_codeindex_resync`."""
+        await codeindex_handlers.on_codeindex_resync(self)
 
     @on(CodeIndexPanelWidget.CleanRequested)
     async def _on_codeindex_clean(
         self,
         _event: CodeIndexPanelWidget.CleanRequested,
     ) -> None:
-        try:
-            panel = self.query_one(CodeIndexPanelWidget)
-        except Exception:
-            return
-        panel.set_busy("Cleaning…")
-        try:
-            result = await self._backend.codeindex_clean()
-            dropped = result.get("dropped") or []
-            if dropped:
-                self._conversation.append_info(
-                    f"Dropped {len(dropped)} commit(s): {', '.join(dropped)}"
-                )
-            else:
-                self._conversation.append_info("Nothing to clean.")
-            status_dict = await self._backend.codeindex_status()
-            status = CodeIndexStatusInfo(**status_dict)
-            panel.set_status(status)
-            self._status.set_codeindex_status(status)
-        finally:
-            panel.set_busy(None)
+        """See :func:`tui.codeindex_handlers.on_codeindex_clean`."""
+        await codeindex_handlers.on_codeindex_clean(self)
 
     @on(CodeIndexPanelWidget.InstallRequested)
     async def _on_codeindex_install(
         self,
         _event: CodeIndexPanelWidget.InstallRequested,
     ) -> None:
-        """Open the Ember portal's repositories page in the
-        browser.
-
-        The portal page is the canonical entry point for adding a
-        repo to CodeIndex — its ``Add repository`` button drives
-        the GitHub-App install flow. No status refresh after the
-        open; the 2s background poll picks up any state change
-        once the user finishes the portal flow.
-        """
-        try:
-            panel = self.query_one(CodeIndexPanelWidget)
-        except Exception:
-            return
-        result = await self._backend.codeindex_install()
-        url = result.get("install_url") or ""
-        if not url:
-            self._conversation.append_error("No portal URL available.")
-            return
-        import webbrowser as _wb
-
-        _wb.open(url)
-        self._conversation.append_info(f"Opening {url}")
-        # Best-effort refresh of the header — the poll would catch
-        # this in ~2s anyway, but doing it now keeps the install
-        # state column from looking stale right after the click.
-        try:
-            status_dict = await self._backend.codeindex_status()
-            status = CodeIndexStatusInfo(**status_dict)
-            panel.set_status(status)
-            self._status.set_codeindex_status(status)
-        except Exception:
-            pass
+        """See :func:`tui.codeindex_handlers.on_codeindex_install`."""
+        await codeindex_handlers.on_codeindex_install(self)
 
     @on(CodeIndexPanelWidget.PanelClosed)
     def _on_codeindex_panel_closed(
         self,
         _event: CodeIndexPanelWidget.PanelClosed,
     ) -> None:
-        # Stop the background status poll started in ``_show_codeindex_panel``
-        # — otherwise it'd keep firing ``codeindex_status`` RPCs against a
-        # panel that's no longer mounted.
-        timer = getattr(self, "_codeindex_status_poll", None)
-        if timer is not None:
-            with contextlib.suppress(Exception):
-                timer.stop()
-            self._codeindex_status_poll = None
-        self.query_one("#user-input", PromptInput).focus()
+        """See :func:`tui.codeindex_handlers.on_codeindex_panel_closed`."""
+        codeindex_handlers.on_codeindex_panel_closed(self)
 
     # ── Loop panel ────────────────────────────────────────────────
 
@@ -1815,444 +834,203 @@ class EmberApp(App):
     _LOOP_STATUS_POLL_SECONDS = 1.0
 
     async def _show_loop_panel(self) -> None:
-        """Open the Loop panel. One status RPC populates the header;
-        the 1s background poll keeps the iteration counter and
-        active/inactive state fresh while the panel is mounted."""
-        status_dict = await self._backend.loop_status()
-        status = LoopStatusInfo(**status_dict)
-        panel = LoopPanelWidget(status=status)
-        self.mount(panel)
-        # Widget self-focuses in ``on_mount`` — see LoopPanelWidget
-        # docstring for why a parent-side ``.focus()`` would race
-        # with the async mount.
-        self._loop_status_poll = self.set_interval(
-            self._LOOP_STATUS_POLL_SECONDS,
-            self._poll_loop_status,
-        )
+        """See :func:`tui.loop_handlers.show_loop_panel`."""
+        await loop_handlers.show_loop_panel(self)
 
     async def _poll_loop_status(self) -> None:
-        """Live-refresh the panel header.
-
-        Skipped when a busy indicator is up (would overwrite the
-        spinner mid-RPC) or when the panel has been unmounted
-        (race with ``PanelClosed``). Transport hiccups are
-        swallowed silently — next tick will retry.
-        """
-        try:
-            panel = self.query_one(LoopPanelWidget)
-        except Exception:
-            return
-        if panel._busy_label:
-            return
-        try:
-            status_dict = await self._backend.loop_status()
-        except Exception:
-            logger.debug("loop status poll failed", exc_info=True)
-            return
-        panel.set_status(LoopStatusInfo(**status_dict))
+        """See :func:`tui.loop_handlers.poll_loop_status`."""
+        await loop_handlers.poll_loop_status(self)
 
     @on(LoopPanelWidget.ResumeRequested)
     async def _on_loop_resume(
         self,
         _event: LoopPanelWidget.ResumeRequested,
     ) -> None:
-        """Panel ``R`` key — unpause and re-fire the interrupted
-        iteration. Mirrors what ``/loop resume`` does from chat:
-        flips the paused flag on the backend, then fires
-        ``_run(prompt)`` directly to bypass the cancel guard."""
-        try:
-            panel = self.query_one(LoopPanelWidget)
-        except Exception:
-            return
-        panel.set_busy("Resuming loop…")
-        try:
-            prompt = await self._backend.loop_resume()
-        finally:
-            panel.set_busy(None)
-        if not prompt:
-            self._conversation.append_info("Nothing to resume.")
-            return
-        # Refresh the header so the badge flips from paused→running
-        # before iteration K starts streaming.
-        try:
-            status_dict = await self._backend.loop_status()
-            panel.set_status(LoopStatusInfo(**status_dict))
-        except Exception:
-            pass
-        # Fire the interrupted iteration on the FE directly — same
-        # path the run_prompt action dispatch takes, so the cancel
-        # guard never sees the prompt and the loop continues
-        # naturally after this iteration completes.
-        asyncio.create_task(self._controller._run(prompt))
+        """See :func:`tui.loop_handlers.on_loop_resume`."""
+        await loop_handlers.on_loop_resume(self)
 
     @on(LoopPanelWidget.CancelRequested)
     async def _on_loop_cancel(
         self,
         _event: LoopPanelWidget.CancelRequested,
     ) -> None:
-        try:
-            panel = self.query_one(LoopPanelWidget)
-        except Exception:
-            return
-        panel.set_busy("Cancelling loop…")
-        try:
-            cancelled = await self._backend.cancel_pending_loop()
-            if cancelled:
-                self._conversation.append_info("Loop cancelled.")
-            # Refresh the header — even when nothing was cancelled
-            # (race: loop completed between the user pressing X
-            # and the RPC reaching the backend), we want the
-            # post-cancel state visible.
-            status_dict = await self._backend.loop_status()
-            panel.set_status(LoopStatusInfo(**status_dict))
-        finally:
-            panel.set_busy(None)
+        """See :func:`tui.loop_handlers.on_loop_cancel`."""
+        await loop_handlers.on_loop_cancel(self)
 
     # ── Hooks panel ──────────────────────────────────────────────
 
     async def _show_hooks_panel(self) -> None:
-        """Open the hooks panel. One RPC pulls the flat hook list;
-        the widget groups by event on the client side."""
-        rows = await self._backend.get_hooks_details()
-        hooks = [HookInfo(**r) for r in rows]
-        panel = HooksPanelWidget(hooks=hooks)
-        self.mount(panel)
-        # Widget self-focuses in ``on_mount`` so we don't need a
-        # parent-side ``.focus()`` (which would race with the
-        # async mount).
+        """See :func:`tui.agent_handlers.show_hooks_panel`."""
+        await agent_handlers.show_hooks_panel(self)
 
     @on(HooksPanelWidget.ReloadRequested)
     async def _on_hooks_reload(
         self,
         _event: HooksPanelWidget.ReloadRequested,
     ) -> None:
-        try:
-            panel = self.query_one(HooksPanelWidget)
-        except Exception:
-            return
-        panel.set_busy("Reloading hooks…")
-        try:
-            result = await self._backend.reload_hooks()
-            self._conversation.append_info(result.text)
-            rows = await self._backend.get_hooks_details()
-            panel.set_hooks([HookInfo(**r) for r in rows])
-        finally:
-            panel.set_busy(None)
+        """See :func:`tui.agent_handlers.on_hooks_reload`."""
+        await agent_handlers.on_hooks_reload(self)
 
     @on(HooksPanelWidget.PanelClosed)
     def _on_hooks_panel_closed(
         self,
         _event: HooksPanelWidget.PanelClosed,
     ) -> None:
-        self.query_one("#user-input", PromptInput).focus()
+        """See :func:`tui.agent_handlers.on_hooks_panel_closed`."""
+        agent_handlers.on_hooks_panel_closed(self)
 
     @on(LoopPanelWidget.PanelClosed)
     def _on_loop_panel_closed(
         self,
         _event: LoopPanelWidget.PanelClosed,
     ) -> None:
-        # Stop the background status poll — same lifecycle as the
-        # CodeIndex panel. Without this the 1s interval keeps
-        # firing ``loop_status`` RPCs after the widget is gone.
-        timer = getattr(self, "_loop_status_poll", None)
-        if timer is not None:
-            with contextlib.suppress(Exception):
-                timer.stop()
-            self._loop_status_poll = None
-        self.query_one("#user-input", PromptInput).focus()
+        """See :func:`tui.loop_handlers.on_loop_panel_closed`."""
+        loop_handlers.on_loop_panel_closed(self)
 
     # ── Plugins panel ─────────────────────────────────────────────
 
     async def _show_plugins_panel(self) -> None:
-        """Build initial plugin + marketplace lists, mount the panel.
-
-        Wrapped in ``try/except`` because the parent dispatch fires
-        this in an ``asyncio.create_task`` that swallows any error
-        — without the wrap a bad catalog row makes ``/plugins`` look
-        like nothing happens, which is exactly the bug a stricter
-        wire schema caused (the silent ValidationError that hid
-        for a session before we found it).
-        """
-        try:
-            installed, marketplaces = await self._build_plugin_state()
-        except Exception as e:
-            logger.exception("Failed to build plugin panel state")
-            self._conversation.append_error(f"Could not open the plugins panel: {e}")
-            return
-        panel = PluginsPanelWidget(installed=installed, marketplaces=marketplaces)
-        self.mount(panel)
-        panel.focus()
+        """See :func:`tui.plugin_handlers.show_plugins_panel`."""
+        await plugin_handlers.show_plugins_panel(self)
 
     async def _build_plugin_state(
         self,
     ) -> tuple[list[PluginInfo], list[MarketplaceInfo]]:
-        details = await self._backend.get_plugin_details()
-        installed = [PluginInfo(**d) for d in details]
-        mkt_payload = await self._backend.get_marketplaces()
-        marketplaces = [
-            MarketplaceInfo(
-                name=m["name"],
-                url=m["url"],
-                last_fetched=m["last_fetched"],
-                plugins=[MarketplacePluginInfo(**p) for p in m["plugins"]],
-            )
-            for m in mkt_payload
-        ]
-        return installed, marketplaces
+        """See :func:`tui.plugin_handlers.build_plugin_state`."""
+        return await plugin_handlers.build_plugin_state(self)
 
     async def _refresh_plugins_panel(self) -> None:
-        try:
-            panel = self.query_one(PluginsPanelWidget)
-        except Exception:
-            return
-        installed, marketplaces = await self._build_plugin_state()
-        panel.refresh_data(installed=installed, marketplaces=marketplaces)
+        """See :func:`tui.plugin_handlers.refresh_plugins_panel`."""
+        await plugin_handlers.refresh_plugins_panel(self)
 
     @on(PluginsPanelWidget.PluginToggleRequested)
     async def _on_plugin_toggle(
         self,
         event: PluginsPanelWidget.PluginToggleRequested,
     ) -> None:
-        result = await self._backend.set_plugin_enabled(
-            event.name,
-            event.enable,
-        )
-        self._conversation.append_info(result.text)
-        await self._refresh_plugins_panel()
+        """See :func:`tui.plugin_handlers.on_plugin_toggle`."""
+        await plugin_handlers.on_plugin_toggle(self, event.name, event.enable)
 
     @on(PluginsPanelWidget.PluginInstallRequested)
     async def _on_plugin_install(
         self,
         event: PluginsPanelWidget.PluginInstallRequested,
     ) -> None:
-        self._conversation.append_info(f"Installing {event.ref}…")
-        result = await self._backend.install_plugin(
-            event.ref,
-            event.install_ref,
-        )
-        self._conversation.append_info(result.text)
-        await self._refresh_plugins_panel()
+        """See :func:`tui.plugin_handlers.on_plugin_install`."""
+        await plugin_handlers.on_plugin_install(self, event.ref, event.install_ref)
 
     @on(PluginsPanelWidget.PluginUpdateRequested)
     async def _on_plugin_update(
         self,
         event: PluginsPanelWidget.PluginUpdateRequested,
     ) -> None:
-        self._conversation.append_info(f"Updating {event.name}…")
-        result = await self._backend.update_plugin(event.name)
-        self._conversation.append_info(result.text)
-        await self._refresh_plugins_panel()
+        """See :func:`tui.plugin_handlers.on_plugin_update`."""
+        await plugin_handlers.on_plugin_update(self, event.name)
 
     @on(PluginsPanelWidget.PluginRemoveRequested)
     async def _on_plugin_remove(
         self,
         event: PluginsPanelWidget.PluginRemoveRequested,
     ) -> None:
-        result = await self._backend.remove_plugin(event.name)
-        self._conversation.append_info(result.text)
-        await self._refresh_plugins_panel()
+        """See :func:`tui.plugin_handlers.on_plugin_remove`."""
+        await plugin_handlers.on_plugin_remove(self, event.name)
 
     @on(PluginsPanelWidget.MarketplaceRefreshRequested)
     async def _on_marketplace_refresh(
         self,
         _event: PluginsPanelWidget.MarketplaceRefreshRequested,
     ) -> None:
-        result = await self._backend.refresh_marketplaces()
-        self._conversation.append_info(result.text)
-        await self._refresh_plugins_panel()
+        """See :func:`tui.plugin_handlers.on_marketplace_refresh`."""
+        await plugin_handlers.on_marketplace_refresh(self)
 
     @on(PluginsPanelWidget.PanelClosed)
     def _on_plugins_panel_closed(
         self,
         _event: PluginsPanelWidget.PanelClosed,
     ) -> None:
-        self.query_one("#user-input", PromptInput).focus()
+        """See :func:`tui.plugin_handlers.on_plugins_panel_closed`."""
+        plugin_handlers.on_plugins_panel_closed(self)
 
     # ── Queue panel events ─────────────────────────────────────────
 
     @on(QueuePanel.ItemDeleted)
     def _on_queue_item_deleted(self, event: QueuePanel.ItemDeleted) -> None:
-        removed = self._controller.dequeue_at(event.index)
-        if removed:
-            short = removed if len(removed) <= 40 else removed[:37] + "..."
-            self._conversation.append_info(f"Removed from queue: {short}")
+        """See :func:`tui.scheduler_handlers.on_queue_item_deleted`."""
+        scheduler_handlers.on_queue_item_deleted(self, event.index)
 
     @on(QueuePanel.ItemEditRequested)
     def _on_queue_item_edit(self, event: QueuePanel.ItemEditRequested) -> None:
-        # Remove the item from the queue and put its text into the input box
-        self._controller.dequeue_at(event.index)
-        input_widget = self.query_one("#user-input", PromptInput)
-        input_widget.clear()
-        input_widget.insert(event.text)
-        input_widget.focus()
+        """See :func:`tui.scheduler_handlers.on_queue_item_edit`."""
+        scheduler_handlers.on_queue_item_edit(self, event.index, event.text)
 
     @on(QueuePanel.PanelClosed)
     def _on_queue_panel_closed(self, _event: QueuePanel.PanelClosed) -> None:
-        with contextlib.suppress(NoMatches):
-            self.query_one("#queue-panel", QueuePanel).add_class("-hidden")
-        self.query_one("#user-input", PromptInput).focus()
+        """See :func:`tui.scheduler_handlers.on_queue_panel_closed`."""
+        scheduler_handlers.on_queue_panel_closed(self)
 
     # ── Task panel events ──────────────────────────────────────────
 
     @on(TaskPanel.TaskCancelled)
     async def _on_task_cancelled(self, event: TaskPanel.TaskCancelled) -> None:
-        result = await self._backend.cancel_scheduled_task(event.task_id)
-        self._conversation.append_info(result.text)
-        await self._refresh_task_panel()
+        """See :func:`tui.scheduler_handlers.on_task_cancelled`."""
+        await scheduler_handlers.on_task_cancelled(self, event.task_id)
 
     @on(TaskPanel.PanelClosed)
     def _on_task_panel_closed(self, _event: TaskPanel.PanelClosed) -> None:
-        with contextlib.suppress(NoMatches):
-            self.query_one("#task-panel", TaskPanel).add_class("-hidden")
-        if hasattr(self, "_task_refresh_timer") and self._task_refresh_timer:
-            self._task_refresh_timer.stop()
-            self._task_refresh_timer = None
-        self.query_one("#user-input", PromptInput).focus()
+        """See :func:`tui.scheduler_handlers.on_task_panel_closed`."""
+        scheduler_handlers.on_task_panel_closed(self)
 
     # ── Scheduler ────────────────────────────────────────────────
 
     def _start_scheduler(self) -> None:
-        """Start the background scheduler via backend."""
-        self._scheduler_runner = self._backend.start_scheduler(
-            on_task_started=self._on_scheduled_task_started,
-            on_task_completed=self._on_scheduled_task_completed,
-        )
+        """See :func:`tui.scheduler_handlers.start_scheduler`."""
+        scheduler_handlers.start_scheduler(self)
 
     async def _execute_scheduled_task(self, description: str) -> str:
-        """Execute a scheduled task through the backend."""
-        try:
-            return await self._backend.execute_scheduled_task(description)
-        except Exception as exc:
-            return f"Error: {exc}"
+        """See :func:`tui.scheduler_handlers.execute_scheduled_task`."""
+        return await scheduler_handlers.execute_scheduled_task(self, description)
 
     def _on_scheduled_task_started(self, task_id: str, description: str) -> None:
-        short = description[:50] + ("..." if len(description) > 50 else "")
-        self._conversation.append_info(f"⚡ Running scheduled task `{task_id}`: {short}")
-        self.notify(f"Task {task_id} started: {short}", title="Scheduler", timeout=5)
-        asyncio.create_task(self._refresh_task_panel())
+        """See :func:`tui.scheduler_handlers.on_scheduled_task_started`."""
+        scheduler_handlers.on_scheduled_task_started(self, task_id, description)
 
     def _on_scheduled_task_completed(self, task_id: str, description: str, success: bool) -> None:
-        short = description[:50] + ("..." if len(description) > 50 else "")
-        if success:
-            self._conversation.append(
-                Static(
-                    f"[green]✓[/green] Task `{task_id}` completed: {short}"
-                    f"  [dim]→ /schedule show {task_id}[/dim]",
-                    classes="task-event",
-                )
-            )
-            self.notify(
-                f"Task {task_id} completed: {short}",
-                title="Scheduler",
-                severity="information",
-                timeout=8,
-            )
-        else:
-            self._conversation.append(
-                Static(
-                    f"[red]✗[/red] Task `{task_id}` failed: {short}"
-                    f"  [dim]→ /schedule show {task_id}[/dim]",
-                    classes="task-event",
-                )
-            )
-            self.notify(
-                f"Task {task_id} failed: {short}",
-                title="Scheduler",
-                severity="error",
-                timeout=10,
-            )
-        asyncio.create_task(self._refresh_task_panel())
+        """See :func:`tui.scheduler_handlers.on_scheduled_task_completed`."""
+        scheduler_handlers.on_scheduled_task_completed(self, task_id, description, success)
 
     async def _refresh_task_panel(self) -> None:
-        """Refresh the task panel with current tasks via backend."""
-        try:
-            tasks = await self._backend.get_scheduled_tasks(include_done=True)
-            panel = self.query_one("#task-panel", TaskPanel)
-            panel.refresh_tasks(tasks)
-        except Exception:
-            pass
+        """See :func:`tui.scheduler_handlers.refresh_task_panel`."""
+        await scheduler_handlers.refresh_task_panel(self)
 
     # ── Actions (Textual keybindings) ─────────────────────────────
 
     def action_clear_screen(self) -> None:
-        self._sessions.clear()
+        """See :func:`tui.keybinding_handlers.action_clear_screen`."""
+        keybinding_handlers.action_clear_screen(self)
 
     def action_toggle_expand_all(self) -> None:
-        container = self._conversation.container
-        widgets = container.query(MessageWidget)
-        long_widgets = [w for w in widgets if w.is_long]
-        if not long_widgets:
-            return
-        any_collapsed = any(not w.expanded for w in long_widgets)
-        for w in long_widgets:
-            w.set_expanded(any_collapsed)
+        """See :func:`tui.keybinding_handlers.action_toggle_expand_all`."""
+        keybinding_handlers.action_toggle_expand_all(self)
 
     def action_toggle_queue(self) -> None:
-        """Toggle queue panel visibility and focus."""
-        try:
-            panel = self.query_one("#queue-panel", QueuePanel)
-            if panel.has_class("-hidden") and self._controller.queue_size > 0:
-                panel.remove_class("-hidden")
-                panel.focus()
-            else:
-                panel.add_class("-hidden")
-                self.query_one("#user-input", PromptInput).focus()
-        except Exception:
-            pass
+        """See :func:`tui.keybinding_handlers.action_toggle_queue`."""
+        keybinding_handlers.action_toggle_queue(self)
 
     async def action_toggle_tasks(self) -> None:
-        """Toggle task panel visibility."""
-        try:
-            panel = self.query_one("#task-panel", TaskPanel)
-            if panel.has_class("-hidden"):
-                await self._refresh_task_panel()
-                panel.remove_class("-hidden")
-                panel.focus()
-                # Start auto-refresh while panel is open
-                if not hasattr(self, "_task_refresh_timer") or self._task_refresh_timer is None:
-                    self._task_refresh_timer = self.set_interval(1.0, self._auto_refresh_tasks)
-            else:
-                panel.add_class("-hidden")
-                if hasattr(self, "_task_refresh_timer") and self._task_refresh_timer:
-                    self._task_refresh_timer.stop()
-                    self._task_refresh_timer = None
-                self.query_one("#user-input", PromptInput).focus()
-        except Exception:
-            pass
+        """See :func:`tui.keybinding_handlers.action_toggle_tasks`."""
+        await keybinding_handlers.action_toggle_tasks(self)
 
     async def _auto_refresh_tasks(self) -> None:
-        """Periodic refresh of the task panel while it's visible."""
-        try:
-            panel = self.query_one("#task-panel", TaskPanel)
-            if panel.has_class("-hidden"):
-                if hasattr(self, "_task_refresh_timer") and self._task_refresh_timer:
-                    self._task_refresh_timer.stop()
-                    self._task_refresh_timer = None
-                return
-            await self._refresh_task_panel()
-        except Exception:
-            pass
+        """See :func:`tui.keybinding_handlers.auto_refresh_tasks`."""
+        await keybinding_handlers.auto_refresh_tasks(self)
 
     def action_toggle_verbose(self) -> None:
-        verbose = self._backend.toggle_verbose()
-        state = "on" if verbose else "off"
-        self._conversation.append_info(f"Verbose mode: {state}")
+        """See :func:`tui.keybinding_handlers.action_toggle_verbose`."""
+        keybinding_handlers.action_toggle_verbose(self)
 
     async def _check_for_update(self) -> None:
-        """Check for a newer CLI version via BE RPC."""
-        try:
-            result = await self._backend._rpc(RpcMethod.CHECK_FOR_UPDATE)
-            logger.debug("Update check result: %s", result)
-            if result and result.get("available"):
-                bar = self.query_one("#update-bar", UpdateBar)
-                bar.show_update(
-                    current=result.get("current_version", ""),
-                    latest=result.get("latest_version", ""),
-                    url=result.get("download_url", ""),
-                    pkg_name=result.get("pkg_name", ""),
-                )
-        except Exception as e:
-            logger.debug("Update check error: %s", e)
+        """See :func:`tui.lifecycle_handlers.check_for_update`."""
+        await lifecycle_handlers.check_for_update(self)
 
     # ── Tips ───────────────────────────────────────────────────────
 
@@ -2271,8 +1049,6 @@ class EmberApp(App):
     ]
 
     def _start_tip_rotation(self) -> None:
-        import random
-
         try:
             tip_bar = self.query_one("#tip-bar", TipBar)
             tip_bar.set_tip(random.choice(self._TIPS))
@@ -2281,8 +1057,6 @@ class EmberApp(App):
             pass
 
     def _rotate_tip(self) -> None:
-        import random
-
         try:
             tip_bar = self.query_one("#tip-bar", TipBar)
             tip_bar.set_tip(random.choice(self._TIPS))
@@ -2296,7 +1070,6 @@ class EmberApp(App):
         scheduled via ``call_later`` onto Textual's message pump.
         """
         if isinstance(message, pmsg.Typing) and message.client_id != "tui":
-            import random
 
             def _update_tip(text: str = message.text) -> None:
                 with contextlib.suppress(Exception):
@@ -2350,66 +1123,5 @@ class EmberApp(App):
         self.screen.refresh(layout=True, repaint=True)
 
     def action_cancel(self) -> None:
-        import os
-        import signal
-
-        # Close any open dialog/panel first
-        # Close visible task panel first (always mounted, toggled via -hidden)
-        try:
-            task_panel = self.query_one("#task-panel", TaskPanel)
-            if not task_panel.has_class("-hidden"):
-                task_panel.add_class("-hidden")
-                with contextlib.suppress(NoMatches):
-                    self.query_one("#user-input", PromptInput).focus()
-                return
-        except NoMatches:
-            pass
-
-        _DIALOG_TYPES = (
-            LoginWidget,
-            HelpPanelWidget,
-            ModelPickerWidget,
-            SessionPickerWidget,
-            MCPPanelWidget,
-            AgentsPanelWidget,
-            SkillsPanelWidget,
-            KnowledgePanelWidget,
-            CodeIndexPanelWidget,
-            HooksPanelWidget,
-            LoopPanelWidget,
-            PluginsPanelWidget,
-        )
-        for widget_cls in _DIALOG_TYPES:
-            try:
-                widget = self.query_one(widget_cls)
-                if isinstance(widget, LoginWidget):
-                    widget.cancel()
-                else:
-                    widget.remove()
-                with contextlib.suppress(NoMatches):
-                    self.query_one("#user-input", PromptInput).focus()
-                return
-            except NoMatches:
-                continue
-
-        # Kill running inline shell command first
-        if self._shell_proc is not None:
-            with contextlib.suppress(ProcessLookupError, OSError):
-                os.killpg(os.getpgid(self._shell_proc.pid), signal.SIGTERM)
-            with contextlib.suppress(ProcessLookupError, OSError):
-                self._shell_proc.kill()
-            self._shell_proc = None
-            return
-
-        # Exit command mode
-        if self._command_mode:
-            self._exit_command_mode()
-            return
-
-        # Exit shell mode
-        if self._shell_mode:
-            self._exit_shell_mode()
-            return
-
-        # Cancel AI run
-        self._controller.cancel()
+        """See :func:`tui.keybinding_handlers.action_cancel`."""
+        keybinding_handlers.action_cancel(self)

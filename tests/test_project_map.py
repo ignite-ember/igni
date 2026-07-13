@@ -35,6 +35,7 @@ from ember_code.core.code_index.project_map import (
     write_server_supplied_map,
 )
 from ember_code.core.config.settings import Settings
+from ember_code.core.session.core import Session
 
 COMMIT = "a" * 40
 
@@ -271,8 +272,6 @@ def _build_session_capture_prompt(
         # string so the only post-load_prompt mutation under test is the
         # Project Map injection.
         mocks["SkillPool"].return_value.describe.return_value = ""
-
-        from ember_code.core.session.core import Session
 
         settings = Settings()
         settings.storage.data_dir = str(data_dir)

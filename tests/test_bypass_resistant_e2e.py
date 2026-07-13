@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import pytest
 
+from ember_code.backend.command_handler import CommandHandler
 from ember_code.core.config.permission_eval import (
     PermissionDecision,
     PermissionEvaluator,
@@ -34,6 +35,7 @@ from ember_code.core.config.permission_eval import (
 )
 from ember_code.core.hooks.executor import HookExecutor
 from ember_code.core.hooks.tool_hook import ToolEventHook
+from ember_code.core.session.core import Session
 
 # ── Slash command → mode flip → evaluator denies ─────────────
 
@@ -46,8 +48,6 @@ class TestSlashBypassThenDenyRule:
     step 4)."""
 
     def _make_session(self, deny: list[str] | None = None):
-        from ember_code.core.session.core import Session
-
         session = Session.__new__(Session)
         session.permission_evaluator = PermissionEvaluator.from_strings(
             mode="default",
@@ -58,8 +58,6 @@ class TestSlashBypassThenDenyRule:
 
     @pytest.mark.asyncio
     async def test_bypass_then_deny_rule_still_blocks(self):
-        from ember_code.backend.command_handler import CommandHandler
-
         session = self._make_session(deny=["Bash(rm *)"])
         handler = CommandHandler(session)
 
@@ -83,8 +81,6 @@ class TestSlashBypassThenDenyRule:
     async def test_bypass_off_keeps_deny_blocking(self):
         # Round-trip: toggle bypass on, deny blocks; toggle off,
         # deny still blocks. The deny is mode-independent.
-        from ember_code.backend.command_handler import CommandHandler
-
         session = self._make_session(deny=["Bash(rm *)"])
         handler = CommandHandler(session)
 
@@ -105,8 +101,6 @@ class TestSlashBypassThenDenyRule:
         # everything that DOESN'T match a deny. Without this
         # assertion the test above could pass by trivially
         # denying everything.
-        from ember_code.backend.command_handler import CommandHandler
-
         session = self._make_session(deny=["Bash(rm *)"])
         handler = CommandHandler(session)
         await handler.handle("/bypass on")

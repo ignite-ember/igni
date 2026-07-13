@@ -18,11 +18,15 @@ across roots are resolved one step earlier, inside ``PluginLoader``.
 
 import logging
 import re
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from ember_code.core.tools.knowledge import KnowledgeTools
+from ember_code.core.tools.schedule import ScheduleTools
 from agno.agent import Agent
 from pydantic import BaseModel, Field
 
@@ -66,6 +70,15 @@ class AgentDefinition(BaseModel):
     mcp_servers: list[str] = Field(default_factory=list)
     max_turns: int | None = None
     temperature: float | None = None
+    # Per-agent output token cap. ``None`` = use provider default
+    # (usually 4-8k on MiniMax / OpenAI). Overriding is critical for
+    # agents whose whole response IS the payload — the visualizer
+    # ships a JSON spec via a tool call and easily blows past 8k on
+    # dashboards with rich state + chart data, showing up as
+    # mid-stream tool_call truncation ("JSON getting cut off"). A
+    # large ceiling here trades nothing on short replies (the model
+    # stops when it stops) but rescues the long ones.
+    max_tokens: int | None = None
     system_prompt: str = ""
     source_path: Path | None = None
     # Set by ``PluginLoader`` for agents loaded from plugin
@@ -166,6 +179,7 @@ def parse_agent_file(path: Path) -> AgentDefinition:
         mcp_servers=fm.get("mcp_servers", []) or [],
         max_turns=fm.get("max_turns"),
         temperature=fm.get("temperature"),
+        max_tokens=fm.get("max_tokens"),
         system_prompt=body,
         source_path=path,
     )
@@ -238,32 +252,44 @@ def _apply_plugin_restrictions(
 # ── Building ─────────────────────────────────────────────────────────
 
 
-def build_agent(
-    definition: AgentDefinition,
-    settings: Settings,
-    base_dir: str | None = None,
-    mcp_clients: dict[str, Any] | None = None,
-    knowledge_mgr: Any | None = None,
-    db: Any | None = None,
-    broadcast: Any | None = None,
-) -> Agent:
-    """Build an Agno Agent from an AgentDefinition.
+_BUILTIN_DEFAULT_MODEL = "MiniMax-M2.7"
 
-    This is the single place where an agent is constructed.  It gathers
-    everything the agent needs — model, tools, MCP tools, prompts,
-    reasoning config — and produces a ready-to-use ``Agent``.
-    """
-    # ── Model ──────────────────────────────────────────────────────
-    BUILTIN_DEFAULT = "MiniMax-M2.7"
+
+def _resolve_model(definition: AgentDefinition, settings: Settings) -> Any:
+    """Pick the model for ``definition`` and apply the two per-agent
+    overrides (``temperature`` / ``max_tokens``).
+
+    ``max_tokens`` overrides the provider's default output cap —
+    necessary for agents like ``visualizer`` whose whole reply IS
+    the payload."""
     agent_model = definition.model
-    if not agent_model or agent_model == BUILTIN_DEFAULT:
+    if not agent_model or agent_model == _BUILTIN_DEFAULT_MODEL:
         agent_model = settings.models.default
     model = ModelRegistry(settings).get_model(agent_model)
-
     if definition.temperature is not None:
         model.temperature = definition.temperature
+    if definition.max_tokens is not None:
+        model.max_tokens = definition.max_tokens
+    return model
 
-    # ── Tools ──────────────────────────────────────────────────────
+
+def _resolve_tools(
+    definition: AgentDefinition,
+    *,
+    base_dir: str | None,
+    mcp_clients: dict[str, Any] | None,
+    knowledge_mgr: Any | None,
+    broadcast: Any | None,
+) -> tuple[list[Any], dict[str, Any]]:
+    """Assemble the full tool list for ``definition`` — resolved
+    named tools + always-on ``ScheduleTools`` + optional
+    ``KnowledgeTools`` + filtered MCP clients.
+
+    Returns ``(tools, agent_mcp)`` where ``agent_mcp`` is the
+    subset of ``mcp_clients`` this agent will actually see. The
+    caller uses it to compose the MCP-hint instruction; keeping
+    the mapping out of the returned tools list would double-
+    compute the filter."""
     tools: list[Any] = []
     if definition.tools:
         permissions = ToolPermissions(project_dir=Path(base_dir) if base_dir else None)
@@ -278,23 +304,15 @@ def build_agent(
         )
         tools = registry.resolve(definition.tools)
 
-    # ── Schedule tools (shared across all agents) ───────────────
     if tools:
-        from ember_code.core.tools.schedule import ScheduleTools
-
         tools.append(ScheduleTools(project_dir=base_dir))
-
-    # ── Knowledge tools (shared across all agents) ────────────────
     if tools and knowledge_mgr is not None:
-        from ember_code.core.tools.knowledge import KnowledgeTools
-
         tools.append(KnowledgeTools(knowledge_mgr))
 
-    # ── MCP tools (user-configured servers) ─────────────────────
-    # If the agent specifies mcp_servers, only include those.
-    # If mcp_servers is empty, include all MCP tools (backward-compatible).
     agent_mcp: dict[str, Any] = {}
     if tools and mcp_clients:
+        # Empty ``mcp_servers`` means "include everything"
+        # (backward-compat); a populated list is a whitelist.
         if definition.mcp_servers:
             agent_mcp = {
                 name: client
@@ -303,12 +321,26 @@ def build_agent(
             }
         else:
             agent_mcp = mcp_clients
-
         for client in agent_mcp.values():
             if client not in tools:
                 tools.append(client)
 
-    # ── Instructions ────────────────────────────────────────────────
+    return tools, agent_mcp
+
+
+def _build_instructions(
+    definition: AgentDefinition,
+    *,
+    base_dir: str | None,
+    agent_mcp: dict[str, Any],
+) -> list[str]:
+    """Compose the instructions list: system prompt (if any),
+    the working-directory hint, and the MCP no-retry hint (when
+    the agent has MCP tools).
+
+    The MCP hint is critical: without it agents will retry an
+    empty MCP response with different arguments in a loop
+    instead of surfacing the empty response to the user."""
     instructions: list[str] = []
     if definition.system_prompt:
         instructions.append(definition.system_prompt)
@@ -322,8 +354,36 @@ def build_agent(
             f"If an MCP tool returns empty/no data, do NOT retry with different arguments. "
             f"Report what happened and ask the user."
         )
+    return instructions
 
-    # ── Construct ──────────────────────────────────────────────────
+
+def build_agent(
+    definition: AgentDefinition,
+    settings: Settings,
+    base_dir: str | None = None,
+    mcp_clients: dict[str, Any] | None = None,
+    knowledge_mgr: Any | None = None,
+    db: Any | None = None,
+    broadcast: Any | None = None,
+) -> Agent:
+    """Build an Agno Agent from an AgentDefinition.
+
+    This is the single place where an agent is constructed. Delegates
+    the three sub-problems to focused helpers: :func:`_resolve_model`,
+    :func:`_resolve_tools`, :func:`_build_instructions`.
+    """
+    model = _resolve_model(definition, settings)
+    tools, agent_mcp = _resolve_tools(
+        definition,
+        base_dir=base_dir,
+        mcp_clients=mcp_clients,
+        knowledge_mgr=knowledge_mgr,
+        broadcast=broadcast,
+    )
+    instructions = _build_instructions(
+        definition, base_dir=base_dir, agent_mcp=agent_mcp
+    )
+
     kwargs: dict[str, Any] = {
         "name": definition.name,
         "model": model,
@@ -760,8 +820,6 @@ class AgentPool:
         dest_dir = project_dir / ".ember" / "agents"
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest_path = dest_dir / defn.source_path.name
-
-        import shutil
 
         shutil.move(str(defn.source_path), str(dest_path))
 

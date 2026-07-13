@@ -115,7 +115,7 @@ class SessionManager:
                 # line frames it — "the agent didn't get to answer
                 # this; send a new message to pick up".
                 for p in pending:
-                    text = (p.get("content") or "").strip()
+                    text = p.content.strip()
                     if text:
                         self._conversation.append_user(text, expanded=True)
                 noun = "message" if len(pending) == 1 else "messages"

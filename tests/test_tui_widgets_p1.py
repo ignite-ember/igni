@@ -4,11 +4,20 @@ Covers: MCP panel, task panel, queue panel, help panel, autocomplete,
 message collapse/expand, diff rendering.
 """
 
+from datetime import datetime
+
+from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
+from ember_code.frontend.tui.input_handler import extract_at_mention, process_file_mentions
+from ember_code.frontend.tui.widgets._chrome import QueuePanel
+from ember_code.frontend.tui.widgets._dialogs import SessionInfo
+from ember_code.frontend.tui.widgets._help_panel import HELP_SECTIONS
+from ember_code.frontend.tui.widgets._mcp_panel import MCPServerInfo
 from ember_code.frontend.tui.widgets._messages import (
     MessageWidget,
     StreamingMessageWidget,
     ToolCallLiveWidget,
 )
+from ember_code.frontend.tui.widgets._tasks import TaskPanel
 
 
 class TestMessageWidgetExpandCollapse:
@@ -96,8 +105,6 @@ class TestMCPPanelWidget:
     """MCP panel widget rendering."""
 
     def test_server_info_model(self):
-        from ember_code.frontend.tui.widgets._mcp_panel import MCPServerInfo
-
         info = MCPServerInfo(
             name="test-server",
             connected=True,
@@ -109,8 +116,6 @@ class TestMCPPanelWidget:
         assert len(info.tool_names) == 2
 
     def test_server_info_defaults(self):
-        from ember_code.frontend.tui.widgets._mcp_panel import MCPServerInfo
-
         info = MCPServerInfo(name="s", connected=False)
         assert info.transport == "stdio"
         assert info.tool_names == []
@@ -122,19 +127,12 @@ class TestTaskPanelWidget:
     """Task panel widget."""
 
     def test_empty_tasks(self):
-        from ember_code.frontend.tui.widgets._tasks import TaskPanel
-
         panel = TaskPanel()
         panel._tasks = []
         visible = panel._visible_tasks
         assert visible == []
 
     def test_filter_active_only(self):
-        from datetime import datetime
-
-        from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
-        from ember_code.frontend.tui.widgets._tasks import TaskPanel
-
         panel = TaskPanel()
         panel._show_all = False
         panel._tasks = [
@@ -158,11 +156,6 @@ class TestTaskPanelWidget:
         assert visible[0].id == "1"
 
     def test_show_all(self):
-        from datetime import datetime
-
-        from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
-        from ember_code.frontend.tui.widgets._tasks import TaskPanel
-
         panel = TaskPanel()
         panel._show_all = True
         panel._tasks = [
@@ -189,39 +182,27 @@ class TestHelpPanelContent:
     """Help panel should have comprehensive content."""
 
     def test_help_sections_not_empty(self):
-        from ember_code.frontend.tui.widgets._help_panel import HELP_SECTIONS
-
         assert len(HELP_SECTIONS) > 0
 
     def test_help_sections_have_titles(self):
-        from ember_code.frontend.tui.widgets._help_panel import HELP_SECTIONS
-
         for section in HELP_SECTIONS:
             assert section.title
             assert section.summary
             assert section.details
 
     def test_help_covers_schedule(self):
-        from ember_code.frontend.tui.widgets._help_panel import HELP_SECTIONS
-
         titles = [s.title for s in HELP_SECTIONS]
         assert "Schedule" in titles
 
     def test_help_covers_mcp(self):
-        from ember_code.frontend.tui.widgets._help_panel import HELP_SECTIONS
-
         titles = [s.title for s in HELP_SECTIONS]
         assert "MCP Servers" in titles
 
     def test_help_covers_knowledge(self):
-        from ember_code.frontend.tui.widgets._help_panel import HELP_SECTIONS
-
         titles = [s.title for s in HELP_SECTIONS]
         assert "Knowledge" in titles
 
     def test_help_covers_memory(self):
-        from ember_code.frontend.tui.widgets._help_panel import HELP_SECTIONS
-
         titles = [s.title for s in HELP_SECTIONS]
         assert "Memory" in titles
 
@@ -230,8 +211,6 @@ class TestQueuePanelWidget:
     """Queue panel widget."""
 
     def test_queue_panel_instantiates(self):
-        from ember_code.frontend.tui.widgets._chrome import QueuePanel
-
         panel = QueuePanel()
         assert panel is not None
 
@@ -240,20 +219,14 @@ class TestSessionInfoModel:
     """Session info for picker."""
 
     def test_display_name_with_name(self):
-        from ember_code.frontend.tui.widgets._dialogs import SessionInfo
-
         info = SessionInfo(session_id="abc", name="My Session")
         assert info.display_name == "My Session"
 
     def test_display_name_fallback(self):
-        from ember_code.frontend.tui.widgets._dialogs import SessionInfo
-
         info = SessionInfo(session_id="abc123")
         assert info.display_name == "abc123"
 
     def test_display_time_unknown(self):
-        from ember_code.frontend.tui.widgets._dialogs import SessionInfo
-
         info = SessionInfo(session_id="abc")
         assert info.display_time == "unknown"
 
@@ -262,22 +235,48 @@ class TestInputAutocomplete:
     """Input handling and @file mentions."""
 
     def test_extract_at_mention_basic(self):
-        from ember_code.frontend.tui.input_handler import extract_at_mention
-
         # extract_at_mention(cursor_row, cursor_col, get_line)
         result = extract_at_mention(0, 8, lambda r: "hello @sr")
         # Should extract "sr" as the query after @
         assert result is not None or result is None  # API may vary
 
     def test_extract_at_mention_email_ignored(self):
-        from ember_code.frontend.tui.input_handler import extract_at_mention
-
         result = extract_at_mention(0, 15, lambda r: "user@domain.com")
         assert result is None
 
     def test_process_file_mentions(self):
-        from ember_code.frontend.tui.input_handler import process_file_mentions
-
         text, files = process_file_mentions("check @src/main.py")
         assert isinstance(text, str)
         assert isinstance(files, list)
+
+
+class TestSessionInfoCanonicalLocation:
+    """Post-iter-19 the ``SessionInfo`` schema lives in its own
+    module ``_session_info.py`` (Pattern 7 — schema separate from
+    UI). ``_dialogs.py`` re-exports it so existing callers stay
+    green. These tests pin both the canonical location and the
+    re-export identity (same class object, not a duplicate)."""
+
+    def test_canonical_import_path(self):
+        from ember_code.frontend.tui.widgets._session_info import SessionInfo
+
+        info = SessionInfo(session_id="canonical")
+        assert info.display_name == "canonical"
+
+    def test_dialogs_reexport_is_same_object(self):
+        # If ``_dialogs`` re-imported and re-declared instead of
+        # re-exporting, the identity check would fail — and any
+        # ``isinstance(x, SessionInfo)`` check downstream would
+        # silently break for the "wrong" copy. Keep this locked.
+        from ember_code.frontend.tui.widgets._dialogs import SessionInfo as From_Dialogs
+        from ember_code.frontend.tui.widgets._session_info import SessionInfo as Canonical
+
+        assert From_Dialogs is Canonical
+
+    def test_package_export_is_same_object(self):
+        # ``widgets/__init__.py`` also re-exports; that path was
+        # updated to point at ``_session_info`` directly.
+        from ember_code.frontend.tui.widgets import SessionInfo as From_Package
+        from ember_code.frontend.tui.widgets._session_info import SessionInfo as Canonical
+
+        assert From_Package is Canonical

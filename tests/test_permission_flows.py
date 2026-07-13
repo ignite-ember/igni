@@ -5,12 +5,16 @@ allow once/always/similar/deny, rule persistence, CLI flag overrides,
 and the protocol-based HITL flow.
 """
 
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from ember_code.backend.server import BackendServer
+from ember_code.core.config.settings import Settings
 from ember_code.core.config.tool_permissions import ToolPermissions
+from ember_code.protocol.messages import Error
 
 # ── Permission check levels ──────────────────────────────────────
 
@@ -53,8 +57,6 @@ class TestPermissionPersistence:
         settings_path = tmp_path / ".ember" / "settings.local.json"
         assert settings_path.exists()
 
-        import json
-
         data = json.loads(settings_path.read_text())
         assert "Bash(git push)" in data["permissions"]["allow"]
 
@@ -72,8 +74,6 @@ class TestPermissionPersistence:
         perms = ToolPermissions(project_dir=tmp_path)
         perms.save_rule("Bash(rm:*)", "deny")
 
-        import json
-
         data = json.loads((tmp_path / ".ember" / "settings.local.json").read_text())
         assert "Bash(rm:*)" in data["permissions"]["deny"]
 
@@ -83,8 +83,6 @@ class TestPermissionPersistence:
         perms = ToolPermissions(project_dir=tmp_path)
         perms.save_rule("Bash(git push)", "deny")
         perms.save_rule("Bash(git push)", "allow")
-
-        import json
 
         data = json.loads((tmp_path / ".ember" / "settings.local.json").read_text())
         assert "Bash(git push)" in data["permissions"]["allow"]
@@ -111,8 +109,6 @@ class TestCLIPermissionFlags:
 
     def test_auto_approve_sets_all_allow(self):
         """--auto-approve should set all permissions to allow."""
-        from ember_code.core.config.settings import Settings
-
         settings = Settings()
         # Simulate --auto-approve
         settings.permissions.file_write = "allow"
@@ -125,8 +121,6 @@ class TestCLIPermissionFlags:
 
     def test_read_only_blocks_writes(self):
         """--read-only should deny file writes and shell execution."""
-        from ember_code.core.config.settings import Settings
-
         settings = Settings()
         settings.permissions.file_write = "deny"
         settings.permissions.shell_execute = "deny"
@@ -136,8 +130,6 @@ class TestCLIPermissionFlags:
 
     def test_accept_edits_allows_writes_asks_shell(self):
         """--accept-edits should allow file writes but ask for shell."""
-        from ember_code.core.config.settings import Settings
-
         settings = Settings()
         settings.permissions.file_write = "allow"
         settings.permissions.shell_execute = "ask"
@@ -147,8 +139,6 @@ class TestCLIPermissionFlags:
 
     def test_strict_denies_all(self):
         """--strict should deny everything."""
-        from ember_code.core.config.settings import Settings
-
         settings = Settings()
         settings.permissions.file_write = "deny"
         settings.permissions.shell_execute = "deny"
@@ -167,22 +157,16 @@ class TestGitPermissions:
 
     def test_git_push_requires_confirmation(self):
         """git push should be in require_confirmation."""
-        from ember_code.core.config.settings import Settings
-
         settings = Settings()
         assert any("git push" in cmd for cmd in settings.safety.require_confirmation)
 
     def test_git_force_push_requires_confirmation(self):
         """git push --force should be in require_confirmation."""
-        from ember_code.core.config.settings import Settings
-
         settings = Settings()
         assert any("force" in cmd for cmd in settings.safety.require_confirmation)
 
     def test_destructive_commands_blocked(self):
         """rm -rf / and fork bombs should be in blocked_commands."""
-        from ember_code.core.config.settings import Settings
-
         settings = Settings()
         assert any("rm -rf" in cmd for cmd in settings.safety.blocked_commands)
 
@@ -196,8 +180,6 @@ class TestBackendHITLResolution:
     @pytest.mark.asyncio
     async def test_resolve_confirm_calls_requirement(self):
         """Backend resolves a confirmed HITL requirement."""
-        from ember_code.backend.server import BackendServer
-
         with patch("ember_code.backend.server.BackendServer.__init__", return_value=None):
             server = BackendServer.__new__(BackendServer)
             server._session = MagicMock()
@@ -227,8 +209,6 @@ class TestBackendHITLResolution:
     @pytest.mark.asyncio
     async def test_resolve_reject_calls_requirement(self):
         """Backend resolves a rejected HITL requirement."""
-        from ember_code.backend.server import BackendServer
-
         with patch("ember_code.backend.server.BackendServer.__init__", return_value=None):
             server = BackendServer.__new__(BackendServer)
             server._session = MagicMock()
@@ -253,9 +233,6 @@ class TestBackendHITLResolution:
     @pytest.mark.asyncio
     async def test_resolve_unknown_requirement_returns_error(self):
         """Backend returns error for unknown requirement ID."""
-        from ember_code.backend.server import BackendServer
-        from ember_code.protocol.messages import Error
-
         with patch("ember_code.backend.server.BackendServer.__init__", return_value=None):
             server = BackendServer.__new__(BackendServer)
             server._session = MagicMock()

@@ -7,10 +7,12 @@ configurable. Each task has a timeout to prevent runaway executions.
 
 import asyncio
 import logging
+import uuid
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from ember_code.core.scheduler.models import TaskStatus
+from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
+from ember_code.core.scheduler.parser import next_occurrence_from_recurrence
 from ember_code.core.scheduler.store import TaskStore
 
 logger = logging.getLogger(__name__)
@@ -150,11 +152,6 @@ class SchedulerRunner:
 
     async def _reschedule_if_recurring(self, task_id: str) -> None:
         """If the task has a recurrence pattern, create the next occurrence."""
-        import uuid
-
-        from ember_code.core.scheduler.models import ScheduledTask
-        from ember_code.core.scheduler.parser import next_occurrence_from_recurrence
-
         task = await self._store.get(task_id)
         if not task or not task.recurrence:
             return

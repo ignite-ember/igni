@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from ember_code.core.mcp.client import MCPClientManager
+from ember_code.core.mcp.config import MCPPolicy
 
 
 class TestMCPClientManager:
@@ -17,8 +18,6 @@ class TestMCPClientManager:
             MockLoader.return_value.load.return_value = configs or {}
             # Auto-approve everything in existing tests
             MockApproval.return_value.check_approval.return_value = True
-            from ember_code.core.mcp.config import MCPPolicy
-
             mock_from.return_value = MCPPolicy()
             return MCPClientManager(project_dir="/tmp/test")
 
@@ -132,7 +131,11 @@ class TestMCPClientManager:
         config.env = {}
 
         mgr = self._make_manager({"broken": config})
-        with patch("agno.tools.mcp.MCPTools", side_effect=ImportError("no mcp")):
+        # Post-refactor the client imports MCPTools at module top with a
+        # try/except ImportError guard (mirrors the ``pwd`` pattern in
+        # ``frontend/tui/app.py``). Simulate the missing-dep case by
+        # patching the module-local name to None.
+        with patch("ember_code.core.mcp.client.MCPTools", None):
             result = await mgr.connect("broken")
             assert result is None
             assert "not installed" in mgr.get_error("broken").lower()

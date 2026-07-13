@@ -1,7 +1,10 @@
 """Tests for auth/credentials.py — credential storage and JWT handling."""
 
+import base64
 import json
 import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from ember_code.core.auth.credentials import (
     CloudCredentials,
@@ -17,8 +20,6 @@ from ember_code.core.auth.credentials import (
 
 def _make_jwt(payload: dict) -> str:
     """Create a fake JWT with the given payload (no signature verification)."""
-    import base64
-
     header = base64.urlsafe_b64encode(b'{"alg":"HS256"}').rstrip(b"=").decode()
     body = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
     sig = base64.urlsafe_b64encode(b"fakesig").rstrip(b"=").decode()
@@ -27,8 +28,6 @@ def _make_jwt(payload: dict) -> str:
 
 class TestCredentialsPath:
     def test_default_path(self):
-        from pathlib import Path
-
         path = _credentials_path()
         assert path == Path.home() / ".ember" / "credentials.json"
 
@@ -37,8 +36,6 @@ class TestCredentialsPath:
         assert path == tmp_path / "creds.json"
 
     def test_expands_tilde(self):
-        from pathlib import Path
-
         path = _credentials_path("~/.ember/credentials.json")
         assert str(Path.home()) in str(path)
 
@@ -88,8 +85,6 @@ class TestClearCredentials:
 
 class TestTokenExpiry:
     def test_not_expired(self, tmp_path):
-        from datetime import datetime, timedelta, timezone
-
         future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
         creds = Credentials(
             access_token="tok",
@@ -99,8 +94,6 @@ class TestTokenExpiry:
         assert not is_token_expired(creds)
 
     def test_expired(self):
-        from datetime import datetime, timedelta, timezone
-
         past = (datetime.now(timezone.utc) - timedelta(seconds=100)).isoformat()
         creds = Credentials(
             access_token="tok",

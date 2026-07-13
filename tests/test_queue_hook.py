@@ -5,6 +5,10 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from agno.agent import Agent
+from agno.models.openai.like import OpenAILike
+from agno.run.agent import RunOutput
+from agno.utils.hooks import filter_hook_args
 
 from ember_code.core.queue_hook import (
     USER_NOTE_HEADER,
@@ -207,8 +211,6 @@ class TestAgnoIntegration:
 
     def test_persister_invoked_with_real_filter_hook_args(self):
         """``filter_hook_args`` must hand our persister a usable run_output."""
-        from agno.utils.hooks import filter_hook_args
-
         injector, persister = create_queue_hook([])
         # Mirror exactly what aexecute_post_hooks builds in Agno's _hooks.py.
         all_args = {
@@ -229,8 +231,6 @@ class TestAgnoIntegration:
 
     def test_appends_to_real_runoutput(self):
         """The real Agno RunOutput accepts our Message append unchanged."""
-        from agno.run.agent import RunOutput
-
         injector, persister = create_queue_hook([])
         injector._injected_this_run = ["real-runoutput note"]
 
@@ -250,8 +250,6 @@ class TestAgnoIntegration:
 
     def test_message_passes_session_skip_roles_filter(self):
         """User messages survive ``skip_roles=['system','tool']`` filtering."""
-        from agno.run.agent import RunOutput
-
         injector, persister = create_queue_hook([])
         injector._injected_this_run = ["should appear in /sessions"]
 
@@ -288,9 +286,6 @@ class TestRealAgnoRun:
             pytest.skip(
                 "EMBER_TEST_LLM_API_KEY not set (add it to .env or export it to run live tests)"
             )
-
-        from agno.agent import Agent
-        from agno.models.openai.like import OpenAILike
 
         queued_text = "PINEAPPLE-MARKER-9821"
         queue = [queued_text]

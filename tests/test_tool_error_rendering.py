@@ -19,6 +19,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from agno.run.agent import ToolCallCompletedEvent
+
+from ember_code.frontend.tui.run_controller import RunController
 from ember_code.frontend.tui.widgets._messages import ToolCallLiveWidget
 from ember_code.protocol.serializer import serialize_event
 
@@ -30,8 +33,6 @@ class TestSerializerDetectsToolError:
 
     def _make_event_with_result(self, result: str):
         """Build a minimal Agno ToolCompletedEvent-shaped mock."""
-        from agno.run.agent import ToolCallCompletedEvent
-
         ev = ToolCallCompletedEvent.__new__(ToolCallCompletedEvent)
         tool = MagicMock()
         tool.tool_name = "edit_file"
@@ -135,8 +136,6 @@ class TestSerializerDetectsToolError:
         ``_result_is_error``. End result: green ✓ on a failed edit,
         which is exactly the lying-UI bug we set out to kill. Pinning
         the fix here so it can't regress."""
-        from agno.run.agent import ToolCallCompletedEvent
-
         ev = ToolCallCompletedEvent.__new__(ToolCallCompletedEvent)
         tool = MagicMock()
         tool.tool_name = "edit_file"
@@ -232,9 +231,6 @@ class TestRunControllerToolError:
         """A running ToolCallLiveWidget that gets a ToolError should
         end up with ``_is_error=True`` and a ✗ in its rendered output.
         """
-        from ember_code.frontend.tui.run_controller import RunController
-        from ember_code.frontend.tui.widgets._messages import ToolCallLiveWidget
-
         widget = ToolCallLiveWidget("edit_file", "x.py", status="running")
 
         # ``_mount_target`` is a property that reads from

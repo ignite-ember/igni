@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ember_code.core.tools import orchestrate as orch_mod
 from ember_code.core.tools.orchestrate import OrchestrateTools, _finalize_worktree
 
 # ── Shared fixtures (mirrored from test_orchestrate.py) ──────
@@ -268,8 +269,6 @@ class TestSpawnAgentIsolation:
         # AFTER spawn_agent has rebound base_dirs. To exercise the
         # preserved-worktree path, write through the rebased tool
         # by hooking _run_agent_streaming.
-        from ember_code.core.tools import orchestrate as orch_mod
-
         async def _fake_run_agent_streaming(agent, *_a, **_kw):
             # Use the agent's (already-rebound) writer tool.
             writer = next(t for t in agent.tools if hasattr(t, "write"))
@@ -300,8 +299,6 @@ class TestSpawnAgentIsolation:
         knows where to operate even for tools that lack
         ``base_dir`` rebinding."""
         _init_git_repo(tmp_path)
-        from ember_code.core.tools import orchestrate as orch_mod
-
         captured: dict = {}
 
         async def _capturing_run(_agent, task, *_a, **_kw):
@@ -335,8 +332,6 @@ class TestSpawnAgentIsolation:
 
         # Keep a ref to the agent so we can inspect post-spawn.
         agents_seen: list = []
-
-        from ember_code.core.tools import orchestrate as orch_mod
 
         async def _capture_agent(agent, *_a, **_kw):
             agents_seen.append(agent)

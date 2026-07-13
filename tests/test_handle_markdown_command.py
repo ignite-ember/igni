@@ -67,7 +67,7 @@ class TestDiscoveryFailure:
         # registry, not bail.
         handler = _make_handler(tmp_path)
         with patch(
-            "ember_code.core.utils.markdown_commands.discover_markdown_commands",
+            "ember_code.backend.command_handler.discover_markdown_commands",
             side_effect=RuntimeError("oops"),
         ):
             result = await handler._handle_markdown_command("/foo", "")
@@ -80,7 +80,7 @@ class TestUnknownName:
         # No commands defined → lookup misses → fall through.
         handler = _make_handler(tmp_path)
         with patch(
-            "ember_code.core.utils.markdown_commands.discover_markdown_commands",
+            "ember_code.backend.command_handler.discover_markdown_commands",
             return_value={},
         ):
             result = await handler._handle_markdown_command("/unknown", "")
@@ -97,7 +97,7 @@ class TestSuccessfulRender:
         md = MagicMock()
         md.render = AsyncMock(return_value="rendered prompt body")
         with patch(
-            "ember_code.core.utils.markdown_commands.discover_markdown_commands",
+            "ember_code.backend.command_handler.discover_markdown_commands",
             return_value={"deploy": md},
         ):
             result = await handler._handle_markdown_command("/deploy", "to staging")
@@ -116,7 +116,7 @@ class TestSuccessfulRender:
         md = MagicMock()
         md.render = AsyncMock(return_value="ok")
         with patch(
-            "ember_code.core.utils.markdown_commands.discover_markdown_commands",
+            "ember_code.backend.command_handler.discover_markdown_commands",
             return_value={"deploy": md},
         ):
             await handler._handle_markdown_command("/deploy", "to staging")
@@ -135,7 +135,7 @@ class TestRenderFailure:
         md = MagicMock()
         md.render = AsyncMock(side_effect=ValueError("template bad"))
         with patch(
-            "ember_code.core.utils.markdown_commands.discover_markdown_commands",
+            "ember_code.backend.command_handler.discover_markdown_commands",
             return_value={"deploy": md},
         ):
             result = await handler._handle_markdown_command("/deploy", "")
@@ -156,7 +156,7 @@ class TestCrossToolSupport:
         handler = _make_handler(tmp_path)
         handler._session.settings.rules.cross_tool_support = True
         with patch(
-            "ember_code.core.utils.markdown_commands.discover_markdown_commands",
+            "ember_code.backend.command_handler.discover_markdown_commands",
             return_value={},
         ) as discover:
             await handler._handle_markdown_command("/foo", "")
@@ -167,7 +167,7 @@ class TestCrossToolSupport:
         handler = _make_handler(tmp_path)
         handler._session.settings.rules.cross_tool_support = False
         with patch(
-            "ember_code.core.utils.markdown_commands.discover_markdown_commands",
+            "ember_code.backend.command_handler.discover_markdown_commands",
             return_value={},
         ) as discover:
             await handler._handle_markdown_command("/foo", "")

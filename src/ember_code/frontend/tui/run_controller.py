@@ -7,10 +7,12 @@ message queue). Zero Agno imports.
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 from textual.widgets import Static
 
+from ember_code.core.auth.credentials import CloudCredentials
 from ember_code.frontend.tui.widgets import (
     AgentActivityWidget,
     AgentRunContainer,
@@ -21,6 +23,8 @@ from ember_code.frontend.tui.widgets import (
     ToolCallLiveWidget,
 )
 from ember_code.frontend.tui.widgets._constants import AUTO_SCROLL_THRESHOLD
+from ember_code.protocol import messages as msg
+from ember_code.protocol.agno_events import _build_diff_table
 
 if TYPE_CHECKING:
     from ember_code.frontend.tui.app import EmberApp
@@ -97,9 +101,7 @@ class RunController:
         # Forward to BE so its queue hook sees it
         backend = getattr(self._app, "backend", None) if self._app else None
         if backend and hasattr(backend, "_transport"):
-            from ember_code.protocol import messages as pmsg
-
-            asyncio.ensure_future(backend._transport.send(pmsg.QueueMessage(text=message)))
+            asyncio.ensure_future(backend._transport.send(msg.QueueMessage(text=message)))
         return len(self._queue)
 
     def dequeue_at(self, index: int) -> str | None:
@@ -114,8 +116,6 @@ class RunController:
 
     def _has_usable_model(self) -> bool:
         """Check if there's at least one model with valid credentials."""
-        from ember_code.core.auth.credentials import CloudCredentials
-
         settings = self._app.settings
         cloud_token = CloudCredentials(settings.auth.credentials_file).access_token
         for cfg in settings.models.registry.values():
@@ -256,11 +256,9 @@ class RunController:
         backend = self._app.backend
 
         # ── Stream from backend ──
-        import time as _time
-
         _llm_log = logging.getLogger("ember_code.llm_calls")
         _llm_log.info("RUN START | msg_len=%d", len(message))
-        _run_t0 = _time.monotonic()
+        _run_t0 = time.monotonic()
         _chunk_count = 0
         _content_count = 0
         _last_chunk_time = _run_t0
@@ -269,7 +267,7 @@ class RunController:
             backend = self._app.backend
             async for proto in backend.run_message(message):
                 _chunk_count += 1
-                _now = _time.monotonic()
+                _now = time.monotonic()
                 _gap = _now - _last_chunk_time
                 _last_chunk_time = _now
 
@@ -284,21 +282,19 @@ class RunController:
                     )
 
                 # Handle errors/info from backend
-                from ember_code.protocol import messages as pmsg
-
-                if isinstance(proto, pmsg.Error):
+                if isinstance(proto, msg.Error):
                     self._conversation.append_error(proto.text)
                     continue
-                if isinstance(proto, pmsg.Info):
+                if isinstance(proto, msg.Info):
                     self._conversation.append_info(proto.text)
                     continue
-                if isinstance(proto, pmsg.RunPaused):
+                if isinstance(proto, msg.RunPaused):
                     await self._handle_hitl_pause(proto, backend, _llm_log)
                     continue
 
                 await self._render(proto)
 
-            _elapsed = _time.monotonic() - _run_t0
+            _elapsed = time.monotonic() - _run_t0
             _llm_log.info(
                 "RUN DONE | chunks=%d | elapsed=%.1fs",
                 _chunk_count,
@@ -472,225 +468,46 @@ class RunController:
     # ── Render protocol messages ─────────────────────────────────
 
     async def _render(self, proto: Any) -> None:
-        """Render a protocol message to TUI widgets.
+        """See :func:`tui.run_renderer.render`."""
+        from ember_code.frontend.tui.run_renderer import render
 
-        This method has ZERO Agno imports — it only reads plain
-        protocol message fields (str, int, bool).
-        """
-        from ember_code.protocol import messages as msg
-
-        if isinstance(proto, msg.ContentDelta):
-            if proto.is_thinking:
-                await self._append_thinking(proto.text)
-            else:
-                await self._on_content_chunk(proto.text)
-                self._streamed = True
-                self._run_output_text.append(proto.text)
-
-        elif isinstance(proto, msg.ToolStarted):
-            await self._on_tool_started(
-                proto.friendly_name, proto.tool_name, proto.args_summary, proto.run_id or None
-            )
-
-        elif isinstance(proto, msg.ToolCompleted):
-            self._status.update_status_bar()
-            self._on_tool_completed(
-                proto.summary,
-                proto.full_result,
-                proto.run_id or None,
-                proto.has_markup,
-                proto.diff_rows,
-                proto.is_error,
-            )
-
-        elif isinstance(proto, msg.ToolError):
-            self._on_tool_error(proto.error)
-
-        elif isinstance(proto, msg.ModelCompleted):
-            self._on_tokens(
-                proto.input_tokens,
-                proto.output_tokens,
-                proto.run_id or None,
-                proto.parent_run_id or None,
-            )
-            if self._streamed and not self._ui_finalized:
-                self._ui_finalized = True
-                self._finalize_spinner()
-                self._status.end_run()
-                self._status.update_context_usage()
-            elif self._spinner:
-                # Mid-run iteration finished. The next model call hasn't
-                # started yet — flip the label back to "Thinking" so the
-                # idle counter in the activity widget resets and the user
-                # sees a fresh signal rather than a stale "Streaming".
-                self._spinner.set_label("Thinking")
-
-        elif isinstance(proto, msg.RunStarted):
-            await self._on_agent_started(
-                proto.agent_name, proto.run_id, proto.parent_run_id or None, proto.model
-            )
-
-        elif isinstance(proto, msg.RunCompleted):
-            if proto.run_id:
-                self._on_agent_completed(proto.run_id, proto.parent_run_id or None)
-
-        elif isinstance(proto, msg.StreamingDone):
-            # Agent's content stream is over — user POV says "done"
-            # even though Agno's post-stream tail (compression,
-            # memory, final persistence) is still running. Mark the
-            # controller as not-processing so ``process_message``
-            # accepts the next user input immediately; the BE
-            # serialises the actual ``team.arun`` calls behind its
-            # own lock, so a follow-up submit just waits silently
-            # there until the tail finishes — the user sees the
-            # normal "Thinking" UI rather than a stale queue panel.
-            self._processing = False
-            self._sync_queue_panel()
-
-        elif isinstance(proto, msg.RunError):
-            await self._on_run_error(proto.error)
-
-        elif isinstance(proto, msg.ReasoningStarted):
-            if self._spinner:
-                self._spinner.set_label("Reasoning")
-
-        elif isinstance(proto, msg.TaskCreated):
-            await self._ensure_task_progress()
-            self._task_progress.on_task_created(
-                task_id=proto.task_id,
-                title=proto.title,
-                assignee=proto.assignee or None,
-                status=proto.status,
-            )
-            self._auto_scroll()
-
-        elif isinstance(proto, msg.TaskUpdated):
-            await self._ensure_task_progress()
-            self._task_progress.on_task_updated(
-                task_id=proto.task_id,
-                status=proto.status,
-                assignee=proto.assignee or None,
-            )
-            self._auto_scroll()
-
-        elif isinstance(proto, msg.TaskIteration):
-            await self._ensure_task_progress()
-            self._task_progress.on_iteration(proto.iteration, proto.max_iterations)
-            if self._spinner:
-                self._spinner.set_label(f"Iteration {proto.iteration}")
-            self._auto_scroll()
-
-        elif isinstance(proto, msg.TaskStateUpdated):
-            await self._ensure_task_progress()
-            if proto.tasks:
-                self._task_progress.on_task_state_updated(proto.tasks)
-                self._auto_scroll()
-
-        else:
-            logger.debug("Unhandled protocol message: %s", type(proto).__name__)
+        await render(self, proto)
 
     # ── Content ───────────────────────────────────────────────────
 
     async def _on_content_chunk(self, chunk: str) -> None:
-        """Route streamed content to thinking (dimmed) or response widget.
+        """See :func:`tui.run_renderer.on_content_chunk`."""
+        from ember_code.frontend.tui.run_renderer import on_content_chunk
 
-        Models wrap thinking in ``<think>...</think>`` tags within the
-        content stream.  We detect the tags and split accordingly.
-        """
-        # Check for <think> open tag
-        if not self._in_thinking and "<think>" in chunk:
-            self._in_thinking = True
-            self._model_uses_think_tags = True
-            chunk = chunk.split("<think>", 1)[1]
-            if not chunk:
-                return
-
-        # Check for </think> close tag — handles both:
-        # 1. Normal: <think>..content..</think> (in_thinking=True)
-        # 2. Post-tool: content..</think> (model resumes thinking without open tag)
-        if "</think>" in chunk:
-            before, after = chunk.split("</think>", 1)
-            if before:
-                await self._append_thinking(before)
-            self._in_thinking = False
-            if self._thinking_widget is not None:
-                self._thinking_widget.finalize()
-                self._thinking_widget = None
-            after = after.lstrip("\n")
-            if after:
-                await self._append_content(after)
-            return
-
-        if self._in_thinking:
-            await self._append_thinking(chunk)
-        else:
-            await self._append_content(chunk)
+        await on_content_chunk(self, chunk)
 
     async def _append_thinking(self, text: str) -> None:
-        """Stream thinking text in dimmed style."""
-        if self._thinking_widget is None:
-            if self._spinner:
-                self._spinner.set_label("Thinking")
-            self._thinking_widget = StreamingMessageWidget(css_class="thinking")
-            await self._mount_target.mount(self._thinking_widget)
-        self._thinking_widget.append_chunk(text)
-        self._auto_scroll()
+        """See :func:`tui.run_renderer.append_thinking`."""
+        from ember_code.frontend.tui.run_renderer import append_thinking
+
+        await append_thinking(self, text)
 
     async def _append_content(self, text: str) -> None:
-        """Stream response content in normal style."""
-        if self._stream_widget is None:
-            if self._spinner:
-                self._spinner.set_label("Streaming")
-            self._stream_widget = StreamingMessageWidget()
-            await self._mount_target.mount(self._stream_widget)
-        self._stream_widget.append_chunk(text)
-        self._auto_scroll()
+        """See :func:`tui.run_renderer.append_content`."""
+        from ember_code.frontend.tui.run_renderer import append_content
+
+        await append_content(self, text)
 
     # ── Tool calls ────────────────────────────────────────────────
 
     async def _on_tool_started(
         self, friendly: str, raw_name: str, args_summary: str, run_id: str | None
     ) -> None:
-        # Finalize streaming/thinking widgets so tool appears after text
-        if self._stream_widget is not None:
-            self._stream_widget.finalize()
-            self._stream_widget = None
-        if self._thinking_widget is not None:
-            self._thinking_widget.finalize()
-            self._thinking_widget = None
-        self._in_thinking = False
+        """See :func:`tui.run_renderer.on_tool_started`."""
+        from ember_code.frontend.tui.run_renderer import on_tool_started
 
-        if self._spinner:
-            self._spinner.set_label(f"Running {friendly}")
-            if run_id and isinstance(self._spinner, AgentActivityWidget):
-                self._spinner.on_agent_tool_started(run_id, friendly)
-
-        preview_lines = self._app.settings.display.tool_result_preview_lines
-        widget = ToolCallLiveWidget(
-            friendly,
-            args_summary,
-            status="running",
-            preview_lines=preview_lines,
-        )
-        await self._mount_target.mount(widget)
-        self._auto_scroll()
-
-        # Wire live progress for orchestrate tools (spawn_agent/spawn_team)
-        if raw_name in ("spawn_agent", "spawn_team"):
-            self._wire_orchestrate_progress(widget)
+        await on_tool_started(self, friendly, raw_name, args_summary, run_id)
 
     def _wire_orchestrate_progress(self, widget: ToolCallLiveWidget) -> None:
-        """Set up live progress updates for orchestrate tool calls."""
+        """See :func:`tui.run_renderer.wire_orchestrate_progress`."""
+        from ember_code.frontend.tui.run_renderer import wire_orchestrate_progress
 
-        def _progress(line: str, w: ToolCallLiveWidget = widget) -> None:
-            # Schedule on Textual's message queue to ensure render
-            if self._app:
-                self._app.call_later(w.update_progress, line)
-                self._app.call_later(self._auto_scroll)
-            else:
-                w.update_progress(line)
-
-        self._app.backend.wire_orchestrate_progress(_progress)
+        wire_orchestrate_progress(self, widget)
 
     def _on_tool_completed(
         self,
@@ -701,122 +518,50 @@ class RunController:
         diff_rows: Any = None,
         is_error: bool = False,
     ) -> None:
-        # Rebuild Rich diff tables from serializable rows if provided
-        diff_table = None
-        if diff_rows and isinstance(diff_rows, (list, tuple)):
-            from ember_code.protocol.agno_events import _build_diff_table
+        """See :func:`tui.run_renderer.on_tool_completed`."""
+        from ember_code.frontend.tui.run_renderer import on_tool_completed
 
-            collapsed_table = _build_diff_table(diff_rows, max_rows=4)
-            expanded_table = _build_diff_table(diff_rows)
-            diff_table = (collapsed_table, expanded_table)
-
-        try:
-            for w in reversed(list(self._mount_target.query(ToolCallLiveWidget))):
-                if w.is_running():
-                    # Flip the widget into the error display *before*
-                    # ``mark_done`` rerenders so the header swaps from
-                    # the running ⏳ glyph straight to ✗ instead of
-                    # flashing ✓ first.
-                    if is_error:
-                        w.mark_error(summary)
-                    w.mark_done(summary, full_result, has_markup=has_markup, diff_table=diff_table)
-                    break
-        except Exception as exc:
-            logger.debug("Failed to mark tool completed in widget: %s", exc)
-
-        if self._spinner:
-            self._spinner.set_label("Thinking")
-            if run_id and isinstance(self._spinner, AgentActivityWidget):
-                self._spinner.on_agent_tool_completed(run_id)
-
-        # After a tool call, models that use <think> tags typically resume
-        # thinking without an opening tag (only emitting </think> to close).
-        # Pre-enter thinking mode only if we've seen <think> tags before.
-        if self._model_uses_think_tags:
-            self._in_thinking = True
+        on_tool_completed(self, summary, full_result, run_id, has_markup, diff_rows, is_error)
 
     def _on_tool_error(self, error: str) -> None:
-        # Agno raised a tool-side exception. Same pattern as
-        # ``_on_tool_completed`` with ``is_error=True`` — mark_error
-        # *before* mark_done so the widget flips to ✗ instead of
-        # rendering ✓ with red error text underneath (the v0.5.11
-        # green-check-on-failure class of bug).
-        summary = f"Error: {error[:60]}"
-        try:
-            for w in reversed(list(self._mount_target.query(ToolCallLiveWidget))):
-                if w.is_running():
-                    w.mark_error(summary)
-                    w.mark_done(summary)
-                    break
-        except Exception as exc:
-            logger.debug("Failed to mark tool error in widget: %s", exc)
-        if self._spinner:
-            self._spinner.set_label("Thinking")
+        """See :func:`tui.run_renderer.on_tool_error`."""
+        from ember_code.frontend.tui.run_renderer import on_tool_error
+
+        on_tool_error(self, error)
 
     # ── Tokens ────────────────────────────────────────────────────
 
     def _on_tokens(
         self, input_t: int, output_t: int, run_id: str | None, parent_run_id: str | None
     ) -> None:
-        """Forward per-model-call tokens to the in-flight spinner only.
+        """See :func:`tui.run_renderer.on_tokens`."""
+        from ember_code.frontend.tui.run_renderer import on_tokens
 
-        The status bar's context-fill indicator and the auto-compaction
-        trigger both read from the backend's locally-counted total —
-        not from API-reported ``input_tokens``, which inflates with
-        ``cache_read_input_tokens`` on prompt-caching providers.
-        """
-        if self._spinner and isinstance(self._spinner, AgentActivityWidget):
-            if run_id:
-                self._spinner.on_agent_tokens(run_id, input_t, output_t)
-            self._spinner.set_tokens(input_t + output_t)
+        on_tokens(self, input_t, output_t, run_id, parent_run_id)
 
     # ── Agent lifecycle ───────────────────────────────────────────
 
     async def _on_agent_started(
         self, name: str, run_id: str, parent_run_id: str | None, model: str
     ) -> None:
-        if self._spinner and isinstance(self._spinner, AgentActivityWidget):
-            self._spinner.on_agent_started(name, run_id, parent_run_id, model)
+        """See :func:`tui.run_renderer.on_agent_started`."""
+        from ember_code.frontend.tui.run_renderer import on_agent_started
 
-        # Skip duplicate run_id (e.g. from acontinue_run after HITL)
-        if run_id in self._seen_run_ids:
-            return
-        self._seen_run_ids.add(run_id)
-
-        # Create agent container — sub-agents get indented
-        is_sub = parent_run_id is not None and len(self._agent_stack) > 0
-        container = AgentRunContainer(
-            agent_name=name,
-            run_id=run_id,
-            model=model,
-            is_sub_agent=is_sub,
-        )
-        # Mount into parent agent's body or the conversation root
-        target = self._mount_target
-        await target.mount(container)
-        self._agent_stack.append((container, run_id))
-        self._auto_scroll()
+        await on_agent_started(self, name, run_id, parent_run_id, model)
 
     def _on_agent_completed(self, run_id: str, parent_run_id: str | None) -> None:
-        if self._spinner and isinstance(self._spinner, AgentActivityWidget):
-            self._spinner.on_agent_completed(run_id)
+        """See :func:`tui.run_renderer.on_agent_completed`."""
+        from ember_code.frontend.tui.run_renderer import on_agent_completed
 
-        # Pop the agent from the stack
-        if self._agent_stack and self._agent_stack[-1][1] == run_id:
-            self._agent_stack.pop()
-
-        # Finalize streaming widget
-        if self._stream_widget is not None:
-            self._stream_widget.finalize()
-            self._stream_widget = None
+        on_agent_completed(self, run_id, parent_run_id)
 
     # ── Run error ─────────────────────────────────────────────────
 
     async def _on_run_error(self, error: str) -> None:
-        await self._mount_target.mount(
-            Static(f"[red]Error: {error[:120]}[/red]", classes="run-error")
-        )
-        self._auto_scroll()
+        """See :func:`tui.run_renderer.on_run_error`."""
+        from ember_code.frontend.tui.run_renderer import on_run_error
+
+        await on_run_error(self, error)
 
     # ── HITL ──────────────────────────────────────────────────────
 
@@ -835,8 +580,6 @@ class RunController:
         decision and shipping a single ``resolve_hitl_batch`` lets
         Agno see the full set.
         """
-        from ember_code.protocol import messages as pmsg
-
         _llm_log.info("HITL PAUSE: %d requirements", len(proto.requirements))
         if self._stream_widget is not None:
             self._stream_widget.finalize()
@@ -878,7 +621,7 @@ class RunController:
 
         async for cont_proto in backend.resolve_hitl_batch(decisions):
             # Recursive — continuation may yield another pause
-            if isinstance(cont_proto, pmsg.RunPaused):
+            if isinstance(cont_proto, msg.RunPaused):
                 await self._handle_hitl_pause(cont_proto, backend, _llm_log)
             else:
                 await self._render(cont_proto)

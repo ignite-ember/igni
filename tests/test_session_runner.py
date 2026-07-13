@@ -1,8 +1,11 @@
 """Tests for session/runner.py — single-message session execution."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from ember_code.core.session.runner import run_single_message
 
 
 class TestRunSingleMessage:
@@ -19,8 +22,6 @@ class TestRunSingleMessage:
             mock_session.hook_executor.execute = AsyncMock()
             mock_session.handle_message = AsyncMock(return_value="Hello!")
             MockSession.return_value = mock_session
-
-            from ember_code.core.session.runner import run_single_message
 
             settings = MagicMock()
             await run_single_message(settings, "Hi there")
@@ -42,8 +43,6 @@ class TestRunSingleMessage:
             mock_session.handle_message = AsyncMock(return_value="ok")
             MockSession.return_value = mock_session
 
-            from ember_code.core.session.runner import run_single_message
-
             await run_single_message(MagicMock(), "test")
 
             calls = mock_session.hook_executor.execute.call_args_list
@@ -64,10 +63,6 @@ class TestRunSingleMessage:
             mock_session.hook_executor.execute = AsyncMock()
             mock_session.handle_message = AsyncMock(return_value="ok")
             MockSession.return_value = mock_session
-
-            from pathlib import Path
-
-            from ember_code.core.session.runner import run_single_message
 
             await run_single_message(
                 MagicMock(),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import socket
 from pathlib import Path
 
 import pytest
@@ -92,8 +93,6 @@ class TestIsPortReachable:
         assert is_port_reachable(0, timeout=0.1) is False
 
     def test_live_port_reachable(self) -> None:
-        import socket
-
         srv = socket.socket()
         srv.bind(("127.0.0.1", 0))
         srv.listen(1)
@@ -130,8 +129,6 @@ class TestDiscover:
         assert not lock.path.exists()
 
     def test_version_mismatch_keeps_lockfile_and_signals(self, tmp_path: Path) -> None:
-        import socket
-
         srv = socket.socket()
         srv.bind(("127.0.0.1", 0))
         srv.listen(1)
@@ -151,8 +148,6 @@ class TestDiscover:
             srv.close()
 
     def test_healthy_lock_returns_payload(self, tmp_path: Path) -> None:
-        import socket
-
         srv = socket.socket()
         srv.bind(("127.0.0.1", 0))
         srv.listen(1)
