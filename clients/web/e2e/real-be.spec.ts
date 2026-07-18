@@ -58,6 +58,21 @@ const test = base.extend<Fixtures>({
       path.join(os.tmpdir(), "ember-real-be-"),
     );
 
+    // Copy the repo's local config into the fixture's tmpdir so the
+    // BE's registry lookup finds the project's default model
+    // (``MiniMax-M2.7``). Without this, the BE's default-agent
+    // build hits ``ValueError: Unknown model 'MiniMax-M2.7'`` and
+    // never reaches the ready line. Best-effort: a missing source
+    // file (e.g. CI without local config) leaves the BE in its
+    // pre-fix state — same failure, just earlier in the stack.
+    const localConfig = path.join(REPO_ROOT, ".ember", "config.local.yaml");
+    try {
+      await fs.mkdir(path.join(projectDir, ".ember"), { recursive: true });
+      await fs.copyFile(localConfig, path.join(projectDir, ".ember", "config.local.yaml"));
+    } catch (err) {
+      console.warn(`realBe fixture: could not copy ${localConfig}: ${err}`);
+    }
+
     const proc: ChildProcessWithoutNullStreams = spawn(
       VENV_PYTHON,
       [

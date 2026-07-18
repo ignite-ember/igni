@@ -20,6 +20,7 @@ from ember_code.backend.server import BackendServer
 from ember_code.core.code_index.fetcher import PreflightStatus
 from ember_code.core.code_index.manifest import ManifestState
 from ember_code.core.code_index.resolver import DiscoveryStatus, ResolvedRepository
+from ember_code.core.code_index.sync.schemas import SyncProgressSnapshot
 from ember_code.core.code_index.sync_manager import SyncResult
 
 
@@ -45,6 +46,9 @@ def _stub_sync(
     current_sha: str = "abc1234",
 ) -> MagicMock:
     sync = MagicMock()
+    # Keep the private-attr shape too so tests that mutate them
+    # after construction (see ``test_apply_progress_takes_precedence_over_stale_preflight``)
+    # still stitch a fresh snapshot from the updated values.
     sync._applying = applying
     sync._apply_done = apply_done
     sync._apply_total = apply_total
@@ -61,6 +65,18 @@ def _stub_sync(
     # Empty activity list so the typed ``CodeIndexStatus`` doesn't
     # try to coerce a MagicMock into ``last_sync_at: str``.
     sync.recent_activity.return_value = []
+    # The controller reads live progress via
+    # ``sync.progress_snapshot()`` — build the snapshot lazily
+    # so tests that mutate ``_last_sync_result`` post-construction
+    # see the updated value.
+    sync.progress_snapshot.side_effect = lambda: SyncProgressSnapshot(
+        in_progress_sha=sync._in_progress_sha,
+        applying=sync._applying,
+        apply_done=sync._apply_done,
+        apply_total=sync._apply_total,
+        apply_step=sync._apply_step,
+        last_sync_result=sync._last_sync_result,
+    )
     return sync
 
 

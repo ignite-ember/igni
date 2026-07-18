@@ -5,19 +5,27 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from ember_code.backend.command_handler import CommandHandler
+from ember_code.core.evals.assertion_runner import ToolArgDriver
 from ember_code.core.evals.assertions import check_file_assertion, check_unexpected_tool_calls
 from ember_code.core.evals.loader import EvalCase, EvalSuite, load_eval_file
 from ember_code.core.evals.reporter import format_results
 from ember_code.core.evals.runner import (
     CaseResult,
+    CaseRunner,
     SuiteResult,
+    SuiteRunner,
     ToolTraceEntry,
-    _check_tool_arg_assertions,
-    run_eval_case,
 )
-from ember_code.core.session.commands import dispatch
+from ember_code.core.session.commands import InteractiveCommandDispatcher
+
+
+async def dispatch(session, command):
+    """Test shim so existing tests keep their call shape."""
+    return await InteractiveCommandDispatcher(session).dispatch(command)
+
 
 # ── Loader tests ──────────────────────────────────────────────
 
@@ -290,7 +298,7 @@ class TestRunEvalCase:
         response.content = "Done"
         agent.arun = AsyncMock(return_value=response)
 
-        result = await run_eval_case(case, agent, judge_model=None)
+        result = await CaseRunner(case, agent, judge_model=None).run()
         assert result.passed is True
         assert result.error is None
         assert result.elapsed > 0
@@ -302,7 +310,7 @@ class TestRunEvalCase:
         agent = MagicMock()
         agent.arun = AsyncMock(side_effect=RuntimeError("boom"))
 
-        result = await run_eval_case(case, agent, judge_model=None)
+        result = await CaseRunner(case, agent, judge_model=None).run()
         assert result.passed is False
         assert "boom" in result.error
 
@@ -325,7 +333,7 @@ class TestRunEvalCase:
         response.tools = [tool]
         agent.arun = AsyncMock(return_value=response)
 
-        result = await run_eval_case(case, agent, judge_model=None)
+        result = await CaseRunner(case, agent, judge_model=None).run()
         assert result.passed is False
         assert result.unexpected_passed is False
 
@@ -350,10 +358,10 @@ class TestRunEvalCase:
         response.messages = []
         agent.arun = AsyncMock(return_value=response)
 
-        result = await run_eval_case(case, agent, judge_model=None)
+        result = await CaseRunner(case, agent, judge_model=None).run()
         assert result.passed is True
         assert len(result.file_results) == 2
-        assert all(p for _, p, _ in result.file_results)
+        assert all(r.passed for r in result.file_results)
 
 
 # ── Reporter tests ─────────────────────────────────────────────
@@ -410,12 +418,9 @@ class TestEvalsCommand:
         session.settings = MagicMock()
         session.project_dir = Path("/tmp/fake")
 
-        with (
-            patch.object(
-                SuiteResult, "run_all", new_callable=AsyncMock, return_value=[]
-            ) as mock_run,
-            patch("ember_code.core.session.commands.print_info"),
-        ):
+        with patch.object(
+            SuiteRunner, "run_all", new_callable=AsyncMock, return_value=[]
+        ) as mock_run:
             result = await dispatch(session, "/evals")
             assert result is True
             mock_run.assert_called_once()
@@ -427,12 +432,9 @@ class TestEvalsCommand:
         session.settings = MagicMock()
         session.project_dir = Path("/tmp/fake")
 
-        with (
-            patch.object(
-                SuiteResult, "run_all", new_callable=AsyncMock, return_value=[]
-            ) as mock_run,
-            patch("ember_code.core.session.commands.print_info"),
-        ):
+        with patch.object(
+            SuiteRunner, "run_all", new_callable=AsyncMock, return_value=[]
+        ) as mock_run:
             await dispatch(session, "/evals editor")
             mock_run.assert_called_once_with(
                 pool=session.pool,
@@ -442,13 +444,13 @@ class TestEvalsCommand:
             )
 
     def test_evals_registered(self):
-        assert "/evals" in CommandHandler._COMMANDS
+        assert "evals" in CommandHandler.builtin_names()
 
 
 class TestToolTraceEntry:
     """Post-refactor ``CaseResult.tool_trace`` holds
     :class:`ToolTraceEntry` (Pydantic) instead of raw ``dict``.
-    Locks in the model shape and the ``_check_tool_arg_assertions``
+    Locks in the model shape and the :class:`ToolArgDriver.check`
     contract that now consumes it."""
 
     def test_defaults(self):
@@ -461,7 +463,7 @@ class TestToolTraceEntry:
     def test_extra_fields_rejected(self):
         # ``extra="forbid"`` — a stray field means Agno's schema
         # drifted and we want it to fail loud, not silently ignored.
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ToolTraceEntry(name="x", unknown_field="value")  # type: ignore[call-arg]
 
     def test_dump_matches_legacy_dict_shape(self):
@@ -489,40 +491,38 @@ class TestToolTraceEntry:
             ToolTraceEntry(name="spawn_team", args={"mode": "coordinate"}),
             ToolTraceEntry(name="save_file", args={"path": "/tmp/x"}),
         ]
-        passed, detail = _check_tool_arg_assertions(
+        check = ToolArgDriver.check(
             trace,
             [{"tool": "spawn_team", "args_must_contain": {"mode": "coordinate"}}],
         )
-        assert passed is True
-        assert "all tool-arg assertions matched" in detail
+        assert check.ok is True
+        assert "all tool-arg assertions matched" in check.detail
 
     def test_check_tool_arg_assertion_reports_missing(self):
         # No matching call → clear failure message.
         trace = [ToolTraceEntry(name="save_file", args={"path": "/tmp/x"})]
-        passed, detail = _check_tool_arg_assertions(
+        check = ToolArgDriver.check(
             trace,
             [{"tool": "spawn_team", "args_must_contain": {"mode": "coordinate"}}],
         )
-        assert passed is False
-        assert "missing tool-arg matches" in detail
-        assert "spawn_team" in detail
+        assert check.ok is False
+        assert "missing tool-arg matches" in check.detail
+        assert "spawn_team" in check.detail
 
     def test_check_tool_arg_assertion_skips_missing_tool_field(self):
         # Malformed assertion (no ``tool`` key) is silently skipped —
         # matches the pre-refactor behaviour where such rows never
         # matched anything.
         trace = [ToolTraceEntry(name="save_file", args={})]
-        passed, detail = _check_tool_arg_assertions(
-            trace, [{"args_must_contain": {"x": 1}}]
-        )
-        assert passed is True
+        check = ToolArgDriver.check(trace, [{"args_must_contain": {"x": 1}}])
+        assert check.ok is True
 
     def test_check_tool_arg_assertion_handles_none_args(self):
         # ``args=None`` (no args captured) must not crash the check.
         trace = [ToolTraceEntry(name="save_file", args=None)]
-        passed, detail = _check_tool_arg_assertions(
+        check = ToolArgDriver.check(
             trace, [{"tool": "save_file", "args_must_contain": {"path": "/x"}}]
         )
         # Should be a clean failure ("no match"), not an exception.
-        assert passed is False
-        assert "save_file" in detail
+        assert check.ok is False
+        assert "save_file" in check.detail

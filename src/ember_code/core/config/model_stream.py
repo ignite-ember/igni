@@ -51,7 +51,7 @@ class _ToolCallFragment(BaseModel):
     args_fragment: str | None = None
 
     @classmethod
-    def from_provider(cls, tc: Any) -> "_ToolCallFragment":
+    def from_provider(cls, tc: Any) -> _ToolCallFragment:
         """Accept either an SDK model object or a dict — Agno
         providers vary in what they hand back."""
         if hasattr(tc, "function"):
@@ -174,8 +174,7 @@ def _emit_tool_arg_deltas(source):
     store = _ToolCallAccumulatorStore()
     for chunk in source:
         yield chunk
-        for ev in _emit_tool_arg_delta_events(chunk, store):
-            yield ev
+        yield from _emit_tool_arg_delta_events(chunk, store)
 
 
 async def _aemit_tool_arg_deltas(source):

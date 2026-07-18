@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 
 from ember_code.backend import server as server_mod
 from ember_code.backend.server import BackendServer
-from ember_code.core.config.settings import _platform_managed_settings_path
+from ember_code.core.config.managed_policy import ManagedPolicySource
 from ember_code.core.plugins import state as state_mod
 from ember_code.core.plugins.loader import PluginLoader, _platform_managed_plugins_root
 from ember_code.core.plugins.models import (
@@ -30,6 +30,12 @@ from ember_code.core.plugins.models import (
     PluginManifest,
     PluginSource,
 )
+
+# Alias for the deleted ``settings._platform_managed_settings_path``
+# shim — kept as a local name so the assertion site below reads
+# naturally after the OOP-refactor moved the discovery onto
+# :class:`ManagedPolicySource`.
+_platform_managed_settings_path = ManagedPolicySource.platform_path
 
 
 def _make_plugin(root: Path, name: str, version: str = "0.1.0") -> None:

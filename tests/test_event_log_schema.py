@@ -10,6 +10,7 @@ than silently drifting the shape.
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from ember_code.core.session.event_log_schema import SessionEvent
 
@@ -52,7 +53,7 @@ class TestValidation:
     def test_extra_field_rejected(self):
         # ``extra="forbid"`` — a stray field means producer drift
         # and should fail loud.
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             SessionEvent(
                 seq=1,
                 type="x",
@@ -61,11 +62,11 @@ class TestValidation:
             )
 
     def test_seq_must_be_positive(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             SessionEvent(seq=0, type="x", payload={})
 
     def test_type_required(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             SessionEvent(seq=1, payload={})  # type: ignore[call-arg]
 
     def test_payload_defaults_to_empty_dict(self):

@@ -54,7 +54,7 @@ test("orphan process surfaces after BE restart", async ({ page, liveWsUrl }) => 
   // (which doesn't exist anyway — sleep produces no stdout).
   await page.locator(".watcher-row").first().click();
   await expect(page.locator(".watcher-log")).toContainText(
-    /stdout unavailable/i,
+    /no buffered output/i,
     { timeout: 5_000 },
   );
 

@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import ValidationError
 
 from ember_code.backend.command_handler import CommandHandler
 from ember_code.core.utils.markdown_commands import (
@@ -226,7 +227,7 @@ class TestMarkdownCommandModel:
         cmd = MarkdownCommand(name="x", path=tmp_path / "x.md", body="body")
         # Mutating a frozen BaseModel raises a ValidationError in v2;
         # we only care that assignment fails somehow.
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             cmd.name = "y"  # type: ignore[misc]
 
     def test_defaults(self, tmp_path):

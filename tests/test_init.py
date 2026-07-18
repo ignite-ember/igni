@@ -7,12 +7,13 @@ from unittest.mock import patch
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
-import ember_code.core.init as init_mod
 from ember_code.core.init import (
     BUILT_IN_HOOKS,
     BuiltInHookSpec,
     HookDefinition,
+    ProjectInitializer,
     initialize_project,
 )
 
@@ -197,8 +198,6 @@ class TestHomeModelMigration:
 
 class TestAgentCopy:
     def test_copies_builtin_agents(self, tmp_path):
-        original = init_mod.PACKAGE_DIR
-
         fake_root = tmp_path / "fake_root"
         fake_root.mkdir()
         agents_dir = fake_root / "bundled_agents"
@@ -206,47 +205,35 @@ class TestAgentCopy:
         (agents_dir / "editor.md").write_text("editor content")
         (agents_dir / "docs.md").write_text("docs content")
 
-        init_mod.PACKAGE_DIR = fake_root
-        try:
-            project = tmp_path / "project"
-            project.mkdir()
-            with _patch_home(tmp_path):
-                initialize_project(project)
+        project = tmp_path / "project"
+        project.mkdir()
+        with _patch_home(tmp_path):
+            ProjectInitializer.initialize(project, package_dir=fake_root)
 
-            copied = project / ".ember" / "agents"
-            assert (copied / "editor.md").exists()
-            assert (copied / "docs.md").exists()
-            assert (copied / "editor.md").read_text() == "editor content"
-        finally:
-            init_mod.PACKAGE_DIR = original
+        copied = project / ".ember" / "agents"
+        assert (copied / "editor.md").exists()
+        assert (copied / "docs.md").exists()
+        assert (copied / "editor.md").read_text() == "editor content"
 
     def test_does_not_overwrite_existing_agents(self, tmp_path):
-        original = init_mod.PACKAGE_DIR
-
         fake_root = tmp_path / "fake_root"
         (fake_root / "bundled_agents").mkdir(parents=True)
         (fake_root / "bundled_agents" / "editor.md").write_text("builtin version")
         (fake_root / "bundled_skills").mkdir()
 
-        init_mod.PACKAGE_DIR = fake_root
-        try:
-            project = tmp_path / "project"
-            project.mkdir()
-            agents_dir = project / ".ember" / "agents"
-            agents_dir.mkdir(parents=True)
-            (agents_dir / "editor.md").write_text("user version")
+        project = tmp_path / "project"
+        project.mkdir()
+        agents_dir = project / ".ember" / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "editor.md").write_text("user version")
 
-            with _patch_home(tmp_path):
-                initialize_project(project)
-            assert (agents_dir / "editor.md").read_text() == "user version"
-        finally:
-            init_mod.PACKAGE_DIR = original
+        with _patch_home(tmp_path):
+            ProjectInitializer.initialize(project, package_dir=fake_root)
+        assert (agents_dir / "editor.md").read_text() == "user version"
 
 
 class TestSkillCopy:
     def test_copies_builtin_skills(self, tmp_path):
-        original = init_mod.PACKAGE_DIR
-
         fake_root = tmp_path / "fake_root"
         (fake_root / "bundled_agents").mkdir(parents=True)
         skills_dir = fake_root / "bundled_skills"
@@ -255,38 +242,28 @@ class TestSkillCopy:
         (skills_dir / "simplify").mkdir(parents=True)
         (skills_dir / "simplify" / "SKILL.md").write_text("simplify skill")
 
-        init_mod.PACKAGE_DIR = fake_root
-        try:
-            project = tmp_path / "project"
-            project.mkdir()
-            with _patch_home(tmp_path):
-                initialize_project(project)
+        project = tmp_path / "project"
+        project.mkdir()
+        with _patch_home(tmp_path):
+            ProjectInitializer.initialize(project, package_dir=fake_root)
 
-            copied = project / ".ember" / "skills"
-            assert (copied / "commit" / "SKILL.md").exists()
-            assert (copied / "simplify" / "SKILL.md").exists()
-            assert (copied / "commit" / "SKILL.md").read_text() == "commit skill"
-        finally:
-            init_mod.PACKAGE_DIR = original
+        copied = project / ".ember" / "skills"
+        assert (copied / "commit" / "SKILL.md").exists()
+        assert (copied / "simplify" / "SKILL.md").exists()
+        assert (copied / "commit" / "SKILL.md").read_text() == "commit skill"
 
     def test_ignores_non_skill_directories(self, tmp_path):
-        original = init_mod.PACKAGE_DIR
-
         fake_root = tmp_path / "fake_root"
         (fake_root / "bundled_agents").mkdir(parents=True)
         skills_dir = fake_root / "bundled_skills"
         (skills_dir / "broken").mkdir(parents=True)
         (skills_dir / "broken" / "README.md").write_text("not a skill")
 
-        init_mod.PACKAGE_DIR = fake_root
-        try:
-            project = tmp_path / "project"
-            project.mkdir()
-            with _patch_home(tmp_path):
-                initialize_project(project)
-            assert not (project / ".ember" / "skills" / "broken").exists()
-        finally:
-            init_mod.PACKAGE_DIR = original
+        project = tmp_path / "project"
+        project.mkdir()
+        with _patch_home(tmp_path):
+            ProjectInitializer.initialize(project, package_dir=fake_root)
+        assert not (project / ".ember" / "skills" / "broken").exists()
 
 
 class TestHookProvisioning:
@@ -347,119 +324,92 @@ class TestChecksumUpdate:
         (fake_root / "bundled_agents").mkdir(parents=True)
         (fake_root / "bundled_agents" / "editor.md").write_text(agent_content)
         (fake_root / "bundled_skills").mkdir()
-        return fake_root, init_mod
+        return fake_root
 
     def test_untouched_file_gets_updated(self, tmp_path):
         """Package updated + user didn't modify → overwrite."""
-        fake_root, init_mod = self._setup_fake_root(tmp_path, "v1 content")
-        original = init_mod.PACKAGE_DIR
-        init_mod.PACKAGE_DIR = fake_root
-        try:
-            project = tmp_path / "project"
-            project.mkdir()
+        fake_root = self._setup_fake_root(tmp_path, "v1 content")
+        project = tmp_path / "project"
+        project.mkdir()
 
-            # First init — copies v1
-            with _patch_home(tmp_path):
-                initialize_project(project)
-            assert (project / ".ember" / "agents" / "editor.md").read_text() == "v1 content"
+        # First init — copies v1
+        with _patch_home(tmp_path):
+            ProjectInitializer.initialize(project, package_dir=fake_root)
+        assert (project / ".ember" / "agents" / "editor.md").read_text() == "v1 content"
 
-            # Simulate package update — change the source file
-            (fake_root / "bundled_agents" / "editor.md").write_text("v2 content")
+        # Simulate package update — change the source file
+        (fake_root / "bundled_agents" / "editor.md").write_text("v2 content")
 
-            # Second run — should overwrite since user didn't modify
-            with _patch_home(tmp_path):
-                initialize_project(project)
-            assert (project / ".ember" / "agents" / "editor.md").read_text() == "v2 content"
-        finally:
-            init_mod.PACKAGE_DIR = original
+        # Second run — should overwrite since user didn't modify
+        with _patch_home(tmp_path):
+            ProjectInitializer.initialize(project, package_dir=fake_root)
+        assert (project / ".ember" / "agents" / "editor.md").read_text() == "v2 content"
 
     def test_user_modified_file_kept_with_new(self, tmp_path):
         """Package updated + user modified → keep user version, write .new file."""
-        fake_root, init_mod = self._setup_fake_root(tmp_path, "v1 content")
-        original = init_mod.PACKAGE_DIR
-        init_mod.PACKAGE_DIR = fake_root
-        try:
-            project = tmp_path / "project"
-            project.mkdir()
+        fake_root = self._setup_fake_root(tmp_path, "v1 content")
+        project = tmp_path / "project"
+        project.mkdir()
 
-            # First init
-            with _patch_home(tmp_path):
-                initialize_project(project)
+        # First init
+        with _patch_home(tmp_path):
+            ProjectInitializer.initialize(project, package_dir=fake_root)
 
-            # User modifies the file
-            (project / ".ember" / "agents" / "editor.md").write_text("my custom agent")
+        # User modifies the file
+        (project / ".ember" / "agents" / "editor.md").write_text("my custom agent")
 
-            # Package updates
-            (fake_root / "bundled_agents" / "editor.md").write_text("v2 content")
+        # Package updates
+        (fake_root / "bundled_agents" / "editor.md").write_text("v2 content")
 
-            # Second run — should keep user version and write .new
-            with _patch_home(tmp_path):
-                initialize_project(project)
-            assert (project / ".ember" / "agents" / "editor.md").read_text() == "my custom agent"
-            assert (project / ".ember" / "agents" / "editor.md.new").read_text() == "v2 content"
-        finally:
-            init_mod.PACKAGE_DIR = original
+        # Second run — should keep user version and write .new
+        with _patch_home(tmp_path):
+            ProjectInitializer.initialize(project, package_dir=fake_root)
+        assert (project / ".ember" / "agents" / "editor.md").read_text() == "my custom agent"
+        assert (project / ".ember" / "agents" / "editor.md.new").read_text() == "v2 content"
 
     def test_new_package_file_copied(self, tmp_path):
         """New file in package → copied to project."""
-        fake_root, init_mod = self._setup_fake_root(tmp_path, "editor v1")
-        original = init_mod.PACKAGE_DIR
-        init_mod.PACKAGE_DIR = fake_root
-        try:
-            project = tmp_path / "project"
-            project.mkdir()
+        fake_root = self._setup_fake_root(tmp_path, "editor v1")
+        project = tmp_path / "project"
+        project.mkdir()
 
-            # First init
-            with _patch_home(tmp_path):
-                initialize_project(project)
+        # First init
+        with _patch_home(tmp_path):
+            ProjectInitializer.initialize(project, package_dir=fake_root)
 
-            # Add new agent to package
-            (fake_root / "bundled_agents" / "new-agent.md").write_text("new agent content")
+        # Add new agent to package
+        (fake_root / "bundled_agents" / "new-agent.md").write_text("new agent content")
 
-            # Second run — should copy the new file
-            with _patch_home(tmp_path):
-                initialize_project(project)
-            assert (
-                project / ".ember" / "agents" / "new-agent.md"
-            ).read_text() == "new agent content"
-        finally:
-            init_mod.PACKAGE_DIR = original
+        # Second run — should copy the new file
+        with _patch_home(tmp_path):
+            ProjectInitializer.initialize(project, package_dir=fake_root)
+        assert (project / ".ember" / "agents" / "new-agent.md").read_text() == "new agent content"
 
     def test_user_custom_files_not_deleted(self, tmp_path):
         """User's custom agents not in package → never touched."""
-        fake_root, init_mod = self._setup_fake_root(tmp_path, "editor v1")
-        original = init_mod.PACKAGE_DIR
-        init_mod.PACKAGE_DIR = fake_root
-        try:
-            project = tmp_path / "project"
-            project.mkdir()
+        fake_root = self._setup_fake_root(tmp_path, "editor v1")
+        project = tmp_path / "project"
+        project.mkdir()
 
-            with _patch_home(tmp_path):
-                initialize_project(project)
+        with _patch_home(tmp_path):
+            ProjectInitializer.initialize(project, package_dir=fake_root)
 
-            # User creates their own custom agent
-            (project / ".ember" / "agents" / "my-custom.md").write_text("custom agent")
+        # User creates their own custom agent
+        (project / ".ember" / "agents" / "my-custom.md").write_text("custom agent")
 
-            # Second run — custom file should survive
-            with _patch_home(tmp_path):
-                initialize_project(project)
-            assert (project / ".ember" / "agents" / "my-custom.md").read_text() == "custom agent"
-        finally:
-            init_mod.PACKAGE_DIR = original
+        # Second run — custom file should survive
+        with _patch_home(tmp_path):
+            ProjectInitializer.initialize(project, package_dir=fake_root)
+        assert (project / ".ember" / "agents" / "my-custom.md").read_text() == "custom agent"
 
     def test_checksums_file_created(self, tmp_path):
         """Checksums file is created after init."""
-        fake_root, init_mod = self._setup_fake_root(tmp_path, "content")
-        original = init_mod.PACKAGE_DIR
-        init_mod.PACKAGE_DIR = fake_root
-        try:
-            project = tmp_path / "project"
-            project.mkdir()
-            with _patch_home(tmp_path):
-                initialize_project(project)
-            assert (project / ".ember" / ".checksums.json").exists()
-        finally:
-            init_mod.PACKAGE_DIR = original
+        fake_root = self._setup_fake_root(tmp_path, "content")
+        project = tmp_path / "project"
+        project.mkdir()
+        with _patch_home(tmp_path):
+            ProjectInitializer.initialize(project, package_dir=fake_root)
+        assert (project / ".ember" / ".checksums.json").exists()
 
 
 class TestBuiltInHookSchema:
@@ -481,7 +431,7 @@ class TestBuiltInHookSchema:
         # widely and callers shouldn't be able to mutate one entry
         # and silently poison every other importer.
         spec = BUILT_IN_HOOKS[0]
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             spec.filename = "hijacked.sh"  # type: ignore[misc]
 
     def test_hook_definition_dumps_with_type_alias(self):
@@ -507,9 +457,7 @@ class TestBuiltInHookSchema:
         assert d.background is False
 
     def test_hook_definition_background_true(self):
-        d = HookDefinition(
-            type="command", command="x", matcher="Bash", timeout=1, background=True
-        )
+        d = HookDefinition(type="command", command="x", matcher="Bash", timeout=1, background=True)
         assert d.background is True
 
     def test_registered_definition_uses_wire_type_field(self, tmp_path):

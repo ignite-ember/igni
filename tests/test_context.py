@@ -5,11 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from ember_code.core.config.settings import (
-    _platform_managed_settings_path as _real_settings_path,
-)
-from ember_code.core.utils.context import load_project_rules_dirs
-
+from ember_code.core.config.managed_policy import ManagedPolicySource
 from ember_code.core.utils import context as context_module
 from ember_code.core.utils.context import (
     _claude_project_memory_dir,
@@ -21,6 +17,7 @@ from ember_code.core.utils.context import (
     load_memory_index,
     load_project_context,
     load_project_rules,
+    load_project_rules_dirs,
     load_subdirectory_rules,
     load_user_rules,
     memory_writeback_instructions,
@@ -28,6 +25,11 @@ from ember_code.core.utils.context import (
 from ember_code.core.utils.context import (
     _platform_managed_rules_dir as _REAL_MANAGED_RULES_DIR,
 )
+
+# Alias for the deleted ``settings._platform_managed_settings_path``
+# shim — kept as a local name so the assertion sites below still read
+# naturally.
+_real_settings_path = ManagedPolicySource.platform_path
 
 
 @pytest.fixture(autouse=True)
@@ -85,8 +87,8 @@ class TestLoadSubdirectoryRules:
 
         results = load_subdirectory_rules(tmp_path, working)
         assert len(results) == 2
-        assert results[0] == ("src", "src rules")
-        assert results[1] == ("src/auth", "auth rules")
+        assert (results[0].rel_path, results[0].content) == ("src", "src rules")
+        assert (results[1].rel_path, results[1].content) == ("src/auth", "auth rules")
 
     def test_collects_claude_md_from_subdirectories(self, tmp_path):
         src = tmp_path / "src"
@@ -96,7 +98,7 @@ class TestLoadSubdirectoryRules:
 
         results = load_subdirectory_rules(tmp_path, working)
         assert len(results) == 1
-        assert results[0] == ("src", "claude src rules")
+        assert (results[0].rel_path, results[0].content) == ("src", "claude src rules")
 
     def test_merges_both_files_in_subdirectory(self, tmp_path):
         src = tmp_path / "src"
@@ -107,8 +109,8 @@ class TestLoadSubdirectoryRules:
 
         results = load_subdirectory_rules(tmp_path, working)
         assert len(results) == 1
-        assert "ember src" in results[0][1]
-        assert "claude src" in results[0][1]
+        assert "ember src" in results[0].content
+        assert "claude src" in results[0].content
 
     def test_returns_empty_when_no_rules(self, tmp_path):
         working = tmp_path / "src"
@@ -403,7 +405,7 @@ class TestLocalOverrides:
         results = load_subdirectory_rules(tmp_path, working_dir=sub)
         # Each subdir's contributions concatenate base + local.
         assert len(results) == 1
-        _, content = results[0]
+        content = results[0].content
         assert content.index("SUB-BASE") < content.index("SUB-LOCAL")
 
 
