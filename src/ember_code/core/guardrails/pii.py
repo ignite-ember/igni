@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import ClassVar
 
 from ember_code.core.guardrails.base import Guardrail, GuardrailResult
 
@@ -33,6 +34,7 @@ class PIIGuardrail(Guardrail):
     """Detects common PII: emails, phone numbers, SSNs, credit card numbers."""
 
     name: str = "pii_detection"
+    gate_key: ClassVar[str] = "pii_detection"
 
     def check(self, text: str) -> GuardrailResult:
         findings: list[str] = []

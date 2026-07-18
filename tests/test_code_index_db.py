@@ -10,6 +10,11 @@ import pytest
 
 from ember_code.core.code_index.db.commit_metadata import CommitMetadataService
 from ember_code.core.code_index.db.file_reference import FileReferenceService
+from ember_code.core.code_index.schema.commit_metadata import (
+    CommitMetadataBulkCreate,
+    CommitMetadataBulkItem,
+    CommitMetadataCreate,
+)
 from ember_code.core.db.database import Database
 
 
@@ -136,51 +141,62 @@ async def test_project_isolation_via_separate_files(tmp_path):
 
 async def test_create_or_update_and_fetch(commits):
     await commits.create_or_update(
-        item_id="i1",
-        commit_sha="sha1",
-        key="line_range",
-        value={"line_from": 1, "line_to": 30},
+        CommitMetadataCreate(
+            item_id="i1",
+            commit_sha="sha1",
+            key="line_range",
+            value={"line_from": 1, "line_to": 30},
+        )
     )
     found = await commits.get_by_items_and_commit(
         item_ids=["i1"], commit_sha="sha1", key="line_range"
     )
-    assert found == {"i1": {"line_from": 1, "line_to": 30}}
+    assert set(found.keys()) == {"i1"}
+    assert found["i1"].value == {"line_from": 1, "line_to": 30}
+    assert found["i1"].commit_sha == "sha1"
+    assert found["i1"].key == "line_range"
 
 
 async def test_create_or_update_is_upsert(commits):
     await commits.create_or_update(
-        item_id="i1", commit_sha="sha1", key="line_range", value={"v": 1}
+        CommitMetadataCreate(item_id="i1", commit_sha="sha1", key="line_range", value={"v": 1})
     )
     await commits.create_or_update(
-        item_id="i1", commit_sha="sha1", key="line_range", value={"v": 2}
+        CommitMetadataCreate(item_id="i1", commit_sha="sha1", key="line_range", value={"v": 2})
     )
     found = await commits.get_by_items_and_commit(
         item_ids=["i1"], commit_sha="sha1", key="line_range"
     )
-    assert found == {"i1": {"v": 2}}
+    assert found["i1"].value == {"v": 2}
 
 
 async def test_bulk_create_or_update(commits):
     await commits.bulk_create_or_update(
-        commit_sha="sha1",
-        key="line_range",
-        items=[
-            {"item_id": "a", "value": {"line_from": 1, "line_to": 10}},
-            {"item_id": "b", "value": {"line_from": 11, "line_to": 20}},
-            {"item_id": "c", "value": {"line_from": 21, "line_to": 30}},
-        ],
+        CommitMetadataBulkCreate(
+            commit_sha="sha1",
+            key="line_range",
+            items=[
+                CommitMetadataBulkItem(item_id="a", value={"line_from": 1, "line_to": 10}),
+                CommitMetadataBulkItem(item_id="b", value={"line_from": 11, "line_to": 20}),
+                CommitMetadataBulkItem(item_id="c", value={"line_from": 21, "line_to": 30}),
+            ],
+        )
     )
     found = await commits.get_by_items_and_commit(
         item_ids=["a", "b", "c"], commit_sha="sha1", key="line_range"
     )
     assert set(found.keys()) == {"a", "b", "c"}
-    assert found["b"] == {"line_from": 11, "line_to": 20}
+    assert found["b"].value == {"line_from": 11, "line_to": 20}
 
 
 async def test_delete_by_item_and_commit(commits):
     for sha in ("s1", "s2"):
-        await commits.create_or_update(item_id="i1", commit_sha=sha, key="k", value={})
-        await commits.create_or_update(item_id="i2", commit_sha=sha, key="k", value={})
+        await commits.create_or_update(
+            CommitMetadataCreate(item_id="i1", commit_sha=sha, key="k", value={})
+        )
+        await commits.create_or_update(
+            CommitMetadataCreate(item_id="i2", commit_sha=sha, key="k", value={})
+        )
 
     await commits.delete_by_item(item_id="i1")
     assert (

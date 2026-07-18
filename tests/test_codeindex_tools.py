@@ -81,35 +81,39 @@ class TestRegistration:
 
 
 class TestBuildWhere:
+    """``_build_where`` returns a :class:`ChromaWhereFilter` (or None);
+    ``.to_chroma_where()`` renders it into the dict shape Chroma expects."""
+
     def test_no_args_returns_none(self):
         assert _build_where(_CategoricalFilters()) is None
 
     def test_single_categorical_no_and_wrap(self):
         where = _build_where(_CategoricalFilters(security=SecurityLevel.CRITICAL))
-        assert where == {"security": "critical"}
+        assert where.to_chroma_where() == {"security": "critical"}
 
     def test_categorical_list_uses_in(self):
         where = _build_where(
             _CategoricalFilters(security=[SecurityLevel.MAJOR_ISSUES, SecurityLevel.CRITICAL])
         )
-        assert where == {"security": {"$in": ["major-issues", "critical"]}}
+        assert where.to_chroma_where() == {"security": {"$in": ["major-issues", "critical"]}}
 
     def test_multiple_categoricals_wrapped_in_and(self):
         where = _build_where(
             _CategoricalFilters(security=SecurityLevel.CRITICAL, quality=QualityLevel.POOR)
         )
-        assert "$and" in where
-        clauses = where["$and"]
+        rendered = where.to_chroma_where()
+        assert "$and" in rendered
+        clauses = rendered["$and"]
         assert {"security": "critical"} in clauses
         assert {"quality": "poor"} in clauses
 
     def test_kind_handled_as_enum_value(self):
-        assert _build_where(_CategoricalFilters(kind=Kind.DOCS)) == {"kind": "docs"}
+        where = _build_where(_CategoricalFilters(kind=Kind.DOCS))
+        assert where.to_chroma_where() == {"kind": "docs"}
 
     def test_needs_refactoring_bool(self):
-        assert _build_where(_CategoricalFilters(needs_refactoring=True)) == {
-            "needs_refactoring": True
-        }
+        where = _build_where(_CategoricalFilters(needs_refactoring=True))
+        assert where.to_chroma_where() == {"needs_refactoring": True}
 
 
 # ── Items: semantic ──────────────────────────────────────────────────
@@ -284,7 +288,7 @@ class TestTree:
     async def test_returns_single_item_with_references(self, tools, index):
         item = _make_item("a.py", "x")
         await index.add_item("c1", item)
-        file_refs = index._file_reference_service()
+        file_refs = index.file_reference_service()
         # ``item --imports--> b``: outgoing edge, item is on the FROM
         # side → b lands under references["imports"].
         await file_refs.create(
@@ -317,7 +321,7 @@ class TestTree:
     async def test_relations_filter(self, tools, index):
         item = _make_item("a.py", "x")
         await index.add_item("c1", item)
-        file_refs = index._file_reference_service()
+        file_refs = index.file_reference_service()
         await file_refs.create(from_uuid=item.item_id, to_uuid="b", relation="calls", meta={})
         await file_refs.create(from_uuid=item.item_id, to_uuid="c", relation="imports", meta={})
 

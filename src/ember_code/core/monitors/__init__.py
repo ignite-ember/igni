@@ -9,11 +9,28 @@ facing tools live in ``core.tools.monitors``.
 """
 
 from ember_code.core.monitors.config import MonitorConfig, load_monitor_config
-from ember_code.core.monitors.manager import MonitorHandle, MonitorManager
+from ember_code.core.monitors.handle import MonitorHandle
+from ember_code.core.monitors.manager import MonitorManager
+from ember_code.core.monitors.models import (
+    MonitorControlResult,
+    MonitorSnapshot,
+    MonitorStatus,
+    RestartDecision,
+)
+from ember_code.core.monitors.supervisor import (
+    MonitorSupervisor,
+    RestartPolicyEvaluator,
+)
 
 __all__ = [
     "MonitorConfig",
+    "MonitorControlResult",
     "MonitorHandle",
     "MonitorManager",
+    "MonitorSnapshot",
+    "MonitorStatus",
+    "MonitorSupervisor",
+    "RestartDecision",
+    "RestartPolicyEvaluator",
     "load_monitor_config",
 ]

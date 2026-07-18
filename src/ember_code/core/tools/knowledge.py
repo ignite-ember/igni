@@ -75,12 +75,12 @@ class KnowledgeTools(Toolkit):
         if self._mgr.knowledge is None:
             return "Error: Knowledge base not available."
         try:
-            deleted = await self._mgr.knowledge.delete_by_query(query)
-            if deleted == 0:
-                return "No entries found to delete."
-            return f"Deleted {deleted} knowledge entry/entries matching '{query}'."
+            result = await self._mgr.knowledge.delete_by_query(query)
         except Exception as e:
             return f"Error deleting entries: {e}"
+        if result.deleted == 0:
+            return "No entries found to delete."
+        return f"Deleted {result.deleted} knowledge entry/entries matching '{query}'."
 
     async def knowledge_status(self) -> str:
         """Check the current state of the knowledge base."""

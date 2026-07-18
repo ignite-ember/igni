@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from ember_code.core.worktree import WorktreeManager, cleanup_stale_worktrees
+from ember_code.core.worktree import WorktreeManager, WorktreeRoot
 
 
 def _init_git_repo(path: Path) -> None:
@@ -82,7 +82,7 @@ class TestWorktreeManager:
 
         assert info.worktree_path.exists()
         cleaned = wm.cleanup()
-        assert cleaned
+        assert cleaned.ok
         assert wm.info is None
 
     def test_cleanup_preserves_dirty_worktree(self, tmp_path):
@@ -92,7 +92,7 @@ class TestWorktreeManager:
 
         (info.worktree_path / "change.txt").write_text("data")
         cleaned = wm.cleanup()
-        assert not cleaned
+        assert cleaned.status == "preserved_dirty"
         assert info.worktree_path.exists()
 
         # Force cleanup for test teardown
@@ -123,5 +123,5 @@ class TestCleanupStaleWorktrees:
     def test_prunes_stale_worktrees(self, tmp_path):
         _init_git_repo(tmp_path)
         # Just verify it doesn't crash on a clean repo
-        cleaned = cleanup_stale_worktrees(tmp_path)
-        assert isinstance(cleaned, list)
+        result = WorktreeRoot().prune_stale(tmp_path)
+        assert isinstance(result.empty_dirs_removed, list)

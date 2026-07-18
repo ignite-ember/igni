@@ -39,7 +39,7 @@ def _make_service(edges: list) -> tuple[TreeService, MagicMock]:
     idx = MagicMock()
     file_ref_service = MagicMock()
     file_ref_service.get_by_uuids = AsyncMock(return_value=edges)
-    idx._file_reference_service = MagicMock(return_value=file_ref_service)
+    idx.file_reference_service = MagicMock(return_value=file_ref_service)
     # Stub the chroma fetch used by _hydrate_target_summaries so the
     # method returns silently. We're testing bucketing, not hydration.
     idx.filter_items = AsyncMock(return_value=[])
@@ -259,7 +259,7 @@ async def test_fetch_exception_returns_silently() -> None:
     idx = MagicMock()
     file_ref_service = MagicMock()
     file_ref_service.get_by_uuids = AsyncMock(side_effect=RuntimeError("boom"))
-    idx._file_reference_service = MagicMock(return_value=file_ref_service)
+    idx.file_reference_service = MagicMock(return_value=file_ref_service)
     service = TreeService(idx)
     item = _item("X")
     await service._attach_references(item, relations=None)

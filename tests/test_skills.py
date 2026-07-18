@@ -2,9 +2,8 @@
 
 from pathlib import Path
 
-from ember_code.core.skills.loader import SkillPool
+from ember_code.core.skills.loader import SkillPool, SkillPriority
 from ember_code.core.skills.parser import SkillDefinition, SkillParser
-from ember_code.core.skills.loader import SkillPriority
 
 
 class TestSkillParser:

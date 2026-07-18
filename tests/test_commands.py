@@ -4,11 +4,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from ember_code.core.session.commands import dispatch
+from ember_code.core.session.commands import InteractiveCommandDispatcher
+
+
+async def dispatch(session, command):
+    """Test shim so existing tests keep their call shape."""
+    return await InteractiveCommandDispatcher(session).dispatch(command)
 
 
 def _make_session():
-    """Create a mock Session with enough attributes for CommandHandler."""
+    """Create a mock Session with enough attributes for CommandHandler.
+
+    ``session.display`` is a MagicMock — all ``print_*`` methods
+    are auto-created attributes, so calls to ``display.print_info(...)``
+    from inside ``_render_result`` silently succeed and expose
+    ``call_args`` for assertions."""
     session = MagicMock()
     session._ensure_knowledge = AsyncMock()
     session.pool.list_agents.return_value = []
@@ -43,8 +53,7 @@ class TestDispatch:
     @pytest.mark.asyncio
     async def test_dispatch_known_command(self):
         session = _make_session()
-        with patch("ember_code.core.session.commands.print_markdown"):
-            result = await dispatch(session, "/agents")
+        result = await dispatch(session, "/agents")
         assert result is True
 
     @pytest.mark.asyncio
@@ -56,76 +65,76 @@ class TestDispatch:
     @pytest.mark.asyncio
     async def test_dispatch_help(self):
         session = _make_session()
-        with patch("ember_code.core.session.commands.print_info"):
-            result = await dispatch(session, "/help")
+        result = await dispatch(session, "/help")
         assert result is True
 
     @pytest.mark.asyncio
     async def test_dispatch_help_with_topic(self):
         session = _make_session()
-        with patch("ember_code.core.session.commands.print_markdown") as mock_print:
-            result = await dispatch(session, "/help schedule")
+        result = await dispatch(session, "/help schedule")
         assert result is True
-        printed = mock_print.call_args[0][0]
+        printed = session.display.print_markdown.call_args[0][0]
         assert "Schedule" in printed
 
     @pytest.mark.asyncio
     async def test_dispatch_config(self):
         session = _make_session()
-        with (
-            patch("ember_code.backend.command_handler.load_credentials", return_value=None),
-            patch("ember_code.core.session.commands.print_markdown") as mock_print,
+        from ember_code.core.auth.schemas import LoadCredentialsResult
+
+        with patch(
+            "ember_code.core.auth.credentials.CredentialsStore.load",
+            return_value=LoadCredentialsResult(ok=False, reason="no_file"),
         ):
             result = await dispatch(session, "/config")
         assert result is True
-        printed = mock_print.call_args[0][0]
+        printed = session.display.print_markdown.call_args[0][0]
         assert "test-model" in printed
 
     @pytest.mark.asyncio
     async def test_dispatch_clear(self):
         session = _make_session()
-        with patch("ember_code.core.session.commands.print_info"):
-            result = await dispatch(session, "/clear")
+        result = await dispatch(session, "/clear")
         assert result is True
-        # Session id should have changed
-        assert session.session_id != "abc12345"
+        # /clear delegates rotation to Session.rotate_id (owner of
+        # the three-attribute invariant); assert the delegation.
+        session.rotate_id.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_dispatch_mcp_action(self):
         session = _make_session()
-        with patch("ember_code.core.session.commands.print_info") as mock_print:
-            result = await dispatch(session, "/mcp")
+        result = await dispatch(session, "/mcp")
         assert result is True
-        printed = mock_print.call_args[0][0]
+        printed = session.display.print_info.call_args[0][0]
         assert "No MCP servers configured" in printed
 
     @pytest.mark.asyncio
     async def test_dispatch_model_action(self):
         session = _make_session()
-        with patch("ember_code.core.session.commands.print_markdown") as mock_print:
-            result = await dispatch(session, "/model")
+        result = await dispatch(session, "/model")
         assert result is True
-        printed = mock_print.call_args[0][0]
+        printed = session.display.print_markdown.call_args[0][0]
         assert "test-model" in printed
 
     @pytest.mark.asyncio
     async def test_dispatch_compact(self):
         session = _make_session()
+        from ember_code.core.session.schemas import CompactResult
+
         session.force_compact = AsyncMock(
-            return_value=("Context compacted.", "Summary of conversation")
+            return_value=CompactResult(
+                ok=True,
+                status="Context compacted.",
+                summary="Summary of conversation",
+            )
         )
-        with patch("ember_code.core.session.commands.print_info"):
-            result = await dispatch(session, "/compact")
+        result = await dispatch(session, "/compact")
         assert result is True
         session.force_compact.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_dispatch_bug(self):
         session = _make_session()
-        with (
-            patch("webbrowser.open") as mock_open,
-            patch("ember_code.core.session.commands.print_info"),
-        ):
+        with patch("webbrowser.open") as mock_open:
             result = await dispatch(session, "/bug")
         assert result is True
         mock_open.assert_called_once()
@@ -137,18 +146,18 @@ class TestExtraCommands:
     async def test_sync_knowledge_not_enabled(self):
         session = _make_session()
         session.knowledge_mgr.share_enabled.return_value = False
-        with patch("ember_code.core.session.commands.print_info") as mock_print:
-            result = await dispatch(session, "/sync-knowledge")
+        result = await dispatch(session, "/sync-knowledge")
         assert result is True
-        assert "not enabled" in mock_print.call_args[0][0].lower()
+        assert "not enabled" in session.display.print_info.call_args[0][0].lower()
 
     @pytest.mark.asyncio
     async def test_sync_knowledge_runs_bidirectional(self):
+        from ember_code.core.knowledge.models import KnowledgeSyncResult
+
         session = _make_session()
         session.knowledge_mgr.share_enabled.return_value = True
-        r = MagicMock(direction="file_to_db", summary="Loaded 3 entries")
+        r = KnowledgeSyncResult(direction="file_to_db", summary="Loaded 3 entries")
         session.knowledge_mgr.sync_bidirectional = AsyncMock(return_value=[r])
-        with patch("ember_code.core.session.commands.print_info"):
-            result = await dispatch(session, "/sync-knowledge")
+        result = await dispatch(session, "/sync-knowledge")
         assert result is True
         session.knowledge_mgr.sync_bidirectional.assert_called_once()

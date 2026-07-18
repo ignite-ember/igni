@@ -167,7 +167,7 @@ def test_loader_accepts_asyncRewake_camelcase(tmp_path: Path, monkeypatch: Any) 
     )
     with monkeypatch.context() as m:
         m.setattr(Path, "home", lambda: fake_home)
-        hooks = HookLoader(tmp_path).load()
+        hooks = HookLoader(tmp_path).load().registry.raw
     assert hooks["PreToolUse"][0].async_rewake is True
 
 
@@ -188,5 +188,5 @@ def test_loader_accepts_async_rewake_snakecase(tmp_path: Path, monkeypatch: Any)
     )
     with monkeypatch.context() as m:
         m.setattr(Path, "home", lambda: fake_home)
-        hooks = HookLoader(tmp_path).load()
+        hooks = HookLoader(tmp_path).load().registry.raw
     assert hooks["PreToolUse"][0].async_rewake is True

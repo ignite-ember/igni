@@ -9,9 +9,9 @@ function eats them.
 This coordinator gives them a path out: the sub-agent's stream handler
 pushes the pending requirements here, the backend's main run loop polls
 for them and forwards them to the FE as ordinary ``HITLRequest`` events,
-and ``resolve_hitl`` routes confirmation back into the coordinator. The
-sub-agent's stream handler awaits the resolution, then resumes the
-sub-agent via ``acontinue_run``.
+and :meth:`HitlController.resolve_single` routes confirmation back into
+the coordinator. The sub-agent's stream handler awaits the resolution,
+then resumes the sub-agent via ``acontinue_run``.
 
 Scope: per-Session. One instance lives on ``Session`` and is injected
 into ``OrchestrateTools``. Threading: every shared field is touched only
@@ -121,7 +121,8 @@ class SubAgentHITLCoordinator:
         return any(not e.event.is_set() for e in self._pending.values())
 
     def resolve(self, req_id: str, action: str) -> bool:
-        """Called from backend.resolve_hitl. Returns True if handled here."""
+        """Called from :meth:`HitlController.resolve_batch`. Returns
+        True if handled here."""
         entry = self._pending.get(req_id)
         if entry is None:
             return False

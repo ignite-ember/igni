@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from agno.tools import Toolkit
 
 if TYPE_CHECKING:
-    from ember_code.core.monitors.manager import MonitorManager
+    from ember_code.core.monitors import MonitorManager
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class MonitorTools(Toolkit):
         snap = self._manager.snapshot_all()
         if not snap:
             return "No monitors configured for this session."
-        return json.dumps([s.model_dump() for s in snap], indent=2)
+        return json.dumps([s.model_dump(mode="json") for s in snap], indent=2)
 
     def monitor_output(self, name: str, lines: int = 40) -> str:
         """Return the last ``lines`` lines of merged
@@ -47,7 +47,7 @@ class MonitorTools(Toolkit):
         lines per monitor — older output is dropped. Use this to
         check what a watcher is reporting without grabbing the
         whole log."""
-        if name not in self._manager._configs:
+        if not self._manager.is_configured(name):
             return f"Error: monitor not configured: {name!r}"
         # Defensive normalisation — the model sometimes passes
         # ``"40"`` as a string for int params.
@@ -66,17 +66,23 @@ class MonitorTools(Toolkit):
         whatever was causing it to crash repeatedly.
         """
         try:
-            return await self._manager.restart(name)
+            result = await self._manager.restart(name)
         except Exception as exc:
             logger.warning("monitor_restart %s raised: %s", name, exc)
             return f"Error: {exc}"
+        # ``MonitorControlResult.__str__`` returns ``.reason``,
+        # preserving the wire string the Agno toolkit expects.
+        # ``str(...)`` also handles the legacy path where the
+        # manager is mocked to return a bare string.
+        return str(result)
 
     async def monitor_stop(self, name: str) -> str:
         """Stop the named monitor. It stays stopped until
         ``monitor_restart`` is called — the supervisor doesn't
         auto-relaunch a deliberately-stopped monitor."""
         try:
-            return await self._manager.stop(name)
+            result = await self._manager.stop(name)
         except Exception as exc:
             logger.warning("monitor_stop %s raised: %s", name, exc)
             return f"Error: {exc}"
+        return str(result)

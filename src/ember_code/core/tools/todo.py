@@ -59,6 +59,39 @@ class TodoItemWire(BaseModel):
     status: str
     active_form: str = Field("", alias="activeForm")
 
+    @classmethod
+    def coerce_snapshot(cls, raw: object) -> list[TodoItemWire]:
+        """Filter — SILENTLY drops malformed entries.
+
+        Absorbed from the pre-refactor module-level
+        ``_coerce_todo_snapshot`` helper in ``session/persistence.py``
+        so the shape rule (``content`` non-empty, ``status`` in the
+        three allowed values, ``active_form`` defaults to empty)
+        lives on the model that defines the shape, not in a free
+        function on a persistence-module boundary.
+
+        Use this for the persistence load/save round-trip where a
+        stale/corrupt on-disk row must NOT sink the whole read —
+        callers get a best-effort list of valid rows and the bad
+        entries drop. For strict validation, use
+        :meth:`model_validate` directly instead.
+        """
+        out: list[TodoItemWire] = []
+        if not isinstance(raw, list):
+            return out
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            content = str(entry.get("content", "")).strip()
+            if not content:
+                continue
+            status = str(entry.get("status", "pending"))
+            if status not in _VALID_STATUSES:
+                continue
+            active_form = str(entry.get("activeForm", entry.get("active_form", "")) or "")
+            out.append(cls(content=content, status=status, active_form=active_form))
+        return out
+
 
 @dataclass(frozen=True)
 class TodoItem:

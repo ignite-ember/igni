@@ -35,6 +35,8 @@ from typing import TYPE_CHECKING
 
 from agno.tools import Toolkit
 
+from ember_code.protocol.messages import CommandResultKind
+
 if TYPE_CHECKING:
     from ember_code.core.session.core import Session
 
@@ -114,7 +116,6 @@ class SlashCommandTool(Toolkit):
         # ``CommandResult.error`` returns kind=ERROR with content
         # set to the message. Surface it as a string the agent
         # sees, prefixed so it reads as an error not as content.
-        from ember_code.protocol.messages import CommandResultKind
 
         if result.kind == CommandResultKind.ERROR:
             return f"Error: {result.content}"

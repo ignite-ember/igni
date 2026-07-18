@@ -151,6 +151,7 @@ class TestErrorHandling:
         """If the underlying CommandHandler raises, the tool
         returns an error string instead of propagating — keeps
         the agent loop alive."""
+
         class _Boom:
             def __init__(self, *_a, **_kw):
                 pass

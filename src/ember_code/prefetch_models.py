@@ -28,18 +28,14 @@ Environment:
 
 from __future__ import annotations
 
-import logging
 import sys
 
-logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
-log = logging.getLogger("ember_code.prefetch_models")
+from ember_code.core.embeddings import DEFAULT_MODEL, get_model
 
 
 def main() -> int:
     print("prefetch: loading sentence-transformer (~90 MB on first run)", flush=True)
     try:
-        from ember_code.core.embeddings import DEFAULT_MODEL, get_model
-
         model = get_model()
     except Exception as exc:  # pragma: no cover — surfaced to caller
         print(f"prefetch: failed: {exc!r}", file=sys.stderr, flush=True)

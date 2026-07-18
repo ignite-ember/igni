@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from ember_code.core.code_index.db.file_reference import FileReferenceService
 from ember_code.core.code_index.delta import (
     CommitOp,
     DeltaError,
@@ -17,7 +18,6 @@ from ember_code.core.code_index.delta import (
 )
 from ember_code.core.code_index.index import CodeIndex
 from ember_code.core.code_index.paths import state_db_path
-from ember_code.core.code_index.db.file_reference import FileReferenceService
 from ember_code.core.db.database import Database
 
 

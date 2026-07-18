@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from ember_code.core.config.settings import Settings
 from ember_code.core.init import initialize_project
-from ember_code.core.utils.audit import AuditLogger
+from ember_code.core.utils.audit import AuditEntry, AuditLogger
 from ember_code.core.utils.context import load_project_context
 from ember_code.core.utils.update_checker import UpdateInfo
 
@@ -64,13 +64,18 @@ class TestAuditLogging:
         settings = Settings()
         logger = AuditLogger(settings)
         # Just verify it doesn't crash
-        logger.log(session_id="s1", agent_name="editor", tool_name="edit_file", status="success")
+        logger.log(AuditEntry.success(session_id="s1", agent_name="editor", tool_name="edit_file"))
 
     def test_audit_logger_log_blocked(self, tmp_path):
         settings = Settings()
         logger = AuditLogger(settings)
-        logger.log_blocked(
-            session_id="s1", agent_name="main", tool_name="run_shell", reason="blocked"
+        logger.log(
+            AuditEntry.blocked(
+                session_id="s1",
+                agent_name="main",
+                tool_name="run_shell",
+                reason="blocked",
+            )
         )
 
 

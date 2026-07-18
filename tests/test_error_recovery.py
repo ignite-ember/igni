@@ -8,9 +8,25 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from ember_code.backend.hitl_tracer import HITLTracer
+from ember_code.backend.pending_requirements_store import PendingRequirementsStore
+from ember_code.backend.run_controller import RunController as BackendRunController
 from ember_code.backend.server import BackendServer
 from ember_code.protocol import messages as msg
 from ember_code.protocol.messages import Error
+
+
+def _wire_backend_runs(server: BackendServer) -> None:
+    """Attach a :class:`BackendRunController` to a partial
+    ``BackendServer`` built via ``__new__``. The controller owns the
+    pre-run pipeline + streaming loop delegate. See
+    ``tests/test_streaming_done_unblock._wire_backend_runs`` for the
+    counterpart in the streaming-lock suite."""
+    server._runs = BackendRunController(
+        backend=server,
+        session=server._session,
+        pending_store=server._pending_store,
+    )
 
 
 class TestBackendRunMessageErrors:
@@ -31,6 +47,7 @@ class TestBackendRunMessageErrors:
             server._session.main_team.arun = _failing_arun
             server._session._learning = None
             server._session._inject_learnings = AsyncMock()
+            server._session.inject_learnings = AsyncMock()
             server._session.hook_executor = MagicMock()
             server._session.hook_executor.execute = AsyncMock(
                 return_value=MagicMock(should_continue=True, message="")
@@ -38,15 +55,15 @@ class TestBackendRunMessageErrors:
             server._session.session_id = "test"
             server._processing = False
             server._settings = MagicMock()
-            server._pending_requirements = {}
+            server._hitl_store = PendingRequirementsStore()
+            server._hitl_tracer = HITLTracer(enabled=False)
             server._run_lock = asyncio.Lock()
-            server._interrupted_run_summary = None
             server._pending_store = MagicMock()
             server._pending_store.arecord_received = AsyncMock(return_value="mid-1")
             server._pending_store.amark_completed = AsyncMock()
             server._pending_store.adiscard = AsyncMock()
-            server._pending_message_ids_to_drop = []
             server._periodic_checkpoint = AsyncMock()
+            _wire_backend_runs(server)
 
             results = []
             async for proto in server.run_message("hello"):
@@ -63,6 +80,7 @@ class TestBackendRunMessageErrors:
             server = BackendServer.__new__(BackendServer)
             server._session = MagicMock()
             server._session._inject_learnings = AsyncMock()
+            server._session.inject_learnings = AsyncMock()
             server._session.hook_executor = MagicMock()
             server._session.hook_executor.execute = AsyncMock(
                 return_value=MagicMock(should_continue=False, message="Blocked by hook")
@@ -71,15 +89,15 @@ class TestBackendRunMessageErrors:
             server._session._learning = None
             server._processing = False
             server._settings = MagicMock()
-            server._pending_requirements = {}
+            server._hitl_store = PendingRequirementsStore()
+            server._hitl_tracer = HITLTracer(enabled=False)
             server._run_lock = asyncio.Lock()
-            server._interrupted_run_summary = None
             server._pending_store = MagicMock()
             server._pending_store.arecord_received = AsyncMock(return_value="mid-1")
             server._pending_store.amark_completed = AsyncMock()
             server._pending_store.adiscard = AsyncMock()
-            server._pending_message_ids_to_drop = []
             server._periodic_checkpoint = AsyncMock()
+            _wire_backend_runs(server)
 
             results = []
             async for proto in server.run_message("blocked message"):

@@ -12,13 +12,20 @@ Lifecycle:
 - :meth:`apply_delta` — apply a JSONL of file-level changes.
 - :meth:`set_head` — point the manifest's ``head`` at a commit.
 - :meth:`search` / :meth:`get_item` — query a commit (defaults to head).
-- :meth:`clean` — drop commits not referenced by any branch and idle > N days.
+- :meth:`clean` — drop commits not on a branch and idle > N days.
 
 Quality / category metadata are first-class typed chroma fields — each
 quality dimension is its own indexed string column, each multi-value
 category is its own ``\\x1f``-bracketed string. There is no ``tags``
 field; the ``codeindex_query`` tool builds typed where-clauses from
 its enum args without any string-tag parsing.
+
+The class is a thin orchestrator over four collaborators:
+
+  - :class:`ChromaRowCodec` — the item ↔ row-metadata wire codec.
+  - :class:`ChromaClientFactory` — client + collection lifecycle.
+  - :class:`GitBranchReader` — local branch resolution for retention.
+  - :class:`ChunkSearch` — the semantic search engine.
 """
 
 from __future__ import annotations
@@ -26,9 +33,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
-import subprocess
 from collections import Counter
-from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -36,10 +41,17 @@ from typing import Any
 from agno.knowledge.chunking.recursive import RecursiveChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy
 from agno.knowledge.document.base import Document
-from pydantic import BaseModel
 
+from ember_code.core.code_index.chroma_client_factory import (
+    CHUNKS_COLLECTION,
+    DOCUMENTS_COLLECTION,
+    ChromaClientFactory,
+)
+from ember_code.core.code_index.chroma_codec import ChromaRowCodec
+from ember_code.core.code_index.chunk_search import ChunkSearch
 from ember_code.core.code_index.db.file_reference import FileReferenceService
 from ember_code.core.code_index.delta import apply_delta
+from ember_code.core.code_index.git_branches import GitBranchReader
 from ember_code.core.code_index.manifest import Manifest
 from ember_code.core.code_index.paths import (
     code_index_dir,
@@ -47,52 +59,13 @@ from ember_code.core.code_index.paths import (
     state_db_path,
 )
 from ember_code.core.code_index.project import resolve_project_id
+from ember_code.core.code_index.schema.chroma_row import ChromaGetPage
 from ember_code.core.code_index.schema.items import CodeIndexItem, CodeIndexResult
+from ember_code.core.code_index.schema.stats import HeadStats
+from ember_code.core.code_index.schema.where_filter import ChromaWhereFilter
 from ember_code.core.db.database import Database
-from ember_code.core.embeddings import EmbeddingFunction
 
 logger = logging.getLogger(__name__)
-
-DOCUMENTS_COLLECTION = "code_index_documents"
-CHUNKS_COLLECTION = "code_index_chunks"
-
-# ASCII unit separator — used to bracket multi-value list fields so
-# ``$contains: "\x1fsql-injection\x1f"`` exact-matches without false
-# prefix collisions (``"sql"`` would otherwise match ``"sql-injection"``).
-_LIST_SEP = "\x1f"
-
-# Quality categorical fields — each is a single-value enum string on
-# the chroma row (or ``""`` when not assessed). Listed here so the
-# flattener / read paths agree on which fields exist.
-_QUALITY_CATEGORICAL_FIELDS: tuple[str, ...] = (
-    "quality",
-    "complexity",
-    "security",
-    "testing",
-    "testability",
-    "documentation",
-    "performance",
-    "issues",
-    "maintainability",
-    "architecture",
-    "technical_debt",
-    "cohesion",
-    "coupling",
-    "stability",
-    "priority",
-)
-
-# Multi-value list fields — stored as ``\x1f``-bracketed strings.
-_LIST_FIELDS: tuple[str, ...] = (
-    "vulnerabilities",
-    "frameworks",
-    "domain",
-    "concerns",
-    "layers",
-    "patterns",
-    "keywords",
-    "file_issues",
-)
 
 
 class CommitNotFoundError(Exception):
@@ -101,31 +74,6 @@ class CommitNotFoundError(Exception):
     def __init__(self, sha: str):
         super().__init__(f"No chroma index found for commit {sha}")
         self.sha = sha
-
-
-class HeadStats(BaseModel):
-    """Wire shape for :meth:`CodeIndex.head_stats` — per-commit
-    coverage summary consumed by the CodeIndex panel donut.
-
-    ``files_indexed`` is the count of unique files that have at
-    least one ``type=="file"`` doc in the commit's chroma;
-    ``languages_indexed`` maps ``file_extension`` (lowercased,
-    ``"(other)"`` fallback) to the file count per extension."""
-
-    files_indexed: int
-    languages_indexed: dict[str, int]
-
-
-class _BestChunkHit(BaseModel):
-    """Best-scoring chunk for one parent document during semantic search.
-
-    Internal scratch model — kept here rather than in ``schema/items.py``
-    because it never crosses the public API.
-    """
-
-    score: float
-    chunk_text: str
-    chunk_id: str
 
 
 class CodeIndex:
@@ -147,6 +95,12 @@ class CodeIndex:
         self._clients: dict[str, Any] = {}
         self._file_refs: Any | None = None
         self._lock = asyncio.Lock()
+
+        # Collaborators — composed once, reused across every call.
+        self._codec = ChromaRowCodec()
+        self._client_factory = ChromaClientFactory()
+        self._branches = GitBranchReader()
+        self._chunk_search = ChunkSearch(codec=self._codec)
 
     async def close(self) -> None:
         """Drop all cached chromadb clients. Persistent data stays on disk."""
@@ -173,16 +127,10 @@ class CodeIndex:
         Used by ``/codeindex resync`` when the local index has drifted
         from the cloud definition.
 
-        We deliberately don't ``rmtree`` the ``<sha>.chroma/`` directory:
-        chromadb keeps a process-level client cache, so a directory
-        wiped underneath a live client leaves a stale SQLite handle and
-        the next write fails with ``SQLITE_READONLY_DBMOVED`` (1032 —
-        "database file was moved out from under it"). Going through
-        chromadb's own ``delete_collection`` API keeps its connection
-        state consistent; the snapshot apply then re-creates the
-        collections via ``get_or_create_collection`` and re-fills them.
-        The manifest entry is dropped so ``has_commit`` reports the
-        commit as missing.
+        We deliberately don't ``rmtree`` the ``<sha>.chroma/`` directory —
+        the two-phase teardown is documented on
+        :meth:`ChromaClientFactory.drop_commit_collections`. The manifest
+        entry is dropped so ``has_commit`` reports the commit as missing.
         """
         if not sha:
             return False
@@ -192,13 +140,7 @@ class CodeIndex:
         if had_state:
             try:
                 client = await self._client_for(sha)
-                for name in (DOCUMENTS_COLLECTION, CHUNKS_COLLECTION):
-                    try:
-                        await asyncio.to_thread(client.delete_collection, name)
-                    except Exception as exc:
-                        # Missing collection / chroma rejection is fine —
-                        # we only care that nothing's left to write into.
-                        logger.debug("forget_commit: delete_collection(%s) skipped (%s)", name, exc)
+                await asyncio.to_thread(self._client_factory.drop_commit_collections, client)
             except Exception as exc:
                 logger.debug("forget_commit: chroma teardown failed (%s)", exc)
 
@@ -244,12 +186,19 @@ class CodeIndex:
         """Apply a producer-emitted JSONL changeset to this project."""
         return await apply_delta(
             index=self,
-            file_refs=self._file_reference_service(),
+            file_refs=self.file_reference_service(),
             jsonl_path=jsonl_path,
         )
 
-    def _file_reference_service(self):
-        """Lazily build a ``FileReferenceService`` against the per-project SQLite."""
+    def file_reference_service(self):
+        """Lazily build a ``FileReferenceService`` against the per-project SQLite.
+
+        Public accessor — the previous ``_file_reference_service`` name
+        implied private state, but the sync manager and the codeindex
+        tools (:mod:`disambiguation`, :mod:`tree_service`) all need to
+        share the same service. The leading underscore was a Rule-6
+        reach-in target; renaming it seals that hole.
+        """
         if self._file_refs is None:
             db = Database(state_db_path(self.project, data_dir=self.data_dir))
             self._file_refs = FileReferenceService(db)
@@ -269,7 +218,7 @@ class CodeIndex:
         docs, chunks = await self._collections(sha)
 
         document_text = item.content or ""
-        doc_metadata = _flatten_item_metadata(item)
+        doc_metadata = self._codec.flatten(item).to_chroma_dict()
         await asyncio.to_thread(
             docs.upsert,
             ids=[item.item_id],
@@ -283,16 +232,7 @@ class CodeIndex:
         if chunk_texts:
             chunk_ids = [f"{item.item_id}::{i}" for i in range(len(chunk_texts))]
             chunk_metadatas = [
-                {
-                    "parent_doc_id": item.item_id,
-                    "chunk_index": i,
-                    "name": item.name or "",
-                    "type": item.type.value if hasattr(item.type, "value") else str(item.type),
-                    "kind": item.kind or "",
-                    "path": item.path or "",
-                    "file_extension": item.file_extension or "",
-                    "repository_id": item.repository_id or "",
-                }
+                self._codec.flatten_chunk_row(item, i).to_chroma_dict()
                 for i in range(len(chunk_texts))
             ]
             await asyncio.to_thread(
@@ -305,9 +245,10 @@ class CodeIndex:
 
     async def remove_item(self, sha: str, item_id: str) -> None:
         """Drop an item and all its chunks from ``<sha>.chroma/``."""
-        if not commit_chroma_path(self.project, sha, data_dir=self.data_dir).exists():
+        pair = await self._open_or_none(sha)
+        if pair is None:
             return
-        docs, chunks = await self._collections(sha)
+        docs, chunks = pair
         await asyncio.to_thread(docs.delete, ids=[item_id])
         await asyncio.to_thread(chunks.delete, where={"parent_doc_id": item_id})
         self.manifest.touch(sha)
@@ -320,103 +261,42 @@ class CodeIndex:
         query: str,
         limit: int = 20,
         commit: str | None = None,
-        where: dict[str, Any] | None = None,
+        where: ChromaWhereFilter | dict[str, Any] | None = None,
     ) -> list[CodeIndexResult]:
         """Semantic search inside one commit's index.
 
-        ``where`` is the chroma metadata filter applied against the
-        chunks collection — the codeindex_query tool builds it from
-        its structured args; callers shouldn't construct it by hand.
+        ``where`` is a :class:`ChromaWhereFilter` (or a raw chroma dict
+        for legacy callers) applied against the chunks collection —
+        the codeindex_query tool builds it from its structured args;
+        callers shouldn't construct it by hand.
         """
         sha = commit or self.head()
         if sha is None:
             return []
-        chroma_dir = commit_chroma_path(self.project, sha, data_dir=self.data_dir)
-        if not chroma_dir.exists():
+        pair = await self._open_or_none(sha)
+        if pair is None:
             return []
-
-        docs, chunks = await self._collections(sha)
-        if await asyncio.to_thread(chunks.count) == 0:
-            return []
-        n = max(limit * 4, limit)
+        docs, chunks = pair
 
         # Quality / categorical fields live on parent doc metadata, not
         # on chunks. So when a ``where`` filter is supplied, resolve it
         # against the parents collection first to get matching IDs,
         # then narrow the chunk query to ``parent_doc_id $in <ids>``.
-        chunk_where: dict[str, Any] | None = None
-        if where:
-            parent_ids = await self._resolve_parent_ids_for(docs, where)
-            if not parent_ids:
-                return []
-            chunk_where = {"parent_doc_id": {"$in": parent_ids}}
-
-        query_kwargs: dict[str, Any] = {
-            "query_texts": [query],
-            "n_results": n,
-            "include": ["documents", "metadatas", "distances"],
-        }
-        if chunk_where is not None:
-            query_kwargs["where"] = chunk_where
-        result = await asyncio.to_thread(chunks.query, **query_kwargs)
-        ids = (result.get("ids") or [[]])[0]
-        chunk_docs = (result.get("documents") or [[]])[0]
-        chunk_metas = (result.get("metadatas") or [[]])[0]
-        dists = (result.get("distances") or [[]])[0]
-        if not ids:
+        chunk_where = await self._resolve_chunk_where(docs, where)
+        if chunk_where is _NARROWED_TO_EMPTY:
             return []
 
-        best: dict[str, _BestChunkHit] = {}
-        for chunk_id, doc_text, meta, dist in zip(
-            ids, chunk_docs, chunk_metas, dists, strict=False
-        ):
-            parent_id = (meta or {}).get("parent_doc_id")
-            if not parent_id:
-                continue
-            score = 1.0 - float(dist) if dist is not None else 0.0
-            current = best.get(parent_id)
-            if current is None or score > current.score:
-                best[parent_id] = _BestChunkHit(
-                    score=score,
-                    chunk_text=doc_text or "",
-                    chunk_id=chunk_id,
-                )
-
-        if not best:
-            return []
-
-        parent_ids = list(best.keys())
-        parents = await asyncio.to_thread(
-            docs.get, ids=parent_ids, include=["documents", "metadatas"]
+        results = await self._chunk_search.execute(
+            docs=docs,
+            chunks=chunks,
+            sha=sha,
+            query=query,
+            chunk_where=chunk_where,
+            limit=limit,
         )
-        parent_rows = {
-            pid: (text or "", meta or {})
-            for pid, text, meta in zip(
-                parents.get("ids", []) or [],
-                parents.get("documents", []) or [],
-                parents.get("metadatas", []) or [],
-                strict=False,
-            )
-        }
-
-        out: list[CodeIndexResult] = []
-        for parent_id, hit in best.items():
-            content_text, parent_meta = parent_rows.get(parent_id, ("", {}))
-            preview = hit.chunk_text
-            truncated = preview[:1000] + "..." if len(preview) > 1000 else preview
-            out.append(
-                _meta_to_result(
-                    parent_id,
-                    parent_meta,
-                    sha,
-                    content=content_text,
-                    score=hit.score,
-                    chunk_preview=truncated,
-                )
-            )
-        out.sort(key=lambda r: r.score or 0.0, reverse=True)
-        self.manifest.touch(sha)
-        return out[:limit]
+        if results:
+            self.manifest.touch(sha)
+        return results
 
     async def search_among(
         self,
@@ -441,93 +321,32 @@ class CodeIndex:
           - empty ``candidate_ids``
           - empty chunks collection
           - chroma returned no matches
-
-        The chunk→doc dedup, score normalization, and ``CodeIndexResult``
-        construction match :meth:`search`. Only the where-filter source
-        differs.
         """
         sha = commit or self.head()
         if sha is None or not candidate_ids:
             return []
-        chroma_dir = commit_chroma_path(self.project, sha, data_dir=self.data_dir)
-        if not chroma_dir.exists():
+        pair = await self._open_or_none(sha)
+        if pair is None:
             return []
-        docs, chunks = await self._collections(sha)
-        if await asyncio.to_thread(chunks.count) == 0:
-            return []
+        docs, chunks = pair
 
         chunk_where = {"parent_doc_id": {"$in": list(candidate_ids)}}
-        n = max(limit * 4, limit)
-        result = await asyncio.to_thread(
-            chunks.query,
-            query_texts=[query],
-            n_results=n,
-            include=["documents", "metadatas", "distances"],
-            where=chunk_where,
+        results = await self._chunk_search.execute(
+            docs=docs,
+            chunks=chunks,
+            sha=sha,
+            query=query,
+            chunk_where=chunk_where,
+            limit=limit,
         )
-        ids = (result.get("ids") or [[]])[0]
-        chunk_docs = (result.get("documents") or [[]])[0]
-        chunk_metas = (result.get("metadatas") or [[]])[0]
-        dists = (result.get("distances") or [[]])[0]
-        if not ids:
-            return []
-
-        best: dict[str, _BestChunkHit] = {}
-        for chunk_id, doc_text, meta, dist in zip(
-            ids, chunk_docs, chunk_metas, dists, strict=False
-        ):
-            parent_id = (meta or {}).get("parent_doc_id")
-            if not parent_id:
-                continue
-            score = 1.0 - float(dist) if dist is not None else 0.0
-            current = best.get(parent_id)
-            if current is None or score > current.score:
-                best[parent_id] = _BestChunkHit(
-                    score=score,
-                    chunk_text=doc_text or "",
-                    chunk_id=chunk_id,
-                )
-
-        if not best:
-            return []
-
-        parent_ids = list(best.keys())
-        parents = await asyncio.to_thread(
-            docs.get, ids=parent_ids, include=["documents", "metadatas"]
-        )
-        parent_rows = {
-            pid: (text or "", meta or {})
-            for pid, text, meta in zip(
-                parents.get("ids", []) or [],
-                parents.get("documents", []) or [],
-                parents.get("metadatas", []) or [],
-                strict=False,
-            )
-        }
-
-        out: list[CodeIndexResult] = []
-        for parent_id, hit in best.items():
-            content_text, parent_meta = parent_rows.get(parent_id, ("", {}))
-            preview = hit.chunk_text
-            truncated = preview[:1000] + "..." if len(preview) > 1000 else preview
-            out.append(
-                _meta_to_result(
-                    parent_id,
-                    parent_meta,
-                    sha,
-                    content=content_text,
-                    score=hit.score,
-                    chunk_preview=truncated,
-                )
-            )
-        out.sort(key=lambda r: r.score or 0.0, reverse=True)
-        self.manifest.touch(sha)
-        return out[:limit]
+        if results:
+            self.manifest.touch(sha)
+        return results
 
     async def filter_items(
         self,
         *,
-        where: dict[str, Any] | None = None,
+        where: ChromaWhereFilter | dict[str, Any] | None = None,
         ids: list[str] | None = None,
         limit: int = 20,
         commit: str | None = None,
@@ -536,28 +355,27 @@ class CodeIndex:
         sha = commit or self.head()
         if sha is None:
             return []
-        chroma_dir = commit_chroma_path(self.project, sha, data_dir=self.data_dir)
-        if not chroma_dir.exists():
+        pair = await self._open_or_none(sha)
+        if pair is None:
             return []
+        docs, _ = pair
 
-        docs, _ = await self._collections(sha)
+        rendered_where = self._render_where(where)
         get_kwargs: dict[str, Any] = {
             "include": ["documents", "metadatas"],
             "limit": limit,
         }
         if ids:
             get_kwargs["ids"] = ids
-        if where:
-            get_kwargs["where"] = where
+        if rendered_where is not None:
+            get_kwargs["where"] = rendered_where
 
-        page = await asyncio.to_thread(docs.get, **get_kwargs)
-        item_ids = page.get("ids") or []
-        documents = page.get("documents") or []
-        metadatas = page.get("metadatas") or []
+        raw = await asyncio.to_thread(docs.get, **get_kwargs)
+        page = ChromaGetPage.from_chroma(raw)
 
         out: list[CodeIndexResult] = []
-        for item_id, doc_text, meta in zip(item_ids, documents, metadatas, strict=False):
-            out.append(_meta_to_result(item_id, meta or {}, sha, content=doc_text or ""))
+        for item_id, doc_text, meta in zip(page.ids, page.documents, page.metadatas, strict=False):
+            out.append(self._codec.parse(item_id, meta or {}, sha, content=doc_text or ""))
         self.manifest.touch(sha)
         return out
 
@@ -570,18 +388,18 @@ class CodeIndex:
         sha = commit or self.head()
         if sha is None:
             return None
-        chroma_dir = commit_chroma_path(self.project, sha, data_dir=self.data_dir)
-        if not chroma_dir.exists():
+        pair = await self._open_or_none(sha)
+        if pair is None:
             return None
-        docs, _ = await self._collections(sha)
-        page = await asyncio.to_thread(docs.get, ids=[item_id], include=["documents", "metadatas"])
-        ids = page.get("ids") or []
-        if not ids:
+        docs, _ = pair
+        raw = await asyncio.to_thread(docs.get, ids=[item_id], include=["documents", "metadatas"])
+        page = ChromaGetPage.from_chroma(raw)
+        if not page.ids:
             return None
-        text = (page.get("documents") or [""])[0]
-        meta = (page.get("metadatas") or [{}])[0]
+        text = page.documents[0] if page.documents else ""
+        meta = page.metadatas[0] if page.metadatas else {}
         self.manifest.touch(sha)
-        return _meta_to_result(ids[0], meta, sha, content=text)
+        return self._codec.parse(page.ids[0], meta or {}, sha, content=text or "")
 
     # -- Retention -------------------------------------------------------------
 
@@ -596,22 +414,15 @@ class CodeIndex:
         pointed to by a local branch.
 
         The eviction is **two-phase**: this call empties the chroma
-        data via chromadb's own ``delete_collection`` API and drops
-        the manifest entry, but leaves the (now-empty) directory on
-        disk. ``rmtree``-ing under a live chromadb client leaves
-        stale SQLite handles in chromadb's process-level cache and
-        triggers ``SQLITE_READONLY_DBMOVED`` on the next write —
-        the same trap that bit ``forget_commit`` in v0.5.8. The
-        directory husk is reclaimed by :meth:`sweep_stale_dirs`
-        which is safe to call at session startup, before any client
-        has been opened in this process.
+        data via chromadb's own ``delete_collection`` API (encapsulated
+        on :class:`ChromaClientFactory`) and drops the manifest entry,
+        but leaves the (now-empty) directory on disk.
+        :meth:`sweep_stale_dirs` reclaims the husk at session startup,
+        before any client has been opened in this process.
         """
         # Refresh branch_refs from git so retention has fresh data.
-        branch_map = _branch_heads(self.project)
-        per_commit_branches: dict[str, list[str]] = {}
-        for branch, sha in branch_map.items():
-            per_commit_branches.setdefault(sha, []).append(branch)
-        self.manifest.update_branch_refs(per_commit_branches)
+        branch_map = self._branches.load(self.project)
+        self.manifest.update_branch_refs(branch_map.per_commit())
 
         state = self.manifest.load()
         cutoff = datetime.now(timezone.utc) - timedelta(days=keep_recent_days)
@@ -635,16 +446,7 @@ class CodeIndex:
                 # directory stays — startup sweep reclaims it.
                 try:
                     client = await self._client_for(sha)
-                    for name in (DOCUMENTS_COLLECTION, CHUNKS_COLLECTION):
-                        try:
-                            await asyncio.to_thread(client.delete_collection, name)
-                        except Exception as exc:
-                            logger.debug(
-                                "clean: delete_collection(%s, sha=%s) skipped (%s)",
-                                name,
-                                sha[:8],
-                                exc,
-                            )
+                    await asyncio.to_thread(self._client_factory.drop_commit_collections, client)
                 except Exception as exc:
                     logger.debug("clean: chroma teardown failed for %s (%s)", sha[:8], exc)
             self.manifest.remove_commit(sha)
@@ -677,17 +479,9 @@ class CodeIndex:
             try:
                 shutil.rmtree(str(child), ignore_errors=True)
                 removed.append(sha)
-            except Exception as exc:
+            except OSError as exc:
                 logger.debug("sweep_stale_dirs: failed to remove %s (%s)", child, exc)
         return removed
-
-    # -- Internal --------------------------------------------------------------
-
-    async def _collections(self, sha: str) -> tuple[Any, Any]:
-        client = await self._client_for(sha)
-        docs = await asyncio.to_thread(_get_or_create_collection, client, DOCUMENTS_COLLECTION)
-        chunks = await asyncio.to_thread(_get_or_create_collection, client, CHUNKS_COLLECTION)
-        return docs, chunks
 
     async def head_stats(self, sha: str) -> HeadStats:
         """Quick per-commit stats for the CodeIndex panel.
@@ -699,10 +493,10 @@ class CodeIndex:
         ``type == "file"`` and dedupe by path so the numbers are
         directly comparable to ``git ls-files``.
         """
-        chroma_dir = commit_chroma_path(self.project, sha, data_dir=self.data_dir)
-        if not chroma_dir.exists():
+        pair = await self._open_or_none(sha)
+        if pair is None:
             return HeadStats(files_indexed=0, languages_indexed={})
-        docs, _ = await self._collections(sha)
+        docs, _ = pair
         total = await asyncio.to_thread(docs.count)
         if total == 0:
             return HeadStats(files_indexed=0, languages_indexed={})
@@ -710,15 +504,16 @@ class CodeIndex:
         # are noise for file-count purposes. ``where`` filters at the
         # chroma layer so we don't pull entity rows over the wire on
         # large repos.
-        page = await asyncio.to_thread(
+        raw = await asyncio.to_thread(
             docs.get,
             where={"type": "file"},
             include=["metadatas"],
             limit=50_000,
         )
+        page = ChromaGetPage.from_chroma(raw)
         seen_paths: set[str] = set()
         ext_counts: Counter[str] = Counter()
-        for meta in page.get("metadatas") or []:
+        for meta in page.metadatas:
             m = meta or {}
             path = (m.get("path") or "").strip()
             if path and path in seen_paths:
@@ -732,33 +527,79 @@ class CodeIndex:
             languages_indexed=dict(ext_counts),
         )
 
-    @staticmethod
-    async def _resolve_parent_ids_for(docs: Any, where: dict[str, Any]) -> list[str]:
-        """Find parent doc IDs matching a metadata ``where`` filter.
+    # -- Internal --------------------------------------------------------------
 
-        Used to translate a quality-field filter (which lives on parent
-        docs) into a chunk-side filter (which can only match the
-        denormalized columns on chunk metadata). Capped at 10k IDs —
-        beyond that the index user really wants ``filter_items``, not
-        a semantic search inside an enormous candidate set.
+    async def _open_or_none(self, sha: str) -> tuple[Any, Any] | None:
+        """Return ``(docs, chunks)`` for ``sha`` or ``None`` if the commit
+        isn't materialized.
+
+        Consolidates the "no chroma dir → return empty" guard that used
+        to appear in every read path.
         """
-        page = await asyncio.to_thread(
-            docs.get,
-            where=where,
-            limit=10_000,
-            include=[],
-        )
-        return list(page.get("ids") or [])
+        chroma_dir = commit_chroma_path(self.project, sha, data_dir=self.data_dir)
+        if not chroma_dir.exists():
+            return None
+        return await self._collections(sha)
+
+    async def _collections(self, sha: str) -> tuple[Any, Any]:
+        client = await self._client_for(sha)
+        docs, chunks = await asyncio.to_thread(self._client_factory.docs_and_chunks, client)
+        return docs, chunks
 
     async def _client_for(self, sha: str) -> Any:
+        """Open (or return cached) chromadb client for ``sha``.
+
+        The per-sha cache lives here on :class:`CodeIndex`, NOT on the
+        factory — chromadb has its own process-level path cache, and
+        double-caching would break the two-phase teardown workaround.
+        """
         if sha in self._clients:
             return self._clients[sha]
         path = commit_chroma_path(self.project, sha, data_dir=self.data_dir)
         path.mkdir(parents=True, exist_ok=True)
         async with self._lock:
             if sha not in self._clients:
-                self._clients[sha] = await asyncio.to_thread(_open_client, path)
+                self._clients[sha] = await asyncio.to_thread(self._client_factory.open, path)
             return self._clients[sha]
+
+    async def _resolve_chunk_where(
+        self,
+        docs: Any,
+        where: ChromaWhereFilter | dict[str, Any] | None,
+    ) -> dict[str, Any] | None | object:
+        """Translate a parent-side ``where`` into a chunk-side ``where``.
+
+        Quality / categorical filters live on parent doc metadata, not
+        on chunks. So we resolve the parent IDs first, then rewrite the
+        chunk-side filter to ``parent_doc_id $in <ids>``. Returns
+        :data:`_NARROWED_TO_EMPTY` when the parent filter matches
+        nothing — callers short-circuit to an empty result.
+        """
+        rendered = self._render_where(where)
+        if not rendered:
+            return None
+        parent_ids = await self._chunk_search.resolve_parent_ids(docs, rendered)
+        if not parent_ids:
+            return _NARROWED_TO_EMPTY
+        return {"parent_doc_id": {"$in": parent_ids}}
+
+    @staticmethod
+    def _render_where(
+        where: ChromaWhereFilter | dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Coerce a filter argument to the raw chroma ``where`` dict.
+
+        Accepts both the typed :class:`ChromaWhereFilter` and — for
+        backwards compat with tests/callers that still pass a hand-built
+        dict — a raw ``dict``. Returns ``None`` when the filter is empty.
+        """
+        if where is None:
+            return None
+        if isinstance(where, ChromaWhereFilter):
+            return where.to_chroma_where()
+        if isinstance(where, dict):
+            return where or None
+        raise TypeError(f"unsupported where filter type: {type(where)!r}")
 
     def _chunk_text(self, content: str) -> list[str]:
         if not content:
@@ -767,185 +608,17 @@ class CodeIndex:
         return [c.content for c in chunks if c.content]
 
 
-# -- Helpers ------------------------------------------------------------------
+# Sentinel returned by :meth:`CodeIndex._resolve_chunk_where` when the
+# parent filter narrowed to zero IDs — the read path short-circuits to
+# an empty result without touching chunks.
+_NARROWED_TO_EMPTY: object = object()
 
 
-def _open_client(path: Path) -> Any:
-    import chromadb
-
-    return chromadb.PersistentClient(path=str(path))
-
-
-def _get_or_create_collection(client: Any, name: str) -> Any:
-    """Get or create a chroma collection with high-recall HNSW config.
-
-    Chroma defaults to ``hnsw:search_ef=10`` which gives broken recall
-    on top-K queries with K > ~10 (the index returns near-floor matches
-    instead of the truly closest neighbors). At our scale (a few tens
-    of thousands of chunks) HNSW with high search_ef is effectively
-    exact, latency-cheap, and matches the precision the agent expects.
-
-    These parameters are baked into the collection's metadata at
-    creation time. Existing collections created without them keep
-    chroma's defaults until rebuilt — see ``scripts/reindex_hnsw.py``.
-
-    HNSW knobs (chroma supports the ``hnsw:*`` metadata keys):
-      - ``hnsw:space=cosine`` — explicit; the score-as-1-minus-distance
-        formula assumes cosine.
-      - ``hnsw:M=32`` — graph connectivity. Higher M = better graph
-        topology = better recall at any search_ef. 32 is the sweet spot
-        for most embedding sizes; doubles memory but our scale is tiny.
-      - ``hnsw:construction_ef=400`` — graph build quality. Higher =
-        better graph at index time, paid once.
-      - ``hnsw:search_ef=1000`` — per-query candidate pool size. Higher
-        = better recall at query time, paid every query. At 1000 with
-        ~42k chunks, recall on top-K is ~100% for K up to ~100.
-    """
-    return client.get_or_create_collection(
-        name=name,
-        embedding_function=EmbeddingFunction(),
-        metadata={
-            "hnsw:space": "cosine",
-            "hnsw:M": 32,
-            "hnsw:construction_ef": 400,
-            "hnsw:search_ef": 10000,
-        },
-    )
-
-
-def _branch_heads(project: str | Path) -> dict[str, str]:
-    """Return ``{branch_name: head_sha}`` for every local branch.
-
-    Empty dict when the project isn't a git repo.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/"],
-            capture_output=True,
-            text=True,
-            cwd=str(project),
-            timeout=5,
-        )
-    except Exception as exc:
-        logger.debug("git for-each-ref failed: %s", exc)
-        return {}
-    if result.returncode != 0:
-        return {}
-    out: dict[str, str] = {}
-    for line in result.stdout.splitlines():
-        parts = line.strip().split(maxsplit=1)
-        if len(parts) == 2:
-            branch, sha = parts
-            out[branch] = sha
-    return out
-
-
-def _flatten_item_metadata(item: CodeIndexItem) -> dict[str, Any]:
-    """Pack a :class:`CodeIndexItem`'s fields into chromadb-friendly metadata.
-
-    Single-value fields land as exact-match strings; quality
-    categoricals use ``""`` as the "not assessed" sentinel since
-    chroma metadata can't hold ``None``. Multi-value lists use
-    ``\\x1f`` brackets so ``$contains`` is exact-on-value.
-
-    Line numbers use ``-1`` for "not applicable" (folder/file rows).
-    """
-    out: dict[str, Any] = {
-        "name": item.name or "",
-        "type": item.type.value if hasattr(item.type, "value") else str(item.type),
-        "kind": item.kind or "",
-        "entity_type": item.entity_type or "",
-        "parent_id": item.parent_id or "",
-        "file_extension": item.file_extension or "",
-        "repository_id": item.repository_id or "",
-        "path": item.path or "",
-        "archived": bool(getattr(item, "archived", False)),
-        "timestamp": item.timestamp or "",
-        "token_count": int(item.token_count or 0),
-        "line_from": int(item.line_from) if item.line_from is not None else -1,
-        "line_to": int(item.line_to) if item.line_to is not None else -1,
-        "needs_refactoring": bool(item.needs_refactoring)
-        if item.needs_refactoring is not None
-        else False,
-    }
-    for field in _QUALITY_CATEGORICAL_FIELDS:
-        out[field] = getattr(item, field) or ""
-    for field in _LIST_FIELDS:
-        values = getattr(item, field) or []
-        out[field] = _encode_bracketed_list(values)
-    return out
-
-
-def _encode_bracketed_list(values: Iterable[str]) -> str:
-    """``["a", "b"]`` → ``"\x1fa\x1fb\x1f"`` for $contains exact match.
-
-    Empty list → ``""`` (so ``$contains`` against any value misses cleanly).
-    """
-    parts = [str(v) for v in values if v]
-    if not parts:
-        return ""
-    return _LIST_SEP + _LIST_SEP.join(parts) + _LIST_SEP
-
-
-def _decode_bracketed_list(encoded: Any) -> list[str]:
-    if not encoded:
-        return []
-    text = str(encoded)
-    return [part for part in text.split(_LIST_SEP) if part]
-
-
-def _line_or_none(value: Any) -> int | None:
-    """Decode the chroma sentinel for "no line range".
-
-    ``-1`` (or any negative value) means "not applicable"; convert
-    back to ``None`` so consumers see a clean nullable.
-    """
-    if value is None:
-        return None
-    try:
-        n = int(value)
-    except (TypeError, ValueError):
-        return None
-    return n if n >= 0 else None
-
-
-def _meta_to_result(
-    item_id: str,
-    meta: dict[str, Any],
-    sha: str,
-    *,
-    content: str = "",
-    score: float | None = None,
-    chunk_preview: str | None = None,
-) -> CodeIndexResult:
-    """Build a :class:`CodeIndexResult` from one chroma row.
-
-    Centralized so ``search`` / ``filter_items`` / ``get_item`` all
-    return the same pydantic shape.
-    """
-    payload: dict[str, Any] = {
-        "item_id": item_id,
-        "name": meta.get("name", ""),
-        "type": meta.get("type", ""),
-        "kind": meta.get("kind", ""),
-        "entity_type": meta.get("entity_type", ""),
-        "path": meta.get("path", ""),
-        "file_extension": meta.get("file_extension", ""),
-        "repository_id": meta.get("repository_id", ""),
-        "parent_id": meta.get("parent_id", ""),
-        "archived": bool(meta.get("archived", False)),
-        "timestamp": meta.get("timestamp", ""),
-        "token_count": int(meta.get("token_count", 0) or 0),
-        "line_from": _line_or_none(meta.get("line_from")),
-        "line_to": _line_or_none(meta.get("line_to")),
-        "needs_refactoring": bool(meta.get("needs_refactoring", False)),
-        "commit": sha,
-        "content": content,
-        "score": score,
-        "chunk_preview": chunk_preview,
-    }
-    for field in _QUALITY_CATEGORICAL_FIELDS:
-        payload[field] = meta.get(field, "")
-    for field in _LIST_FIELDS:
-        payload[field] = _decode_bracketed_list(meta.get(field))
-    return CodeIndexResult.model_validate(payload)
+__all__ = [
+    "CHUNKS_COLLECTION",
+    "DOCUMENTS_COLLECTION",
+    "ChromaWhereFilter",
+    "CodeIndex",
+    "CommitNotFoundError",
+    "HeadStats",
+]

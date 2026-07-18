@@ -27,6 +27,8 @@ async def _mock_stream(content="agent response"):
 
 
 def _mock_pool(content: str = "agent response"):
+    from ember_code.core.tools.orchestrate_budget import SpawnBudget
+
     pool = MagicMock()
     agent = MagicMock()
     agent.arun = MagicMock(return_value=_mock_stream(content))
@@ -40,8 +42,10 @@ def _mock_pool(content: str = "agent response"):
     defn = MagicMock()
     defn.description = "Test agent"
     defn.tools = ["Read", "Write"]
+    defn.force_isolation = None
     pool.get.return_value = agent
     pool.get_definition.return_value = defn
+    pool.spawn_budget.return_value = SpawnBudget(20)
     return pool
 
 

@@ -43,7 +43,7 @@ class TestGetSlashCommands:
         (tmp_path / "home").mkdir()
         backend = _make_backend(tmp_path)
         out = backend.get_slash_commands()
-        names = {entry["name"] for entry in out if entry["source"] == "builtin"}
+        names = {entry.name for entry in out if entry.source == "builtin"}
         # Sanity: well-known built-ins all present (and unprefixed —
         # the bare name lets the caller render its own slash).
         assert {"help", "clear", "compact", "model", "agents", "skills"} <= names
@@ -53,10 +53,10 @@ class TestGetSlashCommands:
         (tmp_path / "home").mkdir()
         backend = _make_backend(tmp_path)
         out = backend.get_slash_commands()
-        help_entry = next(e for e in out if e["name"] == "help")
-        assert help_entry["description"]  # non-empty
-        assert help_entry["source"] == "builtin"
-        assert help_entry["argument_hint"] == ""
+        help_entry = next(e for e in out if e.name == "help")
+        assert help_entry.description  # non-empty
+        assert help_entry.source == "builtin"
+        assert help_entry.argument_hint == ""
 
     def test_bypass_is_listed_with_description(self, tmp_path, monkeypatch):
         """``/bypass`` (the footer auto-approve switch's BE half)
@@ -68,11 +68,11 @@ class TestGetSlashCommands:
         backend = _make_backend(tmp_path)
         out = backend.get_slash_commands()
         bypass = next(
-            (e for e in out if e["name"] == "bypass" and e["source"] == "builtin"),
+            (e for e in out if e.name == "bypass" and e.source == "builtin"),
             None,
         )
         assert bypass is not None, "/bypass missing from slash command catalog"
-        assert bypass["description"]  # non-empty
+        assert bypass.description  # non-empty
 
     def test_includes_markdown_commands(self, tmp_path, monkeypatch):
         home = tmp_path / "home"
@@ -84,9 +84,9 @@ class TestGetSlashCommands:
         )
         backend = _make_backend(tmp_path)
         out = backend.get_slash_commands()
-        review = next(e for e in out if e["source"] == "markdown" and e["name"] == "review")
-        assert review["description"] == "Review the diff"
-        assert review["argument_hint"] == "<path>"
+        review = next(e for e in out if e.source == "markdown" and e.name == "review")
+        assert review.description == "Review the diff"
+        assert review.argument_hint == "<path>"
 
     def test_markdown_discovery_respects_cross_tool_toggle(self, tmp_path, monkeypatch):
         """When cross_tool_support is off, a ``.claude/commands/``
@@ -100,7 +100,7 @@ class TestGetSlashCommands:
 
         backend = _make_backend(tmp_path, cross_tool=False)
         out = backend.get_slash_commands()
-        markdown_names = {e["name"] for e in out if e["source"] == "markdown"}
+        markdown_names = {e.name for e in out if e.source == "markdown"}
         assert "claude_only" not in markdown_names
         assert "ember_only" in markdown_names
 
@@ -117,10 +117,10 @@ class TestGetSlashCommands:
         ]
         backend = _make_backend(tmp_path, skills=skills)
         out = backend.get_slash_commands()
-        planner = next(e for e in out if e["source"] == "skill")
-        assert planner["name"] == "planner"
-        assert planner["description"] == "Plan a task"
-        assert planner["argument_hint"] == "<topic>"
+        planner = next(e for e in out if e.source == "skill")
+        assert planner.name == "planner"
+        assert planner.description == "Plan a task"
+        assert planner.argument_hint == "<topic>"
 
     def test_excludes_non_user_invocable_skills(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
@@ -130,7 +130,7 @@ class TestGetSlashCommands:
         ]
         backend = _make_backend(tmp_path, skills=skills)
         out = backend.get_slash_commands()
-        skill_names = {e["name"] for e in out if e["source"] == "skill"}
+        skill_names = {e.name for e in out if e.source == "skill"}
         assert "internal" not in skill_names
 
     def test_all_three_sources_in_one_response(self, tmp_path, monkeypatch):
@@ -141,7 +141,7 @@ class TestGetSlashCommands:
         skills = [SkillDefinition(name="skillone", description="s", user_invocable=True)]
         backend = _make_backend(tmp_path, skills=skills)
         out = backend.get_slash_commands()
-        sources = {e["source"] for e in out}
+        sources = {e.source for e in out}
         assert sources == {"builtin", "markdown", "skill"}
 
     def test_entry_shape_consistent(self, tmp_path, monkeypatch):
@@ -156,13 +156,18 @@ class TestGetSlashCommands:
         out = backend.get_slash_commands()
         assert out  # non-empty
         for entry in out:
-            assert set(entry.keys()) == {"name", "description", "source", "argument_hint"}
-            assert isinstance(entry["name"], str)
-            assert isinstance(entry["description"], str)
-            assert entry["source"] in ("builtin", "markdown", "skill")
-            assert isinstance(entry["argument_hint"], str)
+            assert set(entry.model_fields.keys()) == {
+                "name",
+                "description",
+                "source",
+                "argument_hint",
+            }
+            assert isinstance(entry.name, str)
+            assert isinstance(entry.description, str)
+            assert entry.source in ("builtin", "markdown", "skill")
+            assert isinstance(entry.argument_hint, str)
             # The leading slash is the CALLER's job to add.
-            assert not entry["name"].startswith("/")
+            assert not entry.name.startswith("/")
 
     def test_skill_enumeration_failure_does_not_sink_call(self, tmp_path, monkeypatch):
         """If skill enumeration raises (e.g. a misconfigured
@@ -182,7 +187,7 @@ class TestGetSlashCommands:
         backend._session = session
 
         out = backend.get_slash_commands()
-        sources = {e["source"] for e in out}
+        sources = {e.source for e in out}
         assert "builtin" in sources
         assert "markdown" in sources
         assert "skill" not in sources
@@ -213,4 +218,4 @@ class TestRpcIntegration:
         # Dispatch entries are sync lambdas wrapping the backend
         # method; this one returns the list directly.
         assert isinstance(result, list)
-        assert any(entry["source"] == "builtin" for entry in result)
+        assert any(entry.source == "builtin" for entry in result)

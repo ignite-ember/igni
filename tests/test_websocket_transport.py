@@ -224,9 +224,10 @@ async def test_slow_client_does_not_stall_other_clients():
         async def parked(_payload):
             await wedge.wait()
 
-        # ``_conns`` holds the raw websocket server conn; replace its
-        # send with our parking coroutine.
-        tr._conns[slow_cid].send = parked  # type: ignore[attr-defined]
+        # ``_conns`` holds a MirroredClient wrapper; reach through its
+        # public ``.conn`` attribute to the raw websocket server conn
+        # and replace its send with our parking coroutine.
+        tr._conns[slow_cid].conn.send = parked
 
         # One broadcast — the slow conn will time out at 100 ms and be
         # dropped; the fast conn receives normally. ``send()`` must

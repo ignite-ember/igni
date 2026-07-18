@@ -1,165 +1,120 @@
-"""``/memory``, ``/knowledge``, ``/sync_knowledge`` slash commands.
+"""``/memory`` slash command implementation.
 
-Extracted from :mod:`ember_code.backend.command_handler` — three
-commands that share the "read/write the session's persistent
-learnings" surface:
+Extracted (and slimmed) from the older ``cmd_memory.py`` that
+housed ``/memory`` + ``/knowledge`` + ``/sync-knowledge`` as three
+free functions. Following the sibling :mod:`cmd_codeindex` pattern:
 
-* ``/memory`` — show Learning Machine data (user profile /
-  memory / entity memory / session context). ``/memory
-  optimize`` triggers a compaction pass over stored memories.
-* ``/knowledge`` — open the panel or add a URL / path / text
-  to the knowledge base.
-* ``/sync_knowledge`` — bidirectional cloud sync (when
-  ``knowledge.share`` is enabled).
+* Only ``/memory`` lives here now. The ``/knowledge`` and
+  ``/sync-knowledge`` commands moved to
+  :mod:`ember_code.backend.cmd_knowledge`.
+* All work happens on :class:`MemoryCommand`, a Session-injected
+  coordinator with one method per verb. The public
+  :func:`cmd_memory` entry point is a two-line shim so
+  :mod:`ember_code.backend.command_handler`'s dispatch table stays
+  wire-compatible.
+* Payload shaping (untyped ``arecall`` dict → per-store Pydantic
+  section models) lives in :mod:`schemas_memory`. This module is
+  the coordinator only.
 
-Each function takes ``CommandHandler`` as its first argument
-and reads/writes via ``handler._session.memory_mgr`` /
-``knowledge_mgr`` / ``main_team.learning_machine``.
+Sub-commands handled here:
+
+* ``/memory`` (no args) — show Learning Machine data (user
+  profile / memory / entity memory / session context).
+* ``/memory optimize`` — trigger a compaction pass over stored
+  memories via :class:`SessionMemoryManager`.
+
+Sibling command files (:mod:`cmd_session`, :mod:`cmd_modes`,
+:mod:`cmd_plugin`) remain procedural at the time of this
+refactor — that shape is documented tech debt and will be
+migrated in follow-up passes. :mod:`cmd_schedule` has since
+adopted the coordinator + view-model pattern (see
+:class:`~ember_code.backend.cmd_schedule.ScheduleCommand`).
 """
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
+from ember_code.backend.command_result import CommandResult
+from ember_code.backend.schemas_memory import LearningRecall
+
 if TYPE_CHECKING:
-    from ember_code.backend.command_handler import CommandHandler, CommandResult
+    from ember_code.backend.command_handler import CommandHandler
+    from ember_code.core.session import Session
+
+logger = logging.getLogger(__name__)
 
 
-async def cmd_memory(handler: "CommandHandler", args: str) -> "CommandResult":
-    """Show Learning Machine data or trigger memory compaction."""
-    from ember_code.backend import command_handler as _handler
+class MemoryCommand:
+    """Coordinator for the ``/memory`` slash-command family.
 
-    CommandResult = _handler.CommandResult
-    subcommand = args.strip().lower()
+    Holds a :class:`Session` reference and exposes each verb as
+    a bound method. Constructed per invocation so the coordinator
+    stays stateless between calls (nothing outlives one
+    :meth:`dispatch` call).
 
-    if subcommand == "optimize":
-        result = await handler._session.memory_mgr.optimize()
-        if "error" in result:
-            return CommandResult.error(f"Memory optimization failed: {result['error']}")
-        return CommandResult.info(result["message"])
+    The class accepts a :class:`Session` directly rather than the
+    :class:`CommandHandler` state object, so we don't reach into
+    ``handler._session`` from inside the coordinator (Rule 6: no
+    private-attribute reach-in). Matches the sibling
+    :class:`~ember_code.backend.cmd_codeindex.CodeIndexCommand`
+    contract.
+    """
 
-    # Show Learning Machine data — use agent's property which triggers
-    # lazy init.
-    learning = getattr(handler._session.main_team, "learning_machine", None)
-    if learning is None:
-        learning = getattr(handler._session, "_learning", None)
-    if learning is None:
-        return CommandResult.info(
-            "Learning is not enabled. Set learning.enabled=true in config."
-        )
+    def __init__(self, session: Session) -> None:
+        self._session = session
 
-    sections: list[str] = []
-    try:
-        # Recall with session_id=None to get cross-session data (user
-        # profile, user memory, entity memory).
-        data = await learning.arecall(
-            user_id=handler._session.user_id,
-        )
-        for store_name, store_data in data.items():
-            if not store_data:
-                continue
-            title = store_name.replace("_", " ").title()
-            lines = f"## {title}\n"
+    # ── Dispatch ─────────────────────────────────────────────────
 
-            if store_name == "user_profile":
-                for attr in ("name", "preferred_name", "role", "expertise", "preferences"):
-                    val = getattr(store_data, attr, None)
-                    if val:
-                        lines += f"- **{attr.replace('_', ' ').title()}**: {val}\n"
+    async def dispatch(self, args: str) -> CommandResult:
+        """Route a raw arg string to the matching verb method.
 
-            elif store_name == "user_memory":
-                memories = getattr(store_data, "memories", []) or []
-                for m in memories:
-                    content = m.get("content", "") if isinstance(m, dict) else str(m)
-                    if content:
-                        lines += f"- {content}\n"
+        Recognised verbs:
 
-            elif store_name == "session_context":
-                summary = getattr(store_data, "summary", None)
-                if summary:
-                    lines += f"{summary}\n"
+        * ``optimize`` → :meth:`optimize`
+        * anything else (including empty args) → :meth:`show`
+        """
+        subcommand = args.strip().lower()
+        if subcommand == "optimize":
+            return await self.optimize()
+        return await self.show()
 
-            elif store_name == "entity_memory":
-                entities = getattr(store_data, "entities", []) or []
-                for e in entities:
-                    if isinstance(e, dict):
-                        lines += f"- **{e.get('name', '?')}**: {e.get('description', '')}\n"
-                    else:
-                        lines += f"- {e}\n"
+    # ── Verb methods ─────────────────────────────────────────────
 
-            else:
-                lines += f"{store_data}\n"
-
-            if lines.strip() != f"## {title}":
-                sections.append(lines)
-    except Exception:
-        pass
-
-    if not sections:
-        return CommandResult.info(
-            "No learnings stored yet. The agent learns from your conversations automatically."
-        )
-
-    return CommandResult.markdown("\n\n".join(sections))
-
-
-async def cmd_knowledge(handler: "CommandHandler", args: str) -> "CommandResult":
-    """Handle ``/knowledge`` commands: add url|path|text, search, status."""
-    from ember_code.backend import command_handler as _handler
-
-    CommandResult = _handler.CommandResult
-    mgr = handler._session.knowledge_mgr
-    parts = args.strip().split(None, 1)
-    subcommand = parts[0].lower() if parts else ""
-    sub_args = parts[1].strip() if len(parts) > 1 else ""
-
-    if subcommand == "add" and sub_args:
-        if sub_args.startswith(("http://", "https://")):
-            result = await mgr.add_url(sub_args)
-        elif "/" in sub_args or sub_args.startswith("."):
-            result = await mgr.add_path(sub_args)
-        else:
-            result = await mgr.add(text=sub_args)
+    async def optimize(self) -> CommandResult:
+        """Trigger a compaction pass over stored memories via
+        :class:`SessionMemoryManager`."""
+        result = await self._session.memory_mgr.optimize()
         if not result.success:
-            return CommandResult.error(result.error)
+            return CommandResult.error(f"Memory optimization failed: {result.error}")
         return CommandResult.info(result.message)
 
-    if subcommand == "search":
-        # Open the panel — the input field there IS the search UI.
-        # Pre-populating from the slash command would defeat the
-        # purpose: the panel is where users type queries, iterate,
-        # and browse results interactively. ``sub_args`` (if any)
-        # is ignored on purpose; users continue typing in the panel.
-        return CommandResult.knowledge()
+    async def show(self) -> CommandResult:
+        """Render the Learning Machine's cross-session recall
+        (user profile / memory / entity memory / session context).
 
-    # No subcommand: open the TUI panel. (Status + commands hint were
-    # previously printed as markdown — the panel surfaces the same
-    # status header and lets the user search / add interactively.)
-    # The error path is preserved so users see a clear reason when
-    # the base failed to initialize.
-    status = await mgr.status()
-    if not status.enabled:
-        if handler._session.settings.knowledge.enabled:
-            if handler._session._knowledge_error:
-                return CommandResult.error(
-                    f"Knowledge failed to load: {handler._session._knowledge_error}"
-                )
-            return CommandResult.error("Knowledge base failed to initialize.")
-        return CommandResult.info(
-            "Knowledge base is disabled. Set knowledge.enabled=true in config."
-        )
-    return CommandResult.knowledge()
+        Uses :attr:`Session.learning_machine` — the public
+        property that fuses ``main_team.learning_machine`` with
+        the fallback ``_learning`` field, so this method never
+        touches Session privates. Recall failures collapse to
+        the empty-recall path inside
+        :meth:`LearningRecall.aload`."""
+        learning = self._session.learning_machine
+        if learning is None:
+            return CommandResult.info(
+                "Learning is not enabled. Set learning.enabled=true in config."
+            )
+        recall = await LearningRecall.aload(learning, self._session.user_id)
+        return recall.to_command_result()
 
 
-async def cmd_sync_knowledge(handler: "CommandHandler") -> "CommandResult":
-    """Handle ``/sync_knowledge`` — bidirectional cloud sync."""
-    from ember_code.backend import command_handler as _handler
+async def cmd_memory(handler: CommandHandler, args: str) -> CommandResult:
+    """Handle ``/memory`` commands.
 
-    CommandResult = _handler.CommandResult
-    if not handler._session.knowledge_mgr.share_enabled():
-        return CommandResult.info(
-            "Knowledge sharing is not enabled. Set knowledge.share=true in config."
-        )
-    results = await handler._session.knowledge_mgr.sync_bidirectional()
-    lines = [f"[{r.direction}] {r.summary}" for r in results]
-    return CommandResult.info("\n".join(lines))
+    Two-line shim preserved verbatim so
+    :mod:`ember_code.backend.command_handler` keeps importing
+    ``cmd_memory`` by name and calling it with ``(self, args)``.
+    All real work lives on :class:`MemoryCommand`.
+    """
+    return await MemoryCommand(handler.session).dispatch(args)

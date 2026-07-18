@@ -22,7 +22,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from agno.run import agent as agent_events
 from agno.run.agent import CustomEvent
 
@@ -50,7 +49,10 @@ class TestFullStreamThroughOrchestrate:
             def __init__(self):
                 self.tool_name = "visualize"
                 self.tool_args = {
-                    "spec": {"root": "r", "elements": {"r": {"type": "Text", "props": {"text": "hi"}}}}
+                    "spec": {
+                        "root": "r",
+                        "elements": {"r": {"type": "Text", "props": {"text": "hi"}}},
+                    }
                 }
                 self.tool_call_id = "c1"
                 self.result = None
@@ -103,8 +105,7 @@ class TestFullStreamThroughOrchestrate:
         # The wire event history the FE would see:
         deltas = [e for e in progress if e.get("type") == "visualization_delta"]
         assert deltas, (
-            f"No visualization_delta emitted; progress types: "
-            f"{[e.get('type') for e in progress]}"
+            f"No visualization_delta emitted; progress types: {[e.get('type') for e in progress]}"
         )
 
         # Final delta carries the fully-parsed spec + final=True.

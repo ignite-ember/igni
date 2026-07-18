@@ -1,139 +1,158 @@
 """Unit tests for ``session/broadcast.py``.
 
-Broadcast machinery was extracted from Session in iter 141.
-Session's own tests cover the delegation, but the free-function
-API deserves its own pins so future refactors (e.g. adding a
-priority queue for post-run broadcasts) can't silently regress
-the defensive-against-partial-init contract or the
-one-callback-can't-sink-the-rest guarantee.
+Broadcast machinery was extracted from Session in iter 141 and
+turned into the :class:`BroadcastBus` class in the OOP pivot for
+the ``session/`` package. Session's own tests cover the delegating
+facade methods; these pins guard the class contract itself —
+idempotent register, exception isolation between callbacks, and
+the run_id stamping policy on drain.
 """
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from ember_code.core.session.broadcast import (
-    broadcast,
-    drain_post_run_broadcasts,
-    queue_post_run_broadcast,
-    register_broadcast_callback,
-)
+from ember_code.core.session.broadcast import BroadcastBus, BroadcastEvent
 
 
-def _bare_session():
-    """Session-shaped stub with only the fields broadcast.py reads."""
-    return SimpleNamespace(_broadcast_callbacks=[], _pending_post_run_broadcasts=[])
+def _bus_with_callback(cb):
+    """Fresh bus wired with a single callback — most tests want
+    this shape and building it inline noise-up the reads."""
+    bus = BroadcastBus()
+    bus.register(cb)
+    return bus
 
 
-class TestRegisterBroadcastCallback:
+class TestRegister:
     def test_registers_new(self):
-        s = _bare_session()
+        bus = BroadcastBus()
         cb = MagicMock()
-        register_broadcast_callback(s, cb)
-        assert cb in s._broadcast_callbacks
+        bus.register(cb)
+        assert bus.has_callbacks
 
     def test_idempotent(self):
         # Same callback registered twice should only appear once
         # so a reload doesn't fan out events N times.
-        s = _bare_session()
+        bus = BroadcastBus()
         cb = MagicMock()
-        register_broadcast_callback(s, cb)
-        register_broadcast_callback(s, cb)
-        assert s._broadcast_callbacks.count(cb) == 1
+        bus.register(cb)
+        bus.register(cb)
+        # Fan out through emit and confirm the callback fires
+        # exactly once.
+        bus.emit(BroadcastEvent(channel="c", payload={}))
+        assert cb.call_count == 1
 
 
-class TestBroadcast:
+class TestEmit:
     def test_fires_all_callbacks(self):
-        s = _bare_session()
         a, b = MagicMock(), MagicMock()
-        s._broadcast_callbacks = [a, b]
-        broadcast(s, "chan", {"k": 1})
+        bus = BroadcastBus()
+        bus.register(a)
+        bus.register(b)
+        bus.emit(BroadcastEvent(channel="chan", payload={"k": 1}))
         a.assert_called_once_with("chan", {"k": 1})
         b.assert_called_once_with("chan", {"k": 1})
 
     def test_no_callbacks_is_noop(self):
-        s = _bare_session()
-        broadcast(s, "chan", {"k": 1})  # should not raise
-
-    def test_missing_attr_is_noop(self):
-        # Defensive path — the audit called out Session.__new__
-        # bypass in tests as a real concern.
-        s = SimpleNamespace()
-        broadcast(s, "chan", {"k": 1})  # should not raise
+        # Bare bus should not raise. Common during session
+        # bootstrap before any transport has subscribed.
+        bus = BroadcastBus()
+        bus.emit(BroadcastEvent(channel="chan", payload={"k": 1}))
 
     def test_one_callback_exception_does_not_sink_others(self):
         # Headline safety property: a bad plugin can't stop
         # legitimate FE clients from receiving the same event.
-        s = _bare_session()
         bad = MagicMock(side_effect=RuntimeError("boom"))
         good = MagicMock()
-        s._broadcast_callbacks = [bad, good]
-        broadcast(s, "chan", {"k": 1})
+        bus = BroadcastBus()
+        bus.register(bad)
+        bus.register(good)
+        bus.emit(BroadcastEvent(channel="chan", payload={"k": 1}))
         good.assert_called_once()
 
 
-class TestQueuePostRunBroadcast:
+class TestQueuePostRun:
     def test_appends_to_queue(self):
-        s = _bare_session()
-        queue_post_run_broadcast(s, "plan_submitted", {"plan": "x"})
-        assert s._pending_post_run_broadcasts == [("plan_submitted", {"plan": "x"})]
+        bus = BroadcastBus()
+        bus.queue_post_run(BroadcastEvent(channel="plan_submitted", payload={"plan": "x"}))
+        assert bus.pending_count == 1
 
-    def test_falls_back_to_immediate_when_queue_missing(self):
-        # Session.__new__ path — no queue attr initialised.
-        s = SimpleNamespace(_broadcast_callbacks=[])
+    def test_queue_holds_until_drain(self):
         cb = MagicMock()
-        s._broadcast_callbacks = [cb]
-        queue_post_run_broadcast(s, "plan_submitted", {"plan": "x"})
-        # Fell back to immediate broadcast.
+        bus = _bus_with_callback(cb)
+        bus.queue_post_run(BroadcastEvent(channel="plan_submitted", payload={"plan": "x"}))
+        # Nothing fires until drain — the whole point.
+        cb.assert_not_called()
+        bus.drain_post_run()
         cb.assert_called_once_with("plan_submitted", {"plan": "x"})
 
 
-class TestDrainPostRunBroadcasts:
+class TestDrainPostRun:
     def test_flushes_all(self):
-        s = _bare_session()
         cb = MagicMock()
-        s._broadcast_callbacks = [cb]
-        s._pending_post_run_broadcasts = [("a", {"x": 1}), ("b", {"y": 2})]
-        drain_post_run_broadcasts(s)
+        bus = _bus_with_callback(cb)
+        bus.queue_post_run(BroadcastEvent(channel="a", payload={"x": 1}))
+        bus.queue_post_run(BroadcastEvent(channel="b", payload={"y": 2}))
+        bus.drain_post_run()
         assert cb.call_count == 2
-        assert s._pending_post_run_broadcasts == []
+        assert bus.pending_count == 0
 
     def test_empty_queue_is_noop(self):
-        s = _bare_session()
         cb = MagicMock()
-        s._broadcast_callbacks = [cb]
-        drain_post_run_broadcasts(s)
+        bus = _bus_with_callback(cb)
+        bus.drain_post_run()
         cb.assert_not_called()
 
     def test_stamps_run_id_into_payload(self):
         # The plan-tool's payload doesn't include ``run_id`` because
         # the tool can't see it from inside its toolkit context;
-        # drain injects it here.
-        s = _bare_session()
+        # drain injects it here via ``BroadcastEvent.with_run_id``.
         cb = MagicMock()
-        s._broadcast_callbacks = [cb]
-        s._pending_post_run_broadcasts = [("plan_submitted", {"plan": "x"})]
-        drain_post_run_broadcasts(s, run_id="run-42")
+        bus = _bus_with_callback(cb)
+        bus.queue_post_run(BroadcastEvent(channel="plan_submitted", payload={"plan": "x"}))
+        bus.drain_post_run(run_id="run-42")
         cb.assert_called_once_with("plan_submitted", {"plan": "x", "run_id": "run-42"})
 
     def test_existing_run_id_preserved(self):
         # If the payload already carries a run_id, don't clobber it.
-        s = _bare_session()
         cb = MagicMock()
-        s._broadcast_callbacks = [cb]
-        s._pending_post_run_broadcasts = [("evt", {"run_id": "original"})]
-        drain_post_run_broadcasts(s, run_id="different")
+        bus = _bus_with_callback(cb)
+        bus.queue_post_run(BroadcastEvent(channel="evt", payload={"run_id": "original"}))
+        bus.drain_post_run(run_id="different")
         cb.assert_called_once_with("evt", {"run_id": "original"})
 
     def test_snapshot_before_clear_prevents_reentry_loop(self):
         # If a callback re-queues during drain, that entry stays
         # in the queue for the NEXT drain — it doesn't loop here.
-        s = _bare_session()
-        s._pending_post_run_broadcasts = [("a", {"x": 1})]
+        bus = BroadcastBus()
+        received: list[tuple[str, dict]] = []
 
         def _requeuer(channel, payload):
-            s._pending_post_run_broadcasts.append(("re", {"y": 2}))
+            received.append((channel, payload))
+            bus.queue_post_run(BroadcastEvent(channel="re", payload={"y": 2}))
 
-        s._broadcast_callbacks = [_requeuer]
-        drain_post_run_broadcasts(s)
-        # The re-queued entry survived to the next drain.
-        assert s._pending_post_run_broadcasts == [("re", {"y": 2})]
+        bus.register(_requeuer)
+        bus.queue_post_run(BroadcastEvent(channel="a", payload={"x": 1}))
+        bus.drain_post_run()
+        # First drain: original entry fired, re-queued one waits.
+        assert received == [("a", {"x": 1})]
+        assert bus.pending_count == 1
+        # Second drain: the re-queued entry now fires.
+        bus.drain_post_run()
+        assert received[-1] == ("re", {"y": 2})
+
+
+class TestBroadcastEvent:
+    def test_with_run_id_stamps_when_missing(self):
+        event = BroadcastEvent(channel="c", payload={"x": 1})
+        stamped = event.with_run_id("R-1")
+        assert stamped.payload == {"x": 1, "run_id": "R-1"}
+        # Source event is not mutated.
+        assert event.payload == {"x": 1}
+
+    def test_with_run_id_preserves_existing(self):
+        event = BroadcastEvent(channel="c", payload={"run_id": "keep"})
+        assert event.with_run_id("override") is event
+
+    def test_with_run_id_noop_on_empty(self):
+        event = BroadcastEvent(channel="c", payload={"x": 1})
+        assert event.with_run_id(None) is event
+        assert event.with_run_id("") is event

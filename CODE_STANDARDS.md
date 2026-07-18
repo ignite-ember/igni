@@ -104,6 +104,72 @@ Surface the gap.
 
 Not Claude. `Co-Authored-By: Ignite Ember <noreply@igniteember.sh>`.
 
+### Rule 6: OOP over procedural — classes own data + behaviour
+
+Data and behaviour live together on classes. If a free function takes one
+object as its first argument and touches that object's attributes, it is a
+METHOD in the wrong place. Move it to the class.
+
+The `refactor-to-standards` workflow enforces this as a hard constraint;
+its audit phase catalogs offenders in seven categories:
+
+- **free-function-with-state-first-arg** — `def foo(session, x)` that
+  reads `session._pending` or calls `session.foo()`. Belongs as
+  `session.foo(x)`, or as a method on a coordinator class that composes
+  the session.
+- **module-level-mutable-state** — module-level lists / dicts / counters
+  mutated by functions. Owned by a class instance instead.
+- **classvar-used-as-singleton** — `Handler.token = ...` used to smuggle
+  state between calls. Move to an instance field.
+- **dispatch-dict-of-free-functions** — `_HANDLERS = {"a": fn_a, ...}`
+  where handlers could be methods on subclasses of a base, or a
+  bound-method table on an object.
+- **data-and-behavior-separated** — a Pydantic model / dataclass that
+  gets passed to a bag of free functions instead of having methods on
+  the model itself.
+- **private-attr-reach-in** — code repeatedly touching `foo._private`
+  from outside `foo`'s class. Either expose a public method, or the
+  reach-in is really a method that belongs on `foo`.
+- **utility-module-of-related-helpers** — a file of standalone functions
+  that all share an implicit subject. The subject wants to be a class.
+
+```python
+# WRONG — session-first free function, reaches into session state
+def compact_if_needed(session: Session, threshold: int) -> bool:
+    if session._context_tokens < threshold:
+        return False
+    session._history = _summarise(session._history)
+    session._compact_count += 1
+    return True
+
+# RIGHT — method on the class that owns the state
+class Session:
+    def compact_if_needed(self, threshold: int) -> bool:
+        if self._context_tokens < threshold:
+            return False
+        self._history = self._summarise(self._history)
+        self._compact_count += 1
+        return True
+```
+
+**"Sibling files are all free-functions" is NOT a defense.** If a
+package is procedural end-to-end, the file you are editing is where
+OOP starts. Note the drift in the PR description; do not clone the
+shape.
+
+**Exceptions — genuine pure helpers may remain free functions:**
+- Takes only primitive types (no controller / session / state object
+  as first arg).
+- No module-level mutable state.
+- Stateless leaf (e.g. `parse_frontmatter(text: str) -> FrontMatter`).
+- Small enough that promotion to a class would add ceremony without
+  behavioural cohesion.
+
+These belong in a small utility module; when in doubt, ask whether the
+function has an implicit subject — if two or more free functions in the
+module share the same first arg, that arg is the class waiting to be
+extracted.
+
 ---
 
 ## Architectural patterns

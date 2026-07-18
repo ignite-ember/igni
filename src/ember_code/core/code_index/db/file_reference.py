@@ -10,6 +10,8 @@ from sqlalchemy import delete, or_, select
 from sqlalchemy.dialects.sqlite import insert
 
 from ember_code.core.code_index.db.models import FileReferenceModel
+from ember_code.core.code_index.delta.ops import ReferenceMeta
+from ember_code.core.code_index.enums import Relation
 from ember_code.core.code_index.schema.file_reference import FileReference
 from ember_code.core.db.database import Database
 
@@ -79,15 +81,24 @@ class FileReferenceService:
         self,
         from_uuid: str,
         to_uuid: str,
-        relation: str,
-        meta: dict,
+        relation: str | Relation,
+        meta: dict | ReferenceMeta,
     ) -> FileReference:
-        """Upsert a reference. ``meta`` replaced; ``(from, to, relation)`` is the key."""
+        """Upsert a reference. ``meta`` replaced; ``(from, to, relation)`` is the key.
+
+        Accepts ``relation`` as a raw string OR a :class:`Relation` enum
+        member (the Pydantic ``FileReference`` model coerces on return).
+        Accepts ``meta`` as either a raw dict or a :class:`ReferenceMeta`
+        instance — the latter is normalized to a dict at the SQLAlchemy
+        boundary so the JSON column stays portable.
+        """
+        relation_str = relation.value if isinstance(relation, Relation) else relation
+        meta_dict = meta.model_dump() if hasattr(meta, "model_dump") else dict(meta)
         stmt = insert(FileReferenceModel).values(
             from_uuid=from_uuid,
             to_uuid=to_uuid,
-            relation=relation,
-            meta=meta,
+            relation=relation_str,
+            meta=meta_dict,
         )
         stmt = stmt.on_conflict_do_update(
             index_elements=["from_uuid", "to_uuid", "relation"],
@@ -95,7 +106,9 @@ class FileReferenceService:
         )
         async with self.db.session() as session, session.begin():
             await session.execute(stmt)
-        return FileReference(from_uuid=from_uuid, to_uuid=to_uuid, relation=relation, meta=meta)
+        return FileReference(
+            from_uuid=from_uuid, to_uuid=to_uuid, relation=relation_str, meta=meta_dict
+        )
 
     async def delete(self, from_uuid: str, to_uuid: str, relation: str | None = None) -> None:
         """Drop one edge (relation set) or all edges between a pair (relation None)."""

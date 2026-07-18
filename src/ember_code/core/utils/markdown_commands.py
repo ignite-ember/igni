@@ -110,9 +110,7 @@ class MarkdownCommand(BaseModel):
         return text
 
     @classmethod
-    def discover(
-        cls, project_dir: Path, *, read_claude: bool = True
-    ) -> dict[str, MarkdownCommand]:
+    def discover(cls, project_dir: Path, *, read_claude: bool = True) -> dict[str, MarkdownCommand]:
         """Walk all configured roots and return ``name → command``.
 
         Later roots override earlier ones on name collisions — project

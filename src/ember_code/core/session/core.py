@@ -1,24 +1,70 @@
-"""Session core — wires up subsystems and handles messages."""
+"""Session core — wires up subsystems and delegates to coordinators.
 
-import asyncio
+:class:`Session` is a slim orchestrator: it constructs the
+subsystem instances, composes the coordinator classes that own
+their concern's state + behaviour, and exposes a thin public
+surface that forwards to those coordinators.
+
+Owned concerns (each has a class in this package):
+
+* :class:`~.loop_ops.LoopController` — ``/loop`` state.
+* :class:`~.plan_ops.PlanCoordinator` — approve / dismiss plans.
+* :class:`~.state_ops.RuntimeModeCoordinator` — output-style +
+  permission-mode flips.
+* :class:`~.compaction.CompactionCoordinator` — auto + manual
+  context compaction.
+* :class:`~.startup.SessionStartupCoordinator` — background
+  warmups + MCP first-connect.
+* :class:`~.mcp_ops.McpLifecycleCoordinator` — plugin-driven MCP
+  auto-connect / disconnect.
+* :class:`~.message_handler.SessionMessageHandler` — the six-
+  step headless message pipeline.
+* :class:`~.cloud_catalog.CloudModelCatalog` — one-shot cloud
+  model refresh.
+* :class:`~.cloud_auth.SessionCloudAuth` — cloud credential
+  swap + rebuild-team invariant.
+* :class:`~.event_log.SessionEventLog` — append-only event log
+  + monotonic seq counter.
+* :class:`~.reminders.PendingReminderQueue` — asyncRewake hook
+  buffer.
+* :class:`~.mcp_resolver.MCPToolResolver` — mcp_tool hook
+  target lookup.
+* :class:`~.tool_hook_factory.ToolEventHookFactory` — ToolEventHook
+  + PermissionEvaluator composition.
+* :class:`~.learning_ops.SessionLearningManager` — learning
+  context inject / extract.
+* :class:`~.codeindex_availability.CodeIndexAvailabilityRefresher`
+  — flip-detect + rebuild.
+* :class:`~.identity.SessionIdentity` — session_id rotate /
+  rebind invariant.
+* :class:`~.run_debug.RunMessagesDebugDumper` — diagnostic
+  dumps.
+* :class:`~.plugin_reload.PluginReloadOrchestrator` — hot
+  plugin/skill/agent/hook/MCP reload.
+
+Session persistence and chat history are delegated entirely to
+Agno's native ``db`` / ``session_id`` mechanism. The main team
+and all its members receive the same ``db`` and ``session_id``,
+so all turns are automatically persisted and restored.
+"""
+
 import contextlib
 import getpass
 import logging
 import threading
 import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
-from pydantic import BaseModel
 
+from ember_code.backend.schemas_codeindex_rpc import RefreshAvailabilityResult
+from ember_code.backend.schemas_model import ModelSwitchResult
+from ember_code.core.agents import AgentPool
 from ember_code.core.auth.credentials import CloudCredentials
 from ember_code.core.code_index import CodeIndex, CodeIndexSyncManager
-from ember_code.core.config.cloud_models import fetch_cloud_models, merge_into_registry
 from ember_code.core.config.models import ModelRegistry
-from ember_code.core.config.permission_eval import PermissionEvaluator
 from ember_code.core.config.permissions import PermissionGuard
 from ember_code.core.config.settings import Settings
 from ember_code.core.config.tool_permissions import ToolPermissions
@@ -26,144 +72,111 @@ from ember_code.core.guardrails.runner import GuardrailRunner
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.hooks.executor import HookExecutor
 from ember_code.core.hooks.loader import HookLoader
+from ember_code.core.hooks.tool_hook import ToolEventHook
+from ember_code.core.init import ProjectInitializer
 from ember_code.core.knowledge.manager import KnowledgeManager
+from ember_code.core.learn import create_learning_machine  # noqa: F401 — test-patch target
+from ember_code.core.loop import LoopProgressStore, LoopStore, LoopToolResult
 from ember_code.core.lsp import LspServerManager, load_lsp_config
+from ember_code.core.mcp.client import MCPClientManager
 from ember_code.core.mcp.config import MCPConfigLoader
+from ember_code.core.memory.manager import StorageManager
 from ember_code.core.monitors import MonitorManager, load_monitor_config
-from ember_code.core.output_styles import discover_output_styles
+from ember_code.core.output_styles import OutputStyle, discover_output_styles
 from ember_code.core.plugins import PluginLoader, load_state
-from ember_code.core.sub_agent_hitl import SubAgentHITLCoordinator
-from ember_code.core.tools.plan import PlanStore
-from ember_code.core.tools.todo import TodoStore
-from ember_code.core.utils.context import ensure_memory_dir
+from ember_code.core.prompts import load_prompt
+from ember_code.core.session.agent_builder import MainAgentBuilder
 from ember_code.core.session.agent_factory import (
     create_guardrails,
     create_reasoning_tools,
 )
-from ember_code.core.session import broadcast as _broadcast_ops
-from ember_code.core.session import compact_ops as _compact_ops
-from ember_code.core.session.compact_ops import ContextBreakdown
-from ember_code.core.session.loop_ops import LoopAdvance
-from ember_code.core.session.plan_ops import PlanDecisionResult
-from ember_code.core.session import loop_ops as _loop_ops
-from ember_code.core.session import plan_ops as _plan_ops
-from ember_code.core.session import startup_ops as _startup_ops
-from ember_code.core.session import state_ops as _state_ops
-from ember_code.core.session.mcp_ops import (
-    auto_connect_mcps,
-    disconnect_removed_mcps,
+from ember_code.core.session.broadcast import BroadcastBus
+from ember_code.core.session.broadcast_schema import BroadcastEvent
+from ember_code.core.session.cloud_auth import SessionCloudAuth
+from ember_code.core.session.cloud_catalog import CloudModelCatalog
+from ember_code.core.session.codeindex_availability import (
+    CodeIndexAvailabilityRefresher,
 )
-
-# Backwards-compat aliases — `test_session.py` patches
-# `ember_code.core.session.core._create_reasoning_tools` /
-# `_create_guardrails`. The factories moved to
-# `session.agent_factory`; these aliases keep the test-patch
-# targets stable so `_start_patches` continues to work.
-_create_reasoning_tools = create_reasoning_tools
-_create_guardrails = create_guardrails
+from ember_code.core.session.compaction import CompactionCoordinator
+from ember_code.core.session.event_log import SessionEventLog
 from ember_code.core.session.event_log_schema import SessionEvent
-from ember_code.core.hooks.tool_hook import ToolEventHook
-from ember_code.core.init import initialize_project
-from ember_code.core.learn import create_learning_machine
-from ember_code.core.loop import (
-    LoopProgressStore,
-    LoopStore,
-)
-from ember_code.core.mcp.client import MCPClientManager
-from ember_code.core.memory.manager import setup_db
-from ember_code.core.pool import AgentPool
-from ember_code.core.prompts import load_prompt
+from ember_code.core.session.identity import SessionIdentity
 from ember_code.core.session.knowledge_ops import SessionKnowledgeManager
+from ember_code.core.session.learning_ops import SessionLearningManager
+from ember_code.core.session.loop_ops import LoopController
+from ember_code.core.session.mcp_ops import McpLifecycleCoordinator, McpLifecycleDeps
+from ember_code.core.session.mcp_resolver import MCPToolResolver
 from ember_code.core.session.memory_ops import SessionMemoryManager
+from ember_code.core.session.message_handler import SessionMessageHandler
 from ember_code.core.session.persistence import SessionPersistence
+from ember_code.core.session.plan_ops import PlanCoordinator
+from ember_code.core.session.plugin_reload import PluginReloadOrchestrator
+from ember_code.core.session.reminders import PendingReminderQueue
+from ember_code.core.session.run_debug import RunMessagesDebugDumper
+from ember_code.core.session.schemas import (
+    CompactResult,
+    ContextBreakdown,
+    LoopAdvance,
+    McpInitResult,
+    McpServerStatus,
+    MessageMedia,
+    PlanDecisionResult,
+    PluginReloadCounts,
+)
+from ember_code.core.session.startup import SessionStartupCoordinator
+from ember_code.core.session.state_ops import RuntimeModeCoordinator
+from ember_code.core.session.tool_hook_factory import ToolEventHookFactory
 from ember_code.core.skills.loader import SkillPool
+from ember_code.core.sub_agent_hitl import SubAgentHITLCoordinator
+from ember_code.core.tools.plan import PlanDecision, PlanStore
 from ember_code.core.tools.registry import ToolRegistry
+from ember_code.core.tools.todo import TodoStore
 from ember_code.core.utils.audit import AuditLogger
-from ember_code.core.utils.context import load_project_context
-from ember_code.core.utils.display import print_error
-from ember_code.core.utils.response import extract_response_text
+from ember_code.core.utils.context import ProjectMemoryBank, load_project_context
+from ember_code.core.utils.display import DisplayManager
+from ember_code.core.utils.response import extract_response_text  # noqa: F401 — test-patch target
 from ember_code.core.utils.rules_index import RulesIndex
 from ember_code.core.workspace import WorkspaceManager
 
 logger = logging.getLogger(__name__)
 
 
-class PluginReloadCounts(BaseModel):
-    """Return shape for :meth:`Session.reload_plugins` — a summary
-    of how many items were re-wired after the disk scan.
-
-    Callers surface these to the user in a hot-reload confirmation
-    ("Active now — N skill(s), M agent(s), K hook(s)"). Modelling
-    the shape once here keeps every consumer type-safe (Rule 1)."""
-
-    plugins: int
-    skills: int
-    agents: int
-    hooks: int
-
-
 def _log_run_messages_debug(team: Any) -> None:
-    """Dump messages from the team's last run at DEBUG level.
+    """Back-compat shim around :meth:`RunMessagesDebugDumper.dump_team`.
 
-    Used for diagnosing tool-result delivery issues — surfaces
-    role / tool_call_id / tool_calls / compression state /
-    from_history flag on every message, plus a 200-char preview
-    of ``content``. Silent on any exception so an introspection
-    hiccup can't break the response path.
+    Kept as a module-level function so
+    ``patch("ember_code.core.session.core._log_run_messages_debug")``
+    (used by older diagnostic tests) still intercepts. New code
+    should call :meth:`RunMessagesDebugDumper.dump_team` directly.
     """
-    try:
-        rr = getattr(team, "run_response", None)
-        if rr is None:
-            logger.debug("RUN_MESSAGES: no run_response")
-            return
-        messages = getattr(rr, "messages", None)
-        if not messages:
-            logger.debug("RUN_MESSAGES: no messages in run_response")
-            return
-        logger.debug("RUN_MESSAGES: %d messages total", len(messages))
-        for i, msg in enumerate(messages):
-            role = getattr(msg, "role", "?")
-            content = getattr(msg, "content", None)
-            tool_calls = getattr(msg, "tool_calls", None)
-            tool_call_id = getattr(msg, "tool_call_id", None)
-            compressed = getattr(msg, "compressed_content", None)
-            from_hist = getattr(msg, "from_history", False)
-
-            content_str = str(content) if content is not None else "<None>"
-            preview = content_str[:200]
-            if len(content_str) > 200:
-                preview += f"... ({len(content_str)} total)"
-
-            extras = []
-            if tool_call_id:
-                extras.append(f"tcid={tool_call_id}")
-            if tool_calls:
-                names = [tc.get("function", {}).get("name", "?") for tc in tool_calls]
-                extras.append(f"calls={names}")
-            if compressed is not None:
-                extras.append(f"COMPRESSED({len(str(compressed))}ch)")
-            if from_hist:
-                extras.append("HIST")
-
-            logger.debug(
-                "  MSG[%d] role=%-9s %s | %s",
-                i,
-                role,
-                " ".join(extras),
-                preview,
-            )
-    except Exception as e:
-        logger.debug("RUN_MESSAGES: error: %s", e)
+    RunMessagesDebugDumper.dump_team(team)
 
 
 class Session:
     """Manages a single igni session with all subsystem integrations.
 
-    Session persistence and chat history are delegated entirely to Agno's
-    native ``db`` / ``session_id`` mechanism.  The main team and all its
-    members receive the same ``db`` and ``session_id``, so all turns are
-    automatically persisted and restored.
+    Slim orchestrator: composes the coordinator classes and forwards
+    public methods to them. Session persistence and chat history are
+    delegated entirely to Agno's native ``db`` / ``session_id``
+    mechanism — the main team and all its members receive the same
+    ``db`` and ``session_id``, so all turns are automatically
+    persisted and restored.
     """
+
+    # Tools the main team ALWAYS gets — the shell-first core. Bash
+    # handles search/find/list/read directly (``rg``, ``find``,
+    # ``cat``, etc.); Edit/Write stay for surgical changes and new
+    # files because shell-based alternatives (``sed -i``, here-doc
+    # rewrites) are fragile. Grep/Glob/Read/LS toolkits intentionally
+    # omitted — they overlapped with shell and confused the model
+    # (v0.4.0 / commit 7e50705). See CLAUDE_CODE_PARITY.md row 22.
+    _MAIN_CORE_TOOLS: tuple[str, ...] = (
+        "Write",
+        "Edit",
+        "Bash",
+        "Schedule",
+        "NotebookEdit",
+    )
 
     def __init__(
         self,
@@ -175,27 +188,28 @@ class Session:
     ):
         self.settings = settings
 
-        # Merge models discovered in the Ember Cloud key pool into the
-        # local registry. Runs on session start so the first ``/model``
-        # invocation already sees fresh values; the picker callers
-        # (text-mode + TUI) also re-fetch on open so adding a key on
-        # the portal is reflected without restarting the CLI.
-        self.refresh_cloud_models()
+        # Cloud model catalog first — every code path below may read
+        # ``settings.models.default``, so refreshing it up front lets
+        # a brand-new install reach a usable state right after login
+        # without a hardcoded fallback name.
+        self.cloud_catalog = CloudModelCatalog(settings)
+        self.cloud_catalog.refresh()
 
         self.project_dir = project_dir or Path.cwd()
         self.workspace = WorkspaceManager(self.project_dir, additional_dirs)
-        self.session_id = resume_session_id or str(uuid.uuid4())[:8]
-        self.session_named = bool(resume_session_id)
-        self.user_id = getpass.getuser()
+
+        # Latched input-token count from the most recent completed
+        # run. Read by ``get_status`` for the FE's ctx footer.
+        self._last_input_tokens: int = 0
 
         self._init_loop_state()
         self._init_per_session_scratch()
 
         # ── First-run initialization (agents, skills, hooks, ember.md) ─
-        initialize_project(self.project_dir)
+        ProjectInitializer.initialize(self.project_dir)
 
         # ── Storage (Agno AsyncBaseDb) ────────────────────────────────
-        self.db = setup_db(settings, project_dir=self.project_dir)
+        self.db = StorageManager.build_db(settings, project_dir=self.project_dir)
 
         self._init_knowledge(settings, pre_knowledge)
 
@@ -204,6 +218,13 @@ class Session:
 
         # ── Audit Logger ─────────────────────────────────────────────
         self.audit = AuditLogger(settings)
+
+        # ── Terminal display sink ────────────────────────────────────
+        # Constructed early — before MCP init and all downstream
+        # subsystems — so any startup path that surfaces status has a
+        # live sink. Every caller reaches display through
+        # ``session.display``; there is no module-level singleton.
+        self.display = DisplayManager()
 
         self._init_plugins_output_styles_hooks(settings)
 
@@ -218,12 +239,32 @@ class Session:
             settings.models.max_context_window,
         )
 
-        # ── Learning (Agno LearningMachine) ─────────────────────────
-        self._learning = create_learning_machine(settings, self.db)
+        # ── Cloud auth coordinator (owns creds + rebuild-team invariant) ─
+        # Composed BEFORE ``main_team`` so the first agent build can
+        # read ``self.cloud_auth.access_token``. ``rebuild_team`` is
+        # a closure that reads ``self._rebuild_main_team`` at call
+        # time — every credential change goes through the coordinator
+        # so the "assign creds → rebuild team" order stays a single
+        # invariant.
+        self.cloud_auth = SessionCloudAuth(
+            creds=CloudCredentials(settings.auth.credentials_file),
+            server_url=settings.api_url,
+            rebuild_team=lambda: self._rebuild_main_team(),
+            catalog=self.cloud_catalog,
+        )
 
-        # ── Ember Cloud auth (cloud-routed models + status indicator) ─
-        self._cloud = CloudCredentials(settings.auth.credentials_file)
-        self._cloud_server_url = settings.api_url
+        # ── Identity coordinator (owns session_id / user_id / named) ──
+        # Constructed with the main-team + persistence refs so
+        # id-rotation propagates via a single method call. Populated
+        # here BEFORE persistence + main_team so the closures resolve
+        # to the correct attributes after the block below fires.
+        self.identity = SessionIdentity(
+            session_id=resume_session_id or str(uuid.uuid4())[:8],
+            session_named=bool(resume_session_id),
+            user_id=getpass.getuser(),
+            main_team_ref=lambda: getattr(self, "main_team", None),
+            persistence_ref=lambda: getattr(self, "persistence", None),
+        )
 
         self._init_mcp_client_manager()
         self._init_lsp_and_monitors()
@@ -243,64 +284,150 @@ class Session:
         self.memory_mgr = SessionMemoryManager(self.db, settings, self.user_id)
         self.knowledge_mgr = SessionKnowledgeManager(self.knowledge, settings, self.project_dir)
         # Share knowledge_mgr with the pool so all sub-agents get the toolkit.
-        self.pool._knowledge_mgr = self.knowledge_mgr if self.knowledge else None
+        self.pool.attach_knowledge_manager(self.knowledge_mgr if self.knowledge else None)
+
+        # ── Learning coordinator (owns _learning + inject/extract) ──
+        # Composed after ``persistence`` / ``memory_mgr`` so the
+        # narrow-dep constructor has everything it needs. The three
+        # closures let the manager tolerate ``main_team`` being
+        # rebuilt (plugin-reload, compact, MCP-refresh) without
+        # going stale. ``create_learning_machine`` is called from
+        # THIS module's namespace so the long-standing test-patch
+        # target ``ember_code.core.session.core.create_learning_machine``
+        # continues to intercept. The typed :class:`LearnBootResult`
+        # envelope is unwrapped here — the ``reason`` string flows
+        # through to the manager so operators see WHY a machine was
+        # not built.
+        boot = create_learning_machine(settings, self.db)
+        self.learning_mgr = SessionLearningManager(
+            settings=settings,
+            db=self.db,
+            user_id_ref=lambda: self.user_id,
+            session_id_ref=lambda: self.session_id,
+            main_team_ref=lambda: self.main_team,
+            learning=boot.machine,
+            boot_reason=boot.reason,
+        )
+
+        # ── Coordinators ────────────────────────────────────────────
+        # Every state-holding concern gets its own class. See the
+        # module docstring for the map.
+        self.plan = PlanCoordinator(self)
+        self.mode = RuntimeModeCoordinator(self)
+        self.compaction = CompactionCoordinator(self)
+        self.startup = SessionStartupCoordinator(self)
+        # Coordinator gets a narrow deps port, not the whole
+        # Session. ``rebuild`` is a lambda (not a bound method) so
+        # the coordinator re-reads ``self.rebuild_mcp`` at call
+        # time — preserving the pre-refactor "late binding"
+        # semantics in case the method is monkey-patched by tests.
+        self.mcp_lifecycle = McpLifecycleCoordinator(
+            McpLifecycleDeps(
+                mcp_manager=self.mcp_manager,
+                rebuild=lambda: self.rebuild_mcp(),
+            )
+        )
+        self.plugin_reload_orchestrator = PluginReloadOrchestrator(
+            project_dir=self.project_dir,
+            mcp_manager=self.mcp_manager,
+            plugin_loader_ref=lambda: self.plugin_loader,
+            disabled_plugins_ref=lambda: self._disabled_plugins,
+            rebuild_plugins_and_hooks=lambda: self._init_plugins_output_styles_hooks(self.settings),
+            rebuild_agent_and_skill_pools=lambda: self._init_agent_and_skill_pools(self.settings),
+            rebuild_main_team=self._rebuild_main_team,
+            skill_pool_ref=lambda: self.skill_pool,
+            agent_pool_ref=lambda: self.pool,
+            hooks_map_ref=lambda: self.hooks_map,
+            disconnect_removed_mcps=self._disconnect_removed_mcps,
+            auto_connect_mcps=self._auto_connect_mcps,
+        )
+
+        # ── Availability refresher (codeindex flip → rebuild) ───────
+        # ``build_main_agent`` is a lambda (not a bound method) so
+        # the refresher re-reads ``self._build_main_agent`` at call
+        # time — tests that monkey-patch the private name intercept
+        # cleanly this way.
+        self._codeindex_refresher = CodeIndexAvailabilityRefresher(
+            settings=settings,
+            project_dir=self.project_dir,
+            code_index=self.code_index,
+            code_index_sync=self.code_index_sync,
+            pool_ref=lambda: self.pool,
+            plugin_loader_ref=lambda: self.plugin_loader,
+            disabled_plugins_ref=lambda: self._disabled_plugins,
+            mcp_manager_ref=lambda: self.mcp_manager,
+            build_main_agent=lambda: self._build_main_agent(),
+            assign_main_team=self._assign_main_team,
+            get_availability=lambda: self._codeindex_available,
+            set_availability=self._set_codeindex_available,
+        )
 
         # ── Main Agent (single agent with all tools + orchestration) ──
         self.main_team = self._build_main_agent()
 
+        # Message-handler wired last so it can capture the live
+        # ``handle_message`` context. ``team_ref`` is a closure over
+        # ``self`` so it always reads the current ``main_team`` even
+        # after compact/reload rebuilds swap it out.
+        # ``extract_response_text`` is read from THIS module's
+        # namespace so tests that patch
+        # ``ember_code.core.session.core.extract_response_text``
+        # still intercept — the handler calls back through the
+        # injected reference on every turn.
+        self._message_handler = SessionMessageHandler(
+            hook_executor=self.hook_executor,
+            audit=self.audit,
+            display=self.display,
+            guardrail_runner=self.guardrail_runner,
+            team_ref=lambda: self.main_team,
+            pending_reminders_drain=self._reminder_queue.drain,
+            compact_hook=self.compact_if_needed,
+            ensure_mcp=self.ensure_mcp,
+            session_id=self.session_id,
+            context_window=self._context_window,
+            latch_input_tokens=self.latch_input_tokens,
+            extract_response_text=lambda resp: extract_response_text(resp),
+        )
+
+    # ── __init__ helpers ────────────────────────────────────────
+
     def _init_per_session_scratch(self) -> None:
         """Set up the per-session scratch state populated by tools /
-        the run loop:
+        the run loop.
 
-        * :class:`TodoStore` — ``todo_write`` tool's list (CC's
-          ``TodoWrite`` parity).
-        * :class:`PlanStore` — ``exit_plan_mode`` submissions (row
-          50).
-        * Append-only event log — BE events Agno's message history
-          doesn't capture (visualizer specs, etc.). Each entry is
-          a typed :class:`SessionEvent` (Rule 1). Persisted to
-          ``session_data.event_log`` on every append.
-        * ``_plan_mode_attempt`` — validator counter that resets
-          on ``enter_plan_mode`` and caps thin ``exit_plan_mode``
-          submissions.
-        * Output-style placeholders — real values land in
-          :meth:`_init_plugins_output_styles_hooks`; the
-          placeholders here prevent AttributeError on anything
-          between this init and that one that touches them.
-        * Broadcast callback list + post-run broadcast queue —
-          FE push channels for plan cards / mode badges. Empty
-          when no transport is wired (headless mode).
-
-        Also pre-creates the per-project memory directory so the
-        agent's first ``save_file`` doesn't fail on "parent
-        doesn't exist".
+        Composes :class:`PendingReminderQueue` +
+        :class:`SessionEventLog` (the log's persister callback
+        looks up ``self.persistence`` lazily via ``getattr`` so
+        the coordinator survives the constructor's storage-then-
+        managers ordering).
         """
         self.todo_store = TodoStore()
         self.plan_store = PlanStore()
-        self.event_log: list[SessionEvent] = []
-        self._event_seq: int = 0
         self._plan_mode_attempt: int = 0
-        ensure_memory_dir(self.project_dir)
-        self.output_styles: dict = {}
+        ProjectMemoryBank(self.project_dir).ensure()
+        self.output_styles: dict[str, OutputStyle] = {}
         self._active_output_style: str = ""
-        self._broadcast_callbacks: list = []
-        self._pending_post_run_broadcasts: list[tuple[str, dict]] = []
+        # Owns the FE push-channel fan-out (callback list +
+        # post-run deferral queue). Composed at construction so
+        # every downstream method — including callers that build
+        # Session via ``__new__`` — can rely on the attribute
+        # existing.
+        self.broadcast_bus = BroadcastBus()
+        # asyncRewake hook buffer (one class instead of three
+        # scattered fields).
+        self._reminder_queue = PendingReminderQueue()
+        # Event log coordinator — persister ref is a closure so
+        # ``self.persistence`` can be composed later in
+        # ``__init__`` without needing to re-wire the log.
+        self.event_log_store = SessionEventLog(
+            persist_ref=lambda: getattr(self, "persistence", None)
+        )
 
     def _init_project_context(self, settings: Settings) -> None:
-        """Load top-level project instructions + construct the
-        :class:`RulesIndex`.
-
-        Top-level context (``ember.md`` / ``CLAUDE.md`` at the
-        project root) is loaded eagerly here so it can be baked
-        into the main-agent's system prompt.
-
-        Subdirectory rules (``ember.md`` deeper in the tree) are
-        NOT pre-loaded — they're discovered lazily by
-        :class:`ToolEventHook` when the agent actually touches a
-        file in those areas. This keeps the system prompt small
-        for repos with many service folders while still
-        delivering scoped rules at the moment they become
-        relevant.
+        """Load top-level project instructions + construct
+        :class:`RulesIndex`. Subdirectory rules are lazily
+        discovered by :class:`ToolEventHook` when the agent
+        touches a file in those areas.
         """
         self.project_instructions = load_project_context(
             self.project_dir,
@@ -313,55 +440,16 @@ class Session:
         )
 
     def _init_loop_state(self) -> None:
-        """Initialize the six ``/loop`` fields to their fresh-boot
-        defaults plus construct the two stores.
-
-        These are memory-side mirrors of the persisted
-        ``loop_state`` row. All mutations go through ``start_loop``
-        / ``advance_loop`` / ``cancel_loop`` so the row stays in
-        lockstep. On session restart, ``load_persisted_loop_state``
-        (called from ``BackendServer.startup``) hydrates the fields
-        from the row (if any) and flips ``loop_paused=True`` so the
-        FE renders the "R resume" hint instead of auto-advancing.
-
-        Field semantics:
-
-        * ``pending_loop_prompt`` — active iteration text, or ``None``
-          when no loop is running.
-        * ``loop_iteration_index`` — 1-based counter of iterations
-          already dispatched.
-        * ``loop_iterations_remaining`` — safety-net budget for
-          future iterations.
-        * ``loop_run_id`` — uuid4 minted per fresh start; keys the
-          :class:`LoopProgressStore` rows so a new run can't see
-          the previous run's progress.
-        * ``loop_cap_explicit`` — True when the user supplied
-          ``/loop N <prompt>``; the panel then renders ``N / M``
-          and we terminate at the cap. False → safety-net cap.
-        * ``loop_paused`` — dormant (persisted, not firing) vs.
-          actively pumping. Guards the FE's cancel-on-non-/loop
-          check so typing after a restart doesn't wipe a resumable
-          loop.
+        """Construct the :class:`LoopController` and its Sqlite-backed
+        stores.
         """
-        self.pending_loop_prompt: str | None = None
-        self.loop_iteration_index: int = 0
-        self.loop_iterations_remaining: int = 0
-        self.loop_run_id: str | None = None
-        self.loop_cap_explicit: bool = False
-        self.loop_paused: bool = False
         self.loop_store = LoopStore(project_dir=self.project_dir)
         self.loop_progress_store = LoopProgressStore(project_dir=self.project_dir)
+        self.loop = LoopController(self.loop_store)
 
     def _init_codeindex(self, settings: Settings) -> None:
         """Construct :class:`CodeIndex` + :class:`CodeIndexSyncManager`
         eagerly and compute the ``_codeindex_available`` flag.
-
-        Runs BEFORE :meth:`_init_agent_and_skill_pools` because the
-        pool consults the flag to pick CodeIndex-first prompt
-        variants (``<name>.codeindex.md`` vs ``<name>.md``). The
-        main-agent prompt loader uses the same flag. Deriving it
-        once here avoids re-computing "does HEAD have a populated
-        chroma?" in multiple places later in the boot sequence.
         """
         self.code_index = CodeIndex(project=self.project_dir, data_dir=settings.storage.data_dir)
         self.code_index_sync = CodeIndexSyncManager.from_settings(
@@ -373,42 +461,49 @@ class Session:
     def _init_mcp_client_manager(self) -> None:
         """Construct :class:`MCPClientManager` and merge in
         plugin-bundled MCP configs.
-
-        Plugin-bundled MCP servers merge into
-        ``mcp_manager.configs`` with names prefixed
-        ``<plugin>:<server>`` — they're available for
-        ``connect()`` like any other server, and the panel
-        surfaces them grouped under the plugin's name.
-        ``_mcp_initialized`` starts False; the first
-        :meth:`ensure_mcp` flips it to True and connects any
-        configured servers marked ``auto_connect=True``.
         """
         self.mcp_manager = MCPClientManager(self.project_dir)
+        # Session-scoped ``{server: reason}`` cache. Written by
+        # :meth:`record_mcp_result` (called from
+        # :class:`~ember_code.core.session.startup.mcp.McpInitPhase`
+        # + :class:`~ember_code.backend.server_mcp.McpController`)
+        # and read by :meth:`get_mcp_status` /
+        # :class:`~ember_code.backend.schemas_mcp.MCPServerSnapshot`.
+        # Replaces the pre-refactor ``mcp_manager.get_error`` side
+        # channel with a session-owned dict that connect calls
+        # populate at Result time.
+        self.mcp_failures: dict[str, str] = {}
         self.plugin_loader.apply_to_mcp(
             MCPConfigLoader(self.project_dir),
             self.mcp_manager.configs,
             disabled=self._disabled_plugins,
         )
-        self._mcp_initialized = False
+
+    def record_mcp_result(self, name: str, result: object | None) -> None:
+        """Cache a connect Result's failure reason (or clear it).
+
+        Called from every site that invokes ``mcp_manager.connect``
+        so :class:`~ember_code.backend.schemas_mcp.MCPServerSnapshot`
+        and the ``/mcp`` status command can render the failure
+        without asking the manager for post-hoc error state.
+
+        * ``result`` is an
+          :class:`~ember_code.core.mcp.MCPConnectResult` — success
+          clears the cached failure, failure records ``reason``.
+        * ``result is None`` — the caller disconnected the server;
+          clears any stale failure so the panel shows "disconnected"
+          rather than the last connect error.
+        """
+        if result is None:
+            self.mcp_failures.pop(name, None)
+            return
+        if getattr(result, "ok", False):
+            self.mcp_failures.pop(name, None)
+        else:
+            self.mcp_failures[name] = getattr(result, "reason", "") or ""
 
     def _init_knowledge(self, settings: Settings, pre_knowledge: Any | None) -> None:
-        """Wire up the Chroma-backed knowledge index (if enabled).
-
-        Three paths:
-
-        1. ``pre_knowledge`` explicit → use as-is (skips re-load;
-           used by CLI callers who already built the index for
-           model warmup).
-        2. ``settings.knowledge.enabled`` → construct via
-           :class:`KnowledgeManager` (cheap — the embedder is a
-           shared singleton, no model download here).
-        3. Otherwise → ``self.knowledge = None``.
-
-        ``_knowledge_ready`` is set immediately (construction is
-        eager), so callers polling it don't block on session
-        boot. ``_knowledge_error`` stays ``None`` until a
-        background operation flips it.
-        """
+        """Wire up the Chroma-backed knowledge index (if enabled)."""
         self._knowledge_error: str | None = None
         self._knowledge_ready = threading.Event()
         self._knowledge_ready.set()
@@ -426,25 +521,6 @@ class Session:
     def _init_agent_and_skill_pools(self, settings: Settings) -> None:
         """Construct :class:`AgentPool` + :class:`SkillPool` from the
         current plugin set.
-
-        Agent pool is built EMPTY of MCP tools — MCP connects
-        asynchronously post-``startup``, and the pool is rebuilt
-        with real MCP clients then. The initial ``build_agents``
-        gives us usable Agents that the main team can construct
-        against, so the session is functional before MCP is ready.
-
-        Both pools:
-
-        1. Construct a fresh instance.
-        2. Load disk definitions.
-        3. Apply plugin contributions (filtered by disabled set).
-
-        The agent pool additionally optionally initialises ephemeral
-        agents (when ``orchestration.generate_ephemeral`` is set)
-        and calls ``build_agents``. Shared: ``self.db`` +
-        ``self.broadcast`` are threaded into the pool so paused
-        sub-agent runs land in the session's store and
-        broadcast-emitting tools reach attached clients.
         """
         self.pool = AgentPool(db=self.db, broadcast=self.broadcast)
         self.pool.load_definitions(
@@ -462,22 +538,9 @@ class Session:
         self.plugin_loader.apply_to_skills(self.skill_pool, disabled=self._disabled_plugins)
 
     def _init_lsp_and_monitors(self) -> None:
-        """Construct :class:`LspServerManager` + :class:`MonitorManager`
-        from the current plugin set.
-
-        Both managers scan the same "enabled plugin roots" but
-        launch differently:
-
-        * LSP is **lazy** — each server's ``start()`` fires on the
-          first ``lsp_query``. The manager exists even when zero
-          servers are configured so callers can call
-          ``list_servers()`` without a None-guard.
-        * Monitors are **eager** — the whole point is they're
-          already running by the time the agent asks. Construction
-          here is cheap; ``start_all`` is called from the session
-          entrypoint once the event loop is ready.
+        """Construct :class:`LspServerManager` (lazy) +
+        :class:`MonitorManager` (eager) from the current plugin set.
         """
-        # LSP servers.
         lsp_plugin_roots = self.plugin_loader.collect_lsp_roots(
             disabled=self._disabled_plugins,
         )
@@ -487,7 +550,6 @@ class Session:
         )
         self.lsp_manager = LspServerManager(lsp_configs, self.project_dir)
 
-        # Plugin monitors.
         monitor_plugin_roots = self.plugin_loader.collect_monitor_roots(
             disabled=self._disabled_plugins,
         )
@@ -498,26 +560,12 @@ class Session:
         self.monitor_manager = MonitorManager(monitor_configs, self.project_dir)
 
     def _init_plugins_output_styles_hooks(self, settings: Settings) -> None:
-        """Set up the three interlocking subsystems that need to
-        run in a fixed order:
+        """Set up plugins → output-styles → hooks in fixed order.
 
-        1. **Plugin discovery** first — plugins contribute hooks
-           AND output styles, so both later steps need
-           ``self.plugin_loader`` populated. Managed plugins are
-           always enabled (org-enforced), so the disabled set is
-           the user's ``plugins.json`` minus that guardrail.
-        2. **Output-style discovery** next (independent of hooks
-           but reads plugin roots for the "plugin tier"). Active
-           style defaults to ``"default"`` when present, else the
-           first alphabetically, else ``""`` (none configured).
-        3. **Hooks** last — merge project hooks with plugin
-           contributions, then construct the executor. The
-           ``asyncRewake`` code-2 path fires ``_queue_rewake``, so
-           the queue is set up here (canonical typed declaration).
-
-        Called from ``__init__``; also idempotently rebuildable
-        via ``reload_plugins`` (which drops + reruns the whole
-        block on hot-reload).
+        Composes :class:`MCPToolResolver` +
+        :class:`ToolEventHookFactory` so the tool-event-hook
+        assembly and the ``mcp_tool`` hook resolver live on
+        dedicated classes rather than as free methods on Session.
         """
         # ── Plugin discovery ────────────────────────────────────────
         self.plugin_state = load_state(settings.storage.data_dir)
@@ -526,7 +574,7 @@ class Session:
         managed_plugins = {p.name for p in self.plugin_loader.list_plugins() if p.is_managed}
         self._disabled_plugins = set(self.plugin_state.disabled) - managed_plugins
 
-        # ── Output-style discovery (row 52) ─────────────────────────
+        # ── Output-style discovery ──────────────────────────────────
         plugin_style_roots = [
             (p.root_path, p.name)
             for p in self.plugin_loader.list_plugins()
@@ -546,318 +594,258 @@ class Session:
         self._hook_loader = HookLoader(
             self.project_dir, cross_tool_support=settings.hooks.cross_tool_support
         )
-        self.hooks_map = self._hook_loader.load()
+        load_result = self._hook_loader.load()
+        self._hook_registry = load_result.registry
+        # ``hooks_map`` remains the raw dict for backward compat with
+        # ``executor.hooks``, backend/panels/hooks_panel.py,
+        # backend/schemas_hooks.py, and interactive_loop.py — all of
+        # which iterate it as a dict. Identity-preserving: mutating
+        # via ``hooks_map`` reflects in the registry, and vice-versa.
+        self.hooks_map = self._hook_registry.raw
         # Plugins prepend per event so project hooks still run last.
-        self.plugin_loader.apply_to_hooks(
+        plugin_result = self.plugin_loader.apply_to_hooks(
             self._hook_loader,
-            self.hooks_map,
+            self._hook_registry,
             disabled=self._disabled_plugins,
         )
-        # ``asyncRewake`` hooks (code-2 exit) fire ``_queue_rewake``.
-        # The queue is the CANONICAL typed declaration — later
-        # re-inits in ``_maybe_reinit_executor`` branches use bare
-        # assignment so mypy doesn't complain about redefinition.
-        self._pending_reminders: list[str] = []
+        for warning in [*load_result.warnings, *plugin_result.warnings]:
+            logger.warning(
+                "hook load warning [%s] from %s: %s",
+                warning.kind,
+                warning.source,
+                warning.detail,
+            )
+        # Reminder queue is composed in ``_init_per_session_scratch``
+        # so it survives a hook-executor rebuild (``reload_hooks``);
+        # a stray reminder from the previous incarnation is dropped
+        # by the reset below.
+        if hasattr(self, "_reminder_queue"):
+            self._reminder_queue.replace([])
+        else:
+            self._reminder_queue = PendingReminderQueue()
+        # MCP-tool resolver — used by ``mcp_tool``-type hooks.
+        self._mcp_resolver_obj = MCPToolResolver(
+            mcp_manager_ref=lambda: getattr(self, "mcp_manager", None)
+        )
         self.hook_executor = HookExecutor(
             self.hooks_map,
-            mcp_resolver=self._mcp_resolver,
-            rewake_callback=self._queue_rewake,
+            mcp_resolver=self._mcp_resolver_obj.resolve,
+            rewake_callback=self._reminder_queue.queue,
         )
+        # Rebuild the tool-hook factory so it points at the new
+        # executor. The factory caches the ``PermissionEvaluator``
+        # so a mode flip performed via :class:`RuntimeModeCoordinator`
+        # survives a ``reload_hooks``.
+        self._tool_hook_factory = ToolEventHookFactory(
+            settings=settings,
+            rules_index=getattr(self, "rules_index", None)
+            or RulesIndex(self.project_dir, read_claude_md=settings.rules.cross_tool_support),
+            project_dir=self.project_dir,
+            hook_executor_ref=lambda: self.hook_executor,
+            session_id_ref=lambda: self.session_id,
+        )
+
+    # ── Cloud auth accessors (forward to SessionCloudAuth) ─────
+
+    @property
+    def _cloud(self) -> CloudCredentials:
+        """Legacy accessor — reads through
+        :attr:`SessionCloudAuth.credentials`. Kept as an attribute
+        rather than a property in the coordinator so tests that
+        seed ``session._cloud`` directly keep working.
+        """
+        return self.cloud_auth.credentials
+
+    @_cloud.setter
+    def _cloud(self, value: CloudCredentials) -> None:
+        """Compat setter — reroutes writes through
+        :meth:`SessionCloudAuth.replace` so the "assign creds →
+        rebuild team" invariant runs on legacy code paths too."""
+        # Direct field write on the coordinator (no team rebuild)
+        # — preserves the pre-refactor behaviour where callers
+        # who set ``session._cloud`` manually did NOT trigger a
+        # rebuild.
+        self.cloud_auth._creds = value
+
+    @property
+    def _cloud_server_url(self) -> str:
+        return self.cloud_auth.server_url
 
     @property
     def cloud_connected(self) -> bool:
         """Whether the session is authenticated with Ember Cloud."""
-        return self._cloud.is_authenticated
+        return self.cloud_auth.connected
 
     @property
     def cloud_org_id(self) -> str | None:
         """The organization ID from the Ember Cloud JWT."""
-        return self._cloud.org_id
+        return self.cloud_auth.org_id
 
     @property
     def cloud_org_name(self) -> str | None:
         """The organization display name from the Ember Cloud JWT."""
-        return self._cloud.org_name
+        return self.cloud_auth.org_name
+
+    def replace_cloud_credentials(self, creds: CloudCredentials) -> None:
+        """Delegate to :meth:`SessionCloudAuth.replace`."""
+        self.cloud_auth.replace(creds)
+
+    def clear_cloud_credentials(self) -> None:
+        """Delegate to :meth:`SessionCloudAuth.clear`."""
+        self.cloud_auth.clear()
 
     def refresh_cloud_models(self) -> int:
-        """Best-effort: fetch the cloud key pool's catalogue and merge
-        into ``settings.models.registry``. Returns the number of newly
-        added entries.
+        """Delegate to :meth:`SessionCloudAuth.refresh_models`."""
+        return self.cloud_auth.refresh_models()
 
-        Silently no-ops when:
-        * the user isn't logged in (no cloud token),
-        * ``api_url`` is unreachable / times out / non-200,
-        * any other transport error.
+    # ── Plugin hot-reload ──────────────────────────────────────
 
-        Safe to call multiple times — same-name entries are skipped so
-        a user-edited registry survives, and re-fetches are idempotent.
-        Never blocks more than ``_FETCH_TIMEOUT_SECONDS`` on the
-        network — kept tight because the picker invokes this on open.
+    def _rebuild_main_team(self) -> None:
+        """Assign a freshly-built main team to ``self.main_team``."""
+        self.main_team = self._build_main_agent()
+
+    def rebuild_main_team(self) -> None:
+        """Public wrapper over :meth:`_rebuild_main_team`."""
+        self._rebuild_main_team()
+
+    def _assign_main_team(self, team: Any) -> None:
+        """Assignment sink used by
+        :class:`CodeIndexAvailabilityRefresher` so the refresher
+        can install a freshly-built team without reaching into
+        ``session.main_team`` by name."""
+        self.main_team = team
+
+    def _set_codeindex_available(self, value: bool) -> None:
+        """Setter used by :class:`CodeIndexAvailabilityRefresher`
+        so the refresher writes through a named method rather than
+        via bare-attribute assignment on the session."""
+        self._codeindex_available = value
+
+    def set_default_model(self, model_name: str) -> ModelSwitchResult:
+        """Validate ``model_name`` against the registry, swap the
+        default, and rebuild the main team. Returns a Pattern-3
+        :class:`ModelSwitchResult` envelope so callers stop try/
+        except-ing on unknown models.
         """
-        token = CloudCredentials(self.settings.auth.credentials_file).access_token
-        if not token:
-            return 0
-        models = fetch_cloud_models(self.settings.api_url, token)
-        if not models:
-            return 0
-        added = merge_into_registry(self.settings.models.registry, models, self.settings.api_url)
-        if added:
-            logger.info("Merged %d cloud model(s) into the local registry", added)
-        # Auto-pick the first entry as the default if nothing else
-        # has set it. Lets a brand-new install reach a usable state
-        # right after login without a hardcoded fallback name —
-        # whatever the server returns first is the choice.
-        if not self.settings.models.default and self.settings.models.registry:
-            self.settings.models.default = next(iter(self.settings.models.registry))
-            logger.info(
-                "Auto-selected default model from cloud discovery: %s",
-                self.settings.models.default,
+        registry = self.settings.models.registry
+        if model_name not in registry:
+            return ModelSwitchResult(
+                ok=False,
+                model_name=model_name,
+                available=sorted(registry.keys()),
             )
-        return added
+        self.settings.models.default = model_name
+        self._rebuild_main_team()
+        return ModelSwitchResult(ok=True, model_name=model_name)
 
-    # ── /loop state helpers ──────────────────────────────────────
-    # Implementation lives in ``session/loop_ops.py`` — each method
-    # here is a thin wrapper around the module-level function that
-    # takes ``self`` as an explicit session argument. Keeps existing
-    # call sites (slash command, LoopTools, run_controller's
-    # ``_check_loop_continuation``) unchanged.
+    def set_plan_research_armed(self, armed: bool) -> None:
+        """Arm / disarm the plan-mode researcher nudge for the next
+        turn.
+        """
+        self._plan_research_armed = armed
 
-    async def load_persisted_loop_state(self) -> None:
-        """See :func:`session.loop_ops.load_persisted_loop_state`."""
-        await _loop_ops.load_persisted_loop_state(self)
+    def consume_plan_research_flag(self) -> bool:
+        """Get-and-reset the ``/plan``-armed flag.
 
-    async def start_loop(
-        self,
-        prompt: str,
-        max_iter: int,
-        *,
-        immediate: bool,
-        cap_explicit: bool,
-    ) -> str:
-        """See :func:`session.loop_ops.start_loop`."""
-        return await _loop_ops.start_loop(
-            self, prompt, max_iter, immediate=immediate, cap_explicit=cap_explicit
-        )
+        Moves the flag reset off of ``BackendServer`` where it was
+        reaching through to a private Session attribute.
 
-    async def advance_loop(self) -> LoopAdvance | None:
-        """See :func:`session.loop_ops.advance_loop`."""
-        return await _loop_ops.advance_loop(self)
+        ``is True`` because mocked sessions in tests use
+        ``MagicMock`` which auto-spawns missing attrs as MagicMock
+        instances — those evaluate truthy and would wrap every
+        test message.
+        """
+        armed = getattr(self, "_plan_research_armed", False) is True
+        if armed:
+            self._plan_research_armed = False
+        return armed
 
-    async def cancel_loop(self) -> bool:
-        """See :func:`session.loop_ops.cancel_loop`."""
-        return await _loop_ops.cancel_loop(self)
+    def start_all_background_services(self) -> None:
+        """Kick off knowledge + codeindex background services.
 
-    async def pause_loop(self) -> bool:
-        """See :func:`session.loop_ops.pause_loop`."""
-        return await _loop_ops.pause_loop(self)
+        Idempotent-safe — each subsystem's ``start_*_background``
+        entry is guarded against a double-start.
+        """
+        self.start_knowledge_background()
+        self.start_codeindex_background()
 
-    async def resume_loop(self) -> str | None:
-        """See :func:`session.loop_ops.resume_loop`."""
-        return await _loop_ops.resume_loop(self)
+    def start_boot_background_services(self) -> None:
+        """Superset of :meth:`start_all_background_services` used by
+        the boot runtime only — also refreshes plugin marketplace
+        catalogs.
+        """
+        self.start_all_background_services()
+        self.start_marketplace_refresh_background()
 
-    async def _persist_loop_state(self) -> None:
-        """See :func:`session.loop_ops._persist_loop_state`."""
-        await _loop_ops._persist_loop_state(self)
+    async def fire_session_start_hook(self) -> None:
+        """Fire the ``SessionStart`` hook.
+
+        Kept on ``Session`` (rather than server.py) because the
+        payload is Session state (``session_id`` +
+        ``hook_executor``) — server.py used to import ``HookEvent``
+        inline solely so this method could live there.
+
+        Best-effort: a hook loader error mustn't gate startup. The
+        try/except mirrors the pre-refactor
+        ``contextlib.suppress(Exception)`` on the server side.
+        """
+        try:
+            await self.hook_executor.execute(
+                event=HookEvent.SESSION_START.value,
+                payload={"session_id": self.session_id},
+            )
+        except Exception as exc:
+            logger.debug("session_start hook fire raised: %s", exc)
 
     def reload_hooks(self) -> int:
-        """Reload hooks from settings files. Returns the number of hooks loaded."""
-        self.hooks_map = self._hook_loader.load()
-        # ``asyncRewake`` hooks fire ``_queue_rewake`` from
-        # background tasks when they exit with code 2. Initialise
-        # the queue here so the executor's callback always has a
-        # destination, regardless of which __init__ branch built
-        # the executor. Re-init here (without annotation — the
-        # canonical typed declaration is at the top of __init__)
-        # so a branch that skipped the top path still has an empty
-        # queue instead of a missing attribute.
-        self._pending_reminders = []
+        """Reload hooks from settings files. Returns the number of
+        hooks loaded.
+        """
+        load_result = self._hook_loader.load()
+        self._hook_registry = load_result.registry
+        self.hooks_map = self._hook_registry.raw
+        for warning in load_result.warnings:
+            logger.warning(
+                "hook reload warning [%s] from %s: %s",
+                warning.kind,
+                warning.source,
+                warning.detail,
+            )
+        # Reset the reminder queue (dropping any stale entries from
+        # the pre-reload incarnation) and rebuild the executor.
+        self._reminder_queue.replace([])
         self.hook_executor = HookExecutor(
             self.hooks_map,
-            mcp_resolver=self._mcp_resolver,
-            rewake_callback=self._queue_rewake,
+            mcp_resolver=self._mcp_resolver_obj.resolve,
+            rewake_callback=self._reminder_queue.queue,
         )
         # Recreate tool event hook on the team
         tool_event_hook = self._create_tool_event_hook()
         if self.main_team:
-            # Replace any existing ToolEventHook in the team's tool_hooks
             existing = self.main_team.tool_hooks or []
             self.main_team.tool_hooks = [h for h in existing if not isinstance(h, ToolEventHook)]
             self.main_team.tool_hooks.append(tool_event_hook)
-        count = sum(len(hl) for hl in self.hooks_map.values())
-        return count
+        return self._hook_registry.total_hooks
 
     def reload_plugins(self) -> PluginReloadCounts:
-        """Hot-reload plugin contents from disk — no session restart.
-
-        Re-scans every plugin root (``~/.ember/plugins``, ``~/.claude/plugins``,
-        and project-local equivalents) and re-applies each enabled
-        plugin's bundled contents to the four wiring points:
-
-        * **Hooks** — rebuilt via ``_hook_loader`` then merged.
-        * **Skills** — fresh :class:`SkillPool` reload from disk.
-        * **Agents** — fresh :class:`AgentPool` rebuilt; ``main_team``
-          is rebuilt at the end so the new agents are attached.
-        * **MCP server configs** — merged into ``mcp_manager.configs``.
-          Connections aren't auto-started — the user can ``/mcp
-          connect`` to bring the new servers online (or restart for
-          auto-connect behavior).
-
-        The main team rebuild happens at the end so any new tools
-        contributed by ``<plugin>/tools/*.py`` are picked up by the
-        live agent on its next message.
-
-        Safe to call mid-session because slash commands (which are
-        the only callers today) only run when ``_processing`` is
-        false; rebuilding the team during an in-flight agent run
-        would otherwise drop streaming state.
-
-        Returns a count dict for the caller's chat confirmation:
-        ``{"plugins", "skills", "agents", "hooks"}``.
-        """
-        # Full plugin / output-style / hooks / pool re-init —
-        # matches the constructor's ordering exactly so a hot-
-        # reload produces the same end-state as a fresh session
-        # boot. As a nice side-effect, this refreshes
-        # ``output_styles`` too (which the pre-DRY code missed).
-        # The old agent pool's runtime state (active runs) lives
-        # on Agno's shared ``db``, so re-assigning ``self.pool``
-        # is safe.
-        self._init_plugins_output_styles_hooks(self.settings)
-        self._init_agent_and_skill_pools(self.settings)
-
-        self._reapply_plugin_mcp_configs()
-
-        # Rebuild the main team so newly-bundled custom tools
-        # (``<plugin>/tools/*.py``) and the refreshed agent pool are
-        # visible to the live agent.
-        self.main_team = self._build_main_agent()
-
-        return PluginReloadCounts(
-            plugins=len(self.plugin_loader.list_plugins()),
-            skills=len(self.skill_pool.list_skills()),
-            agents=len(self.pool.list_agents()),
-            hooks=sum(len(hl) for hl in self.hooks_map.values()),
-        )
-
-    def _reapply_plugin_mcp_configs(self) -> None:
-        """Sync ``mcp_manager.configs`` with the current enabled-plugin
-        set, disconnecting removed servers + auto-connecting added
-        ones in the background.
-
-        MCP is symmetric in both directions. Enabling a plugin
-        wires its servers in + auto-connects them; disabling a
-        plugin wires them OUT + disconnects them. Without the
-        disable side, a user who turns off a plugin sees its
-        skills/agents/hooks disappear but the MCP server keeps
-        running and showing up in ``/mcp`` — confusing state.
-
-        ``apply_to_mcp`` only adds (first-wins); for the disable
-        case we need to *remove* stale entries first. Algorithm:
-
-        1. Identify every config currently in ``configs`` whose
-           name prefix matches a known plugin (i.e. was added by a
-           previous ``apply_to_mcp``). User-configured servers (no
-           plugin prefix) stay untouched.
-        2. Wipe those plugin-contributed entries.
-        3. Re-apply with the *current* disabled set — only enabled
-           plugins re-add their configs.
-        4. Diff the snapshot: added = present after, missing
-           before; removed = present before, missing after.
-        5. Disconnect removed servers (auto-handles the "disable
-           plugin → kill its MCP" case). The "what if two plugins
-           use the same server" concern is naturally handled by
-           the ``<plugin>:<server>`` naming — each plugin's
-           contribution is independently addressable.
-        6. Auto-connect added servers in the background.
-        """
-        plugin_name_prefixes = tuple(f"{p.name}:" for p in self.plugin_loader.list_plugins())
-        previously_plugin_owned = {
-            name
-            for name in self.mcp_manager.configs
-            if any(name.startswith(p) for p in plugin_name_prefixes)
-        }
-        for name in previously_plugin_owned:
-            self.mcp_manager.configs.pop(name, None)
-        self.plugin_loader.apply_to_mcp(
-            MCPConfigLoader(self.project_dir),
-            self.mcp_manager.configs,
-            disabled=self._disabled_plugins,
-        )
-        now_plugin_owned = {
-            name
-            for name in self.mcp_manager.configs
-            if any(name.startswith(p) for p in plugin_name_prefixes)
-        }
-        added_mcp_names = now_plugin_owned - previously_plugin_owned
-        removed_mcp_names = previously_plugin_owned - now_plugin_owned
-
-        if removed_mcp_names:
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._disconnect_removed_mcps(removed_mcp_names))
-            except RuntimeError:
-                logger.debug(
-                    "No running loop — skipping MCP disconnect for: %s",
-                    sorted(removed_mcp_names),
-                )
-
-        if added_mcp_names:
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._auto_connect_mcps(added_mcp_names))
-            except RuntimeError:
-                logger.debug(
-                    "Skipping MCP auto-connect (no running loop); use /mcp connect to start: %s",
-                    sorted(added_mcp_names),
-                )
+        """Hot-reload plugin contents from disk — no session restart."""
+        return self.plugin_reload_orchestrator.reload()
 
     async def _disconnect_removed_mcps(self, names: set[str]) -> None:
-        """Thin wrapper around
-        :func:`session.mcp_ops.disconnect_removed_mcps` — kept as a
-        method so `create_task(self._disconnect_removed_mcps(...))`
-        call sites don't need a rewrite."""
-        await disconnect_removed_mcps(self, names)
+        """Thin async wrapper — delegates to
+        :meth:`McpLifecycleCoordinator.disconnect`."""
+        await self.mcp_lifecycle.disconnect(names)
 
     async def _auto_connect_mcps(self, names: set[str]) -> None:
-        """Thin wrapper around
-        :func:`session.mcp_ops.auto_connect_mcps` — kept as a
-        method so `create_task(self._auto_connect_mcps(...))` call
-        sites don't need a rewrite."""
-        await auto_connect_mcps(self, names)
+        """Thin async wrapper — delegates to
+        :meth:`McpLifecycleCoordinator.connect`."""
+        await self.mcp_lifecycle.connect(names)
 
-    # ── Main Agent setup ────────────────────────────────────────────
-
-    # Tools the main team ALWAYS gets — the shell-first core. Bash
-    # handles search/find/list/read directly (``rg``, ``find``,
-    # ``cat``, etc.); Edit/Write stay for surgical changes and new
-    # files because shell-based alternatives (``sed -i``, here-doc
-    # rewrites) are fragile. Grep/Glob/Read/LS toolkits intentionally
-    # omitted — they overlapped with shell and confused the model
-    # (v0.4.0 / commit 7e50705). See CLAUDE_CODE_PARITY.md row 22.
-    #
-    # Implications worth knowing about:
-    # * The main team has NO ``Read`` tool. Hook matchers targeting
-    #   ``read_file`` will never fire on the main team — use
-    #   ``run_shell_command`` instead.
-    # * Sub-agents CAN opt into Read/Grep/Glob via their frontmatter
-    #   ``tools:`` allowlist (see ``.ember/agents/<name>.md``).
-    # * Granular permissions on Read (e.g. ``deny: Read(.env)``) are
-    #   ineffective at this layer — ``.env`` protection comes from
-    #   ``ToolEventHook``'s Bash-command parsing instead.
-    _MAIN_CORE_TOOLS: tuple[str, ...] = (
-        "Write",
-        "Edit",
-        "Bash",
-        "Schedule",
-        "NotebookEdit",
-    )
+    # ── Main Agent setup ────────────────────────────────────────
 
     def _resolve_main_tool_names(self, registry: "ToolRegistry") -> list[str]:
         """Compose the main team's toolkit, honouring per-session
-        flags (web permissions, CodeIndex availability). Extracted
-        from ``_build_main_agent`` so the shell-first composition
-        can be pinned by a unit test without spinning up a full
-        agent — see ``tests/test_session.py``.
+        flags (web permissions, CodeIndex availability).
         """
         tool_names: list[str] = list(self._MAIN_CORE_TOOLS)
         web_allowed = self.settings.permissions.web_search != "deny"
@@ -874,47 +862,210 @@ class Session:
                 tool_names.append("WebFetch")
             except (ImportError, ValueError):
                 pass
-        # CodeIndex tools are only exposed when there's a usable
-        # local chroma index for the current git HEAD. Without
-        # one, ``codeindex_search`` would return empty results and
-        # waste a tool slot in the agent's catalog — hide it
-        # entirely. The ``self._codeindex_available`` flag was set
-        # in ``__init__`` before ``pool.load_definitions`` ran (so
-        # the pool could pick the right ``<name>.codeindex.md``
-        # vs ``<name>.md`` variant per agent).
         if self._codeindex_available:
             tool_names.append("CodeIndex")
         return tool_names
 
     def _build_main_agent(self) -> Agent:
-        """See :func:`session.agent_builder.build_main_agent`."""
-        from ember_code.core.session.agent_builder import build_main_agent
+        """Construct the main :class:`Agent` via
+        :class:`MainAgentBuilder`.
+        """
+        return MainAgentBuilder(
+            self,
+            agent_cls=Agent,
+            registry_cls=ToolRegistry,
+            permissions_cls=ToolPermissions,
+            compression_cls=CompressionManager,
+            model_registry_cls=ModelRegistry,
+            reasoning_factory=create_reasoning_tools,
+            guardrails_factory=create_guardrails,
+            prompt_loader=load_prompt,
+        ).build()
 
-        return build_main_agent(self)
+    # ── Public accessors consumed by the agent-builder sub-package ──
+
+    @property
+    def cloud_access_token(self) -> str | None:
+        """The Ember Cloud access token (``None`` when logged out)."""
+        return self.cloud_auth.access_token
+
+    @property
+    def cloud_server_url(self) -> str:
+        """The Ember Cloud API root URL used by cloud-routed tools."""
+        return self.cloud_auth.server_url
+
+    @property
+    def codeindex_available(self) -> bool:
+        """Whether a populated CodeIndex exists for the current HEAD."""
+        return self._codeindex_available
+
+    @property
+    def active_output_style(self) -> str:
+        """Name of the currently-active output style (or empty string)."""
+        return self._active_output_style
+
+    def set_active_output_style(self, name: str) -> None:
+        """Write-side of :attr:`active_output_style`."""
+        self._active_output_style = name
+
+    @property
+    def disabled_plugins(self) -> set[str]:
+        """Plugin names currently disabled by ``plugin_state``."""
+        return self._disabled_plugins
+
+    @property
+    def plugin_data_dir(self) -> str:
+        """Root directory for the plugin registry / installer / state.
+
+        Named seam so slash commands and controllers stop reaching
+        through ``session.settings.storage.data_dir`` (a three-level
+        Demeter chain). Read fresh from settings on every access, so
+        a mid-session settings reload is picked up rather than
+        snapshotted at command entry.
+        """
+        return self.settings.storage.data_dir
+
+    @property
+    def learning(self) -> Any:
+        """The Agno :class:`LearningMachine` for this session, or
+        ``None`` when learning is disabled. Forwards to
+        :attr:`SessionLearningManager.machine`."""
+        return self.learning_mgr.machine
+
+    @property
+    def _learning(self) -> Any:
+        """Compat alias — some legacy code paths / tests read
+        ``session._learning`` directly. Forwards to
+        :attr:`SessionLearningManager.machine`."""
+        return self.learning_mgr.machine
+
+    @_learning.setter
+    def _learning(self, value: Any) -> None:
+        """Compat setter — reroutes writes to the coordinator's
+        internal ``_learning`` field. Tests that seed a stub
+        learning machine keep working.
+        """
+        self.learning_mgr._learning = value
+
+    @property
+    def learning_machine(self) -> Any:
+        """Effective Learning Machine for user-facing recall
+        commands. Forwards to
+        :attr:`SessionLearningManager.effective_machine`."""
+        return self.learning_mgr.effective_machine
+
+    @property
+    def knowledge_error(self) -> str | None:
+        """Human-readable error string from the last knowledge
+        base initialisation attempt.
+        """
+        return getattr(self, "_knowledge_error", None)
+
+    @property
+    def _mcp_initialized(self) -> bool:
+        """Compat shim — reads through to the
+        :class:`SessionStartupCoordinator`.
+        """
+        return self._startup_coord().mcp_initialized
+
+    @_mcp_initialized.setter
+    def _mcp_initialized(self, value: bool) -> None:
+        self._startup_coord().mcp_initialized = value
+
+    def tool_event_hook(self) -> ToolEventHook:
+        """Public wrapper for the ``ToolEventHook`` factory."""
+        return self._create_tool_event_hook()
+
+    def resolve_main_tool_names(self, registry: "ToolRegistry") -> list[str]:
+        """Public wrapper for the main toolkit-name composer."""
+        return self._resolve_main_tool_names(registry)
+
+    def build_agent_catalog(self) -> str:
+        """Public wrapper for the specialist-agent catalog builder."""
+        return self._build_agent_catalog()
+
+    def latch_input_tokens(self, n: int) -> None:
+        """Public setter for the last-run input-token count."""
+        self._last_input_tokens = n
+
+    # ── Identity delegation ────────────────────────────────────
+
+    @property
+    def session_id(self) -> str:
+        """The active session id. Forwards to
+        :attr:`SessionIdentity.session_id`.
+        """
+        return self.identity.session_id
+
+    @session_id.setter
+    def session_id(self, value: str) -> None:
+        """Compat setter — tests that seed ``session.session_id``
+        directly keep working. Note: this does NOT propagate to
+        the main team / persistence; use :meth:`rotate_id` for
+        the full three-attribute rotation.
+        """
+        self.identity._session_id = value
+
+    @property
+    def session_named(self) -> bool:
+        """Whether the session was resumed or renamed. Forwards
+        to :attr:`SessionIdentity.session_named`.
+        """
+        return self.identity.session_named
+
+    @session_named.setter
+    def session_named(self, value: bool) -> None:
+        """Compat setter — see :attr:`session_id`."""
+        self.identity._session_named = value
+
+    @property
+    def user_id(self) -> str:
+        """The active user id. Forwards to
+        :attr:`SessionIdentity.user_id`.
+        """
+        return self.identity.user_id
+
+    def rotate_id(self, new_id: str) -> None:
+        """Delegate to :meth:`SessionIdentity.rotate`."""
+        self.identity.rotate(new_id)
+
+    async def rebind_identity(self, session_id: str) -> None:
+        """Delegate to :meth:`SessionIdentity.rebind`."""
+        await self.identity.rebind(session_id)
+
+    @property
+    def last_input_tokens(self) -> int:
+        """Read the latched input-token count from the most recent
+        completed run."""
+        return self._last_input_tokens
+
+    # ── Learning delegation ────────────────────────────────────
+
+    async def inject_learnings(self) -> None:
+        """Delegate to :meth:`SessionLearningManager.inject`."""
+        await self.learning_mgr.inject()
 
     async def _inject_learnings(self) -> None:
-        """Inject learning context into the main agent's instructions."""
-        if self._learning is None:
-            return
-        if self._learning.model is None:
-            self._learning.model = ModelRegistry(self.settings).get_model()
-        if self._learning.db is None:
-            self._learning.db = self.db
-        try:
-            ctx = await self._learning.abuild_context(
-                user_id=self.user_id, session_id=self.session_id
-            )
-            if ctx and self.main_team.instructions:
-                # Remove old learning context and add fresh
-                self.main_team.instructions = [
-                    i
-                    for i in self.main_team.instructions
-                    if not i.startswith("## What I Know About You")
-                    and not i.startswith("## User Profile")
-                ]
-                self.main_team.instructions.append(ctx)
-        except Exception:
-            pass
+        """Compat alias — delegate to :meth:`inject_learnings`."""
+        await self.learning_mgr.inject()
+
+    async def extract_learnings(self, user_msg: str, assistant_msg: str) -> None:
+        """Delegate to :meth:`SessionLearningManager.extract`."""
+        await self.learning_mgr.extract(user_msg, assistant_msg)
+
+    @property
+    def permission_mode_value(self) -> str:
+        """Wire-safe string for the current permission-mode.
+
+        Coerces both plain-string and Enum-shaped ``mode``
+        attributes to a well-known string. Falls back to
+        ``"default"`` for non-string results (test fixtures with
+        MagicMock ``.mode.value``).
+        """
+        evaluator = getattr(self, "permission_evaluator", None)
+        raw_mode = getattr(evaluator, "mode", None)
+        raw_val = getattr(raw_mode, "value", raw_mode)
+        return raw_val if isinstance(raw_val, str) else "default"
 
     def _build_agent_catalog(self) -> str:
         """Build a text catalog of specialist agents for the system prompt."""
@@ -924,92 +1075,125 @@ class Session:
             lines.append(f"- **{defn.name}**: {defn.description} (tools: {tools_str})")
         return "\n".join(lines)
 
-    def _queue_rewake(self, text: str) -> None:
-        """``asyncRewake`` hooks call this from background tasks
-        when they finish with exit-2. The text is buffered until
-        the next ``handle_message`` turn, where it's drained and
-        prepended as a system reminder so the agent sees it on
-        the next reasoning step (we can't interrupt an in-flight
-        response).
+    # ── Reminder-queue compat surface ──────────────────────────
+
+    def _ensure_reminder_queue(self) -> PendingReminderQueue:
+        """Lazily materialise :attr:`_reminder_queue`.
+
+        Bare-Session test stubs (``Session.__new__(Session)``)
+        skip ``__init__`` so the queue may not exist yet — the
+        first read / write reaches through this helper so the
+        compat surface never trips on ``AttributeError``.
         """
-        if not text:
-            return
-        # asyncio is single-threaded — no lock needed; appends are
-        # atomic from concurrent ``asyncio.create_task`` background
-        # hooks.
-        self._pending_reminders.append(text)
+        queue = getattr(self, "_reminder_queue", None)
+        if not isinstance(queue, PendingReminderQueue):
+            queue = PendingReminderQueue()
+            self._reminder_queue = queue
+        return queue
+
+    @property
+    def _pending_reminders(self) -> list[str]:
+        """Compat alias — reads the live buffer from the
+        :class:`PendingReminderQueue`. Existing tests seed via
+        ``session._pending_reminders.append(...)`` or set the list
+        wholesale via ``session._pending_reminders = []`` — both
+        idioms keep working.
+        """
+        return self._ensure_reminder_queue().pending
+
+    @_pending_reminders.setter
+    def _pending_reminders(self, value: list[str]) -> None:
+        self._ensure_reminder_queue().replace(value)
+
+    def _queue_rewake(self, text: str) -> None:
+        """Delegate to :meth:`PendingReminderQueue.queue`."""
+        self._ensure_reminder_queue().queue(text)
+
+    def _drain_pending_reminders(self) -> list[str]:
+        """Delegate to :meth:`PendingReminderQueue.drain`."""
+        return self._ensure_reminder_queue().drain()
 
     def _mcp_resolver(self, server: str, tool: str) -> Any | None:
-        """Resolver passed to ``HookExecutor`` so ``mcp_tool``-type
-        hooks can invoke MCP server tools without the executor
-        knowing about the MCP manager directly.
+        """Delegate to :meth:`MCPToolResolver.resolve`.
 
-        Resolved at hook-fire time (not at executor construction)
-        so this works even though ``__init__`` builds the executor
-        BEFORE ``mcp_manager`` is populated — the closure looks up
-        the manager dynamically. Reaches into the manager's
-        ``_clients`` dict; if MCP gains a public ``call_tool`` API
-        later, swap this body to call it.
+        Kept as a bound method (with the ``_`` prefix) so
+        existing test fixtures that reach for
+        ``session._mcp_resolver(server, tool)`` keep working.
+        Materialises a transient :class:`MCPToolResolver` for
+        bare-Session test stubs so they don't need to compose
+        ``_mcp_resolver_obj`` by hand.
         """
-        mgr = getattr(self, "mcp_manager", None)
-        if mgr is None:
-            return None
-        client = getattr(mgr, "_clients", {}).get(server)
-        if client is None:
-            return None
-        return (getattr(client, "functions", None) or {}).get(tool)
+        resolver = getattr(self, "_mcp_resolver_obj", None)
+        if resolver is None:
+            resolver = MCPToolResolver(mcp_manager_ref=lambda: getattr(self, "mcp_manager", None))
+            self._mcp_resolver_obj = resolver
+        return resolver.resolve(server, tool)
 
     def _create_tool_event_hook(self) -> ToolEventHook:
-        """Create a ToolEventHook for tool event hooks and protected path enforcement."""
-        # Build the 6-step permission evaluator from settings. Empty
-        # rule arrays + ``default`` mode keep the evaluator a no-op
-        # for users who haven't opted in — the existing protected_
-        # paths/blocked_commands enforcement still runs alongside.
-        # We cache the evaluator on ``self`` so the runtime
-        # plan-mode toggle (`/plan`) and the agent's
-        # ``exit_plan_mode`` tool can mutate ``evaluator.mode``
-        # without rebuilding the hook chain.
-        self.permission_evaluator = PermissionEvaluator.from_strings(
-            mode=self.settings.permissions.mode,
-            deny=self.settings.permissions.deny,
-            ask=self.settings.permissions.ask,
-            allow=self.settings.permissions.allow,
-        )
-        return ToolEventHook(
-            executor=self.hook_executor,
-            session_id=self.session_id,
-            protected_paths=self.settings.safety.protected_paths,
-            blocked_commands=self.settings.safety.blocked_commands,
-            rules_index=self.rules_index,
-            project_dir=self.project_dir,
-            permission_evaluator=self.permission_evaluator,
-        )
+        """Delegate to :meth:`ToolEventHookFactory.create`.
+
+        Additionally writes the cached
+        :class:`PermissionEvaluator` onto
+        ``session.permission_evaluator`` for the legacy attribute
+        accessors that reach through the session.
+        """
+        self._tool_hook_factory.evaluator_for_session(self)
+        return self._tool_hook_factory.create()
+
+    # ── Runtime-mode delegation (output style + permission mode) ──
+
+    def _mode_coord(self) -> RuntimeModeCoordinator:
+        """Return the :class:`RuntimeModeCoordinator` for this session.
+
+        Materialises a transient coordinator on demand for
+        bare-Session test stubs (``Session.__new__(Session)`` +
+        manual attribute wiring) that don't run ``__init__``.
+        """
+        coord = getattr(self, "mode", None)
+        if not isinstance(coord, RuntimeModeCoordinator):
+            coord = RuntimeModeCoordinator(self)
+            self.mode = coord
+        return coord
 
     def set_output_style(self, name: str) -> str:
-        """See :func:`session.state_ops.set_output_style`."""
-        return _state_ops.set_output_style(self, name)
+        """Delegate to :meth:`RuntimeModeCoordinator.set_output_style`."""
+        return self._mode_coord().set_output_style(name)
 
     def set_permission_mode(self, mode: str) -> str:
-        """See :func:`session.state_ops.set_permission_mode`."""
-        return _state_ops.set_permission_mode(self, mode)
+        """Delegate to :meth:`RuntimeModeCoordinator.set_permission_mode`."""
+        return self._mode_coord().set_permission_mode(mode)
+
+    # ── Plan decision delegation ────────────────────────────────
+
+    def _plan_coord(self) -> PlanCoordinator:
+        """Return the :class:`PlanCoordinator` for this session."""
+        coord = getattr(self, "plan", None)
+        if not isinstance(coord, PlanCoordinator):
+            coord = PlanCoordinator(self)
+            self.plan = coord
+        return coord
 
     async def approve_plan(self, run_id: str) -> PlanDecisionResult:
-        """See :func:`session.plan_ops.approve_plan`."""
-        return await _plan_ops.approve_plan(self, run_id)
+        """Delegate to :meth:`PlanCoordinator.approve`."""
+        return await self._plan_coord().approve(run_id)
 
     async def dismiss_plan(self, run_id: str) -> PlanDecisionResult:
-        """See :func:`session.plan_ops.dismiss_plan`."""
-        return await _plan_ops.dismiss_plan(self, run_id)
+        """Delegate to :meth:`PlanCoordinator.dismiss`."""
+        return await self._plan_coord().dismiss(run_id)
 
     async def _record_plan_decision(
         self, run_id: str, decision: str, *, flip_mode: bool
     ) -> PlanDecisionResult:
-        """See :func:`session.plan_ops._record_plan_decision`."""
-        return await _plan_ops._record_plan_decision(self, run_id, decision, flip_mode=flip_mode)
+        """Delegate to :meth:`PlanCoordinator._record`."""
+        return await self._plan_coord()._record(run_id, PlanDecision(decision), flip_mode=flip_mode)
+
+    # ── Broadcast facade ───────────────────────────────────────
 
     def register_broadcast_callback(self, callback) -> None:
-        """See :func:`session.broadcast.register_broadcast_callback`."""
-        _broadcast_ops.register_broadcast_callback(self, callback)
+        """Register a ``(channel, payload) -> None`` subscriber on
+        the broadcast bus.
+        """
+        self.broadcast_bus.register(callback)
 
     async def append_event(
         self,
@@ -1017,329 +1201,308 @@ class Session:
         payload: dict,
         run_id: str = "",
     ) -> None:
-        """Record ``(type, payload)`` on this session's event log
-        and persist immediately.
+        """Delegate to :meth:`SessionEventLog.append`."""
+        await self._ensure_event_log_store().append(event_type, payload, run_id)
 
-        Backing storage for a reload-time replay: the FE can call
-        the ``get_session_events`` RPC after ``get_chat_history``
-        to reconstruct state the message log doesn't capture
-        (finalized visualizer specs, etc.).
+    def restore_event_log(self, events: list[SessionEvent]) -> None:
+        """Delegate to :meth:`SessionEventLog.restore`."""
+        self._ensure_event_log_store().restore(events)
 
-        ``seq`` is a per-session monotonic counter — the FE relies
-        on it, not timestamps, for replay ordering (wall-clock is
-        subject to clock skew and per-event timing collisions).
+    def _ensure_event_log_store(self) -> SessionEventLog:
+        """Lazily materialise :attr:`event_log_store`.
 
-        Best-effort persistence: DB write failures log and return
-        so the in-memory log and any downstream broadcast still
-        reach attached clients — only restart-recovery is
-        sacrificed. Same policy as ``save_todos`` /
-        ``save_plan_decisions``.
+        Bare-Session test stubs bypass ``__init__``; the first
+        read / write on the compat surface reaches through this
+        helper so the store attribute always exists.
         """
-        self._event_seq += 1
-        # Every event is validated at the construction boundary
-        # (Rule 1 — no raw dicts for structured data). Stored
-        # in-memory as :class:`SessionEvent`; wire is
-        # ``model_dump()`` at the persistence boundary.
-        event = SessionEvent.build(
-            seq=self._event_seq,
-            event_type=event_type,
-            payload=payload,
-            run_id=run_id,
-        )
-        self.event_log.append(event)
-        persistence = getattr(self, "persistence", None)
-        if persistence is not None:
-            try:
-                await persistence.save_event_log([e.model_dump() for e in self.event_log])
-            except Exception as exc:
-                logger.debug("event_log persist failed: %s", exc)
+        store = getattr(self, "event_log_store", None)
+        if not isinstance(store, SessionEventLog):
+            store = SessionEventLog(persist_ref=lambda: getattr(self, "persistence", None))
+            self.event_log_store = store
+        return store
+
+    @property
+    def event_log(self) -> list[SessionEvent]:
+        """Live reference to the in-memory event log.
+
+        Kept as a live-mutable list (not a snapshot) so callers
+        that historically wrote to ``session.event_log`` — e.g.
+        test fixtures that seed rows directly — keep working.
+        """
+        return self._ensure_event_log_store().events
+
+    @event_log.setter
+    def event_log(self, value: list[SessionEvent]) -> None:
+        """Compat setter — mirrors the legacy fixture pattern."""
+        self._ensure_event_log_store().events = value
+
+    @property
+    def _event_seq(self) -> int:
+        """Compat alias — reads the seq counter from the
+        coordinator. Tests that inspect the counter directly keep
+        working.
+        """
+        return self._ensure_event_log_store().seq
+
+    @_event_seq.setter
+    def _event_seq(self, value: int) -> None:
+        """Compat setter — seeds the seq counter for fixtures."""
+        self._ensure_event_log_store()._seq = value
 
     def broadcast(self, channel: str, payload: dict) -> None:
-        """See :func:`session.broadcast.broadcast`."""
-        _broadcast_ops.broadcast(self, channel, payload)
+        """Fire an event through the broadcast bus."""
+        self.broadcast_bus.emit(BroadcastEvent(channel=channel, payload=payload))
+
+    def broadcast_event(self, event: BroadcastEvent) -> None:
+        """Typed-event companion to :meth:`broadcast`."""
+        self.broadcast_bus.emit(event)
 
     def queue_post_run_broadcast(self, channel: str, payload: dict) -> None:
-        """See :func:`session.broadcast.queue_post_run_broadcast`."""
-        _broadcast_ops.queue_post_run_broadcast(self, channel, payload)
+        """Defer a broadcast until the current run finishes."""
+        self.broadcast_bus.queue_post_run(BroadcastEvent(channel=channel, payload=payload))
 
     def drain_post_run_broadcasts(self, run_id: str | None = None) -> None:
-        """See :func:`session.broadcast.drain_post_run_broadcasts`."""
-        _broadcast_ops.drain_post_run_broadcasts(self, run_id)
+        """Flush the post-run broadcast queue."""
+        self.broadcast_bus.drain_post_run(run_id)
 
-    # ── Knowledge warmup ────────────────────────────────────────────
+    # ── Loop-state proxies + delegation (thin wrappers over LoopController) ──
+
+    @property
+    def pending_loop_prompt(self) -> str | None:
+        """The active iteration prompt, or ``None`` when idle."""
+        return self.loop.pending_loop_prompt
+
+    @property
+    def loop_iteration_index(self) -> int:
+        """1-based counter of iterations dispatched."""
+        return self.loop.loop_iteration_index
+
+    @property
+    def loop_iterations_remaining(self) -> int:
+        """Safety-net budget remaining."""
+        return self.loop.loop_iterations_remaining
+
+    @property
+    def loop_run_id(self) -> str | None:
+        """UUID scoping :class:`LoopProgressStore` writes."""
+        return self.loop.loop_run_id
+
+    @property
+    def loop_cap_explicit(self) -> bool:
+        """Whether the user typed ``/loop N <prompt>``."""
+        return self.loop.loop_cap_explicit
+
+    @property
+    def loop_paused(self) -> bool:
+        """Whether the loop is paused waiting for
+        :meth:`resume_loop`.
+        """
+        return self.loop.paused
+
+    async def load_persisted_loop_state(self) -> None:
+        """Delegate to :meth:`LoopController.load_persisted_loop_state`."""
+        await self.loop.load_persisted_loop_state()
+
+    async def start_loop(
+        self,
+        prompt: str,
+        max_iter: int,
+        *,
+        immediate: bool,
+        cap_explicit: bool,
+    ) -> str:
+        """Delegate to :meth:`LoopController.start_loop`."""
+        return await self.loop.start_loop(
+            prompt, max_iter, immediate=immediate, cap_explicit=cap_explicit
+        )
+
+    async def advance_loop(self) -> LoopAdvance | None:
+        """Delegate to :meth:`LoopController.advance_loop`."""
+        return await self.loop.advance_loop()
+
+    async def cancel_loop(self) -> bool:
+        """Delegate to :meth:`LoopController.cancel_loop`."""
+        return await self.loop.cancel_loop()
+
+    async def pause_loop(self) -> bool:
+        """Delegate to :meth:`LoopController.pause_loop`."""
+        return await self.loop.pause_loop()
+
+    async def resume_loop(self) -> str | None:
+        """Delegate to :meth:`LoopController.resume_loop`."""
+        return await self.loop.resume_loop()
+
+    async def _persist_loop_state(self) -> None:
+        """Delegate to :meth:`LoopController.persist_loop_state`."""
+        await self.loop.persist_loop_state()
+
+    # ── Loop tool-facing delegators (used by LoopTools) ────────
+    #
+    # Each of these forwards to the matching ``*_from_tool``
+    # method on :class:`LoopController`. ``set_announced_total_from_tool``
+    # additionally threads the session's :class:`LoopProgressStore`
+    # through — the controller doesn't own the progress store
+    # (it's a peer on the session), so wiring them together
+    # happens here at the composition root.
+
+    async def start_loop_from_tool(self, prompt: str, max_iterations: int) -> LoopToolResult:
+        """Delegate to :meth:`LoopController.start_loop_from_tool`."""
+        return await self.loop.start_loop_from_tool(prompt, max_iterations)
+
+    async def stop_loop_from_tool(self) -> LoopToolResult:
+        """Delegate to :meth:`LoopController.stop_loop_from_tool`."""
+        return await self.loop.stop_loop_from_tool()
+
+    async def set_announced_total_from_tool(self, total: int) -> LoopToolResult:
+        """Delegate to :meth:`LoopController.set_announced_total_from_tool`.
+
+        Threads the session-owned :class:`LoopProgressStore` through
+        so the controller can persist without reaching upward.
+        """
+        return await self.loop.set_announced_total_from_tool(total, self.loop_progress_store)
+
+    async def resume_loop_from_tool(self) -> LoopToolResult:
+        """Delegate to :meth:`LoopController.resume_loop_from_tool`."""
+        return await self.loop.resume_loop_from_tool()
+
+    def loop_status_from_tool(self) -> LoopToolResult:
+        """Delegate to :meth:`LoopController.loop_status_from_tool`."""
+        return self.loop.loop_status_from_tool()
+
+    # ── Knowledge / codeindex / marketplace / MCP startup ──────
+
+    def _startup_coord(self) -> SessionStartupCoordinator:
+        """Return the :class:`SessionStartupCoordinator`."""
+        coord = getattr(self, "startup", None)
+        if not isinstance(coord, SessionStartupCoordinator):
+            coord = SessionStartupCoordinator(self)
+            self.startup = coord
+        return coord
 
     def start_knowledge_background(self) -> None:
-        """See :func:`session.startup_ops.start_knowledge_background`."""
-        _startup_ops.start_knowledge_background(self)
+        """Delegate to
+        :meth:`SessionStartupCoordinator.start_knowledge_background`."""
+        self._startup_coord().start_knowledge_background()
 
     async def _ensure_knowledge(self) -> None:
-        """See :func:`session.startup_ops.ensure_knowledge_started`."""
-        await _startup_ops.ensure_knowledge_started(self)
+        """Delegate to
+        :meth:`SessionStartupCoordinator.ensure_knowledge_started`."""
+        await self._startup_coord().ensure_knowledge_started()
 
     def start_codeindex_background(self) -> None:
-        """See :func:`session.startup_ops.start_codeindex_background`."""
-        _startup_ops.start_codeindex_background(self)
+        """Delegate to
+        :meth:`SessionStartupCoordinator.start_codeindex_background`."""
+        self._startup_coord().start_codeindex_background()
 
     def start_marketplace_refresh_background(self) -> None:
-        """See :func:`session.startup_ops.start_marketplace_refresh_background`."""
-        _startup_ops.start_marketplace_refresh_background(self)
+        """Delegate to
+        :meth:`SessionStartupCoordinator.start_marketplace_refresh_background`."""
+        self._startup_coord().start_marketplace_refresh_background()
 
-    # ── MCP initialization (async, runs once) ──────────────────────
-
-    async def ensure_mcp(self) -> None:
-        """See :func:`session.startup_ops.ensure_mcp`."""
-        await _startup_ops.ensure_mcp(self)
+    async def ensure_mcp(self) -> McpInitResult:
+        """Delegate to :meth:`SessionStartupCoordinator.ensure_mcp`."""
+        return await self._startup_coord().ensure_mcp()
 
     def rebuild_mcp(self) -> None:
-        """See :func:`session.startup_ops.rebuild_mcp`."""
-        _startup_ops.rebuild_mcp(self)
-    def refresh_codeindex_availability(self) -> bool:
-        """Re-derive ``_codeindex_available`` from the current chroma
-        state and rebuild the agent pool + main team if the flag flipped.
+        """Delegate to :meth:`SessionStartupCoordinator.rebuild_mcp`."""
+        self._startup_coord().rebuild_mcp()
 
-        Without this, the main agent and every specialist keep the
-        prompt variant chosen at session ``__init__`` time. After a
-        ``/codeindex resync`` (or any sync that transitions HEAD from
-        unindexed → indexed) the chroma now has data but the agent's
-        system prompt still says *"CodeIndex isn't active"*; the
-        agent then refuses to use the ``codeindex_query`` /
-        ``codeindex_tree`` tools and tells the user to set things up.
-        Called after every successful sync so the prompt always
-        matches reality.
+    def refresh_codeindex_availability(self) -> RefreshAvailabilityResult:
+        """Delegate to
+        :meth:`CodeIndexAvailabilityRefresher.refresh`.
 
-        Returns ``True`` if a rebuild happened.
+        Bare-Session test stubs may not have composed the
+        refresher (they set ``session.code_index`` etc. by hand);
+        materialise a transient one from the current session
+        attributes so those fixtures keep working. Attribute
+        errors during the lazy build are folded into an
+        ``ok=False`` envelope — matches the pre-refactor
+        bare-except behaviour.
         """
-        head = self.code_index_sync.current_sha()
-        new_avail = bool(head and self.code_index.has_commit(head))
-        if new_avail == self._codeindex_available:
-            return False
+        refresher = getattr(self, "_codeindex_refresher", None)
+        if refresher is None:
+            try:
+                refresher = CodeIndexAvailabilityRefresher(
+                    settings=self.settings,
+                    project_dir=getattr(self, "project_dir", None),
+                    code_index=getattr(self, "code_index", None),
+                    code_index_sync=getattr(self, "code_index_sync", None),
+                    pool_ref=lambda: getattr(self, "pool", None),
+                    plugin_loader_ref=lambda: getattr(self, "plugin_loader", None),
+                    disabled_plugins_ref=lambda: getattr(self, "_disabled_plugins", set()),
+                    mcp_manager_ref=lambda: getattr(self, "mcp_manager", None),
+                    build_main_agent=lambda: self._build_main_agent(),
+                    assign_main_team=self._assign_main_team,
+                    get_availability=lambda: getattr(self, "_codeindex_available", False),
+                    set_availability=self._set_codeindex_available,
+                )
+            except Exception as exc:  # noqa: BLE001 — lazy-build safety envelope
+                logger.debug("refresh_codeindex_availability lazy-build failed (%s)", exc)
+                return RefreshAvailabilityResult(ok=False, changed=False, error=str(exc))
+            self._codeindex_refresher = refresher
+        return refresher.refresh()
 
-        self._codeindex_available = new_avail
-        # Reload definitions so the pool picks the right
-        # ``<name>.codeindex.md`` vs ``<name>.md`` prompt variant per
-        # specialist. ``load_definitions`` only upserts when an
-        # entry's priority is *strictly greater* than what's already
-        # there, so calling it twice with the same sources is a noop.
-        # Clear first to force a true reload; ``clear_definitions``
-        # preserves ephemerals so user-created agents survive.
-        self.pool.clear_definitions(preserve_ephemeral=True)
-        self.pool.load_definitions(self.settings, self.project_dir, codeindex_available=new_avail)
-        self.plugin_loader.apply_to_agents(self.pool, disabled=self._disabled_plugins)
-        # Rebuild Agent objects, preserving current MCP wiring.
-        connected = self.mcp_manager.list_connected()
-        clients = {name: self.mcp_manager._clients[name] for name in connected}
-        self.pool.build_agents(mcp_clients=clients if clients else None)
-        # Main team's prompt also flips between ``main_agent.md`` and
-        # ``main_agent.codeindex.md`` — rebuild it.
-        self.main_team = self._build_main_agent()
-        logger.info(
-            "codeindex_available → %s; rebuilt agent pool + main team",
-            new_avail,
-        )
-        return True
+    # ── MCP status ─────────────────────────────────────────────
 
-    # ── MCP status ─────────────────────────────────────────────────
-
-    def get_mcp_status(self) -> list[tuple[str, bool]]:
-        """Return list of (server_name, connected) for configured MCP servers."""
+    def get_mcp_status(self) -> list[McpServerStatus]:
+        """Return typed rows of ``(name, connected)`` for every
+        configured MCP server.
+        """
         available = set(self.mcp_manager.list_servers())
         connected = set(self.mcp_manager.list_connected())
-        return [(name, name in connected) for name in available]
+        return [McpServerStatus(name=name, connected=name in connected) for name in available]
 
-    # ── Dynamic context compaction ─────────────────────────────────
-
-    async def _compact(self) -> str | None:
-        """See :func:`session.compact_ops.compact`."""
-        return await _compact_ops.compact(self)
-
-    async def _fallback_summarise(self, agno_session):
-        """See :func:`session.compact_ops._fallback_summarise`."""
-        return await _compact_ops._fallback_summarise(self, agno_session)
+    # ── Dynamic context compaction ─────────────────────────────
 
     async def compact_if_needed(self, input_tokens: int, context_window: int) -> bool:
-        """See :func:`session.compact_ops.compact_if_needed`."""
-        return await _compact_ops.compact_if_needed(self, input_tokens, context_window)
+        """Delegate to :meth:`CompactionCoordinator.compact_if_needed`."""
+        return await self.compaction.compact_if_needed(input_tokens, context_window)
 
-    async def force_compact(self) -> tuple[str, str]:
-        """See :func:`session.compact_ops.force_compact`."""
-        return await _compact_ops.force_compact(self)
-
-    # ── Context breakdown ─────────────────────────────────────────────
+    async def force_compact(self) -> CompactResult:
+        """Delegate to :meth:`CompactionCoordinator.force_compact`."""
+        return await self.compaction.force_compact()
 
     async def context_breakdown(self) -> ContextBreakdown:
-        """See :func:`session.compact_ops.context_breakdown`."""
-        return await _compact_ops.context_breakdown(self)
+        """Delegate to :meth:`CompactionCoordinator.context_breakdown`."""
+        return await self.compaction.context_breakdown()
 
-    # ── Debug logging ─────────────────────────────────────────────────
+    # ── Debug logging ─────────────────────────────────────────
 
     def _log_run_messages(self) -> None:
-        """See :func:`_log_run_messages_debug`."""
-        _log_run_messages_debug(self.main_team)
+        """Dump the team's last run at DEBUG level via
+        :meth:`RunMessagesDebugDumper.dump_team`."""
+        RunMessagesDebugDumper.dump_team(self.main_team)
 
-    # ── Message handling (headless path) ──────────────────────────────
+    # ── Message handling (headless path) ──────────────────────
 
-    async def _handle_run_failure(self, exc: Exception) -> str:
-        """Common failure path for `handle_message`: audit log,
-        StopFailure hook fire (observation-only — plugins like
-        crash reporters / alerting react here without having to
-        scrape audit logs), formatted error string return.
-
-        The StopFailure hook mirrors the Stop hook on the happy
-        path — same payload shape, same non-blocking semantics —
-        so plugins can observe both success and failure with a
-        single subscription pair.
-        """
-        error_msg = f"Error handling message: {exc}"
-        print_error(error_msg)
-
-        self.audit.log(
-            session_id=self.session_id,
-            agent_name="session",
-            tool_name="main_team",
-            status="error",
-            details={"error": str(exc)},
-        )
-
-        with contextlib.suppress(Exception):
-            await self.hook_executor.execute(
-                event=HookEvent.STOP_FAILURE.value,
-                payload={
-                    "session_id": self.session_id,
-                    "error": str(exc),
-                    "error_type": type(exc).__name__,
-                },
-            )
-        return error_msg
-
-    async def _retry_on_stop_hook_block(self, response_text: str) -> str:
-        """Fire the ``Stop`` hook up to 3 times; feed rejection
-        messages back to the agent to re-generate the response.
-
-        A Stop hook that returns ``should_continue=False`` treats
-        the agent's response as unacceptable — its ``message``
-        becomes a critique the agent should address. We re-run
-        the agent with that critique as a system message, then
-        fire the hook again on the new response. Bounded at 3
-        attempts so a persistently-rejecting hook doesn't loop
-        forever. On the third failure we accept the response
-        (the hook can still deny at a later stage if it's a
-        hard-block invariant).
-        """
-        for _stop_attempt in range(3):
-            stop_result = await self.hook_executor.execute(
-                event=HookEvent.STOP.value,
-                payload={
-                    "session_id": self.session_id,
-                    "response": response_text[:500],
-                },
-            )
-            if stop_result.should_continue:
-                break
-            feedback = stop_result.message or "Response blocked by Stop hook."
-            system_msg = (
-                f"[SYSTEM] Your previous response was rejected by a Stop hook: "
-                f"{feedback}\nPlease revise your response to address this issue."
-            )
-            response = await self.main_team.arun(system_msg, stream=False)
-            response_text = extract_response_text(response)
-        return response_text
-
-    async def _check_user_prompt_hook(self, message: str) -> str | None:
-        """Fire the ``UserPromptSubmit`` hook. Returns the blocked
-        message when the hook denies, ``None`` when the turn should
-        proceed. Blocked turns emit an audit entry so a policy denial
-        is traceable — otherwise the user sees "blocked" with no
-        record of why."""
-        hook_result = await self.hook_executor.execute(
-            event=HookEvent.USER_PROMPT_SUBMIT.value,
-            payload={"message": message, "session_id": self.session_id},
-        )
-        if hook_result.should_continue:
-            return None
-        blocked_msg = hook_result.message or "Blocked by UserPromptSubmit hook."
-        self.audit.log(
-            session_id=self.session_id,
-            agent_name="session",
-            tool_name="user_prompt",
-            status="BLOCKED",
-            details={"reason": blocked_msg},
-        )
-        return blocked_msg
-
-    async def _guardrail_prefix(self, message: str) -> str:
-        """Run guardrail checks and produce a warning prefix (empty
-        when disabled or all clean). Guardrails inform, don't block —
-        the prefix is prepended to the effective message so the model
-        sees the caveat before the user text.
-        """
-        if not self.guardrail_runner.enabled:
-            return ""
-        gr_results = await self.guardrail_runner.check(message)
-        if not gr_results:
-            return ""
-        warnings = "; ".join(r.message for r in gr_results)
-        logger.info("Guardrails triggered: %s", warnings)
-        return (
-            f"[GUARDRAIL WARNING] The following issues were detected in "
-            f"the user message: {warnings}\n"
-            f"Please be cautious and do not repeat or use any flagged content.\n\n"
-        )
-
-    def _build_effective_message(self, message: str, guardrail_prefix: str) -> str:
-        """Assemble the message the model actually sees: any queued
-        ``asyncRewake`` reminders (drained one-shot), a
-        ``<system-context>`` datetime hint, and the guardrail prefix
-        if any."""
-        timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
-        reminders_block = ""
-        if self._pending_reminders:
-            joined = "\n".join(self._pending_reminders)
-            self._pending_reminders.clear()
-            reminders_block = f"<system-reminder>{joined}</system-reminder>\n"
-        effective = (
-            f"{reminders_block}"
-            f"<system-context>Current datetime: {timestamp}</system-context>\n{message}"
-        )
-        if guardrail_prefix:
-            effective = guardrail_prefix + effective
-        return effective
-
-    async def handle_message(self, message: str, **media_kwargs) -> str:
+    async def handle_message(
+        self,
+        message: str,
+        *,
+        media: MessageMedia | None = None,
+        **media_kwargs: Any,
+    ) -> str:
         """Handle a single user message and return the response.
 
-        Accepts optional media keyword arguments (images, audio, videos, files)
-        which are forwarded directly to team.arun().
+        Accepts either the typed :class:`MessageMedia` model
+        (preferred, Rule 1) OR legacy ``**media_kwargs`` (images,
+        audio, videos, files). During the transition both forms
+        are accepted; new callers should pass ``media=``.
+
+        Delegates the six-step pipeline to
+        :class:`SessionMessageHandler`; a diagnostic dump fires
+        via :class:`RunMessagesDebugDumper` between the model
+        response and the Stop-hook retry loop.
         """
-        await self.ensure_mcp()
-
-        blocked = await self._check_user_prompt_hook(message)
-        if blocked is not None:
-            return blocked
-
-        guardrail_prefix = await self._guardrail_prefix(message)
-        effective_message = self._build_effective_message(message, guardrail_prefix)
-
-        try:
-            response = await self.main_team.arun(effective_message, stream=False, **media_kwargs)
-            self._log_run_messages()
-            response_text = extract_response_text(response)
-
-            self.audit.log(
-                session_id=self.session_id,
-                agent_name="ember",
-                tool_name="main_team",
-                status="success",
-            )
-
-            response_text = await self._retry_on_stop_hook_block(response_text)
-
-            # Compact history if approaching context limit.
-            metrics = getattr(getattr(self.main_team, "run_response", None), "metrics", None)
-            if metrics:
-                input_tokens = getattr(metrics, "input_tokens", 0) or 0
-                await self.compact_if_needed(input_tokens, self._context_window)
-
-            return response_text
-
-        except Exception as e:
-            return await self._handle_run_failure(e)
+        # Compose the effective kwargs: an explicit ``media`` wins,
+        # anything else falls back to the raw kwargs shape Agno's
+        # ``arun`` already accepts.
+        effective_kwargs: dict[str, Any] = media.to_kwargs() if media is not None else media_kwargs
+        result = await self._message_handler.handle(message, **effective_kwargs)
+        # Debug dumper is a side-observer — always safe to fire
+        # after the pipeline returns. Route through the module-level
+        # shim so ``patch("...core._log_run_messages_debug")`` in
+        # tests still intercepts.
+        with contextlib.suppress(Exception):
+            _log_run_messages_debug(self.main_team)
+        return result

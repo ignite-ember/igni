@@ -1,22 +1,23 @@
 """Cloud auth RPCs — login, credential reload/clear, plan fetch.
 
-Extracted from :mod:`ember_code.backend.server`. Four free
-functions taking ``BackendServer`` as arg — the class holds
-one-line delegates:
+Exposes a single class, :class:`AuthController`, constructed with
+``(session, settings, status_provider)``:
 
-* :func:`login` — browser-callback OAuth flow (spawns a local
-  server, waits for the JWT via redirect, persists it with the
-  right TTL from the JWT's ``exp`` claim).
-* :func:`reload_cloud_credentials` — refresh ``_cloud`` on the
-  session and rebuild ``main_team`` so the next agent turn
-  picks up the new token / plan / model set.
-* :func:`clear_cloud_credentials` — the logout inverse of the
-  reload: point ``_cloud`` at a nonexistent path so all
-  properties resolve to None, then rebuild.
-* :func:`get_cloud_plan` — hit ``/portal/me`` for the user's
-  tier + org name (Pro / Max / Lite / CodeIndex badge).
+* :meth:`AuthController.login` — browser-callback OAuth flow.
+* :meth:`AuthController.reload_cloud_credentials` — refresh
+  :class:`CloudCredentials` on the session (post-login) and rebuild
+  the main team.
+* :meth:`AuthController.clear_cloud_credentials` — logout inverse.
+* :meth:`AuthController.get_cloud_plan` — hit ``/portal/me`` for
+  the user's tier + org name.
 
-Rule 2 clean — all imports at module top.
+Wire schemas :class:`~ember_code.backend.schemas_rpc.CloudPlan` +
+:class:`~ember_code.backend.schemas_rpc.LoginResult` live in
+``schemas_rpc.py`` beside the sibling :class:`LoginStarted` — every
+backend wire shape belongs in ``schemas_*.py``. They are re-exported
+from this module to preserve the ``from ember_code.backend.server_auth
+import CloudPlan`` import path for the ``server.py`` TYPE_CHECKING
+consumer.
 """
 
 from __future__ import annotations
@@ -24,145 +25,161 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import webbrowser
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Awaitable, Callable
+from typing import TYPE_CHECKING
 
-from ember_code.core.auth.client import (
-    DEFAULT_API_URL,
-    get_login_url,
-    start_callback_server,
-    validate_token,
-    wait_for_token,
-)
+from ember_code.backend.schemas_rpc import CloudPlan, LoginResult
 from ember_code.core.auth.credentials import (
     CloudCredentials,
-    decode_jwt_claims,
-    save_credentials,
+    Credentials,
+    CredentialsStore,
 )
+from ember_code.core.auth.portal_client import PortalClient
+from ember_code.core.auth.schemas import JwtClaims
 from ember_code.protocol import messages as msg
-from pydantic import BaseModel
 
-
-class CloudPlan(BaseModel):
-    """Wire shape for :func:`get_cloud_plan` — tier + org name for
-    the org popover badge. Nullable fields because the token
-    validation response may omit either."""
-
-    tier: str | None
-    org_name: str | None
+# Re-exported so ``from ember_code.backend.server_auth import CloudPlan``
+# keeps working (server.py TYPE_CHECKING import) — the canonical
+# definition now lives in ``schemas_rpc``.
+__all__ = ["AuthController", "CloudPlan", "LoginResult"]
 
 
 if TYPE_CHECKING:
-    from ember_code.backend.server import BackendServer
+    from ember_code.core.config.settings import Settings
+    from ember_code.core.session import Session
 
 
 StatusCallback = Callable[[str], Awaitable[None] | None] | None
 
 
-async def login(
-    backend: "BackendServer",
-    on_status: StatusCallback = None,
-) -> tuple[bool, str]:
-    """Run the browser-callback login flow.
+class _StatusForwarder:
+    """Adapter around the optional login-status callback.
 
-    Args:
-        backend: the server instance (session + settings live on it).
-        on_status: optional callback(str) for status updates to FE.
-
-    Returns:
-        ``(success, email)`` tuple.
+    Wrapping the sync-or-async callback in a named collaborator (one
+    per :meth:`AuthController.login` call) flattens the login body —
+    the previous nested ``def _status`` closure hid the async-schedule
+    quirk (``ensure_future`` for coroutine returns) inside a
+    per-line-of-progress lambda. Same semantics, one place to explain
+    them.
     """
 
-    def _status(text: str) -> None:
-        if on_status:
-            result = on_status(text)
-            # Support both sync and async callbacks.
-            if asyncio.iscoroutine(result):
-                asyncio.ensure_future(result)
+    def __init__(self, callback: StatusCallback) -> None:
+        self._callback = callback
 
-    server = None
-    try:
-        _status("Starting local server...")
-        server, callback_url = start_callback_server()
-        port = int(callback_url.split(":")[2].split("/")[0])
-        login_url = get_login_url(port)
+    def emit(self, text: str) -> None:
+        """Forward ``text`` to the wrapped callback (sync or async);
+        no-op when no callback was supplied."""
+        if self._callback is None:
+            return
+        result = self._callback(text)
+        # Coroutine callbacks are scheduled fire-and-forget so the
+        # login flow doesn't have to await status echoes.
+        if asyncio.iscoroutine(result):
+            asyncio.ensure_future(result)
 
-        with contextlib.suppress(Exception):
-            webbrowser.open(login_url)
 
-        _status(
-            f"Waiting for login in browser...\nIf the browser didn't open, go to:\n{login_url}"
-        )
+class AuthController:
+    """Cloud auth controller for a single session + settings pair.
 
+    Constructed once per :class:`BackendServer` (or per test); holds
+    no mutable state — every operation reads/writes the injected
+    session/settings collaborators.
+    """
+
+    def __init__(
+        self,
+        session: Session,
+        settings: Settings,
+        status_provider: Callable[[], msg.StatusUpdate],
+    ) -> None:
+        self._session = session
+        self._settings = settings
+        # ``status_provider`` is injected as a callable so
+        # ``reload_cloud_credentials`` / ``clear_cloud_credentials``
+        # can return the fresh :class:`msg.StatusUpdate` shape
+        # without this class needing to know the ``ContextController``
+        # exists.
+        self._status_provider = status_provider
+        # One :class:`PortalClient` per controller — the endpoint
+        # URLs are read once from ``settings`` and reused across
+        # login / plan-fetch calls instead of threading them through
+        # every free-function default.
+        self._portal = PortalClient(api_url=self._settings.api_url)
+        # One :class:`CredentialsStore` per controller so the login
+        # write + the :class:`CloudCredentials` read below share a
+        # single path source (previously two independent free-function
+        # calls both defaulted to ``~/.ember/credentials.json``).
+        self._store = CredentialsStore(self._settings.auth.credentials_file)
+
+    async def login(self, on_status: StatusCallback = None) -> LoginResult:
+        """Run the browser-callback login flow.
+
+        Returns a :class:`LoginResult` with named ``ok`` / ``email`` /
+        ``error`` fields. Status callbacks are forwarded to
+        ``on_status`` so the caller can echo progress into the FE.
+        """
+        status = _StatusForwarder(on_status)
         try:
-            token = await wait_for_token(server, timeout=300)
-        except TimeoutError:
-            return False, "Login timed out"
+            status.emit("Starting local server...")
+            async with self._portal.start_callback() as callback:
+                login_url = self._portal.login_url(callback.port)
 
-        _status("Fetching user info...")
-        user_info = await validate_token(token, backend._settings.api_url)
-        email = user_info.get("email", "") if user_info else ""
+                with contextlib.suppress(Exception):
+                    webbrowser.open(login_url)
 
-        # Read expiry from JWT for accurate TTL — falls back to the
-        # ``save_credentials`` default when the JWT has no ``exp``.
-        claims = decode_jwt_claims(token)
-        if claims.get("exp"):
-            now = datetime.now(timezone.utc)
-            exp = datetime.fromtimestamp(claims["exp"], tz=timezone.utc)
-            ttl = max(int((exp - now).total_seconds()), 0)
-            save_credentials(token, email, ttl=ttl)
-        else:
-            save_credentials(token, email)
+                status.emit(
+                    f"Waiting for login in browser...\nIf the browser didn't open, go to:\n{login_url}"
+                )
 
-        reload_cloud_credentials(backend)
-        return True, email
+                token = await callback.wait_for_token(timeout=300)
+                if token is None:
+                    return LoginResult(ok=False, error="Login timed out")
 
-    except Exception as exc:
-        return False, str(exc)
-    finally:
-        # Always close the callback server to free the port.
-        if server is not None:
-            with contextlib.suppress(Exception):
-                server.server_close()
+            status.emit("Fetching user info...")
+            validation = await self._portal.validate_token(token)
+            email = validation.user.email if validation.ok and validation.user else ""
 
+            # Read expiry from JWT for accurate TTL — falls back to
+            # the :meth:`Credentials.new` default when the JWT has no
+            # ``exp`` or can't be decoded.
+            claims = JwtClaims.decode(token)
+            if claims is not None and claims.exp:
+                now = datetime.now(timezone.utc)
+                exp = datetime.fromtimestamp(claims.exp, tz=timezone.utc)
+                ttl = max(int((exp - now).total_seconds()), 0)
+                self._store.save(Credentials.new(token, email, ttl=ttl))
+            else:
+                self._store.save(Credentials.new(token, email))
 
-def reload_cloud_credentials(backend: "BackendServer") -> msg.StatusUpdate:
-    """Reload cloud credentials after login."""
-    backend._session._cloud = CloudCredentials(backend._settings.auth.credentials_file)
-    backend._session.main_team = backend._session._build_main_agent()
-    return backend.get_status()
+            self.reload_cloud_credentials()
+            return LoginResult(ok=True, email=email)
 
+        except Exception as exc:
+            return LoginResult(ok=False, error=str(exc))
 
-def clear_cloud_credentials(backend: "BackendServer") -> msg.StatusUpdate:
-    """Clear cloud credentials on logout."""
-    # Point at a path that doesn't exist so all properties resolve
-    # to None. That way the very next ``cloud_connected`` /
-    # ``access_token`` read reflects the logout without needing
-    # to know which fields to zero out one by one.
-    backend._session._cloud = CloudCredentials(path="/dev/null")
-    backend._session.main_team = backend._session._build_main_agent()
-    return backend.get_status()
+    def reload_cloud_credentials(self) -> msg.StatusUpdate:
+        """Reload cloud credentials after login."""
+        # Share the controller's :class:`CredentialsStore` so the
+        # session sees the exact file the login flow just wrote.
+        self._session.replace_cloud_credentials(CloudCredentials(store=self._store))
+        return self._status_provider()
 
+    def clear_cloud_credentials(self) -> msg.StatusUpdate:
+        """Clear cloud credentials on logout."""
+        self._session.clear_cloud_credentials()
+        return self._status_provider()
 
-async def get_cloud_plan(backend: "BackendServer") -> CloudPlan | None:
-    """Fetch the current user's plan tier from the cloud.
+    async def get_cloud_plan(self) -> CloudPlan | None:
+        """Fetch the current user's plan tier from the cloud.
 
-    Hits ``/portal/me`` with the stored JWT (same endpoint the
-    client uses to validate the token on login). The response
-    includes the user's tier from their active org membership —
-    ``lite`` / ``pro`` / ``max`` / ``codeindex``. FE renders
-    this as "Plan: Pro" in the org popover and refreshes on
-    every popover open so users see seat/tier changes without
-    having to restart the app.
-
-    Returns ``None`` when there are no credentials (logged out)
-    or the call fails — FE hides the row in that case.
-    """
-    token = backend._session._cloud.access_token
-    if not token:
-        return None
-    api_url = getattr(backend._settings.auth, "api_url", DEFAULT_API_URL) or DEFAULT_API_URL
-    info = await validate_token(token, api_url=api_url)
-    if not info:
-        return None
-    return CloudPlan(tier=info.get("tier"), org_name=info.get("org_display_name"))
+        Hits ``/portal/me`` with the stored JWT. Returns ``None``
+        when logged out or the call fails.
+        """
+        token = self._session.cloud_access_token
+        if not token:
+            return None
+        result = await self._portal.validate_token(token)
+        if not result.ok or result.user is None:
+            return None
+        return CloudPlan.from_user_info(result.user)

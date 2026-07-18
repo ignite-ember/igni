@@ -60,7 +60,9 @@ class TestVisualizeTool:
         # the tool level. Any deeper validation lives on the FE via
         # ``@json-render/core`` — we don't reinvent it here.
         tool = VisualizeTools()
-        result = await tool.visualize({"root": "r", "elements": {"r": {"type": "Text", "props": {}}}})
+        result = await tool.visualize(
+            {"root": "r", "elements": {"r": {"type": "Text", "props": {}}}}
+        )
         assert "Emitted visualization" in result
 
     @pytest.mark.asyncio
@@ -70,7 +72,9 @@ class TestVisualizeTool:
         # ``broadcast=None`` must still succeed and be silent —
         # older callers might still pass one.
         tool = VisualizeTools(broadcast=None)
-        result = await tool.visualize({"root": "r", "elements": {"r": {"type": "Text", "props": {}}}})
+        result = await tool.visualize(
+            {"root": "r", "elements": {"r": {"type": "Text", "props": {}}}}
+        )
         assert "Emitted visualization" in result
 
 

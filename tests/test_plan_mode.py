@@ -25,9 +25,10 @@ from ember_code.backend.__main__ import _build_rpc_table
 from ember_code.backend.command_handler import CommandHandler
 from ember_code.backend.server import BackendServer
 from ember_code.core.config.permission_eval import PermissionEvaluator, PermissionMode
+from ember_code.core.session.broadcast import BroadcastBus as _BroadcastBus
 from ember_code.core.session.core import Session
 from ember_code.core.tools.orchestrate import OrchestrateTools
-from ember_code.core.tools.plan import PlanStore, PlanTool, _MAX_PLAN_ATTEMPTS
+from ember_code.core.tools.plan import _MAX_PLAN_ATTEMPTS, PlanStore, PlanTool
 from ember_code.core.tools.todo import TodoItem, TodoStore, TodoTools
 from ember_code.protocol.rpc import RpcMethod
 
@@ -79,6 +80,7 @@ class TestPlanTool:
     async def test_exit_plan_mode_records_plan(self):
         session = MagicMock()
         session.plan_store = PlanStore()
+        session._codeindex_available = False  # skip citation gate
         tool = PlanTool(session)
         result = tool.exit_plan_mode("Run tests, then refactor.")
         assert "Plan submitted" in result
@@ -114,6 +116,7 @@ class TestPlanTool:
         same turn, defeating the point of plan mode."""
         session = MagicMock()
         session.plan_store = PlanStore()
+        session._codeindex_available = False
         tool = PlanTool(session)
         result = tool.exit_plan_mode("plan body")
         assert "stop" in result.lower() or "do not continue" in result.lower()
@@ -126,6 +129,7 @@ class TestPlanTool:
         session = MagicMock()
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
+        session._codeindex_available = False
         tool = PlanTool(session)
         result = tool.exit_plan_mode(
             "## Refactor\n\nSteps inside.",
@@ -164,7 +168,7 @@ class TestPlanTool:
         session = Session.__new__(Session)
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
-        session._broadcast_callbacks = []
+        session.broadcast_bus = _BroadcastBus()
         captured: list[tuple[str, dict]] = []
         session.register_broadcast_callback(lambda ch, p: captured.append((ch, p)))
         tool = PlanTool(session)
@@ -172,6 +176,10 @@ class TestPlanTool:
             "plan",
             tasks=[{"content": "A"}, {"content": "B"}],
         )
+        # ``exit_plan_mode`` queues the event via ``queue_post_run``;
+        # the run-loop normally drains after ``RunCompleted``. In-
+        # test we drain explicitly.
+        session.broadcast_bus.drain_post_run(run_id=None)
         evt = next(p for ch, p in captured if ch == "plan_submitted")
         assert evt["plan"] == "plan"
         assert len(evt["tasks"]) == 2
@@ -186,6 +194,7 @@ class TestPlanTool:
         session = MagicMock()
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
+        session._codeindex_available = False
         tool = PlanTool(session)
         result = tool.exit_plan_mode(
             "plan",
@@ -209,7 +218,7 @@ class TestExitPlanModeValidation:
         session = Session.__new__(Session)
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
-        session._broadcast_callbacks = []
+        session.broadcast_bus = _BroadcastBus()
         session._codeindex_available = True
         session._plan_mode_attempt = 0
         session.permission_evaluator = PermissionEvaluator.from_strings(mode="default")
@@ -294,7 +303,7 @@ class TestEnterPlanModeSpawnsResearcher:
         session = Session.__new__(Session)
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
-        session._broadcast_callbacks = []
+        session.broadcast_bus = _BroadcastBus()
         session.permission_evaluator = PermissionEvaluator.from_strings(mode="default")
         session._plan_mode_attempt = 0
         return session
@@ -367,7 +376,7 @@ class TestTodoWriteBroadcastsState:
         as the agent executes."""
         session = Session.__new__(Session)
         session.todo_store = TodoStore()
-        session._broadcast_callbacks = []
+        session.broadcast_bus = _BroadcastBus()
         captured: list[tuple[str, dict]] = []
         session.register_broadcast_callback(lambda ch, p: captured.append((ch, p)))
         tool = TodoTools(session)
@@ -389,7 +398,7 @@ class TestTodoWriteBroadcastsState:
         execution leaves the UI showing stale tasks."""
         session = Session.__new__(Session)
         session.todo_store = TodoStore()
-        session._broadcast_callbacks = []
+        session.broadcast_bus = _BroadcastBus()
         captured: list[tuple[str, dict]] = []
         session.register_broadcast_callback(lambda ch, p: captured.append((ch, p)))
         tool = TodoTools(session)
@@ -409,7 +418,7 @@ class TestEnterPlanMode:
         ``set_permission_mode`` and ``broadcast`` on the session."""
         session = Session.__new__(Session)
         session.permission_evaluator = PermissionEvaluator.from_strings(mode="default")
-        session._broadcast_callbacks = []
+        session.broadcast_bus = _BroadcastBus()
         session.plan_store = PlanStore()
         return session
 
@@ -491,6 +500,7 @@ class TestEnterPlanMode:
 class TestSetPermissionMode:
     def _session_with_evaluator(self, initial="default"):
         session = Session.__new__(Session)
+        session.broadcast_bus = _BroadcastBus()
         session.permission_evaluator = PermissionEvaluator.from_strings(mode=initial)
         return session
 
@@ -513,10 +523,15 @@ class TestSetPermissionMode:
         # Mode unchanged.
         assert session.permission_evaluator.mode is PermissionMode.DEFAULT
 
-    def test_no_evaluator_returns_error(self):
+    def test_no_evaluator_raises_attribute_error(self):
+        # Session's public contract requires __init__ to run — the
+        # coordinator no longer soft-fails on partial construction.
+        # A test session built via ``__new__`` without an evaluator
+        # correctly raises rather than pretending to work.
         session = Session.__new__(Session)
-        msg = session.set_permission_mode("plan")
-        assert "Error" in msg
+        session.broadcast_bus = _BroadcastBus()
+        with pytest.raises(AttributeError):
+            session.set_permission_mode("plan")
 
 
 # ── /plan slash command ───────────────────────────────────
@@ -525,6 +540,7 @@ class TestSetPermissionMode:
 class TestPlanSlashCommand:
     def _make_session(self, initial_mode="default"):
         session = Session.__new__(Session)
+        session.broadcast_bus = _BroadcastBus()
         session.permission_evaluator = PermissionEvaluator.from_strings(mode=initial_mode)
         # Bind ``set_permission_mode`` since we constructed via
         # __new__ without running __init__.
@@ -648,7 +664,7 @@ class TestAcceptSlashCommand:
     def _make_session(self, initial_mode="default"):
         session = Session.__new__(Session)
         session.permission_evaluator = PermissionEvaluator.from_strings(mode=initial_mode)
-        session._broadcast_callbacks = []
+        session.broadcast_bus = _BroadcastBus()
         return session
 
     @pytest.mark.asyncio
@@ -733,7 +749,7 @@ class TestBypassSlashCommand:
     def _make_session(self, initial_mode="default"):
         session = Session.__new__(Session)
         session.permission_evaluator = PermissionEvaluator.from_strings(mode=initial_mode)
-        session._broadcast_callbacks = []
+        session.broadcast_bus = _BroadcastBus()
         return session
 
     @pytest.mark.asyncio
@@ -808,10 +824,10 @@ class TestBypassSlashCommand:
 
     @pytest.mark.asyncio
     async def test_bypass_registered_in_dispatch_table(self):
-        """``/bypass`` must be in ``_COMMANDS`` so the slash
+        """``/bypass`` must be in the builtin registry so the slash
         dispatcher routes it. Catches a wiring regression even
         if the method itself is correct."""
-        assert "/bypass" in CommandHandler._COMMANDS
+        assert "bypass" in CommandHandler.builtin_names()
 
 
 # ── GET_LATEST_PLAN RPC ───────────────────────────────────
@@ -883,6 +899,7 @@ class TestPlanModeLifecycle:
         tool, then exit via ``/plan``. Verifies the three pieces
         work as one workflow."""
         session = Session.__new__(Session)
+        session.broadcast_bus = _BroadcastBus()
         session.permission_evaluator = PermissionEvaluator.from_strings(mode="default")
         session.plan_store = PlanStore()
         handler = CommandHandler(session)

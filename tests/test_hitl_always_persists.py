@@ -45,12 +45,18 @@ def _make_server(project_dir: Path, with_evaluator: bool = False) -> BackendServ
     ``with_evaluator=True`` attaches a real ``PermissionEvaluator``
     to ``self._session.permission_evaluator`` so tests can verify
     the in-memory patch that stops the next-call re-prompt loop."""
+    from ember_code.backend.pending_requirements_store import PendingRequirementsStore
+
     server = BackendServer.__new__(BackendServer)
     evaluator = PermissionEvaluator.from_strings() if with_evaluator else None
     server._session = SimpleNamespace(
         project_dir=project_dir,
         permission_evaluator=evaluator,
     )
+    # HitlController takes a PendingRequirementsStore; tests exercise
+    # the persist-choice path only, so a fresh empty store is enough.
+    server._hitl_store = PendingRequirementsStore()
+    server._stream_with_subagent_hitl = None
     return server
 
 

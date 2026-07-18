@@ -181,7 +181,12 @@ class TestConfigCommand:
     async def test_config_shows_model(self):
         """'/config' should show current model."""
         session = _make_session()
-        with patch("ember_code.backend.command_handler.load_credentials", return_value=None):
+        from ember_code.core.auth.schemas import LoadCredentialsResult
+
+        with patch(
+            "ember_code.core.auth.credentials.CredentialsStore.load",
+            return_value=LoadCredentialsResult(ok=False, reason="no_file"),
+        ):
             handler = CommandHandler(session)
             result = await handler.handle("/config")
         assert isinstance(result, CommandResult)
@@ -200,8 +205,13 @@ class TestModelCommand:
     @pytest.mark.asyncio
     async def test_model_switch_unknown(self):
         """'/model unknown' should show error."""
+        from ember_code.backend.schemas_model import ModelSwitchResult
+
         session = _make_session()
         session.settings.models.registry = {}
+        session.set_default_model.return_value = ModelSwitchResult(
+            ok=False, model_name="nonexistent", available=[]
+        )
         handler = CommandHandler(session)
         result = await handler.handle("/model nonexistent")
         assert isinstance(result, CommandResult)

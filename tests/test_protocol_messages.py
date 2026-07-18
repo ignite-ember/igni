@@ -9,8 +9,8 @@ import pytest
 from agno.run.agent import RunContentEvent, RunStartedEvent
 
 from ember_code.protocol import messages as msg
+from ember_code.protocol.registry import MessageRegistry
 from ember_code.protocol.serializer import serialize_event
-from ember_code.transport.unix_socket import deserialize_message
 
 
 class TestAllMessageTypes:
@@ -146,7 +146,7 @@ class TestUnixSocketDeserialization:
         for cls in types:
             original = cls()
             json_line = original.model_dump_json()
-            restored = deserialize_message(json_line)
+            restored = MessageRegistry.default().deserialize(json_line)
             assert restored is not None, f"Failed to deserialize {cls.__name__}"
             assert restored.type == original.type
 
@@ -166,7 +166,7 @@ class TestUnixSocketDeserialization:
         for cls in types:
             original = cls()
             json_line = original.model_dump_json()
-            restored = deserialize_message(json_line)
+            restored = MessageRegistry.default().deserialize(json_line)
             assert restored is not None, f"Failed to deserialize {cls.__name__}"
 
 

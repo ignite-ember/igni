@@ -22,8 +22,8 @@ import asyncio
 import inspect
 from typing import Any
 
-import ember_code.backend.__main__ as main_mod
 from ember_code.backend.session_pool import SessionStampingTransport
+from ember_code.core.session.broadcast import BroadcastBus
 from ember_code.core.session.core import Session
 from ember_code.protocol import messages as msg
 
@@ -41,23 +41,23 @@ class _CapturingTransport:
 
 class _StubSession:
     """Mimics the parts of Session that ``register_broadcast_callback``
-    and ``broadcast`` touch, without booting all of Agno + persistence."""
+    and ``broadcast`` touch, without booting all of Agno + persistence.
+
+    Composes a real :class:`BroadcastBus` — the class is a pure
+    in-memory data structure with no external deps, so pulling it
+    in here keeps the stub honest about the invariant Session
+    holds in production."""
 
     def __init__(self) -> None:
-        self._broadcast_callbacks: list = []
+        self.broadcast_bus = BroadcastBus()
 
     def register_broadcast_callback(self, cb) -> None:
-        if cb not in self._broadcast_callbacks:
-            self._broadcast_callbacks.append(cb)
+        self.broadcast_bus.register(cb)
 
     def broadcast(self, channel: str, payload: dict) -> None:
-        for cb in list(self._broadcast_callbacks):
-            try:
-                cb(channel, payload)
-            except Exception:
-                # Mirror Session.broadcast's "one bad callback doesn't
-                # sink the rest" semantic.
-                continue
+        from ember_code.core.session.broadcast_schema import BroadcastEvent
+
+        self.broadcast_bus.emit(BroadcastEvent(channel=channel, payload=payload))
 
 
 def _make_broadcast_callback_under_test(send_through: Any, loop: asyncio.AbstractEventLoop):
@@ -123,7 +123,7 @@ class TestBroadcastCallbackShape:
         # fixed, so it stays a regression.
         session = _StubSession()
         session.broadcast("plan_submitted", {"plan": "x", "tasks": []})  # must not raise
-        assert session._broadcast_callbacks == []
+        assert not session.broadcast_bus.has_callbacks
 
     async def test_stamped_transport_carries_session_id(self) -> None:
         # The pool callback must use the SessionStampingTransport so
@@ -152,72 +152,62 @@ class TestPostRunDeferral:
     PlanCard appears AFTER the agent's closing reply, not mid-stream
     above it. These tests pin the queue + drain contract."""
 
-    def test_queue_holds_until_drain(self) -> None:
+    def _bus_session(self) -> Session:
         session = Session.__new__(Session)
-        session._broadcast_callbacks = []
-        session._pending_post_run_broadcasts = []
+        session.broadcast_bus = BroadcastBus()
+        return session
+
+    def test_queue_holds_until_drain(self) -> None:
+        session = self._bus_session()
         received: list[tuple[str, dict]] = []
-        session._broadcast_callbacks.append(lambda c, p: received.append((c, p)))
+        session.broadcast_bus.register(lambda c, p: received.append((c, p)))
 
         session.queue_post_run_broadcast("plan_submitted", {"plan": "x", "tasks": []})
 
         # Nothing fires until drain — that's the whole point.
         assert received == []
-        assert len(session._pending_post_run_broadcasts) == 1
+        assert session.broadcast_bus.pending_count == 1
 
         session.drain_post_run_broadcasts()
 
         assert received == [("plan_submitted", {"plan": "x", "tasks": []})]
         # Queue empties so a later drain doesn't re-emit.
-        assert session._pending_post_run_broadcasts == []
+        assert session.broadcast_bus.pending_count == 0
 
     def test_drain_with_empty_queue_is_noop(self) -> None:
-        session = Session.__new__(Session)
-        session._broadcast_callbacks = []
-        session._pending_post_run_broadcasts = []
+        session = self._bus_session()
         received: list = []
-        session._broadcast_callbacks.append(lambda c, p: received.append((c, p)))
+        session.broadcast_bus.register(lambda c, p: received.append((c, p)))
 
         session.drain_post_run_broadcasts()
         assert received == []
 
-    def test_fallback_to_immediate_when_queue_missing(self) -> None:
-        # Tests / headless callers may build the session via __new__
-        # without the queue list. The method must fall back to
-        # immediate broadcast so the event isn't silently dropped.
-        session = Session.__new__(Session)
-        session._broadcast_callbacks = []
-        # Deliberately do NOT set _pending_post_run_broadcasts.
-        received: list = []
-        session._broadcast_callbacks.append(lambda c, p: received.append((c, p)))
 
-        session.queue_post_run_broadcast("plan_submitted", {"plan": "y", "tasks": []})
+class TestOrchestratorAndAppWiring:
+    """Confirm the broadcast-bus binding runs in BOTH the boot path
+    (``BackendApp.setup`` → ``PushNotificationBridge.wire_all``) and
+    the pool path (``SessionOrchestrator._create_runtime`` →
+    ``rt_bridge.bind_to_broadcast_bus``)."""
 
-        assert received == [("plan_submitted", {"plan": "y", "tasks": []})]
+    def test_boot_wires_broadcast_via_push_bridge(self) -> None:
+        from ember_code.backend.push_bridge import PushNotificationBridge
 
-
-class TestMainWiring:
-    """Confirm ``__main__`` actually wires the callback in BOTH the
-    boot path and ``_create_runtime``. The integration is asserted by
-    introspecting the source — running the full ``_run`` requires a
-    transport, a project dir, and an event loop, all of which would
-    bloat this test without adding signal."""
-
-    def test_helper_defined_and_called_for_both_paths(self) -> None:
-        src = inspect.getsource(main_mod._run)
-        # The factory exists.
-        assert "_make_broadcast_callback" in src, (
-            "_make_broadcast_callback helper not defined in _run; "
-            "pooled sessions will silently miss broadcasts"
+        # ``wire_all`` is what ``BackendApp.setup`` calls — must
+        # include the broadcast-bus bind for the default runtime.
+        assert "bind_to_broadcast_bus" in inspect.getsource(PushNotificationBridge.wire_all), (
+            "PushNotificationBridge.wire_all must bind the broadcast "
+            "bus, or the default runtime silently drops broadcasts"
         )
-        # And it's called at least twice — once for boot, once
-        # inside _create_runtime for pool sessions.
-        assert src.count("_make_broadcast_callback(") >= 3, (
-            "_make_broadcast_callback should be defined + called for "
-            "boot transport + pooled stamped transport"
-        )
-        # The pool-side call must use the stamped transport, not the
-        # raw boot transport — otherwise the push lacks session_id.
-        assert "_make_broadcast_callback(stamped)" in src, (
-            "Pool callback must bind to the SessionStampingTransport"
+
+    def test_pool_runtime_binds_broadcast_via_runtime_bridge(self) -> None:
+        from ember_code.backend.session_orchestrator import SessionOrchestrator
+
+        create_src = inspect.getsource(SessionOrchestrator._create_runtime)
+        # Pool sessions get a runtime-scoped ``rt_bridge`` bound to
+        # the SessionStampingTransport — the bind must run there so
+        # the resulting push carries the session id.
+        assert "rt_bridge.bind_to_broadcast_bus" in create_src, (
+            "SessionOrchestrator._create_runtime must bind the broadcast "
+            "bus through the runtime-scoped bridge, or pool sessions miss "
+            "broadcasts / miss the session_id stamp"
         )

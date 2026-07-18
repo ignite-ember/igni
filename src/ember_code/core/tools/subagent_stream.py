@@ -1,36 +1,36 @@
-"""Sub-agent stream state — Pydantic model that replaces the 11
-nonlocals in :func:`_run_agent_streaming`.
+"""Sub-agent stream state — Pydantic models that own the mutation
+logic for the two streaming handlers in
+:mod:`orchestrate_streaming`.
 
 Why this exists: before this file, ``_run_agent_streaming``'s nested
 ``_handle`` closure declared 11 nonlocals to track content buffers,
 run-id capture, visualizer streaming throttle state, and completion
 markers. Every new feature added another nonlocal. Adding a nonlocal
-is a two-line change (`nonlocal foo; ... foo = ...`) with no schema
+is a two-line change (``nonlocal foo; ... foo = ...``) with no schema
 enforcement — the ceiling for that pattern is a bug per addition
 because typos become new locals silently.
 
 The refactor is model-first, per CODE_STANDARDS.md Pattern 4
 (composition over god-classes) + AP2 (>5 nonlocals in a function is
-a smell). One Pydantic model holds every piece of per-stream state.
-The handler mutates it in place, then passes it forward. Adding a
-new field is a one-line change on the model + explicit usage — no
-silent typos, autocomplete works, and every field is discoverable
-via ``model_fields``.
-
-Behaviour-preserving: field-for-field replacement of the pre-existing
-nonlocals. No new behaviour; the file exists purely to give the
-state a schema.
+a smell). One Pydantic model holds every piece of per-stream state
+AND owns the mutation methods that used to be inline in the handler
+closure. Adding a new field is a one-line change on the model + a
+call site; adding new behaviour is a new method on the model, not a
+new free function taking ``state`` as its first arg.
 """
 
 from __future__ import annotations
 
+import time
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ember_code.core.tools.orchestrate_preview import PREVIEWS
+
 
 class SubAgentStreamState(BaseModel):
-    """Per-invocation state for :func:`_run_agent_streaming`.
+    """Per-invocation state for the sub-agent stream handler.
 
     One instance is constructed at the top of every sub-agent stream
     and mutated across the event loop. Fields group by concern:
@@ -127,9 +127,87 @@ class SubAgentStreamState(BaseModel):
     #: the full content, so we hold it as a fallback.
     completed_content: str = ""
 
+    # ── Behaviour ──────────────────────────────────────────────────
+    def latch_ids(self, event: object) -> bool:
+        """Latch ``run_id`` / ``session_id`` / ``parent_run_id`` from
+        the first event that carries each.
+
+        Agno only yields ``RunStartedEvent`` when
+        ``stream_events=True``, which we don't pass to keep specialist
+        streams quiet, so a ``RunStartedEvent``-only capture would
+        leave both fields ``None`` and our
+        ``aget_run_output(run_id, session_id)`` lookup would silently
+        return ``None``. Every Agno run event carries these fields,
+        so latching onto the first non-empty value we see is
+        sufficient and stable across pause/resume.
+
+        Returns ``True`` iff this call latched ``current_run_id`` for
+        the first time — signal for the caller to register with the
+        cancellation registry.
+        """
+        newly_run = False
+        if not self.current_run_id:
+            ev_run_id = getattr(event, "run_id", None)
+            if ev_run_id:
+                self.current_run_id = ev_run_id
+                newly_run = True
+        if not self.current_session_id:
+            ev_session_id = getattr(event, "session_id", None)
+            if ev_session_id:
+                self.current_session_id = ev_session_id
+        if not self.parent_top_run_id:
+            ev_parent = getattr(event, "parent_run_id", None)
+            if ev_parent:
+                self.parent_top_run_id = ev_parent
+        return newly_run
+
+    def can_emit_vis_delta(self, now_s: float) -> bool:
+        """50ms throttle for visualizer partial-JSON deltas.
+
+        First delta always emits so the FE mounts the card early.
+        Subsequent deltas need at least 50ms of wall-clock separation
+        from the previous emission — keeps the wire quiet on fast
+        models while still feeling live.
+        """
+        return self.vis_last_emitted_len == 0 or (now_s - self.vis_last_emit_at >= 0.05)
+
+    def record_vis_emission(self, now_s: float, partial_len: int) -> None:
+        """Note that we just emitted a delta at ``now_s`` for a
+        partial-args string of length ``partial_len``."""
+        self.vis_last_emitted_len = partial_len
+        self.vis_last_emit_at = now_s
+
+    def record_completion(self, content: str | None, _metrics: object = None) -> None:
+        """Keep the streamed ``RunCompletedEvent.content`` as a
+        fallback in case the DB-backed lookup comes up empty."""
+        if content:
+            self.completed_content = str(content)
+        self.agent_completed_emitted = True
+
+    def append_content_delta(self, chunk: str) -> str | None:
+        """Buffer a streaming content chunk and return a preview
+        string when the ~2 Hz throttle fires AND the preview text
+        actually changed.
+
+        Returns ``None`` when the throttle window hasn't elapsed or
+        the preview text matches the last one we emitted.
+        """
+        if not chunk:
+            return None
+        self.content_buf += str(chunk)
+        now = time.monotonic()
+        if now - self.last_update <= 0.5:
+            return None
+        self.last_update = now
+        preview = PREVIEWS.format_content_buffer(self.content_buf)
+        if not preview or preview == self.last_preview:
+            return None
+        self.last_preview = preview
+        return preview
+
 
 class TeamStreamState(BaseModel):
-    """Per-invocation state for :func:`run_team_streaming`.
+    """Per-invocation state for the team stream handler.
 
     Sibling of :class:`SubAgentStreamState` — same "model instead of
     nonlocals" refactor, but shaped for the team case. Two things
@@ -143,12 +221,6 @@ class TeamStreamState(BaseModel):
        the whole team run, used as the tree-node id for the
        coordinator itself and as a namespace prefix for member
        events.
-
-    Field-for-field replacement of the pre-existing 9 nonlocals
-    (`current_tool`, `current_agent`, `last_update_by_agent`,
-    `last_preview_by_agent`, `content_buf_by_agent`,
-    `current_run_id`, `current_session_id`, `completed_content`,
-    `team_path_id`). Behaviour-preserving.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -197,3 +269,48 @@ class TeamStreamState(BaseModel):
     #: Backup capture of the final answer, same rationale as
     #: :attr:`SubAgentStreamState.completed_content`.
     completed_content: str = ""
+
+    # ── Behaviour ──────────────────────────────────────────────────
+    def latch_ids(self, event: object) -> bool:
+        """Same latch-first-non-empty semantics as
+        :meth:`SubAgentStreamState.latch_ids` — team state has no
+        ``parent_top_run_id`` to worry about because the team IS the
+        top-level run (its members' parent_run_id points back here).
+
+        Returns ``True`` iff ``current_run_id`` was latched by this
+        call.
+        """
+        newly_run = False
+        if not self.current_run_id:
+            ev_run_id = getattr(event, "run_id", None)
+            if ev_run_id:
+                self.current_run_id = ev_run_id
+                newly_run = True
+        if not self.current_session_id:
+            ev_session_id = getattr(event, "session_id", None)
+            if ev_session_id:
+                self.current_session_id = ev_session_id
+        return newly_run
+
+    def record_completion(self, content: str | None, _metrics: object = None) -> None:
+        if content:
+            self.completed_content = str(content)
+
+    def append_content_delta(self, agent_path: str, chunk: str) -> str | None:
+        """Per-agent variant of
+        :meth:`SubAgentStreamState.append_content_delta`. The throttle
+        + dedup are keyed by ``agent_path`` so one chatty member
+        can't starve the others."""
+        if not chunk:
+            return None
+        buf = self.content_buf_by_agent.get(agent_path, "") + str(chunk)
+        self.content_buf_by_agent[agent_path] = buf
+        now = time.monotonic()
+        if now - self.last_update_by_agent.get(agent_path, 0.0) <= 0.5:
+            return None
+        self.last_update_by_agent[agent_path] = now
+        preview = PREVIEWS.format_content_buffer(buf)
+        if not preview or preview == self.last_preview_by_agent.get(agent_path):
+            return None
+        self.last_preview_by_agent[agent_path] = preview
+        return preview

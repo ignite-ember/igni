@@ -17,14 +17,18 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from ember_code.core.code_index.enums import FileSystemType
-from ember_code.core.code_index.schema import convert_weaviate_types, now_iso
+from ember_code.core.code_index.schema.manifest import SystemClock
+from ember_code.core.code_index.schema.wire import WeaviateWireCodec
+
+_WEAVIATE_CODEC = WeaviateWireCodec()
+_SYSTEM_CLOCK = SystemClock()
 
 
 class CodeIndexItemBase(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     content: str | None = None
-    timestamp: str = Field(default_factory=now_iso)
+    timestamp: str = Field(default_factory=lambda: _SYSTEM_CLOCK.now_iso())
 
     _agno_documents: list | None = PrivateAttr(default=None)
 
@@ -59,7 +63,7 @@ class CodeIndexFileChunkBase(BaseModel):
     @classmethod
     def _convert_weaviate_types(cls, data):
         if isinstance(data, dict):
-            return convert_weaviate_types(data)
+            return _WEAVIATE_CODEC.coerce(data)
         return data
 
     @property
@@ -288,7 +292,7 @@ class CodeIndexItem(CodeIndexItemCreate):
     @classmethod
     def _convert_weaviate_types(cls, data):
         if isinstance(data, dict):
-            return convert_weaviate_types(data)
+            return _WEAVIATE_CODEC.coerce(data)
         return data
 
     @property

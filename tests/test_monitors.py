@@ -17,12 +17,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ember_code.core.monitors import (
+    MonitorControlResult,
+    MonitorHandle,
+    MonitorManager,
+)
 from ember_code.core.monitors.config import (
     MonitorConfig,
     _parse_monitors_dict,
     load_monitor_config,
 )
-from ember_code.core.monitors.manager import MonitorHandle, MonitorManager
 from ember_code.core.tools.monitors import MonitorTools
 
 # ── Config parsing ────────────────────────────────────────────
@@ -252,10 +256,13 @@ class TestMonitorManager:
                 break
             await asyncio.sleep(0.05)
         # Inflate the crash counter to confirm it gets cleared.
-        manager._handles["r"]._crash_count = 99
-        manager._handles["r"]._status = "failed"
+        # Uses public seams on ``MonitorHandle`` — the invariant
+        # "status only moves through the mark_* methods" holds
+        # even in tests.
+        manager._handles["r"].bump_crash_count_to(99)
+        manager._handles["r"].mark_failed("[test-forced failure]")
         await manager.restart("r")
-        assert manager._handles["r"]._crash_count == 0
+        assert manager._handles["r"].crash_count == 0
         await manager.shutdown_all()
 
     @pytest.mark.asyncio
@@ -311,13 +318,12 @@ class TestMonitorTools:
     def test_output_returns_tail(self, tmp_path):
         cfg = MonitorConfig(name="x", command="echo")
         manager = MonitorManager({"x": cfg}, tmp_path)
-        # Pre-populate the buffer to avoid spawning a real
-        # process in this pure-tool test.
-        handle = manager._handles
+        # Pre-populate the buffer via the public seam to avoid
+        # spawning a real process in this pure-tool test.
         h = MonitorHandle(cfg, project_dir=tmp_path)
-        h._output.append("line 1")
-        h._output.append("line 2")
-        handle["x"] = h
+        h.append_output("line 1")
+        h.append_output("line 2")
+        manager._handles["x"] = h
         tool = MonitorTools(manager)
         out = tool.monitor_output("x", lines=10)
         assert "line 1" in out
@@ -329,7 +335,7 @@ class TestMonitorTools:
         cfg = MonitorConfig(name="x", command="echo")
         manager = MonitorManager({"x": cfg}, tmp_path)
         h = MonitorHandle(cfg, project_dir=tmp_path)
-        h._output.append("hi")
+        h.append_output("hi")
         manager._handles["x"] = h
         tool = MonitorTools(manager)
         out = tool.monitor_output("x", lines="3")  # type: ignore[arg-type]
@@ -345,7 +351,11 @@ class TestMonitorTools:
     @pytest.mark.asyncio
     async def test_restart_calls_manager(self, tmp_path):
         manager = MagicMock()
-        manager.restart = AsyncMock(return_value="Restarted x.")
+        manager.restart = AsyncMock(
+            return_value=MonitorControlResult(
+                ok=True, name="x", action="restart", reason="Restarted x."
+            )
+        )
         tool = MonitorTools(manager)
         out = await tool.monitor_restart("x")
         assert "Restarted" in out
@@ -354,7 +364,9 @@ class TestMonitorTools:
     @pytest.mark.asyncio
     async def test_stop_calls_manager(self, tmp_path):
         manager = MagicMock()
-        manager.stop = AsyncMock(return_value="Stopped x.")
+        manager.stop = AsyncMock(
+            return_value=MonitorControlResult(ok=True, name="x", action="stop", reason="Stopped x.")
+        )
         tool = MonitorTools(manager)
         out = await tool.monitor_stop("x")
         assert "Stopped" in out

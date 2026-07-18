@@ -18,6 +18,8 @@ def _settings():
 
 
 def _pool(*agents):
+    from ember_code.core.tools.orchestrate_budget import SpawnBudget
+
     pool = MagicMock()
     m = {a.name: a for a in agents}
 
@@ -30,7 +32,9 @@ def _pool(*agents):
     defn = MagicMock()
     defn.description = "Test"
     defn.tools = ["Read"]
+    defn.force_isolation = None
     pool.get_definition.return_value = defn
+    pool.spawn_budget.return_value = SpawnBudget(20)
     return pool
 
 

@@ -27,8 +27,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from ember_code.core.agents import AgentDefinition, AgentPool, AgentPriority
 from ember_code.core.config.settings import Settings
-from ember_code.core.pool import AgentDefinition, AgentPool, AgentPriority
 from ember_code.core.session.core import Session
 
 
@@ -67,9 +67,10 @@ class TestRefreshCodeIndexAvailability:
         nothing to do; expensive rebuild must NOT fire."""
         sess = _make_session(available=True, chroma_has_commit=True)
 
-        changed = sess.refresh_codeindex_availability()
+        result = sess.refresh_codeindex_availability()
 
-        assert changed is False
+        assert result.ok is True
+        assert result.changed is False
         assert sess._codeindex_available is True
         sess.pool.load_definitions.assert_not_called()
         sess.pool.build_agents.assert_not_called()
@@ -80,9 +81,10 @@ class TestRefreshCodeIndexAvailability:
         """Symmetric: both say "not available" — still no rebuild."""
         sess = _make_session(available=False, chroma_has_commit=False)
 
-        changed = sess.refresh_codeindex_availability()
+        result = sess.refresh_codeindex_availability()
 
-        assert changed is False
+        assert result.ok is True
+        assert result.changed is False
         sess.pool.load_definitions.assert_not_called()
         sess.pool.build_agents.assert_not_called()
         sess._build_main_agent.assert_not_called()
@@ -94,9 +96,10 @@ class TestRefreshCodeIndexAvailability:
         ``main_agent.codeindex.md`` prompt variant."""
         sess = _make_session(available=False, chroma_has_commit=True)
 
-        changed = sess.refresh_codeindex_availability()
+        result = sess.refresh_codeindex_availability()
 
-        assert changed is True
+        assert result.ok is True
+        assert result.changed is True
         assert sess._codeindex_available is True
         # Pool entries cleared first (forces re-load — load_definitions
         # is a noop without this).
@@ -124,9 +127,10 @@ class TestRefreshCodeIndexAvailability:
         so the agent stops claiming codeindex is available."""
         sess = _make_session(available=True, chroma_has_commit=False)
 
-        changed = sess.refresh_codeindex_availability()
+        result = sess.refresh_codeindex_availability()
 
-        assert changed is True
+        assert result.ok is True
+        assert result.changed is True
         assert sess._codeindex_available is False
         sess.pool.load_definitions.assert_called_once()
         assert sess.pool.load_definitions.call_args.kwargs.get("codeindex_available") is False
@@ -152,9 +156,10 @@ class TestRefreshCodeIndexAvailability:
         and never flips up — no rebuild storm on every sync."""
         sess = _make_session(available=False, head_sha="", chroma_has_commit=False)
 
-        changed = sess.refresh_codeindex_availability()
+        result = sess.refresh_codeindex_availability()
 
-        assert changed is False
+        assert result.ok is True
+        assert result.changed is False
         sess._build_main_agent.assert_not_called()
 
 
@@ -225,8 +230,9 @@ class TestRefreshActuallySwitchesPromptVariants:
         # Sync runs, chroma now has the commit.
         sess.code_index.has_commit.return_value = True
 
-        changed = sess.refresh_codeindex_availability()
-        assert changed is True
+        result = sess.refresh_codeindex_availability()
+        assert result.ok is True
+        assert result.changed is True
 
         defn = sess.pool.get_definition("explorer")
         assert "CODEINDEX-VARIANT" in defn.system_prompt, (

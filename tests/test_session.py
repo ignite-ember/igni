@@ -5,8 +5,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from ember_code.core.config.settings import Settings
+from ember_code.core.learn import LearnBootResult
 from ember_code.core.session.core import Session
 from ember_code.core.utils import context as ctx_mod
+
+
+def _boot_disabled() -> LearnBootResult:
+    """Default ``create_learning_machine`` patch return: learning off."""
+    return LearnBootResult(ok=False, machine=None, reason="disabled in test")
+
+
+def _boot_with_machine(machine) -> LearnBootResult:
+    """Wrap a fake LM in the envelope Session now unwraps."""
+    return LearnBootResult(ok=True, machine=machine, reason="")
 
 
 def _session_patches(**overrides):
@@ -16,8 +27,8 @@ def _session_patches(**overrides):
     ``_session_patches(load_project_context="ctx")``.
     """
     defaults = {
-        "initialize_project": None,
-        "setup_db": None,
+        "ProjectInitializer": None,
+        "StorageManager": None,
         "PermissionGuard": None,
         "AuditLogger": None,
         "HookLoader": None,
@@ -35,10 +46,10 @@ def _session_patches(**overrides):
         "CodeIndexSyncManager": None,
         "ToolRegistry": None,
         "ToolPermissions": None,
-        "create_learning_machine": None,
+        "create_learning_machine": _boot_disabled(),
         "ToolEventHook": None,
-        "_create_reasoning_tools": None,
-        "_create_guardrails": None,
+        "create_reasoning_tools": None,
+        "create_guardrails": None,
         "CompressionManager": None,
         "Agent": None,
         "load_prompt": "You are an assistant.",
@@ -286,7 +297,7 @@ class TestSessionLearning:
 
     def test_learning_created_when_enabled(self, tmp_path):
         fake_lm = MagicMock()
-        patches = _session_patches(create_learning_machine=fake_lm)
+        patches = _session_patches(create_learning_machine=_boot_with_machine(fake_lm))
         _start_patches(patches)
         try:
             settings = Settings()
@@ -305,7 +316,7 @@ class TestSessionLearning:
         without an extra plumbing round-trip.
         """
         fake_lm = MagicMock()
-        patches = _session_patches(create_learning_machine=fake_lm)
+        patches = _session_patches(create_learning_machine=_boot_with_machine(fake_lm))
         mocks = {}
         for p in patches:
             mock = p.start()
@@ -351,8 +362,8 @@ def _patches_with_real_context_loader():
     ``load_project_context`` un-mocked so the real loader fires and we can
     verify that rule files on disk actually reach the agent."""
     overrides = {
-        "initialize_project": None,
-        "setup_db": None,
+        "ProjectInitializer": None,
+        "StorageManager": None,
         "PermissionGuard": None,
         "AuditLogger": None,
         "HookLoader": None,
@@ -369,10 +380,10 @@ def _patches_with_real_context_loader():
         "CodeIndexSyncManager": None,
         "ToolRegistry": None,
         "ToolPermissions": None,
-        "create_learning_machine": None,
+        "create_learning_machine": _boot_disabled(),
         "ToolEventHook": None,
-        "_create_reasoning_tools": None,
-        "_create_guardrails": None,
+        "create_reasoning_tools": None,
+        "create_guardrails": None,
         "CompressionManager": None,
         "Agent": None,
         "load_prompt": "You are an assistant.",
@@ -713,23 +724,29 @@ class TestSessionMcpResolver:
 #
 # Indirect coverage exists via output_styles and plan_mode tests
 # (they register a capture callback to inspect the channel
-# stream). These tests pin the contract itself: idempotent
-# re-register, exception isolation between callbacks, defensive
-# fallback when ``_broadcast_callbacks`` was never initialised,
-# call order + payload identity.
+# stream). These tests pin the facade contract on Session
+# (``session.broadcast(...)`` / ``session.register_broadcast_callback(...)``)
+# — the bus itself has its own unit tests in
+# ``test_session_broadcast.py``. The class invariant here is:
+# every Session (including ``Session.__new__`` -bypass stubs)
+# must be given a ``BroadcastBus`` before broadcast machinery
+# can be exercised — the ``getattr(..., None)`` defensiveness is
+# gone by design.
 
 
 class TestSessionBroadcast:
     def _bare_session(self):
+        from ember_code.core.session.broadcast import BroadcastBus
+
         session = Session.__new__(Session)
-        session._broadcast_callbacks = []
+        session.broadcast_bus = BroadcastBus()
         return session
 
     def test_register_appends_callback(self):
         session = self._bare_session()
         cb = lambda ch, p: None  # noqa: E731
         session.register_broadcast_callback(cb)
-        assert session._broadcast_callbacks == [cb]
+        assert session.broadcast_bus.callbacks_snapshot() == [cb]
 
     def test_register_is_idempotent_on_same_callback(self):
         # The /plan and /accept slash commands both call
@@ -743,7 +760,7 @@ class TestSessionBroadcast:
         session.register_broadcast_callback(cb)
         session.register_broadcast_callback(cb)
         session.register_broadcast_callback(cb)
-        assert len(session._broadcast_callbacks) == 1
+        assert len(session.broadcast_bus.callbacks_snapshot()) == 1
 
     def test_register_distinct_callbacks_both_kept(self):
         session = self._bare_session()
@@ -751,7 +768,7 @@ class TestSessionBroadcast:
         cb2 = lambda ch, p: None  # noqa: E731
         session.register_broadcast_callback(cb1)
         session.register_broadcast_callback(cb2)
-        assert session._broadcast_callbacks == [cb1, cb2]
+        assert session.broadcast_bus.callbacks_snapshot() == [cb1, cb2]
 
     def test_broadcast_calls_every_registered_callback(self):
         session = self._bare_session()
@@ -813,19 +830,24 @@ class TestSessionBroadcast:
         session = self._bare_session()
         session.broadcast("any", {})  # no raise
 
-    def test_broadcast_without_callbacks_attribute_is_noop(self):
-        # Tests routinely build ``Session.__new__`` without
-        # running ``__init__`` — ``_broadcast_callbacks``
-        # doesn't exist yet. The defensive ``getattr`` in the
-        # source makes this a noop instead of an AttributeError.
-        # Load-bearing for the test suite's session-construct
-        # patterns.
-        session = Session.__new__(Session)  # NO ``_broadcast_callbacks`` set
-        session.broadcast("any", {})  # no raise
+    def test_broadcast_bus_is_construction_invariant(self):
+        # Post-OOP-pivot: ``BroadcastBus`` is composed in
+        # ``Session.__init__``. Test fixtures that build Session
+        # via ``Session.__new__`` must also assign
+        # ``broadcast_bus``. Attempting to broadcast on a bypass
+        # without doing so raises — replacing the old
+        # ``getattr(..., None)`` "silently no-op" branch. This
+        # test pins the tighter invariant so a regression toward
+        # defensive silence surfaces.
+        session = Session.__new__(Session)  # NO ``broadcast_bus``
+        import pytest as _pytest
+
+        with _pytest.raises(AttributeError):
+            session.broadcast("any", {})
 
     def test_callbacks_can_register_during_broadcast_safely(self):
         # Edge case — a callback that registers a NEW callback
-        # during the broadcast. The source iterates ``list(...)``
+        # during the broadcast. The bus iterates ``list(...)``
         # which copies the snapshot, so new callbacks don't fire
         # mid-broadcast (they wait for the next one). Pin this:
         # absent the copy, mutating the list during iteration

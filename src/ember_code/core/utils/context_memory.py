@@ -7,9 +7,22 @@ parent module was 778 LoC of hierarchical rules loading with
 memory-index handling glued into the middle; this file holds the
 memory-index concern only.
 
-Backwards-compatible: the public API (:func:`ensure_memory_dir`,
-:func:`memory_writeback_instructions`, :func:`load_memory_index`) is
-re-exported by :mod:`context` so existing callers work unchanged.
+## OOP shape
+
+The dominant subject of this file is ``project_dir`` — every helper
+took it as first arg and either derived paths from it or read files
+under those paths. That's the classic Rule 6 "implicit subject
+cluster" audit flag. The refactor promotes ``project_dir`` to
+constructor state on :class:`ProjectMemoryBank`, with the three
+public verbs (``ensure`` / ``load_index`` / ``writeback_instructions``)
+as instance methods.
+
+Free-function shims (:func:`ensure_memory_dir`,
+:func:`load_memory_index`, :func:`memory_writeback_instructions`)
+survive at the module bottom as one-liner delegations to the class
+— they're what :mod:`context` re-exports and what the test suite
+imports. Rewriting every call site to the class form is a separate
+concern from the OOP promotion happening here.
 
 ## What lives here
 
@@ -19,23 +32,47 @@ re-exported by :mod:`context` so existing callers work unchanged.
   publishes, so a runaway memory file can never blow up the session
   prompt.
 - **Write-back instructions** — the system-prompt block the agent
-  sees at session start, teaching it how to save new memories
-  (four types: user / feedback / project / reference; explicit
-  DON'T-save categories).
-- **Bootstrap** — ``ensure_memory_dir`` creates the per-project
-  memory directory idempotently so the agent's first ``save_file``
-  doesn't fail on a missing parent.
+  sees at session start, delegated to
+  :class:`context_memory_prompt.MemoryWritebackPrompt` so the 79-line
+  template lives in its own file (Pattern 8).
+- **Bootstrap** — :meth:`ProjectMemoryBank.ensure` creates the per-
+  project memory directory idempotently so the agent's first
+  ``save_file`` doesn't fail on a missing parent.
+
+Backwards-compatible: :mod:`context` still re-exports the free-
+function names and the leading-underscore private helpers; tests
+that ``monkeypatch.setattr`` ``_ember_project_memory_dir`` on this
+module (or on ``context``) still take effect because
+:class:`ProjectMemoryBank` looks up the names on the module
+namespace at call time — see the module-late-binding pattern in
+:meth:`ProjectMemoryBank.ember_dir`.
 """
 
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
+
+from ember_code.core.utils.context_memory_prompt import MemoryWritebackPrompt
 
 logger = logging.getLogger(__name__)
 
 
-# ── Constants ──────────────────────────────────────────────────────
+# ── Module-level path helpers ─────────────────────────────────────
+#
+# Kept as module-level free functions (not class methods) because:
+#
+# * :mod:`context` re-exports every leading-underscore name so
+#   tests can ``monkeypatch.setattr(context, "_ember_project_memory_dir",
+#   ...)``. That patch reaches the ORIGINAL name here via
+#   ``sys.modules[__name__]`` lookup inside the class — see
+#   :meth:`ProjectMemoryBank.ember_dir`. If these lived on the class
+#   directly, the monkeypatch would silently miss.
+# * Tests also import them directly:
+#   ``from context_memory import _ember_project_memory_dir``. The
+#   module-level position preserves that.
+
 
 #: Filename of the per-project memory INDEX. Individual memory files
 #: are separate ``<name>.md`` files in the same directory; the index
@@ -50,9 +87,6 @@ _MEMORY_INDEX_MAX_LINES = 200
 #: Byte cap that runs alongside the line cap — whichever hits first
 #: wins. Matches Claude Code's 25 KB published cap.
 _MEMORY_INDEX_MAX_BYTES = 25_000
-
-
-# ── Path helpers ───────────────────────────────────────────────────
 
 
 def _project_memory_slug(project_dir: Path) -> str:
@@ -104,138 +138,160 @@ def _read_memory_index(memory_dir: Path) -> str:
     return text
 
 
-# ── Public API ─────────────────────────────────────────────────────
+# ── The bank ──────────────────────────────────────────────────────
+
+
+class ProjectMemoryBank:
+    """One project's auto-memory bank — the OOP core of this module.
+
+    Owns a ``project_dir`` and a cross-tool fallback flag; exposes
+    the three verbs the caller actually cares about
+    (``ensure`` / ``load_index`` / ``writeback_instructions``) as
+    methods. Replaces the pre-refactor free-function trio that
+    threaded ``project_dir`` through five signatures as an
+    implicit subject (Rule 6 "implicit subject cluster" audit
+    flag).
+
+    ## Late-binding lookup of the path helpers
+
+    The instance methods do NOT capture the module-level
+    ``_ember_project_memory_dir`` / ``_claude_project_memory_dir``
+    names at method-definition time. Instead, they re-read them
+    off ``sys.modules[__name__]`` at call time. That's the only
+    way tests that ``monkeypatch.setattr(context_memory,
+    "_ember_project_memory_dir", ...)`` — or the equivalent patch
+    on the :mod:`context` re-export — take effect on subsequent
+    method calls. A naive ``from … import`` at method scope would
+    freeze the reference and silently ignore the monkeypatch.
+    """
+
+    #: Filename of the per-project memory INDEX — mirrors module
+    #: constant so callers with a bank instance can read it off
+    #: ``self.MEMORY_INDEX_NAME``.
+    MEMORY_INDEX_NAME: str = _MEMORY_INDEX_NAME
+
+    #: Prefix line cap — see module-level constant.
+    MAX_LINES: int = _MEMORY_INDEX_MAX_LINES
+
+    #: Byte cap — see module-level constant.
+    MAX_BYTES: int = _MEMORY_INDEX_MAX_BYTES
+
+    def __init__(
+        self,
+        project_dir: Path,
+        read_claude_fallback: bool = True,
+    ) -> None:
+        self._project_dir = project_dir
+        self._read_claude_fallback = read_claude_fallback
+
+    # ── Path resolution ─────────────────────────────────────────
+
+    @property
+    def project_dir(self) -> Path:
+        return self._project_dir
+
+    @property
+    def read_claude_fallback(self) -> bool:
+        return self._read_claude_fallback
+
+    def ember_dir(self) -> Path:
+        """Resolve the ember-native memory dir for this project.
+
+        Reads the module-level ``_ember_project_memory_dir`` name
+        off ``sys.modules[__name__]`` at call time so test
+        monkeypatches take effect. Do NOT inline this to
+        ``_ember_project_memory_dir(self._project_dir)`` — that
+        captures the reference at method-definition time and
+        silently ignores patched replacements.
+        """
+        return sys.modules[__name__]._ember_project_memory_dir(self._project_dir)
+
+    def claude_dir(self) -> Path:
+        """Resolve the Claude Code cross-tool memory dir for this project.
+
+        See :meth:`ember_dir` — same late-binding rationale.
+        """
+        return sys.modules[__name__]._claude_project_memory_dir(self._project_dir)
+
+    # ── Verbs ───────────────────────────────────────────────────
+
+    def ensure(self) -> Path:
+        """Create the per-project memory directory if missing and
+        return its path. Idempotent — existing directories are left
+        alone, and any OS-level permission error is logged +
+        swallowed so a flaky disk doesn't break session boot.
+        """
+        target = self.ember_dir()
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.debug("ensure_memory_dir %s failed: %s", target, exc)
+        return target
+
+    def load_index(self) -> str:
+        """Load the per-project ``MEMORY.md`` index for the session.
+
+        Tries the ember-native location first; when
+        ``read_claude_fallback`` is set and no ember-native file
+        exists, falls back to the equivalent CC path so a user
+        mid-migration keeps their existing memory bank without
+        copying files. The first 200 lines OR 25 KB (whichever cap
+        hits first) load into context — the same prefix budget
+        Claude Code applies — so a runaway memory file can never
+        blow up the session prompt.
+        """
+        reader = sys.modules[__name__]._read_memory_index
+        text = reader(self.ember_dir())
+        if text:
+            return text
+        if self._read_claude_fallback:
+            text = reader(self.claude_dir())
+            if text:
+                return text
+        return ""
+
+    def writeback_instructions(self) -> str:
+        """Return the system-prompt block that teaches the agent
+        how to WRITE new memory entries during a conversation
+        (Claude Code parity, row 61).
+
+        Delegates the actual template rendering to
+        :class:`context_memory_prompt.MemoryWritebackPrompt` so the
+        79-line prose lives in its own file (Pattern 8). This
+        method's job is to wire the resolved ember-dir path into
+        the prompt.
+        """
+        return MemoryWritebackPrompt(self.ember_dir()).render()
+
+
+# ── Free-function shims ───────────────────────────────────────────
+#
+# One-liner delegations to :class:`ProjectMemoryBank`. Kept because:
+#
+# * :mod:`context` re-exports these names for backwards compat with
+#   ``session/core.py`` and other external callers.
+# * Every test in ``test_context.py::TestLoadMemoryIndex`` /
+#   ``TestEnsureMemoryDir`` / ``TestMemoryWritebackInstructions``
+#   calls them by the free-function name.
+#
+# Migrating every call site to the class form is out of scope for
+# this file's refactor — it would ripple through 20+ tests and the
+# :mod:`context` re-export block. Named as scope-limited debt.
 
 
 def ensure_memory_dir(project_dir: Path) -> Path:
-    """Create the per-project memory directory if missing and
-    return its path. Called at session bootstrap so the agent's
-    first ``save_file`` into the memory area doesn't fail on a
-    "parent directory doesn't exist" error.
-
-    The function is idempotent — existing directories are left
-    alone, and any OS-level permission error is logged + swallowed
-    so a flaky disk doesn't break session boot."""
-    target = _ember_project_memory_dir(project_dir)
-    try:
-        target.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        logger.debug("ensure_memory_dir %s failed: %s", target, exc)
-    return target
-
-
-def memory_writeback_instructions(project_dir: Path) -> str:
-    """Return the system-prompt block that teaches the agent
-    how to WRITE new memory entries during a conversation
-    (Claude Code parity, row 61).
-
-    Mirrors CC's auto-memory convention: per-project memory dir,
-    individual ``<name>.md`` files with YAML frontmatter, an
-    index file (``MEMORY.md``) the agent updates alongside.
-    The block names the four memory types (user / feedback /
-    project / reference), gives concrete WHEN-to-save triggers,
-    and lists the categories the agent should NEVER save (code
-    patterns, paths, git history — anything derivable from the
-    code itself)."""
-    memory_dir = _ember_project_memory_dir(project_dir)
-    return f"""# auto memory
-
-You have a persistent, file-based memory system at `{memory_dir}/`. \
-This directory already exists — write to it directly with the standard \
-`save_file` / `edit_file` tools (do not run mkdir or check for its existence).
-
-Build up this memory system over time so future conversations have a \
-complete picture of who the user is, how they'd like to collaborate, \
-what behaviours to avoid or repeat, and the context behind the work.
-
-If the user explicitly asks you to remember something, save it immediately \
-as whichever type fits best. If they ask you to forget something, find and \
-remove the relevant entry.
-
-## Types of memory
-
-* `user` — the user's role, goals, responsibilities, knowledge. Lets you \
-  tailor future behaviour to their perspective.
-* `feedback` — corrections AND confirmations on how to approach work. \
-  Both directions matter — recording only corrections drifts you away \
-  from approaches the user already validated. Lead with the rule; \
-  follow with **Why:** and **How to apply:** lines.
-* `project` — ongoing work, goals, initiatives, bugs, deadlines that \
-  aren't derivable from the code or git history. Convert relative \
-  dates to absolute when saving (today → 2026-06-26).
-* `reference` — pointers to where information lives in external systems \
-  (Linear, Slack, Grafana dashboards, etc.).
-
-## What NOT to save
-
-* Code patterns, conventions, architecture, file paths, or project \
-  structure — these are derivable by reading the project.
-* Git history, recent changes, blame info — `git log` / `git blame` \
-  are authoritative.
-* Debugging recipes or fix details — the fix is in the code; the \
-  commit message has the context.
-* Anything already documented in `CLAUDE.md` / `ember.md`.
-* Ephemeral task details: in-progress work, conversation context.
-
-These exclusions apply even when the user explicitly asks you to save. \
-If they ask to save a PR list or activity summary, ask what was *surprising* \
-or *non-obvious* about it — that is the part worth keeping.
-
-## How to save memories
-
-Two-step process:
-
-**Step 1** — write the memory to its own file (e.g. `user_role.md`, \
-`feedback_testing.md`):
-
-```markdown
----
-name: short-kebab-case-slug
-description: one-line summary — used to decide relevance in future \
-conversations, so be specific
-metadata:
-  type: user | feedback | project | reference
----
-
-{{memory body — for feedback/project, structure as: rule/fact, then \
-**Why:** line, then **How to apply:** line. Link related memories \
-with [[their-slug]].}}
-```
-
-**Step 2** — add a pointer to that file in `MEMORY.md`. `MEMORY.md` is \
-an index, not a memory. Each line: `- [Title](file.md) — one-line hook`. \
-No frontmatter on `MEMORY.md`. Keep entries under ~150 characters; the \
-first 200 lines load into context, so density matters.
-
-## When to access vs write memory
-
-Read existing memories when they seem relevant or the user references \
-prior-conversation work. Write new ones when you learn something — \
-don't wait to be told. Update or remove memories that turn out to be \
-wrong or outdated.
-
-Before recommending something from memory: if it names a file or symbol, \
-verify the file still exists / the symbol still exists. Memory captures \
-state at a point in time."""
+    """Backwards-compat shim — see :meth:`ProjectMemoryBank.ensure`."""
+    return ProjectMemoryBank(project_dir).ensure()
 
 
 def load_memory_index(project_dir: Path, read_claude_memory: bool = True) -> str:
-    """Load the per-project ``MEMORY.md`` index for the session.
+    """Backwards-compat shim — see :meth:`ProjectMemoryBank.load_index`."""
+    return ProjectMemoryBank(
+        project_dir,
+        read_claude_fallback=read_claude_memory,
+    ).load_index()
 
-    Tries the ember-native location first
-    (``~/.ember/projects/<slug>/memory/MEMORY.md``); when
-    ``read_claude_memory`` is set and no ember-native file exists,
-    falls back to the equivalent CC path so a user mid-migration
-    keeps their existing memory bank without copying files. The
-    first 200 lines OR 25 KB (whichever cap hits first) load into
-    context — the same prefix budget Claude Code applies — so a
-    runaway memory file can never blow up the session prompt.
-    """
-    text = _read_memory_index(_ember_project_memory_dir(project_dir))
-    if text:
-        return text
-    if read_claude_memory:
-        text = _read_memory_index(_claude_project_memory_dir(project_dir))
-        if text:
-            return text
-    return ""
+
+def memory_writeback_instructions(project_dir: Path) -> str:
+    """Backwards-compat shim — see :meth:`ProjectMemoryBank.writeback_instructions`."""
+    return ProjectMemoryBank(project_dir).writeback_instructions()

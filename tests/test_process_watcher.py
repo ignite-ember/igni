@@ -24,7 +24,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from ember_code.backend.__main__ import _build_rpc_table
 from ember_code.backend.server import BackendServer
-from ember_code.core.tools import shell as shell_mod
+from ember_code.core.tools.process_supervisor_locator import supervisors
 from ember_code.protocol.rpc import RpcMethod
 
 # ── Subscriber semantics ─────────────────────────────────────
@@ -35,40 +35,42 @@ class TestLineSubscriber:
         # Test isolation: reset the process-event bus before each
         # test so a leftover callback from a previous test doesn't
         # fire here. Post-refactor the three parallel subscriber
-        # lists are consolidated into ``shell_mod._event_bus`` (a
-        # :class:`ProcessEventBus`); ``.reset()`` drops all
-        # subscribers across all event types in one call.
-        shell_mod._event_bus.reset()
+        # lists live inside :class:`ProcessEventBus`; ``.reset()``
+        # drops all subscribers across all event types in one call.
+        supervisors.default().registry.bus.reset()
 
     def test_subscribe_then_emit_fires_callback(self) -> None:
+        registry = supervisors.default().registry
         received: list[dict] = []
-        shell_mod.subscribe_to_process_line(received.append)
+        registry.bus.on("line", received.append)
 
-        shell_mod._emit_line(42, "hello from background")
+        registry.emit_line(42, "hello from background")
 
         assert received == [{"pid": 42, "line": "hello from background"}]
 
     def test_unsubscribe_stops_callback(self) -> None:
+        registry = supervisors.default().registry
         received: list[dict] = []
 
         def cb(info: dict) -> None:
             received.append(info)
 
-        shell_mod.subscribe_to_process_line(cb)
-        shell_mod.unsubscribe_from_process_line(cb)
-        shell_mod._emit_line(42, "should not surface")
+        registry.bus.on("line", cb)
+        registry.bus.off("line", cb)
+        registry.emit_line(42, "should not surface")
 
         assert received == []
 
     def test_duplicate_subscribe_is_idempotent(self) -> None:
         # Same callback registered twice should only fire once —
         # mirrors the completion subscriber contract.
+        registry = supervisors.default().registry
         received: list[dict] = []
         cb = received.append
-        shell_mod.subscribe_to_process_line(cb)
-        shell_mod.subscribe_to_process_line(cb)
+        registry.bus.on("line", cb)
+        registry.bus.on("line", cb)
 
-        shell_mod._emit_line(1, "x")
+        registry.emit_line(1, "x")
 
         assert received == [{"pid": 1, "line": "x"}]
 
@@ -76,15 +78,16 @@ class TestLineSubscriber:
         # One bad callback can't sink the rest. Important because
         # the watcher's loop-hop subscriber would otherwise prevent
         # an unrelated plugin from receiving lines.
+        registry = supervisors.default().registry
         survivor: list[dict] = []
 
         def bad(_info: dict) -> None:
             raise RuntimeError("bad subscriber")
 
-        shell_mod.subscribe_to_process_line(bad)
-        shell_mod.subscribe_to_process_line(survivor.append)
+        registry.bus.on("line", bad)
+        registry.bus.on("line", survivor.append)
 
-        shell_mod._emit_line(7, "still arrives")
+        registry.emit_line(7, "still arrives")
 
         assert survivor == [{"pid": 7, "line": "still arrives"}]
 
@@ -92,19 +95,20 @@ class TestLineSubscriber:
         # Hot path — must short-circuit when nothing is listening.
         # Build a payload-allocating subscriber and assert it's
         # NOT called for the no-subscriber emit.
-        shell_mod._emit_line(99, "ignored")  # must not raise
+        supervisors.default().registry.emit_line(99, "ignored")  # must not raise
 
 
 class TestStartSubscriber:
     def setup_method(self) -> None:
-        shell_mod._event_bus.reset()
+        supervisors.default().registry.bus.reset()
 
     def test_emit_start_publishes_pid_cmd_ts(self) -> None:
+        registry = supervisors.default().registry
         received: list[dict] = []
-        shell_mod.subscribe_to_process_start(received.append)
+        registry.bus.on("start", received.append)
 
         mp = SimpleNamespace(proc=SimpleNamespace(pid=123), cmd="tail -f x.log")
-        shell_mod._emit_start(mp)  # type: ignore[arg-type]
+        registry.announce_start(mp)  # type: ignore[arg-type]
 
         assert len(received) == 1
         assert received[0]["pid"] == 123
@@ -114,15 +118,16 @@ class TestStartSubscriber:
         assert isinstance(received[0]["started_at"], (int, float))
 
     def test_start_subscriber_exception_isolated(self) -> None:
+        registry = supervisors.default().registry
         survivor: list[dict] = []
 
         def bad(_info: dict) -> None:
             raise RuntimeError("crash")
 
-        shell_mod.subscribe_to_process_start(bad)
-        shell_mod.subscribe_to_process_start(survivor.append)
+        registry.bus.on("start", bad)
+        registry.bus.on("start", survivor.append)
         mp = SimpleNamespace(proc=SimpleNamespace(pid=1), cmd="x")
-        shell_mod._emit_start(mp)  # type: ignore[arg-type]
+        registry.announce_start(mp)  # type: ignore[arg-type]
 
         assert survivor[0]["pid"] == 1
 
@@ -132,13 +137,13 @@ class TestStartSubscriber:
 
 class TestListBackgroundProcesses:
     def test_empty_registry_returns_empty(self, monkeypatch) -> None:
-        monkeypatch.setattr(shell_mod._registry, "all_running", lambda: [], raising=True)
+        monkeypatch.setattr(supervisors.default().registry, "all_running", lambda: [], raising=True)
         server = BackendServer.__new__(BackendServer)
         assert server.list_background_processes() == []
 
     def test_returns_pid_cmd_elapsed_per_process(self, monkeypatch) -> None:
         monkeypatch.setattr(
-            shell_mod._registry,
+            supervisors.default().registry,
             "all_running",
             lambda: [(101, "npm run dev", 12.3), (202, "tail -f log", 4.5)],
             raising=True,
@@ -153,7 +158,7 @@ class TestListBackgroundProcesses:
 
 class TestReadProcessTail:
     def test_unknown_pid_returns_safe_shape(self, monkeypatch) -> None:
-        monkeypatch.setattr(shell_mod._registry, "get", lambda _pid: None, raising=True)
+        monkeypatch.setattr(supervisors.default().registry, "get", lambda _pid: None, raising=True)
         server = BackendServer.__new__(BackendServer)
         out = server.read_process_tail(pid=9999)
         assert out == {
@@ -168,7 +173,7 @@ class TestReadProcessTail:
         mp.read.return_value = "line1\nline2"
         mp.is_running.return_value = True
         mp.returncode.return_value = None
-        monkeypatch.setattr(shell_mod._registry, "get", lambda _pid: mp, raising=True)
+        monkeypatch.setattr(supervisors.default().registry, "get", lambda _pid: mp, raising=True)
 
         server = BackendServer.__new__(BackendServer)
         out = server.read_process_tail(pid=42, tail=50)
@@ -188,7 +193,7 @@ class TestReadProcessTail:
         mp.read.return_value = "done"
         mp.is_running.return_value = False
         mp.returncode.return_value = 0
-        monkeypatch.setattr(shell_mod._registry, "get", lambda _pid: mp, raising=True)
+        monkeypatch.setattr(supervisors.default().registry, "get", lambda _pid: mp, raising=True)
 
         server = BackendServer.__new__(BackendServer)
         out = server.read_process_tail(pid=7, tail=100)
@@ -198,7 +203,7 @@ class TestReadProcessTail:
 
 class TestStopBackgroundProcess:
     async def test_unknown_pid_returns_killed_false(self, monkeypatch) -> None:
-        monkeypatch.setattr(shell_mod._registry, "get", lambda _pid: None, raising=True)
+        monkeypatch.setattr(supervisors.default().registry, "get", lambda _pid: None, raising=True)
         server = BackendServer.__new__(BackendServer)
         out = await server.stop_background_process(pid=9999)
         assert out["killed"] is False
@@ -208,7 +213,7 @@ class TestStopBackgroundProcess:
         mp = MagicMock()
         mp.is_running.return_value = False
         mp.returncode.return_value = 137
-        monkeypatch.setattr(shell_mod._registry, "get", lambda _pid: mp, raising=True)
+        monkeypatch.setattr(supervisors.default().registry, "get", lambda _pid: mp, raising=True)
 
         server = BackendServer.__new__(BackendServer)
         out = await server.stop_background_process(pid=1)
@@ -221,7 +226,7 @@ class TestStopBackgroundProcess:
         mp.is_running.return_value = True
         mp.returncode.return_value = -15
         mp._reader_task = None  # no reader to await — skip the wait_for branch
-        monkeypatch.setattr(shell_mod._registry, "get", lambda _pid: mp, raising=True)
+        monkeypatch.setattr(supervisors.default().registry, "get", lambda _pid: mp, raising=True)
 
         server = BackendServer.__new__(BackendServer)
         out = await server.stop_background_process(pid=42)

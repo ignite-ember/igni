@@ -15,8 +15,8 @@ These tests cover:
   warranted).
 - ``_emit_tool_arg_delta_events`` — CustomEvent shape, tool_name /
   tool_call_id propagation, accumulated args are monotonic.
-- ``_extract_spec_from_partial_args`` — jiter partial parse of
-  ``{"spec": ...}`` including tail-truncated tokens.
+- :meth:`VisualizationDeltaEvent.from_partial_args` — jiter partial
+  parse of ``{"spec": ...}`` including tail-truncated tokens.
 """
 
 from __future__ import annotations
@@ -24,22 +24,20 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from agno.models.response import ModelResponse
 from agno.run import agent as agent_events
 from agno.run.agent import CustomEvent
 
 from ember_code.core.config.models import (
     _aemit_tool_arg_deltas,
-    _ToolCallAccumulator,
+    _emit_tool_arg_delta_events,
     _ToolCallAccumulatorStore,
     _ToolCallFragment,
-    _emit_tool_arg_delta_events,
 )
-from ember_code.core.tools.orchestrate import (
-    OrchestrateTools,
-    _extract_spec_from_partial_args,
-    _run_agent_streaming,
+from ember_code.core.tools.orchestrate import _run_agent_streaming
+from ember_code.core.tools.orchestrate_events import (
+    SubAgentRegistry,
+    VisualizationDeltaEvent,
 )
 
 
@@ -82,9 +80,7 @@ class TestToolCallFragment:
     def test_delta_carrying_only_args_fragment(self):
         # 2nd+ delta on OpenAI-compatible streams: only .index +
         # .function.arguments — no id, no name.
-        frag = _ToolCallFragment.from_provider(
-            {"index": 0, "function": {"arguments": ' "root":'}}
-        )
+        frag = _ToolCallFragment.from_provider({"index": 0, "function": {"arguments": ' "root":'}})
         assert frag.index == 0
         assert frag.call_id is None
         assert frag.name is None
@@ -230,13 +226,22 @@ class TestEmitToolArgDeltaEvents:
 
 
 class TestExtractSpecFromPartialArgs:
+    """:meth:`VisualizationDeltaEvent.from_partial_args` internalises
+    the jiter partial-parse that used to be a free helper. These
+    tests hit the classmethod directly so the wire model and the
+    parser stay tested as one contract."""
+
     def test_extracts_complete_spec(self):
-        full = '{"spec": {"root": "r", "elements": {"r": {"type": "Text", "props": {"text": "hi"}}}}}'
-        got = _extract_spec_from_partial_args(full)
-        assert got is not None
-        # Result is a JSON string; parsing it should yield the
+        full = (
+            '{"spec": {"root": "r", "elements": {"r": {"type": "Text", "props": {"text": "hi"}}}}}'
+        )
+        event = VisualizationDeltaEvent.from_partial_args(
+            agent_path="a", spec_id="s", args_partial=full
+        )
+        assert event is not None
+        # ``spec_json`` is a JSON string; parsing it should yield the
         # inner ``spec`` dict.
-        assert json.loads(got) == {
+        assert json.loads(event.spec_json) == {
             "root": "r",
             "elements": {"r": {"type": "Text", "props": {"text": "hi"}}},
         }
@@ -244,24 +249,46 @@ class TestExtractSpecFromPartialArgs:
     def test_extracts_partial_spec_with_tail_truncated_string(self):
         # jiter's ``trailing-strings`` mode salvages a truncated
         # value so we can still render partial contents.
-        partial = '{"spec": {"root": "r", "elements": {"r": {"type": "Text", "props": {"text": "AAPL '
-        got = _extract_spec_from_partial_args(partial)
-        assert got is not None
-        parsed = json.loads(got)
+        partial = (
+            '{"spec": {"root": "r", "elements": {"r": {"type": "Text", "props": {"text": "AAPL '
+        )
+        event = VisualizationDeltaEvent.from_partial_args(
+            agent_path="a", spec_id="s", args_partial=partial
+        )
+        assert event is not None
+        parsed = json.loads(event.spec_json)
         # Trailing string mode preserves the incomplete value.
         assert parsed["root"] == "r"
         assert parsed["elements"]["r"]["type"] == "Text"
 
     def test_returns_none_before_spec_object_opens(self):
         # First bytes of the argument JSON — ``spec`` isn't a dict yet.
-        assert _extract_spec_from_partial_args("") is None
-        assert _extract_spec_from_partial_args("{") is None
-        assert _extract_spec_from_partial_args('{"sp') is None
+        assert (
+            VisualizationDeltaEvent.from_partial_args(agent_path="a", spec_id="s", args_partial="")
+            is None
+        )
+        assert (
+            VisualizationDeltaEvent.from_partial_args(agent_path="a", spec_id="s", args_partial="{")
+            is None
+        )
+        assert (
+            VisualizationDeltaEvent.from_partial_args(
+                agent_path="a", spec_id="s", args_partial='{"sp'
+            )
+            is None
+        )
 
     def test_returns_none_when_spec_is_not_a_dict(self):
         # Defensive — if someone somehow calls visualize with
         # ``{"spec": "..."}`` we don't emit a nonsense delta.
-        assert _extract_spec_from_partial_args('{"spec": "not-an-object"}') is None
+        assert (
+            VisualizationDeltaEvent.from_partial_args(
+                agent_path="a",
+                spec_id="s",
+                args_partial='{"spec": "not-an-object"}',
+            )
+            is None
+        )
 
 
 # ── Async pipeline: full generator wrapping ─────────────────────────
@@ -287,9 +314,7 @@ class TestAsyncPipelineWrapping:
             content.content = "hello"
             yield content
             # Third delta: closing.
-            yield _chunk(
-                [{"index": 0, "function": {"arguments": '{"root":"r"}}'}}]
-            )
+            yield _chunk([{"index": 0, "function": {"arguments": '{"root":"r"}}'}}])
 
         emitted: list = []
         async for ev in _aemit_tool_arg_deltas(source()):
@@ -446,8 +471,7 @@ class TestOrchestrateVisualizerIntegration:
 
         deltas = [e for e in progress if e.get("type") == "visualization_delta"]
         assert deltas, (
-            f"Expected visualization_delta events; got types: "
-            f"{[e.get('type') for e in progress]}"
+            f"Expected visualization_delta events; got types: {[e.get('type') for e in progress]}"
         )
 
         # First delta may be dropped by the 50ms throttle if the
@@ -533,9 +557,7 @@ class TestOrchestrateVisualizerIntegration:
             agent_path=["visualizer"],
         )
 
-        completed_events = [
-            e for e in progress if e.get("type") == "agent_completed"
-        ]
+        completed_events = [e for e in progress if e.get("type") == "agent_completed"]
         assert len(completed_events) == 1, (
             f"Expected exactly one agent_completed emission (post-loop "
             f"fallback), got {len(completed_events)}. Progress types: "
@@ -578,9 +600,7 @@ class TestOrchestrateVisualizerIntegration:
             agent_path=["visualizer"],
         )
 
-        completed_events = [
-            e for e in progress if e.get("type") == "agent_completed"
-        ]
+        completed_events = [e for e in progress if e.get("type") == "agent_completed"]
         assert len(completed_events) == 1, (
             f"Expected exactly one agent_completed emission (the "
             f"in-loop one), got {len(completed_events)}. "
@@ -596,18 +616,18 @@ class TestOrchestrateVisualizerIntegration:
         doesn't propagate to sub-agents that have their own
         distinct run_ids.
 
-        Fix: ``OrchestrateTools._active_subagent_runs`` — a class
-        registry that ``_run_agent_streaming`` populates when it
-        latches onto the sub-agent's run_id and cleans up in its
-        ``finally`` block. ``BackendServer.cancel_run`` iterates
-        the registry and cancels every entry.
+        Fix: :class:`SubAgentRegistry` — an injectable collaborator
+        that ``_run_agent_streaming`` populates when it latches onto
+        the sub-agent's run_id and cleans up in its ``finally``
+        block. ``BackendServer.cancel_run`` iterates the registry
+        and cancels every entry.
 
         This test verifies the register/deregister lifecycle.
         """
-        # Snapshot the registry before we run — some other test
-        # might have left entries, and we only care about our own.
-        registry = OrchestrateTools._active_subagent_runs
-        before = set(registry)
+        # Fresh registry per test — the pre-refactor global set
+        # made this test order-dependent; the injectable
+        # collaborator eliminates that.
+        registry = SubAgentRegistry()
 
         # Sentinel: as _handle sees the first event with a run_id,
         # it should add "subagent-run-42" to the registry. We
@@ -643,6 +663,7 @@ class TestOrchestrateVisualizerIntegration:
             task="viz",
             on_progress=on_progress,
             agent_path=["visualizer"],
+            subagent_registry=registry,
         )
 
         # During the run, the sub-agent's run_id was in the registry.
@@ -653,15 +674,15 @@ class TestOrchestrateVisualizerIntegration:
         )
 
         # After the run completes cleanly, the sub-agent's run_id
-        # must be gone — the ``finally`` in ``_run_agent_streaming``
+        # must be gone — the ``finally`` in ``BaseStreamHandler.run``
         # deregisters. If it lingered, the set would grow across
         # sessions and eventually hold stale ids.
         assert "subagent-run-42" not in registry, (
             "sub-agent run_id leaked into the registry after the "
             "stream ended — finally-block cleanup didn't run"
         )
-        # No collateral damage to pre-existing entries.
-        assert registry == before
+        # Fresh registry started empty; must be empty again.
+        assert len(registry) == 0
 
     @pytest.mark.asyncio
     async def test_subagent_run_id_deregistered_on_exception(self):
@@ -669,6 +690,7 @@ class TestOrchestrateVisualizerIntegration:
         must still remove the sub-agent's run_id — otherwise a
         crashed run leaks its id and every future ESC cancels
         it (against a run that no longer exists) forever."""
+
         class _BoomAgent:
             def arun(self, task, stream=True, stream_events=False):
                 async def _gen():
@@ -687,8 +709,7 @@ class TestOrchestrateVisualizerIntegration:
             async def aget_last_run_output(self, **_kw):
                 return None
 
-        registry = OrchestrateTools._active_subagent_runs
-        before = set(registry)
+        registry = SubAgentRegistry()
 
         with pytest.raises(RuntimeError, match="simulated"):
             await _run_agent_streaming(
@@ -696,13 +717,14 @@ class TestOrchestrateVisualizerIntegration:
                 task="boom",
                 on_progress=lambda _e: None,
                 agent_path=["visualizer"],
+                subagent_registry=registry,
             )
 
         assert "boom-run" not in registry, (
             "sub-agent run_id leaked after mid-stream exception — "
             "the finally-block cleanup is missing or incorrect"
         )
-        assert registry == before
+        assert len(registry) == 0
 
     @pytest.mark.asyncio
     async def test_event_log_uses_parent_top_run_id_not_subagent_run_id(self):
@@ -713,7 +735,7 @@ class TestOrchestrateVisualizerIntegration:
         ``run_id`` is the TOP-LEVEL run, not the visualizer
         sub-agent's own UUID run.
 
-        Before this fix, ``_append_event`` was called with
+        Before this fix, the appender was called with
         ``current_run_id`` (the sub-agent's own run_id from
         ``RunStartedEvent.run_id``), which never matched a
         spawn_agent tool turn's run_id and forced every viz to
@@ -735,9 +757,7 @@ class TestOrchestrateVisualizerIntegration:
                 agent_name="",
                 tool=_ToolExecutionFake(
                     tool_name="visualize",
-                    tool_args={
-                        "spec": {"root": "r", "elements": {"r": {"type": "Text"}}}
-                    },
+                    tool_args={"spec": {"root": "r", "elements": {"r": {"type": "Text"}}}},
                 ),
             ),
         ]
@@ -747,17 +767,16 @@ class TestOrchestrateVisualizerIntegration:
         async def _fake_append(event_type: str, payload: dict, run_id: str):
             captured_calls.append((event_type, payload, run_id))
 
-        original_appender = OrchestrateTools._append_event
-        OrchestrateTools._append_event = staticmethod(_fake_append)  # type: ignore[method-assign]
-        try:
-            await _run_agent_streaming(
-                agent=_MockAgent(tape),
-                task="viz",
-                on_progress=lambda _ev: None,
-                agent_path=["visualizer"],
-            )
-        finally:
-            OrchestrateTools._append_event = original_appender  # type: ignore[method-assign]
+        # Inject the appender as a proper constructor collaborator
+        # (no more classvar patching — the OOP refactor made this
+        # an ordinary keyword argument).
+        await _run_agent_streaming(
+            agent=_MockAgent(tape),
+            task="viz",
+            on_progress=lambda _ev: None,
+            agent_path=["visualizer"],
+            event_appender=_fake_append,
+        )
 
         assert len(captured_calls) == 1
         event_type, _payload, appended_run_id = captured_calls[0]

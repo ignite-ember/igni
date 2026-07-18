@@ -5,10 +5,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from ember_code.core.config.settings import Settings
+from ember_code.core.session.core import Session
 
 # Reuse the shared patching infrastructure from test_session
 from tests.test_session import _session_patches, _start_patches, _stop_patches
-from ember_code.core.session.core import Session
 
 
 class TestStopHookBlocking:

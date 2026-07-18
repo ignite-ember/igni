@@ -26,7 +26,6 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable
-from typing import Any
 
 from agno.tools import Toolkit
 

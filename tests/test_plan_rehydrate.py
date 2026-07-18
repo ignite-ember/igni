@@ -14,7 +14,8 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock  # noqa: F401  (used in tests)
 
-from ember_code.backend.server import BackendServer, _split_assistant_content_for_restore
+from ember_code.backend.restore_content import AssistantContentRestorer
+from ember_code.backend.server import BackendServer
 from ember_code.core.tools.plan import PlanStore
 
 
@@ -279,19 +280,19 @@ class TestPlanRehydrate:
         )
 
     def test_split_assistant_no_think_tags(self) -> None:
-        assert _split_assistant_content_for_restore("Hello world.") == [
+        assert AssistantContentRestorer.split_content("Hello world.") == [
             ("assistant", "Hello world.")
         ]
 
     def test_split_assistant_only_whitespace(self) -> None:
-        assert _split_assistant_content_for_restore("   ") == []
+        assert AssistantContentRestorer.split_content("   ") == []
 
     def test_split_assistant_inline_think_block(self) -> None:
-        parts = _split_assistant_content_for_restore("<think>reasoning here</think>Final answer.")
+        parts = AssistantContentRestorer.split_content("<think>reasoning here</think>Final answer.")
         assert parts == [("thinking", "reasoning here"), ("assistant", "Final answer.")]
 
     def test_split_assistant_text_then_think_then_text(self) -> None:
-        parts = _split_assistant_content_for_restore("Starting now. <think>checking</think>Done.")
+        parts = AssistantContentRestorer.split_content("Starting now. <think>checking</think>Done.")
         assert parts == [
             ("assistant", "Starting now."),
             ("thinking", "checking"),
@@ -301,13 +302,13 @@ class TestPlanRehydrate:
     def test_split_assistant_only_think_block(self) -> None:
         # A cancelled run can leave nothing but a think block — no
         # assistant text should be emitted.
-        assert _split_assistant_content_for_restore("<think>just thoughts</think>") == [
+        assert AssistantContentRestorer.split_content("<think>just thoughts</think>") == [
             ("thinking", "just thoughts")
         ]
 
     def test_split_assistant_unclosed_trailing_think(self) -> None:
         # Cancelled mid-thought — extract up to end-of-content.
-        parts = _split_assistant_content_for_restore("Partial. <think>was still")
+        parts = AssistantContentRestorer.split_content("Partial. <think>was still")
         assert parts == [("assistant", "Partial."), ("thinking", "was still")]
 
     async def test_get_chat_history_extracts_inline_think_tags(self) -> None:

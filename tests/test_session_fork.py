@@ -179,20 +179,24 @@ class TestForkSlashCommand:
         return session
 
     @pytest.mark.asyncio
-    async def test_fork_rebinds_every_session_id_holder(self):
-        """SAFETY: a fork must update session_id on the Session
-        AND on main_team AND on persistence. Missing any one of
-        the three leaves the next turn reading/writing the
-        SOURCE session — defeats the point of forking."""
+    async def test_fork_delegates_rebind_to_session_rotate_id(self):
+        """SAFETY: /fork MUST rebind the session id via
+        :meth:`Session.rotate_id`, which owns the three-attribute
+        invariant (session_id + main_team.session_id +
+        persistence.session_id) atomically. Missing that call
+        leaves the next turn reading/writing the SOURCE session.
+
+        Coordinator-level test: verify /fork calls rotate_id with
+        the fork's new id — the three-attribute invariant lives
+        on Session.rotate_id and is covered by Session's own unit
+        tests."""
         session = self._session(fork_result="forkedid")
         handler = CommandHandler(session)
         result = await handler.handle("/fork")
         # CommandResult signals the fork to the FE.
         assert result.action == CommandAction.FORK
-        # All three holders point at the new id.
-        assert session.session_id == "forkedid"
-        assert session.main_team.session_id == "forkedid"
-        assert session.persistence.session_id == "forkedid"
+        # Coordinator delegated to the invariant owner.
+        session.rotate_id.assert_called_once_with("forkedid")
 
     @pytest.mark.asyncio
     async def test_fork_with_name_flags_session_named_true(self):

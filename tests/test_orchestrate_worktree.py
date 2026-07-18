@@ -3,9 +3,10 @@
 
 Layered:
 
-* Unit tests for the standalone helpers (``_finalize_worktree``,
-  ``_rebind_tool_base_dirs``, ``_create_isolated_worktree``) so
-  failure modes have clear coverage.
+* Unit tests for the sandbox lifecycle (:meth:`SpawnSandbox.finalize`
+  plus the ``_rebind_tool_base_dirs`` / ``_create_isolated_worktree``
+  legacy shims on :class:`OrchestrateTools`) so failure modes have
+  clear coverage.
 * Integration tests that spin up a real git repo on ``tmp_path``
   and run ``spawn_agent`` with isolation enabled, asserting the
   worktree was created, the tool ``base_dir`` was rebased and
@@ -21,7 +22,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from ember_code.core.tools import orchestrate as orch_mod
-from ember_code.core.tools.orchestrate import OrchestrateTools, _finalize_worktree
+from ember_code.core.tools.orchestrate import OrchestrateTools
+from ember_code.core.tools.orchestrate_sandbox import SpawnSandbox
 
 # ── Shared fixtures (mirrored from test_orchestrate.py) ──────
 
@@ -44,6 +46,8 @@ def _mock_stream(content: str):
 
 
 def _mock_pool(content: str = "agent response", agent_tools: list | None = None):
+    from ember_code.core.tools.orchestrate_budget import SpawnBudget
+
     pool = MagicMock()
     agent = MagicMock()
     agent.arun = MagicMock(return_value=_mock_stream(content))
@@ -55,8 +59,12 @@ def _mock_pool(content: str = "agent response", agent_tools: list | None = None)
     defn = MagicMock()
     defn.description = "Test agent"
     defn.tools = ["Read", "Write"]
+    defn.force_isolation = None
     pool.get.return_value = agent
     pool.get_definition.return_value = defn
+    # Real SpawnBudget so OrchestrateTools.__init__ gets a live
+    # counter (max=20 matches _settings.orchestration.max_total_agents).
+    pool.spawn_budget.return_value = SpawnBudget(20)
     return pool
 
 
@@ -81,22 +89,34 @@ def _init_git_repo(path: Path) -> None:
     subprocess.run(["git", "commit", "-qm", "seed"], cwd=path, check=True)
 
 
-# ── _finalize_worktree (pure helper) ─────────────────────────
+# ── SpawnSandbox.finalize (per-spawn worktree lifecycle) ──────
 
 
 class TestFinalizeWorktree:
     def test_no_worktree_returns_empty(self):
         """The hot path: spawn without isolation. Call should be
         cheap and produce no footer."""
-        assert _finalize_worktree(None, None, {}) == ""
+        sandbox = SpawnSandbox(
+            manager=None,
+            info=None,
+            original_base_dirs={},
+            task="",
+        )
+        assert sandbox.finalize() == ""
 
     def test_restores_base_dirs_even_when_no_worktree(self):
         """A future caller might rebase tools without creating a
-        worktree (custom isolation mode). ``_finalize_worktree``
+        worktree (custom isolation mode). :meth:`SpawnSandbox.finalize`
         must still restore them."""
         tool = MagicMock()
         tool.base_dir = Path("/changed")
-        _finalize_worktree(None, None, {tool: Path("/original")})
+        sandbox = SpawnSandbox(
+            manager=None,
+            info=None,
+            original_base_dirs={tool: Path("/original")},
+            task="",
+        )
+        sandbox.finalize()
         assert tool.base_dir == Path("/original")
 
     def test_cleanup_failure_surfaces_as_footer(self):
@@ -105,7 +125,13 @@ class TestFinalizeWorktree:
         info = MagicMock(worktree_path=Path("/tmp/wt"), branch_name="b1")
         manager = MagicMock()
         manager.cleanup.side_effect = RuntimeError("boom")
-        footer = _finalize_worktree(manager, info, {})
+        sandbox = SpawnSandbox(
+            manager=manager,
+            info=info,
+            original_base_dirs={},
+            task="",
+        )
+        footer = sandbox.finalize()
         assert "cleanup failed" in footer
         assert "boom" in footer
 

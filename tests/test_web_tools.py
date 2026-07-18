@@ -4,7 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from ember_code.core.tools.web import WebTools, _extract_text_from_html
+from ember_code.core.tools.http_fetcher import HttpFetcher
+from ember_code.core.tools.web import WebTools
 
 
 class TestWebTools:
@@ -18,14 +19,14 @@ class TestWebTools:
 
     def test_extract_text_from_html(self):
         html = "<html><body><h1>Title</h1><p>Hello world</p><script>bad();</script></body></html>"
-        text = _extract_text_from_html(html)
+        text = HttpFetcher.html_to_text(html)
         assert "Title" in text
         assert "Hello world" in text
         assert "bad()" not in text
 
 
 class TestExtractTextFromHtmlDeepDive:
-    """Deeper coverage of ``_extract_text_from_html``. The function
+    """Deeper coverage of ``HttpFetcher.html_to_text``. The method
     runs four regex passes:
       1. ``<script>…</script>`` removal (DOTALL — multi-line scripts)
       2. ``<style>…</style>`` removal (same — was only one test
@@ -39,7 +40,7 @@ class TestExtractTextFromHtmlDeepDive:
         # ``<style>`` uses an identical pattern but a refactor
         # of one could drop the other silently.
         html = "<html><style>body { color: red; }</style><body>visible</body></html>"
-        text = _extract_text_from_html(html)
+        text = HttpFetcher.html_to_text(html)
         assert "visible" in text
         assert "color: red" not in text
         assert "{" not in text
@@ -52,7 +53,7 @@ class TestExtractTextFromHtmlDeepDive:
             "<script>\nconst x = 1;\nconsole.log(x);\n</script>"
             "after</body></html>"
         )
-        text = _extract_text_from_html(html)
+        text = HttpFetcher.html_to_text(html)
         assert "before" in text
         assert "after" in text
         assert "const x" not in text
@@ -68,7 +69,7 @@ class TestExtractTextFromHtmlDeepDive:
             "</style>"
             "<p>visible body text</p>"
         )
-        text = _extract_text_from_html(html)
+        text = HttpFetcher.html_to_text(html)
         assert "visible body text" in text
         assert "font-size" not in text
         assert "color: blue" not in text
@@ -83,7 +84,7 @@ class TestExtractTextFromHtmlDeepDive:
             "<p>and this</p>"
             "<script>c()</script>"
         )
-        text = _extract_text_from_html(html)
+        text = HttpFetcher.html_to_text(html)
         assert "keep this" in text and "and this" in text
         assert "a()" not in text
         assert "b()" not in text
@@ -95,7 +96,7 @@ class TestExtractTextFromHtmlDeepDive:
         # (e.g. requiring an exact ``<script>``) doesn't leak
         # script blobs with src / type attrs.
         html = '<script type="application/json">{"secret":"data"}</script><p>visible</p>'
-        text = _extract_text_from_html(html)
+        text = HttpFetcher.html_to_text(html)
         assert "visible" in text
         assert "secret" not in text
 
@@ -104,7 +105,7 @@ class TestExtractTextFromHtmlDeepDive:
         # (via the ``<[^>]+>`` → " " pass). Pin that <div>,
         # <span>, <br/>, <a href="…"> all collapse to space.
         html = '<div><span>a</span><br/><a href="x">b</a></div>'
-        text = _extract_text_from_html(html)
+        text = HttpFetcher.html_to_text(html)
         # Single space between tokens after the whitespace-
         # collapse pass.
         assert text == "a b"
@@ -115,7 +116,7 @@ class TestExtractTextFromHtmlDeepDive:
         # what keeps the extracted text scannable for the
         # agent — original HTML formatting is noise.
         html = "<p>line one</p>\n\n\n<p>line\ttwo</p>   <p>line   three</p>"
-        text = _extract_text_from_html(html)
+        text = HttpFetcher.html_to_text(html)
         # ``\s+`` → " " means all whitespace becomes single
         # spaces.
         assert text == "line one line two line three"
@@ -125,19 +126,19 @@ class TestExtractTextFromHtmlDeepDive:
         # tag conversion (a leading/trailing tag becomes a
         # leading/trailing space).
         html = "<html><body><p>content</p></body></html>"
-        text = _extract_text_from_html(html)
+        text = HttpFetcher.html_to_text(html)
         assert text == "content"
         assert not text.startswith(" ")
         assert not text.endswith(" ")
 
     def test_empty_input(self):
         # Defensive — empty string in, empty out. Don't raise.
-        assert _extract_text_from_html("") == ""
+        assert HttpFetcher.html_to_text("") == ""
 
     def test_plain_text_with_no_tags(self):
         # The function may be called on already-stripped text.
         # Should pass through (modulo whitespace collapse).
-        assert _extract_text_from_html("just text") == "just text"
+        assert HttpFetcher.html_to_text("just text") == "just text"
 
     def test_html_entities_pass_through_literally(self):
         # The function does NOT decode HTML entities — they
@@ -145,7 +146,7 @@ class TestExtractTextFromHtmlDeepDive:
         # ``&nbsp;`` not space). Pin so a future refactor
         # adding html.unescape is a deliberate decision.
         html = "<p>Tom &amp; Jerry &nbsp; cost &lt; $5</p>"
-        text = _extract_text_from_html(html)
+        text = HttpFetcher.html_to_text(html)
         assert "&amp;" in text
         assert "&lt;" in text
 
@@ -158,7 +159,7 @@ class TestExtractTextFromHtmlDeepDive:
         # future "robustness" refactor that bails on
         # malformed HTML is a deliberate choice.
         html = "<script>alert(1)<p>visible</p>"
-        text = _extract_text_from_html(html)
+        text = HttpFetcher.html_to_text(html)
         # alert(1) leaks through — documented limitation.
         assert "alert(1)" in text or "visible" in text
 
@@ -166,14 +167,14 @@ class TestExtractTextFromHtmlDeepDive:
         # ``<br/>``, ``<img src="x"/>``, ``<hr>`` — all consumed
         # by ``<[^>]+>``.
         html = "before<br/>after<hr>end"
-        text = _extract_text_from_html(html)
+        text = HttpFetcher.html_to_text(html)
         assert text == "before after end"
 
     def test_nested_tags_all_stripped(self):
         # Deeply nested DOM — all the wrapper tags collapse,
         # only text content remains.
         html = "<div><section><article><p><span><em>deep</em></span></p></article></section></div>"
-        text = _extract_text_from_html(html)
+        text = HttpFetcher.html_to_text(html)
         assert text == "deep"
 
     def test_doctype_and_comments_collapse_via_tag_pass(self):
@@ -184,7 +185,7 @@ class TestExtractTextFromHtmlDeepDive:
         # — though the comment's body content survives as text
         # if it spans multiple ``>``s.
         html = "<!DOCTYPE html><html><body><!-- single-line comment --><p>visible</p></body></html>"
-        text = _extract_text_from_html(html)
+        text = HttpFetcher.html_to_text(html)
         assert "visible" in text
         # DOCTYPE keyword is gone.
         assert "DOCTYPE" not in text
@@ -197,7 +198,7 @@ class TestExtractTextFromHtmlDeepDive:
         mock_response.headers = {"content-type": "text/html"}
         mock_response.raise_for_status = MagicMock()
 
-        with patch("ember_code.core.tools.web.httpx.AsyncClient") as MockClient:
+        with patch("ember_code.core.tools.http_fetcher.httpx.AsyncClient") as MockClient:
             instance = AsyncMock()
             instance.get = AsyncMock(return_value=mock_response)
             instance.__aenter__ = AsyncMock(return_value=instance)
@@ -215,7 +216,7 @@ class TestExtractTextFromHtmlDeepDive:
         mock_response.headers = {"content-type": "text/plain"}
         mock_response.raise_for_status = MagicMock()
 
-        with patch("ember_code.core.tools.web.httpx.AsyncClient") as MockClient:
+        with patch("ember_code.core.tools.http_fetcher.httpx.AsyncClient") as MockClient:
             instance = AsyncMock()
             instance.get = AsyncMock(return_value=mock_response)
             instance.__aenter__ = AsyncMock(return_value=instance)
@@ -233,7 +234,7 @@ class TestExtractTextFromHtmlDeepDive:
         mock_response.headers = {"content-type": "application/json"}
         mock_response.raise_for_status = MagicMock()
 
-        with patch("ember_code.core.tools.web.httpx.AsyncClient") as MockClient:
+        with patch("ember_code.core.tools.http_fetcher.httpx.AsyncClient") as MockClient:
             instance = AsyncMock()
             instance.get = AsyncMock(return_value=mock_response)
             instance.__aenter__ = AsyncMock(return_value=instance)
@@ -245,11 +246,18 @@ class TestExtractTextFromHtmlDeepDive:
 
     @pytest.mark.asyncio
     async def test_fetch_url_error(self):
+        import httpx
+
         tools = WebTools()
 
-        with patch("ember_code.core.tools.web.httpx.AsyncClient") as MockClient:
+        with patch("ember_code.core.tools.http_fetcher.httpx.AsyncClient") as MockClient:
             instance = AsyncMock()
-            instance.get = AsyncMock(side_effect=Exception("connection refused"))
+            # HttpFetcher narrows to ``httpx.HTTPError`` (Pattern 3) —
+            # a real connect failure surfaces as ``httpx.ConnectError``
+            # (a subclass), which becomes ``FetchResult.failure`` at
+            # the toolkit boundary. A bare ``Exception`` would (by
+            # design) propagate as a programming bug.
+            instance.get = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
             instance.__aenter__ = AsyncMock(return_value=instance)
             instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = instance

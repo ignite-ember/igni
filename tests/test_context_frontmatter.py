@@ -45,15 +45,7 @@ class TestParseFrontmatter:
         # Regression: prior implementations kept consuming lines
         # past ``paths:`` if they didn't start with ``- ``. Confirm
         # a following key ends the block.
-        content = (
-            "---\n"
-            "paths:\n"
-            "  - docs/**\n"
-            "name: rule\n"
-            "  - not-a-path\n"
-            "---\n"
-            "body"
-        )
+        content = "---\npaths:\n  - docs/**\nname: rule\n  - not-a-path\n---\nbody"
         paths, _body = parse_frontmatter(content)
         # Second entry after ``name:`` must NOT be treated as a path.
         assert paths == ["docs/**"]
@@ -61,7 +53,7 @@ class TestParseFrontmatter:
     def test_quoted_values_are_unwrapped(self):
         # Both single and double quotes are stripped so YAML users
         # can quote their globs when they contain special chars.
-        content = '---\npaths:\n  - "docs/**"\n  - \'tests/**\'\n---\nbody'
+        content = "---\npaths:\n  - \"docs/**\"\n  - 'tests/**'\n---\nbody"
         paths, _body = parse_frontmatter(content)
         assert paths == ["docs/**", "tests/**"]
 

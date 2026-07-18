@@ -5,9 +5,9 @@ arrives in the JSONL changeset's ``CommitSummaryOp``. So the client
 tests cover only:
 
   - Path computation (where on disk the map lives).
-  - ``write_server_supplied_map`` — writes the markdown to disk
-    verbatim, no transformation.
-  - ``load_project_map`` — reads what was written, returns ``None``
+  - ``ProjectMap.write`` — writes the markdown to disk verbatim, no
+    transformation.
+  - ``ProjectMap.load`` — reads what was written, returns ``None``
     when missing or unreadable.
   - End-to-end: a ``CommitSummaryOp`` flowing through ``apply_delta``
     lands on disk at the expected path.
@@ -29,11 +29,7 @@ from ember_code.core.code_index.manifest import (
     Manifest,
     ManifestState,
 )
-from ember_code.core.code_index.project_map import (
-    load_project_map,
-    project_map_path,
-    write_server_supplied_map,
-)
+from ember_code.core.code_index.project_map import ProjectMap
 from ember_code.core.config.settings import Settings
 from ember_code.core.session.core import Session
 
@@ -46,7 +42,7 @@ COMMIT = "a" * 40
 def test_project_map_path_sits_next_to_chroma(tmp_path: Path) -> None:
     """The map file lives in the same dir as the per-commit chroma so
     the two are paired (and can be GC'd together)."""
-    path = project_map_path(tmp_path / "proj", COMMIT, data_dir=tmp_path / "ember")
+    path = ProjectMap(tmp_path / "proj", COMMIT, data_dir=tmp_path / "ember").path
     assert path.name == f"{COMMIT}.project_map.md"
     # Parent dir matches the codeindex layout: <data>/projects/<hash>/code_index/
     assert path.parent.name == "code_index"
@@ -67,12 +63,11 @@ def test_write_server_supplied_map_persists_markdown_verbatim(tmp_path: Path) ->
         "5 folders · 12 files · 80 entities indexed.\n\n"
         "## Tables\n- `app/db/users.py` `User` — auth user table.\n"
     )
-    path = write_server_supplied_map(
+    path = ProjectMap(
         project=project,
-        data_dir=data_dir,
         commit_sha=COMMIT,
-        markdown=body,
-    )
+        data_dir=data_dir,
+    ).write(body)
     assert path.is_file()
     assert path.read_text(encoding="utf-8") == body
 
@@ -81,31 +76,29 @@ def test_load_project_map_returns_written_content(tmp_path: Path) -> None:
     project = tmp_path / "proj"
     data_dir = tmp_path / "ember"
     body = "## Project snapshot\n\nroundtrip content\n"
-    write_server_supplied_map(
+    ProjectMap(
         project=project,
-        data_dir=data_dir,
         commit_sha=COMMIT,
-        markdown=body,
-    )
-    assert load_project_map(project, COMMIT, data_dir=data_dir) == body
+        data_dir=data_dir,
+    ).write(body)
+    assert ProjectMap(project, COMMIT, data_dir=data_dir).load() == body
 
 
 def test_load_project_map_returns_none_when_missing(tmp_path: Path) -> None:
-    assert load_project_map(tmp_path / "missing", "deadbeef") is None
+    assert ProjectMap(tmp_path / "missing", "deadbeef").load() is None
 
 
 def test_write_creates_parent_dir(tmp_path: Path) -> None:
     """The codeindex dir doesn't exist yet when the first changeset
-    is applied — write_server_supplied_map must mkdir as needed."""
+    is applied — ProjectMap.write must mkdir as needed."""
     project = tmp_path / "fresh"
     data_dir = tmp_path / "ember"
     assert not (data_dir / "projects").exists()
-    path = write_server_supplied_map(
+    path = ProjectMap(
         project=project,
-        data_dir=data_dir,
         commit_sha=COMMIT,
-        markdown="ok",
-    )
+        data_dir=data_dir,
+    ).write("ok")
     assert path.is_file()
 
 
@@ -189,7 +182,7 @@ async def test_apply_delta_writes_commit_summary_to_disk(
     assert stats.commit_summary_written is True
 
     # File landed at the expected path with the verbatim body.
-    loaded = load_project_map(project, COMMIT, data_dir=data_dir)
+    loaded = ProjectMap(project, COMMIT, data_dir=data_dir).load()
     assert loaded == body
 
 
@@ -217,7 +210,7 @@ async def test_apply_delta_without_commit_summary_leaves_no_map(
 
     stats = await idx.apply_delta(jsonl_path)
     assert stats.commit_summary_written is False
-    assert load_project_map(project, COMMIT, data_dir=data_dir) is None
+    assert ProjectMap(project, COMMIT, data_dir=data_dir).load() is None
 
 
 # ── Session loader: injection into the agent's system prompt ───────
@@ -293,12 +286,11 @@ def test_session_prompt_includes_project_map_when_present(tmp_path: Path) -> Non
     project.mkdir()
     data_dir = tmp_path / "ember"
     _write_head_manifest(project, data_dir, COMMIT)
-    write_server_supplied_map(
+    ProjectMap(
         project=project,
-        data_dir=data_dir,
         commit_sha=COMMIT,
-        markdown="## Project snapshot\n\n5 folders. taxonomy stuff.\n",
-    )
+        data_dir=data_dir,
+    ).write("## Project snapshot\n\n5 folders. taxonomy stuff.\n")
 
     prompt = _build_session_capture_prompt(project, data_dir)
 
@@ -314,7 +306,7 @@ def test_session_prompt_omits_project_map_when_file_missing(tmp_path: Path) -> N
     project.mkdir()
     data_dir = tmp_path / "ember"
     _write_head_manifest(project, data_dir, COMMIT)
-    # No write_server_supplied_map call — the file slot is absent.
+    # No ProjectMap.write call — the file slot is absent.
 
     prompt = _build_session_capture_prompt(project, data_dir)
 
@@ -332,12 +324,11 @@ def test_session_prompt_omits_project_map_when_codeindex_unavailable(
     project.mkdir()
     data_dir = tmp_path / "ember"
     _write_head_manifest(project, data_dir, COMMIT)
-    write_server_supplied_map(
+    ProjectMap(
         project=project,
-        data_dir=data_dir,
         commit_sha=COMMIT,
-        markdown="stale content from old commit\n",
-    )
+        data_dir=data_dir,
+    ).write("stale content from old commit\n")
 
     prompt = _build_session_capture_prompt(project, data_dir, codeindex_available=False)
 

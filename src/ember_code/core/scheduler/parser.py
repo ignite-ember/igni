@@ -1,5 +1,20 @@
 """Natural language time parser for scheduling.
 
+Narrow-purpose leaf module: exposes a single ``parse_time`` free
+function that takes a primitive string and returns a :class:`datetime`
+(or ``None``). It is kept as a free function on purpose — it has no
+shared implicit subject with any other helper (Rule 6 stateless-leaf
+exception), and wrapping a one-line ``dateparser.parse`` call in a
+class would be pure ceremony.
+
+Recurrence parsing (``every 2 hours``, ``daily``, …) previously lived
+here as free functions too. It now lives on the
+:class:`~ember_code.core.scheduler.recurrence.Recurrence` value object
+in the sibling ``recurrence.py`` module — an ``(amount, unit)`` pair
+IS an object with behaviour, so callers use
+``Recurrence.parse(...).next_after(...)`` / ``.canonical()`` instead
+of the old free-function tuple protocol.
+
 Uses ``dateparser`` for multilingual support (200+ languages).
 
 Supports formats like:
@@ -8,11 +23,6 @@ Supports formats like:
 - "tomorrow", "завтра", "mañana"
 - "tomorrow at 9am", "завтра о 9 ранку"
 - "2026-03-20 14:00"
-
-Recurrence patterns (English):
-- "every 30 minutes", "every 2 hours", "every 1 day"
-- "daily", "hourly", "weekly"
-- "daily at 9am", "weekly at 5pm"
 """
 
 import re
@@ -46,100 +56,3 @@ def parse_time(text: str) -> datetime | None:
         result += timedelta(days=1)
 
     return result
-
-
-# ── Recurrence ──────────────────────────────────────────────────
-
-
-_RECURRENCE_ALIASES = {
-    "hourly": "every 1 hours",
-    "daily": "every 1 days",
-    "weekly": "every 7 days",
-}
-
-
-def parse_recurrence(text: str) -> tuple[str, datetime | None]:
-    """Parse a recurrence pattern and compute the first scheduled time.
-
-    Args:
-        text: e.g. "every 30 minutes", "daily", "daily at 9am", "hourly"
-
-    Returns:
-        (canonical_recurrence, first_scheduled_at) or ("", None) if not a recurrence.
-    """
-    text = text.strip().lower()
-
-    # "daily at 9am" → split into recurrence + time
-    at_time: datetime | None = None
-    for alias, canonical in _RECURRENCE_ALIASES.items():
-        if text.startswith(alias):
-            rest = text[len(alias) :].strip()
-            if rest.startswith("at"):
-                at_time = parse_time(rest)
-            elif not rest:
-                at_time = _next_occurrence(canonical)
-            if at_time is not None:
-                return canonical, at_time
-
-    # "every N units" — N defaults to 1 so "every minute" works.
-    m = re.match(r"every\s+(?:(\d+)\s+)?(min(?:ute)?s?|hours?|days?|weeks?)", text)
-    if m:
-        amount = int(m.group(1)) if m.group(1) else 1
-        unit = m.group(2)
-        canonical = f"every {amount} {_normalize_unit(unit)}"
-
-        # Check for "every 2 hours at 9am"
-        rest = text[m.end() :].strip()
-        at_time = parse_time(rest) if rest.startswith("at") else _next_occurrence(canonical)
-
-        if at_time is not None:
-            return canonical, at_time
-
-    return "", None
-
-
-def next_occurrence_from_recurrence(recurrence: str, last_run: datetime) -> datetime | None:
-    """Compute the next occurrence given a recurrence pattern and the last run time."""
-    delta = _recurrence_to_delta(recurrence)
-    if delta is None:
-        return None
-    return last_run + delta
-
-
-def _next_occurrence(recurrence: str) -> datetime | None:
-    """Compute the first occurrence from now."""
-    delta = _recurrence_to_delta(recurrence)
-    if delta is None:
-        return None
-    return datetime.now() + delta
-
-
-def _recurrence_to_delta(recurrence: str) -> timedelta | None:
-    """Convert canonical recurrence to timedelta."""
-    m = re.match(r"every\s+(\d+)\s+(minutes?|hours?|days?|weeks?)", recurrence)
-    if not m:
-        return None
-    amount = int(m.group(1))
-    unit = m.group(2)
-    if unit.startswith("minute"):
-        return timedelta(minutes=amount)
-    if unit.startswith("hour"):
-        return timedelta(hours=amount)
-    if unit.startswith("day"):
-        return timedelta(days=amount)
-    if unit.startswith("week"):
-        return timedelta(weeks=amount)
-    return None
-
-
-def _normalize_unit(unit: str) -> str:
-    """Normalize time unit to plural form."""
-    if unit.startswith("min"):
-        return "minutes"
-    if unit.startswith("hour"):
-        return "hours"
-    if unit.startswith("day"):
-        return "days"
-    if unit.startswith("week"):
-        return "weeks"
-    return unit

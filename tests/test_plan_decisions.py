@@ -31,7 +31,7 @@ import pytest
 from ember_code.backend.server import BackendServer
 from ember_code.core.config.permission_eval import PermissionMode
 from ember_code.core.session.core import Session
-from ember_code.core.tools.plan import PlanStore
+from ember_code.core.tools.plan import PlanDecisionsBlob, PlanStore
 
 # ── PlanStore.decisions ─────────────────────────────────────
 
@@ -118,11 +118,13 @@ class TestPlanStoreDecisions:
     def test_snapshot_returns_independent_copy(self) -> None:
         # Returning the live dict would let the persistence layer
         # mutate the store while serializing — caused subtle bugs
-        # when the persistence layer was async.
+        # when the persistence layer was async. Post-refactor the
+        # snapshot is a Pydantic ``PlanDecisionsBlob``; mutating
+        # its ``decisions`` dict must not leak back into the store.
         store = PlanStore()
         store.set_decision("r1", "approved")
         snap = store.decisions_snapshot()
-        snap["r1"] = "dismissed"  # mutate the copy
+        snap.decisions.clear()  # mutate the copy
         assert store.get_decision("r1") == "approved"  # store unchanged
 
 
@@ -137,18 +139,28 @@ class _StubPermissionEvaluator:
 
 
 class _StubPersistence:
-    """Captures save_plan_decisions calls without touching disk."""
+    """Captures save_plan_decisions calls without touching disk.
+
+    Accepts the post-refactor typed :class:`PlanDecisionsBlob`
+    (the shape :class:`PlanCoordinator` now passes) and dumps it
+    to the historic ``dict[str, str]`` shape so the assertion
+    style ``saved[-1] == {"run-1": "approved"}`` keeps reading
+    naturally."""
 
     def __init__(self) -> None:
         self.saved: list[dict[str, str]] = []
         self.fail = False
 
-    async def save_plan_decisions(self, decisions: dict[str, str]) -> None:
+    async def save_plan_decisions(self, decisions: PlanDecisionsBlob | dict[str, str]) -> None:
         if self.fail:
             raise RuntimeError("simulated DB outage")
-        # Snapshot — mirror what the real persistence layer does
-        # (no live reference).
-        self.saved.append(dict(decisions))
+        if isinstance(decisions, PlanDecisionsBlob):
+            self.saved.append(decisions.model_dump(mode="json")["decisions"])
+        else:
+            # ``model_dump(mode="json")`` on the raw dict path
+            # would explode; mirror the real persistence layer's
+            # dict-branch fallback.
+            self.saved.append(dict(decisions))
 
     async def load_plan_decisions(self) -> dict[str, str]:
         return {}
@@ -159,9 +171,10 @@ def _build_session() -> object:
     ``approve_plan`` / ``dismiss_plan`` touch. Skips Agno
     initialisation — keeps the test fast and isolated from
     schema drift in the storage layer."""
+    from ember_code.core.session.broadcast import BroadcastBus
+
     session = Session.__new__(Session)
-    session._broadcast_callbacks = []
-    session._pending_post_run_broadcasts = []
+    session.broadcast_bus = BroadcastBus()
     session.plan_store = PlanStore()
     session.permission_evaluator = _StubPermissionEvaluator()
     session.persistence = _StubPersistence()
@@ -196,7 +209,7 @@ class TestSessionApproveDismiss:
         # the card stay in pending until they reloaded.
         session = _build_session()
         received: list[tuple[str, dict]] = []
-        session._broadcast_callbacks.append(lambda c, p: received.append((c, p)))
+        session.broadcast_bus.register(lambda c, p: received.append((c, p)))
         await session.approve_plan("run-123")
         decided = [(c, p) for c, p in received if c == "plan_decided"]
         assert decided
@@ -218,33 +231,45 @@ class TestSessionApproveDismiss:
     async def test_dismiss_broadcasts_plan_decided(self) -> None:
         session = _build_session()
         received: list[tuple[str, dict]] = []
-        session._broadcast_callbacks.append(lambda c, p: received.append((c, p)))
+        session.broadcast_bus.register(lambda c, p: received.append((c, p)))
         await session.dismiss_plan("run-789")
         decided = [(c, p) for c, p in received if c == "plan_decided"]
         assert decided
         assert decided[0][1] == {"run_id": "run-789", "decision": "dismissed"}
 
-    async def test_empty_run_id_raises(self) -> None:
+    async def test_empty_run_id_returns_error_envelope(self) -> None:
+        # Post-refactor: :class:`PlanCoordinator` returns a
+        # Pattern-3 envelope with ``ok=False`` + a diagnostic
+        # ``error`` string instead of raising ``ValueError``. The
+        # FE now surfaces the error inline via the RPC response
+        # instead of catching a generic RPC failure.
         session = _build_session()
-        with pytest.raises(ValueError, match="run_id must be non-empty"):
-            await session.approve_plan("")
-        with pytest.raises(ValueError, match="run_id must be non-empty"):
-            await session.dismiss_plan("")
+        approve_result = await session.approve_plan("")
+        assert approve_result.ok is False
+        assert approve_result.error is not None
+        assert "non-empty" in approve_result.error
+        dismiss_result = await session.dismiss_plan("")
+        assert dismiss_result.ok is False
+        assert dismiss_result.error is not None
+        assert "non-empty" in dismiss_result.error
 
-    async def test_persistence_failure_does_NOT_block_decision(self) -> None:
-        # If session_data write fails (transient DB issue), the
-        # in-memory state still has the decision and the
-        # broadcast still fires. The user sees the right UI; the
-        # loss surfaces only on reload, which is acceptable
-        # since the next decision will rewrite the blob anyway.
+    async def test_persistence_failure_on_approve_aborts_flip(self) -> None:
+        # Behavioural tightening: pre-refactor, a persist failure
+        # on approve was swallowed and the mode still flipped —
+        # that violated the persist-before-flip invariant (after
+        # restart the user would see mode=default with no
+        # recorded approval, i.e. the original bug this module
+        # was written to prevent). Post-refactor the coordinator
+        # returns ``ok=False`` and refuses to flip so the
+        # invariant holds even on the DB-down path.
         session = _build_session()
         session.persistence.fail = True
-        received: list[tuple[str, dict]] = []
-        session._broadcast_callbacks.append(lambda c, p: received.append((c, p)))
         result = await session.approve_plan("run-1")
-        assert result.decision == "approved"
-        assert session.plan_store.get_decision("run-1") == "approved"
-        assert any(c == "plan_decided" for c, _ in received)
+        assert result.ok is False
+        assert result.error is not None
+        assert "persist failed" in result.error
+        # Mode did NOT flip — the whole point of the invariant.
+        assert session.permission_evaluator.mode is PermissionMode.PLAN
 
 
 # ── The "I've never approved it" regression ─────────────────
@@ -454,12 +479,17 @@ class TestPostRunBroadcastRunIdStamp:
     see the run_id from inside its toolkit context, so the run
     loop stamps it at drain time."""
 
-    def test_drain_stamps_run_id_into_payload(self) -> None:
+    def _bus_session(self):
+        from ember_code.core.session.broadcast import BroadcastBus
+
         session = Session.__new__(Session)
-        session._broadcast_callbacks = []
-        session._pending_post_run_broadcasts = []
+        session.broadcast_bus = BroadcastBus()
+        return session
+
+    def test_drain_stamps_run_id_into_payload(self) -> None:
+        session = self._bus_session()
         received: list[tuple[str, dict]] = []
-        session._broadcast_callbacks.append(lambda c, p: received.append((c, p)))
+        session.broadcast_bus.register(lambda c, p: received.append((c, p)))
 
         session.queue_post_run_broadcast("plan_submitted", {"plan": "X", "tasks": []})
         session.drain_post_run_broadcasts(run_id="R-stamped")
@@ -470,11 +500,9 @@ class TestPostRunBroadcastRunIdStamp:
         # Drain called from a context that doesn't have a
         # run_id (degenerate / cancelled). Payload passes
         # through untouched.
-        session = Session.__new__(Session)
-        session._broadcast_callbacks = []
-        session._pending_post_run_broadcasts = []
+        session = self._bus_session()
         received: list[tuple[str, dict]] = []
-        session._broadcast_callbacks.append(lambda c, p: received.append((c, p)))
+        session.broadcast_bus.register(lambda c, p: received.append((c, p)))
 
         session.queue_post_run_broadcast("plan_submitted", {"plan": "X", "tasks": []})
         session.drain_post_run_broadcasts()  # no run_id arg
@@ -485,11 +513,9 @@ class TestPostRunBroadcastRunIdStamp:
         # If the caller explicitly set run_id in the payload,
         # the drain respects it. Belt and suspenders for tools
         # that already know their run_id at queue time.
-        session = Session.__new__(Session)
-        session._broadcast_callbacks = []
-        session._pending_post_run_broadcasts = []
+        session = self._bus_session()
         received: list[tuple[str, dict]] = []
-        session._broadcast_callbacks.append(lambda c, p: received.append((c, p)))
+        session.broadcast_bus.register(lambda c, p: received.append((c, p)))
 
         session.queue_post_run_broadcast("plan_submitted", {"plan": "X", "run_id": "explicit"})
         session.drain_post_run_broadcasts(run_id="from-loop")

@@ -1,109 +1,147 @@
-"""Backend server — processes FE messages and streams BE events.
+"""Backend server — the composition root.
 
 Owns the Session object and all Agno/AI logic. The FE never touches
-Session directly — everything goes through protocol messages.
+Session directly — everything goes through protocol messages
+routed via :mod:`ember_code.backend.rpc_router`.
 
-In Phase 2 (single-process), this is called in-process by the TUI.
-In Phase 4 (multi-process), this runs as a separate process with
-socket transport.
+Structural layout (post-refactor):
+
+* :class:`BackendBootstrap` builds every long-lived collaborator
+  (``Session``, stores, tracer) with all imports hoisted to module
+  top — no more inline-import cycle workarounds.
+* :class:`ControllerRegistry` builds the :class:`Controllers` bag
+  eagerly — replaces the 17 duplicated lazy-init ``@property``
+  blocks that previously lived here.
+* :class:`RunController` owns the run pipeline (lock, current
+  task, checkpoint, cancel).
+* :class:`HitlController` owns pause-handling, stream-muxing,
+  requirement sweeps.
+
+Every FE-facing method on :class:`BackendServer` is a one-line
+delegate into the appropriate controller. Legacy underscore-
+prefixed seams (``_run_message_locked``, ``_handle_pause``,
+``_close_model_http_client``, ``_periodic_checkpoint``, …) are
+preserved as forwarders so tests that ``patch.object`` on them
+continue to intercept without changes.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ember_code.backend import (
-    server_auth,
-    server_codeindex,
-    server_context,
-    server_files,
-    server_history,
-    server_hitl,
-    server_knowledge,
-    server_lifecycle,
-    server_loop,
-    server_mcp,
-    server_panels,
-    server_pause,
-    server_plugin,
-    server_processes,
-    server_rehydrate,
-    server_run,
-    server_search,
-    server_sessions,
+from agno.agent import Agent  # noqa: F401 — test-patch target
+
+from ember_code.backend.backend_bootstrap import BackendBootstrap
+from ember_code.backend.controller_registry import ControllerRegistry, Controllers
+from ember_code.backend.hitl_controller import HitlController
+from ember_code.backend.hitl_stream_mux import (
+    HITLStreamMultiplexer,  # noqa: F401 — legacy re-export
 )
-from ember_code.backend.server_helpers import (  # noqa: F401 — re-exported for tests
-    _SEARCH_CHAT_SNIPPET_HALF_WIDTH,
-    PluginContents,
-    _scan_plugin_dir,
-    _search_history,
-    _split_assistant_content_for_restore,
-)
+from ember_code.backend.marketplace_controller import MarketplaceController
+from ember_code.backend.model_switcher import ModelSwitcher
+from ember_code.backend.pause_handler import PauseHandler  # noqa: F401 — legacy re-export
+from ember_code.backend.plan_snapshot_builder import PlanSnapshotBuilder
+from ember_code.backend.plugin_controller import PluginController
+from ember_code.backend.plugin_schemas import PluginContents
+from ember_code.backend.run_controller import RunController
+from ember_code.backend.schemas_hitl import ToolCallArgs
+from ember_code.backend.schemas_pause import PauseHandleResult
+from ember_code.backend.schemas_run import CancelAgentRunResult, MediaAttachments
+from ember_code.backend.schemas_sessions import AutoNameResult
+from ember_code.backend.server_auth import AuthController
+from ember_code.backend.server_codeindex import CodeIndexController
+from ember_code.backend.server_context import ContextController
+from ember_code.backend.server_files import FilesController
+from ember_code.backend.server_history import ChatHistoryRebuilder
+from ember_code.backend.server_knowledge import KnowledgeController
+from ember_code.backend.server_lifecycle import LifecycleController
+from ember_code.backend.server_loop import LoopController
+from ember_code.backend.server_mcp import McpController
+from ember_code.backend.server_panels import PanelsController
+from ember_code.backend.server_processes import ProcessesController
+from ember_code.backend.server_rehydrate import RehydrateController
+from ember_code.backend.server_search import SearchController
+from ember_code.backend.server_sessions import SessionsController
+from ember_code.backend.team_wiring import TeamWiring
+from ember_code.backend.visualization_action_bus import VisualizationActionBus
+from ember_code.core.config.user_config_store import UserConfigStore
 from ember_code.protocol import messages as msg
-from pydantic import BaseModel
 
 if TYPE_CHECKING:
+    from ember_code.backend.schemas_codeindex_rpc import (
+        CodeIndexActivityEntry,
+        CodeIndexCleanResult,
+        CodeIndexHeadBreakdown,
+        CodeIndexInstallResult,
+        CodeIndexStatus,
+        CodeIndexSyncResult,
+    )
+    from ember_code.backend.schemas_context import PendingMessage, TruncateHistoryResult
+    from ember_code.backend.schemas_history import ChatSearchHit
+    from ember_code.backend.schemas_hitl import RunRequirement
+    from ember_code.backend.schemas_knowledge import KnowledgeStatus
+    from ember_code.backend.schemas_lifecycle import RehydrateOutcome
+    from ember_code.backend.schemas_loop import LoopStatusSnapshot
+    from ember_code.backend.schemas_mcp import (
+        MCPServerSnapshot,
+        MCPServerSummary,
+        MCPToolToggleResult,
+    )
+    from ember_code.backend.schemas_panels import (
+        DiscardEphemeralResult,
+        HookEntryView,
+        OutputStylesResult,
+        PromoteEphemeralResult,
+        SlashCommandEntry,
+    )
+    from ember_code.backend.schemas_plan import LatestPlanResult
+    from ember_code.backend.schemas_rpc import CloudPlan, LoginResult
+    from ember_code.backend.schemas_search import SearchCodeResult
+    from ember_code.backend.schemas_visualization import VisualizationActionResult
+    from ember_code.backend.server_files import (
+        ReadFileResult,
+        UploadAttachmentResult,
+    )
+    from ember_code.backend.server_knowledge import (
+        KnowledgeGetResult,
+        KnowledgeHit,
+        KnowledgeListEntry,
+        KnowledgeRemoveResult,
+    )
+    from ember_code.core.agents import AgentInfo
     from ember_code.core.config.settings import Settings
+    from ember_code.core.config.tool_permissions import PermissionLevel
     from ember_code.core.plugins.models import MarketplaceInfo, PluginInfo
-    from ember_code.core.pool import AgentInfo
+    from ember_code.core.session.loop_ops import LoopAdvance
+    from ember_code.core.session.schemas import (
+        McpInitResult,
+        McpServerStatus,
+        PlanDecisionResult,
+    )
+    from ember_code.core.skills import SkillPool
     from ember_code.core.skills.parser import SkillInfo
 
 logger = logging.getLogger(__name__)
 
 
-class CancelAgentRunResult(BaseModel):
-    """Wire shape for :meth:`BackendServer.cancel_agent_run` — the
-    FE renders a toast on ``ok=False`` so ``error`` differentiates
-    the unknown-run-id case from a live cancel error."""
-
-    ok: bool
-    error: str = ""
-
-
-class LatestPlanResult(BaseModel):
-    """Wire shape for :meth:`BackendServer.get_latest_plan` — the
-    plan-mode panel reads this on open + after each ``exit_plan_mode``.
-
-    ``state`` is ``"pending"`` when a plan exists (user hasn't
-    approved/dismissed yet) or ``""`` when no plan submitted.
-    ``tasks`` mirrors ``TodoStore.snapshot`` (activeForm camelCase
-    dicts) so the FE renders the plan and task list from a single
-    payload."""
-
-    latest: str = ""
-    history: list[str] = []
-    tasks: list[dict] = []
-    state: str = ""
-
-
-class VisualizationActionResult(BaseModel):
-    """Wire shape for :meth:`BackendServer.dispatch_visualization_action`
-    — the FE's tool result echo of the action name + user-supplied
-    params so it can render "you clicked X" in the conversation."""
-
-    ok: bool
-    action: str
-    params: dict = {}
-
-
-class KnowledgeStatus(BaseModel):
-    """Wire shape for :meth:`BackendServer.get_knowledge_status` —
-    KB panel header. ``embedder`` carries the active embedding
-    provider (empty when KB disabled)."""
-
-    enabled: bool
-    collection_name: str
-    document_count: int
-    embedder: str
-
-
 class BackendServer:
-    """Wraps Session and handles all FE→BE protocol messages."""
+    """Composition root wrapping :class:`Session` and every
+    sub-controller.
+
+    :meth:`__init__` fires :class:`BackendBootstrap` to construct
+    the shared collaborators, then :class:`ControllerRegistry` to
+    build the :class:`Controllers` bag. Every FE-facing method is
+    a one-liner into ``self.controllers.<name>``.
+
+    Legacy underscore-prefixed methods (``_run_message_locked``,
+    ``_handle_pause``, ``_close_model_http_client``, …) are kept
+    as forwarders so tests that ``patch.object`` on them still
+    intercept.
+    """
 
     def __init__(
         self,
@@ -112,545 +150,921 @@ class BackendServer:
         resume_session_id: str | None = None,
         additional_dirs: list[Path] | None = None,
     ):
-        from ember_code.core.code_index.paths import state_db_path
-        from ember_code.core.session import Session
-        from ember_code.core.session.session_preferences import SessionPreferencesStore
-
-        # Per-session prefs need to be consulted BEFORE the Session
-        # builds its main team, since the team binds whatever model
-        # is in ``settings.models.default`` at construction time. The
-        # store lives in the project-local ``state.db``, so we have
-        # to know the project_dir up front — fall back to cwd to
-        # mirror what Session does internally.
-        resolved_project_dir = project_dir or Path.cwd()
-        self._session_prefs = SessionPreferencesStore(
-            state_db_path(resolved_project_dir, data_dir=settings.storage.data_dir),
-        )
-        if resume_session_id:
-            persisted_model = self._session_prefs.get_model(resume_session_id)
-            if persisted_model and persisted_model in settings.models.registry:
-                settings.models.default = persisted_model
-
-        self._session = Session(
-            settings,
+        bootstrap = BackendBootstrap(
+            settings=settings,
             project_dir=project_dir,
             resume_session_id=resume_session_id,
             additional_dirs=additional_dirs,
         )
-        self._settings = settings
-        self._pending_requirements: dict[str, Any] = {}  # requirement_id → Agno requirement
-        # Auto-resolved requirements waiting to merge into the next
-        # ``acontinue_run`` call. Populated by ``_handle_pause`` when
-        # the permission evaluator (plan / acceptEdits / bypass / deny
-        # rules) decides a paused tool BEFORE the user is asked.
-        # ``resolve_hitl_batch`` drains the bucket for the same run_id
-        # and includes them alongside the user-resolved reqs so Agno
-        # gets the full resolution set in one resume.
-        self._auto_resolved_requirements: dict[str, list[Any]] = {}
-        self._processing = False
-        self._current_team: Any = None  # held during HITL pause
-        # Task currently iterating run_message → tool calls → events.
-        # ``cancel_run`` calls ``.cancel()`` on this to bail out of any
-        # awaits — the most reliable way to stop a streamed run when
-        # Agno's cooperative cancellation doesn't propagate (e.g. a
-        # broadcast sub-agent is mid-tool-call). Set when iteration
-        # starts, cleared in ``finally``.
-        self._current_run_task: asyncio.Task | None = None
-        # Serialises concurrent ``run_message`` calls. The FE unblocks
-        # user input on ``StreamingDone`` (emitted when Agno's content
-        # stream ends) but the previous run's Agno tail —
-        # compression, memory/learning extraction, final persistence —
-        # is still draining. Two ``team.arun()`` calls in flight on the
-        # same Agno team would race on session/memory state, so the
-        # lock makes the second call wait silently until the previous
-        # tail finishes. From the user's POV the second submit just
-        # shows the normal "Thinking" UI for a beat longer than usual.
-        self._run_lock = asyncio.Lock()
-        # Set during ``startup`` if the resumed session's last run
-        # had ``status=running`` — i.e. the previous process crashed
-        # mid-chain. The next ``run_message`` injects a system note
-        # so the agent knows it was interrupted and can decide
-        # whether to recap, retry, or pick up where it left off.
-        # Cleared after the note is consumed (one-shot per launch).
-        self._interrupted_run_summary: str | None = None
-        # Pending-message ids surfaced on the next ``--continue``
-        # boot. Kept alive in the store (not discarded by
-        # ``_detect_interrupted_run``) so the FE can fetch them via
-        # ``get_pending_messages`` and render the interrupted prompt
-        # as a chat-history entry. Cleared from the store after the
-        # next ``run_message`` consumes the summary.
-        self._pending_message_ids_to_drop: list[str] = []
-        # Latched from RunCompleted.input_tokens for the live ctx
-        # footer — kept on the Session so /clear (which goes through
-        # CommandHandler with only a session ref) can reset it.
-        self._session._last_input_tokens = 0
-        # Pre-persist user messages BEFORE handing them to Agno.
-        # Agno's streaming runs don't write to disk until the run
-        # completes, so a kill mid-stream loses the user's prompt
-        # entirely — the partial response, sure, but also the
-        # question they asked. The store lives in the same
-        # state.db file Agno uses; the table is created on first
-        # touch via ``CREATE TABLE IF NOT EXISTS``.
-        from ember_code.core.session.pending_messages import PendingMessageStore
+        self._session = bootstrap.session
+        self._settings = bootstrap.settings
+        self._session_prefs = bootstrap.session_prefs
+        self._hitl_store = bootstrap.hitl_store
+        self._hitl_tracer = bootstrap.hitl_tracer
+        self._pending_store = bootstrap.pending_store
 
-        self._pending_store = PendingMessageStore(
-            state_db_path(
-                self._session.project_dir,
-                data_dir=settings.storage.data_dir,
-            ),
+        self.controllers: Controllers = ControllerRegistry.build(
+            backend=self,
+            session=self._session,
+            settings=settings,
+            hitl_store=self._hitl_store,
+            pending_store=self._pending_store,
+            session_prefs=self._session_prefs,
+            user_config_store=bootstrap.user_config_store,
+            hitl_tracer=self._hitl_tracer,
         )
+        # Alias for the run pipeline attribute the LifecycleController
+        # composes at construction — kept as a name on the server for
+        # any legacy caller that reaches through ``server._runs``.
+        self._runs: RunController = self.controllers.runs
 
-    # No .session property — all access goes through backend methods
+    # ── Runtime attach (SessionOrchestrator uses this) ─────────────
+
+    def attach_runtime(self, runtime: Any) -> None:
+        """Called by :class:`SessionOrchestrator` after building the
+        default :class:`SessionRuntime` and again per pool runtime.
+        Exposed so :class:`MessageDispatcher` can reach the runtime
+        via :attr:`runtime` without dunder gymnastics."""
+        self._runtime = runtime
+
+    @property
+    def runtime(self) -> Any:
+        # Partial-init tolerance — tests build ``BackendServer`` via
+        # ``__new__`` and never attach.
+        return getattr(self, "_runtime", None)
 
     @property
     def project_dir(self) -> Path:
         return self._session.project_dir
 
+    # ── Controller accessors (thin properties over Controllers bag) ──
+    #
+    # Every accessor tolerates the ``__new__``-bypass test path — if
+    # ``self.controllers`` was never built (test fixture) the property
+    # falls back to a fresh single-shot controller against whatever
+    # session/state attributes the test wired manually. This preserves
+    # the pre-refactor lazy-init behaviour without duplicating the
+    # construction on every property.
+
+    def _controllers_or_partial(self) -> Controllers | None:
+        return getattr(self, "controllers", None)
+
+    @property
+    def plugins(self) -> PluginController:
+        """Plugin lifecycle controller."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.plugins
+        cached = getattr(self, "_plugin_controller", None)
+        if cached is None:
+            cached = PluginController(self._session)
+            self._plugin_controller = cached
+        return cached
+
+    @property
+    def marketplaces(self) -> MarketplaceController:
+        """Marketplace controller."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.marketplaces
+        cached = getattr(self, "_marketplace_controller", None)
+        if cached is None:
+            cached = MarketplaceController(self._session)
+            self._marketplace_controller = cached
+        return cached
+
+    @property
+    def mcp(self) -> McpController:
+        """MCP lifecycle controller."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.mcp
+        cached = getattr(self, "_mcp_ctrl", None)
+        if cached is None:
+            cached = McpController(self._session)
+            self._mcp_ctrl = cached
+        return cached
+
+    @property
+    def hitl(self) -> HitlController:
+        """HITL resolution + permission-rule controller."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.hitl
+        cached = getattr(self, "_hitl_controller", None)
+        if cached is None:
+            cached = HitlController(
+                session=self._session,
+                store=self._hitl_store,
+                stream_factory=self._stream_with_subagent_hitl,
+            )
+            self._hitl_controller = cached
+        return cached
+
+    @property
+    def context(self) -> ContextController:
+        """Context / status / compaction / learning controller."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.context
+        cached = getattr(self, "_context_ctrl", None)
+        if cached is None:
+            cached = ContextController(
+                session=getattr(self, "_session", None),
+                settings=getattr(self, "_settings", None),
+                pending_store=getattr(self, "_pending_store", None),
+            )
+            self._context_ctrl = cached
+        return cached
+
+    @property
+    def auth(self) -> AuthController:
+        """Cloud auth controller."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.auth
+        cached = getattr(self, "_auth_ctrl", None)
+        if cached is None:
+            cached = AuthController(
+                session=self._session,
+                settings=self._settings,
+                status_provider=self.get_status,
+            )
+            self._auth_ctrl = cached
+        return cached
+
+    @property
+    def knowledge(self) -> KnowledgeController:
+        """Knowledge-base controller."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.knowledge
+        cached = getattr(self, "_knowledge_ctrl", None)
+        if cached is None:
+            cached = KnowledgeController(self._session)
+            self._knowledge_ctrl = cached
+        return cached
+
+    @property
+    def files(self) -> FilesController:
+        """File-I/O controller."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.files
+        cached = getattr(self, "_files_ctrl", None)
+        if cached is None:
+            cached = FilesController(self._session)
+            self._files_ctrl = cached
+        return cached
+
+    @property
+    def search(self) -> SearchController:
+        """Composer-paste code-search controller."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.search
+        cached = getattr(self, "_search_controller", None)
+        if cached is None:
+            cached = SearchController(self._session)
+            self._search_controller = cached
+        return cached
+
+    @property
+    def panels(self) -> PanelsController:
+        """Panel-details controller."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.panels
+        cached = getattr(self, "_panels_ctrl", None)
+        if cached is None:
+            cached = PanelsController(self._session)
+            self._panels_ctrl = cached
+        return cached
+
+    @property
+    def codeindex(self) -> CodeIndexController:
+        """CodeIndex panel controller."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.codeindex
+        cached = getattr(self, "_codeindex_ctrl", None)
+        if cached is None:
+            cached = CodeIndexController(self._session)
+            self._codeindex_ctrl = cached
+        return cached
+
+    @property
+    def loop(self) -> LoopController:
+        """``/loop`` + scheduler controller."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.loop
+        cached = getattr(self, "_loop_controller", None)
+        if cached is None:
+            cached = LoopController(
+                session=self._session,
+                settings=getattr(self, "_settings", None),
+            )
+            self._loop_controller = cached
+        return cached
+
+    @property
+    def processes(self) -> ProcessesController:
+        """Background-process watcher controller."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.processes
+        cached = getattr(self, "_processes_ctrl", None)
+        if cached is None:
+            cached = ProcessesController()
+            self._processes_ctrl = cached
+        return cached
+
+    @property
+    def sessions(self) -> SessionsController:
+        """Session lifecycle controller."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.sessions
+        cached = getattr(self, "_sessions_ctrl", None)
+        if cached is None:
+            cached = SessionsController(
+                session=self._session,
+                chat_history_provider=self.get_chat_history,
+            )
+            self._sessions_ctrl = cached
+        return cached
+
+    @property
+    def rehydrate(self) -> RehydrateController:
+        """Boot-time state-recovery controller."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.rehydrate
+        cached = getattr(self, "_rehydrate_ctrl", None)
+        if cached is None:
+            cached = RehydrateController(self._session)
+            self._rehydrate_ctrl = cached
+        return cached
+
+    @property
+    def lifecycle(self) -> LifecycleController:
+        """Startup / shutdown / interrupted-run detection controller."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.lifecycle
+        cached = getattr(self, "_lifecycle_ctrl", None)
+        if cached is None:
+            cached = LifecycleController(
+                session=self._session,
+                pending_store=getattr(self, "_pending_store", None),
+                runs=getattr(self, "_runs", None),
+                rehydrate=self.rehydrate,
+                scheduler_stop=self.loop.scheduler.stop,
+                backend=self,
+            )
+            self._lifecycle_ctrl = cached
+        return cached
+
+    @property
+    def plan_snapshots(self) -> PlanSnapshotBuilder:
+        """Plan / todos snapshot builder."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.plan_snapshots
+        cached = getattr(self, "_plan_snapshots", None)
+        if cached is None:
+            cached = PlanSnapshotBuilder(self._session)
+            self._plan_snapshots = cached
+        return cached
+
+    @property
+    def viz_actions(self) -> VisualizationActionBus:
+        """json-render visualization action bus."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.viz_actions
+        cached = getattr(self, "_viz_actions", None)
+        if cached is None:
+            cached = VisualizationActionBus(self._session)
+            self._viz_actions = cached
+        return cached
+
+    @property
+    def team_wiring(self) -> TeamWiring:
+        """Team hook + progress-callback wiring collaborator."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.team_wiring
+        cached = getattr(self, "_team_wiring", None)
+        if cached is None:
+            cached = TeamWiring(self._session)
+            self._team_wiring = cached
+        return cached
+
+    @property
+    def model_switcher(self) -> ModelSwitcher:
+        """Model-switch logic owner."""
+        ctrl = self._controllers_or_partial()
+        if ctrl is not None:
+            return ctrl.model_switcher
+        cached = getattr(self, "_model_switcher", None)
+        if cached is None:
+            cached = ModelSwitcher(
+                session=self._session,
+                session_prefs=self._session_prefs,
+                user_config_store=UserConfigStore(),
+            )
+            self._model_switcher = cached
+        return cached
+
+    # ── Run pipeline exposure — properties forward to the pipeline ──
+    #
+    # ``_run_lock`` and ``_current_run_task`` used to be raw instance
+    # attributes on :class:`BackendServer`. Ownership has moved to
+    # :class:`RunController` (Pattern 1 — single owner of run phase +
+    # task) but tests build partial ``__new__``-bypass instances that
+    # set the fields directly (``server._run_lock = asyncio.Lock()``).
+    # Getter routes to the pipeline when present; setter stores on
+    # the instance so those test fixtures keep working. Once the
+    # test fixtures are migrated, both wrappers can be deleted.
+
+    @property
+    def _run_lock(self) -> asyncio.Lock:
+        """Compat alias for the outer serialization lock."""
+        runs = getattr(self, "_runs", None)
+        if runs is not None:
+            return runs.run_lock
+        return self.__dict__.get("_run_lock", asyncio.Lock())
+
+    @_run_lock.setter
+    def _run_lock(self, value: asyncio.Lock) -> None:
+        """Compat setter — used by ``__new__``-bypass test fixtures."""
+        self.__dict__["_run_lock"] = value
+
+    @property
+    def _current_run_task(self) -> asyncio.Task | None:
+        """Compat alias for the currently-running ``asyncio.Task``."""
+        runs = getattr(self, "_runs", None)
+        if runs is not None:
+            return runs.current_run_task
+        return self.__dict__.get("_current_run_task")
+
+    @_current_run_task.setter
+    def _current_run_task(self, value: asyncio.Task | None) -> None:
+        """Compat setter — route to the pipeline's private slot when
+        the pipeline exists so tests + production stay in sync.
+        Falls back to a raw ``__dict__`` write when the pipeline
+        hasn't been wired up yet."""
+        runs = getattr(self, "_runs", None)
+        if runs is not None:
+            runs._current_run_task = value
+        else:
+            self.__dict__["_current_run_task"] = value
+
+    # ── Public seams for coordinators ──────────────────────────────
+
+    async def approve_plan(self, run_id: str) -> PlanDecisionResult:
+        """See :meth:`core.session.Session.approve_plan`."""
+        return await self._session.approve_plan(run_id=run_id)
+
+    async def dismiss_plan(self, run_id: str) -> PlanDecisionResult:
+        """See :meth:`core.session.Session.dismiss_plan`."""
+        return await self._session.dismiss_plan(run_id=run_id)
+
+    def start_all_background_services(self) -> None:
+        """Forward to :meth:`Session.start_all_background_services`."""
+        self._session.start_all_background_services()
+
+    def start_boot_background_services(self) -> None:
+        """Forward to :meth:`Session.start_boot_background_services`."""
+        self._session.start_boot_background_services()
+
+    def register_broadcast(self, callback: Any) -> None:
+        """Wire a ``(channel, payload) → None`` callback into the
+        session's broadcast bus."""
+        sess = getattr(self, "_session", None)
+        if sess is None:
+            return
+        sess.broadcast_bus.register(callback)
+
+    def consume_plan_research_flag(self) -> bool:
+        """Get-and-reset the ``/plan``-armed flag.
+
+        Reads through the raw attribute (rather than calling
+        :meth:`Session.consume_plan_research_flag`) because tests
+        wire ``_session`` as a MagicMock and any method call on
+        one returns another MagicMock — truthy by default — which
+        would spuriously arm the plan-research prefix.
+        """
+        sess = getattr(self, "_session", None)
+        if sess is None:
+            return False
+        # ``is True`` guards against MagicMock's auto-spawn of missing
+        # attrs (each returns a MagicMock which evaluates truthy).
+        armed = getattr(sess, "_plan_research_armed", False) is True
+        if armed:
+            sess._plan_research_armed = False
+        return armed
+
+    # ── Lifecycle ──────────────────────────────────────────────────
+
     async def startup(self) -> None:
-        """See :func:`backend.server_lifecycle.startup`."""
-        await server_lifecycle.startup(self)
+        """See :meth:`LifecycleController.startup`."""
+        await self.lifecycle.startup()
 
-    async def _rehydrate_event_log(self) -> None:
-        """See :func:`backend.server_rehydrate.rehydrate_event_log`."""
-        await server_rehydrate.rehydrate_event_log(self)
-
-    async def _rehydrate_orphan_processes(self) -> None:
-        """See :func:`backend.server_rehydrate.rehydrate_orphan_processes`."""
-        await server_rehydrate.rehydrate_orphan_processes(self)
-
-    async def _rehydrate_plan_decisions(self) -> None:
-        """See :func:`backend.server_rehydrate.rehydrate_plan_decisions`."""
-        await server_rehydrate.rehydrate_plan_decisions(self)
-
-    async def _rehydrate_todos(self) -> None:
-        """See :func:`backend.server_rehydrate.rehydrate_todos`."""
-        await server_rehydrate.rehydrate_todos(self)
-
-    async def _rehydrate_plan_store(self) -> None:
-        """See :func:`backend.server_rehydrate.rehydrate_plan_store`."""
-        await server_rehydrate.rehydrate_plan_store(self)
+    async def shutdown(self) -> None:
+        """See :meth:`LifecycleController.shutdown`."""
+        await self.lifecycle.shutdown()
 
     async def _detect_interrupted_run(self) -> None:
-        """See :func:`backend.server_lifecycle.detect_interrupted_run`."""
-        await server_lifecycle.detect_interrupted_run(self)
+        """See :meth:`LifecycleController.detect_interrupted_run`.
+
+        Kept as a method-level seam because
+        ``tests/test_session_restart_round_trip.py`` +
+        ``tests/test_plan_rpc_wiring.py`` bind ``AsyncMock`` here.
+        """
+        await self.lifecycle.detect_interrupted_run()
+
+    async def _rehydrate_event_log(self) -> RehydrateOutcome:
+        """See :meth:`RehydrateController.event_log`."""
+        return await self.rehydrate.event_log()
+
+    async def _rehydrate_orphan_processes(self) -> RehydrateOutcome:
+        """See :meth:`RehydrateController.orphan_processes`."""
+        return await self.rehydrate.orphan_processes()
+
+    async def _rehydrate_plan_decisions(self) -> RehydrateOutcome:
+        """See :meth:`RehydrateController.plan_decisions`."""
+        return await self.rehydrate.plan_decisions()
+
+    async def _rehydrate_todos(self) -> RehydrateOutcome:
+        """See :meth:`RehydrateController.todos`."""
+        return await self.rehydrate.todos()
+
+    async def _rehydrate_plan_store(self) -> RehydrateOutcome:
+        """See :meth:`RehydrateController.plan_store`."""
+        return await self.rehydrate.plan_store()
 
     # ── Run a user message (streaming) ────────────────────────────
 
     async def run_message(
         self, text: str, media: dict[str, Any] | None = None
     ) -> AsyncIterator[msg.Message]:
-        """See :func:`backend.server_run.run_message`."""
-        async for proto in server_run.run_message(self, text, media):
+        """Streaming entry point — delegates to
+        :meth:`RunController.run_message`."""
+        attachments = MediaAttachments.from_optional_dict(media)
+        async for proto in self._runs.run_message(text, attachments):
             yield proto
 
     async def _run_message_locked(
         self, text: str, media: dict[str, Any] | None
     ) -> AsyncIterator[msg.Message]:
-        """See :func:`backend.server_run.run_message_locked`."""
-        async for proto in server_run.run_message_locked(self, text, media):
+        """Legacy test-patch seam for the run body.
+
+        Tests in ``test_streaming_done_unblock.py`` patch this
+        method on the class to inject a stub run body. Preserved
+        as a forwarder into :meth:`RunController.run_locked`.
+        """
+        async for proto in self._runs.run_locked(text, MediaAttachments.from_optional_dict(media)):
             yield proto
 
     async def _stream_with_subagent_hitl(
         self, team_stream: AsyncIterator[Any]
     ) -> AsyncIterator[msg.Message]:
-        """See :func:`backend.server_pause.stream_with_subagent_hitl`."""
-        async for proto in server_pause.stream_with_subagent_hitl(self, team_stream):
+        """Forward to :meth:`HitlController.stream_with_subagent`.
+
+        Kept as a real method because tests
+        ``patch.object(BackendServer, '_stream_with_subagent_hitl', ...)``
+        on this seam. The controller-owned method is where the
+        multiplexer lives now.
+        """
+        async for proto in self.hitl.stream_with_subagent(team_stream):
             yield proto
 
-    def _build_subagent_run_paused(self, entries: list) -> msg.Message:
-        """See :func:`backend.server_pause.build_subagent_run_paused`."""
-        return server_pause.build_subagent_run_paused(entries)
+    def _build_subagent_run_paused(self, entries: list[RunRequirement]) -> msg.Message:
+        """Forward to :meth:`HitlController.build_subagent_run_paused`."""
+        return self.hitl.build_subagent_run_paused(entries)
 
     async def _periodic_checkpoint(self, team: Any, interval: float = 3.0) -> None:
-        """See :func:`backend.server_pause.periodic_checkpoint`."""
-        await server_pause.periodic_checkpoint(self, team, interval)
+        """Forward to :meth:`RunController.periodic_checkpoint`.
+
+        ``__new__``-bypass fallback: when the pipeline is missing
+        (``tests/test_crash_survival.py`` builds a bare server and
+        calls this method directly with a stub checkpoint hook)
+        drive a self-contained :class:`SessionCheckpointer` loop
+        that routes back through ``self._checkpoint_session`` so
+        the test-installed spy fires on every tick.
+        """
+        runs = getattr(self, "_runs", None)
+        if runs is not None:
+            await runs.periodic_checkpoint(team, interval)
+            return
+        from ember_code.backend.session_checkpointer import (  # noqa: PLC0415 — bypass-path only
+            SessionCheckpointer,
+        )
+
+        checkpointer = SessionCheckpointer(team)
+        await checkpointer.run_forever(
+            interval=interval,
+            checkpoint_hook=self._checkpoint_session,
+        )
 
     async def _checkpoint_session(self, team: Any) -> None:
-        """See :func:`backend.server_pause.checkpoint_session`."""
-        await server_pause.checkpoint_session(self, team)
+        """Forward to :meth:`RunController.checkpoint`.
+
+        Kept as a real method so tests binding
+        ``server._checkpoint_session = spy`` intercept the
+        per-tick callback the pipeline routes back through
+        (see :meth:`RunController._checkpoint_via_backend`).
+        """
+        runs = getattr(self, "_runs", None)
+        if runs is not None:
+            await runs.checkpoint(team)
+            return
+        from ember_code.backend.session_checkpointer import (  # noqa: PLC0415 — bypass-path only
+            SessionCheckpointer,
+        )
+
+        await SessionCheckpointer(team).snapshot()
 
     def _drop_pending_for_run(self, run_id: str) -> None:
-        """See :func:`backend.server_pause.drop_pending_for_run`."""
-        server_pause.drop_pending_for_run(self, run_id)
+        """Forward to :meth:`HitlController.sweep_run`."""
+        self.hitl.sweep_run(run_id)
 
-    def _handle_pause(self, event: Any) -> tuple[list[msg.Message], list[Any], str | None]:
-        """See :func:`backend.server_pause.handle_pause`."""
-        return server_pause.handle_pause(self, event)
+    def _handle_pause(self, event: Any) -> PauseHandleResult:
+        """Forward to :meth:`HitlController.handle_pause`."""
+        return self.hitl.handle_pause(event)
+
+    # ── HITL RPCs ─────────────────────────────────────────────────
 
     async def resolve_hitl_batch(
         self, decisions: list[msg.HITLDecision]
     ) -> AsyncIterator[msg.Message]:
-        """See :func:`backend.server_hitl.resolve_hitl_batch`."""
-        async for proto in server_hitl.resolve_hitl_batch(self, decisions):
+        """See :meth:`HitlController.resolve_batch`."""
+        async for proto in self.hitl.resolve_batch(decisions):
             yield proto
 
     async def resolve_hitl(
         self, requirement_id: str, action: str, choice: str = "once"
     ) -> AsyncIterator[msg.Message]:
-        """See :func:`backend.server_hitl.resolve_hitl`."""
-        async for proto in server_hitl.resolve_hitl(self, requirement_id, action, choice):
+        """See :meth:`HitlController.resolve_single`."""
+        async for proto in self.hitl.resolve_single(requirement_id, action, choice):
             yield proto
 
+    def check_permission(
+        self, tool_name: str, func_name: str, tool_args: ToolCallArgs
+    ) -> PermissionLevel:
+        """See :meth:`HitlController.check_permission`."""
+        return self.hitl.check_permission(tool_name, func_name, tool_args)
+
+    def save_permission_rule(self, rule: str, level: PermissionLevel) -> None:
+        """See :meth:`HitlController.save_permission_rule`."""
+        self.hitl.save_permission_rule(rule, level)
+
+    def _maybe_persist_choice(self, decision: msg.HITLDecision, req: RunRequirement) -> None:
+        """Forward to :meth:`HitlController.maybe_persist_choice`.
+
+        Discards the :class:`PersistChoiceResult` return so the
+        method continues to satisfy the legacy no-return contract
+        callers rely on. New code should call
+        ``self.hitl.maybe_persist_choice`` directly for the typed
+        result.
+        """
+        self.hitl.maybe_persist_choice(decision, req)
+
+    # ── Command handling ──────────────────────────────────────────
+
     async def handle_command(self, text: str) -> msg.CommandResult:
-        """Process a slash command and return the result."""
-        from ember_code.backend.command_handler import CommandHandler
+        """Process a slash command via :class:`CommandHandler`.
+
+        Returns a typed :class:`ember_code.backend.command_result.CommandResult`
+        (a subclass of the wire :class:`msg.CommandResult`) directly.
+
+        Late-imported so ``patch('...command_handler.CommandHandler')``
+        in tests intercepts — the mock is checked at call time.
+        """
+        from ember_code.backend.command_handler import (
+            CommandHandler,  # noqa: PLC0415 — mock-patch target
+        )
 
         handler = CommandHandler(self._session)
-        result = await handler.handle(text)
-        return msg.CommandResult(
-            kind=result.kind,
-            content=result.content,
-            display_content=getattr(result, "display_content", "") or "",
-            action=result.action or "",
-        )
+        return await handler.handle(text)
 
     # ── Session management ────────────────────────────────────────
 
     async def list_sessions(self) -> msg.SessionListResult:
-        """See :func:`backend.server_sessions.list_sessions`."""
-        return await server_sessions.list_sessions(self)
+        """See :meth:`SessionsController.list_sessions`."""
+        return await self.sessions.list_sessions()
 
-    async def maybe_auto_name_session(self) -> str | None:
-        """See :func:`backend.server_sessions.maybe_auto_name_session`."""
-        return await server_sessions.maybe_auto_name_session(self)
+    async def maybe_auto_name_session(self) -> AutoNameResult:
+        """See :meth:`SessionsController.maybe_auto_name_session`."""
+        return await self.sessions.maybe_auto_name_session()
 
     async def switch_session(self, session_id: str) -> msg.Info:
-        """See :func:`backend.server_sessions.switch_session`."""
-        return await server_sessions.switch_session(self, session_id)
+        """See :meth:`SessionsController.switch_session`."""
+        return await self.sessions.switch_session(session_id)
+
+    async def search_chat(
+        self, session_id: str, query: str, limit: int = 50
+    ) -> list[ChatSearchHit]:
+        """See :meth:`SessionsController.search_chat`."""
+        return await self.sessions.search_chat(session_id, query, limit)
 
     # ── MCP ───────────────────────────────────────────────────────
 
-    async def ensure_mcp(self) -> None:
-        """See :func:`backend.server_mcp.ensure_mcp`."""
-        await server_mcp.ensure_mcp(self)
+    async def ensure_mcp(self) -> McpInitResult:
+        """See :meth:`McpController.ensure`."""
+        return await self.mcp.ensure()
 
     async def toggle_mcp(self, server_name: str, connect: bool) -> msg.Info:
-        """See :func:`backend.server_mcp.toggle_mcp`."""
-        return await server_mcp.toggle_mcp(self, server_name, connect)
+        """See :meth:`McpController.toggle`."""
+        return await self.mcp.toggle(server_name, connect)
 
-    def get_mcp_status(self) -> list[tuple[str, bool]]:
-        """See :func:`backend.server_mcp.get_mcp_status`."""
-        return server_mcp.get_mcp_status(self)
+    def get_mcp_status(self) -> list[McpServerStatus]:
+        """See :meth:`McpController.status`."""
+        return self.mcp.status()
 
-    def set_mcp_tool_enabled(
-        self, server: str, tool: str, enabled: bool
-    ) -> "server_mcp.MCPToolToggleResult":
-        """See :func:`backend.server_mcp.set_mcp_tool_enabled`."""
-        return server_mcp.set_mcp_tool_enabled(self, server, tool, enabled)
+    def set_mcp_tool_enabled(self, server: str, tool: str, enabled: bool) -> MCPToolToggleResult:
+        """See :meth:`McpController.set_tool_enabled`."""
+        return self.mcp.set_tool_enabled(server, tool, enabled)
 
-    # ── Permissions ────────────────────────────────────────────────
+    async def get_mcp_server_details(self) -> list[MCPServerSnapshot]:
+        """See :meth:`McpController.server_details`."""
+        return await self.mcp.server_details()
 
-    def check_permission(self, tool_name: str, func_name: str, tool_args: dict) -> str:
-        """See :func:`backend.server_hitl.check_permission`."""
-        return server_hitl.check_permission(self, tool_name, func_name, tool_args)
+    def get_mcp_servers(self) -> list[MCPServerSummary]:
+        """See :meth:`McpController.servers`."""
+        return self.mcp.servers()
 
-    def save_permission_rule(self, rule: str, level: str) -> None:
-        """See :func:`backend.server_hitl.save_permission_rule`."""
-        server_hitl.save_permission_rule(self, rule, level)
+    async def mcp_connect(self, server_name: str) -> msg.Info:
+        """See :meth:`McpController.connect`."""
+        return await self.mcp.connect(server_name)
 
-    def _maybe_persist_choice(self, decision: Any, req: Any) -> None:
-        """See :func:`backend.server_hitl.maybe_persist_choice`."""
-        server_hitl.maybe_persist_choice(self, decision, req)
+    async def mcp_disconnect(self, server_name: str) -> msg.Info:
+        """See :meth:`McpController.disconnect`."""
+        return await self.mcp.disconnect(server_name)
+
+    # ── Model switching ───────────────────────────────────────────
 
     def switch_model(self, model_name: str) -> msg.Info:
-        """Switch the active model and persist the choice.
+        """See :meth:`ModelSwitcher.switch`."""
+        return self.model_switcher.switch(model_name)
 
-        Two layers of persistence so the choice survives both an
-        app restart AND a session resume:
+    # ── Login / Logout ────────────────────────────────────────────
 
-        * **User-level default** — written to
-          ``~/.ember/config.yaml`` so any new session opened next
-          launch uses this model. Best-effort: a save failure is
-          logged but doesn't fail the switch (the in-memory state
-          is already updated).
-        * **Per-session preference** — written to
-          ``state.db``'s ``ember_session_preferences`` table keyed
-          by session_id. ``--continue`` consults this on startup
-          and overrides the user-level default for the resumed
-          session.
-        """
-        from ember_code.core.config.settings import save_default_model
-
-        old_name = self._session.settings.models.default
-        old_cfg = self._session.settings.models.registry.get(old_name, {})
-        new_cfg = self._session.settings.models.registry.get(model_name, {})
-
-        self._session.settings.models.default = model_name
-        self._session.main_team = self._session._build_main_agent()
-
-        # User-level persistence.
-        try:
-            save_default_model(model_name)
-        except Exception as exc:
-            logger.warning("failed to persist model choice to user config: %s", exc)
-
-        # Per-session persistence.
-        try:
-            self._session_prefs.set_model(self._session.session_id, model_name)
-        except Exception as exc:
-            logger.debug("failed to persist per-session model preference: %s", exc)
-
-        note = f"Switched to {model_name}"
-        # Warn if switching from vision to non-vision with media in history
-        if old_cfg.get("vision") and not new_cfg.get("vision"):
-            note += (
-                "\nNote: previous messages may contain images/files. "
-                "Use /clear to reset if you get errors."
-            )
-        return msg.Info(text=note)
-
-    # ── Login/Logout ──────────────────────────────────────────────
-
-    async def login(self, on_status=None) -> tuple[bool, str]:
-        """See :func:`backend.server_auth.login`."""
-        return await server_auth.login(self, on_status)
+    async def login(self, on_status=None) -> LoginResult:
+        """See :meth:`AuthController.login`."""
+        return await self.auth.login(on_status)
 
     def reload_cloud_credentials(self) -> msg.StatusUpdate:
-        """See :func:`backend.server_auth.reload_cloud_credentials`."""
-        return server_auth.reload_cloud_credentials(self)
+        """See :meth:`AuthController.reload_cloud_credentials`."""
+        return self.auth.reload_cloud_credentials()
 
     def clear_cloud_credentials(self) -> msg.StatusUpdate:
-        """See :func:`backend.server_auth.clear_cloud_credentials`."""
-        return server_auth.clear_cloud_credentials(self)
+        """See :meth:`AuthController.clear_cloud_credentials`."""
+        return self.auth.clear_cloud_credentials()
 
-    async def get_cloud_plan(self) -> "server_auth.CloudPlan | None":
-        """See :func:`backend.server_auth.get_cloud_plan`."""
-        return await server_auth.get_cloud_plan(self)
+    async def get_cloud_plan(self) -> CloudPlan | None:
+        """See :meth:`AuthController.get_cloud_plan`."""
+        return await self.auth.get_cloud_plan()
 
-    # ── Status ────────────────────────────────────────────────────
+    # ── Context / status / compaction ─────────────────────────────
 
     def get_status(self) -> msg.StatusUpdate:
-        """See :func:`backend.server_context.get_status`."""
-        return server_context.get_status(self)
-
-    # ── /loop continuation ────────────────────────────────────────
-
-    async def pop_pending_loop_iteration(self) -> "server_loop.LoopAdvance | None":
-        """See :func:`backend.server_loop.pop_pending_loop_iteration`."""
-        return await server_loop.pop_pending_loop_iteration(self)
-
-    async def cancel_pending_loop(self) -> bool:
-        """See :func:`backend.server_loop.cancel_pending_loop`."""
-        return await server_loop.cancel_pending_loop(self)
-
-    async def loop_pause(self) -> bool:
-        """See :func:`backend.server_loop.loop_pause`."""
-        return await server_loop.loop_pause(self)
-
-    async def loop_resume(self) -> str:
-        """See :func:`backend.server_loop.loop_resume`."""
-        return await server_loop.loop_resume(self)
-
-    async def loop_status(self) -> "server_loop.LoopStatus":
-        """See :func:`backend.server_loop.loop_status`."""
-        return await server_loop.loop_status(self)
-
-    # ── Compaction ────────────────────────────────────────────────
+        """See :meth:`ContextController.get_status`."""
+        return self.context.get_status()
 
     async def count_context_tokens(self) -> int:
-        """See :func:`backend.server_context.count_context_tokens`."""
-        return await server_context.count_context_tokens(self)
+        """See :meth:`ContextController.count_context_tokens`."""
+        return await self.context.count_context_tokens()
 
     async def compact_if_needed(self, ctx_tokens: int, max_ctx: int) -> msg.SessionCleared | None:
-        """See :func:`backend.server_context.compact_if_needed`."""
-        return await server_context.compact_if_needed(self, ctx_tokens, max_ctx)
+        """See :meth:`ContextController.compact_if_needed`."""
+        return await self.context.compact_if_needed(ctx_tokens, max_ctx)
 
     async def extract_learnings(self, user_msg: str, assistant_msg: str) -> None:
-        """See :func:`backend.server_context.extract_learnings`."""
-        await server_context.extract_learnings(self, user_msg, assistant_msg)
+        """See :meth:`ContextController.extract_learnings`."""
+        await self.context.extract_learnings(user_msg, assistant_msg)
 
-    # ── Cleanup ───────────────────────────────────────────────────
+    async def get_pending_messages(self, session_id: str) -> list[PendingMessage]:
+        """See :meth:`ContextController.get_pending_messages`."""
+        return await self.context.get_pending_messages(session_id)
 
-    async def shutdown(self) -> None:
-        """See :func:`backend.server_lifecycle.shutdown`."""
-        await server_lifecycle.shutdown(self)
+    async def truncate_history(self, session_id: str, run_id: str) -> TruncateHistoryResult:
+        """See :meth:`ContextController.truncate_history`."""
+        return await self.context.truncate_history(session_id, run_id)
 
-    # ── Accessors for FE (read-only state) ──────────────────────
+    # ── /loop continuation + scheduler ────────────────────────────
+
+    async def pop_pending_loop_iteration(self) -> LoopAdvance | None:
+        """Direct session call — see
+        :meth:`LoopController.pop_pending_iteration`."""
+        return await self._session.advance_loop()
+
+    async def cancel_pending_loop(self) -> bool:
+        """Direct session call — see
+        :meth:`LoopController.cancel_pending`."""
+        if self._session.loop_paused:
+            return False
+        return await self._session.cancel_loop()
+
+    async def loop_pause(self) -> bool:
+        """See :meth:`LoopController.pause`."""
+        return await self._session.pause_loop()
+
+    async def loop_resume(self) -> str:
+        """See :meth:`LoopController.resume`."""
+        prompt = await self._session.resume_loop()
+        return prompt or ""
+
+    async def loop_status(self) -> LoopStatusSnapshot:
+        """See :meth:`LoopController.status`."""
+        return await self.loop.status()
+
+    async def execute_scheduled_task(self, description: str) -> str:
+        """See :meth:`SchedulerController.execute`."""
+        return await self.loop.scheduler.execute(description)
+
+    async def cancel_scheduled_task(self, task_id: str) -> msg.Info:
+        """See :meth:`SchedulerController.cancel`."""
+        return await self.loop.scheduler.cancel(task_id)
+
+    async def get_scheduled_tasks(self, include_done: bool = True) -> list:
+        """See :meth:`SchedulerController.list_all`."""
+        return await self.loop.scheduler.list_all(include_done)
+
+    def start_scheduler(self, on_task_started=None, on_task_completed=None) -> Any:
+        """See :meth:`SchedulerController.start`."""
+        return self.loop.scheduler.start(on_task_started, on_task_completed)
+
+    # ── Files / search / knowledge ────────────────────────────────
+
+    def upload_attachment(self, filename: str, content_base64: str) -> UploadAttachmentResult:
+        """See :meth:`FilesController.upload_attachment`."""
+        return self.files.upload_attachment(filename, content_base64)
+
+    def read_file(self, path: str) -> ReadFileResult:
+        """See :meth:`FilesController.read_file`."""
+        return self.files.read_file(path)
+
+    def search_code(self, snippet: str, max_results: int = 20) -> SearchCodeResult:
+        """See :meth:`SearchController.search_code`."""
+        return self.search.search_code(snippet, max_results)
+
+    async def get_knowledge_status(self) -> KnowledgeStatus:
+        """See :meth:`KnowledgeController.status`."""
+        return await self.knowledge.status()
+
+    async def knowledge_search(self, query: str) -> list[KnowledgeHit]:
+        """See :meth:`KnowledgeController.search`."""
+        return await self.knowledge.search(query)
+
+    async def knowledge_add(self, source: str) -> msg.Info:
+        """See :meth:`KnowledgeController.add`."""
+        return await self.knowledge.add(source)
+
+    async def knowledge_list(self) -> list[KnowledgeListEntry]:
+        """See :meth:`KnowledgeController.list`."""
+        return await self.knowledge.list()
+
+    async def knowledge_get(self, entry_id: str) -> KnowledgeGetResult:
+        """See :meth:`KnowledgeController.get`."""
+        return await self.knowledge.get(entry_id)
+
+    async def knowledge_remove(self, entry_id: str) -> KnowledgeRemoveResult:
+        """See :meth:`KnowledgeController.remove`."""
+        return await self.knowledge.remove(entry_id)
+
+    async def auto_sync_knowledge(self) -> str | None:
+        """See :meth:`KnowledgeController.auto_sync`."""
+        return await self.knowledge.auto_sync()
+
+    # ── Chat history ──────────────────────────────────────────────
+
+    async def get_chat_history(self, session_id: str) -> list[dict]:
+        """Rebuild the FE's turn list.
+
+        Dumps the discriminated-union ``ChatTurn`` list to
+        ``list[dict]`` at this wire boundary so the RPC contract
+        stays byte-identical (a strict ``ChatHistoryEntry`` cast
+        here would collapse per-role fields to their defaults).
+        The controller returns typed :class:`ChatTurn` objects.
+        """
+        controllers = getattr(self, "controllers", None)
+        if controllers is not None:
+            turns = await controllers.chat_history.rebuild(session_id)
+        else:
+            # ``__new__``-bypass fallback for test fixtures that
+            # never ran BackendBootstrap.
+            turns = await ChatHistoryRebuilder(session=self._session).rebuild(session_id)
+        return [t.model_dump(mode="json") for t in turns]
+
+    # ── Team-wiring ───────────────────────────────────────────────
 
     def wire_queue_hook(self, queue: list) -> None:
-        """Wire queue hooks onto the team.
-
-        - Tool-hook (injector) drains the queue after each tool call so the
-          model sees queued text on its next iteration.
-        - Post-hook (persister) records those drained items as proper
-          user-role history entries before the session is saved.
-        """
-        from ember_code.core.queue_hook import create_queue_hook
-
-        injector, persister = create_queue_hook(queue=queue)
-        team = self._session.main_team
-        existing_tool_hooks = team.tool_hooks or []
-        team.tool_hooks = [*existing_tool_hooks, injector]
-        existing_post_hooks = team.post_hooks or []
-        team.post_hooks = [*existing_post_hooks, persister]
+        """See :meth:`TeamWiring.wire_queue_hook`."""
+        self.team_wiring.wire_queue_hook(queue)
 
     def wire_orchestrate_progress(self, callback) -> None:
-        """Set a progress callback on the orchestrate tool."""
-        from ember_code.core.tools.orchestrate import OrchestrateTools
+        """See :meth:`TeamWiring.wire_orchestrate_progress`."""
+        self.team_wiring.wire_orchestrate_progress(callback)
 
-        for tool in self._session.main_team.tools or []:
-            if isinstance(tool, OrchestrateTools):
-                tool._on_progress = callback
-                break
+    # ── Run cancellation ──────────────────────────────────────────
 
     @staticmethod
     async def _close_model_http_client(team: Any) -> None:
-        """See :func:`backend.server_run.close_model_http_client`."""
-        await server_run.close_model_http_client(team)
+        """Legacy staticmethod seam.
+
+        Forwards to :meth:`RunController.close_model_http_client` —
+        preserved as a static on :class:`BackendServer` because 5
+        tests in ``test_backend_server.py`` call this without an
+        instance.
+        """
+        await RunController.close_model_http_client(team)
 
     def cancel_agent_run(self, run_id: str) -> CancelAgentRunResult:
-        """Cancel a specific sub-agent run by its Agno ``run_id``.
-
-        Used by the team-progress UI when the user wants to stop one
-        specialist mid-broadcast without killing the whole team. Agno
-        flags the run for cooperative cancellation — the sub-agent
-        bails at its next ``await`` boundary, siblings keep going.
-
-        The FE renders a quick toast on ``ok=False``; ``error``
-        carries the specific reason (unknown run_id, live cancel
-        failure).
-        """
+        """See :meth:`RunController.cancel_agent_run`."""
+        runs = getattr(self, "_runs", None)
+        if runs is not None:
+            return runs.cancel_agent_run(run_id)
         if not run_id:
             return CancelAgentRunResult(ok=False, error="missing run_id")
         try:
-            from agno.agent import Agent
-
             Agent.cancel_run(run_id)
-            logger.info("Cancelled sub-agent run %s", run_id)
             return CancelAgentRunResult(ok=True)
-        except Exception as exc:
-            logger.warning("cancel_agent_run failed: %s", exc)
+        except Exception as exc:  # noqa: BLE001 — surfaced in envelope
             return CancelAgentRunResult(ok=False, error=str(exc))
 
-    def get_latest_plan(self) -> LatestPlanResult:
-        """Snapshot of the plan store + todos + display state for the
-        FE panel.
+    def cancel_run(self) -> None:
+        """See :meth:`RunController.cancel_run`.
 
-        ``state`` is ``"pending"`` when a plan exists (the FE
-        proves otherwise via ``approve_plan`` / ``dismiss_plan``)
-        and empty when no plan has been submitted yet. Never
-        inferred from permission mode — a mode flip without an
-        explicit user click leaves the plan pending.
+        ``__new__``-bypass fallback: when the pipeline was never
+        wired, drop to a minimal cancel that only touches session
+        state (mirrors the old inline behaviour so
+        ``test_cancel_run_no_crash_when_no_team`` keeps passing
+        without wiring a controller).
         """
-        store = getattr(self._session, "plan_store", None)
-        todo_store = getattr(self._session, "todo_store", None)
-        if store is None:
-            return LatestPlanResult()
-        snap = store.snapshot()
-        latest = snap.latest or ""
-        tasks: list[dict] = []
-        if todo_store is not None:
-            try:
-                tasks = todo_store.snapshot()
-            except Exception as exc:
-                logger.debug("get_latest_plan todo snapshot failed: %s", exc)
-        return LatestPlanResult(
-            latest=latest,
-            history=list(snap.history),
-            tasks=tasks,
-            state="pending" if latest else "",
+        runs = getattr(self, "_runs", None)
+        if runs is not None:
+            runs.cancel_run()
+            return
+        from ember_code.core.tools.process_supervisor_locator import (  # noqa: PLC0415 — bypass-path only
+            supervisors,
         )
 
-    def dispatch_visualization_action(
-        self, action: str, params: dict | None = None
-    ) -> VisualizationActionResult:
-        """User interacted with a component inside a rendered
-        json-render spec (Button click, Select change, etc.).
-
-        The FE forwards the action name + params here. Two side
-        effects: stash the event on the session so a future
-        agent tool can query it, and broadcast a
-        ``visualization_action_dispatched`` push so anything
-        else (log panels, dev tools) can observe.
-        """
-        p = dict(params or {})
-        # Bounded ring so a chatty UI (e.g. a Slider firing on
-        # every drag tick) doesn't grow forever. 32 is generous
-        # for the "one-off action after the user reviews a card"
-        # use case.
-        MAX_ACTIONS = 32
-        buf = getattr(self._session, "_visualization_actions", None)
-        if buf is None:
-            buf = []
-            self._session._visualization_actions = buf
-        buf.append({"action": action, "params": p})
-        if len(buf) > MAX_ACTIONS:
-            del buf[: len(buf) - MAX_ACTIONS]
-        broadcast = getattr(self._session, "broadcast", None)
-        if broadcast is not None:
-            with contextlib.suppress(Exception):
-                broadcast(
-                    "visualization_action_dispatched",
-                    {"action": action, "params": p},
-                )
-        return VisualizationActionResult(ok=True, action=action, params=p)
-
-    def get_todos(self) -> list[dict]:
-        """Snapshot of the session's todo list for the todos panel.
-
-        Returns whatever the last ``todo_write`` tool call
-        published (in ``activeForm``-camelCase shape, matching
-        the SDK payload). Empty list when the store is missing
-        (legacy serialised session) or was never written.
-        """
-        store = getattr(self._session, "todo_store", None)
-        if store is None:
-            return []
-        try:
-            return store.snapshot()
-        except Exception as exc:
-            logger.debug("get_todos snapshot failed: %s", exc)
-            return []
-
-    def list_background_processes(self) -> list[dict]:
-        """See :func:`backend.server_processes.list_background_processes`."""
-        return server_processes.list_background_processes(self)
-
-    def read_process_tail(self, pid: int, tail: int = 200) -> dict:
-        """See :func:`backend.server_processes.read_process_tail`."""
-        return server_processes.read_process_tail(self, pid, tail)
-
-    async def stop_background_process(self, pid: int) -> dict:
-        """See :func:`backend.server_processes.stop_background_process`."""
-        return await server_processes.stop_background_process(self, pid)
-
-    def cancel_run(self) -> None:
-        """Cancel the currently running agent and kill any foreground process.
-
-        Three mechanisms fire in order:
-          1. Kill the active foreground shell subprocess (so a blocking
-             ``run_shell_command`` returns immediately).
-          2. Flag the run for cooperative cancel via Agno
-             (``Agent.cancel_run``) — propagates to the team's main loop
-             and any sub-agents that check the flag.
-          3. Hard-cancel the asyncio task iterating ``run_message`` —
-             unblocks any ``await`` that Agno's cooperative cancel
-             can't reach (notably tool calls deep inside specialist
-             sub-agents during a ``broadcast`` team).
-        """
-        from ember_code.core.tools.shell import cancel_foreground
-
-        if cancel_foreground():
+        if supervisors.default().cancel_foreground():
             logger.info("Killed foreground process on cancel")
-
         try:
-            from agno.agent import Agent
-
             team = self._session.main_team
             run_id = getattr(team, "run_id", None)
             if run_id:
                 Agent.cancel_run(run_id)
         except Exception as exc:
             logger.debug("Failed to cancel run: %s", exc)
-
-        task = self._current_run_task
+        task = self.__dict__.get("_current_run_task")
         if task and not task.done():
-            logger.info("Cancelling run task %s", task.get_name())
             task.cancel()
+
+    # ── Plan + todos + visualization ──────────────────────────────
+
+    def get_latest_plan(self) -> LatestPlanResult:
+        """See :meth:`PlanSnapshotBuilder.latest`."""
+        return self.plan_snapshots.latest()
+
+    def get_todos(self) -> list[dict]:
+        """See :meth:`PlanSnapshotBuilder.todos`."""
+        return self.plan_snapshots.todos()
+
+    def dispatch_visualization_action(
+        self, action: str, params: dict | None = None
+    ) -> VisualizationActionResult:
+        """See :meth:`VisualizationActionBus.dispatch`."""
+        return self.viz_actions.dispatch(action, params)
+
+    # ── Background process watcher ────────────────────────────────
+
+    def list_background_processes(self) -> list[dict]:
+        """See :meth:`ProcessesController.list`."""
+        return [row.model_dump() for row in self.processes.list()]
+
+    def read_process_tail(self, pid: int, tail: int = 200) -> dict:
+        """See :meth:`ProcessesController.read_tail`."""
+        return self.processes.read_tail(pid, tail).model_dump()
+
+    async def stop_background_process(self, pid: int) -> dict:
+        """See :meth:`ProcessesController.stop`."""
+        result = await self.processes.stop(pid)
+        return result.model_dump()
+
+    # ── Read-only accessors ───────────────────────────────────────
 
     @property
     def processing(self) -> bool:
-        return self._processing
+        """Wire-compatible with the previous ``_processing`` bool —
+        forwards to :meth:`RunController.is_processing`."""
+        runs = getattr(self, "_runs", None)
+        return runs.is_processing() if runs is not None else False
 
     @property
     def session_id(self) -> str:
@@ -666,193 +1080,81 @@ class BackendServer:
 
     @property
     def skill_names(self) -> list[str]:
-        """Skill names for input autocomplete — FE needs these for the input handler."""
-        return [s.name for s in self._session.skill_pool.list_skills()]
+        """Skill names for input autocomplete."""
+        return self.panels.skill_names()
 
-    def get_skill_pool(self):
+    def get_skill_pool(self) -> SkillPool:
         """Return the skill pool for input autocomplete."""
-        return self._session.skill_pool
+        return self.panels.skill_pool()
 
-    async def get_mcp_server_details(self) -> list[dict]:
-        """See :func:`backend.server_mcp.get_mcp_server_details`."""
-        return await server_mcp.get_mcp_server_details(self)
-
-    async def get_pending_messages(
-        self, session_id: str
-    ) -> "list[server_context.PendingMessage]":
-        """See :func:`backend.server_context.get_pending_messages`."""
-        return await server_context.get_pending_messages(self, session_id)
-
-    def upload_attachment(
-        self, filename: str, content_base64: str
-    ) -> "server_files.UploadAttachmentResult":
-        """See :func:`backend.server_files.upload_attachment`."""
-        return server_files.upload_attachment(self, filename, content_base64)
-
-    async def get_chat_history(self, session_id: str) -> list[dict]:
-        """See :func:`backend.server_history.get_chat_history`."""
-        return await server_history.get_chat_history(self, session_id)
-
-    async def search_chat(self, session_id: str, query: str, limit: int = 50) -> list[dict]:
-        """See :func:`backend.server_sessions.search_chat`."""
-        return await server_sessions.search_chat(self, session_id, query, limit)
-
-    async def truncate_history(
-        self, session_id: str, run_id: str
-    ) -> "server_context.TruncateHistoryResult":
-        """See :func:`backend.server_context.truncate_history`."""
-        return await server_context.truncate_history(self, session_id, run_id)
-
-    def get_mcp_servers(self) -> list[dict]:
-        """See :func:`backend.server_mcp.get_mcp_servers`."""
-        return server_mcp.get_mcp_servers(self)
-
-    async def mcp_connect(self, server_name: str) -> msg.Info:
-        """See :func:`backend.server_mcp.mcp_connect`."""
-        return await server_mcp.mcp_connect(self, server_name)
-
-    async def mcp_disconnect(self, server_name: str) -> msg.Info:
-        """See :func:`backend.server_mcp.mcp_disconnect`."""
-        return await server_mcp.mcp_disconnect(self, server_name)
-
-    # ── Agents ─────────────────────────────────────────────────────
+    # ── Panels ────────────────────────────────────────────────────
 
     def get_agent_details(self) -> list[AgentInfo]:
-        """See :func:`backend.server_panels.get_agent_details`."""
-        return server_panels.get_agent_details(self)
+        """See :meth:`PanelsController.agent_details`."""
+        return self.panels.agent_details()
 
-    def promote_ephemeral_agent(self, name: str) -> msg.Info:
-        """Save an ephemeral agent permanently (called from the panel)."""
-        try:
-            dest = self._session.pool.promote_ephemeral(name, self._session.project_dir)
-        except (KeyError, ValueError, RuntimeError) as e:
-            return msg.Info(text=str(e))
-        return msg.Info(text=f"Promoted '{name}' to {dest}")
+    def promote_ephemeral_agent(self, name: str) -> PromoteEphemeralResult:
+        """See :meth:`PanelsController.promote_ephemeral_agent`."""
+        return self.panels.promote_ephemeral_agent(name)
 
-    def discard_ephemeral_agent(self, name: str) -> msg.Info:
-        """Delete an ephemeral agent (called from the panel)."""
-        try:
-            self._session.pool.discard_ephemeral(name)
-        except (KeyError, ValueError, RuntimeError) as e:
-            return msg.Info(text=str(e))
-        return msg.Info(text=f"Discarded ephemeral agent '{name}'.")
+    def discard_ephemeral_agent(self, name: str) -> DiscardEphemeralResult:
+        """See :meth:`PanelsController.discard_ephemeral_agent`."""
+        return self.panels.discard_ephemeral_agent(name)
 
-    # ── Skills ─────────────────────────────────────────────────────
-
-    # ── Knowledge ──────────────────────────────────────────────────
-
-    async def get_knowledge_status(self) -> KnowledgeStatus:
-        """Status snapshot for the knowledge panel header."""
-        status = await self._session.knowledge_mgr.status()
-        return KnowledgeStatus(
-            enabled=status.enabled,
-            collection_name=status.collection_name,
-            document_count=status.document_count,
-            embedder=status.embedder,
-        )
-
-    async def knowledge_search(
-        self, query: str
-    ) -> "list[server_knowledge.KnowledgeHit]":
-        """See :func:`backend.server_knowledge.knowledge_search`."""
-        return await server_knowledge.knowledge_search(self, query)
-
-    async def knowledge_add(self, source: str) -> msg.Info:
-        """See :func:`backend.server_knowledge.knowledge_add`."""
-        return await server_knowledge.knowledge_add(self, source)
-
-    async def knowledge_list(self) -> "list[server_knowledge.KnowledgeListEntry]":
-        """See :func:`backend.server_knowledge.knowledge_list`."""
-        return await server_knowledge.knowledge_list(self)
-
-    async def knowledge_get(self, entry_id: str) -> "server_knowledge.KnowledgeGetResult":
-        """See :func:`backend.server_knowledge.knowledge_get`."""
-        return await server_knowledge.knowledge_get(self, entry_id)
-
-    def read_file(self, path: str) -> "server_files.ReadFileResult":
-        """See :func:`backend.server_files.read_file`."""
-        return server_files.read_file(self, path)
-
-    def search_code(
-        self, snippet: str, max_results: int = 20
-    ) -> "server_search.SearchCodeResult":
-        """See :func:`backend.server_search.search_code`."""
-        return server_search.search_code(self, snippet, max_results)
-
-    async def knowledge_remove(
-        self, entry_id: str
-    ) -> "server_knowledge.KnowledgeRemoveResult":
-        """See :func:`backend.server_knowledge.knowledge_remove`."""
-        return await server_knowledge.knowledge_remove(self, entry_id)
-
-    # ── Hooks ──────────────────────────────────────────────────────
-
-    def get_hooks_details(self) -> list[dict]:
-        """See :func:`backend.server_panels.get_hooks_details`."""
-        return server_panels.get_hooks_details(self)
+    def get_hooks_details(self) -> list[HookEntryView]:
+        """See :meth:`PanelsController.hooks_details`."""
+        return self.panels.hooks_details()
 
     def reload_hooks_rpc(self) -> msg.Info:
-        """See :func:`backend.server_panels.reload_hooks_rpc`."""
-        return server_panels.reload_hooks_rpc(self)
-
-    # ── CodeIndex ──────────────────────────────────────────────────
-
-    async def codeindex_status(self) -> "server_codeindex.CodeIndexStatus":
-        """See :func:`backend.server_codeindex.codeindex_status`."""
-        return await server_codeindex.codeindex_status(self)
-
-    async def codeindex_sync(
-        self, sha: str | None
-    ) -> "server_codeindex.CodeIndexSyncResult":
-        """See :func:`backend.server_codeindex.codeindex_sync`."""
-        return await server_codeindex.codeindex_sync(self, sha)
-
-    async def codeindex_resync(
-        self, sha: str | None
-    ) -> "server_codeindex.CodeIndexSyncResult":
-        """See :func:`backend.server_codeindex.codeindex_resync`."""
-        return await server_codeindex.codeindex_resync(self, sha)
-
-    async def codeindex_clean(self) -> "server_codeindex.CodeIndexCleanResult":
-        """See :func:`backend.server_codeindex.codeindex_clean`."""
-        return await server_codeindex.codeindex_clean(self)
-
-    async def codeindex_head_breakdown(
-        self,
-    ) -> "server_codeindex.CodeIndexHeadBreakdown":
-        """See :func:`backend.server_codeindex.codeindex_head_breakdown`."""
-        return await server_codeindex.codeindex_head_breakdown(self)
-
-    def codeindex_activity(self) -> list[dict]:
-        """See :func:`backend.server_codeindex.codeindex_activity`."""
-        return server_codeindex.codeindex_activity(self)
-
-    def codeindex_install(self) -> "server_codeindex.CodeIndexInstallResult":
-        """See :func:`backend.server_codeindex.codeindex_install`."""
-        return server_codeindex.codeindex_install(self)
-
-    # ── Skills ─────────────────────────────────────────────────────
+        """See :meth:`PanelsController.reload_hooks`."""
+        return self.panels.reload_hooks()
 
     def get_skill_details(self) -> list[SkillInfo]:
-        """See :func:`backend.server_panels.get_skill_details`."""
-        return server_panels.get_skill_details(self)
+        """See :meth:`PanelsController.skill_details`."""
+        return self.panels.skill_details()
 
-    def get_output_styles(self) -> "server_panels.OutputStylesResult":
-        """See :func:`backend.server_panels.get_output_styles`."""
-        return server_panels.get_output_styles(self)
+    def get_output_styles(self) -> OutputStylesResult:
+        """See :meth:`PanelsController.output_styles`."""
+        return self.panels.output_styles()
 
-    def get_slash_commands(self) -> list[dict]:
-        """See :func:`backend.server_panels.get_slash_commands`."""
-        return server_panels.get_slash_commands(self)
+    def get_slash_commands(self) -> list[SlashCommandEntry]:
+        """See :meth:`PanelsController.slash_commands`."""
+        return self.panels.slash_commands()
 
-    # ── Plugins ────────────────────────────────────────────────────
+    # ── CodeIndex ─────────────────────────────────────────────────
+
+    async def codeindex_status(self) -> CodeIndexStatus:
+        """See :meth:`CodeIndexController.status`."""
+        return await self.codeindex.status()
+
+    async def codeindex_sync(self, sha: str | None) -> CodeIndexSyncResult:
+        """See :meth:`CodeIndexController.sync`."""
+        return await self.codeindex.sync(sha)
+
+    async def codeindex_resync(self, sha: str | None) -> CodeIndexSyncResult:
+        """See :meth:`CodeIndexController.resync`."""
+        return await self.codeindex.resync(sha)
+
+    async def codeindex_clean(self) -> CodeIndexCleanResult:
+        """See :meth:`CodeIndexController.clean`."""
+        return await self.codeindex.clean()
+
+    async def codeindex_head_breakdown(self) -> CodeIndexHeadBreakdown:
+        """See :meth:`CodeIndexController.head_breakdown`."""
+        return await self.codeindex.head_breakdown()
+
+    def codeindex_activity(self) -> list[CodeIndexActivityEntry]:
+        """See :meth:`CodeIndexController.activity`."""
+        return self.codeindex.activity()
+
+    def codeindex_install(self) -> CodeIndexInstallResult:
+        """See :meth:`CodeIndexController.install`."""
+        return self.codeindex.install()
+
+    # ── Plugins ───────────────────────────────────────────────────
 
     def get_plugin_contents(self, name: str) -> PluginContents:
-        """Detailed inventory of one installed plugin — what skills,
-        agents, hooks, MCP servers, and custom tools it bundles, plus
-        a short README excerpt if present. Powers the expandable
-        plugin card in the panel.
-        """
+        """Detailed inventory of one installed plugin."""
         loader = self._session.plugin_loader
         plugin = next(
             (p for p in loader.list_plugins() if p.name == name),
@@ -860,7 +1162,7 @@ class BackendServer:
         )
         if plugin is None:
             return PluginContents(error=f"Plugin '{name}' not found")
-        return _scan_plugin_dir(plugin.root_path, name=name)
+        return PluginContents.from_directory(plugin.root_path, name=name)
 
     async def preview_plugin(
         self,
@@ -868,88 +1170,58 @@ class BackendServer:
         branch: str | None = None,
         subdir: str | None = None,
     ) -> PluginContents:
-        """See :func:`backend.server_plugin.preview_plugin`."""
-        return await server_plugin.preview_plugin(self, source, branch, subdir)
+        """See :meth:`PluginController.preview`."""
+        return await self.plugins.preview(source, branch, subdir)
 
     def get_plugin_details(self) -> list[PluginInfo]:
-        """See :func:`backend.server_plugin.get_plugin_details`."""
-        return server_plugin.get_plugin_details(self)
+        """See :meth:`PluginController.list_installed`."""
+        return self.plugins.list_installed()
 
     def set_plugin_enabled(self, name: str, enabled: bool) -> msg.Info:
-        """See :func:`backend.server_plugin.set_plugin_enabled`."""
-        return server_plugin.set_plugin_enabled(self, name, enabled)
+        """See :meth:`PluginController.set_enabled`."""
+        return self.plugins.set_enabled(name, enabled)
 
     def install_plugin(self, ref: str, install_ref: str | None = None) -> msg.Info:
-        """See :func:`backend.server_plugin.install_plugin`."""
-        return server_plugin.install_plugin(self, ref, install_ref)
+        """See :meth:`PluginController.install`."""
+        return self.plugins.install(ref, install_ref)
 
     def update_plugin(self, name: str, install_ref: str | None = None) -> msg.Info:
-        """See :func:`backend.server_plugin.update_plugin`."""
-        return server_plugin.update_plugin(self, name, install_ref)
+        """See :meth:`PluginController.update`."""
+        return self.plugins.update(name, install_ref)
 
     def remove_plugin(self, name: str) -> msg.Info:
-        """See :func:`backend.server_plugin.remove_plugin`."""
-        return server_plugin.remove_plugin(self, name)
+        """See :meth:`PluginController.remove`."""
+        return self.plugins.remove(name)
 
     def get_marketplaces(self) -> list[MarketplaceInfo]:
-        """See :func:`backend.server_plugin.get_marketplaces`."""
-        return server_plugin.get_marketplaces(self)
+        """See :meth:`MarketplaceController.list_registered`."""
+        return self.marketplaces.list_registered()
 
     def add_marketplace(self, url: str) -> msg.Info:
-        """See :func:`backend.server_plugin.add_marketplace`."""
-        return server_plugin.add_marketplace(self, url)
+        """See :meth:`MarketplaceController.add`."""
+        return self.marketplaces.add(url)
 
     def remove_marketplace(self, name: str) -> msg.Info:
-        """See :func:`backend.server_plugin.remove_marketplace`."""
-        return server_plugin.remove_marketplace(self, name)
+        """See :meth:`MarketplaceController.remove`."""
+        return self.marketplaces.remove(name)
 
     def refresh_marketplaces(self, name: str | None = None) -> msg.Info:
-        """See :func:`backend.server_plugin.refresh_marketplaces`."""
-        return server_plugin.refresh_marketplaces(self, name)
+        """See :meth:`MarketplaceController.refresh`."""
+        return self.marketplaces.refresh(name)
+
+    # ── Hooks fire ────────────────────────────────────────────────
 
     async def fire_session_start_hook(self) -> None:
-        """Fire the SessionStart hook."""
-        from ember_code.core.hooks.events import HookEvent
+        """Forward to :meth:`Session.fire_session_start_hook`."""
+        await self._session.fire_session_start_hook()
 
-        with contextlib.suppress(Exception):
-            await self._session.hook_executor.execute(
-                event=HookEvent.SESSION_START.value,
-                payload={"session_id": self._session.session_id},
-            )
-
-    async def auto_sync_knowledge(self) -> str | None:
-        """Auto-sync knowledge file on startup. Returns status message or None."""
-        if self._session.knowledge is None:
-            return None
-        try:
-            result = await self._session.knowledge_mgr.sync_from_file()
-            if result:
-                return f"Knowledge synced: {result}"
-        except Exception as exc:
-            logger.debug("knowledge sync_from_file failed (%s)", exc)
-        return None
-
-    async def execute_scheduled_task(self, description: str) -> str:
-        """See :func:`backend.server_loop.execute_scheduled_task`."""
-        return await server_loop.execute_scheduled_task(self, description)
-
-    async def cancel_scheduled_task(self, task_id: str) -> msg.Info:
-        """See :func:`backend.server_loop.cancel_scheduled_task`."""
-        return await server_loop.cancel_scheduled_task(self, task_id)
-
-    async def get_scheduled_tasks(self, include_done: bool = True) -> list:
-        """See :func:`backend.server_loop.get_scheduled_tasks`."""
-        return await server_loop.get_scheduled_tasks(self, include_done)
-
-    def start_scheduler(
-        self,
-        on_task_started=None,
-        on_task_completed=None,
-    ) -> Any:
-        """See :func:`backend.server_loop.start_scheduler`."""
-        return server_loop.start_scheduler(self, on_task_started, on_task_completed)
+    # ── Display toggle ────────────────────────────────────────────
 
     def toggle_verbose(self) -> bool:
-        """Toggle verbose mode. Returns new state."""
-        self._settings.display.show_routing = not self._settings.display.show_routing
-        return self._settings.display.show_routing
+        """Forward to :meth:`DisplayConfig.toggle_show_routing`.
+
+        Read-mutate-return that lives on the settings type, not
+        here. Kept as a one-line delegate so ``rpc_router.py``'s
+        ``server.toggle_verbose()`` call site stays unchanged.
+        """
+        return self._settings.display.toggle_show_routing()

@@ -53,7 +53,9 @@ class TestSlashBypassThenDenyRule:
             mode="default",
             deny=deny or [],
         )
-        session._broadcast_callbacks = []
+        from ember_code.core.session.broadcast import BroadcastBus
+
+        session.broadcast_bus = BroadcastBus()
         return session
 
     @pytest.mark.asyncio

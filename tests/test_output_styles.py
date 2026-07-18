@@ -134,7 +134,9 @@ class TestSetOutputStyle:
             ),
         }
         session._active_output_style = "default"
-        session._broadcast_callbacks = []
+        from ember_code.core.session.broadcast import BroadcastBus
+
+        session.broadcast_bus = BroadcastBus()
         session.main_team = None  # patch path tolerated
         return session
 
@@ -214,7 +216,9 @@ class TestOutputStyleSlashCommand:
             ),
         }
         session._active_output_style = "default"
-        session._broadcast_callbacks = []
+        from ember_code.core.session.broadcast import BroadcastBus
+
+        session.broadcast_bus = BroadcastBus()
         session.main_team = None
         return session
 
@@ -302,6 +306,7 @@ class TestGetOutputStylesRpc:
             ),
         }
         session._active_output_style = "learning"
+        session.active_output_style = "learning"
         backend = BackendServer.__new__(BackendServer)
         backend._session = session
         out = backend.get_output_styles()
@@ -310,7 +315,9 @@ class TestGetOutputStylesRpc:
         assert names == ["default", "learning"]  # sorted
 
     def test_returns_empty_when_no_styles(self):
-        session = MagicMock(spec=[])
+        session = MagicMock(spec=["output_styles", "active_output_style"])
+        session.output_styles = {}
+        session.active_output_style = ""
         backend = BackendServer.__new__(BackendServer)
         backend._session = session
         out = backend.get_output_styles()
@@ -328,6 +335,7 @@ class TestGetOutputStylesRpc:
             )
         }
         session._active_output_style = "default"
+        session.active_output_style = "default"
         backend = BackendServer.__new__(BackendServer)
         backend._session = session
 

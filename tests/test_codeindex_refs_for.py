@@ -72,7 +72,7 @@ def _build_service(
     if parent_edges is not None:
         edge_responses.append(parent_edges)
     file_ref_service.get_by_uuids = AsyncMock(side_effect=edge_responses)
-    idx._file_reference_service = MagicMock(return_value=file_ref_service)
+    idx.file_reference_service = MagicMock(return_value=file_ref_service)
 
     # ``_rank_direction`` calls ``self._idx.search_among(candidate_ids=…)``
     # which returns ``CodeIndexResult``-shaped rows ranked against the
@@ -199,7 +199,7 @@ async def test_refs_for_no_fallback_when_item_has_direct_edges() -> None:
     assert result is not None
     assert result["A"].via_parent is None
     # Only one ``get_by_uuids`` call should have fired — the direct one.
-    fetch = service._idx._file_reference_service().get_by_uuids
+    fetch = service._idx.file_reference_service().get_by_uuids
     assert fetch.call_count == 1
 
 

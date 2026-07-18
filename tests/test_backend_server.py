@@ -6,9 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from ember_code.backend.pending_requirements_store import PendingRequirementsStore
 from ember_code.backend.server import BackendServer
 from ember_code.protocol import messages as msg
-from ember_code.transport.unix_socket import deserialize_message
+from ember_code.protocol.registry import MessageRegistry
 
 
 class TestBackendServerCommands:
@@ -20,19 +21,17 @@ class TestBackendServerCommands:
             server = BackendServer.__new__(BackendServer)
             server._session = MagicMock()
             server._settings = MagicMock()
-            server._pending_requirements = {}
+            server._hitl_store = PendingRequirementsStore()
             server._processing = False
 
-            # Mock the command handler
-            mock_result = MagicMock()
-            mock_result.kind = "info"
-            mock_result.content = "test output"
-            mock_result.action = ""
-            # ``handle_command`` now passes ``display_content`` to the
-            # pydantic ``CommandResult``; default MagicMock attrs
-            # auto-vivify to another MagicMock (truthy), which fails
-            # the ``str`` field validator. Pin to an empty string.
-            mock_result.display_content = ""
+            # ``handle_command`` returns whatever the handler produced,
+            # unchanged — the backend ``CommandResult`` subclasses the
+            # wire ``msg.CommandResult`` so no rebuild step is needed.
+            # Feed the mock a real ``CommandResult`` so the ``isinstance``
+            # + field assertions below still exercise the wire contract.
+            from ember_code.backend.command_result import CommandResult
+
+            mock_result = CommandResult.info("test output")
 
             with patch("ember_code.backend.command_handler.CommandHandler") as MockHandler:
                 instance = MockHandler.return_value
@@ -54,7 +53,13 @@ class TestBackendServerCommands:
             server._session = MagicMock()
             server._session.cloud_connected = True
             server._session.cloud_org_name = "Test Org"
-            server._session._last_input_tokens = 1234
+            server._session.last_input_tokens = 1234
+            # ``Session.permission_mode_value`` is the wire-safe string
+            # StatusUpdate needs — MagicMock returns another MagicMock
+            # for arbitrary attribute access, which then fails pydantic
+            # validation. Pin it to the real default so we exercise the
+            # RPC path, not the MagicMock-glue plumbing.
+            server._session.permission_mode_value = "default"
 
             status = server.get_status()
 
@@ -69,11 +74,14 @@ class TestBackendServerCommands:
     async def test_switch_model(self):
         with (
             patch("ember_code.backend.server.BackendServer.__init__", return_value=None),
-            patch("ember_code.core.config.settings.save_default_model"),
+            # The persistence side-effect now lives on
+            # :class:`UserConfigStore` — patch the class method so the
+            # real user config file isn't touched during the test.
+            patch("ember_code.core.config.user_config_store.UserConfigStore.set_default_model"),
         ):
             server = BackendServer.__new__(BackendServer)
             server._session = MagicMock()
-            server._session._build_main_agent = MagicMock()
+            server._session.rebuild_main_team = MagicMock()
             server._session.session_id = "test-sess"
             server._settings = MagicMock()
             server._session_prefs = MagicMock()
@@ -82,7 +90,7 @@ class TestBackendServerCommands:
 
         assert isinstance(result, msg.Info)
         assert "new-model" in result.text
-        server._session._build_main_agent.assert_called_once()
+        server._session.rebuild_main_team.assert_called_once()
         server._session_prefs.set_model.assert_called_once_with("test-sess", "new-model")
 
 
@@ -185,9 +193,16 @@ class TestProtocolSerialization:
         assert restored.tool_args["command"] == "rm -rf /"
 
     def test_all_message_types_have_type_field(self):
-        """Every concrete message class should have a default type value."""
+        """Every concrete message class should have a default type value.
+
+        Excludes the abstract intermediary :class:`RunScopedMessage`
+        (which every run-scoped concrete event inherits from) — it
+        deliberately has no ``type`` default because it's a mixin,
+        not a wire message.
+        """
+        abstract_bases = {msg.Message, msg.RunScopedMessage}
         for name, cls in inspect.getmembers(msg, inspect.isclass):
-            if issubclass(cls, msg.Message) and cls is not msg.Message:
+            if issubclass(cls, msg.Message) and cls not in abstract_bases:
                 instance = cls()
                 assert instance.type, f"{name} has no default type"
 
@@ -195,7 +210,7 @@ class TestProtocolSerialization:
         # Round-trip through JSON string
         original = msg.UserMessage(text="hello")
         json_line = original.model_dump_json()
-        restored = deserialize_message(json_line)
+        restored = MessageRegistry.default().deserialize(json_line)
         assert isinstance(restored, msg.UserMessage)
         assert restored.text == "hello"
 
@@ -229,9 +244,11 @@ class TestBackendServerRealConstruction:
         # this test — we're validating BackendServer wiring, not KB
         # behaviour. Same story for other heavy subsystems that key
         # off settings flags.
-        settings = settings.model_copy(update={
-            "knowledge": settings.knowledge.model_copy(update={"enabled": False}),
-        })
+        settings = settings.model_copy(
+            update={
+                "knowledge": settings.knowledge.model_copy(update={"enabled": False}),
+            }
+        )
 
         backend = BackendServer(settings, project_dir=tmp_path)
 
@@ -265,9 +282,11 @@ class TestBackendServerRealConstruction:
         from ember_code.core.config.settings import load_settings
 
         settings = load_settings(project_dir=tmp_path)
-        settings = settings.model_copy(update={
-            "knowledge": settings.knowledge.model_copy(update={"enabled": False}),
-        })
+        settings = settings.model_copy(
+            update={
+                "knowledge": settings.knowledge.model_copy(update={"enabled": False}),
+            }
+        )
         backend = BackendServer(settings, project_dir=tmp_path)
         session = backend._session
 
@@ -282,8 +301,13 @@ class TestBackendServerRealConstruction:
         assert session.plan_store is not None
         assert session.event_log == []
         assert session._plan_mode_attempt == 0
-        assert session._broadcast_callbacks == []
-        assert session._pending_post_run_broadcasts == []
+        # BroadcastBus is composed in ``__init__`` — the class
+        # invariant that replaces the old raw-list init.
+        from ember_code.core.session.broadcast import BroadcastBus
+
+        assert isinstance(session.broadcast_bus, BroadcastBus)
+        assert not session.broadcast_bus.has_callbacks
+        assert session.broadcast_bus.pending_count == 0
 
         # _init_knowledge — KB disabled path yields None + ready flag set.
         assert session.knowledge is None

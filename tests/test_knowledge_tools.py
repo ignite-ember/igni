@@ -8,6 +8,7 @@ import pytest
 
 from ember_code.core.knowledge.models import (
     KnowledgeAddResult,
+    KnowledgeDeleteResult,
     KnowledgeSearchResponse,
     KnowledgeSearchResult,
     KnowledgeStatus,
@@ -18,7 +19,7 @@ from ember_code.core.tools.knowledge import KnowledgeTools
 def _make_mgr():
     mgr = MagicMock()
     mgr.knowledge = AsyncMock()
-    mgr.knowledge.delete_by_query = AsyncMock(return_value=0)
+    mgr.knowledge.delete_by_query = AsyncMock(return_value=KnowledgeDeleteResult(deleted=0))
     mgr.search = AsyncMock(return_value=KnowledgeSearchResponse(query="test"))
     mgr.add = AsyncMock(return_value=KnowledgeAddResult.ok("Added."))
     mgr.status = AsyncMock(
@@ -90,7 +91,7 @@ class TestKnowledgeDelete:
     @pytest.mark.asyncio
     async def test_delete_dispatches_to_facade(self):
         mgr = _make_mgr()
-        mgr.knowledge.delete_by_query.return_value = 3
+        mgr.knowledge.delete_by_query.return_value = KnowledgeDeleteResult(deleted=3)
         result = await KnowledgeTools(knowledge_mgr=mgr).knowledge_delete("old", confirm=True)
         assert "3" in result
         mgr.knowledge.delete_by_query.assert_awaited_once_with("old")

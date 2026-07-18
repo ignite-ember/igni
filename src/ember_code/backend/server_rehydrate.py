@@ -1,212 +1,196 @@
-"""Boot-time state-recovery helpers for :class:`BackendServer`.
+"""Boot-time state-recovery for one :class:`Session`.
 
-Extracted from :mod:`ember_code.backend.server` — five async
-functions that populate in-memory session stores from persisted
-state on server startup. Each takes the ``BackendServer`` (called
-`backend` inside the module) as an explicit argument.
+Single-class module. :class:`RehydrateController` owns the five
+best-effort recovery steps executed post-``BackendServer.__init__``
+by :meth:`LifecycleController.startup`:
 
-Recovery is best-effort throughout: every failure path logs at
-DEBUG level and returns rather than crashing startup. Partial
-recovery is preferable to a broken restart.
-
-Contents:
-
-* :func:`rehydrate_event_log` — reload the append-only event
-  log so ``get_session_events`` can serve it after restart.
-* :func:`rehydrate_orphan_processes` — re-adopt any background
-  shell processes that survived the previous BE lifetime.
-* :func:`rehydrate_plan_decisions` — restore the
+* :meth:`RehydrateController.event_log` — reload the append-only
+  event log so ``get_session_events`` can serve it after restart.
+* :meth:`RehydrateController.orphan_processes` — re-adopt any
+  background shell processes that survived the previous BE
+  lifetime.
+* :meth:`RehydrateController.plan_decisions` — restore the
   ``{run_id: decision}`` map onto the live ``PlanStore``.
-* :func:`rehydrate_todos` — overlay the persisted todo snapshot
-  onto ``session.todo_store`` (authoritative once execution has
-  started).
-* :func:`rehydrate_plan_store` — repopulate ``PlanStore`` from
-  the most recent ``exit_plan_mode`` tool call in the persisted
-  Agno history.
+* :meth:`RehydrateController.todos` — overlay the persisted todo
+  snapshot onto ``session.todo_store``.
+* :meth:`RehydrateController.plan_store` — repopulate ``PlanStore``
+  from the most recent ``exit_plan_mode`` tool call in history via
+  :class:`AgnoHistoryPlanScanner`.
+
+Every method returns a typed :class:`RehydrateOutcome` so
+:meth:`LifecycleController.startup` can log a single structured
+summary instead of each method silently swallowing at DEBUG.
+Recovery stays best-effort throughout — no ``raise`` escapes the
+controller.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING
 
+from ember_code.backend.agno_history_plan_scanner import AgnoHistoryPlanScanner
+from ember_code.backend.schemas_lifecycle import RehydrateOutcome
 from ember_code.core.session.event_log_schema import SessionEvent
+from ember_code.core.tools.orphan_rehydrator import build_rehydrator
+from ember_code.core.tools.plan import PlanDecisionsBlob
+from ember_code.core.tools.process_supervisor_locator import supervisors
+from ember_code.core.tools.todo import _coerce_items
 
 if TYPE_CHECKING:
-    from ember_code.backend.server import BackendServer
+    from ember_code.core.session import Session
 
 logger = logging.getLogger(__name__)
 
 
-async def rehydrate_event_log(backend: "BackendServer") -> None:
-    """Load the persisted append-only event log onto the session so
-    ``get_session_events`` can serve it. Also restores
-    ``_event_seq`` from the max ``seq`` seen so subsequent
-    :meth:`Session.append_event` calls stay monotonic across the
-    restart boundary.
+class RehydrateController:
+    """Boot-time state-recovery for one :class:`Session`.
+
+    Each method is a ~10-line best-effort loader that returns a
+    typed :class:`RehydrateOutcome`; the lifecycle controller
+    accumulates the five outcomes for a single summary log line.
     """
-    persistence = getattr(backend._session, "persistence", None)
-    if persistence is None:
-        return
-    try:
-        entries = await persistence.load_event_log()
-    except Exception as exc:
-        logger.debug("event log rehydrate failed: %s", exc)
-        return
-    if not isinstance(entries, list):
-        return
-    # Parse each persisted dict back to a :class:`SessionEvent`,
-    # dropping any that fail validation (corrupt row, schema drift).
-    parsed = [
-        evt
-        for e in entries
-        if isinstance(e, dict) and (evt := SessionEvent.from_wire(e)) is not None
-    ]
-    backend._session.event_log = parsed
-    backend._session._event_seq = max((e.seq for e in parsed), default=0)
 
+    def __init__(self, session: Session) -> None:
+        self._session = session
 
-async def rehydrate_orphan_processes(backend: "BackendServer") -> None:
-    """Re-adopt every backgrounded shell process that survived the
-    previous BE lifetime. Without this, ``run_shell_command(background=True)``
-    spawns that outlive a BE restart become invisible orphans — the
-    OS keeps them alive via ``start_new_session=True`` but the
-    registry resets to empty.
-    """
-    from ember_code.core.tools import process_log
-    from ember_code.core.tools.shell import rehydrate_orphan_processes as _rehydrate
+    async def event_log(self) -> RehydrateOutcome:
+        """Load the persisted append-only event log onto the session."""
+        persistence = self._session.persistence
+        if persistence is None:
+            return RehydrateOutcome(ok=True, step="event_log", reason="no persistence")
+        try:
+            entries = await persistence.load_event_log()
+        except Exception as exc:
+            return RehydrateOutcome(ok=False, step="event_log", reason=str(exc))
+        if not isinstance(entries, list):
+            return RehydrateOutcome(ok=True, step="event_log", reason="empty on disk")
+        parsed = [
+            evt
+            for e in entries
+            if isinstance(e, dict) and (evt := SessionEvent.from_wire(e)) is not None
+        ]
+        self._session.restore_event_log(parsed)
+        return RehydrateOutcome(ok=True, step="event_log")
 
-    # ``project_dir`` is optional on the session stub used by unit
-    # tests — fall back to ``None`` so the log path resolver uses
-    # TMPDIR and the rehydrate is a no-op, rather than crashing
-    # startup.
-    project_dir = getattr(backend._session, "project_dir", None)
-    process_log.set_default_project_dir(project_dir)
-    if project_dir is None:
-        return
-    try:
-        await _rehydrate(project_dir)
-    except Exception as exc:
-        logger.debug("orphan process rehydrate failed: %s", exc)
+    async def orphan_processes(self) -> RehydrateOutcome:
+        """Re-adopt every backgrounded shell process that survived the
+        previous BE lifetime.
 
+        Builds an :class:`OrphanRehydrator` (typed store-init
+        failure surfaces via ``build_failure.reason``) then
+        plumbs the :class:`RehydrateResult.reason` straight into
+        :class:`RehydrateOutcome` so failure modes stay
+        observable at INFO instead of collapsing to a silent
+        ``ok=True``.
+        """
+        supervisor = supervisors.default()
+        project_dir = self._session.project_dir
+        supervisor.configure_log_store(project_dir)
+        if project_dir is None:
+            return RehydrateOutcome(ok=True, step="orphan_processes", reason="no project_dir")
+        rehydrator, build_failure = build_rehydrator(supervisor, project_dir)
+        if rehydrator is None:
+            # ``build_failure`` is populated when the store
+            # constructor raised — surface the typed reason
+            # instead of the silent "return 0" the legacy wrapper
+            # kept.
+            reason = build_failure.reason if build_failure is not None else "unknown"
+            return RehydrateOutcome(ok=False, step="orphan_processes", reason=reason)
+        try:
+            result = await rehydrator.run()
+        except Exception as exc:
+            return RehydrateOutcome(ok=False, step="orphan_processes", reason=str(exc))
+        return RehydrateOutcome(
+            ok=result.ok,
+            step="orphan_processes",
+            reason=result.reason or None,
+        )
 
-async def rehydrate_plan_decisions(backend: "BackendServer") -> None:
-    """Load the ``{run_id: decision}`` map persisted on
-    ``session_data`` back into the in-memory ``PlanStore``.
+    async def plan_decisions(self) -> RehydrateOutcome:
+        """Load the ``{run_id: decision}`` map back into ``PlanStore``."""
+        store = self._session.plan_store
+        persistence = self._session.persistence
+        if persistence is None:
+            return RehydrateOutcome(ok=True, step="plan_decisions", reason="no persistence")
+        try:
+            data = await persistence.load_plan_decisions()
+        except Exception as exc:
+            return RehydrateOutcome(ok=False, step="plan_decisions", reason=str(exc))
+        # Validate the persisted blob shape before handing it to
+        # the store — a corrupt row on disk would otherwise leak
+        # untyped strings into the decisions map.
+        blob = PlanDecisionsBlob.from_raw(data)
+        store.load_decisions(blob)
+        return RehydrateOutcome(ok=True, step="plan_decisions")
 
-    Without this, after BE restart every plan's state would fall
-    back to the default "pending" / "approved" logic in
-    ``get_chat_history`` and the user's previous approval clicks
-    would silently vanish from the FE.
-    """
-    store = getattr(backend._session, "plan_store", None)
-    if store is None:
-        return
-    persistence = getattr(backend._session, "persistence", None)
-    if persistence is None:
-        return
-    try:
-        data = await persistence.load_plan_decisions()
-    except Exception as exc:
-        logger.debug("plan decision rehydrate failed: %s", exc)
-        return
-    store.load_decisions(data)
+    async def todos(self) -> RehydrateOutcome:
+        """Load the persisted todo snapshot back into
+        ``session.todo_store``.
 
-
-async def rehydrate_todos(backend: "BackendServer") -> None:
-    """Load the persisted todo snapshot back into
-    ``session.todo_store``.
-
-    Order matters: this runs AFTER :func:`rehydrate_plan_store` so
-    it overwrites the plan-args seeding only when a real snapshot
-    exists (i.e., execution has happened since the plan submission).
-    """
-    todo = getattr(backend._session, "todo_store", None)
-    persistence = getattr(backend._session, "persistence", None)
-    if todo is None or persistence is None:
-        return
-    try:
-        snapshot = await persistence.load_todos()
-    except Exception as exc:
-        logger.debug("todo rehydrate failed: %s", exc)
-        return
-    if not snapshot:
-        return  # no live execution state yet; keep the plan-args seed
-    try:
-        from ember_code.core.tools.todo import _coerce_items
-
-        items, _errs = _coerce_items(snapshot)
+        Order matters: this runs AFTER :meth:`plan_store` so it
+        overwrites the plan-args seeding only when a real snapshot
+        exists (i.e., execution has happened since the plan
+        submission).
+        """
+        todo = self._session.todo_store
+        persistence = self._session.persistence
+        if persistence is None:
+            return RehydrateOutcome(ok=True, step="todos", reason="no persistence")
+        try:
+            snapshot = await persistence.load_todos()
+        except Exception as exc:
+            return RehydrateOutcome(ok=False, step="todos", reason=str(exc))
+        if not snapshot:
+            # no live execution state yet; keep the plan-args seed
+            return RehydrateOutcome(ok=True, step="todos", reason="no snapshot")
+        try:
+            items, _errs = _coerce_items(snapshot)
+        except Exception as exc:
+            return RehydrateOutcome(ok=False, step="todos", reason=str(exc))
         if items:
             todo.set(items)
-    except Exception as exc:
-        logger.debug("todo rehydrate: coerce failed: %s", exc)
+        return RehydrateOutcome(ok=True, step="todos")
 
+    async def plan_store(self) -> RehydrateOutcome:
+        """Repopulate ``session.plan_store`` from the persisted history.
 
-async def rehydrate_plan_store(backend: "BackendServer") -> None:
-    """Repopulate ``session.plan_store`` from the persisted history.
-
-    ``PlanStore`` is in-memory only — submitted via the agent's
-    ``exit_plan_mode`` tool, never written to its own table. On BE
-    restart the store is empty even when the previous run clearly
-    produced a plan. We walk the Agno session for the most recent
-    ``exit_plan_mode`` tool call and pull its ``plan`` / ``tasks``
-    arguments back into the live stores, so the FE's restore path
-    sees the same PlanCard it did before close.
-    """
-    store = getattr(backend._session, "plan_store", None)
-    if store is None or store.latest:
-        return  # nothing to do (already populated or absent)
-    try:
-        agent = backend._session.main_team
-        agno_session = await agent.aget_session(
-            session_id=backend._session.session_id,
-            user_id=backend._session.user_id,
+        Delegates the Agno history walk to
+        :class:`AgnoHistoryPlanScanner` — the untyped-dict expedition
+        lives behind that typed boundary, so this method stays a
+        short applier that seeds :class:`PlanStore` and (optionally)
+        :class:`TodoStore` from the resulting :class:`PlanArgs`.
+        """
+        store = self._session.plan_store
+        if store.latest:
+            return RehydrateOutcome(ok=True, step="plan_store", reason="already populated")
+        try:
+            agent = self._session.main_team
+            agno_session = await agent.aget_session(
+                session_id=self._session.session_id,
+                user_id=self._session.user_id,
+            )
+        except Exception as exc:
+            return RehydrateOutcome(ok=False, step="plan_store", reason=f"aget_session: {exc}")
+        if agno_session is None:
+            return RehydrateOutcome(ok=True, step="plan_store", reason="no agno session")
+        scanner = AgnoHistoryPlanScanner(agno_session)
+        found = scanner.find_latest_plan()
+        if found is None:
+            return RehydrateOutcome(ok=True, step="plan_store", reason="no plan in history")
+        plan_args, run_id = found
+        store.set_plan(plan_args.plan)
+        if plan_args.tasks is not None:
+            try:
+                items, _errs = _coerce_items(plan_args.tasks)
+            except Exception as exc:
+                logger.debug("plan rehydrate: todo coerce failed: %s", exc)
+            else:
+                if items:
+                    self._session.todo_store.set(items)
+        logger.info(
+            "Rehydrated plan_store from history (run_id=%s, plan=%d chars)",
+            run_id,
+            len(plan_args.plan),
         )
-    except Exception as exc:
-        logger.debug("plan rehydrate: aget_session failed: %s", exc)
-        return
-    if agno_session is None:
-        return
-    runs = getattr(agno_session, "runs", None) or []
-    for run in reversed(runs):
-        messages = getattr(run, "messages", None) or []
-        for m in reversed(messages):
-            if getattr(m, "role", "") != "assistant":
-                continue
-            tool_calls = getattr(m, "tool_calls", None) or []
-            for tc in tool_calls:
-                fn = (tc.get("function") or {}) if isinstance(tc, dict) else {}
-                if fn.get("name") != "exit_plan_mode":
-                    continue
-                args_raw = fn.get("arguments")
-                if isinstance(args_raw, str):
-                    try:
-                        args = json.loads(args_raw)
-                    except Exception:
-                        continue
-                elif isinstance(args_raw, dict):
-                    args = args_raw
-                else:
-                    continue
-                plan_text = str(args.get("plan", "")).strip()
-                if not plan_text:
-                    continue
-                store.set_plan(plan_text)
-                tasks_raw = args.get("tasks")
-                todo = getattr(backend._session, "todo_store", None)
-                if todo is not None and isinstance(tasks_raw, list):
-                    try:
-                        from ember_code.core.tools.todo import _coerce_items
-
-                        items, _errs = _coerce_items(tasks_raw)
-                        if items:
-                            todo.set(items)
-                    except Exception as exc:
-                        logger.debug("plan rehydrate: todo coerce failed: %s", exc)
-                logger.info(
-                    "Rehydrated plan_store from history (run_id=%s, plan=%d chars)",
-                    getattr(run, "run_id", ""),
-                    len(plan_text),
-                )
-                return  # most recent plan wins; stop scanning
+        return RehydrateOutcome(ok=True, step="plan_store")

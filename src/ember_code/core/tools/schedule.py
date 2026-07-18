@@ -1,11 +1,10 @@
 """Schedule tools — lets the AI agent create, list, and cancel scheduled tasks."""
 
-import uuid
-
 from agno.tools import Toolkit
 
 from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
-from ember_code.core.scheduler.parser import parse_recurrence, parse_time
+from ember_code.core.scheduler.parser import parse_time
+from ember_code.core.scheduler.recurrence import Recurrence
 from ember_code.core.scheduler.store import TaskStore
 
 
@@ -45,18 +44,19 @@ class ScheduleTools(Toolkit):
             Confirmation message with the task ID and scheduled time.
         """
         # Try recurring first
-        recurrence, scheduled_at = parse_recurrence(when)
-        if recurrence and scheduled_at:
-            task = ScheduledTask(
-                id=uuid.uuid4().hex[:8],
+        result = Recurrence.parse(when)
+        if result is not None:
+            canonical = result.recurrence.canonical()
+            scheduled_at = result.first_scheduled
+            task = ScheduledTask.new(
                 description=description,
                 scheduled_at=scheduled_at,
-                recurrence=recurrence,
+                recurrence=canonical,
             )
             await self._ensure_store().add(task)
             return (
                 f'Scheduled recurring task `{task.id}`: "{description}" '
-                f"({recurrence}, first run at {scheduled_at.strftime('%Y-%m-%d %H:%M')})."
+                f"({canonical}, first run at {scheduled_at.strftime('%Y-%m-%d %H:%M')})."
             )
 
         # One-shot
@@ -68,8 +68,7 @@ class ScheduleTools(Toolkit):
                 "  Recurring: 'daily', 'every 2 hours', 'weekly at 9am'"
             )
 
-        task = ScheduledTask(
-            id=uuid.uuid4().hex[:8],
+        task = ScheduledTask.new(
             description=description,
             scheduled_at=scheduled_at,
         )

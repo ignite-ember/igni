@@ -13,8 +13,6 @@ from __future__ import annotations
 import json as _json
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from ember_code.core.session.core import Session
 
 
@@ -101,8 +99,7 @@ class TestGetChatHistoryVizSplicing:
         pairing logic without wiring up a full Session/DB."""
         out = list(history)
         viz_events = [
-            e for e in event_log
-            if isinstance(e, dict) and e.get("type") == "visualization_delta"
+            e for e in event_log if isinstance(e, dict) and e.get("type") == "visualization_delta"
         ]
         if not viz_events:
             return out
@@ -202,8 +199,13 @@ class TestGetChatHistoryVizSplicing:
             {"role": "assistant", "run_id": "r1"},
         ]
         event_log = [
-            {"seq": i, "run_id": "r1", "timestamp_ms": i, "type": "visualization_delta",
-             "payload": {"spec_id": f"s{i}", "json": '{"root":"r"}'}}
+            {
+                "seq": i,
+                "run_id": "r1",
+                "timestamp_ms": i,
+                "type": "visualization_delta",
+                "payload": {"spec_id": f"s{i}", "json": '{"root":"r"}'},
+            }
             for i in (1, 2, 3)
         ]
         result = self._splice(history, event_log)
@@ -231,8 +233,13 @@ class TestGetChatHistoryVizSplicing:
             {"role": "assistant", "run_id": "r1"},
         ]
         event_log = [
-            {"seq": 1, "run_id": "r1", "timestamp_ms": 1, "type": "visualization_delta",
-             "payload": {"spec_id": "s1", "json": '{"root":"r"}'}}
+            {
+                "seq": 1,
+                "run_id": "r1",
+                "timestamp_ms": 1,
+                "type": "visualization_delta",
+                "payload": {"spec_id": "s1", "json": '{"root":"r"}'},
+            }
         ]
         result = self._splice(history, event_log)
         # Viz appears after the last turn of the run.
@@ -246,8 +253,13 @@ class TestGetChatHistoryVizSplicing:
             {"role": "user", "run_id": "r1"},
         ]
         event_log = [
-            {"seq": 1, "run_id": "ORPHAN", "timestamp_ms": 1, "type": "visualization_delta",
-             "payload": {"spec_id": "s1", "json": '{"root":"r"}'}}
+            {
+                "seq": 1,
+                "run_id": "ORPHAN",
+                "timestamp_ms": 1,
+                "type": "visualization_delta",
+                "payload": {"spec_id": "s1", "json": '{"root":"r"}'},
+            }
         ]
         result = self._splice(history, event_log)
         assert result[-1]["role"] == "visualization"
@@ -260,10 +272,20 @@ class TestGetChatHistoryVizSplicing:
             {"role": "tool", "tool_name": "spawn_agent", "run_id": "r1"},
         ]
         event_log = [
-            {"seq": 1, "run_id": "r1", "timestamp_ms": 1, "type": "visualization_delta",
-             "payload": {"spec_id": "bad", "json": '{"root": "r"'}},  # truncated
-            {"seq": 2, "run_id": "r1", "timestamp_ms": 2, "type": "visualization_delta",
-             "payload": {"spec_id": "good", "json": '{"root":"r"}'}},
+            {
+                "seq": 1,
+                "run_id": "r1",
+                "timestamp_ms": 1,
+                "type": "visualization_delta",
+                "payload": {"spec_id": "bad", "json": '{"root": "r"'},
+            },  # truncated
+            {
+                "seq": 2,
+                "run_id": "r1",
+                "timestamp_ms": 2,
+                "type": "visualization_delta",
+                "payload": {"spec_id": "good", "json": '{"root":"r"}'},
+            },
         ]
         result = self._splice(history, event_log)
         vis = [t for t in result if t["role"] == "visualization"]
@@ -279,10 +301,20 @@ class TestGetChatHistoryVizSplicing:
             {"role": "tool", "tool_name": "spawn_agent", "run_id": "r1"},
         ]
         event_log = [
-            {"seq": 1, "run_id": "r1", "timestamp_ms": 1, "type": "content_preview",
-             "payload": {"text": "hi"}},
-            {"seq": 2, "run_id": "r1", "timestamp_ms": 2, "type": "orchestrate_event",
-             "payload": {}},
+            {
+                "seq": 1,
+                "run_id": "r1",
+                "timestamp_ms": 1,
+                "type": "content_preview",
+                "payload": {"text": "hi"},
+            },
+            {
+                "seq": 2,
+                "run_id": "r1",
+                "timestamp_ms": 2,
+                "type": "orchestrate_event",
+                "payload": {},
+            },
         ]
         result = self._splice(history, event_log)
         assert all(t["role"] != "visualization" for t in result)

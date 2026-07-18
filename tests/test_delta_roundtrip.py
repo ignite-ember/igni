@@ -153,7 +153,7 @@ async def test_apply_delta_persists_references(tmp_path):
     jsonl = _write_jsonl(tmp_path, _full_changeset())
     await index.apply_delta(jsonl)
 
-    file_refs = index._file_reference_service()
+    file_refs = index.file_reference_service()
     forward = await file_refs.get(from_uuid=FILE_ID, to_uuid=CALLEE_FILE_ID, relation="imports")
     reverse = await file_refs.get(from_uuid=CALLEE_FILE_ID, to_uuid=FILE_ID, relation="imported_by")
 
@@ -223,7 +223,7 @@ async def test_apply_incremental_delta_after_full(tmp_path):
     assert new_entity_id not in [r.item_id for r in parent_results]
 
     # References for the deleted helper are gone.
-    file_refs = index._file_reference_service()
+    file_refs = index.file_reference_service()
     assert (
         await file_refs.get(from_uuid=FILE_ID, to_uuid=CALLEE_FILE_ID, relation="imports") is None
     )

@@ -23,16 +23,19 @@ import re
 
 import pytest
 
-from ember_code.core.tools.shell import (
-    EmberShellTools,
-    subscribe_to_process_completion,
-    unsubscribe_from_process_completion,
-)
+from ember_code.core.tools.process_supervisor_locator import supervisors
+from ember_code.core.tools.shell import EmberShellTools
 
 
 @pytest.fixture
 def collected_completions():
-    """Record completions; auto-unsubscribe at test end."""
+    """Record completions; auto-unsubscribe at test end.
+
+    Subscribes directly on the supervisor's event bus — no
+    module-level ``subscribe_to_process_completion`` shim
+    anymore; ``ProcessEventBus.on/off`` is the sanctioned
+    OOP entry point.
+    """
     seen: list[dict] = []
     seen_event = asyncio.Event()
 
@@ -40,20 +43,21 @@ def collected_completions():
         seen.append(info)
         seen_event.set()
 
-    subscribe_to_process_completion(_cb)
+    bus = supervisors.default().registry.bus
+    bus.on("exit", _cb)
     try:
         yield seen, seen_event
     finally:
-        unsubscribe_from_process_completion(_cb)
+        bus.off("exit", _cb)
 
 
 async def _wait_for_finish(pid: int, timeout: float = 8.0) -> None:
     """Poll the registry until the process is finished or timeout."""
-    from ember_code.core.tools.shell import _registry
+    registry = supervisors.default().registry
 
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
-        mp = _registry.get(pid)
+        mp = registry.get(pid)
         if mp is not None and mp.finished:
             return
         await asyncio.sleep(0.1)
@@ -135,12 +139,18 @@ async def test_read_process_output_is_idempotent_after_finish(tmp_path):
 async def test_finished_process_evicted_after_ttl(tmp_path, monkeypatch):
     """First ``read_process_output`` after a process has finished
     arms a TTL task; once it fires, the entry should be gone from
-    the registry. Patches ``_FINISHED_PROCESS_TTL_SECONDS`` to a
-    fraction of a second so the test runs quickly."""
-    from ember_code.core.tools import shell as _shell
-    from ember_code.core.tools.shell import _registry
+    the registry. Drives TTL down via
+    :meth:`ProcessRegistry.set_ttl_seconds` so the test runs
+    quickly.
 
-    monkeypatch.setattr(_shell, "_FINISHED_PROCESS_TTL_SECONDS", 0.3)
+    Post-split refactor: the TTL lives on the registry (which
+    owns the eviction bookkeeping), not on the supervisor.
+    ``monkeypatch.setattr`` on the registry auto-restores after
+    the test.
+    """
+    supervisor = supervisors.default()
+    registry = supervisor.registry
+    monkeypatch.setattr(registry, "_ttl_seconds", 0.3, raising=True)
 
     tools = EmberShellTools(base_dir=str(tmp_path))
     out = await tools.run_shell_command(
@@ -154,12 +164,12 @@ async def test_finished_process_evicted_after_ttl(tmp_path, monkeypatch):
     assert "hi" in first
 
     # Before TTL fires, the entry is still there.
-    assert _registry.get(pid) is not None
+    assert registry.get(pid) is not None
 
     # Wait past TTL — entry should be evicted. ``asyncio.sleep`` so
     # the eviction task (also running on the loop) gets to fire.
     await asyncio.sleep(0.6)
-    assert _registry.get(pid) is None
+    assert registry.get(pid) is None
     gone = await tools.read_process_output(pid)
     assert "No tracked process" in gone
 
@@ -168,10 +178,9 @@ async def test_finished_process_evicted_after_ttl(tmp_path, monkeypatch):
 async def test_ttl_resets_on_subsequent_read(tmp_path, monkeypatch):
     """A second read before the TTL expires should reset it, so an
     actively-engaged agent doesn't lose the buffer mid-iteration."""
-    from ember_code.core.tools import shell as _shell
-    from ember_code.core.tools.shell import _registry
-
-    monkeypatch.setattr(_shell, "_FINISHED_PROCESS_TTL_SECONDS", 0.4)
+    supervisor = supervisors.default()
+    registry = supervisor.registry
+    monkeypatch.setattr(registry, "_ttl_seconds", 0.4, raising=True)
 
     tools = EmberShellTools(base_dir=str(tmp_path))
     out = await tools.run_shell_command(
@@ -188,25 +197,26 @@ async def test_ttl_resets_on_subsequent_read(tmp_path, monkeypatch):
 
     # Reset means we should still be alive — only 0.25s into the new
     # window.
-    assert _registry.get(pid) is not None
+    assert registry.get(pid) is not None
     # Wait out the new window plus slack.
     await asyncio.sleep(0.4)
-    assert _registry.get(pid) is None
+    assert registry.get(pid) is None
 
 
 @pytest.mark.asyncio
 async def test_unsubscribe_stops_emissions(tmp_path):
-    """After ``unsubscribe_from_process_completion`` the callback
-    must no longer be called — important for tests and for the BE's
-    shutdown path so we don't leak into a process tree that's about
-    to be killed anyway."""
+    """After ``bus.off("exit", cb)`` the callback must no longer be
+    called — important for tests and for the BE's shutdown path so
+    we don't leak into a process tree that's about to be killed
+    anyway."""
     seen: list[dict] = []
 
     def _cb(info: dict) -> None:
         seen.append(info)
 
-    subscribe_to_process_completion(_cb)
-    unsubscribe_from_process_completion(_cb)
+    bus = supervisors.default().registry.bus
+    bus.on("exit", _cb)
+    bus.off("exit", _cb)
 
     tools = EmberShellTools(base_dir=str(tmp_path))
     await tools.run_shell_command(command="echo after_unsub", background=True)

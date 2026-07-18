@@ -79,9 +79,7 @@ def _make_backend(
     # so the install/update/remove paths' f-string messages don't
     # interpolate a MagicMock repr. Individual tests override this
     # when they want to assert on specific counts.
-    session.reload_plugins.return_value = PluginReloadCounts(
-        plugins=0, skills=0, agents=0, hooks=0
-    )
+    session.reload_plugins.return_value = PluginReloadCounts(plugins=0, skills=0, agents=0, hooks=0)
 
     backend = BackendServer.__new__(BackendServer)
     backend._session = session

@@ -45,9 +45,9 @@ export interface OrchestrateAgent {
 
 /** Cap on how many preview lines we keep per agent. 5 lines is enough
  *  to see a coherent thought without consuming bubble height — and
- *  matches the BE's ``PREVIEW_WINDOW`` in
- *  ``core/tools/orchestrate.py`` (the BE is the source of truth for
- *  the window contents). */
+ *  matches the BE's ``PreviewFormatter.WINDOW`` in
+ *  ``core/tools/orchestrate_preview.py`` (the BE is the source of
+ *  truth for the window contents). */
 export const PREVIEW_WINDOW = 5;
 
 export interface OrchestrateToolCall {
@@ -242,7 +242,8 @@ export function applyOrchestrateEvent(
       // non-empty lines of the agent's accumulated streaming content,
       // joined by ``\n``. We split + replace rather than append so the
       // FE never has to reconstruct lines from token-sized deltas —
-      // see ``_build_preview`` in core/tools/orchestrate.py.
+      // see ``PreviewFormatter.format_content_buffer`` in
+      // ``core/tools/orchestrate_preview.py``.
       const raw = ev.text || "";
       const parsed = raw
         .split("\n")

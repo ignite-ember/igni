@@ -11,6 +11,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from ember_code.backend.hitl_tracer import HITLTracer
+from ember_code.backend.pending_requirements_store import PendingRequirementsStore
+from ember_code.backend.schemas_pause import PendingRequirement
 from ember_code.backend.server import BackendServer
 from ember_code.core.config.settings import Settings
 from ember_code.core.config.tool_permissions import ToolPermissions
@@ -192,12 +195,13 @@ class TestBackendHITLResolution:
             # Force the sub-agent coordinator to NOT claim this requirement,
             # so the main-team resolve path runs and we can assert on it.
             server._session.sub_agent_hitl.resolve = MagicMock(return_value=False)
-            server._pending_requirements = {}
+            server._hitl_store = PendingRequirementsStore()
+            server._hitl_tracer = HITLTracer(enabled=False)
             server._processing = False
 
             # Store a mock requirement
             req = MagicMock()
-            server._pending_requirements["r1"] = (req, "run-1")
+            server._hitl_store.register("r1", PendingRequirement(req=req, run_id="run-1"))
 
             # Resolve it
             results = []
@@ -219,10 +223,11 @@ class TestBackendHITLResolution:
                 return_value=MagicMock(should_continue=True, message="")
             )
             server._session.sub_agent_hitl.resolve = MagicMock(return_value=False)
-            server._pending_requirements = {}
+            server._hitl_store = PendingRequirementsStore()
+            server._hitl_tracer = HITLTracer(enabled=False)
 
             req = MagicMock()
-            server._pending_requirements["r1"] = (req, "run-1")
+            server._hitl_store.register("r1", PendingRequirement(req=req, run_id="run-1"))
 
             results = []
             async for proto in server.resolve_hitl("r1", "reject"):
@@ -237,7 +242,8 @@ class TestBackendHITLResolution:
             server = BackendServer.__new__(BackendServer)
             server._session = MagicMock()
             server._session.sub_agent_hitl.resolve = MagicMock(return_value=False)
-            server._pending_requirements = {}
+            server._hitl_store = PendingRequirementsStore()
+            server._hitl_tracer = HITLTracer(enabled=False)
 
             results = []
             async for proto in server.resolve_hitl("nonexistent", "confirm"):

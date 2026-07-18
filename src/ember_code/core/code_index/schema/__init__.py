@@ -1,24 +1,21 @@
-"""Domain schema for the code_index package."""
+"""Public re-export surface for ``ember_code.core.code_index.schema``.
+
+Domain Pydantic models live in sibling files (branches, chroma_row,
+commit_metadata, file_reference, items, manifest, queries, stats,
+where_filter). Wire-format coercion lives in :mod:`.wire`. The clock
+collaborator lives in :mod:`.manifest` (the only consumer is
+manifest's own mutators); this ``__init__`` re-exports it alongside
+``wire`` so callers can ``from ember_code.core.code_index.schema import Clock``.
+"""
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any
-from uuid import UUID
+from ember_code.core.code_index.schema.manifest import Clock, SystemClock
+from ember_code.core.code_index.schema.wire import JsonSafe, WeaviateWireCodec
 
-
-def convert_weaviate_types(data: Any) -> Any:
-    """Recursively convert Weaviate-returned datetime/UUID values to strings."""
-    if isinstance(data, datetime):
-        return data.isoformat()
-    if isinstance(data, UUID):
-        return str(data)
-    if isinstance(data, dict):
-        return {k: convert_weaviate_types(v) for k, v in data.items()}
-    if isinstance(data, list):
-        return [convert_weaviate_types(item) for item in data]
-    return data
-
-
-def now_iso() -> str:
-    return datetime.now().astimezone().isoformat()
+__all__ = [
+    "Clock",
+    "JsonSafe",
+    "SystemClock",
+    "WeaviateWireCodec",
+]

@@ -2,9 +2,9 @@
 
 Two layers cooperate:
 
-* ``save_default_model`` — writes to ``~/.ember/config.yaml`` so a
+* :class:`UserConfigStore` — writes to ``~/.ember/config.yaml`` so a
   fresh session opened after restart loads the chosen model.
-* ``SessionPreferencesStore`` — writes to ``state.db`` keyed by
+* :class:`SessionPreferencesStore` — writes to ``state.db`` keyed by
   ``session_id`` so ``--continue`` restores the model the user was
   using in that specific session, even if the user has since picked
   a different default for new sessions.
@@ -20,12 +20,22 @@ import yaml
 
 from ember_code.backend.server import BackendServer
 from ember_code.core.code_index.paths import state_db_path
-from ember_code.core.config.settings import Settings, save_default_model
+from ember_code.core.config.settings import Settings
+from ember_code.core.config.user_config_store import UserConfigStore
 from ember_code.core.session.session_preferences import SessionPreferencesStore
 
 
+def _save_default_model(name: str) -> None:
+    """Thin adapter that mirrors the deleted ``save_default_model``
+    shim so the existing test bodies read naturally after the OOP-
+    refactor promoted the persistence logic onto
+    :class:`UserConfigStore`."""
+    UserConfigStore().set_default_model(name)
+
+
 class TestSaveDefaultModel:
-    """``save_default_model`` round-trips through ``~/.ember/config.yaml``."""
+    """``UserConfigStore.set_default_model`` round-trips through
+    ``~/.ember/config.yaml``."""
 
     def test_writes_default_to_user_config(self, tmp_path, monkeypatch):
         """Setting a default writes a minimal ``models.default`` key
@@ -33,7 +43,7 @@ class TestSaveDefaultModel:
         unrelated keys."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
-        save_default_model("MiniMax-M2.7")
+        _save_default_model("MiniMax-M2.7")
 
         cfg_path = tmp_path / ".ember" / "config.yaml"
         assert cfg_path.exists()
@@ -55,7 +65,7 @@ class TestSaveDefaultModel:
             )
         )
 
-        save_default_model("gpt-7")
+        _save_default_model("gpt-7")
 
         cfg = yaml.safe_load((cfg_dir / "config.yaml").read_text())
         assert cfg["display"] == {"color_theme": "dark"}
@@ -69,8 +79,8 @@ class TestSaveDefaultModel:
         no list."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
-        save_default_model("first")
-        save_default_model("second")
+        _save_default_model("first")
+        _save_default_model("second")
 
         cfg = yaml.safe_load((tmp_path / ".ember" / "config.yaml").read_text())
         assert cfg["models"]["default"] == "second"
@@ -85,7 +95,7 @@ class TestSaveDefaultModel:
         cfg_dir.mkdir(parents=True)
         (cfg_dir / "config.yaml").write_text(yaml.safe_dump({"models": ["bogus", "list"]}))
 
-        save_default_model("MiniMax-M2.7")
+        _save_default_model("MiniMax-M2.7")
 
         cfg = yaml.safe_load((cfg_dir / "config.yaml").read_text())
         assert cfg["models"] == {"default": "MiniMax-M2.7"}

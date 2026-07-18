@@ -63,9 +63,7 @@ class MCPToolStateStore:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
-                "disabled": {
-                    server: sorted(tools) for server, tools in disabled.items() if tools
-                }
+                "disabled": {server: sorted(tools) for server, tools in disabled.items() if tools}
             }
             path.write_text(json.dumps(payload, indent=2) + "\n")
         except OSError as exc:

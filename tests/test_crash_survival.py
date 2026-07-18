@@ -30,11 +30,48 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ember_code.backend.schemas_lifecycle import InterruptedRunSummary
 from ember_code.backend.server import BackendServer
+from ember_code.backend.server_lifecycle import LifecycleController
 from ember_code.core.session.pending_messages import (
     PendingMessage,
     PendingMessageStore,
 )
+
+
+class _RunsStub:
+    """Minimal :class:`RunController` stand-in — captures the typed
+    :class:`InterruptedRunSummary` handed off by
+    :meth:`LifecycleController.detect_interrupted_run`.
+
+    Used across the crash-survival tests that need to observe the
+    summary without spinning up a full ``RunController`` (which
+    would drag in ``PromptBuilder``, ``RunHookGate``, ...).
+    """
+
+    def __init__(self) -> None:
+        self.interrupted_summary: InterruptedRunSummary | None = None
+
+    def set_interrupted_summary(self, summary: InterruptedRunSummary | None) -> None:
+        self.interrupted_summary = summary
+
+
+def _make_lifecycle(
+    session, pending_store: PendingMessageStore, runs: _RunsStub
+) -> LifecycleController:
+    """Build a :class:`LifecycleController` against real dependencies.
+
+    Replaces the old pattern of poking private attrs
+    (``_interrupted_run_summary`` / ``_pending_message_ids_to_drop``)
+    onto a ``BackendServer`` built via ``__new__``. The controller
+    is now the actual owner; tests read the typed summary off the
+    runs stub."""
+    return LifecycleController(
+        session=session,
+        pending_store=pending_store,
+        runs=runs,
+        rehydrate=MagicMock(),  # unused by detect_interrupted_run
+    )
 
 
 @pytest.fixture
@@ -290,31 +327,34 @@ class TestPendingNotDiscardedUntilConsumed:
 
     @pytest.mark.asyncio
     async def test_detect_keeps_pending_alive(self, tmp_path):
-        server = BackendServer.__new__(BackendServer)
-        server._interrupted_run_summary = None
-        server._pending_message_ids_to_drop = []
-        server._session = MagicMock()
-        server._session.session_id = "sess"
-        server._session.main_team.aget_session = AsyncMock(return_value=None)
+        session = MagicMock()
+        session.session_id = "sess"
+        session.main_team.aget_session = AsyncMock(return_value=None)
 
         store = PendingMessageStore(tmp_path / "state.db")
         store.record_received("sess", "lost question")
-        server._pending_store = store
 
-        await server._detect_interrupted_run()
+        runs = _RunsStub()
+        lifecycle = _make_lifecycle(session, store, runs)
+        await lifecycle.detect_interrupted_run()
 
         # Summary built — agent will know about the interruption.
-        assert server._interrupted_run_summary is not None
+        assert runs.interrupted_summary is not None
         # AND the pending row is still in the store so the FE can
         # fetch it for the conversation pane. Backdate first so the
         # 60s freshness filter in ``get_pending_messages`` doesn't
         # hide the just-inserted row.
         _backdate_pending_rows(tmp_path / "state.db")
-        rows = await server.get_pending_messages("sess")
-        assert len(rows) == 1
-        assert rows[0].content == "lost question"
-        # Drop list is queued for the next ``run_message``.
-        assert len(server._pending_message_ids_to_drop) == 1
+        # The row is still present in the store (drop is queued,
+        # not executed) — the FE fetches it via
+        # ``get_pending_messages`` for the conversation pane. Read
+        # directly off the store rather than through the server's
+        # RPC delegate: we don't need the server here anymore.
+        assert len(store.list_pending("sess")) == 1
+        assert store.list_pending("sess")[0].text == "lost question"
+        # Drop list is queued on the summary for the next
+        # ``run_message`` to drain.
+        assert len(runs.interrupted_summary.pending_ids_to_drop) == 1
 
 
 class TestInterruptedDetectionUsesPendingStore:
@@ -326,53 +366,51 @@ class TestInterruptedDetectionUsesPendingStore:
 
     @pytest.mark.asyncio
     async def test_pending_message_only_path_builds_summary(self, tmp_path):
-        server = BackendServer.__new__(BackendServer)
-        server._interrupted_run_summary = None
-        server._session = MagicMock()
-        server._session.session_id = "sess"
-
+        session = MagicMock()
+        session.session_id = "sess"
         # Agno's session lookup returns None — the typical
         # text-only crash case.
-        server._session.main_team.aget_session = AsyncMock(return_value=None)
+        session.main_team.aget_session = AsyncMock(return_value=None)
 
         store = PendingMessageStore(tmp_path / "state.db")
         store.record_received("sess", "What's the meaning of life?")
-        server._pending_store = store
 
-        await server._detect_interrupted_run()
+        runs = _RunsStub()
+        lifecycle = _make_lifecycle(session, store, runs)
+        await lifecycle.detect_interrupted_run()
 
-        assert server._interrupted_run_summary is not None
-        s = server._interrupted_run_summary
+        assert runs.interrupted_summary is not None
+        s = runs.interrupted_summary.summary_text
         assert "interrupted" in s.lower()
         assert "what's the meaning of life" in s.lower()
 
     @pytest.mark.asyncio
     async def test_pending_row_queued_for_drop_not_discarded_yet(self, tmp_path):
         """Two-step lifecycle (refined to fix the FE-visibility
-        bug): ``_detect_interrupted_run`` builds the summary AND
+        bug): ``detect_interrupted_run`` builds the summary AND
         records which pending ids should be dropped next, but the
         rows themselves stay alive so the FE can fetch them via
         ``get_pending_messages``. Actual ``discard`` happens inside
         ``_run_message_locked`` when the agent consumes the
         summary."""
-        server = BackendServer.__new__(BackendServer)
-        server._interrupted_run_summary = None
-        server._pending_message_ids_to_drop = []
-        server._session = MagicMock()
-        server._session.session_id = "sess"
-        server._session.main_team.aget_session = AsyncMock(return_value=None)
+        session = MagicMock()
+        session.session_id = "sess"
+        session.main_team.aget_session = AsyncMock(return_value=None)
 
         store = PendingMessageStore(tmp_path / "state.db")
         store.record_received("sess", "q1")
-        server._pending_store = store
 
-        await server._detect_interrupted_run()
+        runs = _RunsStub()
+        lifecycle = _make_lifecycle(session, store, runs)
+        await lifecycle.detect_interrupted_run()
 
         # Row IS still pending — the FE needs it for the
         # conversation pane.
         assert len(store.list_pending("sess")) == 1
-        # And the drop is queued for the next consumer.
-        assert len(server._pending_message_ids_to_drop) == 1
+        # And the drop is queued for the next consumer, on the
+        # typed summary.
+        assert runs.interrupted_summary is not None
+        assert len(runs.interrupted_summary.pending_ids_to_drop) == 1
 
 
 class TestPeriodicCheckpoint:

@@ -2,7 +2,7 @@
 
 Extracted in iter 139. Session integration coverage lives in
 ``test_plugins_session_integration.py``; these tests pin the
-free-function contract in isolation — most importantly the
+coordinator contract in isolation — most importantly the
 "sequential iteration" invariant (parallel would race MCP
 handshakes / stack N modal approval prompts) and the
 "rebuild_mcp only when something actually connected /
@@ -14,118 +14,135 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ember_code.core.session.mcp_ops import auto_connect_mcps, disconnect_removed_mcps
+from ember_code.core.mcp.schemas import MCPConnectResult
+from ember_code.core.session.mcp_ops import (
+    McpLifecycleCoordinator,
+    McpLifecycleDeps,
+)
 
 
-def _bare_session():
-    """Session-shaped stub carrying only what mcp_ops reads."""
-    session = SimpleNamespace()
-    session.mcp_manager = SimpleNamespace()
-    session.mcp_manager.disconnect_one = AsyncMock(return_value=True)
-    session.mcp_manager.connect = AsyncMock(return_value=MagicMock(functions={"t1": lambda: None}))
-    session.rebuild_mcp = MagicMock()
-    return session
+def _deps():
+    """Build an :class:`McpLifecycleDeps` stub carrying only what
+    the coordinator reads: a fake ``mcp_manager`` with
+    ``disconnect_one`` / ``connect`` async methods and a
+    :class:`MagicMock` ``rebuild`` callable so tests can assert on
+    call count."""
+    mcp_manager = SimpleNamespace()
+    mcp_manager.disconnect_one = AsyncMock(return_value=True)
+    mcp_manager.connect = AsyncMock(
+        return_value=MCPConnectResult.success(MagicMock(functions={"t1": lambda: None}))
+    )
+    rebuild = MagicMock()
+    return McpLifecycleDeps(mcp_manager=mcp_manager, rebuild=rebuild)
 
 
-class TestDisconnectRemovedMcps:
+class TestDisconnect:
     @pytest.mark.asyncio
     async def test_disconnects_each_server(self):
-        s = _bare_session()
-        await disconnect_removed_mcps(s, {"srv-a", "srv-b"})
+        deps = _deps()
+        coord = McpLifecycleCoordinator(deps)
+        await coord.disconnect({"srv-a", "srv-b"})
         # Sequential iteration through both.
-        assert s.mcp_manager.disconnect_one.call_count == 2
-        # ``rebuild_mcp`` fired because at least one disconnect succeeded.
-        s.rebuild_mcp.assert_called_once()
+        assert deps.mcp_manager.disconnect_one.call_count == 2
+        # ``rebuild`` fired because at least one disconnect succeeded.
+        deps.rebuild.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_no_rebuild_when_nothing_actually_disconnected(self):
         # ``disconnect_one`` returns False when the server wasn't
         # connected in the first place — the config-removal branch.
         # No rebuild needed since the tool surface didn't change.
-        s = _bare_session()
-        s.mcp_manager.disconnect_one = AsyncMock(return_value=False)
-        await disconnect_removed_mcps(s, {"srv-never-connected"})
-        s.rebuild_mcp.assert_not_called()
+        deps = _deps()
+        deps.mcp_manager.disconnect_one = AsyncMock(return_value=False)
+        coord = McpLifecycleCoordinator(deps)
+        await coord.disconnect({"srv-never-connected"})
+        deps.rebuild.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_exception_in_one_does_not_stop_others(self):
         # A crash disconnecting srv-a shouldn't prevent srv-b from
         # being cleaned up — best-effort cleanup.
-        s = _bare_session()
+        deps = _deps()
 
         async def _flaky(name):
             if name == "srv-a":
                 raise RuntimeError("boom")
             return True
 
-        s.mcp_manager.disconnect_one = AsyncMock(side_effect=_flaky)
+        deps.mcp_manager.disconnect_one = AsyncMock(side_effect=_flaky)
+        coord = McpLifecycleCoordinator(deps)
         # No raise even though srv-a crashes.
-        await disconnect_removed_mcps(s, {"srv-a", "srv-b"})
+        await coord.disconnect({"srv-a", "srv-b"})
         # Still fired at rebuild for srv-b's successful disconnect.
-        s.rebuild_mcp.assert_called_once()
+        deps.rebuild.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_empty_set_is_noop(self):
-        s = _bare_session()
-        await disconnect_removed_mcps(s, set())
-        s.mcp_manager.disconnect_one.assert_not_called()
-        s.rebuild_mcp.assert_not_called()
+        deps = _deps()
+        coord = McpLifecycleCoordinator(deps)
+        await coord.disconnect(set())
+        deps.mcp_manager.disconnect_one.assert_not_called()
+        deps.rebuild.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_iteration_is_sorted(self):
         # Sorted iteration keeps the debug logs stable — makes it
         # easier to reproduce timing bugs from log traces.
-        s = _bare_session()
+        deps = _deps()
         called_order: list[str] = []
 
         async def _record(name):
             called_order.append(name)
             return True
 
-        s.mcp_manager.disconnect_one = AsyncMock(side_effect=_record)
-        await disconnect_removed_mcps(s, {"c", "a", "b"})
+        deps.mcp_manager.disconnect_one = AsyncMock(side_effect=_record)
+        coord = McpLifecycleCoordinator(deps)
+        await coord.disconnect({"c", "a", "b"})
         assert called_order == ["a", "b", "c"]
 
 
-class TestAutoConnectMcps:
+class TestConnect:
     @pytest.mark.asyncio
     async def test_connects_each_server(self):
-        s = _bare_session()
-        await auto_connect_mcps(s, {"srv-a", "srv-b"})
-        assert s.mcp_manager.connect.call_count == 2
-        s.rebuild_mcp.assert_called_once()
+        deps = _deps()
+        coord = McpLifecycleCoordinator(deps)
+        await coord.connect({"srv-a", "srv-b"})
+        assert deps.mcp_manager.connect.call_count == 2
+        deps.rebuild.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_no_rebuild_when_all_connections_failed(self):
-        # If every connect returned None (denied / policy blocked /
-        # transport error), skip the rebuild — the tool surface
-        # didn't gain anything.
-        s = _bare_session()
-        s.mcp_manager.connect = AsyncMock(return_value=None)
-        await auto_connect_mcps(s, {"srv-a"})
-        s.rebuild_mcp.assert_not_called()
+        # If every connect returned an ``ok=False`` Result (denied /
+        # policy blocked / transport error), skip the rebuild — the
+        # tool surface didn't gain anything.
+        deps = _deps()
+        deps.mcp_manager.connect = AsyncMock(return_value=MCPConnectResult.failure("denied"))
+        coord = McpLifecycleCoordinator(deps)
+        await coord.connect({"srv-a"})
+        deps.rebuild.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_exception_in_one_does_not_stop_others(self):
-        s = _bare_session()
+        deps = _deps()
         client = MagicMock(functions={"t1": lambda: None})
 
         async def _flaky(name):
             if name == "srv-a":
                 raise RuntimeError("boom")
-            return client
+            return MCPConnectResult.success(client)
 
-        s.mcp_manager.connect = AsyncMock(side_effect=_flaky)
-        await auto_connect_mcps(s, {"srv-a", "srv-b"})
+        deps.mcp_manager.connect = AsyncMock(side_effect=_flaky)
+        coord = McpLifecycleCoordinator(deps)
+        await coord.connect({"srv-a", "srv-b"})
         # srv-b succeeded → rebuild.
-        s.rebuild_mcp.assert_called_once()
+        deps.rebuild.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_sequential_not_parallel(self):
         # Sequential is a required invariant: first-use approval
         # is a modal UI element; parallel connect would stack N
         # dialogs on the user simultaneously.
-        s = _bare_session()
+        deps = _deps()
         in_flight = 0
         max_in_flight = 0
 
@@ -138,9 +155,10 @@ class TestAutoConnectMcps:
 
             await _asyncio.sleep(0)
             in_flight -= 1
-            return MagicMock(functions={})
+            return MCPConnectResult.success(MagicMock(functions={"t1": lambda: None}))
 
-        s.mcp_manager.connect = AsyncMock(side_effect=_tracking)
-        await auto_connect_mcps(s, {"a", "b", "c"})
+        deps.mcp_manager.connect = AsyncMock(side_effect=_tracking)
+        coord = McpLifecycleCoordinator(deps)
+        await coord.connect({"a", "b", "c"})
         # Never more than one connect in flight at a time.
         assert max_in_flight == 1
