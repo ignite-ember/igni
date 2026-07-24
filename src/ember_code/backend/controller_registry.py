@@ -52,7 +52,6 @@ from ember_code.backend.team_wiring import TeamWiring
 from ember_code.backend.visualization_action_bus import VisualizationActionBus
 
 if TYPE_CHECKING:
-
     from ember_code.backend.server import BackendServer
     from ember_code.core.config.settings import Settings
     from ember_code.core.session import Session

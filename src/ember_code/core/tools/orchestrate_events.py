@@ -35,7 +35,6 @@ import jiter
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
-
     pass
 
 
