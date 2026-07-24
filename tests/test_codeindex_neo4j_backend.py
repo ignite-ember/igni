@@ -140,3 +140,113 @@ async def test_apply_delta_persists_references_to_neo4j(tmp_path, driver, projec
     svc = index.file_reference_service()
     edges = await svc.get_by_uuids(["f1"])
     assert any(e.to_uuid == "f2" and e.relation == "imports" for e in edges)
+
+
+class _StubRuntime:
+    """Minimal stand-in for :class:`Neo4jRuntime` to exercise the
+    ``runtime=`` wiring on :class:`CodeIndex` without spawning a real
+    subprocess. Records calls so the test can assert what the indexer
+    asked for and hands back the shared live driver for that commit.
+    """
+
+    def __init__(self, driver, project_id: str) -> None:
+        self._driver = driver
+        self._project_id = project_id
+        self.started: list[tuple[str, str]] = []
+        self.drivers_requested: list[tuple[str, str]] = []
+
+    async def start_for_commit(self, project_hash: str, commit_sha: str) -> object:
+        self.started.append((project_hash, commit_sha))
+        # Endpoints are unused by the indexer; the driver is the
+        # only thing actually consumed.
+        return object()
+
+    def driver_for(self, project_hash: str, commit_sha: str):
+        self.drivers_requested.append((project_hash, commit_sha))
+        return self._driver
+
+
+async def test_runtime_param_derives_per_commit_client(tmp_path, driver, project_id):
+    """When constructed with ``runtime=``, the indexer ensures the
+    runtime has a process for the commit, then uses the per-commit
+    driver for the file-refs service. Same wiring the per-commit
+    isolation tests will use, exercised here against a live driver
+    via a stub runtime (no real subprocess)."""
+    # Prepare schema on the live neo4j so the references have somewhere
+    # to land. The stub reuses this single driver for all commits.
+    client = Neo4jClient(driver, project_id, commit_sha="d" * 40)
+    await client.apply_schema()
+
+    runtime = _StubRuntime(driver, project_id)
+    index = CodeIndex(project=tmp_path, data_dir=tmp_path / "data", runtime=runtime)
+
+    # Write a JSONL delta with one reference. The applier should
+    # drive the runtime to start the commit, then derive a
+    # per-commit client for the service.
+    jsonl = tmp_path / "delta.jsonl"
+    jsonl.write_text(
+        json.dumps(
+            {
+                "op": "commit",
+                "sha": "e" * 40,
+                "parent_sha": None,
+                "branches": ["main"],
+                "indexed_at": "2026-07-24T00:00:00+00:00",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "op": "upsert_reference",
+                "from_id": "alpha",
+                "to_id": "beta",
+                "relation": "calls",
+                "meta": {"line": 7},
+            }
+        )
+        + "\n"
+    )
+
+    await index.apply_delta(jsonl)
+
+    # The runtime should have been asked to start the commit and then
+    # hand out a driver for it.
+    assert any(sha == "e" * 40 for (_, sha) in runtime.started)
+    assert any(sha == "e" * 40 for (_, sha) in runtime.drivers_requested)
+
+    # The reference must be visible via the per-commit service the
+    # indexer derived from the runtime.
+    svc = index.file_reference_service(commit_sha="e" * 40)
+    fetched = await svc.get("alpha", "beta", "calls")
+    assert fetched is not None
+    assert fetched.meta == {"line": 7}
+
+    # A second apply_delta for a different commit must get its own
+    # per-commit service (cached, but distinct from the first).
+    jsonl2 = tmp_path / "delta2.jsonl"
+    jsonl2.write_text(
+        json.dumps(
+            {
+                "op": "commit",
+                "sha": "f" * 40,
+                "parent_sha": None,
+                "branches": ["main"],
+                "indexed_at": "2026-07-24T00:00:00+00:00",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "op": "upsert_reference",
+                "from_id": "gamma",
+                "to_id": "delta",
+                "relation": "imports",
+            }
+        )
+        + "\n"
+    )
+    await index.apply_delta(jsonl2)
+    svc2 = index.file_reference_service(commit_sha="f" * 40)
+    assert svc2 is not svc  # distinct per-commit service instances
+    fetched2 = await svc2.get("gamma", "delta", "imports")
+    assert fetched2 is not None

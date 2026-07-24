@@ -37,7 +37,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ember_code.core.code_index.delta.ops import (
     CommitOp,
@@ -88,12 +88,18 @@ class DeltaApplier:
         file_refs: FileReferenceService,
         jsonl_path: str | Path,
         on_progress: ProgressCallback | None = None,
+        neo4j_client: Any | None = None,
     ) -> None:
         self._index = index
+        # If a per-call neo4j_client is passed, prefer it for the
+        # file-refs service — the commit-scoped client knows which
+        # physical Neo4j DB to target. Falls back to whatever the
+        # indexer was constructed with (``self._index._file_refs``).
         self._file_refs = file_refs
         self._jsonl_path = Path(jsonl_path)
         self._progress = SafeProgressReporter(on_progress)
         self._parser = DeltaParser()
+        self._neo4j_client = neo4j_client
 
         # Per-run mutable state — reset by construction, not by
         # ``run()``, so accidental re-runs surface as ``ValueError``

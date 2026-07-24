@@ -48,6 +48,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from ember_code.core.code_index.delta.applier import DeltaApplier
 from ember_code.core.code_index.delta.ops import (
@@ -89,6 +90,7 @@ async def apply_delta(
     file_refs,
     jsonl_path: str | Path,
     on_progress: ProgressCallback | None = None,
+    neo4j_client: Any | None = None,
 ) -> DeltaStats:
     """Backward-compatibility shim over :class:`DeltaApplier`.
 
@@ -104,6 +106,7 @@ async def apply_delta(
         file_refs=file_refs,
         jsonl_path=jsonl_path,
         on_progress=on_progress,
+        neo4j_client=neo4j_client,
     )
     result = await applier.run()
     return result.stats

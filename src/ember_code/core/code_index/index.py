@@ -31,6 +31,7 @@ The class is a thin orchestrator over four collaborators:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
 from collections import Counter
@@ -198,29 +199,121 @@ class CodeIndex:
         return target
 
     async def apply_delta(self, jsonl_path: str | Path):
-        """Apply a producer-emitted JSONL changeset to this project."""
+        """Apply a producer-emitted JSONL changeset to this project.
+
+        When constructed with ``runtime=`` (a :class:`Neo4jRuntime`),
+        this method ensures the runtime has a process for the commit
+        being indexed, derives a per-commit ``Neo4jClient``, and
+        routes ``upsert_reference`` ops through it. The chroma-backed
+        item/chunk storage is unchanged in this branch; only file
+        references traverse the neo4j path.
+        """
+        # When a runtime is configured, ``_client_for_active_commit``
+        # ensures the runtime has a process for the commit, returns
+        # the per-commit client, and ``file_reference_service()``
+        # uses it (per-commit cached). When no runtime, ``commit_sha``
+        # is irrelevant for the file-refs backend.
+        neo4j_client = await self._client_for_active_commit(jsonl_path)
+        commit_sha = neo4j_client.commit_sha if neo4j_client is not None else None
+        file_refs = self.file_reference_service(commit_sha=commit_sha)
         return await apply_delta(
             index=self,
-            file_refs=self.file_reference_service(),
+            file_refs=file_refs,
             jsonl_path=jsonl_path,
+            neo4j_client=neo4j_client,
         )
 
-    def file_reference_service(self):
+    async def _client_for_active_commit(self, jsonl_path: str | Path) -> Any | None:
+        """Return a per-commit ``Neo4jClient`` when ``runtime=`` is set.
+
+        Reads the first line of ``jsonl_path`` (the mandatory
+        ``commit`` op) to learn the active ``commit_sha``, then asks
+        the runtime to ensure a process for the
+        ``(project_hash, commit_sha)`` pair and hands back a client
+        bound to the resulting driver. Returns ``None`` when no
+        runtime is configured (the caller falls back to whatever
+        backend the indexer was constructed with).
+        """
+        if self._neo4j_runtime is None:
+            return None
+        # Peek the first non-blank line for the commit sha. The
+        # applier will re-parse the file; we just need the sha.
+        commit_sha = ""
+        with open(jsonl_path) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                op = json.loads(line)
+                if op.get("op") != "commit":
+                    raise ValueError(
+                        f"first op of {jsonl_path} must be 'commit', got {op.get('op')!r}"
+                    )
+                commit_sha = op.get("sha", "")
+                break
+        if not commit_sha:
+            raise ValueError(f"empty or non-commit-leading delta: {jsonl_path}")
+        # Ensure the runtime has spawned (or re-attached to) a
+        # process for this (project, commit) pair. ``start_for_commit``
+        # is idempotent — subsequent callers get the same driver.
+        await self._neo4j_runtime.start_for_commit(self.project_id, commit_sha)
+        driver = self._neo4j_runtime.driver_for(self.project_id, commit_sha)
+        # Lazy import — the project may not have the neo4j driver
+        # installed when this module is loaded.
+        from ember_code.core.code_index.neo4j_client import Neo4jClient
+
+        return Neo4jClient(driver, self.project_id, commit_sha)
+
+    def file_reference_service(self, *, commit_sha: str | None = None):
         """Lazily build a ``FileReferenceService``.
 
         Routes to the neo4j backend when ``neo4j_client`` was
-        injected at construction; falls back to the per-project SQLite
-        otherwise. The service class is backend-pluggable (see
+        injected at construction OR when ``runtime=`` is set (the
+        latter derives a per-commit client from the runtime; the
+        ``commit_sha`` arg is the discriminator for that case);
+        falls back to the per-project SQLite otherwise. The
+        service class is backend-pluggable (see
         :class:`db.file_reference.FileReferenceService`), so the
         switch is transparent to callers — the only difference is
         where the data lives.
+
+        When ``runtime=`` is set, results are cached per ``commit_sha``
+        so repeated reads of the same commit's references don't
+        re-construct a client.
         """
-        if self._file_refs is None:
-            if self._neo4j_client is not None:
+        # Runtime path: per-commit client from the runtime.
+        if self._neo4j_runtime is not None:
+            assert commit_sha is not None, (
+                "file_reference_service() with runtime= requires commit_sha"
+            )
+            cache = getattr(self, "_file_refs_by_commit", None)
+            if cache is None:
+                cache = {}
+                self._file_refs_by_commit = cache  # type: ignore[attr-defined]
+            existing = cache.get(commit_sha)
+            if existing is not None:
+                return existing
+            # Caller is expected to have called
+            # ``_client_for_active_commit`` (or equivalent) so the
+            # runtime already has a process for this commit.
+            driver = self._neo4j_runtime.driver_for(self.project_id, commit_sha)
+            from ember_code.core.code_index.neo4j_client import Neo4jClient
+
+            client = Neo4jClient(driver, self.project_id, commit_sha)
+            svc = FileReferenceService(client)
+            cache[commit_sha] = svc
+            return svc
+
+        # Explicit client shortcut (no runtime).
+        if self._neo4j_client is not None:
+            if self._file_refs is None:
                 self._file_refs = FileReferenceService(self._neo4j_client)
-            else:
-                db = Database(state_db_path(self.project, data_dir=self.data_dir))
-                self._file_refs = FileReferenceService(db)
+            return self._file_refs
+
+        # Legacy SQLite fallback.
+        if self._file_refs is None:
+            db = Database(state_db_path(self.project, data_dir=self.data_dir))
+            self._file_refs = FileReferenceService(db)
         return self._file_refs
 
     async def set_head(self, sha: str) -> None:
