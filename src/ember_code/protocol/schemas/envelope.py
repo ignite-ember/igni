@@ -38,6 +38,15 @@ class Message(BaseModel):
     # which session emitted the event — views filter to their bound
     # session; empty means session-agnostic (Welcome, global pushes).
     session_id: str = ""
+    # Per-frame sequence number stamped on every BE→FE send by
+    # :meth:`WebSocketServerTransport.send`. Resets to 1 at the
+    # start of every stream (i.e. after ``stream_end``). The FE
+    # dedups by (id, event_seq) so events that arrive twice (e.g.
+    # when two WebSocket clients are attached due to a StrictMode
+    # double-mount of EmberClient) are dropped; the monotonic
+    # counter also pins the canonical ordering of events in a
+    # stream. Empty on FE→BE messages.
+    event_seq: int = 0
 
 
 class RunHeader(BaseModel):

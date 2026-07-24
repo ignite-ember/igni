@@ -28,6 +28,11 @@ from ember_code.backend.schemas_pause import (
     SubagentPause,
     TeamStreamEvent,
 )
+from ember_code.core.text_tags import (
+    INITIAL_STATE,
+    ThinkParseState,
+    split_inline_think_tags,
+)
 from ember_code.protocol import messages as msg
 from ember_code.protocol.agno_taxonomy import (
     RUN_COMPLETED_EVENTS,
@@ -92,6 +97,15 @@ class HITLStreamMultiplexer:
         self._store = store
         self._pause_handler = pause_handler
         self._tracer = tracer
+        # Per-run parser state for inline ``<think>`` tag parsing (see
+        # :func:`ember_code.core.text_tags.split_inline_think_tags`).
+        # Some providers emit inline ``<think>`` tags inside their
+        # visible content stream; a block routinely spans many events,
+        # so this holds both the "currently inside an open block" flag
+        # and any trailing partial-tag fragment across events. Reset on
+        # ``run_end`` so a stray partial / open block from a cancelled
+        # run never bleeds into the next run.
+        self._inline_think_state: dict[str, ThinkParseState] = {}
 
     async def stream(self, team_stream: AsyncIterator[Any]) -> AsyncIterator[msg.Message]:
         """Drive the multiplexer for one team stream lifecycle."""
@@ -208,7 +222,8 @@ class HITLStreamMultiplexer:
         # a Message binding to Message | None.
         serialized = serialize_event(event)
         if serialized is not None:
-            yield serialized
+            async for split_msg in self._split_inline_think_tags(event, serialized):
+                yield split_msg
 
         if run_finished:
             # Drain post-run broadcasts (e.g. ``plan_submitted``
@@ -275,6 +290,110 @@ class HITLStreamMultiplexer:
         outer loop after the pause is forwarded/resumed. Everything
         else keeps the stream going."""
         return isinstance(event, RUN_PAUSED_EVENTS)
+
+    # ── Inline `` tag parsing ──────────────────────────────────────
+
+    async def _split_inline_think_tags(
+        self,
+        event: Any,
+        message: msg.Message,
+    ) -> AsyncIterator[msg.Message]:
+        """Run ``split_inline_think_tags`` on a serialized message
+        (typically ``ContentDelta``), yielding the split segments as
+        freshly-built ``ContentDelta`` messages on the wire.
+
+        Why this lives here, not in :class:`EventHandler.build`:
+        handlers must remain stateless so a single Agno event can be
+        tested without a session-shaped collaborator. Carry state is
+        per-stream and per-run — the multiplexer's natural
+        jurisdiction. The serializer stays exactly as it was.
+
+        Carry state for ``run_id`` is preserved across calls and
+        cleared on ``run_end`` (so a partial from a cancelled run
+        doesn't bleed into the next one).
+        """
+        # Only ContentDelta carries inline-tag-text through Agno
+        # ``RunContentEvent`` events; every other message type is
+        # passed straight through.
+        if message.type != "content_delta":
+            yield message
+            return
+
+        # Native reasoning deltas (from ``ReasoningContentHandler``)
+        # already arrive tagged ``is_thinking=True`` with any literal
+        # ``…`` wrapper stripped. The inline-tag parser is only
+        # for *visible* content that carries literal tags — running it
+        # on already-classified reasoning would reclassify tag-free
+        # reasoning text as ``is_thinking=False`` and dump the whole
+        # thinking stream into the visible bubble (the "all goes as
+        # std" bug). Pass reasoning through untouched.
+        if message.is_thinking:
+            yield message
+            return
+
+        # Run-level bookkeeping: drop the parser state when a run ends
+        # so a stray partial tag or unclosed block from a cancelled run
+        # can't leak into the next run.
+        event_type = getattr(event, "type", None) or ""
+        run_id = getattr(message, "id", "") or getattr(event, "run_id", "")
+        if run_id and event_type in ("run_completed", "run_error"):
+            self._inline_think_state.pop(run_id, None)
+            yield message
+            return
+        if not run_id:
+            run_id = "_unknown_"
+
+        state = self._inline_think_state.get(run_id, INITIAL_STATE)
+        segments, next_state = split_inline_think_tags(state, message.text)
+        self._inline_think_state[run_id] = next_state
+
+        # No split needed — pass the original message through
+        # unchanged. Don't rebuild a new instance unless we actually
+        # have multi-segment to emit, so that the chat's identity-
+        # based memoisation (ChatItem text + id) is preserved on the
+        # happy path.
+        #
+        # The text must match too, not just the role: when a ``</think>``
+        # splits across events (``…</thi`` then ``nk>…``), the parser
+        # strips the tag remainder and returns a single visible segment
+        # whose role equals the original — but whose TEXT has the ``nk>``
+        # peeled off. Yielding the original ``message`` here would leak
+        # that ``nk>`` into the visible bubble. Compare text as well so
+        # the fast path only fires when nothing actually changed.
+        if (
+            len(segments) == 1
+            and segments[0][1] == message.is_thinking
+            and segments[0][0] == message.text
+        ):
+            yield message
+            return
+
+        for idx, (text, is_thinking) in enumerate(segments):
+            if not text:
+                continue
+            if idx == 0 and is_thinking == message.is_thinking and text == message.text:
+                # First segment is byte-identical to the original —
+                # emit it verbatim so the chat's identity memoisation
+                # sees the exact same ``Message`` instance the prior
+                # (un-split) handler would have. Guarded on ``text ==
+                # message.text`` so a segment with a stripped tag
+                # remainder (e.g. a split ``</think>``) is rebuilt with
+                # the cleaned text below rather than leaking the tag.
+                # ``message.event_seq`` is whatever the prior transport
+                # left on it (usually 0); passing it through is safe
+                # because the ``WebSocketServerTransport.send`` path
+                # bumps and stamps the counter on the broadcast step
+                # regardless.
+                yield message
+                continue
+            yield msg.ContentDelta(
+                type="content_delta",
+                text=text,
+                is_thinking=is_thinking,
+                id=message.id,
+                session_id=message.session_id,
+                event_seq=0,  # transport stamps on broadcast
+            )
 
     # ── Static helpers ────────────────────────────────────────────
 

@@ -26,8 +26,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import uuid
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from websockets.asyncio.server import serve
@@ -62,6 +64,44 @@ _MAX_FRAME_BYTES = 64 * 1024 * 1024
 _BROADCAST_SEND_TIMEOUT = 2.0
 
 
+# ── Dedicated chunk trace handler ─────────────────────────────────
+# The BE's normal ``--debug`` path configures root logging in
+# :mod:`ember_code.backend.__main__`, but several downstream imports
+# (httpx, litellm, …) reset root handlers between startup and the
+# first :meth:`send` call, which silently drops our
+# ``logger.debug`` calls. To make the chunk trace reliable we attach
+# a *dedicated* file handler to this module's logger the first time
+# it's imported, gated on ``EMBER_CHUNK_TRACE=1`` so non-debug runs
+# don't pay the cost. The handler writes to
+# ``~/.ember/chunk_trace.log`` (overridable via EMBER_CHUNK_TRACE_LOG)
+# and bypasses root propagation entirely — the file is the only sink.
+if os.environ.get("EMBER_CHUNK_TRACE") == "1" and not any(
+    getattr(h, "_ember_chunk_trace", False) for h in logger.handlers
+):
+    _trace_path = Path(
+        os.environ.get("EMBER_CHUNK_TRACE_LOG") or (Path.home() / ".ember" / "chunk_trace.log")
+    )
+    _trace_path.parent.mkdir(parents=True, exist_ok=True)
+
+    class _FlushingFileHandler(logging.FileHandler):
+        """Line-buffer after each emit so a ``tail -f`` shows chunks
+        the moment they leave the BE. Default FileHandler is
+        block-buffered on disk files, which hid 43 chunks behind
+        ~4 KB of buffering on macOS until enough traffic arrived
+        to fill the buffer."""
+
+        def emit(self, record):  # noqa: D401 - stdlib override
+            super().emit(record)
+            self.flush()
+
+    _trace_handler = _FlushingFileHandler(str(_trace_path), mode="a")
+    _trace_handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
+    _trace_handler._ember_chunk_trace = True  # type: ignore[attr-defined]
+    logger.addHandler(_trace_handler)
+    logger.setLevel(logging.DEBUG)
+    logger.debug("chunk_trace handler attached at %s", _trace_path)
+
+
 class WebSocketServerTransport(ListeningTransport):
     """BE-side transport: loopback WS server, N mirrored clients."""
 
@@ -81,6 +121,11 @@ class WebSocketServerTransport(ListeningTransport):
         # client_id → live client wrapper. Insertion order preserved so
         # broadcast order is stable (oldest first).
         self._conns: dict[str, MirroredClient] = {}
+        # Monotonic per-stream event sequence. Increments on every
+        # ``send()``; resets to 0 on ``stream_end`` so the next turn
+        # starts fresh from 1. See :meth:`send` for the FE dedup
+        # contract.
+        self._event_seq: int = 0
         self._closed = False
         self._connected = asyncio.Event()
         # Incoming frames from every client land here; ``receive()``
@@ -154,6 +199,49 @@ class WebSocketServerTransport(ListeningTransport):
             # No views attached (e.g. all webviews mid-reload). Events
             # are fire-and-forget; RPC callers re-issue after reconnect.
             return
+        # Stamp a per-stream monotonic ``event_seq`` so the FE can
+        # dedup events that arrive twice (e.g. when two WebSocket
+        # clients are attached due to a StrictMode double-mount of
+        # EmberClient) AND so the ordering is preserved across
+        # duplicates — the FE keys dedup on (id, event_seq) and the
+        # sequence itself is the canonical order of events in the
+        # stream. ``stream_end`` resets the counter so a new turn
+        # starts fresh from 1.
+        if not message.event_seq:
+            self._event_seq += 1
+            message = message.model_copy(update={"event_seq": self._event_seq})
+        if message.type == "stream_end":
+            self._event_seq = 0
+        # DEBUG-only chunk trace — enabled when an operator raises the
+        # log level to DEBUG to verify the BE is actually streaming
+        # every chunk (vs coalescing or dropping under back-pressure).
+        if message.type == "content_delta":
+            text = getattr(message, "text", "") or ""
+            # Bypass ``logger.debug``: a downstream library (suspect
+            # litellm / agno) calls ``logging.disable(DEBUG)``
+            # globally after startup, which leaves ``isEnabledFor``
+            # returning False even though our level is DEBUG. Emit
+            # the record directly to the chunk-trace handler instead
+            # so chunks actually land in the trace log.
+            chunk_msg = "[chunk tx] seq=%d len=%d thinking=%s preview=%r" % (
+                message.event_seq,
+                len(text),
+                getattr(message, "is_thinking", False),
+                text[:40],
+            )
+            for h in logger.handlers:
+                if getattr(h, "_ember_chunk_trace", False):
+                    record = logging.LogRecord(
+                        name=logger.name,
+                        level=logging.DEBUG,
+                        pathname=__file__,
+                        lineno=0,
+                        msg=chunk_msg,
+                        args=(),
+                        exc_info=None,
+                    )
+                    h.emit(record)
+                    h.flush()
         payload = message.model_dump_json()
 
         results: list[SendResult] = await asyncio.gather(

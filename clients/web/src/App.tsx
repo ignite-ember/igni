@@ -12,7 +12,6 @@ import {
   isOrchestrateActive,
   loopItem,
   mergePlanTasks,
-  newStreamState,
   normalizePlanTasks,
   planItem,
   shellItem,
@@ -525,14 +524,14 @@ export default function App() {
     el.addEventListener("mousedown", onDown);
     return () => el.removeEventListener("mousedown", onDown);
   }, []);
+  // The think-tag parser state previously lived here (streamRef)
+  // — it moved to the BE (see docs/STREAMING_BUG_INVESTIGATION.md)
+  // so React StrictMode's double-fire can no longer contaminate it.
+
   // Bumped on /clear: late events from a pre-clear run (Agno's
   // post-stream tail, e.g. run_completed) must not leak into the
   // fresh conversation.
   const viewGenRef = useRef(0);
-  // <think>-tag parser state. `usesThinkTags` persists across runs
-  // (the model identity doesn't change mid-session unless switched);
-  // inThinking/carry reset at each run start.
-  const streamRef = useRef(newStreamState());
 
   /** Ping the OS / favicon when a reply finishes while the tab is
    *  not focused, so the user knows to come back. */
@@ -629,7 +628,7 @@ export default function App() {
         // the BE confirmed it's live.
         setRunPhase("streaming");
       }
-      setItems((prev) => applyEvent(prev, m, streamRef.current));
+      setItems((prev) => applyEvent(prev, m));
       // After a top-level run finishes, Agno's reported ``input_tokens``
       // is a sum across model iterations and is 2-3× the real session
       // size on multi-step turns. The TUI long since switched its
@@ -1258,7 +1257,7 @@ export default function App() {
         // except for the pure-terminator events that carry no
         // renderable payload.
         if (m.type !== "streaming_done" && m.type !== "stream_end") {
-          setItems((prev) => applyEvent(prev, m, streamRef.current));
+          setItems((prev) => applyEvent(prev, m));
         }
       }
     });
@@ -1434,10 +1433,7 @@ export default function App() {
   const runUserMessage = useCallback(
     async (text: string) => {
       setRunPhase("starting");
-      // Fresh turn: close any dangling thinking state from a
-      // cancelled run; keep usesThinkTags (model didn't change).
-      streamRef.current.inThinking = false;
-      streamRef.current.carry = "";
+      // (parser state was dropped when tag splitter moved to BE)
       const gen = viewGenRef.current;
       try {
         await client.runMessage(text, (m) => {
