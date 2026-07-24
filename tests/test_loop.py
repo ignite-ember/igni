@@ -18,15 +18,17 @@ chroma / HTTP side effects.
 
 from __future__ import annotations
 
-import uuid
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from ember_code.backend.command_handler import CommandHandler
 from ember_code.backend.server import BackendServer
 from ember_code.core.loop.limits import LOOP_DEFAULT_MAX_ITERATIONS, LOOP_HARD_CAP
-from ember_code.core.loop.prompt import wrap_iteration_prompt
+from ember_code.core.loop.models import LoopState
+from ember_code.core.loop.store import LoopProgressStore
+from ember_code.core.session.loop_ops import LoopAdvance, LoopController
 from ember_code.core.tools.loop import LoopTools
 
 # ── Helpers ─────────────────────────────────────────────────────────
@@ -62,30 +64,127 @@ class _FakeProgressStore:
             del self._rows[k]
         return len(keys)
 
+    # Matches the real store's ``ANNOUNCED_TOTAL_KEY = "__loop_total__"``
+    # so tests that read via the same key see the write.
+    ANNOUNCED_TOTAL_KEY = "__loop_total__"
+
+    async def set_announced_total(self, run_id: str, total: int) -> None:
+        self._rows[(run_id, self.ANNOUNCED_TOTAL_KEY)] = str(total)
+
+    async def get_announced_total(self, run_id: str) -> int | None:
+        raw = self._rows.get((run_id, self.ANNOUNCED_TOTAL_KEY))
+        return int(raw) if raw is not None else None
+
 
 class _FakeSession:
-    """Minimal Session stand-in carrying loop fields + helpers.
+    """Minimal Session stand-in that composes a real :class:`LoopController`.
 
     The real :class:`Session` has dozens of subsystems we don't need
-    here. We re-implement the four loop helpers (``start_loop`` /
-    ``advance_loop`` / ``cancel_loop`` / ``resume_loop``) with the
-    same semantics as the real Session — but without the SQLite
-    persistence side-effect, since these unit tests are about the
-    field state machine, not the store.
+    here. This fake mirrors :class:`Session`'s post-refactor shape:
+    a real :class:`LoopController` on ``self.loop`` owns the state
+    machine, and the six ``loop_*`` reads are proxy properties that
+    forward to the controller — matching the production surface so
+    the ``CommandHandler`` / ``LoopTools`` / ``BackendServer``
+    tests exercise the same code path production does.
+
+    Test hooks that write directly to ``sess.pending_loop_prompt``
+    et al. are still supported via the property setters below —
+    they seed the underlying :class:`LoopState` in one shot so
+    downstream calls see a consistent controller state.
     """
 
     def __init__(self) -> None:
-        self.pending_loop_prompt: str | None = None
-        self.loop_iteration_index: int = 0
-        self.loop_iterations_remaining: int = 0
-        self.loop_run_id: str | None = None
-        self.loop_paused: bool = False
-        self.loop_cap_explicit: bool = False
-        self._auto_extended_this_advance: bool = False
+        # Store is stubbed so we don't pay for SQLite in these
+        # state-machine tests; the real persistence path is
+        # covered in ``test_loop_store.py``.
+        store = AsyncMock()
+        store.load = AsyncMock(return_value=None)
+        store.save = AsyncMock()
+        store.clear = AsyncMock()
+        self.loop = LoopController(loop_store=store)
         # In-memory progress store stand-in keyed by (run_id, key)
         # — enough for ``loop_set_total`` and direct
         # ``loop_progress_*`` tool tests without paying for SQLite.
         self.loop_progress_store = _FakeProgressStore()
+
+    # ── Proxy reads (match :class:`Session`) ──────────────────
+
+    @property
+    def pending_loop_prompt(self) -> str | None:
+        return self.loop.pending_loop_prompt
+
+    @property
+    def loop_iteration_index(self) -> int:
+        return self.loop.loop_iteration_index
+
+    @property
+    def loop_iterations_remaining(self) -> int:
+        return self.loop.loop_iterations_remaining
+
+    @property
+    def loop_run_id(self) -> str | None:
+        return self.loop.loop_run_id
+
+    @property
+    def loop_cap_explicit(self) -> bool:
+        return self.loop.loop_cap_explicit
+
+    @property
+    def loop_paused(self) -> bool:
+        return self.loop.paused
+
+    # ── Test seeding writers ──────────────────────────────────
+    #
+    # Tests write raw state via ``sess.pending_loop_prompt = "hi"``
+    # / ``sess.loop_iteration_index = 5`` / ``sess.loop_paused =
+    # True`` etc. to seed a scenario without walking the state
+    # machine. These setters land the writes on the underlying
+    # :class:`LoopState` so the controller reads them back the
+    # same way. The real Session doesn't expose writeable
+    # proxies — this is a test-only affordance.
+
+    def _ensure_state(self) -> LoopState:
+        if self.loop._state is None:
+            self.loop._state = LoopState(
+                run_id="",
+                prompt="",
+                iteration_index=0,
+                iterations_remaining=0,
+                cap_explicit=False,
+            )
+        return self.loop._state
+
+    @pending_loop_prompt.setter
+    def pending_loop_prompt(self, value: str | None) -> None:
+        if value is None:
+            # Full clear mirrors ``cancel_loop`` from a test seeding
+            # a "no active loop" scenario.
+            self.loop._state = None
+            self.loop._paused = False
+            return
+        self._ensure_state().prompt = value
+
+    @loop_iteration_index.setter
+    def loop_iteration_index(self, value: int) -> None:
+        self._ensure_state().iteration_index = value
+
+    @loop_iterations_remaining.setter
+    def loop_iterations_remaining(self, value: int) -> None:
+        self._ensure_state().iterations_remaining = value
+
+    @loop_run_id.setter
+    def loop_run_id(self, value: str | None) -> None:
+        self._ensure_state().run_id = value or ""
+
+    @loop_cap_explicit.setter
+    def loop_cap_explicit(self, value: bool) -> None:
+        self._ensure_state().cap_explicit = value
+
+    @loop_paused.setter
+    def loop_paused(self, value: bool) -> None:
+        self.loop._paused = value
+
+    # ── State-machine methods (forward to the controller) ────
 
     async def start_loop(
         self,
@@ -95,88 +194,44 @@ class _FakeSession:
         immediate: bool,
         cap_explicit: bool,
     ) -> str:
-        self.loop_run_id = str(uuid.uuid4())
-        self.pending_loop_prompt = prompt
-        self.loop_cap_explicit = cap_explicit
-        self.loop_paused = False
-        if immediate:
-            self.loop_iteration_index = 1
-            self.loop_iterations_remaining = max_iter - 1
-        else:
-            self.loop_iteration_index = 0
-            self.loop_iterations_remaining = max_iter
-        return self.loop_run_id
-
-    async def advance_loop(self) -> dict | None:
-        if self.pending_loop_prompt is None:
-            return None
-        if self.loop_paused:
-            return None
-        if self.loop_iterations_remaining <= 0:
-            if self.loop_cap_explicit:
-                total = self.loop_iteration_index
-                await self.cancel_loop()
-                return {"completed": True, "total_iterations": total}
-            if self.loop_iteration_index >= LOOP_HARD_CAP:
-                await self.pause_loop()
-                return {
-                    "safety_cap_paused": True,
-                    "iteration": self.loop_iteration_index,
-                }
-            self.loop_iterations_remaining = min(
-                LOOP_DEFAULT_MAX_ITERATIONS,
-                LOOP_HARD_CAP - self.loop_iteration_index,
-            )
-            self._auto_extended_this_advance = True
-        self.loop_paused = False
-        self.loop_iterations_remaining -= 1
-        self.loop_iteration_index += 1
-        cap = (
-            self.loop_iteration_index + self.loop_iterations_remaining
-            if self.loop_cap_explicit
-            else None
+        return await self.loop.start_loop(
+            prompt, max_iter, immediate=immediate, cap_explicit=cap_explicit
         )
-        out = {
-            "prompt": wrap_iteration_prompt(
-                self.pending_loop_prompt, self.loop_iteration_index, cap
-            ),
-            "display_prompt": self.pending_loop_prompt,
-            "iteration": self.loop_iteration_index,
-            "remaining": self.loop_iterations_remaining,
-            "cap_explicit": self.loop_cap_explicit,
-        }
-        if self._auto_extended_this_advance:
-            out["auto_extended"] = True
-            self._auto_extended_this_advance = False
-        return out
+
+    async def advance_loop(self) -> LoopAdvance | None:
+        return await self.loop.advance_loop()
 
     async def cancel_loop(self) -> bool:
-        if self.pending_loop_prompt is None:
-            return False
-        self.pending_loop_prompt = None
-        self.loop_iteration_index = 0
-        self.loop_iterations_remaining = 0
-        self.loop_run_id = None
-        self.loop_paused = False
-        self.loop_cap_explicit = False
-        return True
+        return await self.loop.cancel_loop()
 
     async def pause_loop(self) -> bool:
-        if self.pending_loop_prompt is None:
-            return False
-        self.loop_paused = True
-        return True
+        return await self.loop.pause_loop()
 
     async def resume_loop(self) -> str | None:
-        if self.pending_loop_prompt is None or not self.loop_paused:
-            return None
-        self.loop_paused = False
-        cap = (
-            self.loop_iteration_index + self.loop_iterations_remaining
-            if self.loop_cap_explicit
-            else None
-        )
-        return wrap_iteration_prompt(self.pending_loop_prompt, self.loop_iteration_index, cap)
+        return await self.loop.resume_loop()
+
+    # ── Tool-facing delegators (mirror Session's public surface) ──
+    #
+    # The real :class:`Session` forwards each of these to the
+    # controller (threading ``loop_progress_store`` through for
+    # ``set_announced_total_from_tool``). Mirroring the same shape
+    # here means the fake exercises the same code path production
+    # does when ``LoopTools`` invokes them.
+
+    async def start_loop_from_tool(self, prompt: str, max_iterations: int):
+        return await self.loop.start_loop_from_tool(prompt, max_iterations)
+
+    async def stop_loop_from_tool(self):
+        return await self.loop.stop_loop_from_tool()
+
+    async def set_announced_total_from_tool(self, total: int):
+        return await self.loop.set_announced_total_from_tool(total, self.loop_progress_store)
+
+    async def resume_loop_from_tool(self):
+        return await self.loop.resume_loop_from_tool()
+
+    def loop_status_from_tool(self):
+        return self.loop.loop_status_from_tool()
 
 
 def _fake_session() -> _FakeSession:
@@ -484,11 +539,11 @@ async def test_pop_iteration_returns_descriptor_and_decrements():
     # iterations) — the original prompt is preserved verbatim
     # inside the wrapper. ``display_prompt`` carries the unwrapped
     # form for chat rendering.
-    assert desc["iteration"] == 1
-    assert desc["remaining"] == 2
-    assert "do X" in desc["prompt"]
-    assert '<loop-iteration index="1" total="3">' in desc["prompt"]
-    assert desc["display_prompt"] == "do X"
+    assert desc.iteration == 1
+    assert desc.remaining == 2
+    assert "do X" in desc.prompt
+    assert '<loop-iteration index="1" total="3">' in desc.prompt
+    assert desc.display_prompt == "do X"
     assert sess.loop_iterations_remaining == 2
     assert sess.loop_iteration_index == 1
     # Session keeps the *unwrapped* prompt for the panel display.
@@ -513,16 +568,17 @@ async def test_pop_iteration_full_lifecycle_to_cap():
     d1 = await backend.pop_pending_loop_iteration()
     d2 = await backend.pop_pending_loop_iteration()
     d3 = await backend.pop_pending_loop_iteration()
-    assert (d1["iteration"], d1["remaining"]) == (1, 2)
-    assert (d2["iteration"], d2["remaining"]) == (2, 1)
-    assert (d3["iteration"], d3["remaining"]) == (3, 0)
+    assert (d1.iteration, d1.remaining) == (1, 2)
+    assert (d2.iteration, d2.remaining) == (2, 1)
+    assert (d3.iteration, d3.remaining) == (3, 0)
     for d, n in ((d1, 1), (d2, 2), (d3, 3)):
-        assert "tick" in d["prompt"]
-        assert f'<loop-iteration index="{n}" total="3">' in d["prompt"]
+        assert "tick" in d.prompt
+        assert f'<loop-iteration index="{n}" total="3">' in d.prompt
 
     # 4th pop hits the cap — returns the completion marker and clears.
     d4 = await backend.pop_pending_loop_iteration()
-    assert d4 == {"completed": True, "total_iterations": 3}
+    assert d4.completed is True
+    assert d4.total_iterations == 3
     assert sess.pending_loop_prompt is None
     assert sess.loop_iterations_remaining == 0
 
@@ -543,11 +599,13 @@ async def test_pop_iteration_completion_marker_only_fires_once():
     backend = _FakeBackend(sess)
 
     # First pop = iteration 1 descriptor.
-    assert (await backend.pop_pending_loop_iteration())["iteration"] == 1
+    first = await backend.pop_pending_loop_iteration()
+    assert first is not None
+    assert first.iteration == 1
     # Second pop = completion marker (cap exhausted).
     second = await backend.pop_pending_loop_iteration()
     assert second is not None
-    assert second.get("completed") is True
+    assert second.completed is True
     # Third pop = nothing.
     assert await backend.pop_pending_loop_iteration() is None
     assert await backend.pop_pending_loop_iteration() is None
@@ -600,15 +658,17 @@ async def test_full_flow_command_arms_rpc_drains_cap_terminates():
     # 2. The continuation RPC fires iteration 2 (1 was already
     # booked by ``immediate=True``). After this, remaining=0.
     d2 = await backend.pop_pending_loop_iteration()
-    assert "ping" in d2["prompt"]
-    assert '<loop-iteration index="2" total="2">' in d2["prompt"]
-    assert d2["iteration"] == 2
-    assert d2["remaining"] == 0
+    assert "ping" in d2.prompt
+    assert '<loop-iteration index="2" total="2">' in d2.prompt
+    assert d2.iteration == 2
+    assert d2.remaining == 0
 
     # 3. Next RPC tick — cap exhausted, returns the completion
     # marker (so the FE renders the summary) and clears state.
     completion = await backend.pop_pending_loop_iteration()
-    assert completion == {"completed": True, "total_iterations": 2}
+    assert completion is not None
+    assert completion.completed is True
+    assert completion.total_iterations == 2
     assert sess.pending_loop_prompt is None
 
     # 4. A subsequent tick returns None — completion is one-shot.
@@ -642,7 +702,7 @@ async def test_user_input_cancellation_via_rpc():
     assert sess.loop_iteration_index == 1
     # The next continuation pop produces iteration 2.
     desc = await backend.pop_pending_loop_iteration()
-    assert desc is not None and desc["iteration"] == 2
+    assert desc is not None and desc.iteration == 2
 
     # User types something else → FE invokes cancel.
     assert await backend.cancel_pending_loop() is True
@@ -748,7 +808,7 @@ async def test_loop_set_total_writes_to_progress_store() -> None:
     msg = await tools.loop_set_total(12)
 
     assert "12" in msg
-    stored = await sess.loop_progress_store.get("run-xyz", LoopTools._ANNOUNCED_TOTAL_KEY)
+    stored = await sess.loop_progress_store.get("run-xyz", LoopProgressStore.ANNOUNCED_TOTAL_KEY)
     assert stored == "12"
 
 
@@ -788,7 +848,7 @@ async def test_loop_set_total_is_idempotent_on_repeat() -> None:
     await tools.loop_set_total(8)
     await tools.loop_set_total(12)
 
-    stored = await sess.loop_progress_store.get("run-1", LoopTools._ANNOUNCED_TOTAL_KEY)
+    stored = await sess.loop_progress_store.get("run-1", LoopProgressStore.ANNOUNCED_TOTAL_KEY)
     assert stored == "12"
 
 
@@ -812,10 +872,10 @@ async def test_implicit_cap_auto_extends_at_cap_hit() -> None:
     desc = await backend.pop_pending_loop_iteration()
 
     assert desc is not None
-    assert desc.get("completed") is None or desc.get("completed") is False
-    assert desc["auto_extended"] is True
+    assert desc.completed is False
+    assert desc.auto_extended is True
     # The loop didn't terminate — iteration 4 is firing.
-    assert desc["iteration"] == 4
+    assert desc.iteration == 4
     assert sess.pending_loop_prompt == "p"
 
 
@@ -833,7 +893,8 @@ async def test_explicit_cap_terminates_at_cap_hit() -> None:
 
     desc = await backend.pop_pending_loop_iteration()
 
-    assert desc == {"completed": True, "total_iterations": 3}
+    assert desc.completed is True
+    assert desc.total_iterations == 3
     assert sess.pending_loop_prompt is None
 
 
@@ -853,10 +914,8 @@ async def test_implicit_cap_pauses_at_hard_cap() -> None:
 
     desc = await backend.pop_pending_loop_iteration()
 
-    assert desc == {
-        "safety_cap_paused": True,
-        "iteration": LOOP_HARD_CAP,
-    }
+    assert desc.safety_cap_paused is True
+    assert desc.iteration == LOOP_HARD_CAP
     assert sess.loop_paused is True
     # Loop state survives — prompt + counter unchanged so resume
     # picks up exactly where the cap stopped it.
@@ -918,9 +977,9 @@ async def test_implicit_cap_descriptor_omits_total_attr() -> None:
 
     desc = await backend.pop_pending_loop_iteration()
     assert desc is not None
-    assert '<loop-iteration index="1">' in desc["prompt"]
-    assert "total=" not in desc["prompt"]
-    assert desc["cap_explicit"] is False
+    assert '<loop-iteration index="1">' in desc.prompt
+    assert "total=" not in desc.prompt
+    assert desc.cap_explicit is False
 
 
 # ── Help is registered ──────────────────────────────────────────────

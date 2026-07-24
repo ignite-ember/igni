@@ -8,14 +8,18 @@ substitutions (``$ARGUMENTS``, ``!`cmd```, ``@path``)."""
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import ValidationError
 
+from ember_code.backend.command_handler import CommandHandler
 from ember_code.core.utils.markdown_commands import (
     MarkdownCommand,
     _parse_frontmatter,
     discover_markdown_commands,
 )
+from ember_code.protocol.messages import CommandAction
 
 
 def _write(p: Path, text: str) -> None:
@@ -170,6 +174,79 @@ class TestDiscoverMarkdownCommands:
         assert discover_markdown_commands(tmp_path) == {}
 
 
+class TestMarkdownCommandClassmethodDiscover:
+    """The class-method ``MarkdownCommand.discover(...)`` is the
+    preferred entry point post-refactor (Rule 5.3 — public API
+    lives on the class). The module-level ``discover_markdown_commands``
+    is retained as a thin delegate for backwards compatibility
+    with test monkey-patches that pin the dotted path. These tests
+    lock in that both APIs return equivalent results."""
+
+    def test_classmethod_finds_commands(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: home)
+        _write(
+            tmp_path / ".ember" / "commands" / "hello.md",
+            "---\ndescription: greeting\n---\nHi.\n",
+        )
+        cmds = MarkdownCommand.discover(tmp_path)
+        assert "hello" in cmds
+        assert cmds["hello"].description == "greeting"
+
+    def test_classmethod_and_delegate_return_equivalent_dict(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: home)
+        _write(tmp_path / ".ember" / "commands" / "a.md", "A body.\n")
+        _write(tmp_path / ".ember" / "commands" / "b.md", "B body.\n")
+        via_class = MarkdownCommand.discover(tmp_path)
+        via_func = discover_markdown_commands(tmp_path)
+        # Both entry points must produce identical maps — the module
+        # function delegates to the classmethod under the hood.
+        assert set(via_class) == set(via_func)
+        for name in via_class:
+            assert via_class[name] == via_func[name]
+
+    def test_classmethod_respects_read_claude_toggle(self, tmp_path, monkeypatch):
+        # Same off-switch semantics as the module function.
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: home)
+        _write(tmp_path / ".claude" / "commands" / "cc_only.md", "CC.\n")
+        assert "cc_only" in MarkdownCommand.discover(tmp_path, read_claude=True)
+        assert "cc_only" not in MarkdownCommand.discover(tmp_path, read_claude=False)
+
+
+class TestMarkdownCommandModel:
+    """Post-refactor MarkdownCommand is a Pydantic BaseModel with
+    ``frozen=True``. These tests pin the invariants that callers
+    (and any future ``model_dump`` serialisation) rely on."""
+
+    def test_is_frozen(self, tmp_path):
+        cmd = MarkdownCommand(name="x", path=tmp_path / "x.md", body="body")
+        # Mutating a frozen BaseModel raises a ValidationError in v2;
+        # we only care that assignment fails somehow.
+        with pytest.raises(ValidationError):
+            cmd.name = "y"  # type: ignore[misc]
+
+    def test_defaults(self, tmp_path):
+        cmd = MarkdownCommand(name="x", path=tmp_path / "x.md")
+        assert cmd.description == ""
+        assert cmd.allowed_tools == ()
+        assert cmd.argument_hint == ""
+        assert cmd.model is None
+        assert cmd.body == ""
+
+    def test_equality_is_by_value(self, tmp_path):
+        # Two commands built from the same fields must compare equal —
+        # otherwise the ``discover`` dict semantics (last-write-wins on
+        # name collision) would depend on identity.
+        a = MarkdownCommand(name="x", path=tmp_path / "x.md", body="B")
+        b = MarkdownCommand(name="x", path=tmp_path / "x.md", body="B")
+        assert a == b
+
+
 # ── Token substitution ────────────────────────────────────────
 
 
@@ -298,11 +375,6 @@ class TestCommandHandlerDispatch:
 
     @pytest.mark.asyncio
     async def test_command_handler_dispatches_to_markdown_command(self, tmp_path, monkeypatch):
-        from unittest.mock import AsyncMock, MagicMock
-
-        from ember_code.backend.command_handler import CommandHandler
-        from ember_code.protocol.messages import CommandAction
-
         # Wire HOME so user-tier dirs land inside tmp_path.
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
         (tmp_path / "home").mkdir()
@@ -337,10 +409,6 @@ class TestCommandHandlerDispatch:
         the built-in ``/help`` — built-ins ship with the binary
         and a user shouldn't accidentally hijack them with a
         drop-in markdown file."""
-        from unittest.mock import MagicMock
-
-        from ember_code.backend.command_handler import CommandHandler
-
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
         (tmp_path / "home").mkdir()
         _write(

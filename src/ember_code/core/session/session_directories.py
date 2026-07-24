@@ -19,6 +19,9 @@ import logging
 import sqlite3
 from pathlib import Path
 
+from ember_code.core.code_index.paths import data_root
+from ember_code.core.session._sqlite_utils import connect_kv
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,12 +45,10 @@ class SessionDirectoryStore:
 
     @classmethod
     def from_data_dir(cls, data_dir: str | Path) -> SessionDirectoryStore:
-        from ember_code.core.code_index.paths import data_root
 
         return cls(data_root(data_dir) / "sessions.db")
 
     def _connect(self) -> sqlite3.Connection:
-        from ember_code.core.session._sqlite_utils import connect_kv
 
         return connect_kv(self._db_path)
 

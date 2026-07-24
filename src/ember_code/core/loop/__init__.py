@@ -22,6 +22,7 @@ from ember_code.core.loop.limits import (
 from ember_code.core.loop.models import LoopState
 from ember_code.core.loop.prompt import wrap_iteration_prompt
 from ember_code.core.loop.store import LoopProgressStore, LoopStore
+from ember_code.core.loop.tool_results import LoopToolErrorCode, LoopToolResult
 
 __all__ = [
     "LOOP_DEFAULT_MAX_ITERATIONS",
@@ -29,5 +30,7 @@ __all__ = [
     "LoopProgressStore",
     "LoopState",
     "LoopStore",
+    "LoopToolErrorCode",
+    "LoopToolResult",
     "wrap_iteration_prompt",
 ]

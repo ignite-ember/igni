@@ -30,13 +30,11 @@ intent the agent expressed. Disambiguation becomes mechanical.
 from __future__ import annotations
 
 import logging
+from typing import ClassVar
 
 from ember_code.core.code_index.enums import Relation
 from ember_code.core.code_index.index import CodeIndex
 from ember_code.core.code_index.schema.items import CodeIndexResult
-from ember_code.core.tools.codeindex.filters import (
-    DISAMBIGUATION_REFS_PER_DIRECTION,
-)
 from ember_code.core.tools.codeindex.schemas import (
     _DisambiguationGroup,
     _DisambiguationRef,
@@ -51,6 +49,23 @@ class DisambiguationService:
     Stateless aside from the ``CodeIndex`` reference. One instance per
     toolkit lifetime is fine (no per-query state).
     """
+
+    # Top-N items to fetch disambiguation refs for. Chroma's top-3
+    # often contains files / module-level constants / unrelated
+    # near-miss methods; the actual entities the agent needs to
+    # disambiguate against frequently land at ranks 6-12 in
+    # semantically dense areas (rate-limiting, retries, auth). Ten
+    # covers that band; the per-item ref fetch is a single batched
+    # sqlite call so the cost stays flat in N. Owned by this service
+    # because it's the service that consumes it — a module-level
+    # constant elsewhere would be misleading indirection.
+    TOP_N: ClassVar[int] = 10
+
+    # Refs per direction (calls / called_by) surfaced per item. Enough
+    # to show a usage signature (e.g. "all callers are API endpoints"
+    # vs "all callers are streaming workers") without bloating the
+    # response.
+    REFS_PER_DIRECTION: ClassVar[int] = 10
 
     def __init__(self, idx: CodeIndex):
         self._idx = idx
@@ -244,7 +259,7 @@ class DisambiguationService:
         hydrate refs whose chroma row no longer exists.
         """
         try:
-            edges = await self._idx._file_reference_service().get_by_uuids(
+            edges = await self._idx.file_reference_service().get_by_uuids(
                 uuids=item_ids,
                 relations=list(self._OUTGOING_RELATIONS | self._INCOMING_RELATIONS),
             )
@@ -367,7 +382,7 @@ class DisambiguationService:
         target_meta: dict[str, dict[str, str]],
     ) -> list[_DisambiguationRef]:
         """Re-rank ``target_ids`` by similarity to ``query_text`` and
-        keep the top ``DISAMBIGUATION_REFS_PER_DIRECTION``.
+        keep the top :attr:`REFS_PER_DIRECTION`.
         """
         unique_ids = list({t for t in target_ids if t})
         if not unique_ids:
@@ -376,7 +391,7 @@ class DisambiguationService:
             scored = await self._idx.search_among(
                 query=query_text,
                 candidate_ids=unique_ids,
-                limit=DISAMBIGUATION_REFS_PER_DIRECTION,
+                limit=self.REFS_PER_DIRECTION,
                 commit=sha,
             )
         except Exception:

@@ -1,10 +1,12 @@
 """Tests for scheduler/runner.py — background task execution."""
 
 import asyncio
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
 from ember_code.core.scheduler.runner import SchedulerRunner
 
 
@@ -44,10 +46,6 @@ class TestSchedulerRunner:
 
     @pytest.mark.asyncio
     async def test_executes_due_task(self):
-        from datetime import datetime
-
-        from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
-
         task = ScheduledTask(
             id="t1",
             description="test task",
@@ -83,10 +81,6 @@ class TestSchedulerRunner:
 
     @pytest.mark.asyncio
     async def test_callbacks_called(self):
-        from datetime import datetime
-
-        from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
-
         task = ScheduledTask(
             id="t2",
             description="callback test",

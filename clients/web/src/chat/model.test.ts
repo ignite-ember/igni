@@ -6,15 +6,12 @@ import {
   formatStats,
   loopItem,
   mergePlanTasks,
-  newStreamState,
   normalizePlanTask,
   normalizePlanTasks,
-  onToolBoundary,
   parseLoopIteration,
   type PlanTask,
   restoredItem,
   restoredStatsItem,
-  splitThinkTags,
   type ChatItem,
 } from "./model";
 import type { ServerMessage } from "../protocol/messages";
@@ -41,93 +38,27 @@ const toolCompleted: ServerMessage = {
 } as ServerMessage;
 
 function play(events: ServerMessage[]): ChatItem[] {
-  const stream = newStreamState();
   let items: ChatItem[] = [];
-  for (const e of events) items = applyEvent(items, e, stream);
+  for (const e of events) items = applyEvent(items, e);
   return items;
 }
 
-describe("splitThinkTags", () => {
-  it("routes <think> content to thinking and the rest to text", () => {
-    const s = newStreamState();
-    expect(splitThinkTags(s, "<think>plan</think>answer")).toEqual([
-      ["plan", true],
-      ["answer", false],
-    ]);
-    expect(s.usesThinkTags).toBe(true);
-    expect(s.inThinking).toBe(false);
-  });
-
-  it("handles tags split across deltas", () => {
-    const s = newStreamState();
-    expect(splitThinkTags(s, "<thi")).toEqual([]);
-    expect(splitThinkTags(s, "nk>deep ")).toEqual([["deep ", true]]);
-    expect(splitThinkTags(s, "thought</th")).toEqual([["thought", true]]);
-    expect(splitThinkTags(s, "ink>done")).toEqual([["done", false]]);
-  });
-
-  it("keeps multi-delta thinking in thinking mode", () => {
-    const s = newStreamState();
-    splitThinkTags(s, "<think>first ");
-    expect(splitThinkTags(s, "second")).toEqual([["second", true]]);
-    expect(s.inThinking).toBe(true);
-  });
-
-  it("strips cosmetic newlines after the close tag", () => {
-    const s = newStreamState();
-    expect(splitThinkTags(s, "<think>x</think>\n\nanswer")).toEqual([
-      ["x", true],
-      ["answer", false],
-    ]);
-  });
-
-  it("treats a bare stray </think> as thinking-close, not literal text", () => {
-    const s = newStreamState();
-    expect(splitThinkTags(s, "resumed reasoning</think>answer")).toEqual([
-      ["resumed reasoning", true],
-      ["answer", false],
-    ]);
-  });
-
-  it("pre-enters thinking after a tool boundary for think-tag models", () => {
-    const s = newStreamState();
-    splitThinkTags(s, "<think>a</think>b");
-    onToolBoundary(s);
-    expect(s.inThinking).toBe(true);
-    expect(splitThinkTags(s, "post-tool reasoning</think>final")).toEqual([
-      ["post-tool reasoning", true],
-      ["final", false],
-    ]);
-  });
-
-  it("does NOT pre-enter thinking for models without think tags", () => {
-    const s = newStreamState();
-    splitThinkTags(s, "plain answer");
-    onToolBoundary(s);
-    expect(s.inThinking).toBe(false);
-  });
-});
-
 describe("applyEvent", () => {
-  it("renders inline <think> content as a thinking item", () => {
-    const items = play([delta("<think>let me see</think>"), delta("the answer")]);
+  it("routes content_delta by is_thinking flag (BE does the parse)", () => {
+    const items = play([delta("hidden", true), delta("the answer")]);
     expect(items.map((i) => i.kind)).toEqual(["thinking", "assistant"]);
-    expect((items[0] as { text: string }).text).toBe("let me see");
+    expect((items[0] as { text: string }).text).toBe("hidden");
     expect((items[1] as { text: string }).text).toBe("the answer");
   });
 
-  it("never shows literal think tags in any item", () => {
+  it("BE pre-classifies chunks; the FE routes by is_thinking", () => {
     const items = play([
-      delta("<thi"),
-      delta("nk>hidden</think>"),
-      delta("visible"),
+      delta("thinking chunk", true),
+      delta("visible chunk with <think> literal", false),
     ]);
-    for (const it of items) {
-      if ("text" in it) {
-        expect(it.text).not.toContain("<think>");
-        expect(it.text).not.toContain("</think>");
-      }
-    }
+    expect(items.map((i) => i.kind)).toEqual(["thinking", "assistant"]);
+    expect((items[0] as { text: string }).text).toBe("thinking chunk");
+    expect((items[1] as { text: string }).text).toBe("visible chunk with <think> literal");
   });
 
   it("merges consecutive same-kind deltas into one item", () => {
@@ -141,16 +72,16 @@ describe("applyEvent", () => {
     expect(items.map((i) => i.kind)).toEqual(["thinking", "assistant"]);
   });
 
-  it("handles post-tool thinking resume without an opening tag", () => {
+  it("BE already split reasoning: deltas arrive pre-classified", () => {
+    // The BE routes thinking-mode chunks as is_thinking=true and
+    // visible-mode chunks as is_thinking=false across one run; the
+    // FE just appends to the right bubble by is_thinking.
     const items = play([
-      delta("<think>before tool</think>calling now"),
+      delta("before tool", false),
       toolStarted,
-      toolCompleted,
-      delta("resumed thought</think>final answer"),
+      delta("post tool", false),
     ]);
-    const kinds = items.map((i) => i.kind);
-    expect(kinds).toEqual(["thinking", "assistant", "tool", "thinking", "assistant"]);
-    expect((items[4] as { text: string }).text).toBe("final answer");
+    expect(items.map((i) => i.kind)).toEqual(["assistant", "tool", "assistant"]);
   });
 
   it("updates the running tool card on completion", () => {

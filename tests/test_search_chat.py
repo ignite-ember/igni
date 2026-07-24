@@ -4,10 +4,10 @@ output the FE highlight logic relies on.
 
 Two layers:
 
-* ``_search_history`` — pure function over a chat-history list,
-  trivially testable without Agno. The bulk of the contract lives
-  here (snippet truncation, ellipses, match offsets, limit cap,
-  defensive skips for non-string content).
+* :class:`ChatHistorySearcher` — pure class over a typed
+  :class:`ChatHistoryEntry` list, trivially testable without Agno.
+  The bulk of the contract lives here (snippet truncation, ellipses,
+  match offsets, limit cap, defensive skips for empty content).
 * ``BackendServer.search_chat`` — thin wrapper that strips the
   query, fetches history, delegates. Tests verify the strip +
   delegation + empty-query short-circuit.
@@ -19,11 +19,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ember_code.backend.server import (
-    _SEARCH_CHAT_SNIPPET_HALF_WIDTH,
-    BackendServer,
-    _search_history,
-)
+from ember_code.backend.__main__ import _build_rpc_table
+from ember_code.backend.chat_history_searcher import ChatHistorySearcher
+from ember_code.backend.schemas_history import ChatHistoryEntry
+from ember_code.backend.server import BackendServer
+from ember_code.protocol.rpc import RpcMethod
+
+# Default snippet half-width — mirrors ChatHistorySearcher's default
+# so test assertions can compute expected snippet lengths without
+# importing a module-private constant.
+_SEARCH_CHAT_SNIPPET_HALF_WIDTH = 80
 
 
 def _turn(
@@ -32,18 +37,24 @@ def _turn(
     role: str = "user",
     run_id: str = "r1",
     created_at: int = 100,
-) -> dict:
-    """One chat history turn in the shape ``get_chat_history``
-    emits."""
-    return {
-        "content": content,
-        "role": role,
-        "run_id": run_id,
-        "created_at": created_at,
-    }
+) -> ChatHistoryEntry:
+    """One typed chat history turn — the shape
+    :meth:`ChatHistoryRebuilder.rebuild` produces after the RPC
+    seam's ``model_validate`` pass."""
+    return ChatHistoryEntry(
+        content=content,
+        role=role,
+        run_id=run_id,
+        created_at=created_at,
+    )
 
 
-# ── _search_history ─────────────────────────────────────────
+def _search(history: list[ChatHistoryEntry], needle: str, limit: int):
+    """Test convenience: instantiate the searcher and run one query."""
+    return ChatHistorySearcher(history).search(needle, limit=limit)
+
+
+# ── ChatHistorySearcher ─────────────────────────────────────
 
 
 class TestSearchHistoryEdges:
@@ -54,30 +65,17 @@ class TestSearchHistoryEdges:
         an empty needle slipping through must not flood the
         results)."""
         history = [_turn("hello"), _turn("world")]
-        assert _search_history(history, "", 50) == []
+        assert _search(history, "", 50) == []
 
     def test_no_match_returns_empty(self):
         history = [_turn("hello"), _turn("world")]
-        assert _search_history(history, "zzz", 50) == []
-
-    def test_skips_non_string_content(self):
-        """Tool turns sometimes carry dict/list content. Skipping
-        them silently is the right call — the user is searching
-        for prose, not tool payload."""
-        history = [
-            {"content": {"key": "val"}, "role": "tool", "run_id": "r"},
-            {"content": ["a", "b"], "role": "tool", "run_id": "r"},
-            _turn("real prose with NEEDLE inside"),
-        ]
-        out = _search_history(history, "needle", 50)
-        assert len(out) == 1
-        assert out[0]["history_index"] == 2
+        assert _search(history, "zzz", 50) == []
 
     def test_skips_empty_string_content(self):
         history = [_turn(""), _turn("has NEEDLE in it")]
-        out = _search_history(history, "needle", 50)
+        out = _search(history, "needle", 50)
         assert len(out) == 1
-        assert out[0]["history_index"] == 1
+        assert out[0].history_index == 1
 
     def test_history_index_matches_input_position(self):
         """``history_index`` must align with ``get_chat_history``'s
@@ -91,24 +89,24 @@ class TestSearchHistoryEdges:
             _turn("the target word lives here"),
             _turn("nothing"),
         ]
-        out = _search_history(history, "target", 50)
+        out = _search(history, "target", 50)
         assert len(out) == 1
-        assert out[0]["history_index"] == 2
+        assert out[0].history_index == 2
 
 
 class TestSearchHistorySnippet:
     def test_match_at_start_no_leading_ellipsis(self):
         history = [_turn("NEEDLE at the start of this string")]
-        out = _search_history(history, "needle", 50)
-        assert out[0]["snippet"].startswith("NEEDLE")
+        out = _search(history, "needle", 50)
+        assert out[0].snippet.startswith("NEEDLE")
         # Leading ellipsis is absent — match was at the start.
-        assert not out[0]["snippet"].startswith("…")
+        assert not out[0].snippet.startswith("…")
 
     def test_match_at_end_no_trailing_ellipsis(self):
         history = [_turn("the end of the line is NEEDLE")]
-        out = _search_history(history, "needle", 50)
-        assert out[0]["snippet"].endswith("NEEDLE")
-        assert not out[0]["snippet"].endswith("…")
+        out = _search(history, "needle", 50)
+        assert out[0].snippet.endswith("NEEDLE")
+        assert not out[0].snippet.endswith("…")
 
     def test_long_content_truncated_with_both_ellipses(self):
         """Content longer than 2 * SNIPPET_HALF_WIDTH around the
@@ -116,8 +114,8 @@ class TestSearchHistorySnippet:
         prefix = "x" * 200
         suffix = "y" * 200
         history = [_turn(f"{prefix} NEEDLE {suffix}")]
-        out = _search_history(history, "needle", 50)
-        snip = out[0]["snippet"]
+        out = _search(history, "needle", 50)
+        snip = out[0].snippet
         assert snip.startswith("…")
         assert snip.endswith("…")
         # Snippet is bounded: 2 * half_width + len(needle) + 2 ellipsis chars.
@@ -130,10 +128,10 @@ class TestSearchHistorySnippet:
         wrong characters."""
         prefix = "x" * 200
         history = [_turn(f"{prefix} NEEDLE more")]
-        out = _search_history(history, "needle", 50)
-        snip = out[0]["snippet"]
+        out = _search(history, "needle", 50)
+        snip = out[0].snippet
         # Slice with the offsets — must return the match text.
-        sliced = snip[out[0]["match_start"] : out[0]["match_end"]]
+        sliced = snip[out[0].match_start : out[0].match_end]
         assert sliced.lower() == "needle"
 
     def test_match_offsets_account_for_leading_ellipsis(self):
@@ -142,12 +140,12 @@ class TestSearchHistorySnippet:
         include that shift."""
         prefix = "x" * 200
         history = [_turn(f"{prefix} NEEDLE")]
-        out = _search_history(history, "needle", 50)
-        snip = out[0]["snippet"]
+        out = _search(history, "needle", 50)
+        snip = out[0].snippet
         # First char of the snippet must be the ellipsis.
         assert snip[0] == "…"
         # And the slice still extracts the match.
-        assert snip[out[0]["match_start"] : out[0]["match_end"]].lower() == "needle"
+        assert snip[out[0].match_start : out[0].match_end].lower() == "needle"
 
 
 class TestSearchHistoryCaseAndLimit:
@@ -156,20 +154,20 @@ class TestSearchHistoryCaseAndLimit:
         needle. NEEDLE / Needle / neeDLE all match the same
         position."""
         history = [_turn("contains MiXeD case Needle inside")]
-        out = _search_history(history, "NEEDLE", 50)
+        out = _search(history, "NEEDLE", 50)
         assert len(out) == 1
         # Snippet preserves original case.
-        assert "Needle" in out[0]["snippet"]
+        assert "Needle" in out[0].snippet
 
     def test_limit_caps_results(self):
         """Once we've collected ``limit`` matches we stop scanning
         — guards against pathological queries against megabyte-
         sized history."""
         history = [_turn(f"match {i} NEEDLE") for i in range(20)]
-        out = _search_history(history, "needle", limit=5)
+        out = _search(history, "needle", limit=5)
         assert len(out) == 5
         # And we stopped at the first 5, not skipped any.
-        assert [m["history_index"] for m in out] == [0, 1, 2, 3, 4]
+        assert [m.history_index for m in out] == [0, 1, 2, 3, 4]
 
     def test_only_first_match_per_turn_captured(self):
         """``find`` returns the FIRST occurrence — the function
@@ -177,39 +175,48 @@ class TestSearchHistoryCaseAndLimit:
         That's the documented behavior (one match per turn
         keeps the result list scannable)."""
         history = [_turn("NEEDLE first NEEDLE second NEEDLE third")]
-        out = _search_history(history, "needle", 50)
+        out = _search(history, "needle", 50)
         assert len(out) == 1
 
 
 class TestSearchHistoryFieldDefaults:
     def test_missing_role_defaults_to_empty(self):
-        history = [{"content": "with NEEDLE inside"}]
-        out = _search_history(history, "needle", 50)
-        assert out[0]["role"] == ""
+        history = [ChatHistoryEntry(content="with NEEDLE inside")]
+        out = _search(history, "needle", 50)
+        assert out[0].role == ""
 
     def test_missing_run_id_defaults_to_empty(self):
-        history = [{"content": "with NEEDLE inside"}]
-        out = _search_history(history, "needle", 50)
-        assert out[0]["run_id"] == ""
+        history = [ChatHistoryEntry(content="with NEEDLE inside")]
+        out = _search(history, "needle", 50)
+        assert out[0].run_id == ""
 
     def test_missing_created_at_defaults_to_zero(self):
         """The FE renders epoch 0 as "long ago" / a generic
         timestamp, which is the right fallback when the BE
         didn't include the field. Numeric, never None — the FE
         would crash on a None timestamp."""
-        history = [{"content": "with NEEDLE inside"}]
-        out = _search_history(history, "needle", 50)
-        assert out[0]["created_at"] == 0
-        assert isinstance(out[0]["created_at"], int)
+        history = [ChatHistoryEntry(content="with NEEDLE inside")]
+        out = _search(history, "needle", 50)
+        assert out[0].created_at == 0
+        assert isinstance(out[0].created_at, int)
 
 
 # ── BackendServer.search_chat wrapper ──────────────────────
 
 
 class TestSearchChatWrapper:
-    def _backend(self, history: list[dict]):
+    def _backend(self, history: list):
+        """Build a BackendServer stub. The wire path emits
+        ``list[dict]`` from ``get_chat_history``; the controller
+        re-validates each entry into :class:`ChatHistoryEntry` at
+        the RPC seam, so we hand the mock a list of dicts to match
+        the production shape."""
         backend = BackendServer.__new__(BackendServer)
-        backend.get_chat_history = AsyncMock(return_value=history)
+        wire_shape = [
+            entry.model_dump(mode="json") if isinstance(entry, ChatHistoryEntry) else entry
+            for entry in history
+        ]
+        backend.get_chat_history = AsyncMock(return_value=wire_shape)
         backend._session = MagicMock()
         return backend
 
@@ -261,9 +268,6 @@ class TestSearchChatWrapper:
     async def test_dispatch_table_routes_search_chat(self):
         """Wiring check: ``RpcMethod.SEARCH_CHAT`` resolves to the
         backend's method through the actual dispatch table."""
-        from ember_code.backend.__main__ import _build_rpc_table
-        from ember_code.protocol.rpc import RpcMethod
-
         backend = self._backend([_turn("foo NEEDLE bar")])
         table = _build_rpc_table(backend, transport=MagicMock(), login_state={})
         handler = table.get(RpcMethod.SEARCH_CHAT)

@@ -1,52 +1,46 @@
 """Tests for auth/credentials.py — credential storage and JWT handling."""
 
+import base64
 import json
 import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from ember_code.core.auth.credentials import (
     CloudCredentials,
     Credentials,
-    _credentials_path,
-    clear_credentials,
-    decode_jwt_claims,
-    is_token_expired,
-    load_credentials,
-    save_credentials,
+    CredentialsStore,
 )
+from ember_code.core.auth.schemas import JwtClaims
 
 
 def _make_jwt(payload: dict) -> str:
     """Create a fake JWT with the given payload (no signature verification)."""
-    import base64
-
     header = base64.urlsafe_b64encode(b'{"alg":"HS256"}').rstrip(b"=").decode()
     body = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
     sig = base64.urlsafe_b64encode(b"fakesig").rstrip(b"=").decode()
     return f"{header}.{body}.{sig}"
 
 
-class TestCredentialsPath:
+class TestCredentialsStorePath:
     def test_default_path(self):
-        from pathlib import Path
-
-        path = _credentials_path()
-        assert path == Path.home() / ".ember" / "credentials.json"
+        store = CredentialsStore()
+        assert store.path == Path.home() / ".ember" / "credentials.json"
 
     def test_custom_path(self, tmp_path):
-        path = _credentials_path(str(tmp_path / "creds.json"))
-        assert path == tmp_path / "creds.json"
+        store = CredentialsStore(str(tmp_path / "creds.json"))
+        assert store.path == tmp_path / "creds.json"
 
     def test_expands_tilde(self):
-        from pathlib import Path
-
-        path = _credentials_path("~/.ember/credentials.json")
-        assert str(Path.home()) in str(path)
+        store = CredentialsStore("~/.ember/credentials.json")
+        assert str(Path.home()) in str(store.path)
 
 
 class TestSaveAndLoadCredentials:
     def test_save_creates_file(self, tmp_path):
         creds_path = str(tmp_path / "creds.json")
-        save_credentials("tok123", "user@test.com", path=creds_path)
+        store = CredentialsStore(creds_path)
+        store.save(Credentials.new("tok123", "user@test.com"))
 
         assert (tmp_path / "creds.json").exists()
         data = json.loads((tmp_path / "creds.json").read_text())
@@ -55,72 +49,77 @@ class TestSaveAndLoadCredentials:
 
     def test_load_returns_credentials(self, tmp_path):
         creds_path = str(tmp_path / "creds.json")
-        save_credentials("tok456", "a@b.com", path=creds_path)
-        creds = load_credentials(path=creds_path)
+        store = CredentialsStore(creds_path)
+        store.save(Credentials.new("tok456", "a@b.com"))
+        result = store.load()
 
-        assert creds is not None
-        assert creds.access_token == "tok456"
-        assert creds.email == "a@b.com"
+        assert result.ok is True
+        assert result.creds is not None
+        assert result.creds.access_token == "tok456"
+        assert result.creds.email == "a@b.com"
 
-    def test_load_returns_none_for_missing(self, tmp_path):
-        creds = load_credentials(path=str(tmp_path / "missing.json"))
-        assert creds is None
+    def test_load_returns_no_file(self, tmp_path):
+        store = CredentialsStore(str(tmp_path / "missing.json"))
+        result = store.load()
+        assert result.ok is False
+        assert result.reason == "no_file"
+        assert result.creds is None
 
-    def test_load_returns_none_for_invalid_json(self, tmp_path):
+    def test_load_returns_malformed_json(self, tmp_path):
         bad = tmp_path / "bad.json"
         bad.write_text("not json")
-        creds = load_credentials(path=str(bad))
-        assert creds is None
+        result = CredentialsStore(str(bad)).load()
+        assert result.ok is False
+        assert result.reason == "malformed_json"
+        assert result.creds is None
 
 
 class TestClearCredentials:
     def test_removes_file(self, tmp_path):
         creds_path = str(tmp_path / "creds.json")
-        save_credentials("tok", "a@b.com", path=creds_path)
+        store = CredentialsStore(creds_path)
+        store.save(Credentials.new("tok", "a@b.com"))
         assert (tmp_path / "creds.json").exists()
 
-        clear_credentials(path=creds_path)
+        store.clear()
         assert not (tmp_path / "creds.json").exists()
 
     def test_no_error_on_missing(self, tmp_path):
-        clear_credentials(path=str(tmp_path / "missing.json"))  # should not raise
+        store = CredentialsStore(str(tmp_path / "missing.json"))
+        store.clear()  # should not raise
 
 
 class TestTokenExpiry:
     def test_not_expired(self, tmp_path):
-        from datetime import datetime, timedelta, timezone
-
         future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
         creds = Credentials(
             access_token="tok",
             email="a@b.com",
             expires_at=future,
         )
-        assert not is_token_expired(creds)
+        assert not creds.is_expired()
 
     def test_expired(self):
-        from datetime import datetime, timedelta, timezone
-
         past = (datetime.now(timezone.utc) - timedelta(seconds=100)).isoformat()
         creds = Credentials(
             access_token="tok",
             email="a@b.com",
             expires_at=past,
         )
-        assert is_token_expired(creds)
+        assert creds.is_expired()
 
     def test_no_expiry_is_not_expired(self):
         creds = Credentials(
             access_token="tok",
             email="a@b.com",
         )
-        assert not is_token_expired(creds)
+        assert not creds.is_expired()
 
 
 class TestCloudCredentialsAccessToken:
     def test_returns_token(self, tmp_path):
         creds_path = str(tmp_path / "creds.json")
-        save_credentials("my_token", "a@b.com", path=creds_path)
+        CredentialsStore(creds_path).save(Credentials.new("my_token", "a@b.com"))
         creds = CloudCredentials(creds_path)
         assert creds.access_token == "my_token"
         assert creds.is_authenticated is True
@@ -145,20 +144,21 @@ class TestCloudCredentialsAccessToken:
 class TestDecodeJwtClaims:
     def test_decodes_valid_jwt(self):
         token = _make_jwt({"sub": "user1", "org": "org123"})
-        claims = decode_jwt_claims(token)
-        assert claims["sub"] == "user1"
-        assert claims["org"] == "org123"
+        claims = JwtClaims.decode(token)
+        assert claims is not None
+        assert claims.org == "org123"
 
-    def test_returns_empty_for_invalid(self):
-        assert decode_jwt_claims("not.a.jwt") == {}
-        assert decode_jwt_claims("") == {}
-        assert decode_jwt_claims("single") == {}
+    def test_returns_none_for_invalid(self):
+        assert JwtClaims.decode("not.a.jwt") is None
+        assert JwtClaims.decode("") is None
+        assert JwtClaims.decode("single") is None
 
     def test_handles_padding(self):
         # Payload that needs padding
         token = _make_jwt({"org": "x"})
-        claims = decode_jwt_claims(token)
-        assert claims["org"] == "x"
+        claims = JwtClaims.decode(token)
+        assert claims is not None
+        assert claims.org == "x"
 
 
 class TestCloudCredentialsOrg:

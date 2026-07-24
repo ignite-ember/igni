@@ -37,22 +37,16 @@ from pathlib import Path
 # Make ember_code importable when run as a script
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from ember_code.core.code_index.chroma_client_factory import ChromaClientFactory  # noqa: E402
 from ember_code.core.code_index.paths import (  # noqa: E402
     commit_chroma_path,
     knowledge_chroma_path,
 )
 from ember_code.core.embeddings import EmbeddingFunction  # noqa: E402
 
-# Mirror what _get_or_create_collection now sets — keep these in sync.
-# Both ``code_index.index`` and ``knowledge.index`` apply the same
-# metadata when creating new collections, so this script's target
-# matches their runtime config.
-TARGET_HNSW_METADATA = {
-    "hnsw:space": "cosine",
-    "hnsw:M": 32,
-    "hnsw:construction_ef": 400,
-    "hnsw:search_ef": 10000,
-}
+# Single source of truth — bump ``ChromaClientFactory.HNSW_METADATA``
+# and both the runtime and this rebuild script pick up the new values.
+TARGET_HNSW_METADATA = dict(ChromaClientFactory.HNSW_METADATA)
 
 CODE_INDEX_COLLECTION_NAMES = ("code_index_documents", "code_index_chunks")
 KNOWLEDGE_COLLECTION_NAMES = ("knowledge_documents", "knowledge_chunks")

@@ -6,14 +6,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from ember_code.core.config.settings import GuardrailsConfig, KnowledgeConfig, Settings
+from ember_code.core.config.settings import (
+    GuardrailsConfig,
+    KnowledgeConfig,
+    PermissionsConfig,
+    Settings,
+)
 from ember_code.core.utils.tips import CONTEXTUAL_TIPS, GENERAL_TIPS, get_tip, random_tip
 from ember_code.core.utils.update_checker import (
+    UpdateCache,
+    UpdateCacheEntry,
+    UpdateError,
     UpdateInfo,
-    _is_newer,
-    _parse_version,
-    _read_cache,
-    _write_cache,
+    Version,
     check_for_update,
 )
 
@@ -65,8 +70,6 @@ class TestTips:
         (tmp_path / "ember.md").write_text("# test")
         (tmp_path / ".ember" / "agents").mkdir(parents=True)
         (tmp_path / ".ember" / "agents" / "custom.md").write_text("---\nname: custom\n---")
-        from ember_code.core.config.settings import PermissionsConfig
-
         settings = Settings(
             knowledge=KnowledgeConfig(enabled=True, share=True),
             guardrails=GuardrailsConfig(pii_detection=True, prompt_injection=True, moderation=True),
@@ -84,31 +87,31 @@ class TestTips:
 
 class TestVersionParsing:
     def test_parse_simple(self):
-        assert _parse_version("1.2.3") == (1, 2, 3)
+        assert Version.parse("1.2.3").parts == (1, 2, 3)
 
     def test_parse_with_v_prefix(self):
-        assert _parse_version("v0.1.0") == (0, 1, 0)
+        assert Version.parse("v0.1.0").parts == (0, 1, 0)
 
     def test_parse_two_parts(self):
-        assert _parse_version("1.0") == (1, 0)
+        assert Version.parse("1.0").parts == (1, 0)
 
     def test_parse_invalid(self):
-        assert _parse_version("abc") == (0,)
+        assert Version.parse("abc").parts == (0,)
 
     def test_is_newer_true(self):
-        assert _is_newer("0.2.0", "0.1.0") is True
+        assert Version.parse("0.2.0") > Version.parse("0.1.0")
 
     def test_is_newer_false_same(self):
-        assert _is_newer("0.1.0", "0.1.0") is False
+        assert not (Version.parse("0.1.0") > Version.parse("0.1.0"))
 
     def test_is_newer_false_older(self):
-        assert _is_newer("0.1.0", "0.2.0") is False
+        assert not (Version.parse("0.1.0") > Version.parse("0.2.0"))
 
     def test_is_newer_major(self):
-        assert _is_newer("1.0.0", "0.9.9") is True
+        assert Version.parse("1.0.0") > Version.parse("0.9.9")
 
     def test_is_newer_patch(self):
-        assert _is_newer("0.1.1", "0.1.0") is True
+        assert Version.parse("0.1.1") > Version.parse("0.1.0")
 
 
 # ── UpdateInfo ──────────────────────────────────────────────────────
@@ -141,7 +144,7 @@ class TestUpdateInfo:
         assert "0.2.0" in info.message
 
     def test_error_no_message(self):
-        info = UpdateInfo(error="network error")
+        info = UpdateInfo(error=UpdateError.NETWORK, error_detail="timeout")
         assert info.message == ""
 
 
@@ -151,26 +154,25 @@ class TestUpdateInfo:
 class TestCache:
     def test_write_and_read(self, tmp_path):
         cache_file = tmp_path / ".update-check"
-        with patch("ember_code.core.utils.update_checker.CACHE_FILE", cache_file):
-            data = {"latest_version": "0.2.0"}
-            _write_cache(data)
-            result = _read_cache(ttl=86400)
-            assert result is not None
-            assert result["latest_version"] == "0.2.0"
+        cache = UpdateCache(cache_file)
+        cache.write(UpdateCacheEntry(latest_version="0.2.0"))
+        result = cache.read(ttl=86400)
+        assert result is not None
+        assert result.latest_version == "0.2.0"
 
     def test_expired_cache(self, tmp_path):
         cache_file = tmp_path / ".update-check"
-        with patch("ember_code.core.utils.update_checker.CACHE_FILE", cache_file):
-            data = {"latest_version": "0.2.0", "checked_at": time.time() - 86401}
-            cache_file.write_text(json.dumps(data))
-            result = _read_cache(ttl=86400)
-            assert result is None
+        data = {"latest_version": "0.2.0", "checked_at": time.time() - 86401}
+        cache_file.write_text(json.dumps(data))
+        cache = UpdateCache(cache_file)
+        result = cache.read(ttl=86400)
+        assert result is None
 
     def test_missing_cache(self, tmp_path):
         cache_file = tmp_path / "nonexistent"
-        with patch("ember_code.core.utils.update_checker.CACHE_FILE", cache_file):
-            result = _read_cache(ttl=86400)
-            assert result is None
+        cache = UpdateCache(cache_file)
+        result = cache.read(ttl=86400)
+        assert result is None
 
 
 # ── check_for_update ────────────────────────────────────────────────

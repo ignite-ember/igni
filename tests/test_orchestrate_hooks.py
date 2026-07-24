@@ -18,6 +18,8 @@ def _settings():
 
 
 def _pool(*agents):
+    from ember_code.core.tools.orchestrate_budget import SpawnBudget
+
     pool = MagicMock()
     m = {a.name: a for a in agents}
 
@@ -30,7 +32,9 @@ def _pool(*agents):
     defn = MagicMock()
     defn.description = "Test"
     defn.tools = ["Read"]
+    defn.force_isolation = None
     pool.get_definition.return_value = defn
+    pool.spawn_budget.return_value = SpawnBudget(20)
     return pool
 
 
@@ -100,8 +104,10 @@ class TestSubagentStartStop:
         )
 
         with (
-            patch("agno.team.team.Team"),
-            patch("ember_code.core.config.models.ModelRegistry") as MockReg,
+            # Post-refactor these are at ``orchestrate.py``'s module
+            # top (iter 30) — patch the local bindings.
+            patch("ember_code.core.tools.orchestrate.Team"),
+            patch("ember_code.core.tools.orchestrate.ModelRegistry") as MockReg,
             patch(
                 "ember_code.core.tools.orchestrate._run_team_streaming",
                 new=AsyncMock(return_value=("team done", [])),

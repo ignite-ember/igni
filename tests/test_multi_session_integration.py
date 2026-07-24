@@ -657,7 +657,7 @@ async def test_real_handle_message_routes_two_sessions_through_production_path()
 
     async def _dispatch_one(message: Any) -> None:
         rt = await pool.get_or_create(message.session_id or "")
-        rt.remember_id()
+        rt.register_id()
         await _handle_message(message, rt.backend, rt.transport, rt.rpc_table, rt.queue, None)
 
     async def _loop() -> None:

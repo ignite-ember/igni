@@ -1,12 +1,37 @@
-"""Display utilities — Rich-based output for the terminal."""
+"""Display utilities — Rich-based output for the terminal.
+
+The public surface is exactly one class — :class:`DisplayManager`
+— plus the two Pydantic DTOs it accepts
+(:class:`RunStats` / :class:`ToolCallDisplay`), which are
+re-exported here so external callers can pull everything from
+this module.
+
+There is deliberately no module-level singleton and no free-
+function facade: every caller constructs (or is handed) a
+:class:`DisplayManager` instance and calls methods on it. This
+keeps Rule 1 (no raw dicts crossing module boundaries) and
+Rule 3 (no emoji icons — text prefixes only) enforced at the
+type-signature level rather than by convention.
+"""
 
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 
+from ember_code.core.utils.display_schemas import RunStats, ToolCallDisplay
+
+__all__ = ["DisplayManager", "RunStats", "ToolCallDisplay"]
+
 
 class DisplayManager:
-    """Manages terminal output with configurable formatting."""
+    """Manages terminal output with configurable formatting.
+
+    Every method takes either a plain string (info / warning /
+    error / markdown / response / welcome banner) or one of the
+    two Pydantic DTOs (:class:`RunStats`, :class:`ToolCallDisplay`).
+    The DTOs own the domain formatting policy — this class is a
+    thin Rich sink.
+    """
 
     def __init__(self, console: Console | None = None):
         self.console = console or Console()
@@ -21,18 +46,16 @@ class DisplayManager:
             self.console.print(f"[dim]{agent_name}[/dim]")
         self.print_markdown(text)
 
-    def print_tool_call(self, tool_name: str, args: dict | None = None) -> None:
-        """Print a tool call notification."""
-        args_str = ""
-        if args:
-            parts = []
-            for k, v in args.items():
-                val = str(v)
-                if len(val) > 50:
-                    val = val[:47] + "..."
-                parts.append(f"{k}={val}")
-            args_str = f" ({', '.join(parts)})"
-        self.console.print(f"[dim]  ⚡ {tool_name}{args_str}[/dim]")
+    def print_tool_call(self, call: ToolCallDisplay) -> None:
+        """Print a tool call notification.
+
+        Delegates truncation to :meth:`ToolCallDisplay.format_args`
+        so the "50-char clip + ellipsis" policy is a data
+        concern, not a Rich concern. The prefix is the text
+        marker ``>`` — no emoji icons (Rule 3).
+        """
+        args_str = call.format_args()
+        self.console.print(f"[dim]  > {call.tool_name}{args_str}[/dim]")
 
     def print_error(self, message: str) -> None:
         """Print an error message."""
@@ -46,28 +69,14 @@ class DisplayManager:
         """Print an info message."""
         self.console.print(f"[dim]{message}[/dim]")
 
-    def print_run_stats(
-        self,
-        elapsed_seconds: float,
-        input_tokens: int = 0,
-        output_tokens: int = 0,
-        model: str = "",
-    ) -> None:
-        """Print run statistics after a completed run."""
-        parts = []
-        if elapsed_seconds < 60:
-            parts.append(f"{elapsed_seconds:.1f}s")
-        else:
-            m = int(elapsed_seconds // 60)
-            s = int(elapsed_seconds % 60)
-            parts.append(f"{m}m {s}s")
-        if input_tokens or output_tokens:
-            parts.append(
-                f"{input_tokens + output_tokens} tokens ({input_tokens}↑ {output_tokens}↓)"
-            )
-        if model:
-            parts.append(model)
-        self.console.print(f"[dim]  ── {' · '.join(parts)} ──[/dim]")
+    def print_run_stats(self, stats: RunStats) -> None:
+        """Print run statistics after a completed run.
+
+        The full summary string is composed by
+        :meth:`RunStats.format_summary`; this method just wraps
+        it in the ``── … ──`` separator and hands it to Rich.
+        """
+        self.console.print(f"[dim]  ── {stats.format_summary()} ──[/dim]")
 
     def print_welcome(self, version: str) -> None:
         """Print the welcome banner."""
@@ -80,46 +89,3 @@ class DisplayManager:
                 border_style="blue",
             )
         )
-
-
-# Default instance for module-level convenience functions
-_default = DisplayManager()
-
-console = _default.console
-
-
-def print_markdown(text: str) -> None:
-    _default.print_markdown(text)
-
-
-def print_response(text: str, agent_name: str | None = None) -> None:
-    _default.print_response(text, agent_name)
-
-
-def print_tool_call(tool_name: str, args: dict | None = None) -> None:
-    _default.print_tool_call(tool_name, args)
-
-
-def print_error(message: str) -> None:
-    _default.print_error(message)
-
-
-def print_warning(message: str) -> None:
-    _default.print_warning(message)
-
-
-def print_info(message: str) -> None:
-    _default.print_info(message)
-
-
-def print_run_stats(
-    elapsed_seconds: float,
-    input_tokens: int = 0,
-    output_tokens: int = 0,
-    model: str = "",
-) -> None:
-    _default.print_run_stats(elapsed_seconds, input_tokens, output_tokens, model)
-
-
-def print_welcome(version: str) -> None:
-    _default.print_welcome(version)

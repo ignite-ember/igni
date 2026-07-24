@@ -5,6 +5,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from ember_code.core.config.settings import Settings
+from ember_code.core.learn import LearnBootResult
+from ember_code.core.session.core import Session
+from ember_code.core.utils import context as ctx_mod
+
+
+def _boot_disabled() -> LearnBootResult:
+    """Default ``create_learning_machine`` patch return: learning off."""
+    return LearnBootResult(ok=False, machine=None, reason="disabled in test")
+
+
+def _boot_with_machine(machine) -> LearnBootResult:
+    """Wrap a fake LM in the envelope Session now unwraps."""
+    return LearnBootResult(ok=True, machine=machine, reason="")
 
 
 def _session_patches(**overrides):
@@ -14,8 +27,8 @@ def _session_patches(**overrides):
     ``_session_patches(load_project_context="ctx")``.
     """
     defaults = {
-        "initialize_project": None,
-        "setup_db": None,
+        "ProjectInitializer": None,
+        "StorageManager": None,
         "PermissionGuard": None,
         "AuditLogger": None,
         "HookLoader": None,
@@ -33,10 +46,10 @@ def _session_patches(**overrides):
         "CodeIndexSyncManager": None,
         "ToolRegistry": None,
         "ToolPermissions": None,
-        "create_learning_machine": None,
+        "create_learning_machine": _boot_disabled(),
         "ToolEventHook": None,
-        "_create_reasoning_tools": None,
-        "_create_guardrails": None,
+        "create_reasoning_tools": None,
+        "create_guardrails": None,
         "CompressionManager": None,
         "Agent": None,
         "load_prompt": "You are an assistant.",
@@ -92,8 +105,6 @@ class TestSessionConstruction:
         _stop_patches(patches)
 
     def test_creates_session_with_defaults(self, tmp_path, _patch_deps):
-        from ember_code.core.session.core import Session
-
         settings = Settings()
         session = Session(settings, project_dir=tmp_path)
 
@@ -103,15 +114,11 @@ class TestSessionConstruction:
         assert session.settings is settings
 
     def test_creates_session_with_resume_id(self, tmp_path, _patch_deps):
-        from ember_code.core.session.core import Session
-
         session = Session(Settings(), project_dir=tmp_path, resume_session_id="my-session")
         assert session.session_id == "my-session"
         assert session.session_named is True
 
     def test_creates_session_with_additional_dirs(self, tmp_path, _patch_deps):
-        from ember_code.core.session.core import Session
-
         extra = tmp_path / "extra"
         extra.mkdir()
         session = Session(Settings(), project_dir=tmp_path, additional_dirs=[extra])
@@ -119,8 +126,6 @@ class TestSessionConstruction:
         assert extra.resolve() in session.workspace.all_dirs
 
     def test_cloud_connected_false_by_default(self, tmp_path, _patch_deps):
-        from ember_code.core.session.core import Session
-
         session = Session(Settings(), project_dir=tmp_path)
         assert session.cloud_connected is False
         assert session.cloud_org_id is None
@@ -138,8 +143,6 @@ class TestSessionConstruction:
             cc.org_id = "org_42"
             cc.org_name = "Acme"
 
-            from ember_code.core.session.core import Session
-
             session = Session(Settings(), project_dir=tmp_path)
             assert session.cloud_connected is True
             assert session.cloud_org_id == "org_42"
@@ -153,8 +156,6 @@ class TestSessionMessageHandling:
     def session(self, tmp_path):
         patches = _session_patches()
         _start_patches(patches)
-
-        from ember_code.core.session.core import Session
 
         s = Session(Settings(), project_dir=tmp_path)
 
@@ -231,8 +232,6 @@ class TestSessionCompaction:
         patches = _session_patches()
         _start_patches(patches)
 
-        from ember_code.core.session.core import Session
-
         s = Session(Settings(), project_dir=tmp_path)
         yield s
         _stop_patches(patches)
@@ -289,8 +288,6 @@ class TestSessionLearning:
         patches = _session_patches()
         _start_patches(patches)
         try:
-            from ember_code.core.session.core import Session
-
             settings = Settings()
             settings.learning.enabled = False
             session = Session(settings, project_dir=tmp_path)
@@ -300,11 +297,9 @@ class TestSessionLearning:
 
     def test_learning_created_when_enabled(self, tmp_path):
         fake_lm = MagicMock()
-        patches = _session_patches(create_learning_machine=fake_lm)
+        patches = _session_patches(create_learning_machine=_boot_with_machine(fake_lm))
         _start_patches(patches)
         try:
-            from ember_code.core.session.core import Session
-
             settings = Settings()
             settings.learning.enabled = True
             session = Session(settings, project_dir=tmp_path)
@@ -321,7 +316,7 @@ class TestSessionLearning:
         without an extra plumbing round-trip.
         """
         fake_lm = MagicMock()
-        patches = _session_patches(create_learning_machine=fake_lm)
+        patches = _session_patches(create_learning_machine=_boot_with_machine(fake_lm))
         mocks = {}
         for p in patches:
             mock = p.start()
@@ -329,8 +324,6 @@ class TestSessionLearning:
         if "ModelRegistry" in mocks:
             mocks["ModelRegistry"].return_value.get_context_window.return_value = 128_000
         try:
-            from ember_code.core.session.core import Session
-
             settings = Settings()
             settings.learning.enabled = True
             session = Session(settings, project_dir=tmp_path)
@@ -354,8 +347,6 @@ class TestSessionLearning:
         if "ModelRegistry" in mocks:
             mocks["ModelRegistry"].return_value.get_context_window.return_value = 128_000
         try:
-            from ember_code.core.session.core import Session
-
             settings = Settings()
             Session(settings, project_dir=tmp_path)
 
@@ -371,8 +362,8 @@ def _patches_with_real_context_loader():
     ``load_project_context`` un-mocked so the real loader fires and we can
     verify that rule files on disk actually reach the agent."""
     overrides = {
-        "initialize_project": None,
-        "setup_db": None,
+        "ProjectInitializer": None,
+        "StorageManager": None,
         "PermissionGuard": None,
         "AuditLogger": None,
         "HookLoader": None,
@@ -389,10 +380,10 @@ def _patches_with_real_context_loader():
         "CodeIndexSyncManager": None,
         "ToolRegistry": None,
         "ToolPermissions": None,
-        "create_learning_machine": None,
+        "create_learning_machine": _boot_disabled(),
         "ToolEventHook": None,
-        "_create_reasoning_tools": None,
-        "_create_guardrails": None,
+        "create_reasoning_tools": None,
+        "create_guardrails": None,
         "CompressionManager": None,
         "Agent": None,
         "load_prompt": "You are an assistant.",
@@ -432,8 +423,6 @@ class TestRulesReachAgent:
     def _isolate_user_rules(self, monkeypatch, tmp_path, *, claude_dir=None):
         """Redirect user-rule lookups into ``tmp_path`` so the test host's
         real ``~/.ember/`` and ``~/.claude/`` never leak in."""
-        from ember_code.core.utils import context as ctx_mod
-
         monkeypatch.setattr(ctx_mod, "USER_RULES_PATH", tmp_path / "_no_legacy.md")
         monkeypatch.setattr(ctx_mod, "USER_RULES_DIR", tmp_path / "_no_user_dir")
         monkeypatch.setattr(
@@ -443,8 +432,6 @@ class TestRulesReachAgent:
         )
 
     def _build_session(self, project_dir, settings=None):
-        from ember_code.core.session.core import Session
-
         return Session(settings or Settings(), project_dir=project_dir)
 
     def test_project_ember_md_reaches_agent_instructions(self, tmp_path, monkeypatch):
@@ -469,8 +456,6 @@ class TestRulesReachAgent:
             _stop_patches(patches)
 
     def test_user_legacy_rules_md_reaches_agent_instructions(self, tmp_path, monkeypatch):
-        from ember_code.core.utils import context as ctx_mod
-
         legacy = tmp_path / "rules.md"
         legacy.write_text("SENTINEL_USER_LEGACY_ABC")
         monkeypatch.setattr(ctx_mod, "USER_RULES_PATH", legacy)
@@ -495,8 +480,6 @@ class TestRulesReachAgent:
 
     def test_user_rules_directory_reaches_agent_instructions(self, tmp_path, monkeypatch):
         """``~/.ember/rules/*.md`` (the new directory source) must reach the agent."""
-        from ember_code.core.utils import context as ctx_mod
-
         user_dir = tmp_path / "ember-rules"
         user_dir.mkdir()
         (user_dir / "commit-style.md").write_text("SENTINEL_USER_DIR_RULE_111")
@@ -581,8 +564,6 @@ class TestRulesReachAgent:
     def test_all_three_user_sources_merge_into_agent_instructions(self, tmp_path, monkeypatch):
         """Sanity: legacy file + ember rules dir + claude rules dir all merge
         and reach the agent in a single session."""
-        from ember_code.core.utils import context as ctx_mod
-
         legacy = tmp_path / "rules.md"
         legacy.write_text("SENTINEL_TRIPLE_LEGACY")
         ember_dir = tmp_path / "ember-rules"
@@ -629,8 +610,6 @@ class TestSessionQueueRewake:
     """Direct unit tests for ``Session._queue_rewake``."""
 
     def _bare_session(self):
-        from ember_code.core.session.core import Session
-
         session = Session.__new__(Session)
         session._pending_reminders = []
         return session
@@ -679,8 +658,6 @@ class TestSessionMcpResolver:
     returns ``None`` at the first missing hop."""
 
     def _bare_session(self):
-        from ember_code.core.session.core import Session
-
         return Session.__new__(Session)
 
     def test_returns_none_when_manager_absent(self):
@@ -747,25 +724,29 @@ class TestSessionMcpResolver:
 #
 # Indirect coverage exists via output_styles and plan_mode tests
 # (they register a capture callback to inspect the channel
-# stream). These tests pin the contract itself: idempotent
-# re-register, exception isolation between callbacks, defensive
-# fallback when ``_broadcast_callbacks`` was never initialised,
-# call order + payload identity.
+# stream). These tests pin the facade contract on Session
+# (``session.broadcast(...)`` / ``session.register_broadcast_callback(...)``)
+# — the bus itself has its own unit tests in
+# ``test_session_broadcast.py``. The class invariant here is:
+# every Session (including ``Session.__new__`` -bypass stubs)
+# must be given a ``BroadcastBus`` before broadcast machinery
+# can be exercised — the ``getattr(..., None)`` defensiveness is
+# gone by design.
 
 
 class TestSessionBroadcast:
     def _bare_session(self):
-        from ember_code.core.session.core import Session
+        from ember_code.core.session.broadcast import BroadcastBus
 
         session = Session.__new__(Session)
-        session._broadcast_callbacks = []
+        session.broadcast_bus = BroadcastBus()
         return session
 
     def test_register_appends_callback(self):
         session = self._bare_session()
         cb = lambda ch, p: None  # noqa: E731
         session.register_broadcast_callback(cb)
-        assert session._broadcast_callbacks == [cb]
+        assert session.broadcast_bus.callbacks_snapshot() == [cb]
 
     def test_register_is_idempotent_on_same_callback(self):
         # The /plan and /accept slash commands both call
@@ -779,7 +760,7 @@ class TestSessionBroadcast:
         session.register_broadcast_callback(cb)
         session.register_broadcast_callback(cb)
         session.register_broadcast_callback(cb)
-        assert len(session._broadcast_callbacks) == 1
+        assert len(session.broadcast_bus.callbacks_snapshot()) == 1
 
     def test_register_distinct_callbacks_both_kept(self):
         session = self._bare_session()
@@ -787,7 +768,7 @@ class TestSessionBroadcast:
         cb2 = lambda ch, p: None  # noqa: E731
         session.register_broadcast_callback(cb1)
         session.register_broadcast_callback(cb2)
-        assert session._broadcast_callbacks == [cb1, cb2]
+        assert session.broadcast_bus.callbacks_snapshot() == [cb1, cb2]
 
     def test_broadcast_calls_every_registered_callback(self):
         session = self._bare_session()
@@ -849,21 +830,24 @@ class TestSessionBroadcast:
         session = self._bare_session()
         session.broadcast("any", {})  # no raise
 
-    def test_broadcast_without_callbacks_attribute_is_noop(self):
-        # Tests routinely build ``Session.__new__`` without
-        # running ``__init__`` — ``_broadcast_callbacks``
-        # doesn't exist yet. The defensive ``getattr`` in the
-        # source makes this a noop instead of an AttributeError.
-        # Load-bearing for the test suite's session-construct
-        # patterns.
-        from ember_code.core.session.core import Session
+    def test_broadcast_bus_is_construction_invariant(self):
+        # Post-OOP-pivot: ``BroadcastBus`` is composed in
+        # ``Session.__init__``. Test fixtures that build Session
+        # via ``Session.__new__`` must also assign
+        # ``broadcast_bus``. Attempting to broadcast on a bypass
+        # without doing so raises — replacing the old
+        # ``getattr(..., None)`` "silently no-op" branch. This
+        # test pins the tighter invariant so a regression toward
+        # defensive silence surfaces.
+        session = Session.__new__(Session)  # NO ``broadcast_bus``
+        import pytest as _pytest
 
-        session = Session.__new__(Session)  # NO ``_broadcast_callbacks`` set
-        session.broadcast("any", {})  # no raise
+        with _pytest.raises(AttributeError):
+            session.broadcast("any", {})
 
     def test_callbacks_can_register_during_broadcast_safely(self):
         # Edge case — a callback that registers a NEW callback
-        # during the broadcast. The source iterates ``list(...)``
+        # during the broadcast. The bus iterates ``list(...)``
         # which copies the snapshot, so new callbacks don't fire
         # mid-broadcast (they wait for the next one). Pin this:
         # absent the copy, mutating the list during iteration
@@ -910,10 +894,6 @@ class TestMainTeamToolkit:
         ``_resolve_main_tool_names`` to run, without booting Agno,
         the DB, etc. The method only reads ``settings.permissions``
         and ``_codeindex_available``."""
-        from unittest.mock import MagicMock
-
-        from ember_code.core.session.core import Session
-
         session = Session.__new__(Session)
         permissions = MagicMock()
         permissions.web_search = web
@@ -932,8 +912,6 @@ class TestMainTeamToolkit:
         every optional tool gets added when its permission/flag
         gate allows it. Per-test variants override this to
         simulate ``ImportError`` for missing extras."""
-        from unittest.mock import MagicMock
-
         return MagicMock(resolve=MagicMock(return_value=[]))
 
     def test_core_toolkit_is_shell_first(self):
@@ -978,8 +956,6 @@ class TestMainTeamToolkit:
         # ``ImportError``; ``_resolve_main_tool_names`` swallows
         # it and just omits the tool — no crash, no warning to
         # the user that doesn't want the dep anyway.
-        from unittest.mock import MagicMock
-
         session = self._stub_session(web="ask", fetch="ask")
         registry = MagicMock()
         registry.resolve = MagicMock(side_effect=ImportError("no ddgs"))
@@ -1001,8 +977,6 @@ class TestMainTeamToolkit:
         # The 5-tool core is class-level + a tuple so a future
         # contributor can't accidentally ``Session._MAIN_CORE_TOOLS
         # .append("Read")`` and silently regress the design.
-        from ember_code.core.session.core import Session
-
         assert isinstance(Session._MAIN_CORE_TOOLS, tuple)
         assert Session._MAIN_CORE_TOOLS == (
             "Write",

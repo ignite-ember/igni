@@ -1,18 +1,29 @@
 """Tests for config/settings.py."""
 
+from pathlib import Path
+
 import pytest
 
 from ember_code.core.config.settings import (
     ModelsConfig,
     PermissionsConfig,
     Settings,
-    _deep_merge,
-    _load_yaml,
+    SettingsLoader,
     load_settings,
 )
-from ember_code.core.config.settings import (
-    _platform_managed_settings_path as _REAL_PLATFORM_PATH,
-)
+
+# The pre-refactor module exposed ``_deep_merge`` / ``_load_yaml`` as
+# free-function shims. They have been promoted to staticmethods on
+# :class:`SettingsLoader`; the tests below call them via the class
+# instead of the deleted module attributes.
+_deep_merge = SettingsLoader.deep_merge
+_load_yaml = SettingsLoader.load_yaml
+
+# Capture the pristine class staticmethod BEFORE any autouse fixture
+# monkey-patches ``SettingsLoader.platform_managed_settings_path``.
+# Tests in ``TestPlatformManagedSettingsPath`` call this to reach the
+# real OS branching past the autouse stub.
+_REAL_PLATFORM_PATH = SettingsLoader.platform_managed_settings_path
 
 
 @pytest.fixture(autouse=True)
@@ -26,8 +37,8 @@ def _isolate_managed_settings(monkeypatch):
     ``_REAL_PLATFORM_PATH`` so platform-detail tests can still reach
     it past this stub."""
     monkeypatch.setattr(
-        "ember_code.core.config.settings._platform_managed_settings_path",
-        lambda: None,
+        "ember_code.core.config.settings.SettingsLoader.platform_managed_settings_path",
+        staticmethod(lambda: None),
     )
 
 
@@ -169,8 +180,6 @@ class TestLoadSettings:
         # ``Path.home()`` to a per-test tmp dir, so writing
         # ``Path.home() / .ember / config.yaml`` writes inside the
         # fake home without touching the developer's real config.
-        from pathlib import Path
-
         user_ember = Path.home() / ".ember"
         user_ember.mkdir(parents=True)
         (user_ember / "config.yaml").write_text("models:\n  default: user-global-model\n")
@@ -178,8 +187,6 @@ class TestLoadSettings:
         assert s.models.default == "user-global-model"
 
     def test_project_beats_user_global(self, tmp_path):
-        from pathlib import Path
-
         user_ember = Path.home() / ".ember"
         user_ember.mkdir(parents=True)
         (user_ember / "config.yaml").write_text("models:\n  default: user-global\n")
@@ -205,8 +212,6 @@ class TestFiveTierPrecedence:
         """Helper: stage every tier with values keyed to a label
         so each test can verify which one wins for that value.
         Returns once all tiers are present."""
-        from pathlib import Path
-
         # Tier 5: user global
         user_ember = Path.home() / ".ember"
         user_ember.mkdir(parents=True, exist_ok=True)
@@ -222,8 +227,8 @@ class TestFiveTierPrecedence:
         managed = tmp_path / "managed.yaml"
         managed.write_text(f"models:\n  default: managed-{tier_label}\n")
         monkeypatch.setattr(
-            "ember_code.core.config.settings._platform_managed_settings_path",
-            lambda: managed,
+            "ember_code.core.config.settings.SettingsLoader.platform_managed_settings_path",
+            staticmethod(lambda: managed),
         )
 
     def test_managed_is_top_of_stack(self, tmp_path, monkeypatch):
@@ -253,8 +258,6 @@ class TestFiveTierPrecedence:
         assert s.models.default == "local-x"
 
     def test_project_wins_when_only_user_and_project(self, tmp_path) -> None:
-        from pathlib import Path
-
         user_ember = Path.home() / ".ember"
         user_ember.mkdir(parents=True, exist_ok=True)
         (user_ember / "config.yaml").write_text("models:\n  default: user-only\n")
@@ -304,8 +307,8 @@ class TestManagedSettings:
         managed = tmp_path / "managed.yaml"
         managed.write_text("models:\n  default: org-pinned\n")
         monkeypatch.setattr(
-            "ember_code.core.config.settings._platform_managed_settings_path",
-            lambda: managed,
+            "ember_code.core.config.settings.SettingsLoader.platform_managed_settings_path",
+            staticmethod(lambda: managed),
         )
         s = load_settings(project_dir=tmp_path)
         assert s.models.default == "org-pinned"
@@ -317,8 +320,8 @@ class TestManagedSettings:
         managed = tmp_path / "managed.yaml"
         managed.write_text("models:\n  default: org-pinned\n")
         monkeypatch.setattr(
-            "ember_code.core.config.settings._platform_managed_settings_path",
-            lambda: managed,
+            "ember_code.core.config.settings.SettingsLoader.platform_managed_settings_path",
+            staticmethod(lambda: managed),
         )
         s = load_settings(project_dir=tmp_path)
         assert s.models.default == "org-pinned"
@@ -329,8 +332,8 @@ class TestManagedSettings:
         managed = tmp_path / "managed.yaml"
         managed.write_text("permissions:\n  mode: dontAsk\nmodels:\n  default: org-pinned\n")
         monkeypatch.setattr(
-            "ember_code.core.config.settings._platform_managed_settings_path",
-            lambda: managed,
+            "ember_code.core.config.settings.SettingsLoader.platform_managed_settings_path",
+            staticmethod(lambda: managed),
         )
         s = load_settings(
             cli_overrides={
@@ -347,8 +350,8 @@ class TestManagedSettings:
         # Point at a path that doesn't exist — loader should fall
         # back to lower tiers without raising.
         monkeypatch.setattr(
-            "ember_code.core.config.settings._platform_managed_settings_path",
-            lambda: tmp_path / "does-not-exist.yaml",
+            "ember_code.core.config.settings.SettingsLoader.platform_managed_settings_path",
+            staticmethod(lambda: tmp_path / "does-not-exist.yaml"),
         )
         s = load_settings(
             cli_overrides={"models": {"default": "user-cli-choice"}},
@@ -363,8 +366,8 @@ class TestManagedSettings:
         managed = tmp_path / "managed.yaml"
         managed.write_text("permissions:\n  mode: dontAsk\n")
         monkeypatch.setattr(
-            "ember_code.core.config.settings._platform_managed_settings_path",
-            lambda: managed,
+            "ember_code.core.config.settings.SettingsLoader.platform_managed_settings_path",
+            staticmethod(lambda: managed),
         )
         s = load_settings(
             cli_overrides={"models": {"default": "user-cli-choice"}},
@@ -382,8 +385,8 @@ class TestManagedSettings:
             '{"permissions": {"mode": "dontAsk"}, "models": {"default": "json-model"}}'
         )
         monkeypatch.setattr(
-            "ember_code.core.config.settings._platform_managed_settings_path",
-            lambda: managed,
+            "ember_code.core.config.settings.SettingsLoader.platform_managed_settings_path",
+            staticmethod(lambda: managed),
         )
         s = load_settings(project_dir=tmp_path)
         assert s.permissions.mode == "dontAsk"
@@ -393,8 +396,8 @@ class TestManagedSettings:
         """Unknown platform (no managed location defined) → managed
         tier is silently skipped without error."""
         monkeypatch.setattr(
-            "ember_code.core.config.settings._platform_managed_settings_path",
-            lambda: None,
+            "ember_code.core.config.settings.SettingsLoader.platform_managed_settings_path",
+            staticmethod(lambda: None),
         )
         s = load_settings(
             cli_overrides={"models": {"default": "cli-wins"}},

@@ -5,6 +5,7 @@ import { ChatScrollDemo } from "./dev/ChatScrollDemo";
 import { HitlDemo } from "./dev/HitlDemo";
 import { OrchestrateDemo } from "./dev/OrchestrateDemo";
 import { PlanModeDemo } from "./dev/PlanModeDemo";
+import { VisualizerStreamDemo } from "./dev/VisualizerStreamDemo";
 import { host } from "./lib/host";
 import "./theme.css";
 
@@ -30,6 +31,7 @@ function pickRoot() {
   if (demo === "plan") return <PlanModeDemo />;
   if (demo === "hitl") return <HitlDemo />;
   if (demo === "chat-scroll") return <ChatScrollDemo />;
+  if (demo === "viz-stream") return <VisualizerStreamDemo />;
   return <App />;
 }
 

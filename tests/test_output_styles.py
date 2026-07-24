@@ -10,10 +10,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ember_code.backend.__main__ import _build_rpc_table
 from ember_code.backend.command_handler import CommandHandler
 from ember_code.backend.server import BackendServer
 from ember_code.core.output_styles import OutputStyle, discover_output_styles
 from ember_code.core.output_styles.loader import _parse_frontmatter
+from ember_code.core.session.core import Session
+from ember_code.protocol.rpc import RpcMethod
 
 
 def _write(p: Path, body: str) -> None:
@@ -115,8 +118,6 @@ class TestDiscover:
 
 class TestSetOutputStyle:
     def _session(self, styles=None):
-        from ember_code.core.session.core import Session
-
         session = Session.__new__(Session)
         session.output_styles = styles or {
             "default": OutputStyle(
@@ -133,7 +134,9 @@ class TestSetOutputStyle:
             ),
         }
         session._active_output_style = "default"
-        session._broadcast_callbacks = []
+        from ember_code.core.session.broadcast import BroadcastBus
+
+        session.broadcast_bus = BroadcastBus()
         session.main_team = None  # patch path tolerated
         return session
 
@@ -197,8 +200,6 @@ class TestSetOutputStyle:
 
 class TestOutputStyleSlashCommand:
     def _make_session(self):
-        from ember_code.core.session.core import Session
-
         session = Session.__new__(Session)
         session.output_styles = {
             "default": OutputStyle(
@@ -215,7 +216,9 @@ class TestOutputStyleSlashCommand:
             ),
         }
         session._active_output_style = "default"
-        session._broadcast_callbacks = []
+        from ember_code.core.session.broadcast import BroadcastBus
+
+        session.broadcast_bus = BroadcastBus()
         session.main_team = None
         return session
 
@@ -303,24 +306,25 @@ class TestGetOutputStylesRpc:
             ),
         }
         session._active_output_style = "learning"
+        session.active_output_style = "learning"
         backend = BackendServer.__new__(BackendServer)
         backend._session = session
         out = backend.get_output_styles()
-        assert out["active"] == "learning"
-        names = [s["name"] for s in out["styles"]]
+        assert out.active == "learning"
+        names = [s.name for s in out.styles]
         assert names == ["default", "learning"]  # sorted
 
     def test_returns_empty_when_no_styles(self):
-        session = MagicMock(spec=[])
+        session = MagicMock(spec=["output_styles", "active_output_style"])
+        session.output_styles = {}
+        session.active_output_style = ""
         backend = BackendServer.__new__(BackendServer)
         backend._session = session
         out = backend.get_output_styles()
-        assert out == {"active": "", "styles": []}
+        assert out.active == ""
+        assert out.styles == []
 
     def test_dispatch_table_routes_get_output_styles(self):
-        from ember_code.backend.__main__ import _build_rpc_table
-        from ember_code.protocol.rpc import RpcMethod
-
         session = MagicMock()
         session.output_styles = {
             "default": OutputStyle(
@@ -331,6 +335,7 @@ class TestGetOutputStylesRpc:
             )
         }
         session._active_output_style = "default"
+        session.active_output_style = "default"
         backend = BackendServer.__new__(BackendServer)
         backend._session = session
 
@@ -338,4 +343,4 @@ class TestGetOutputStylesRpc:
         handler = table.get(RpcMethod.GET_OUTPUT_STYLES)
         assert handler is not None
         result = handler({})
-        assert result["active"] == "default"
+        assert result.active == "default"

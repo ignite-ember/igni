@@ -1,23 +1,40 @@
-"""Tests for ``protocol/agno_events`` — the Agno-event → TUI-string
-translation layer.
+"""Tests for the Agno-event → TUI-string translation layer.
 
 The two pure surfaces worth pinning:
 
-  * ``format_tool_args`` — generates the one-line argument summary
+  * :meth:`AgnoToolEventFormatter.args_summary` (formerly the free
+    ``format_tool_args``) — generates the one-line argument summary
     that lands in the tool-call header. Gets called on every tool
     invocation; bugs here are LOUD (the header is the first thing
     the user sees when a tool fires) but easy to introduce
     silently — wrong arg key, missed truncation, leaked markdown.
 
-  * ``TOOL_NAMES`` — friendly-name map that turns ``run_shell_command``
-    into ``Bash`` etc. The TUI shows the friendly name; if a tool
-    drops out of the map the header reverts to the snake_case
-    internal name, which reads as a regression.
+  * :attr:`ToolCallFormatterRegistry.friendly_names` (formerly the
+    module-level ``TOOL_NAMES`` dict) — friendly-name map that
+    turns ``run_shell_command`` into ``Bash`` etc. The TUI shows
+    the friendly name; if a tool drops out of the map the header
+    reverts to the snake_case internal name, which reads as a
+    regression.
 """
 
 from __future__ import annotations
 
-from ember_code.protocol.agno_events import TOOL_NAMES, format_tool_args
+from ember_code.protocol.agno_tool_formatter import AgnoToolEventFormatter
+
+# Shared coordinator + friendly-name view — one instance per test
+# module is enough since neither has mutable per-call state.
+_formatter = AgnoToolEventFormatter()
+TOOL_NAMES = _formatter.registry.friendly_names
+
+
+def format_tool_args(tool_args, tool_name: str = ""):
+    """Shim onto :meth:`AgnoToolEventFormatter.args_summary`.
+
+    Keeps the test bodies unchanged post-refactor while proving
+    the class method matches the pre-refactor free-function
+    contract byte-for-byte.
+    """
+    return _formatter.args_summary(tool_name, tool_args)
 
 
 class TestFormatToolArgsSentinels:

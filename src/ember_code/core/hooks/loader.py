@@ -1,139 +1,238 @@
-"""Hook loader — discovers and loads hooks from settings files."""
+"""Hook loader — pure orchestration over settings-path discovery,
+per-file JSON reading, and the :class:`HookRegistry` merge.
+
+Every concern has an owner class:
+
+* :class:`_SettingsPathDiscovery` — builds the ordered path list
+  for ``home / project × ember / claude × base / .local`` given
+  the ``cross_tool_support`` flag.
+* :class:`_SettingsFileReader` — reads a single JSON file and
+  returns either a parsed dict or a :class:`HookLoadWarning`.
+* :class:`HookRegistry` (in ``registry.py``) — owns the merge
+  itself via :meth:`HookRegistry.merge_from_dict`.
+
+:class:`HookLoader` composes those three into
+:meth:`HookLoader.load` (which returns a
+:class:`HookLoadResult`) and :meth:`HookLoader.load_plugin_hooks`
+(which returns the same result shape so callers can
+:meth:`HookLoadResult.merge` them together).
+"""
+
+from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
+from typing import Any
 
-from ember_code.core.hooks.schemas import HookDefinition
+from ember_code.core.hooks.registry import HookRegistry
+from ember_code.core.hooks.schemas import (
+    HookLoadResult,
+    HookLoadWarning,
+    MergeStrategy,
+)
 
 
-class HookLoader:
-    """Loads hook definitions from settings files."""
+class _SettingsPathDiscovery:
+    """Ordered discovery of settings files that may declare hooks.
 
-    def __init__(self, project_dir: Path | None = None, cross_tool_support: bool = False):
-        self.project_dir = project_dir or Path.cwd()
-        self.cross_tool_support = cross_tool_support
+    Ordering matters — later paths layer on top of earlier ones,
+    so project-local files override user globals, and
+    ``.local.json`` variants override their base sibling. The
+    default order is user-global → user-local → project → project-
+    local, mirroring the pre-refactor loader.
 
-    def load(self) -> dict[str, list[HookDefinition]]:
-        """Load hooks from all settings files.
+    ``cross_tool_support=True`` splices ``.claude`` siblings in
+    after the ``.ember`` bucket so a user with hooks in both
+    ecosystems gets both loaded — the Ember hooks still win last
+    since they're spec'd second.
+    """
 
-        Settings locations (merged, later wins):
-        1. ~/.ember/settings.json (user global defaults)
-        2. ~/.ember/settings.local.json (user local overrides)
-        3. .ember/settings.json (project overrides, committed)
-        4. .ember/settings.local.json (project local overrides, gitignored)
+    def __init__(self, project_dir: Path, *, cross_tool_support: bool):
+        self._project_dir = project_dir
+        self._cross_tool_support = cross_tool_support
+
+    def discover(self) -> list[Path]:
+        """Return the ordered list of settings-file paths to try.
+
+        Missing files are NOT filtered here — the reader handles
+        that case by returning a ``None`` payload. That keeps the
+        path list stable across runs (useful for logging /
+        debugging).
         """
-        hooks: dict[str, list[HookDefinition]] = {}
-
         home_ember = Path.home() / ".ember"
-        paths = [
+        paths: list[Path] = [
             home_ember / "settings.json",
             home_ember / "settings.local.json",
-            self.project_dir / ".ember" / "settings.json",
-            self.project_dir / ".ember" / "settings.local.json",
+            self._project_dir / ".ember" / "settings.json",
+            self._project_dir / ".ember" / "settings.local.json",
         ]
-
-        if self.cross_tool_support:
+        if self._cross_tool_support:
             home_claude = Path.home() / ".claude"
             paths.extend(
                 [
                     home_claude / "settings.json",
                     home_claude / "settings.local.json",
-                    self.project_dir / ".claude" / "settings.json",
-                    self.project_dir / ".claude" / "settings.local.json",
+                    self._project_dir / ".claude" / "settings.json",
+                    self._project_dir / ".claude" / "settings.local.json",
                 ]
             )
+        return paths
 
-        for path in paths:
-            self._load_from_file(path, hooks)
 
-        return hooks
+class _SettingsFileReader:
+    """Reads a single settings-file JSON and extracts its ``hooks``
+    block.
 
-    def _load_from_file(self, path: Path, hooks: dict[str, list[HookDefinition]]) -> None:
-        """Load hooks from a single settings file."""
-        if not path.exists():
-            return
+    Owns the two failure modes callers used to hit as ``print(...,
+    file=sys.stderr)``:
 
-        try:
-            with open(path) as f:
-                data = json.load(f)
+    * :class:`json.JSONDecodeError` — malformed JSON.
+    * :class:`OSError` — read failed (permissions, race with a
+      concurrent editor, disappearing file).
 
-            hooks_data = data.get("hooks", {})
-            self._merge_hooks_data(hooks_data, hooks, source=path)
-        except (json.JSONDecodeError, OSError) as e:
-            print(f"Warning: Failed to load hooks from {path}: {e}", file=sys.stderr)
+    Both become structured :class:`HookLoadWarning` instances so
+    the caller can log / batch / surface them however it wants.
+    Missing files are NOT warnings (they're the expected case for
+    most path candidates); the reader returns ``(None, [])`` for
+    them.
+    """
 
-    def _merge_hooks_data(
-        self,
-        hooks_data: dict,
-        target: dict[str, list[HookDefinition]],
-        *,
-        source: Path,
-        prepend: bool = False,
-    ) -> None:
-        """Parse a ``{event: [hook, ...]}`` block and merge it into *target*.
+    def read(self, path: Path) -> tuple[dict[str, Any] | None, list[HookLoadWarning]]:
+        """Read *path* and return ``(hooks_block, warnings)``.
 
-        Extracted so plugin hooks (which carry the same shape but live at
-        ``<plugin>/hooks/hooks.json`` instead of settings.json) can use
-        the same parser without re-stating the schema. ``prepend`` puts
-        new hooks at the front of each event's list — used for plugin
-        hooks so plugin-supplied behavior fires *before* project hooks,
-        letting the project still get the final word (e.g. a project
-        PreToolUse veto runs after the plugin's PreToolUse audit log).
+        ``hooks_block`` is the dict at the ``hooks`` key of the
+        parsed JSON, or ``None`` if the file was missing / broken
+        / didn't contain a hooks block. Warnings surface the
+        broken/missing-hook-block cases so callers can log them.
         """
-        for event_name, hook_list in hooks_data.items():
-            if not isinstance(hook_list, list):
-                continue
-            for hook_data in hook_list:
-                hook = HookDefinition(
-                    type=hook_data.get("type", "command"),
-                    command=hook_data.get("command", ""),
-                    url=hook_data.get("url", ""),
-                    headers=hook_data.get("headers", {}),
-                    text=hook_data.get("text", ""),
-                    mcp_server=hook_data.get("mcp_server", ""),
-                    mcp_tool=hook_data.get("mcp_tool", ""),
-                    mcp_args=hook_data.get("mcp_args", {}),
-                    matcher=hook_data.get("matcher", ""),
-                    timeout=hook_data.get("timeout", 10000),
-                    background=hook_data.get("background", False),
-                    # Accept Claude Code's camelCase ``asyncRewake``
-                    # AND a snake_case alias for parity with the
-                    # rest of ember-code's settings.
-                    async_rewake=hook_data.get("asyncRewake", hook_data.get("async_rewake", False)),
+        if not path.exists():
+            return None, []
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            return None, [HookLoadWarning.from_path(path, "invalid_json", str(e))]
+        except OSError as e:
+            return None, [HookLoadWarning.from_path(path, "os_error", str(e))]
+        hooks_block = data.get("hooks", {})
+        if not isinstance(hooks_block, dict):
+            return None, [
+                HookLoadWarning.from_path(
+                    path,
+                    "non_dict_block",
+                    "top-level 'hooks' key is not a JSON object",
                 )
-                bucket = target.setdefault(event_name, [])
-                if prepend:
-                    bucket.insert(0, hook)
-                else:
-                    bucket.append(hook)
+            ]
+        return hooks_block, []
+
+
+class HookLoader:
+    """Loads hook definitions from settings files.
+
+    Pure orchestration: composes :class:`_SettingsPathDiscovery`,
+    :class:`_SettingsFileReader`, and :class:`HookRegistry` to
+    turn a project directory into a populated
+    :class:`HookLoadResult`.
+    """
+
+    def __init__(self, project_dir: Path | None = None, cross_tool_support: bool = False):
+        self.project_dir = project_dir or Path.cwd()
+        self.cross_tool_support = cross_tool_support
+        self._discovery = _SettingsPathDiscovery(
+            self.project_dir, cross_tool_support=cross_tool_support
+        )
+        self._reader = _SettingsFileReader()
+
+    def load(self) -> HookLoadResult:
+        """Load hooks from all settings files.
+
+        Settings locations (merged, later wins):
+
+        1. ``~/.ember/settings.json`` (user global defaults)
+        2. ``~/.ember/settings.local.json`` (user local overrides)
+        3. ``<project>/.ember/settings.json`` (project overrides,
+           committed)
+        4. ``<project>/.ember/settings.local.json`` (project local
+           overrides, gitignored)
+
+        With ``cross_tool_support=True`` the ``.claude`` siblings
+        of each of the above are also consulted (before the
+        matching ``.ember`` entry in the ordering — see
+        :class:`_SettingsPathDiscovery`).
+
+        Returns a :class:`HookLoadResult` bundling the populated
+        registry with any structured warnings that surfaced. The
+        registry's underlying dict is shared with downstream
+        consumers (see :attr:`HookRegistry.raw`) so a plugin
+        hot-reload can extend it in place.
+        """
+        registry = HookRegistry.from_empty()
+        warnings: list[HookLoadWarning] = []
+        for path in self._discovery.discover():
+            hooks_block, read_warnings = self._reader.read(path)
+            warnings.extend(read_warnings)
+            if hooks_block is None:
+                continue
+            warnings.extend(
+                registry.merge_from_dict(
+                    hooks_block,
+                    source=path,
+                    strategy=MergeStrategy.APPEND,
+                )
+            )
+        return HookLoadResult(registry=registry, warnings=warnings)
 
     def load_plugin_hooks(
         self,
         plugin_dir: Path,
-        target: dict[str, list[HookDefinition]],
-    ) -> None:
-        """Merge ``<plugin_dir>/hooks/hooks.json`` into *target*.
+        registry: HookRegistry,
+    ) -> HookLoadResult:
+        """Merge ``<plugin_dir>/hooks/hooks.json`` into *registry*.
 
-        Same schema as settings.json's ``hooks`` block — the file IS
-        the ``hooks`` block (no outer wrapping). Plugins are prepended
-        so project-level hooks still run last.
+        Same schema as ``settings.json``'s ``hooks`` block — the
+        file IS the ``hooks`` block (no outer wrapping). Plugins
+        are :class:`MergeStrategy.PREPEND`-ed so project-level
+        hooks still run last and retain the veto.
 
-        Failures (missing, malformed, OSError) are logged and swallowed
-        so one broken plugin can't take down the whole hooks pipeline.
+        Returns a :class:`HookLoadResult` referencing the SAME
+        registry that was passed in (so the caller can
+        :meth:`HookLoadResult.merge` it with the settings-load
+        result). Failures (missing, malformed, OSError) surface
+        as warnings on the result — no ``sys.stderr`` fallout.
         """
         path = plugin_dir / "hooks" / "hooks.json"
         if not path.is_file():
-            return
+            return HookLoadResult(registry=registry, warnings=[])
+        # Read via the same reader that handles settings files,
+        # but plugin files ARE the hooks block (no outer ``hooks``
+        # key) so we sidestep :meth:`_SettingsFileReader.read` and
+        # parse directly. Keeps the reader's contract (extract the
+        # ``hooks`` sub-key) uncontaminated.
         try:
-            with open(path) as f:
-                hooks_data = json.load(f)
-            if not isinstance(hooks_data, dict):
-                print(
-                    f"Warning: plugin hooks at {path} is not a JSON object — skipping",
-                    file=sys.stderr,
-                )
-                return
-            self._merge_hooks_data(hooks_data, target, source=path, prepend=True)
-        except (json.JSONDecodeError, OSError) as e:
-            print(f"Warning: Failed to load plugin hooks from {path}: {e}", file=sys.stderr)
+            with open(path, encoding="utf-8") as f:
+                hooks_block = json.load(f)
+        except json.JSONDecodeError as e:
+            return HookLoadResult(
+                registry=registry,
+                warnings=[HookLoadWarning.from_path(path, "invalid_json", str(e))],
+            )
+        except OSError as e:
+            return HookLoadResult(
+                registry=registry,
+                warnings=[HookLoadWarning.from_path(path, "os_error", str(e))],
+            )
+        if not isinstance(hooks_block, dict):
+            return HookLoadResult(
+                registry=registry,
+                warnings=[
+                    HookLoadWarning.from_path(
+                        path,
+                        "non_dict_block",
+                        "plugin hooks file is not a JSON object",
+                    )
+                ],
+            )
+        warnings = registry.merge_from_dict(
+            hooks_block, source=path, strategy=MergeStrategy.PREPEND
+        )
+        return HookLoadResult(registry=registry, warnings=warnings)

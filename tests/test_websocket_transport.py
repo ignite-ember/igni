@@ -119,6 +119,87 @@ async def test_send_broadcasts_to_all_clients():
 
 
 @pytest.mark.asyncio
+async def test_send_stamps_monotonic_event_seq():
+    """Every send() stamps event_seq, incrementing per frame; the
+    counter is the dedup anchor the FE uses when two WebSocket
+    clients are briefly attached (StrictMode double-mount).
+    """
+    tr = WebSocketServerTransport(port=0)
+    await tr.start()
+    try:
+        ws, _ = await _connect_and_welcome(tr.port)
+
+        await tr.send(msg.Info(text="first", id="r1"))
+        await tr.send(msg.Info(text="second", id="r1"))
+        await tr.send(msg.Info(text="third", id="r1"))
+
+        seqs = []
+        for _ in range(3):
+            raw = await asyncio.wait_for(ws.recv(), 5)
+            data = json.loads(raw)
+            seqs.append(data["event_seq"])
+
+        assert seqs == [1, 2, 3], f"event_seq must be monotonic, got {seqs}"
+        await ws.close()
+    finally:
+        await tr.close()
+
+
+@pytest.mark.asyncio
+async def test_event_seq_is_consistent_across_clients():
+    """Two clients attached at once must see the same event_seq for
+    the same frame — the dedup anchor only works if the seq is
+    stamped BEFORE the broadcast fans out.
+    """
+    tr = WebSocketServerTransport(port=0)
+    await tr.start()
+    try:
+        ws1, _ = await _connect_and_welcome(tr.port)
+        ws2, _ = await _connect_and_welcome(tr.port)
+
+        await tr.send(msg.Info(text="broadcast", id="r1"))
+
+        seq1 = json.loads(await asyncio.wait_for(ws1.recv(), 5))["event_seq"]
+        seq2 = json.loads(await asyncio.wait_for(ws2.recv(), 5))["event_seq"]
+        assert seq1 == seq2 == 1
+
+        await ws1.close()
+        await ws2.close()
+    finally:
+        await tr.close()
+
+
+@pytest.mark.asyncio
+async def test_stream_end_resets_event_seq_counter():
+    """The seq counter resets after stream_end so a new turn starts
+    from 1 — otherwise the dedup set would carry over and a fresh
+    stream's seq 1 would be dropped as a "duplicate" of the
+    previous turn's seq 1.
+    """
+    tr = WebSocketServerTransport(port=0)
+    await tr.start()
+    try:
+        ws, _ = await _connect_and_welcome(tr.port)
+
+        await tr.send(msg.Info(text="a", id="r1"))
+        await tr.send(msg.Info(text="b", id="r1"))
+        await tr.send(msg.StreamEnd(id="r1"))
+        await tr.send(msg.Info(text="next turn", id="r2"))
+
+        seqs = []
+        for _ in range(4):
+            raw = await asyncio.wait_for(ws.recv(), 5)
+            seqs.append(json.loads(raw)["event_seq"])
+
+        # Three events before the StreamEnd, then the new turn's
+        # first event reuses seq=1 because the counter reset.
+        assert seqs == [1, 2, 3, 1], f"expected reset after stream_end, got {seqs}"
+        await ws.close()
+    finally:
+        await tr.close()
+
+
+@pytest.mark.asyncio
 async def test_inbound_merges_from_all_clients():
     """Messages from every client land in the same receive stream."""
     tr = WebSocketServerTransport(port=0)
@@ -224,9 +305,10 @@ async def test_slow_client_does_not_stall_other_clients():
         async def parked(_payload):
             await wedge.wait()
 
-        # ``_conns`` holds the raw websocket server conn; replace its
-        # send with our parking coroutine.
-        tr._conns[slow_cid].send = parked  # type: ignore[attr-defined]
+        # ``_conns`` holds a MirroredClient wrapper; reach through its
+        # public ``.conn`` attribute to the raw websocket server conn
+        # and replace its send with our parking coroutine.
+        tr._conns[slow_cid].conn.send = parked
 
         # One broadcast — the slow conn will time out at 100 ms and be
         # dropped; the fast conn receives normally. ``send()`` must

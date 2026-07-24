@@ -1,11 +1,21 @@
-"""Web tools — URL fetching and content extraction."""
+"""Web tools — thin Agno-toolkit adapter over :class:`HttpFetcher`.
 
-import re
+The heavy lifting (config, GET, content-type branching, HTML→text
+extraction) lives on :class:`HttpFetcher` in :mod:`http_fetcher`.
+This module exists only to bridge :class:`HttpFetcher`'s typed
+:class:`FetchResult` return to Agno's string-return tool contract.
 
-import httpx
+TLS verification stays ON. Disabling it silently would strip
+integrity checks from every ``fetch_url`` / ``fetch_json`` call,
+opening the tool to MITM interception when the user is on a
+corporate/hostile network. If an internal endpoint uses a private
+CA, the caller should set ``SSL_CERT_FILE`` / ``REQUESTS_CA_BUNDLE``.
+"""
+
 from agno.tools import Toolkit
 
-_HTTPX_KWARGS: dict = {"timeout": 30, "follow_redirects": True, "verify": False}
+from ember_code.core.tools.http_fetcher import HttpFetcher
+from ember_code.core.tools.web_schemas import HttpFetcherConfig
 
 
 class WebTools(Toolkit):
@@ -13,6 +23,7 @@ class WebTools(Toolkit):
 
     def __init__(self, **kwargs):
         super().__init__(name="ember_web", **kwargs)
+        self._fetcher = HttpFetcher(HttpFetcherConfig())
         self.register(self.fetch_url)
         self.register(self.fetch_json)
 
@@ -26,25 +37,8 @@ class WebTools(Toolkit):
         Returns:
             Extracted text content from the URL.
         """
-        try:
-            async with httpx.AsyncClient(**_HTTPX_KWARGS) as client:
-                response = await client.get(url, headers={"User-Agent": "EmberCode/0.1.0"})
-                response.raise_for_status()
-
-                content_type = response.headers.get("content-type", "")
-
-                if "json" in content_type:
-                    return response.text[:max_length]
-
-                text = response.text
-                if "html" in content_type:
-                    text = _extract_text_from_html(text)
-
-                return text[:max_length]
-        except httpx.HTTPError as e:
-            return f"Error fetching {url}: {e}"
-        except Exception as e:
-            return f"Error: {e}"
+        result = await self._fetcher.fetch_text(url, max_length)
+        return result.text_or_error()
 
     async def fetch_json(self, url: str) -> str:
         """Fetch and return JSON from a URL.
@@ -55,24 +49,5 @@ class WebTools(Toolkit):
         Returns:
             JSON string or error message.
         """
-        try:
-            async with httpx.AsyncClient(**_HTTPX_KWARGS) as client:
-                response = await client.get(
-                    url,
-                    headers={"User-Agent": "EmberCode/0.1.0", "Accept": "application/json"},
-                )
-                response.raise_for_status()
-                return response.text[:20000]
-        except httpx.HTTPError as e:
-            return f"Error fetching {url}: {e}"
-        except Exception as e:
-            return f"Error: {e}"
-
-
-def _extract_text_from_html(html: str) -> str:
-    """Basic HTML to text extraction."""
-    text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL)
-    text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+        result = await self._fetcher.fetch_json_text(url)
+        return result.text_or_error()

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ember_code.core.skills.executor import SkillExecutor
+from ember_code.core.skills.executor import SkillExecutor, SkillResult
 
 
 def _mock_skill(name="test-skill", context="default", agent="editor"):
@@ -40,7 +40,9 @@ class TestSkillExecutor:
         skill = _mock_skill(context="default")
 
         result = await executor.execute(skill, arguments="my args")
-        assert isinstance(result, str)
+        assert isinstance(result, SkillResult)
+        assert result.ok is True
+        assert isinstance(result.text, str)
         skill.render.assert_called_once()
 
     @pytest.mark.asyncio
@@ -50,7 +52,8 @@ class TestSkillExecutor:
         skill = _mock_skill(context="fork")
 
         result = await executor.execute(skill, arguments="test")
-        assert isinstance(result, str)
+        assert isinstance(result, SkillResult)
+        assert result.ok is True
         # Forked should call pool.get with the skill's agent name
         pool.get.assert_called_with("editor")
 

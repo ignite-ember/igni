@@ -32,23 +32,26 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from ember_code.backend.__main__ import _build_rpc_table
+from ember_code.backend.server import BackendServer
+from ember_code.core.tools.plan import PlanStore
+from ember_code.core.tools.todo import TodoStore
 from ember_code.protocol.rpc import RpcMethod
 
 
 def _make_backend_with_recording_session() -> tuple[MagicMock, MagicMock]:
-    """Construct a backend stub whose ``_session.approve_plan`` /
-    ``dismiss_plan`` are :class:`AsyncMock` so the test can
-    introspect call args."""
-    session = MagicMock()
-    session.approve_plan = AsyncMock(
+    """Construct a backend stub whose ``approve_plan`` /
+    ``dismiss_plan`` public methods are :class:`AsyncMock` so the
+    test can introspect call args. The RPC router now calls the
+    public ``backend.approve_plan(run_id=...)`` — replacing the
+    old ``backend._session.approve_plan(...)`` reach-in."""
+    backend = MagicMock()
+    backend.approve_plan = AsyncMock(
         return_value={"run_id": "R", "decision": "approved", "mode_status": ""}
     )
-    session.dismiss_plan = AsyncMock(
+    backend.dismiss_plan = AsyncMock(
         return_value={"run_id": "R", "decision": "dismissed", "mode_status": ""}
     )
-    backend = MagicMock()
-    backend._session = session
-    return backend, session
+    return backend, backend
 
 
 class TestApprovePlanRouting:
@@ -178,9 +181,6 @@ class TestStartupRehydratesPlanDecisions:
     """
 
     async def test_startup_calls_rehydrate_plan_decisions(self):
-        from ember_code.backend.server import BackendServer
-        from ember_code.core.tools.plan import PlanStore
-
         server = BackendServer.__new__(BackendServer)
         # Stub everything startup touches besides our target.
         server._session = SimpleNamespace(
@@ -194,6 +194,11 @@ class TestStartupRehydratesPlanDecisions:
         )
         server._detect_interrupted_run = AsyncMock()
         server._rehydrate_plan_store = AsyncMock()
+        # Startup also fires event_log + orphan_processes rehydrate
+        # steps — stub them so partial-init tests don't need to
+        # provide ``session.project_dir`` / ``restore_event_log``.
+        server._rehydrate_event_log = AsyncMock()
+        server._rehydrate_orphan_processes = AsyncMock()
 
         await server.startup()
 
@@ -205,10 +210,6 @@ class TestStartupRehydratesPlanDecisions:
     async def test_startup_calls_rehydrate_todos(self):
         # Same shape for todos — todo execution state must
         # survive restart, which means startup has to load it.
-        from ember_code.backend.server import BackendServer
-        from ember_code.core.tools.plan import PlanStore
-        from ember_code.core.tools.todo import TodoStore
-
         server = BackendServer.__new__(BackendServer)
         todo_store = TodoStore()
         server._session = SimpleNamespace(
@@ -230,6 +231,11 @@ class TestStartupRehydratesPlanDecisions:
         )
         server._detect_interrupted_run = AsyncMock()
         server._rehydrate_plan_store = AsyncMock()
+        # Startup also fires event_log + orphan_processes rehydrate
+        # steps — stub them so partial-init tests don't need to
+        # provide ``session.project_dir`` / ``restore_event_log``.
+        server._rehydrate_event_log = AsyncMock()
+        server._rehydrate_orphan_processes = AsyncMock()
 
         await server.startup()
 
@@ -242,10 +248,6 @@ class TestStartupRehydratesPlanDecisions:
         # I/O blip), startup must NOT crash. The user lands in
         # a session that pretends no decisions were ever made
         # — degraded but functional, same as a fresh boot.
-        from ember_code.backend.server import BackendServer
-        from ember_code.core.tools.plan import PlanStore
-        from ember_code.core.tools.todo import TodoStore
-
         server = BackendServer.__new__(BackendServer)
         server._session = SimpleNamespace(
             load_persisted_loop_state=AsyncMock(),
@@ -258,6 +260,11 @@ class TestStartupRehydratesPlanDecisions:
         )
         server._detect_interrupted_run = AsyncMock()
         server._rehydrate_plan_store = AsyncMock()
+        # Startup also fires event_log + orphan_processes rehydrate
+        # steps — stub them so partial-init tests don't need to
+        # provide ``session.project_dir`` / ``restore_event_log``.
+        server._rehydrate_event_log = AsyncMock()
+        server._rehydrate_orphan_processes = AsyncMock()
 
         # Must not raise — the whole point of best-effort
         # persistence is graceful degradation on restart.

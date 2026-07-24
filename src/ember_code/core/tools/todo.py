@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from agno.tools import Toolkit
+from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     from ember_code.core.session.core import Session
@@ -43,6 +44,53 @@ logger = logging.getLogger(__name__)
 
 TodoStatus = Literal["pending", "in_progress", "completed"]
 _VALID_STATUSES: frozenset[str] = frozenset(("pending", "in_progress", "completed"))
+
+
+class TodoItemWire(BaseModel):
+    """Wire shape for one todo row — CC-parity ``activeForm``
+    camelCase alias so the SDK-facing payload matches Claude Code
+    verbatim. Constructed via keyword-args with the Python-side
+    ``active_form`` snake case; ``.model_dump(by_alias=True)``
+    produces the camelCase dict for broadcasts / persistence."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    content: str
+    status: str
+    active_form: str = Field("", alias="activeForm")
+
+    @classmethod
+    def coerce_snapshot(cls, raw: object) -> list[TodoItemWire]:
+        """Filter — SILENTLY drops malformed entries.
+
+        Absorbed from the pre-refactor module-level
+        ``_coerce_todo_snapshot`` helper in ``session/persistence.py``
+        so the shape rule (``content`` non-empty, ``status`` in the
+        three allowed values, ``active_form`` defaults to empty)
+        lives on the model that defines the shape, not in a free
+        function on a persistence-module boundary.
+
+        Use this for the persistence load/save round-trip where a
+        stale/corrupt on-disk row must NOT sink the whole read —
+        callers get a best-effort list of valid rows and the bad
+        entries drop. For strict validation, use
+        :meth:`model_validate` directly instead.
+        """
+        out: list[TodoItemWire] = []
+        if not isinstance(raw, list):
+            return out
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            content = str(entry.get("content", "")).strip()
+            if not content:
+                continue
+            status = str(entry.get("status", "pending"))
+            if status not in _VALID_STATUSES:
+                continue
+            active_form = str(entry.get("activeForm", entry.get("active_form", "")) or "")
+            out.append(cls(content=content, status=status, active_form=active_form))
+        return out
 
 
 @dataclass(frozen=True)
@@ -76,13 +124,17 @@ class TodoStore:
 
     def snapshot(self) -> list[dict]:
         """Serialise to the wire shape (``activeForm`` camelCase,
-        matching how CC's tool payload looks on the SDK)."""
+        matching how CC's tool payload looks on the SDK). The
+        shape is defined once by :class:`TodoItemWire`; the
+        list-comp constructs and dumps via ``by_alias=True`` so
+        any future field addition/rename goes through the model,
+        not a hand-rolled dict."""
         return [
-            {
-                "content": item.content,
-                "status": item.status,
-                "activeForm": item.active_form,
-            }
+            TodoItemWire(
+                content=item.content,
+                status=item.status,
+                active_form=item.active_form,
+            ).model_dump(by_alias=True)
             for item in self.items
         ]
 

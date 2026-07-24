@@ -3,22 +3,23 @@
 from __future__ import annotations
 
 import subprocess
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from ember_code.core.code_index.chroma_codec import ChromaRowCodec
 from ember_code.core.code_index.enums import FileSystemType
-from ember_code.core.code_index.index import (
-    CodeIndex,
-    _branch_heads,
-    _decode_bracketed_list,
-    _encode_bracketed_list,
-    _flatten_item_metadata,
-)
+from ember_code.core.code_index.git_branches import GitBranchReader
+from ember_code.core.code_index.index import CodeIndex
 from ember_code.core.code_index.manifest import Manifest
-from ember_code.core.code_index.paths import commit_chroma_path
+from ember_code.core.code_index.paths import code_index_dir, commit_chroma_path
 from ember_code.core.code_index.schema.items import CodeIndexItem
+from ember_code.core.code_index.schema.where_filter import ChromaWhereFilter
+
+_codec = ChromaRowCodec()
+_branch_reader = GitBranchReader()
 
 
 def _make_item(
@@ -73,8 +74,6 @@ class TestManifest:
         m = Manifest(project=tmp_path / "p", data_dir=str(tmp_path / "data"))
         m.upsert_commit("abc")
         original = m.load().commits["abc"].last_used_at
-        import time
-
         time.sleep(1.1)
         m.touch("abc")
         assert m.load().commits["abc"].last_used_at != original
@@ -100,17 +99,17 @@ class TestManifest:
 class TestMetadata:
     def test_bracketed_round_trip(self):
         original = ["alpha", "beta", "gamma"]
-        encoded = _encode_bracketed_list(original)
+        encoded = _codec._encode_list(original)
         # Bracketed on both sides for $contains exact match.
         assert encoded.startswith("\x1f") and encoded.endswith("\x1f")
-        assert _decode_bracketed_list(encoded) == original
+        assert _codec._decode_list(encoded) == original
 
     def test_bracketed_drops_empty_strings(self):
-        assert _decode_bracketed_list(_encode_bracketed_list(["a", "", "b"])) == ["a", "b"]
+        assert _codec._decode_list(_codec._encode_list(["a", "", "b"])) == ["a", "b"]
 
     def test_bracketed_empty_round_trip(self):
-        assert _encode_bracketed_list([]) == ""
-        assert _decode_bracketed_list("") == []
+        assert _codec._encode_list([]) == ""
+        assert _codec._decode_list("") == []
 
     def test_flatten_promotes_quality_and_lists(self):
         item = _make_item(
@@ -120,7 +119,7 @@ class TestMetadata:
             security="critical",
             domain=["auth", "api"],
         )
-        meta = _flatten_item_metadata(item)
+        meta = _codec.flatten(item).to_chroma_dict()
         assert meta["quality"] == "poor"
         assert meta["security"] == "critical"
         # Domain is bracketed for exact $contains match.
@@ -146,8 +145,6 @@ class TestPrepareCommit:
     async def test_idempotent_on_existing_commit(self, index):
         await index.prepare_commit("sha_0")
         first_used = index.manifest.load().commits["sha_0"].last_used_at
-        import time
-
         time.sleep(1.1)
         await index.prepare_commit("sha_0")
         assert index.manifest.load().commits["sha_0"].last_used_at != first_used
@@ -221,8 +218,6 @@ class TestSweepStaleDirs:
 
     @pytest.mark.asyncio
     async def test_removes_dirs_not_in_manifest(self, index):
-        from ember_code.core.code_index.paths import code_index_dir
-
         # Two tracked commits.
         await index.prepare_commit("alive_a")
         await index.prepare_commit("alive_b")
@@ -250,8 +245,6 @@ class TestSweepStaleDirs:
 
     @pytest.mark.asyncio
     async def test_ignores_non_chroma_entries(self, index):
-        from ember_code.core.code_index.paths import code_index_dir
-
         await index.prepare_commit("alive")
         base = code_index_dir(index.project, data_dir=index.data_dir)
         # Sibling files / unrelated dirs must survive — manifest.json
@@ -330,7 +323,11 @@ class TestSearchAndGet:
             ),
         )
 
-        critical = await index.search(query="SQL", limit=5, where={"security": "critical"})
+        critical = await index.search(
+            query="SQL",
+            limit=5,
+            where=ChromaWhereFilter.equal("security", "critical"),
+        )
         assert {r.name for r in critical} == {"risky.py"}
 
     @pytest.mark.asyncio
@@ -363,7 +360,7 @@ class TestFilterItems:
         await index.add_item("c", _make_item(name="poor.py", content="...", quality="poor"))
         await index.add_item("c", _make_item(name="good.py", content="...", quality="good"))
 
-        rows = await index.filter_items(where={"quality": "poor"}, limit=10)
+        rows = await index.filter_items(where=ChromaWhereFilter.equal("quality", "poor"), limit=10)
         assert {r.name for r in rows} == {"poor.py"}
 
 
@@ -441,7 +438,7 @@ class TestClean:
 
 class TestBranchHeads:
     def test_empty_for_non_git(self, tmp_path):
-        assert _branch_heads(tmp_path) == {}
+        assert _branch_reader.load(tmp_path).heads == {}
 
     def test_real_git_returns_branches(self, tmp_path):
         env_args = ["-c", "user.email=t@t", "-c", "user.name=t"]
@@ -451,6 +448,6 @@ class TestBranchHeads:
         subprocess.run(["git", *env_args, "commit", "-m", "init"], cwd=tmp_path, check=True)
         subprocess.run(["git", *env_args, "branch", "feature/foo"], cwd=tmp_path, check=True)
 
-        heads = _branch_heads(tmp_path)
+        heads = _branch_reader.load(tmp_path).heads
         assert set(heads.keys()) == {"main", "feature/foo"}
         assert len(set(heads.values())) == 1

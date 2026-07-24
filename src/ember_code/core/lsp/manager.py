@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from ember_code.core.lsp.client import LspClient, LspClientError
-from ember_code.core.lsp.config import LspServerConfig
+from ember_code.core.lsp.schemas import LspServerConfig, LspServerInfo
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,28 @@ class LspServerManager:
         for the panel to show "this server failed to start because
         X" without forcing the user to retry."""
         return self._launch_errors.get(name, "")
+
+    def server_info(self, name: str) -> LspServerInfo:
+        """Public snapshot of a single configured server. Raises
+        ``LspClientError`` for unknown names — matches
+        :meth:`ensure`'s failure vocabulary so callers get a
+        single error type for "no such server"."""
+        if name not in self._configs:
+            raise LspClientError(f"LSP server not configured: {name!r}")
+        config = self._configs[name]
+        return LspServerInfo(
+            name=name,
+            languages=list(config.languages),
+            running=self.is_running(name),
+            last_error=self.last_error(name),
+        )
+
+    def all_server_info(self) -> list[LspServerInfo]:
+        """Public snapshots of every configured server, sorted by
+        name. Used by :class:`LspTools.lsp_list_servers` and any
+        future panel/UI reader — the manager owns projection of
+        its own private state onto a Pydantic wire shape."""
+        return [self.server_info(name) for name in self.list_servers()]
 
     async def ensure(self, name: str) -> LspClient:
         """Lazy-launch (if needed) and return the client. Raises

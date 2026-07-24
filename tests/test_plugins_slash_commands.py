@@ -25,6 +25,7 @@ from ember_code.backend.command_handler import (
 )
 from ember_code.core.plugins.loader import PluginLoader
 from ember_code.core.plugins.state import PluginsState, load_state
+from ember_code.core.session.core import PluginReloadCounts
 
 # ── Helpers ─────────────────────────────────────────────────────────
 
@@ -69,18 +70,16 @@ def _make_handler(
     session.plugin_loader = loader
     session.plugin_state = state
     session.settings.storage.data_dir = str(tmp_path / "ember")
-    # ``reload_plugins`` returns a count dict that the install /
-    # update / remove paths interpolate into the chat message. The
-    # session is a MagicMock so we have to set the return value
-    # explicitly — otherwise ``counts['skills']`` would be a
-    # MagicMock and the f-string would render its repr instead of
-    # a number.
-    session.reload_plugins.return_value = {
-        "plugins": 0,
-        "skills": 0,
-        "agents": 0,
-        "hooks": 0,
-    }
+    # New public ``Session.plugin_data_dir`` property — mirrored on
+    # the mock so :class:`PluginBackendGateway` picks up a real path
+    # rather than a MagicMock attribute.
+    session.plugin_data_dir = str(tmp_path / "ember")
+    # ``reload_plugins`` returns a :class:`PluginReloadCounts` that
+    # the install / update / remove paths interpolate into the chat
+    # message. The session is a MagicMock so we have to set the
+    # return value explicitly — otherwise the attribute access on
+    # a MagicMock would render a MagicMock repr instead of a number.
+    session.reload_plugins.return_value = PluginReloadCounts(plugins=0, skills=0, agents=0, hooks=0)
 
     return CommandHandler(session)
 
@@ -101,17 +100,20 @@ def test_plugins_bare_opens_panel(tmp_path: Path) -> None:
     assert result.action == "plugins"
 
 
-def test_plugins_bare_when_loader_missing_returns_info(tmp_path: Path) -> None:
-    """Defensive: a Session without ``plugin_loader`` (shouldn't
-    happen in real use) gets a clear info message rather than a
-    crash. Same for ``plugin_state``."""
+def test_plugins_bare_opens_panel_when_no_subcommand(tmp_path: Path) -> None:
+    """``/plugins`` with no args opens the TUI panel.
+
+    Pre-refactor there was a defensive branch that swallowed a
+    ``session.plugin_loader is None`` state and returned an info
+    message; the reviewer flagged that as papering over a broken
+    constructor contract. Session now always constructs those
+    fields, so the check is gone and the bare-args path is a
+    clean "open panel" action.
+    """
     session = MagicMock()
-    session.plugin_loader = None
-    session.plugin_state = None
     h = CommandHandler(session)
     result = _run(h.handle("/plugins"))
-    assert result.kind == "info"
-    assert "not initialized" in result.content.lower()
+    assert result.action == "plugins"
 
 
 # ── /plugins enable / disable ──────────────────────────────────────

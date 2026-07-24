@@ -17,6 +17,8 @@ __str__).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import BaseModel
 
 from ember_code.backend.__main__ import _serialize
@@ -144,8 +146,6 @@ class TestFallback:
         assert _serialize(Custom()) == "custom-repr"
 
     def test_path_object_serialized_as_str(self):
-        from pathlib import Path
-
         # Path is a common BE return type — the str() fallback
         # gives the OS-path string the FE can render.
         p = Path("/tmp/x.txt")

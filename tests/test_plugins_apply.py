@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ember_code.core.hooks.loader import HookLoader
+from ember_code.core.hooks.registry import HookRegistry
 from ember_code.core.hooks.schemas import HookDefinition
 from ember_code.core.mcp.config import MCPConfigLoader, MCPServerConfig
 from ember_code.core.plugins.loader import PluginLoader
@@ -89,10 +90,11 @@ def test_apply_to_hooks_merges_plugin_event(tmp_path: Path) -> None:
     with patch.object(Path, "home", return_value=tmp_path / "home"):
         loader.load_all(project_dir=tmp_path / "proj")
 
-    hooks: dict[str, list[HookDefinition]] = {}
+    registry = HookRegistry.from_empty()
     hook_loader = HookLoader(project_dir=tmp_path / "proj")
-    loader.apply_to_hooks(hook_loader, hooks)
+    loader.apply_to_hooks(hook_loader, registry)
 
+    hooks = registry.raw
     assert "PreToolUse" in hooks
     assert len(hooks["PreToolUse"]) == 1
     assert hooks["PreToolUse"][0].command == "echo plugin-pre"
@@ -106,7 +108,7 @@ def test_plugin_hooks_prepend_so_project_runs_last(tmp_path: Path) -> None:
     can override plugin behavior on a per-project basis without
     forking the plugin."""
     project_hook = HookDefinition(type="command", command="project-cmd")
-    hooks: dict[str, list[HookDefinition]] = {"PostToolUse": [project_hook]}
+    registry = HookRegistry({"PostToolUse": [project_hook]})
 
     user_ember = tmp_path / "home" / ".ember" / "plugins"
     _write_plugin_with_hooks(
@@ -121,9 +123,9 @@ def test_plugin_hooks_prepend_so_project_runs_last(tmp_path: Path) -> None:
     with patch.object(Path, "home", return_value=tmp_path / "home"):
         loader.load_all(project_dir=tmp_path / "proj")
     hook_loader = HookLoader(project_dir=tmp_path / "proj")
-    loader.apply_to_hooks(hook_loader, hooks)
+    loader.apply_to_hooks(hook_loader, registry)
 
-    commands = [h.command for h in hooks["PostToolUse"]]
+    commands = [h.command for h in registry.raw["PostToolUse"]]
     assert commands == ["plugin-cmd", "project-cmd"]
 
 
@@ -150,11 +152,11 @@ def test_apply_to_hooks_skips_disabled_plugin(tmp_path: Path) -> None:
     with patch.object(Path, "home", return_value=tmp_path / "home"):
         loader.load_all(project_dir=tmp_path / "proj")
 
-    hooks: dict[str, list[HookDefinition]] = {}
+    registry = HookRegistry.from_empty()
     hook_loader = HookLoader(project_dir=tmp_path / "proj")
-    loader.apply_to_hooks(hook_loader, hooks, disabled={"alpha"})
+    loader.apply_to_hooks(hook_loader, registry, disabled={"alpha"})
 
-    commands = [h.command for h in hooks["PreToolUse"]]
+    commands = [h.command for h in registry.raw["PreToolUse"]]
     assert commands == ["beta-cmd"]
 
 
@@ -169,10 +171,12 @@ def test_load_plugin_hooks_swallows_malformed_json(tmp_path: Path) -> None:
     (plugin_dir / "hooks" / "hooks.json").write_text("not-json")
 
     hook_loader = HookLoader(project_dir=tmp_path / "proj")
-    hooks: dict[str, list[HookDefinition]] = {}
+    registry = HookRegistry.from_empty()
     # Should not raise.
-    hook_loader.load_plugin_hooks(plugin_dir, hooks)
-    assert hooks == {}
+    result = hook_loader.load_plugin_hooks(plugin_dir, registry)
+    assert registry.raw == {}
+    assert len(result.warnings) >= 1
+    assert result.warnings[0].kind == "invalid_json"
 
 
 # ── MCP servers ─────────────────────────────────────────────────────

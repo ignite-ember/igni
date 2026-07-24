@@ -10,7 +10,7 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from ember_code.core.scheduler.models import TaskStatus
+from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
 from ember_code.core.scheduler.store import TaskStore
 
 logger = logging.getLogger(__name__)
@@ -150,22 +150,17 @@ class SchedulerRunner:
 
     async def _reschedule_if_recurring(self, task_id: str) -> None:
         """If the task has a recurrence pattern, create the next occurrence."""
-        import uuid
-
-        from ember_code.core.scheduler.models import ScheduledTask
-        from ember_code.core.scheduler.parser import next_occurrence_from_recurrence
-
         task = await self._store.get(task_id)
         if not task or not task.recurrence:
             return
 
-        next_at = next_occurrence_from_recurrence(task.recurrence, task.scheduled_at)
-        if next_at is None:
+        recurrence = task.recurrence_obj
+        if recurrence is None:
             logger.warning("Could not compute next occurrence for task %s", task_id)
             return
+        next_at = recurrence.next_after(task.scheduled_at)
 
-        next_task = ScheduledTask(
-            id=uuid.uuid4().hex[:8],
+        next_task = ScheduledTask.new(
             description=task.description,
             scheduled_at=next_at,
             recurrence=task.recurrence,

@@ -130,6 +130,14 @@ class LoopProgressStore:
     and the tool layer is responsible for current-run resolution.
     """
 
+    # Reserved key that holds the agent's announced iteration total.
+    # Read by :meth:`get_announced_total` (used by the ``/loop`` panel
+    # header) and written by :meth:`set_announced_total` (used by the
+    # ``loop_set_total`` agent tool). Underscored to keep it out of
+    # the way of user-defined progress keys — callers should reach
+    # for the typed accessors rather than the raw string.
+    ANNOUNCED_TOTAL_KEY = "__loop_total__"
+
     def __init__(
         self,
         db_path: str | Path | None = None,
@@ -215,3 +223,31 @@ class LoopProgressStore:
                 delete(LoopProgressModel).where(LoopProgressModel.run_id == run_id)
             )
             return result.rowcount or 0
+
+    # ── Announced-total accessors (typed façade over the raw kv) ──
+
+    async def get_announced_total(self, run_id: str) -> int | None:
+        """Return the agent-announced iteration total for ``run_id``.
+
+        Owned by the store rather than by the caller so the
+        ``ANNOUNCED_TOTAL_KEY`` string + the ``int(...)`` fallback
+        semantics have one home. Returns ``None`` when the key is
+        unset or its value isn't parseable as an integer (silent
+        fallback — the panel just hides the total in that case).
+        """
+        raw = await self.get(run_id, self.ANNOUNCED_TOTAL_KEY)
+        if not raw:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
+    async def set_announced_total(self, run_id: str, total: int) -> None:
+        """Persist the agent-announced iteration total for ``run_id``.
+
+        Stringifies before writing (the underlying kv is string-typed)
+        so the same value round-trips through
+        :meth:`get_announced_total`.
+        """
+        await self.set(run_id, self.ANNOUNCED_TOTAL_KEY, str(total))

@@ -56,22 +56,26 @@ _CONTENT_EVENTS = {"ContentDelta", "ToolCompleted"}
 async def _ensure_cloud_models(settings) -> None:
     """Mirror the TUI startup that pulls hosted models into the registry."""
     from ember_code.core.auth.credentials import CloudCredentials
-    from ember_code.core.config.cloud_models import fetch_cloud_models, merge_into_registry
+    from ember_code.core.config.cloud_models import CloudModelCatalogClient
 
     token = CloudCredentials(settings.auth.credentials_file).access_token
     if not token:
         raise RuntimeError(
             "No cloud token found. Run `/login` in ember-code to authenticate first."
         )
+    client = CloudModelCatalogClient(settings.api_url, token)
     loop = asyncio.get_event_loop()
-    entries = await loop.run_in_executor(None, fetch_cloud_models, settings.api_url, token)
-    if not entries:
+    fetch_result = await loop.run_in_executor(None, client.fetch)
+    if not fetch_result.ok or not fetch_result.entries:
         raise RuntimeError(
-            f"Cloud-model discovery returned no entries (api_url={settings.api_url}). "
+            f"Cloud-model discovery returned no entries "
+            f"(api_url={settings.api_url}, reason={fetch_result.reason.value}). "
             "Make sure the API is reachable and your credentials are valid."
         )
-    merge_into_registry(settings.models.registry, entries, settings.api_url)
-    logger.info("loaded %d cloud model(s) from %s", len(entries), settings.api_url)
+    client.merge_into(settings.models.registry, entries=fetch_result.entries)
+    logger.info(
+        "loaded %d cloud model(s) from %s", len(fetch_result.entries), settings.api_url
+    )
 
 
 async def _profile_raw_agno(

@@ -49,14 +49,23 @@ class TestAdd:
 
     @pytest.mark.asyncio
     async def test_add_document_uses_provided_chunks(self, index):
-        eid = await index.add_document(
+        result = await index.add_document(
             chunks=["chunk one about cats", "chunk two about dogs"],
             full_content="cats and dogs",
             source="pets.md",
         )
+        assert result.success
+        eid = result.entry_id
         assert await index.has_entry(eid)
-        results = await index.search(query="dogs", limit=2)
-        assert any(r["entry_id"] == eid for r in results)
+        hits = await index.search(query="dogs", limit=2)
+        assert any(r["entry_id"] == eid for r in hits)
+
+    @pytest.mark.asyncio
+    async def test_add_document_empty_chunks_returns_failure(self, index):
+        result = await index.add_document(chunks=[], source="empty.md")
+        assert not result.success
+        assert result.entry_id is None
+        assert "at least one chunk" in (result.error or "")
 
 
 class TestSearch:
@@ -134,9 +143,10 @@ class TestDelete:
         eid = await index.add(content="pluto is a planet", source="space.md")
         await index.add(content="mars has two moons", source="space.md")
         before = await index.count()
-        deleted = await index.delete_by_query("pluto", limit=5)
-        assert deleted >= 1
-        assert await index.count() == before - deleted
+        result = await index.delete_by_query("pluto", limit=5)
+        assert result.deleted >= 1
+        assert result.ok
+        assert await index.count() == before - result.deleted
         assert not await index.has_entry(eid)
 
 

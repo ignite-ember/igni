@@ -22,10 +22,13 @@ they reopen Tauri and find a different state than they left.
 
 from __future__ import annotations
 
+import tempfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+
+from agno.session.agent import AgentSession
 
 from ember_code.backend.server import BackendServer
 from ember_code.core.session.persistence import SessionPersistence
@@ -63,6 +66,16 @@ def _make_server_against_db(db, session_id: str) -> BackendServer:
         # tests that don't write through a real Agno run.
         main_team=MagicMock(aget_session=AsyncMock(return_value=None)),
         load_persisted_loop_state=AsyncMock(),
+        # ``RehydrateController.event_log`` calls
+        # ``session.restore_event_log(events)`` — the public method
+        # that owns the ``event_log`` + ``_event_seq`` atomic write.
+        # A no-op stub is enough because the persistence layer never
+        # writes an event log in these tests.
+        restore_event_log=lambda events: None,
+        # ``project_dir`` is read by ``RehydrateController.orphan_processes``
+        # which shells out to the process supervisor; ``tmp_path`` is
+        # the closest analogue and safe because no orphan rows exist.
+        project_dir=Path(tempfile.gettempdir()),
     )
     server._detect_interrupted_run = AsyncMock()
     return server
@@ -204,8 +217,6 @@ class TestFullRestartRoundTrip:
         # status changed to ``"banana"``). The cleaning at
         # ``load_todos`` drops the bad entry; restart should
         # surface a sensible (partial / empty) state, not crash.
-
-        from agno.session.agent import AgentSession
 
         db = _make_db(tmp_path)
         # Hand-craft a corrupted session_data and upsert directly.

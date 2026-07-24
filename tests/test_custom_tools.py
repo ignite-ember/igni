@@ -4,6 +4,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from agno.tools import tool
 
 from ember_code.core.tools.custom_loader import CustomToolkit, load_custom_tools
 
@@ -197,8 +198,6 @@ class TestLoadCustomTools:
 
 class TestCustomToolkit:
     def test_toolkit_name(self):
-        from agno.tools import tool
-
         @tool(description="Test")
         def my_fn() -> str:
             return "hi"
@@ -208,8 +207,6 @@ class TestCustomToolkit:
         assert "my_fn" in tk.functions
 
     def test_toolkit_functions_callable(self):
-        from agno.tools import tool
-
         @tool(description="Add two numbers")
         def add(a: int, b: int) -> int:
             return a + b

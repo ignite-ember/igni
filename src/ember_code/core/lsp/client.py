@@ -13,6 +13,12 @@ single reader task that drains its stdout. Requests/responses are
 correlated by integer ``id``; out-of-band notifications from the
 server are logged and dropped — we don't surface ``window/log``,
 ``textDocument/publishDiagnostics``, etc. yet.
+
+Wire shapes are modeled in :mod:`ember_code.core.lsp.schemas` —
+this module builds outgoing payloads by constructing typed
+Pydantic models and dumps them onto stdin; inbound bytes are
+parsed via :func:`parse_inbound_message` and dispatched by
+envelope type rather than key-presence heuristics.
 """
 
 from __future__ import annotations
@@ -23,9 +29,21 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
-from ember_code.core.lsp.config import LspServerConfig
+from pydantic import BaseModel
+
+from ember_code.core.lsp.schemas import (
+    ClientCapabilities,
+    InitializeParams,
+    JsonRpcNotification,
+    JsonRpcParams,
+    JsonRpcRequest,
+    JsonRpcResponse,
+    JsonRpcServerRequest,
+    LspServerConfig,
+    parse_inbound_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +53,17 @@ logger = logging.getLogger(__name__)
 # fast (sub-100ms typical). 30 s leaves a generous ceiling without
 # letting a stalled server pin the agent forever.
 _DEFAULT_REQUEST_TIMEOUT = 30.0
+
+
+# What callers may hand us for ``params``. A ``BaseModel`` gets
+# dumped via ``model_dump(exclude_none=True)``; a mapping / list /
+# ``None`` is passed through verbatim. This is a strict superset
+# of what the manager and ``LspTools`` pass today (JSON-decoded
+# LLM output — dicts, lists, or ``None``).
+# ``Union`` (not ``|``) because ``BaseModel | JsonRpcParams`` mixes
+# a metaclass and a ``typing.Union`` alias at module scope, which
+# is unsupported on Python <3.12 outside of annotations.
+RequestParams = Union[BaseModel, JsonRpcParams]  # noqa: UP007
 
 
 class LspClientError(RuntimeError):
@@ -83,26 +112,27 @@ class LspClient:
         # other queries. We pass the project_dir as the root URI
         # unless the config pinned an explicit one.
         root_uri = self.config.root_uri or f"file://{self.project_dir.resolve()}"
-        params = {
-            "processId": os.getpid(),
-            "rootUri": root_uri,
-            "capabilities": {
-                # Minimal — we don't subscribe to workspace events.
-                # Server still functions; just won't push diagnostics.
-                "workspace": {},
-                "textDocument": {},
-            },
-            "initializationOptions": self.config.initialization_options,
-        }
+        init_params = InitializeParams(
+            processId=os.getpid(),
+            rootUri=root_uri,
+            # Minimal capabilities — we don't subscribe to
+            # workspace events. Server still functions; just
+            # won't push diagnostics.
+            capabilities=ClientCapabilities(),
+            initializationOptions=dict(self.config.initialization_options),
+        )
+        # BaseException so we clean up the subprocess even on
+        # asyncio.CancelledError / validation failures — narrowing
+        # to LspClientError would leak a running process.
         try:
-            await self.request("initialize", params)
-        except Exception:
+            await self.request("initialize", init_params)
+            # ``initialized`` notification (note the past tense —
+            # it's the FE's signal that handshake is complete and
+            # the server may begin asynchronous work).
+            await self.notify("initialized", {})
+        except BaseException:
             await self.shutdown()
             raise
-        # ``initialized`` notification (note the past tense — it's
-        # the FE's signal that handshake is complete and the
-        # server may begin asynchronous work).
-        await self.notify("initialized", {})
         self._initialized = True
 
     async def shutdown(self) -> None:
@@ -135,18 +165,14 @@ class LspClient:
             self._proc = None
             self._reader_task = None
             self._initialized = False
-            # Fail any pending futures so callers don't hang.
-            for fut in self._pending.values():
-                if not fut.done():
-                    fut.set_exception(LspClientError("LSP server shut down"))
-            self._pending.clear()
+            self._fail_pending("LSP server shut down")
 
     # ── Protocol ────────────────────────────────────────────────
 
     async def request(
         self,
         method: str,
-        params: Any,
+        params: RequestParams,
         timeout: float = _DEFAULT_REQUEST_TIMEOUT,
     ) -> Any:
         """Send a JSON-RPC request and await its response.
@@ -157,10 +183,15 @@ class LspClient:
         """
         req_id = self._next_id
         self._next_id += 1
-        future: asyncio.Future[Any] = asyncio.get_event_loop().create_future()
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._pending[req_id] = future
+        envelope = JsonRpcRequest(
+            id=req_id,
+            method=method,
+            params=self._encode_params(params),
+        )
         try:
-            await self._send({"jsonrpc": "2.0", "id": req_id, "method": method, "params": params})
+            await self._send_envelope(envelope)
             return await asyncio.wait_for(future, timeout=timeout)
         except TimeoutError as exc:
             raise LspClientError(
@@ -169,13 +200,36 @@ class LspClient:
         finally:
             self._pending.pop(req_id, None)
 
-    async def notify(self, method: str, params: Any) -> None:
+    async def notify(self, method: str, params: RequestParams) -> None:
         """Send a JSON-RPC notification — no response expected."""
-        await self._send({"jsonrpc": "2.0", "method": method, "params": params})
+        envelope = JsonRpcNotification(
+            method=method,
+            params=self._encode_params(params),
+        )
+        await self._send_envelope(envelope)
 
-    async def _send(self, payload: dict) -> None:
+    @staticmethod
+    def _encode_params(params: RequestParams) -> JsonRpcParams:
+        """Coerce a caller-supplied ``params`` into a JSON-friendly
+        shape. Pydantic models get dumped with camelCase aliases
+        (LSP wire shape) and ``exclude_none`` so optional fields
+        drop out cleanly."""
+        if isinstance(params, BaseModel):
+            return params.model_dump(by_alias=True, exclude_none=True)
+        return params
+
+    async def _send_envelope(self, envelope: JsonRpcRequest | JsonRpcNotification) -> None:
+        """Serialize one envelope model and write it on stdin.
+
+        ``exclude_none=False`` is deliberate: JSON-RPC ``shutdown``
+        request and ``exit`` notification both carry
+        ``params=null`` and some LSP servers require the key to be
+        present. The envelope models use spec-lowercase field names
+        so no ``by_alias`` is required here.
+        """
         if self._proc is None or self._proc.stdin is None:
             raise LspClientError(f"{self.config.name}: not running")
+        payload = envelope.model_dump(exclude_none=False)
         body = json.dumps(payload).encode("utf-8")
         header = f"Content-Length: {len(body)}\r\n\r\n".encode()
         # Hold the lock across the two writes so concurrent
@@ -205,15 +259,15 @@ class LspClient:
             raise
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning("LSP %s reader crashed: %s", self.config.name, exc)
-            # Fail any pending futures so they don't hang.
-            for fut in self._pending.values():
-                if not fut.done():
-                    fut.set_exception(LspClientError(f"reader crashed: {exc}"))
-            self._pending.clear()
+            self._fail_pending(f"reader crashed: {exc}")
 
-    async def _read_message(self, stream: asyncio.StreamReader) -> dict | None:
+    async def _read_message(
+        self, stream: asyncio.StreamReader
+    ) -> JsonRpcResponse | JsonRpcNotification | JsonRpcServerRequest | None:
         """Read one ``Content-Length: N\\r\\n\\r\\n<body>`` framed
-        message. Returns ``None`` on EOF."""
+        message and parse it into an envelope model. Returns
+        ``None`` on EOF, malformed framing, or an unparseable
+        body — the reader drops the message and continues."""
         content_length: int | None = None
         # Headers — one per line, terminated by an empty line.
         while True:
@@ -234,29 +288,52 @@ class LspClient:
             return None
         body = await stream.readexactly(content_length)
         try:
-            return json.loads(body.decode("utf-8"))
+            raw = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             return None
+        return parse_inbound_message(raw)
 
-    def _dispatch(self, msg: dict) -> None:
-        """Route an incoming message: a response carries ``id``,
-        a notification doesn't. Server-side requests (e.g.
-        ``window/showMessageRequest``) would also lack our id —
-        we ignore them for now since we declared minimal client
-        capabilities in ``initialize``."""
-        msg_id = msg.get("id")
-        if msg_id is None:
-            logger.debug("LSP %s notification: %s", self.config.name, msg.get("method"))
+    def _dispatch(self, msg: JsonRpcResponse | JsonRpcNotification | JsonRpcServerRequest) -> None:
+        """Route a parsed inbound message.
+
+        * :class:`JsonRpcResponse` → resolve/fail the pending
+          future for its ``id``.
+        * :class:`JsonRpcNotification` → log at debug and drop
+          (we don't surface ``window/log`` etc. yet).
+        * :class:`JsonRpcServerRequest` → log at debug and drop
+          (we declared minimal client capabilities in
+          ``initialize`` so servers shouldn't send these).
+        """
+        if isinstance(msg, JsonRpcNotification):
+            logger.debug("LSP %s notification: %s", self.config.name, msg.method)
             return
-        future = self._pending.get(msg_id)
+        if isinstance(msg, JsonRpcServerRequest):
+            logger.debug(
+                "LSP %s server request id=%s method=%s (ignored)",
+                self.config.name,
+                msg.id,
+                msg.method,
+            )
+            return
+        # JsonRpcResponse path.
+        future = self._pending.get(msg.id)
         if future is None:
-            logger.debug("LSP %s unmatched response id=%s", self.config.name, msg_id)
+            logger.debug("LSP %s unmatched response id=%s", self.config.name, msg.id)
             return
-        if "error" in msg and msg["error"]:
-            err = msg["error"]
-            code = err.get("code", "?")
-            message = err.get("message", "")
+        if msg.error is not None:
+            err = msg.error
             if not future.done():
-                future.set_exception(LspClientError(f"LSP error {code}: {message}"))
-        elif not future.done():
-            future.set_result(msg.get("result"))
+                future.set_exception(LspClientError(f"LSP error {err.code}: {err.message}"))
+            return
+        if not future.done():
+            future.set_result(msg.result)
+
+    # ── Internals ────────────────────────────────────────────────
+
+    def _fail_pending(self, reason: str) -> None:
+        """Fail every pending future with :class:`LspClientError`
+        so waiters don't hang after a shutdown or reader crash."""
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_exception(LspClientError(reason))
+        self._pending.clear()

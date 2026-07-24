@@ -5,13 +5,68 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from agno.agent import Agent
+from agno.models.openai.like import OpenAILike
+from agno.run.agent import RunOutput
+from agno.utils.hooks import filter_hook_args
 
-from ember_code.core.queue_hook import (
+from ember_code.core.hooks.queue import (
     USER_NOTE_HEADER,
-    QueueInjectorHook,
-    QueuePersisterHook,
-    create_queue_hook,
+    QueueBridge,
 )
+from ember_code.core.hooks.queue import (
+    QueueInjectorHook as _RealQueueInjectorHook,
+)
+from ember_code.core.hooks.queue import (
+    QueuePersisterHook as _RealQueuePersisterHook,
+)
+
+# Re-export the real class for ``isinstance`` assertions in
+# ``TestCreateQueueHook``. Direct construction of the injector in
+# older test bodies now goes through :func:`_make_injector` (below)
+# which builds one via :class:`QueueBridge`, matching the pre-refactor
+# ``QueueInjectorHook(queue=…)`` call shape.
+QueuePersisterHook = _RealQueuePersisterHook
+
+
+def _make_injector(queue=None, on_inject=None, on_queue_changed=None):
+    """Test factory — construct just the injector with a fresh shared
+    buffer. Kept as a callable named ``QueueInjectorHook`` in the test
+    scope below so test bodies read unchanged."""
+    bridge = QueueBridge(
+        queue=queue if queue is not None else [],
+        on_inject=on_inject,
+        on_queue_changed=on_queue_changed,
+    )
+    return bridge.injector
+
+
+# Alias so the pre-refactor call sites keep reading naturally. This
+# is a callable that returns a real injector; ``isinstance`` checks
+# against the real class use ``_RealQueueInjectorHook`` below.
+QueueInjectorHook = _make_injector
+
+
+def create_queue_hook(queue, on_inject=None, on_queue_changed=None):
+    """Test helper mirroring the retired free function.
+
+    New code should call :class:`QueueBridge` directly; the helper
+    keeps the existing assertions readable.
+    """
+    bridge = QueueBridge(
+        queue=queue,
+        on_inject=on_inject,
+        on_queue_changed=on_queue_changed,
+    )
+    return bridge.injector, bridge.persister
+
+
+def _set_injected(injector, texts):
+    """Replace the pre-refactor ``injector._injected_this_run = […]``
+    reach-in. Populates the shared buffer directly."""
+    injector._buffer.items.clear()
+    for text in texts:
+        injector._buffer.append(text)
 
 
 class TestQueueInjectorHook:
@@ -120,10 +175,10 @@ class TestQueueInjectorHook:
 
 class TestQueuePersisterHook:
     def test_appends_user_messages_to_run_output(self):
-        injector = QueueInjectorHook(queue=[])
+        bridge = QueueBridge(queue=[])
         # Simulate two messages drained during the run.
-        injector._injected_this_run = ["first", "second"]
-        persister = QueuePersisterHook(injector)
+        _set_injected(bridge.injector, ["first", "second"])
+        persister = bridge.persister
 
         run_output = SimpleNamespace(messages=[])
         persister(run_output=run_output)
@@ -132,48 +187,46 @@ class TestQueuePersisterHook:
         assert run_output.messages[0].role == "user"
         assert run_output.messages[0].content == "first"
         assert run_output.messages[1].content == "second"
-        assert injector.injected_this_run == []
+        assert bridge.injector.injected_this_run == []
 
     def test_initialises_messages_when_none(self):
-        injector = QueueInjectorHook(queue=[])
-        injector._injected_this_run = ["x"]
-        persister = QueuePersisterHook(injector)
+        bridge = QueueBridge(queue=[])
+        _set_injected(bridge.injector, ["x"])
 
         run_output = SimpleNamespace(messages=None)
-        persister(run_output=run_output)
+        bridge.persister(run_output=run_output)
 
         assert run_output.messages is not None
         assert run_output.messages[0].content == "x"
 
     def test_no_injected_means_no_op(self):
-        injector = QueueInjectorHook(queue=[])
-        persister = QueuePersisterHook(injector)
+        bridge = QueueBridge(queue=[])
         run_output = SimpleNamespace(messages=[])
-        persister(run_output=run_output)
+        bridge.persister(run_output=run_output)
         assert run_output.messages == []
 
     def test_no_run_output_clears_state(self):
-        injector = QueueInjectorHook(queue=[])
-        injector._injected_this_run = ["a"]
-        persister = QueuePersisterHook(injector)
-        persister(run_output=None)
+        bridge = QueueBridge(queue=[])
+        _set_injected(bridge.injector, ["a"])
+        bridge.persister(run_output=None)
         # State cleared even when there's nowhere to write.
-        assert injector.injected_this_run == []
+        assert bridge.injector.injected_this_run == []
 
 
 class TestCreateQueueHook:
     def test_returns_injector_and_persister(self):
         injector, persister = create_queue_hook([])
-        assert isinstance(injector, QueueInjectorHook)
+        assert isinstance(injector, _RealQueueInjectorHook)
         assert isinstance(persister, QueuePersisterHook)
-        assert persister._injector is injector
+        # Injector and persister share the same buffer instance.
+        assert persister._buffer is injector._buffer
 
     def test_passes_callbacks(self):
         on_inject = MagicMock()
         on_changed = MagicMock()
         injector, _ = create_queue_hook([], on_inject=on_inject, on_queue_changed=on_changed)
-        assert injector._on_inject is on_inject
-        assert injector._on_queue_changed is on_changed
+        assert injector._callbacks.on_inject is on_inject
+        assert injector._callbacks.on_queue_changed is on_changed
 
     @pytest.mark.asyncio
     async def test_full_flow_tool_then_persist(self):
@@ -207,8 +260,6 @@ class TestAgnoIntegration:
 
     def test_persister_invoked_with_real_filter_hook_args(self):
         """``filter_hook_args`` must hand our persister a usable run_output."""
-        from agno.utils.hooks import filter_hook_args
-
         injector, persister = create_queue_hook([])
         # Mirror exactly what aexecute_post_hooks builds in Agno's _hooks.py.
         all_args = {
@@ -220,7 +271,7 @@ class TestAgnoIntegration:
             "debug_mode": False,
             "metadata": None,
         }
-        injector._injected_this_run = ["typed during run"]
+        _set_injected(injector, ["typed during run"])
         persister(**filter_hook_args(persister, all_args))
 
         run_output = all_args["run_output"]
@@ -229,10 +280,8 @@ class TestAgnoIntegration:
 
     def test_appends_to_real_runoutput(self):
         """The real Agno RunOutput accepts our Message append unchanged."""
-        from agno.run.agent import RunOutput
-
         injector, persister = create_queue_hook([])
-        injector._injected_this_run = ["real-runoutput note"]
+        _set_injected(injector, ["real-runoutput note"])
 
         run_output = RunOutput(run_id="test-run-1", session_id="s1")
         # Agno may initialise messages later; persister must handle None.
@@ -250,10 +299,8 @@ class TestAgnoIntegration:
 
     def test_message_passes_session_skip_roles_filter(self):
         """User messages survive ``skip_roles=['system','tool']`` filtering."""
-        from agno.run.agent import RunOutput
-
         injector, persister = create_queue_hook([])
-        injector._injected_this_run = ["should appear in /sessions"]
+        _set_injected(injector, ["should appear in /sessions"])
 
         run_output = RunOutput(run_id="r2", session_id="s2")
         persister(run_output=run_output)
@@ -288,9 +335,6 @@ class TestRealAgnoRun:
             pytest.skip(
                 "EMBER_TEST_LLM_API_KEY not set (add it to .env or export it to run live tests)"
             )
-
-        from agno.agent import Agent
-        from agno.models.openai.like import OpenAILike
 
         queued_text = "PINEAPPLE-MARKER-9821"
         queue = [queued_text]
