@@ -52,6 +52,7 @@ from ember_code.core.code_index.neo4j_codec import Neo4jRowCodec
 from ember_code.core.code_index.neo4j_schema import (
     COMMIT_SCHEMA_STATEMENTS,
     DEFAULT_DATABASE,
+    META_SCHEMA_STATEMENTS,
 )
 from ember_code.core.code_index.schema.commit_metadata import (
     CommitMetadataBulkCreate,
@@ -59,10 +60,26 @@ from ember_code.core.code_index.schema.commit_metadata import (
     CommitMetadataEntry,
 )
 from ember_code.core.code_index.schema.file_reference import FileReference
-from ember_code.core.code_index.schema.items import CodeIndexItem, CodeIndexResult
+from ember_code.core.code_index.schema.items import (
+    CodeIndexItem,
+    CodeIndexItemCreate,
+    CodeIndexResult,
+)
 from ember_code.core.code_index.schema.stats import HeadStats
 
 logger = logging.getLogger(__name__)
+
+
+# Allowlist of :Item property names the where-renderer accepts. Property
+# names are interpolated into Cypher (values are parameterized), so
+# without this a caller-controlled key like ``x) OR true //`` would
+# become executable query text. Derived from ``CodeIndexItemCreate``
+# at import time so adding a new field is one line in the Pydantic
+# model — and ``archived`` (an admin field on the node, not on the
+# create schema) is included explicitly.
+_ITEM_WHERE_FIELDS: frozenset[str] = frozenset(CodeIndexItemCreate.model_fields) | frozenset(
+    {"archived"}
+)
 
 
 # Vector search over-fetch factor — matches today's chroma behaviour
@@ -88,13 +105,20 @@ class Neo4jClient:
         self,
         driver: AsyncDriver,
         project_id: str,
+        commit_sha: str = "",
         *,
         vector_overfetch: int = _DEFAULT_VECTOR_OVERFETCH,
     ):
         self._driver = driver
         self._project_id = project_id
         # Per-process isolation: each Neo4j process = one commit.
-        # project_hash scopes queries within a multi-tenant runtime.
+        # ``commit_sha`` identifies which commit this client's process
+        # holds — used for admin-facing calls (``drop_database``,
+        # ``touch_commit``) and returned via the ``commit_sha``
+        # property. Data queries don't filter on it (the process IS
+        # the scope); ``project_hash`` scopes across projects sharing
+        # a physical DB.
+        self._commit_sha = commit_sha
         self._db_name = DEFAULT_DATABASE
         self._codec = Neo4jRowCodec()
         self._overfetch = vector_overfetch
@@ -106,6 +130,10 @@ class Neo4jClient:
     @property
     def project_id(self) -> str:
         return self._project_id
+
+    @property
+    def commit_sha(self) -> str:
+        return self._commit_sha
 
     # ── Lifecycle ───────────────────────────────────────────────────
 
@@ -686,17 +714,22 @@ class Neo4jClient:
         """Return every edge whose ``from_uuid`` or ``to_uuid`` is in ``uuids``.
 
         When ``kinds`` is provided, narrows to edges with one of
-        those ``kind`` values. Mirrors
+        those ``kind`` values. An empty ``uuids`` with ``kinds``
+        returns every edge of those kinds (admin-style "all
+        relations" queries). Mirrors
         :meth:`FileReferenceService.get_by_uuids`.
         """
-        if not uuids:
+        if not uuids and not kinds:
             return []
-        clauses = ["a.item_id IN $ids OR b.item_id IN $ids"]
-        params: dict[str, Any] = {"ids": list(uuids)}
+        clauses: list[str] = []
+        params: dict[str, Any] = {}
+        if uuids:
+            clauses.append("a.item_id IN $ids OR b.item_id IN $ids")
+            params["ids"] = list(uuids)
         if kinds:
             clauses.append("r.kind IN $kinds")
             params["kinds"] = list(kinds)
-        where_str = " AND ".join(clauses)
+        where_str = " AND ".join(clauses) if clauses else "true"
         async with self.session() as session:
             result = await session.run(
                 f"MATCH (a:Item)-[r:REL]->(b:Item) WHERE {where_str} "
@@ -890,6 +923,14 @@ class Neo4jClient:
             return " AND ".join(clauses), params
 
         for field, value in where.items():
+            # Field name is interpolated into Cypher as an identifier
+            # (values are parameterized). Reject anything outside the
+            # :Item property allowlist so a caller-controlled key
+            # can't escape the WHERE clause.
+            if field not in _ITEM_WHERE_FIELDS:
+                raise ValueError(
+                    f"unknown where field: {field!r}; allowed: {sorted(_ITEM_WHERE_FIELDS)}"
+                )
             idx = _param_counter[0]
             _param_counter[0] += 1
             param = f"w{idx}"
@@ -944,3 +985,130 @@ class Neo4jChunkSearch:
 
     PREVIEW_MAX_CHARS = 1000
     PARENT_ID_CAP = _DEFAULT_PARENT_ID_CAP
+
+
+class Neo4jMetaClient:
+    """Per-project admin store: HEAD sha, branch pins, tracked commits.
+
+    Unlike :class:`Neo4jClient` (which is scoped to one commit's
+    process), the meta client holds project-level bookkeeping that
+    must outlive any single commit process:
+
+    * ``head`` — the current commit sha for the project.
+    * ``branch_pins`` — commits exempt from retention sweeps.
+    * ``:Commit`` nodes — one per tracked commit, carrying
+      ``created_at`` / ``last_used_at`` so a retention sweep can
+      drop idle, branch-unpinned commit DBs.
+
+    All nodes are scoped by ``project_hash`` so one physical DB can
+    hold many projects' admin data without leakage. The client takes
+    the shared driver (owned by :class:`Neo4jRuntime`); construction
+    is cheap and does no I/O.
+    """
+
+    _HEAD_KEY = "head"
+    _BRANCH_PINS_KEY = "branch_pins"
+
+    def __init__(self, driver: AsyncDriver, project_id: str):
+        self._driver = driver
+        self._project_id = project_id
+        self._db_name = DEFAULT_DATABASE
+
+    @property
+    def project_id(self) -> str:
+        return self._project_id
+
+    def session(self) -> AsyncSession:
+        """Open a session bound to the meta DB (the default ``neo4j``)."""
+        return self._driver.session(database=self._db_name)
+
+    async def apply_schema(self) -> None:
+        """Create the meta indexes. Idempotent (``IF NOT EXISTS``)."""
+        async with self.session() as session:
+            for stmt in META_SCHEMA_STATEMENTS:
+                await session.run(stmt)
+
+    async def close(self) -> None:
+        """No-op — the driver is shared and owned by the runtime."""
+
+    # ── HEAD pointer ────────────────────────────────────────────────
+
+    async def set_head(self, sha: str) -> None:
+        """Set the project's current HEAD commit sha."""
+        await self._set_meta(self._HEAD_KEY, sha)
+
+    async def get_head(self) -> str | None:
+        """Return the project's HEAD sha, or ``None`` if never set."""
+        value = await self._get_meta(self._HEAD_KEY)
+        return value if isinstance(value, str) else None
+
+    # ── Branch pins ─────────────────────────────────────────────────
+
+    async def set_branch_pins(self, shas: list[str]) -> None:
+        """Replace the set of branch-pinned commit shas.
+
+        Stored as a JSON array on the ``branch_pins`` :Meta node —
+        Neo4j property values must be primitives or arrays of a
+        single primitive type, and a JSON string keeps the read/write
+        symmetric with the rest of the codec.
+        """
+        await self._set_meta(self._BRANCH_PINS_KEY, json.dumps(list(shas)))
+
+    async def get_branch_pins(self) -> list[str]:
+        """Return the branch-pinned shas (empty list if never set)."""
+        value = await self._get_meta(self._BRANCH_PINS_KEY)
+        if not value:
+            return []
+        return list(json.loads(value))
+
+    # ── Commit tracking / retention ─────────────────────────────────
+
+    async def touch_commit(self, sha: str, *, now_iso: str) -> None:
+        """Upsert a :Commit node, stamping ``last_used_at``.
+
+        ``created_at`` is set once (on first touch) and preserved on
+        subsequent touches; ``last_used_at`` moves forward every time.
+        The caller passes ``now_iso`` (rather than the client reading
+        the clock) so the timestamp source stays testable and the
+        function stays pure w.r.t. wall-clock.
+        """
+        async with self.session() as session:
+            await session.run(
+                "MERGE (c:Commit {project_hash: $proj, sha: $sha}) "
+                "ON CREATE SET c.created_at = $now "
+                "SET c.last_used_at = $now",
+                proj=self._project_id,
+                sha=sha,
+                now=now_iso,
+            )
+
+    async def list_tracked_commits(self) -> list[str]:
+        """Return every tracked commit sha for this project."""
+        async with self.session() as session:
+            result = await session.run(
+                "MATCH (c:Commit {project_hash: $proj}) RETURN c.sha AS sha",
+                proj=self._project_id,
+            )
+            records = (await result.to_eager_result()).records
+        return [r["sha"] for r in records]
+
+    # ── Internals ───────────────────────────────────────────────────
+
+    async def _set_meta(self, key: str, value: str) -> None:
+        async with self.session() as session:
+            await session.run(
+                "MERGE (m:Meta {project_hash: $proj, key: $key}) SET m.value = $value",
+                proj=self._project_id,
+                key=key,
+                value=value,
+            )
+
+    async def _get_meta(self, key: str) -> str | None:
+        async with self.session() as session:
+            result = await session.run(
+                "MATCH (m:Meta {project_hash: $proj, key: $key}) RETURN m.value AS value",
+                proj=self._project_id,
+                key=key,
+            )
+            record = await result.single()
+        return record["value"] if record else None

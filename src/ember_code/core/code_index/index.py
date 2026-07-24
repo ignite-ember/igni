@@ -85,6 +85,8 @@ class CodeIndex:
         project: str | Path,
         data_dir: str | Path = "~/.ember",
         chunker: ChunkingStrategy | None = None,
+        neo4j_client: Any | None = None,
+        runtime: Any | None = None,
     ):
         self.project = project
         self.project_id = resolve_project_id(project)
@@ -94,6 +96,19 @@ class CodeIndex:
         # Per-(commit_sha) ChromaDB clients; opened lazily, reused.
         self._clients: dict[str, Any] = {}
         self._file_refs: Any | None = None
+        # Optional Neo4j client for relations. When present,
+        # ``file_reference_service()`` and ``apply_delta`` route
+        # references through it; when absent, the legacy SQLite
+        # backend is used. The chroma-backed item/chunk storage is
+        # unchanged in this branch — neo4j owns relations only, the
+        # Item/Chunk vector data stays in chroma for now.
+        #
+        # ``runtime`` is a higher-level convenience: pass a
+        # :class:`Neo4jRuntime` and the index derives a per-commit
+        # ``Neo4jClient`` lazily. ``neo4j_client`` is the explicit
+        # form for tests / callers that already have a client.
+        self._neo4j_client = neo4j_client
+        self._neo4j_runtime = runtime
         self._lock = asyncio.Lock()
 
         # Collaborators — composed once, reused across every call.
@@ -191,17 +206,21 @@ class CodeIndex:
         )
 
     def file_reference_service(self):
-        """Lazily build a ``FileReferenceService`` against the per-project SQLite.
+        """Lazily build a ``FileReferenceService``.
 
-        Public accessor — the previous ``_file_reference_service`` name
-        implied private state, but the sync manager and the codeindex
-        tools (:mod:`disambiguation`, :mod:`tree_service`) all need to
-        share the same service. The leading underscore was a Rule-6
-        reach-in target; renaming it seals that hole.
+        Routes to the neo4j backend when ``neo4j_client`` was
+        injected at construction; falls back to the per-project SQLite
+        otherwise. The service class is backend-pluggable (see
+        :class:`db.file_reference.FileReferenceService`), so the
+        switch is transparent to callers — the only difference is
+        where the data lives.
         """
         if self._file_refs is None:
-            db = Database(state_db_path(self.project, data_dir=self.data_dir))
-            self._file_refs = FileReferenceService(db)
+            if self._neo4j_client is not None:
+                self._file_refs = FileReferenceService(self._neo4j_client)
+            else:
+                db = Database(state_db_path(self.project, data_dir=self.data_dir))
+                self._file_refs = FileReferenceService(db)
         return self._file_refs
 
     async def set_head(self, sha: str) -> None:

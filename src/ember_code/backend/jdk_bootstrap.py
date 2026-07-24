@@ -131,9 +131,18 @@ class JdkBootstrap:
 
         if not assets:
             raise JdkBootstrapError(f"no Adoptium assets for {self._version}/{os_part}/{arch_part}")
-        # Pick the first matching asset (newest release).
-        link = assets[0]["binary"]["package"]["link"]
-        return link
+        # The Adoptium ``arch=`` query param is a hint, not a hard
+        # filter — the API returns every arch for the os (e.g. both
+        # x64 and aarch64 for mac). Match the requested arch explicitly;
+        # picking ``assets[0]`` blindly hands an Apple-Silicon host the
+        # x64 JDK (runs under Rosetta at best, fails at worst).
+        for asset in assets:
+            if asset.get("binary", {}).get("architecture") == arch_part:
+                return asset["binary"]["package"]["link"]
+        raise JdkBootstrapError(
+            f"no {arch_part} Adoptium asset for {self._version}/{os_part}; "
+            f"got: {[a.get('binary', {}).get('architecture') for a in assets]}"
+        )
 
     async def ensure(self) -> Path:
         """Return the path to ``bin/java``; download if missing.

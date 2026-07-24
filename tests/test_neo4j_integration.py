@@ -38,7 +38,7 @@ from neo4j import AsyncGraphDatabase
 from ember_code.core.code_index.db.commit_metadata import CommitMetadataService
 from ember_code.core.code_index.db.file_reference import FileReferenceService
 from ember_code.core.code_index.enums import FileSystemType, Relation
-from ember_code.core.code_index.neo4j_client import Neo4jClient
+from ember_code.core.code_index.neo4j_client import Neo4jClient, Neo4jMetaClient
 from ember_code.core.code_index.schema.commit_metadata import (
     CommitMetadataBulkCreate,
     CommitMetadataBulkItem,
