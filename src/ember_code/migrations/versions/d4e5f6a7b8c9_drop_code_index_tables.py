@@ -4,28 +4,19 @@ Revision ID: d4e5f6a7b8c9
 Revises: b3a8c2e5d4f1
 Create Date: 2026-07-18 12:00:00.000000
 
-PARKED — NOT IN THE ACTIVE ALEMBIC CHAIN.
-    This file has a ``.disabled`` suffix so Alembic's ``versions/*.py``
-    scan skips it. It drops ``code_index_file_reference`` and
-    ``code_index_commit_metadata``, but the live SQL path
-    (``code_index/index.py`` and ``delta/applier.py`` via
-    ``FileReferenceService`` / ``CommitMetadataService``) still reads
-    those tables — Neo4j is not wired into the indexer yet. Running
-    this migration now breaks ~45 code_index tests and real indexing.
-
-    RE-ENABLE (rename back to ``.py``) only once ``FileReferenceService``
-    and ``CommitMetadataService`` route through ``Neo4jClient`` instead
-    of SQLite, so the tables are genuinely unused. Until then the
-    drop-tables intent is preserved here without being applied.
-
 The code_index tables (``code_index_file_reference`` and
 ``code_index_commit_metadata``) moved to Neo4j in v0.10. Alembic
 drops them on upgrade so the schema history reflects reality.
 
 The cutover script (:mod:`ember_code.core.code_index.cutover`)
-runs idempotent ``DROP TABLE IF EXISTS`` on the same tables at
-BE startup; both code paths are safe to run together (the
-second is a no-op).
+runs at BE startup (``backend/app.py:BackendApp.run``). It
+performs the file-system side of the cutover (wipes the
+per-commit ``<sha>.chroma/`` dirs, the ``knowledge.chroma`` dir,
+and the legacy ``manifest.json``) and writes a sentinel at
+``<data>/neo4j/state/<project_id>/.migrated`` so the next
+startup is a no-op. It also re-runs the same
+``DROP TABLE IF EXISTS`` Alembic does — both paths are safe
+to run together.
 
 Other tables in ``state.db`` (agno memory, loop, scheduler,
 process store, session prefs) are unaffected.

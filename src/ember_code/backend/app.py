@@ -193,6 +193,23 @@ class BackendApp:
         )
         pool = self._orchestrator.setup_pool()
         self._supervisor.set_pool(pool)
+        # Idempotent chroma → neo4j cutover for the active project:
+        # wipes the per-commit ``<sha>.chroma/`` dirs, the
+        # ``knowledge.chroma`` dir, the legacy ``manifest.json``,
+        # and writes a sentinel at ``<data>/neo4j/state/<id>/.migrated``.
+        # The SQLite side (drop ``code_index_*`` tables) is handled
+        # by alembic migration ``d4e5f6a7b8c9`` in the regular
+        # ``Database.__init__`` path. Safe to run on every boot —
+        # the sentinel makes the second call a no-op.
+        from ember_code.core.code_index.cutover import maybe_cutover
+
+        try:
+            await maybe_cutover(
+                project=self._project_dir,
+                data_dir=settings.storage.data_dir,
+            )
+        except Exception:
+            logger.exception("neo4j cutover failed; will retry on next boot")
         # Opt-in: when ``EMBER_NEO4J_RUNTIME`` is set, build the
         # :class:`Neo4jRuntime` and switch the default session's
         # knowledge index to it. The first knowledge op will block
