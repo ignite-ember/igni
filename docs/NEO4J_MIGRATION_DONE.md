@@ -2,10 +2,11 @@
 
 ## What was done in this session
 
-Twelve commits on `revision-2`. Total: 6 new files, 25 modified
+Fifteen commits on `revision-2`. Total: 11 new files, 27 modified
 files, 13 test files deleted, 5 chroma modules + 1 chroma schema
 module deleted, 1 migration re-enabled, 2 dead SQLite branches
-removed from the indexer.
+removed from the indexer, 38 new offline tests for the
+neo4j scaffolding.
 
 ### Committed
 
@@ -29,7 +30,24 @@ removed from the indexer.
 10. `b48c40e` — `Session.attach_codeindex_neo4j(runtime)` + the
     orchestrator wires both paths (knowledge + code) in one call.
 11. `7ecd72e` — style: drop blank lines after `TYPE_CHECKING` guard.
-12. latest — **the chroma retirement** (this commit):
+12. latest — **the chroma retirement**: chroma is gone from
+    `code_index` + `knowledge`. SQLite fallback deleted. Migration
+    `d4e5f6a7b8c9` re-enabled.
+13. `de0ead9` — **the missing piece** (was untracked):
+    `Neo4jRowCodec` (`core/code_index/neo4j_codec.py`) +
+    `maybe_cutover` (`core/code_index/cutover.py`) +
+    BE-startup wiring in `backend/app.py`. Also refreshed the
+    `d4e5f6a7b8c9` migration's module docstring (dropped the
+    "PARKED" notice that explained why the file was renamed
+    `.py.disabled`).
+14. `0995c52` — **jvm package**: `ember_code.jvm.ensure_jdk` sync
+    wrapper for the IDE shells (Tauri / JetBrains / VSCode) that
+    bootstrap a JDK as a subprocess.
+15. `d387c56` — **38 missing unit tests** for the neo4j scaffolding
+    (`test_neo4j_runtime`, `test_neo4j_schema`,
+    `test_jdk_bootstrap`, `test_per_commit_isolation`). The
+    modules have shipped for several commits without a single
+    offline-passing test.
     - `core/code_index/index.py` rewritten to use neo4j for items
       / chunks / edges. The chroma path is deleted. Public methods
       (`add_item`, `remove_item`, `search`, `search_among`,
@@ -112,13 +130,21 @@ removed from the indexer.
 
 **Before this round of changes:** 3098 passed, 5 failed (live-LLM).
 
-**After this commit:** 2913 passed, 5 failed (live-LLM), 0 errors.
+**After commit 12 (chroma retirement):** 2913 passed, 5 failed
+(live-LLM), 0 errors.
 
-The 5 live-LLM failures are pre-existing tests that need an
-`EMBER_TEST_LLM_API_KEY` and are unrelated to the migration.
+**After commit 15 (the missing tests):** 2913 passed, 5 failed
+(live-LLM), 4 skipped, 0 errors. The 4 skips are the
+`test_per_commit_isolation` integration tests (require
+`EMBER_TEST_NEO4J_RUNTIME` + ~4 GB RAM) and the
+`test_jdk_bootstrap` network test.
 
 The 185-test delta vs the original baseline = the 12 deleted
-chroma-era test files (some of which had multiple test functions).
+chroma-era test files (some of which had multiple test
+functions). The 38 new tests (commits 13-15) replace the
+deleted chroma tests in spirit — the modules they exercise
+were committed earlier but had no offline test coverage
+until now.
 
 ## What's left to do
 
@@ -134,4 +160,6 @@ chroma-era test files (some of which had multiple test functions).
 - **Production smoke test** — the BE has not yet been smoke-tested
   end-to-end with `EMBER_NEO4J_RUNTIME=1` against a live neo4j
   (the unit + integration tests cover the path, but a real
-  chat loop is the final acceptance test).
+  chat loop is the final acceptance test). The
+  `test_per_commit_isolation` tests will run as part of that
+  smoke (they need the runtime env to be set).
