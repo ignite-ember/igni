@@ -1112,3 +1112,235 @@ class Neo4jMetaClient:
             )
             record = await result.single()
         return record["value"] if record else None
+
+
+class Neo4jKnowledgeClient:
+    """Per-project knowledge store on Neo4j.
+
+    The knowledge index is per-project (one DB per project, shared
+    across commits of that project), unlike the code index which
+    is per-commit. The driver comes from
+    :meth:`Neo4jRuntime.driver_for_knowledge` — the runtime spawns
+    a separate neo4j process for the project's knowledge store
+    on first use.
+
+    Entries (:class:`:Entry`) carry the parent-level metadata
+    (source, name, content, kind, created_at). Chunks (``:Chunk``)
+    are linked to their parent entry via ``[:HAS_CHUNK]`` and hold
+    the 384-dim embedding that the vector index searches over.
+    Construction is cheap; every method opens a fresh session.
+    """
+
+    def __init__(self, driver: AsyncDriver, project_id: str):
+        self._driver = driver
+        self._project_id = project_id
+        self._db_name = DEFAULT_DATABASE
+
+    @property
+    def project_id(self) -> str:
+        return self._project_id
+
+    def session(self) -> AsyncSession:
+        return self._driver.session(database=self._db_name)
+
+    async def apply_schema(self) -> None:
+        """Idempotent schema apply (indexes + vector index)."""
+        async with self.session() as session:
+            for stmt in COMMIT_SCHEMA_STATEMENTS:
+                await session.run(stmt)
+
+    async def close(self) -> None:
+        """No-op — the driver is shared and owned by the runtime."""
+
+    async def add_entry(
+        self,
+        *,
+        entry_id: str,
+        name: str,
+        source: str,
+        content: str,
+        kind: str = "",
+        metadata: dict[str, Any] | None = None,
+        embedding: list[float] | None = None,
+        chunks: list[tuple[str, int, int]] | None = None,
+    ) -> None:
+        """Upsert a knowledge entry and its chunks.
+
+        ``embedding`` is the 384-dim vector for the entry (the
+        vector index searches on ``Entry.embedding``). One per
+        entry — chunks are stored as :Chunk nodes for display/
+        rollup but aren't the search unit. ``chunks`` is a list
+        of ``(text, line_from, line_to)`` triples for the per-text
+        splits; the embedding is taken from the first chunk's
+        caller-supplied vector, so the caller passes the same
+        embedding for all chunks of a given entry.
+
+        Idempotent on ``entry_id`` — re-upserts replace content,
+        embedding, and chunks.
+        """
+        meta_json = json.dumps(dict(metadata or {}))
+        async with self.session() as session:
+            await session.execute_write(
+                self._add_entry_tx,
+                entry_id,
+                self._project_id,
+                name,
+                source,
+                content,
+                kind,
+                meta_json,
+                embedding,
+                list(chunks or []),
+            )
+
+    @staticmethod
+    async def _add_entry_tx(
+        tx,
+        entry_id: str,
+        project_id: str,
+        name: str,
+        source: str,
+        content: str,
+        kind: str,
+        meta_json: str,
+        embedding: list[float] | None,
+        chunks: list[tuple[str, int, int]],
+    ) -> None:
+        # Single-statement upsert so the MERGE on Entry, the
+        # embedding SET, and the CREATE of chunks share the same
+        # write set (a separate ``tx.run`` after the MERGE is not
+        # guaranteed to see the just-written node).
+        #
+        # The embedding lives on ``Entry`` (matches the existing
+        # ``entry_embedding`` vector index in the schema); chunks
+        # are a per-text split for display/rollup, not the vector
+        # search unit. ``chunks`` is a list of ``(text, line_from,
+        # line_to)`` triples; the text is stored as a :Chunk node
+        # so callers can show a hit's surrounding context.
+        chunk_rows = [
+            {
+                "chunk_id": f"{entry_id}::{i}",
+                "parent": entry_id,
+                "text": text,
+                "line_from": lf,
+                "line_to": lt,
+            }
+            for i, (text, lf, lt) in enumerate(chunks)
+        ]
+        await tx.run(
+            "MERGE (e:Entry {entry_id: $entry_id}) "
+            "SET e.project_hash = $proj, e.name = $name, "
+            "e.source = $source, e.content = $content, "
+            "e.kind = $kind, e.meta_json = $meta_json, "
+            "e.created_at = coalesce(e.created_at, datetime()), "
+            "e.embedding = $embedding "
+            # Detach any old chunks before attaching new ones.
+            "WITH e, $chunk_rows AS rows "
+            "OPTIONAL MATCH (e)-[old_r:HAS_CHUNK]->(old_c:Chunk) "
+            "DELETE old_r, old_c "
+            "WITH e, rows "
+            "UNWIND rows AS row "
+            "CREATE (e)-[:HAS_CHUNK]->(ch:Chunk {chunk_id: row.chunk_id, "
+            "parent_id: row.parent, text: row.text, "
+            "line_from: row.line_from, line_to: row.line_to, "
+            "project_hash: $proj})",
+            entry_id=entry_id,
+            proj=project_id,
+            name=name,
+            source=source,
+            content=content,
+            kind=kind,
+            meta_json=meta_json,
+            embedding=embedding,
+            chunk_rows=chunk_rows,
+        )
+
+    async def search(
+        self,
+        *,
+        query_embedding: list[float],
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Vector-search over the per-project knowledge store.
+
+        Returns a list of ``{entry_id, content, source, name, score}``
+        dicts (one per matched entry, ranked by score). The vector
+        index ``entry_embedding`` is on ``Entry.embedding`` — the
+        search unit is the entry, not the per-text :Chunk.
+        """
+        async with self.session() as session:
+            result = await session.run(
+                "CALL db.index.vector.queryNodes("
+                "'entry_embedding', $k, $vec) YIELD node, score "
+                "RETURN node.entry_id AS entry_id, node.content AS content, "
+                "node.source AS source, node.name AS name, score "
+                "ORDER BY score DESC",
+                k=limit,
+                vec=query_embedding,
+            )
+            records = (await result.to_eager_result()).records
+        return [dict(r) for r in records]
+
+    async def count(self) -> int:
+        async with self.session() as session:
+            result = await session.run(
+                "MATCH (e:Entry {project_hash: $proj}) RETURN count(e) AS n",
+                proj=self._project_id,
+            )
+            record = await result.single()
+        return record["n"] if record else 0
+
+    async def list_entries(self, *, limit: int = 1000) -> list[dict[str, Any]]:
+        """Return every :Entry for this project (chunk-less view)."""
+        async with self.session() as session:
+            result = await session.run(
+                "MATCH (e:Entry {project_hash: $proj}) "
+                "RETURN e.entry_id AS entry_id, e.content AS content, "
+                "e.source AS source, e.name AS name, e.meta_json AS meta_json "
+                "LIMIT $limit",
+                proj=self._project_id,
+                limit=limit,
+            )
+            records = (await result.to_eager_result()).records
+        out = []
+        for r in records:
+            d = dict(r)
+            meta = d.get("meta_json")
+            d["metadata"] = json.loads(meta) if meta else {}
+            d.pop("meta_json", None)
+            out.append(d)
+        return out
+
+    async def has_entry(self, entry_id: str) -> bool:
+        async with self.session() as session:
+            result = await session.run(
+                "MATCH (e:Entry {entry_id: $eid, project_hash: $proj}) "
+                "RETURN count(e) > 0 AS present",
+                eid=entry_id,
+                proj=self._project_id,
+            )
+            record = await result.single()
+        return bool(record["present"]) if record else False
+
+    async def delete_entry(self, entry_id: str) -> bool:
+        async with self.session() as session:
+            # ``DETACH DELETE`` removes the Entry + all its
+            # edges in one Cypher statement (chunks become
+            # orphan nodes and are reaped by a follow-up match,
+            # or deleted via the second statement below).
+            await session.run(
+                "MATCH (e:Entry {entry_id: $eid, project_hash: $proj}) DETACH DELETE e",
+                eid=entry_id,
+                proj=self._project_id,
+            )
+            # The Entry's NODE KEY constraints (entry_id alone)
+            # mean the ``DETACH DELETE`` doesn't auto-cascade to
+            # the :Chunk nodes attached via :HAS_CHUNK; clean
+            # those up explicitly. The :Chunk ``parent_id``
+            # property was the only link to the Entry.
+            await session.run(
+                "MATCH (c:Chunk {parent_id: $eid, project_hash: $proj}) DELETE c",
+                eid=entry_id,
+                proj=self._project_id,
+            )
+        return True
