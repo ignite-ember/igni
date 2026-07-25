@@ -518,6 +518,61 @@ class Session:
             self.knowledge = None
             logger.info("Knowledge: disabled in settings")
 
+    async def attach_knowledge_neo4j(self, runtime: Any) -> None:
+        """Swap the default chroma-backed knowledge index for a neo4j
+        one driven by ``runtime`` (typically a ``Neo4jRuntime``).
+
+        Called by :class:`SessionOrchestrator` after the BE's
+        runtime is up — the Session's default constructor runs
+        before any neo4j driver exists, so the chroma fallback
+        path is the constructor's choice. This method replaces
+        ``self.knowledge`` (and ``self.knowledge_mgr.knowledge``)
+        with a neo4j-backed :class:`KnowledgeIndex` so subsequent
+        knowledge ops go through neo4j.
+
+        Idempotent: a second call with the same client is a
+        no-op. Switching the runtime rebuilds the index.
+        """
+        from ember_code.core.code_index.embedder import LiveEmbedder
+        from ember_code.core.code_index.neo4j_client import Neo4jKnowledgeClient
+
+        # ``runtime`` may be a real ``Neo4jRuntime`` (production) or
+        # any duck-typed object with ``driver_for_knowledge(project_id)``
+        # (test stubs). We only depend on the protocol surface.
+        from ember_code.core.code_index.project import resolve_project_id
+        from ember_code.core.knowledge.index import KnowledgeIndex
+
+        project_id = resolve_project_id(self.project_dir)
+        driver = runtime.driver_for_knowledge(project_id)
+        client = Neo4jKnowledgeClient(driver, project_id)
+        await client.apply_schema()
+        embedder = LiveEmbedder()
+
+        # Idempotency guard: a second ``attach_knowledge_neo4j``
+        # with the same runtime reuses the existing index. We
+        # compare on the underlying driver (the runtime's
+        # ``driver_for_knowledge`` returns a cached driver per
+        # project, so identity is the right comparator) — not the
+        # client instance, which is constructed fresh each call.
+        existing_client = getattr(self.knowledge, "_neo4j_client", None)
+        if existing_client is not None and existing_client._driver is driver:
+            return
+        index = KnowledgeIndex(
+            project=self.project_dir,
+            data_dir=self.settings.storage.data_dir,
+            neo4j_client=client,
+            embedder=embedder,
+        )
+        await index.start()  # no-op on neo4j (client is open)
+        self.knowledge = index
+        # ``knowledge_mgr`` is constructed in __init__ with the
+        # default chroma index; it caches ``self.knowledge`` —
+        # update the reference so subsequent calls go through
+        # the neo4j backend.
+        if self.knowledge_mgr is not None:
+            self.knowledge_mgr.knowledge = index
+        logger.info("Knowledge: switched to neo4j backend (project=%s)", project_id)
+
     def _init_agent_and_skill_pools(self, settings: Settings) -> None:
         """Construct :class:`AgentPool` + :class:`SkillPool` from the
         current plugin set.
