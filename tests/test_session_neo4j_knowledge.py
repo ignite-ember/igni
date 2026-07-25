@@ -74,16 +74,17 @@ async def project_id(driver):
 
 
 async def test_session_attach_knowledge_neo4j_routes_through_neo4j(tmp_path, driver, project_id):
-    """Build a Session with the default chroma knowledge, swap in
-    neo4j via ``attach_knowledge_neo4j``, and verify knowledge ops
-    hit the live driver."""
+    """Build a Session (no chroma anymore), swap in neo4j via
+    ``attach_knowledge_neo4j``, and verify knowledge ops hit the
+    live driver."""
     settings = Settings()
     settings.knowledge.enabled = True
     # Project dir is what the resolver hashes into project_id.
     session = Session(settings, project_dir=tmp_path)
-    # The constructor's chroma-backed ``self.knowledge`` is in place.
-    assert session.knowledge is not None
-    assert getattr(session.knowledge, "_neo4j_client", None) is None
+    # The constructor's chroma fallback is gone — knowledge is
+    # deferred until attach_knowledge_neo4j runs (matches the
+    # orchestrator's startup order).
+    assert session.knowledge is None
 
     runtime = _StubRuntime(driver)
     await session.attach_knowledge_neo4j(runtime)

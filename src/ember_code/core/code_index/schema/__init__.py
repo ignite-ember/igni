@@ -1,6 +1,6 @@
 """Public re-export surface for ``ember_code.core.code_index.schema``.
 
-Domain Pydantic models live in sibling files (branches, chroma_row,
+Domain Pydantic models live in sibling files (branches,
 commit_metadata, file_reference, items, manifest, queries, stats,
 where_filter). Wire-format coercion lives in :mod:`.wire`. The clock
 collaborator lives in :mod:`.manifest` (the only consumer is

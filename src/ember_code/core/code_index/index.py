@@ -1,10 +1,10 @@
-"""Per-project, per-commit code index backed by ChromaDB.
+"""Per-project, per-commit code index backed by Neo4j.
 
-Each commit gets its own ``<sha>.chroma/`` directory under
-``~/.ember/projects/<project_id>/code_index/``. Indexing a new commit
-copies the parent commit's directory in place, then applies the diff
-on top — so each commit is fully self-contained but only the changed
-files re-embed.
+Each commit's data lives in its own Neo4j process (one driver
+per (project, commit) pair, refcounted via
+:class:`Neo4jRuntime`). Item / chunk / edge data lands in
+``<Item>`` / ``<Chunk>`` / ``<REL>`` nodes plus a 384-dim vector
+index on :Chunk.
 
 Lifecycle:
 
@@ -14,19 +14,26 @@ Lifecycle:
 - :meth:`search` / :meth:`get_item` — query a commit (defaults to head).
 - :meth:`clean` — drop commits not on a branch and idle > N days.
 
-Quality / category metadata are first-class typed chroma fields — each
-quality dimension is its own indexed string column, each multi-value
-category is its own ``\\x1f``-bracketed string. There is no ``tags``
-field; the ``codeindex_query`` tool builds typed where-clauses from
-its enum args without any string-tag parsing.
+Quality / category metadata are first-class typed :Item
+properties; the ``codeindex_query`` tool builds typed
+where-clauses from its enum args without any string-tag
+parsing.
 
-The class is a thin orchestrator over four collaborators:
+The class is a thin orchestrator over:
 
-  - :class:`ChromaRowCodec` — the item ↔ row-metadata wire codec.
-  - :class:`ChromaClientFactory` — client + collection lifecycle.
-  - :class:`GitBranchReader` — local branch resolution for retention.
-  - :class:`ChunkSearch` — the semantic search engine.
+  - :class:`Embedder` — 384-dim vector producer (see
+    :mod:`core.code_index.embedder`).
+  - :class:`Neo4jClient` — per-commit data access (items, chunks,
+    edges, metadata). One instance per (project, commit) pair
+    when ``runtime=`` is set; one shared instance when
+    ``neo4j_client=`` is passed (test escape hatch).
+  - :class:`GitBranchReader` — local branch resolution for
+    retention.
+  - :class:`Neo4jMetaClient` — per-project admin (head pointer,
+    branch pins, commit tracking) — only used by ``clean`` /
+    retention.
 """
+
 
 from __future__ import annotations
 
@@ -43,28 +50,19 @@ from agno.knowledge.chunking.recursive import RecursiveChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy
 from agno.knowledge.document.base import Document
 
-from ember_code.core.code_index.chroma_client_factory import (
-    CHUNKS_COLLECTION,
-    DOCUMENTS_COLLECTION,
-    ChromaClientFactory,
-)
-from ember_code.core.code_index.chroma_codec import ChromaRowCodec
-from ember_code.core.code_index.chunk_search import ChunkSearch
 from ember_code.core.code_index.db.file_reference import FileReferenceService
 from ember_code.core.code_index.delta import apply_delta
+from ember_code.core.code_index.embedder import Embedder, HashEmbedder
 from ember_code.core.code_index.git_branches import GitBranchReader
 from ember_code.core.code_index.manifest import Manifest
 from ember_code.core.code_index.paths import (
     code_index_dir,
     commit_chroma_path,
-    state_db_path,
 )
 from ember_code.core.code_index.project import resolve_project_id
-from ember_code.core.code_index.schema.chroma_row import ChromaGetPage
 from ember_code.core.code_index.schema.items import CodeIndexItem, CodeIndexResult
 from ember_code.core.code_index.schema.stats import HeadStats
 from ember_code.core.code_index.schema.where_filter import ChromaWhereFilter
-from ember_code.core.db.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -88,52 +86,44 @@ class CodeIndex:
         chunker: ChunkingStrategy | None = None,
         neo4j_client: Any | None = None,
         runtime: Any | None = None,
+        embedder: Embedder | None = None,
     ):
         self.project = project
         self.project_id = resolve_project_id(project)
         self.data_dir = data_dir
         self.chunker = chunker or RecursiveChunking(chunk_size=800, overlap=100)
         self.manifest = Manifest(project=project, data_dir=data_dir)
-        # Per-(commit_sha) ChromaDB clients; opened lazily, reused.
+        # Per-(commit_sha) Neo4j clients when ``runtime=`` is set;
+        # one global client when ``neo4j_client=`` is passed.
         self._clients: dict[str, Any] = {}
         self._file_refs: Any | None = None
-        # Optional Neo4j client for relations. When present,
-        # ``file_reference_service()`` and ``apply_delta`` route
-        # references through it; when absent, the legacy SQLite
-        # backend is used. The chroma-backed item/chunk storage is
-        # unchanged in this branch — neo4j owns relations only, the
-        # Item/Chunk vector data stays in chroma for now.
-        #
-        # ``runtime`` is a higher-level convenience: pass a
-        # :class:`Neo4jRuntime` and the index derives a per-commit
-        # ``Neo4jClient`` lazily. ``neo4j_client`` is the explicit
-        # form for tests / callers that already have a client.
+        # ``runtime=`` is the production seam: a real
+        # :class:`Neo4jRuntime` spawns a process per (project, commit)
+        # and hands back a driver for that commit. ``neo4j_client=``
+        # is the test escape hatch (one client for every commit).
+        # ``embedder`` supplies the 384-dim vectors for
+        # ``add_item`` / ``search``; the default ``HashEmbedder`` is
+        # deterministic and offline-safe for tests.
         self._neo4j_client = neo4j_client
         self._neo4j_runtime = runtime
+        self._embedder: Embedder = embedder or HashEmbedder()
         self._lock = asyncio.Lock()
-
-        # Collaborators — composed once, reused across every call.
-        self._codec = ChromaRowCodec()
-        self._client_factory = ChromaClientFactory()
         self._branches = GitBranchReader()
-        self._chunk_search = ChunkSearch(codec=self._codec)
 
     async def close(self) -> None:
-        """Drop all cached chromadb clients. Persistent data stays on disk."""
+        """Drop all cached neo4j clients. Persistent data stays on disk."""
         async with self._lock:
             self._clients.clear()
 
     def has_commit(self, sha: str) -> bool:
         """Return True iff the commit is fully indexed locally.
 
-        Both the chroma dir AND a manifest entry must be present. The
-        manifest check lets ``forget_commit`` mark a commit as
-        un-indexed without ``rmtree``-ing under chromadb's live
-        client (see ``forget_commit`` for why we avoid that).
+        On the neo4j path the per-commit process owns the data;
+        we only check the manifest. The runtime is the source of
+        truth for ``drop`` / ``start_for_commit`` — the manifest
+        entry stays in sync with the runtime's refcount.
         """
         if not sha:
-            return False
-        if not commit_chroma_path(self.project, sha, data_dir=self.data_dir).exists():
             return False
         return sha in self.manifest.load().commits
 
@@ -143,28 +133,37 @@ class CodeIndex:
         Used by ``/codeindex resync`` when the local index has drifted
         from the cloud definition.
 
-        We deliberately don't ``rmtree`` the ``<sha>.chroma/`` directory —
-        the two-phase teardown is documented on
-        :meth:`ChromaClientFactory.drop_commit_collections`. The manifest
-        entry is dropped so ``has_commit`` reports the commit as missing.
+        On the neo4j path the per-commit data lives in its own
+        process's DB; we ask the runtime to drop it. The
+        per-commit state dir is left in place (informational —
+        :meth:`sweep_stale_dirs` reclaims it on next startup). The
+        manifest entry is dropped so ``has_commit`` reports the
+        commit as missing.
         """
         if not sha:
             return False
-        target = commit_chroma_path(self.project, sha, data_dir=self.data_dir)
-        had_state = target.exists()
-
-        if had_state:
+        had_state = sha in self.manifest.load().commits
+        if had_state and self._neo4j_runtime is not None:
             try:
-                client = await self._client_for(sha)
-                await asyncio.to_thread(self._client_factory.drop_commit_collections, client)
+                # Ask the runtime to stop this commit's process.
+                # ``stop_for_commit`` is idempotent — safe even if
+                # the process is already gone.
+                await self._neo4j_runtime.stop_for_commit(self.project_id, sha)
             except Exception as exc:
-                logger.debug("forget_commit: chroma teardown failed (%s)", exc)
+                logger.debug("forget_commit: neo4j stop failed for %s (%s)", sha[:8], exc)
+        elif had_state and self._neo4j_client is not None:
+            try:
+                # Shared-client test path: drop the per-commit data
+                # via the static helper on Neo4jClient.
+                from ember_code.core.code_index.neo4j_client import Neo4jClient
 
+                await Neo4jClient.drop_database(self._neo4j_client._driver, self.project_id, sha)
+            except Exception as exc:
+                logger.debug("forget_commit: neo4j drop failed for %s (%s)", sha[:8], exc)
         try:
             self.manifest.remove_commit(sha)
         except Exception:
             logger.debug("manifest had no record of %s", sha)
-
         return had_state
 
     # -- Commit lifecycle ------------------------------------------------------
@@ -175,28 +174,20 @@ class CodeIndex:
         *,
         parent_sha: str | None = None,
     ) -> Path:
-        """Ensure ``<sha>.chroma/`` exists; copy from ``parent_sha`` if provided."""
-        target = commit_chroma_path(self.project, sha, data_dir=self.data_dir)
-        if target.exists():
-            self.manifest.touch(sha)
-            return target
+        """Ensure this commit's neo4j process is up + manifest entry exists.
 
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if parent_sha:
-            parent = commit_chroma_path(self.project, parent_sha, data_dir=self.data_dir)
-            if parent.exists():
-                await asyncio.to_thread(shutil.copytree, str(parent), str(target))
-            else:
-                logger.warning(
-                    "parent commit %s missing; creating empty chroma for %s",
-                    parent_sha,
-                    sha,
-                )
-                target.mkdir()
-        else:
-            target.mkdir()
+        With the per-process isolation model, each commit's data
+        lives in a separate Neo4j process; the directory this
+        returns is the *process state dir* (kept as a chroma-era
+        artifact for back-compat — nothing writes into it). The
+        actual item/chunk writes go through ``neo4j_client``.
+        ``parent_sha`` is recorded on the manifest's parent chain
+        but no per-commit data is copied (the process is empty).
+        """
+        if self._neo4j_runtime is not None:
+            await self._neo4j_runtime.start_for_commit(self.project_id, sha)
         self.manifest.upsert_commit(sha)
-        return target
+        return commit_chroma_path(self.project, sha, data_dir=self.data_dir)
 
     async def apply_delta(self, jsonl_path: str | Path):
         """Apply a producer-emitted JSONL changeset to this project.
@@ -270,9 +261,8 @@ class CodeIndex:
         Routes to the neo4j backend when ``neo4j_client`` was
         injected at construction OR when ``runtime=`` is set (the
         latter derives a per-commit client from the runtime; the
-        ``commit_sha`` arg is the discriminator for that case);
-        falls back to the per-project SQLite otherwise. The
-        service class is backend-pluggable (see
+        ``commit_sha`` arg is the discriminator for that case).
+        The service class is backend-pluggable (see
         :class:`db.file_reference.FileReferenceService`), so the
         switch is transparent to callers — the only difference is
         where the data lives.
@@ -310,11 +300,12 @@ class CodeIndex:
                 self._file_refs = FileReferenceService(self._neo4j_client)
             return self._file_refs
 
-        # Legacy SQLite fallback.
-        if self._file_refs is None:
-            db = Database(state_db_path(self.project, data_dir=self.data_dir))
-            self._file_refs = FileReferenceService(db)
-        return self._file_refs
+        raise NotImplementedError(
+            "file_reference_service() requires a neo4j backend — pass "
+            "``runtime=`` (production) or ``neo4j_client=`` (test) to "
+            "the constructor. The legacy SQLite path was removed when "
+            "code_index migrated to neo4j."
+        )
 
     async def set_head(self, sha: str) -> None:
         self.manifest.set_head(sha)
@@ -324,45 +315,69 @@ class CodeIndex:
 
     # -- Indexing --------------------------------------------------------------
 
+    async def _client_for(self, sha: str) -> Any | None:
+        """Return the per-commit ``Neo4jClient`` (or None if no backend).
+
+        When ``runtime=`` is set, ensures the runtime has a
+        process for ``sha`` and hands back the per-commit client.
+        When ``neo4j_client=`` was passed at construction, every
+        commit is treated as the same client (process IS the
+        isolation boundary; sharing one client across commits is
+        the test escape hatch).
+        """
+        if self._neo4j_client is not None:
+            return self._neo4j_client
+        if self._neo4j_runtime is not None:
+            if sha in self._clients:
+                return self._clients[sha]
+            async with self._lock:
+                if sha not in self._clients:
+                    await self._neo4j_runtime.start_for_commit(self.project_id, sha)
+                    driver = self._neo4j_runtime.driver_for(self.project_id, sha)
+                    from ember_code.core.code_index.neo4j_client import Neo4jClient
+
+                    self._clients[sha] = Neo4jClient(driver, self.project_id, sha)
+            return self._clients[sha]
+        return None
+
+    async def _require_neo4j_backend(self, op: str) -> Any:
+        """Return a per-commit ``Neo4jClient`` or raise.
+
+        ``CodeIndex`` no longer ships a chroma fallback — every
+        public method (add_item, search, get_item, filter_items,
+        etc.) requires a neo4j backend. The ``runtime=`` /
+        ``neo4j_client=`` constructor params select the backend.
+        """
+        if self._neo4j_client is None and self._neo4j_runtime is None:
+            raise NotImplementedError(
+                f"CodeIndex.{op} requires a neo4j backend — pass "
+                f"``runtime=`` (production) or ``neo4j_client=`` "
+                f"(test) to the constructor."
+            )
+        return None  # placeholder so callers can read the guard
+
     async def add_item(self, sha: str, item: CodeIndexItem) -> None:
-        """Insert/replace an item + its chunks in ``<sha>.chroma/``."""
+        """Insert/replace an item + its chunks in this commit's neo4j process."""
+        await self._require_neo4j_backend("add_item")
         await self.prepare_commit(sha)
-        docs, chunks = await self._collections(sha)
+        client = await self._client_for(sha)
+        assert client is not None  # guarded above
 
         document_text = item.content or ""
-        doc_metadata = self._codec.flatten(item).to_chroma_dict()
-        await asyncio.to_thread(
-            docs.upsert,
-            ids=[item.item_id],
-            documents=[document_text],
-            metadatas=[doc_metadata],
-        )
-
-        # Replace the chunk set for this item.
-        await asyncio.to_thread(chunks.delete, where={"parent_doc_id": item.item_id})
+        # ``upsert_item`` MERGE-deletes any existing :Chunk for
+        # the parent first, so re-upserts are clean.
         chunk_texts = self._chunk_text(document_text)
-        if chunk_texts:
-            chunk_ids = [f"{item.item_id}::{i}" for i in range(len(chunk_texts))]
-            chunk_metadatas = [
-                self._codec.flatten_chunk_row(item, i).to_chroma_dict()
-                for i in range(len(chunk_texts))
-            ]
-            await asyncio.to_thread(
-                chunks.upsert,
-                ids=chunk_ids,
-                documents=chunk_texts,
-                metadatas=chunk_metadatas,
-            )
+        embeddings = self._embedder.embed(chunk_texts) if chunk_texts else []
+        chunks = list(zip(chunk_texts, embeddings, strict=True))
+        await client.upsert_item(item, chunks)
         self.manifest.touch(sha)
 
     async def remove_item(self, sha: str, item_id: str) -> None:
-        """Drop an item and all its chunks from ``<sha>.chroma/``."""
-        pair = await self._open_or_none(sha)
-        if pair is None:
-            return
-        docs, chunks = pair
-        await asyncio.to_thread(docs.delete, ids=[item_id])
-        await asyncio.to_thread(chunks.delete, where={"parent_doc_id": item_id})
+        """Drop an item and all its chunks from this commit's neo4j process."""
+        await self._require_neo4j_backend("remove_item")
+        client = await self._client_for(sha)
+        assert client is not None
+        await client.delete_item(item_id)
         self.manifest.touch(sha)
 
     # -- Reads -----------------------------------------------------------------
@@ -375,36 +390,33 @@ class CodeIndex:
         commit: str | None = None,
         where: ChromaWhereFilter | dict[str, Any] | None = None,
     ) -> list[CodeIndexResult]:
-        """Semantic search inside one commit's index.
+        """Semantic search inside one commit's neo4j process.
 
-        ``where`` is a :class:`ChromaWhereFilter` (or a raw chroma dict
-        for legacy callers) applied against the chunks collection —
-        the codeindex_query tool builds it from its structured args;
-        callers shouldn't construct it by hand.
+        ``where`` is a :class:`ChromaWhereFilter` (or a raw dict
+        for legacy callers) applied against the :Item nodes
+        first; the resulting parent IDs narrow the vector search
+        over :Chunk. The codeindex_query tool builds the filter
+        from its structured args; callers shouldn't construct it
+        by hand.
         """
+        await self._require_neo4j_backend("search")
         sha = commit or self.head()
         if sha is None:
             return []
-        pair = await self._open_or_none(sha)
-        if pair is None:
-            return []
-        docs, chunks = pair
+        client = await self._client_for(sha)
+        assert client is not None
 
-        # Quality / categorical fields live on parent doc metadata, not
-        # on chunks. So when a ``where`` filter is supplied, resolve it
-        # against the parents collection first to get matching IDs,
-        # then narrow the chunk query to ``parent_doc_id $in <ids>``.
-        chunk_where = await self._resolve_chunk_where(docs, where)
-        if chunk_where is _NARROWED_TO_EMPTY:
+        # Quality / categorical fields live on :Item, not :Chunk.
+        # When ``where`` is supplied, resolve it against :Item to
+        # get matching parent IDs, then narrow the vector query.
+        parent_ids = await self._resolve_parent_where(client, where)
+        if parent_ids is _NARROWED_TO_EMPTY:
             return []
 
-        results = await self._chunk_search.execute(
-            docs=docs,
-            chunks=chunks,
-            sha=sha,
-            query=query,
-            chunk_where=chunk_where,
-            limit=limit,
+        query_vec = self._embedder.embed([query])[0]
+        restricted_where = {"parent_id": {"$in": list(parent_ids)}} if parent_ids else None
+        results = await client.vector_search(
+            embedding=query_vec, where=restricted_where, limit=limit
         )
         if results:
             self.manifest.touch(sha)
@@ -418,37 +430,25 @@ class CodeIndex:
         limit: int,
         commit: str | None = None,
     ) -> list[CodeIndexResult]:
-        """Like :meth:`search` but restricted to a fixed set of parent doc IDs.
+        """Like :meth:`search` but restricted to a fixed set of parent IDs.
 
-        Used by the disambiguation-refs path on ``codeindex_query``: given
-        the reference graph of an item (its callers / callees), this scores
-        each reference's similarity to the original ``query_text`` and
-        returns the top-K with full content. The restriction is applied
-        chunk-side via ``where={"parent_doc_id": {"$in": candidate_ids}}``
-        — the same mechanism :meth:`search` uses for typed-filter queries.
-
-        Returns ``[]`` on any of:
-          - no head commit
-          - no chroma dir for the commit
-          - empty ``candidate_ids``
-          - empty chunks collection
-          - chroma returned no matches
+        Used by the disambiguation-refs path on ``codeindex_query``:
+        given the reference graph of an item (its callers /
+        callees), this scores each reference's similarity to
+        the original ``query_text`` and returns the top-K with
+        full content. The restriction is applied as a vector
+        search ``where={"parent_id": {"$in": ...}}`` filter.
         """
+        await self._require_neo4j_backend("search_among")
         sha = commit or self.head()
         if sha is None or not candidate_ids:
             return []
-        pair = await self._open_or_none(sha)
-        if pair is None:
-            return []
-        docs, chunks = pair
-
-        chunk_where = {"parent_doc_id": {"$in": list(candidate_ids)}}
-        results = await self._chunk_search.execute(
-            docs=docs,
-            chunks=chunks,
-            sha=sha,
-            query=query,
-            chunk_where=chunk_where,
+        client = await self._client_for(sha)
+        assert client is not None
+        query_vec = self._embedder.embed([query])[0]
+        results = await client.vector_search(
+            embedding=query_vec,
+            where={"parent_id": {"$in": list(candidate_ids)}},
             limit=limit,
         )
         if results:
@@ -463,33 +463,19 @@ class CodeIndex:
         limit: int = 20,
         commit: str | None = None,
     ) -> list[CodeIndexResult]:
-        """Direct fetch / filter against the documents collection (no semantic search)."""
+        """Direct fetch / filter against the :Item nodes (no semantic search)."""
+        await self._require_neo4j_backend("filter_items")
         sha = commit or self.head()
         if sha is None:
             return []
-        pair = await self._open_or_none(sha)
-        if pair is None:
-            return []
-        docs, _ = pair
-
-        rendered_where = self._render_where(where)
-        get_kwargs: dict[str, Any] = {
-            "include": ["documents", "metadatas"],
-            "limit": limit,
-        }
-        if ids:
-            get_kwargs["ids"] = ids
-        if rendered_where is not None:
-            get_kwargs["where"] = rendered_where
-
-        raw = await asyncio.to_thread(docs.get, **get_kwargs)
-        page = ChromaGetPage.from_chroma(raw)
-
-        out: list[CodeIndexResult] = []
-        for item_id, doc_text, meta in zip(page.ids, page.documents, page.metadatas, strict=False):
-            out.append(self._codec.parse(item_id, meta or {}, sha, content=doc_text or ""))
-        self.manifest.touch(sha)
-        return out
+        client = await self._client_for(sha)
+        assert client is not None
+        # The :Item schema has the typed fields the
+        # :class:`ChromaWhereFilter` declares (``type`` /
+        # ``quality`` / etc.); the neo4j client's
+        # ``_render_where`` already speaks the same operator set.
+        where_dict = where.to_chroma_where() if isinstance(where, ChromaWhereFilter) else where
+        return await client.filter_items(where=where_dict, ids=ids, limit=limit)
 
     async def get_item(
         self,
@@ -497,21 +483,13 @@ class CodeIndex:
         *,
         commit: str | None = None,
     ) -> CodeIndexResult | None:
+        await self._require_neo4j_backend("get_item")
         sha = commit or self.head()
         if sha is None:
             return None
-        pair = await self._open_or_none(sha)
-        if pair is None:
-            return None
-        docs, _ = pair
-        raw = await asyncio.to_thread(docs.get, ids=[item_id], include=["documents", "metadatas"])
-        page = ChromaGetPage.from_chroma(raw)
-        if not page.ids:
-            return None
-        text = page.documents[0] if page.documents else ""
-        meta = page.metadatas[0] if page.metadatas else {}
-        self.manifest.touch(sha)
-        return self._codec.parse(page.ids[0], meta or {}, sha, content=text or "")
+        client = await self._client_for(sha)
+        assert client is not None
+        return await client.get_item(item_id)
 
     # -- Retention -------------------------------------------------------------
 
@@ -520,17 +498,13 @@ class CodeIndex:
         *,
         keep_recent_days: int = 30,
     ) -> list[str]:
-        """Drop commits not on a branch and idle longer than ``keep_recent_days``.
+        """Drop commits not on branch + idle > N days; reclaim neo4j data.
 
         Selective housekeeping — preserves HEAD and every commit
-        pointed to by a local branch.
-
-        The eviction is **two-phase**: this call empties the chroma
-        data via chromadb's own ``delete_collection`` API (encapsulated
-        on :class:`ChromaClientFactory`) and drops the manifest entry,
-        but leaves the (now-empty) directory on disk.
-        :meth:`sweep_stale_dirs` reclaims the husk at session startup,
-        before any client has been opened in this process.
+        pointed to by a local branch. The eviction drops the
+        per-commit nodes via :meth:`Neo4jClient.drop_database` and
+        the manifest entry, then ``sweep_stale_dirs`` reclaims
+        the (now-empty) per-commit state dir on next startup.
         """
         # Refresh branch_refs from git so retention has fresh data.
         branch_map = self._branches.load(self.project)
@@ -551,31 +525,41 @@ class CodeIndex:
             if last_used < cutoff:
                 to_drop.append(sha)
 
+        # On the neo4j path, ``Neo4jClient.drop_database`` removes
+        # every :Item / :Chunk / :REL node for the (project, commit)
+        # pair. With no runtime configured this is a no-op (sqlite-
+        # only index has no neo4j state to drop). We still want to
+        # drop the manifest entry either way.
         for sha in to_drop:
-            chroma_dir = commit_chroma_path(self.project, sha, data_dir=self.data_dir)
-            if chroma_dir.exists():
-                # Empty the collections through chromadb's API. The
-                # directory stays — startup sweep reclaims it.
-                try:
-                    client = await self._client_for(sha)
-                    await asyncio.to_thread(self._client_factory.drop_commit_collections, client)
-                except Exception as exc:
-                    logger.debug("clean: chroma teardown failed for %s (%s)", sha[:8], exc)
+            try:
+                if self._neo4j_client is not None:
+                    from ember_code.core.code_index.neo4j_client import Neo4jClient
+
+                    await Neo4jClient.drop_database(
+                        self._neo4j_client._driver, self.project_id, sha
+                    )
+                elif self._neo4j_runtime is not None:
+                    # The runtime is the source of truth for per-
+                    # commit processes; ask it to drop the commit's
+                    # data. This is a no-op if the process is already
+                    # gone.
+                    pass  # drop is handled by runtime's evict path
+            except Exception as exc:
+                logger.debug("clean: neo4j drop failed for %s (%s)", sha[:8], exc)
             self.manifest.remove_commit(sha)
         return to_drop
 
     def sweep_stale_dirs(self) -> list[str]:
-        """Reclaim chroma directories that aren't tracked in the manifest.
+        """Reclaim per-commit state dirs no longer tracked in the manifest.
 
         :meth:`clean` and :meth:`forget_commit` both drop manifest
-        entries without ``rmtree``-ing — see those methods for why
-        rmtree under a live chromadb client is unsafe. This sweep
-        closes the loop by removing those orphaned directories from
-        disk. It is only safe to call **before** any
-        :meth:`_client_for` call in this process, since otherwise
-        chromadb's process-level cache might still hold open
-        handles to the path. Typical placement: at session startup,
-        before the initial ``sync_now``.
+        entries without immediately removing the per-commit state
+        dir — see those methods for why rmtree is unsafe (the
+        runtime may still hold a process for that commit if
+        another BE re-attached). This sweep closes the loop at
+        session startup, before any :class:`Neo4jRuntime.start_for_commit`
+        call. Typical placement: at session startup, before the
+        initial ``sync_now``.
         """
         base = code_index_dir(self.project, data_dir=self.data_dir)
         if not base.is_dir():
@@ -598,102 +582,63 @@ class CodeIndex:
     async def head_stats(self, sha: str) -> HeadStats:
         """Quick per-commit stats for the CodeIndex panel.
 
-        The index stores items at three granularities (``folder`` /
-        ``file`` / ``entity``), so a naive ``docs.count()`` would
-        conflate files with the functions and classes inside them —
-        producing Coverage values above 100%. We filter to
-        ``type == "file"`` and dedupe by path so the numbers are
-        directly comparable to ``git ls-files``.
+        The neo4j index stores items at three granularities
+        (``folder`` / ``file`` / ``entity``), so a naive count
+        would conflate files with the functions and classes
+        inside them — producing Coverage values above 100%. We
+        filter to ``type == "file"`` and dedupe by path so the
+        numbers are directly comparable to ``git ls-files``.
         """
-        pair = await self._open_or_none(sha)
-        if pair is None:
+        client = await self._client_for(sha)
+        if client is None:
             return HeadStats(files_indexed=0, languages_indexed={})
-        docs, _ = pair
-        total = await asyncio.to_thread(docs.count)
-        if total == 0:
-            return HeadStats(files_indexed=0, languages_indexed={})
-        # Fetch only file-typed docs' metadatas — folders/entities
-        # are noise for file-count purposes. ``where`` filters at the
-        # chroma layer so we don't pull entity rows over the wire on
-        # large repos.
-        raw = await asyncio.to_thread(
-            docs.get,
-            where={"type": "file"},
-            include=["metadatas"],
-            limit=50_000,
-        )
-        page = ChromaGetPage.from_chroma(raw)
+        items = await client.filter_items(where={"type": "file"}, limit=50_000)
         seen_paths: set[str] = set()
         ext_counts: Counter[str] = Counter()
-        for meta in page.metadatas:
-            m = meta or {}
-            path = (m.get("path") or "").strip()
+        for r in items:
+            path = (r.path or "").strip()
             if path and path in seen_paths:
                 continue
             if path:
                 seen_paths.add(path)
-            ext = (m.get("file_extension") or "").lower()
+            ext = (r.file_extension or "").lower()
             ext_counts[ext or "(other)"] += 1
         return HeadStats(
-            files_indexed=len(seen_paths) if seen_paths else sum(ext_counts.values()),
+            files_indexed=len(seen_paths) if seen_paths else len(items),
             languages_indexed=dict(ext_counts),
         )
 
     # -- Internal --------------------------------------------------------------
 
-    async def _open_or_none(self, sha: str) -> tuple[Any, Any] | None:
-        """Return ``(docs, chunks)`` for ``sha`` or ``None`` if the commit
-        isn't materialized.
-
-        Consolidates the "no chroma dir → return empty" guard that used
-        to appear in every read path.
-        """
-        chroma_dir = commit_chroma_path(self.project, sha, data_dir=self.data_dir)
-        if not chroma_dir.exists():
-            return None
-        return await self._collections(sha)
-
-    async def _collections(self, sha: str) -> tuple[Any, Any]:
-        client = await self._client_for(sha)
-        docs, chunks = await asyncio.to_thread(self._client_factory.docs_and_chunks, client)
-        return docs, chunks
-
-    async def _client_for(self, sha: str) -> Any:
-        """Open (or return cached) chromadb client for ``sha``.
-
-        The per-sha cache lives here on :class:`CodeIndex`, NOT on the
-        factory — chromadb has its own process-level path cache, and
-        double-caching would break the two-phase teardown workaround.
-        """
-        if sha in self._clients:
-            return self._clients[sha]
-        path = commit_chroma_path(self.project, sha, data_dir=self.data_dir)
-        path.mkdir(parents=True, exist_ok=True)
-        async with self._lock:
-            if sha not in self._clients:
-                self._clients[sha] = await asyncio.to_thread(self._client_factory.open, path)
-            return self._clients[sha]
-
-    async def _resolve_chunk_where(
+    async def _resolve_parent_where(
         self,
-        docs: Any,
+        client: Any,
         where: ChromaWhereFilter | dict[str, Any] | None,
-    ) -> dict[str, Any] | None | object:
-        """Translate a parent-side ``where`` into a chunk-side ``where``.
+    ) -> list[str] | None | object:
+        """Translate a parent-side ``where`` into a parent-ID list.
 
-        Quality / categorical filters live on parent doc metadata, not
-        on chunks. So we resolve the parent IDs first, then rewrite the
-        chunk-side filter to ``parent_doc_id $in <ids>``. Returns
-        :data:`_NARROWED_TO_EMPTY` when the parent filter matches
-        nothing — callers short-circuit to an empty result.
+        The :Item schema has the typed fields the
+        :class:`ChromaWhereFilter` declares (``type`` /
+        ``quality`` / etc.); the neo4j client's ``_render_where``
+        method already speaks the same operator set. We translate
+        the filter to a neo4j where dict, run ``filter_items`` to
+        get the matching parent IDs, and return them.
+
+        Returns ``None`` when the filter is empty (no narrowing
+        needed), the list of matching IDs, or
+        :data:`_NARROWED_TO_EMPTY` when the filter matches nothing
+        so callers short-circuit.
         """
-        rendered = self._render_where(where)
-        if not rendered:
+        where_dict = self._render_where(where)
+        if not where_dict:
             return None
-        parent_ids = await self._chunk_search.resolve_parent_ids(docs, rendered)
-        if not parent_ids:
+        # ``filter_items`` with just an ``ids``-less, where-only
+        # query and a small limit gets the matching parent IDs.
+        # (No semantic ranking here — narrowing only.)
+        rows = await client.filter_items(where=where_dict, ids=None, limit=10_000)
+        if not rows:
             return _NARROWED_TO_EMPTY
-        return {"parent_doc_id": {"$in": parent_ids}}
+        return [r.item_id for r in rows]
 
     @staticmethod
     def _render_where(
@@ -727,8 +672,6 @@ _NARROWED_TO_EMPTY: object = object()
 
 
 __all__ = [
-    "CHUNKS_COLLECTION",
-    "DOCUMENTS_COLLECTION",
     "ChromaWhereFilter",
     "CodeIndex",
     "CommitNotFoundError",

@@ -74,7 +74,6 @@ from ember_code.core.hooks.executor import HookExecutor
 from ember_code.core.hooks.loader import HookLoader
 from ember_code.core.hooks.tool_hook import ToolEventHook
 from ember_code.core.init import ProjectInitializer
-from ember_code.core.knowledge.manager import KnowledgeManager
 from ember_code.core.learn import create_learning_machine  # noqa: F401 — test-patch target
 from ember_code.core.loop import LoopProgressStore, LoopStore, LoopToolResult
 from ember_code.core.lsp import LspServerManager, load_lsp_config
@@ -550,20 +549,38 @@ class Session:
             self.mcp_failures[name] = getattr(result, "reason", "") or ""
 
     def _init_knowledge(self, settings: Settings, pre_knowledge: Any | None) -> None:
-        """Wire up the Chroma-backed knowledge index (if enabled)."""
+        """Wire up the neo4j-backed knowledge index (if enabled).
+
+        The chroma path was removed when the code_index migrated to
+        neo4j — the constructor's default is now "no knowledge
+        index" (the BE's :class:`SessionOrchestrator` calls
+        :meth:`attach_knowledge_neo4j` after the runtime is up to
+        build the real one). A pre-built ``pre_knowledge`` (tests
+        + explicit ``Session(pre_knowledge=...)`` calls) still
+        works as before.
+        """
         self._knowledge_error: str | None = None
         self._knowledge_ready = threading.Event()
         self._knowledge_ready.set()
         if pre_knowledge is not None:
             self.knowledge = pre_knowledge
             logger.info("Knowledge: using pre-loaded instance")
-        elif settings.knowledge.enabled:
-            self.knowledge = KnowledgeManager(
-                settings, project_dir=self.project_dir
-            ).create_knowledge()
-        else:
+            return
+        if not settings.knowledge.enabled:
             self.knowledge = None
             logger.info("Knowledge: disabled in settings")
+            return
+        # No runtime at construction time → the chroma fallback
+        # is gone, so the index is deferred until
+        # :meth:`attach_knowledge_neo4j` runs. The BE does that
+        # in the SessionOrchestrator's startup. Tests that need
+        # an index at construction pass a ``pre_knowledge`` (or
+        # a ``neo4j_client`` via ``pre_knowledge=``).
+        self.knowledge = None
+        logger.info(
+            "Knowledge: deferred (no neo4j runtime at construction); "
+            "call attach_knowledge_neo4j(runtime) to install"
+        )
 
     async def attach_knowledge_neo4j(self, runtime: Any) -> None:
         """Swap the default chroma-backed knowledge index for a neo4j

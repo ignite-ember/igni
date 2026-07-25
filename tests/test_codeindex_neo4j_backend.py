@@ -80,16 +80,11 @@ async def test_codeindex_routes_references_through_neo4j(tmp_path, driver, proje
 
 
 async def test_codeindex_without_neo4j_falls_back_to_sqlite(tmp_path):
-    """The legacy SQLite path still works when no neo4j_client is injected."""
-    index = CodeIndex(project=tmp_path, data_dir=tmp_path / "data")
-    svc = index.file_reference_service()
-    assert isinstance(svc, FileReferenceService)
-    assert svc._is_neo4j is False  # type: ignore[attr-defined]
-
-    await svc.create("a", "b", "calls", {})
-    got = await svc.get("a", "b", "calls")
-    assert got is not None
-    assert got.relation == "calls"
+    """Removed: the SQLite ``code_index_file_reference`` table was
+    dropped by the d4e5f6a7b8c9 migration when code_index moved
+    to neo4j. There is no SQLite fallback anymore — see the
+    ``_require_neo4j_backend`` guard in :class:`CodeIndex` for the
+    legacy path callers will hit."""
 
 
 async def test_apply_delta_persists_references_to_neo4j(tmp_path, driver, project_id):

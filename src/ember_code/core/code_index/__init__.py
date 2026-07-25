@@ -20,31 +20,16 @@ from ember_code.core.code_index.fetcher import (
     PreflightStatus,
 )
 from ember_code.core.code_index.index import CodeIndex, CommitNotFoundError
-from ember_code.core.code_index.manifest import (
-    Manifest,
-    ManifestStore,
-)
+from ember_code.core.code_index.manifest import Manifest, ManifestStore
 from ember_code.core.code_index.resolver import (
     DiscoveryStatus,
     RepositoryResolver,
     ResolvedRepository,
 )
-from ember_code.core.code_index.schema.chroma_row import (
-    ChromaChunkRow,
-    ChromaRowMetadata,
-)
-from ember_code.core.code_index.schema.manifest import (
-    CommitInfo,
-    ManifestState,
-    ManifestWire,
-)
+from ember_code.core.code_index.schema.manifest import CommitInfo, ManifestState, ManifestWire
 from ember_code.core.code_index.schema.stats import HeadStats
 from ember_code.core.code_index.schema.where_filter import ChromaWhereFilter
-from ember_code.core.code_index.sync import (
-    ActivityEntry,
-    CodeIndexSyncManager,
-    SyncResult,
-)
+from ember_code.core.code_index.sync import ActivityEntry, CodeIndexSyncManager, SyncResult
 
 __all__ = [
     "ActivityEntry",

@@ -229,7 +229,7 @@ class Embedder:
 
 # --- Module-level convenience wrappers ---------------------------------------
 # Thin delegates that preserve backwards compatibility with existing callers
-# (``prefetch_models.py``, ``chroma_client_factory.py``,
+# (``prefetch_models.py``, ``prefetch_models.py``,
 # ``knowledge/collections.py``) and every test in ``tests/test_embeddings.py``
 # that pokes ``embeddings.<name>`` directly. Each is a one-liner.
 

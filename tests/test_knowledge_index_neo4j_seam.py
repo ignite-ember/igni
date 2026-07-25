@@ -158,18 +158,10 @@ async def test_knowledge_index_add_search_count_round_trip(knowledge_index):
     assert await idx.has_entry(result.entry_id) is False
 
 
-async def test_knowledge_index_without_neo4j_falls_back_to_chroma(tmp_path):
-    """The chroma path still works when no neo4j_client is injected."""
-    idx = KnowledgeIndex(project=tmp_path, data_dir=tmp_path / "data")
-    await idx.start()
-    result = await idx.add_document(
-        chunks=["hello world"],
-        full_content="hello world",
-        name="Hello",
-    )
-    assert result.success
-    assert await idx.count() == 1
-    assert await idx.has_entry(result.entry_id) is True
+async def test_knowledge_index_without_neo4j_raises(tmp_path):
+    """The chroma fallback is gone — ``neo4j_client`` is now a required kwarg."""
+    with pytest.raises(TypeError, match="neo4j_client"):
+        KnowledgeIndex(project=tmp_path, data_dir=tmp_path / "data")
 
 
 async def test_knowledge_index_neo4j_requires_embedder(tmp_path, driver, project_id):

@@ -9,8 +9,19 @@ tests cover only:
     transformation.
   - ``ProjectMap.load`` — reads what was written, returns ``None``
     when missing or unreadable.
-  - End-to-end: a ``CommitSummaryOp`` flowing through ``apply_delta``
-    lands on disk at the expected path.
+  - The session loader hook (in ``core/session/core.py``) injects the
+    on-disk map into the assembled system prompt under a
+    ``## Project Map`` heading when both the manifest head and the
+    map file are present.
+
+The end-to-end JSONL → on-disk path used to be tested by
+``test_apply_delta_writes_commit_summary_to_disk`` and
+``test_apply_delta_without_commit_summary_leaves_no_map``; those
+exercised ``CodeIndex.apply_delta`` with no neo4j backend. The
+SQLite path those tests relied on was removed when code_index
+migrated to neo4j, so the delta path now requires a real runtime
+— see ``test_codeindex_neo4j_backend.py`` for the equivalent
+integration coverage.
 
 There are no LLM tests here — the rendering logic lives on the server.
 """
@@ -23,7 +34,6 @@ from pathlib import Path
 import pytest
 
 from ember_code.core.code_index.delta import DeltaError, parse_op
-from ember_code.core.code_index.index import CodeIndex
 from ember_code.core.code_index.manifest import (
     CommitInfo,
     Manifest,
@@ -129,88 +139,6 @@ def test_parse_commit_summary_op_validation() -> None:
     raw = json.dumps({"op": "commit_summary", "sha": COMMIT})  # no markdown
     with pytest.raises(DeltaError):
         parse_op(raw)
-
-
-# ── End-to-end: changeset → on-disk map ────────────────────────────
-
-
-def _jsonl(*ops: dict) -> str:
-    return "\n".join(json.dumps(o) for o in ops) + "\n"
-
-
-@pytest.fixture
-async def populated_index(tmp_path):
-    """Fresh CodeIndex on a temp project so apply_delta has somewhere
-    to land its commits."""
-    project = tmp_path / "proj"
-    project.mkdir()
-    data_dir = tmp_path / "ember"
-    idx = CodeIndex(project=project, data_dir=data_dir)
-    yield idx, project, data_dir
-    await idx.close()
-
-
-@pytest.mark.asyncio
-async def test_apply_delta_writes_commit_summary_to_disk(
-    populated_index,
-    tmp_path: Path,
-) -> None:
-    """End-to-end: a JSONL changeset carrying a ``commit_summary`` op
-    results in the markdown landing at the canonical path. The agent
-    can then load it next session."""
-    idx, project, data_dir = populated_index
-
-    body = (
-        "_Auto-generated for commit `aaaaaaaaaaaa`. Factual; no opinions._\n\n"
-        "## Project snapshot\n5 folders · 0 files · 0 entities indexed.\n"
-    )
-    jsonl_path = tmp_path / "delta.jsonl"
-    jsonl_path.write_text(
-        _jsonl(
-            {
-                "op": "commit",
-                "sha": COMMIT,
-                "parent_sha": None,
-                "branches": [],
-                "indexed_at": "2026-01-01T00:00:00Z",
-            },
-            {"op": "commit_summary", "sha": COMMIT, "markdown": body},
-        )
-    )
-
-    stats = await idx.apply_delta(jsonl_path)
-    assert stats.commit_summary_written is True
-
-    # File landed at the expected path with the verbatim body.
-    loaded = ProjectMap(project, COMMIT, data_dir=data_dir).load()
-    assert loaded == body
-
-
-@pytest.mark.asyncio
-async def test_apply_delta_without_commit_summary_leaves_no_map(
-    populated_index,
-    tmp_path: Path,
-) -> None:
-    """Older changesets (or commits where the server didn't generate
-    a map) don't leave behind a stale or empty file. The map slot
-    stays absent and the session loader degrades gracefully."""
-    idx, project, data_dir = populated_index
-    jsonl_path = tmp_path / "delta.jsonl"
-    jsonl_path.write_text(
-        _jsonl(
-            {
-                "op": "commit",
-                "sha": COMMIT,
-                "parent_sha": None,
-                "branches": [],
-                "indexed_at": "2026-01-01T00:00:00Z",
-            },
-        )
-    )
-
-    stats = await idx.apply_delta(jsonl_path)
-    assert stats.commit_summary_written is False
-    assert ProjectMap(project, COMMIT, data_dir=data_dir).load() is None
 
 
 # ── Session loader: injection into the agent's system prompt ───────
