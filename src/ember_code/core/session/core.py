@@ -458,6 +458,53 @@ class Session:
         _head_sha = self.code_index_sync.current_sha()
         self._codeindex_available = bool(_head_sha and self.code_index.has_commit(_head_sha))
 
+    async def attach_codeindex_neo4j(self, runtime: Any) -> None:
+        """Swap the default chroma-backed code index for a neo4j
+        one driven by ``runtime`` (typically a ``Neo4jRuntime``).
+
+        Mirrors :meth:`attach_knowledge_neo4j` for the code
+        intelligence side. Replaces ``self.code_index`` and
+        ``self.code_index_sync`` with neo4j-backed equivalents,
+        points the :class:`CodeIndexAvailabilityRefresher` at the
+        new refs, and recomputes ``_codeindex_available``.
+
+        Idempotent: a second call with the same runtime
+        short-circuits. Switching the runtime rebuilds the index.
+        """
+        # ``CodeIndex`` doesn't take an ``embedder`` kwarg yet —
+        # the items/chunks path is still chroma-backed in this
+        # branch. The seam for ``runtime=`` is what matters here:
+        # ``apply_delta`` and ``file_reference_service`` already
+        # route through the runtime's per-commit client. The
+        # remaining chroma path inside ``add_item`` is the
+        # standing migration debt (see the parked drop-tables
+        # migration and the schema description for the boundary).
+        new_index = CodeIndex(
+            project=self.project_dir,
+            data_dir=self.settings.storage.data_dir,
+            runtime=runtime,
+        )
+        new_sync = CodeIndexSyncManager.from_settings(
+            self.settings,
+            project_dir=self.project_dir,
+            code_index=new_index,
+        )
+
+        existing_runtime = getattr(self.code_index, "_neo4j_runtime", None)
+        if existing_runtime is runtime:
+            return
+
+        self.code_index = new_index
+        self.code_index_sync = new_sync
+
+        if self._codeindex_refresher is not None:
+            self._codeindex_refresher._code_index = new_index
+            self._codeindex_refresher._code_index_sync = new_sync
+
+        new_head = new_sync.current_sha()
+        self._codeindex_available = bool(new_head and new_index.has_commit(new_head))
+        logger.info("CodeIndex: switched to neo4j backend (project=%s)", self.project_dir)
+
     def _init_mcp_client_manager(self) -> None:
         """Construct :class:`MCPClientManager` and merge in
         plugin-bundled MCP configs.

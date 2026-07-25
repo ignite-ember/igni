@@ -173,10 +173,15 @@ class SessionOrchestrator:
         runtime = Neo4jRuntime(data_dir=self._settings.storage.data_dir)
         self._neo4j_runtime = runtime
         # ``self._backend`` is a :class:`BackendServer`; the session
-        # is reachable via the bootstrap.
+        # is reachable via the bootstrap. Both attach calls are
+        # safe when the field is missing or the session was built
+        # with the relevant feature disabled.
         session = getattr(self._backend, "_session", None)
-        if session is not None and getattr(session, "knowledge", None) is not None:
-            await session.attach_knowledge_neo4j(runtime)
+        if session is not None:
+            if getattr(session, "knowledge", None) is not None:
+                await session.attach_knowledge_neo4j(runtime)
+            if getattr(session, "code_index", None) is not None:
+                await session.attach_codeindex_neo4j(runtime)
         return runtime
 
     @property

@@ -115,16 +115,22 @@ async def test_orchestrator_attach_neo4j_swaps_knowledge_when_env_set(
     class _Session:
         def __init__(self, project_id: str):
             self._project_id = project_id
-            # Start with a non-None knowledge (the orchestrator
-            # only swaps when there's something to swap; the real
-            # Session's constructor installs a chroma-backed
-            # index by default).
+            # Start with a non-None knowledge + code_index (the
+            # orchestrator only swaps when there's something to
+            # swap; the real Session's constructor installs
+            # chroma-backed defaults).
             self.knowledge = object()
+            self.code_index = object()
             self.attached_runtimes: list[Any] = []
+            self.codeindex_attach_calls = 0
 
         async def attach_knowledge_neo4j(self, runtime: Any) -> None:
             self.attached_runtimes.append(runtime)
             self.knowledge = f"neo4j-{runtime is not None}"
+
+        async def attach_codeindex_neo4j(self, runtime: Any) -> None:
+            self.codeindex_attach_calls += 1
+            self.code_index = f"neo4j-codeindex-{runtime is not None}"
 
     project_id = "orch-attach-test"
     session = _Session(project_id)
@@ -150,10 +156,13 @@ async def test_orchestrator_attach_neo4j_swaps_knowledge_when_env_set(
     assert runtime is not None
     # The runtime was cached on the orchestrator.
     assert orch._neo4j_runtime is runtime
-    # The session received the runtime.
+    # The session received the runtime for BOTH the knowledge and
+    # the code_index attach calls.
     assert session.attached_runtimes == [runtime]
-    # The session's knowledge was updated.
+    assert session.codeindex_attach_calls == 1
+    # The session's knowledge + code_index were updated.
     assert session.knowledge == "neo4j-True"
+    assert session.code_index == "neo4j-codeindex-True"
 
 
 async def test_orchestrator_attach_neo4j_idempotent(tmp_path, monkeypatch, driver):
