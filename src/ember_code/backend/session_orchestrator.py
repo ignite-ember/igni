@@ -90,6 +90,14 @@ class SessionOrchestrator:
         # ``_AUTO_NAME_TASKS`` set. Kept as instance attributes so
         # each orchestrator has its own lifetime.
         self._in_flight: set[asyncio.Task] = set()
+        # Optional Neo4j runtime. Constructed lazily in
+        # :meth:`setup_pool` when the env var is set — the
+        # runtime's heavy work (downloading the JDK + Neo4j
+        # distribution, spawning the per-process subprocess) is
+        # triggered on first use via ``start_for_knowledge`` /
+        # ``start_for_commit``, not at construction. The
+        # construction itself is cheap (path resolution only).
+        self._neo4j_runtime: Any = None
 
     # ── Setup ────────────────────────────────────────────────────
 
@@ -138,6 +146,38 @@ class SessionOrchestrator:
             **config.model_dump(exclude_none=True),
         )
         return self._pool
+
+    async def attach_neo4j(self) -> Any | None:
+        """Wire the optional :class:`Neo4jRuntime` into the default
+        session's knowledge index.
+
+        No-op when ``EMBER_NEO4J_RUNTIME`` is unset — the env var
+        is the explicit opt-in (constructing + downloading the JDK
+        and the Neo4j distribution is heavy, so we don't do it
+        silently). When set, builds a :class:`Neo4jRuntime` (one
+        per BE — the runtime is refcounted across sessions via
+        the per-(project, commit) subprocess map) and calls
+        :meth:`Session.attach_knowledge_neo4j` to swap the
+        default session's knowledge backend. Returns the runtime
+        for tests + the supervisor; ``None`` when skipped.
+
+        Idempotent — a second call is a no-op (the runtime
+        itself is cached on ``self._neo4j_runtime``).
+        """
+        if not os.environ.get("EMBER_NEO4J_RUNTIME"):
+            return None
+        if self._neo4j_runtime is not None:
+            return self._neo4j_runtime
+        from ember_code.backend.neo4j_runtime import Neo4jRuntime
+
+        runtime = Neo4jRuntime(data_dir=self._settings.storage.data_dir)
+        self._neo4j_runtime = runtime
+        # ``self._backend`` is a :class:`BackendServer`; the session
+        # is reachable via the bootstrap.
+        session = getattr(self._backend, "_session", None)
+        if session is not None and getattr(session, "knowledge", None) is not None:
+            await session.attach_knowledge_neo4j(runtime)
+        return runtime
 
     @property
     def pool(self) -> SessionPool:

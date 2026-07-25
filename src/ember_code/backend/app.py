@@ -193,6 +193,12 @@ class BackendApp:
         )
         pool = self._orchestrator.setup_pool()
         self._supervisor.set_pool(pool)
+        # Opt-in: when ``EMBER_NEO4J_RUNTIME`` is set, build the
+        # :class:`Neo4jRuntime` and switch the default session's
+        # knowledge index to it. The first knowledge op will block
+        # while the runtime downloads + spawns the per-process
+        # Neo4j subprocess; subsequent ops hit the live driver.
+        await self._orchestrator.attach_neo4j()
         self._supervisor.start_evictor()
         self._supervisor.mark_running()
 
