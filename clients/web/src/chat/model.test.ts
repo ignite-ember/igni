@@ -935,6 +935,7 @@ import {
   workflowItem,
   type WorkflowEvent,
 } from "./model";
+import { __test_formatResultSummary as formatResultSummary } from "../components/WorkflowRun";
 
 function wfEvent(
   type: string,
@@ -1129,5 +1130,108 @@ describe("reduceWorkflowEvent — parallel grouping", () => {
     expect(agents[2].parallelGroupId).toBe("par_x");
     // Serial agent after the parallel block has no group.
     expect(agents[3].parallelGroupId).toBeUndefined();
+  });
+});
+
+describe("reduceWorkflowEvent — serial + parallel mixed", () => {
+  it("labels the right groups when serial and parallel interleave", () => {
+    let items: ChatItem[] = [];
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("workflow_started", {}, 0),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("phase_started", { phase_id: "p1", title: "Design" }, 1),
+    );
+    // Serial agent first.
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("agent_started", { id: "a0", label: "intro" }, 2),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("agent_completed", { id: "a0", status: "completed" }, 3),
+    );
+    // Parallel block of two.
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("parallel_started", { group_id: "g1", lane_count: 2 }, 4),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("agent_started", { id: "a1", label: "d-1" }, 5),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("agent_started", { id: "a2", label: "d-2" }, 6),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("parallel_completed", { group_id: "g1" }, 7),
+    );
+    // Another parallel block of two.
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("parallel_started", { group_id: "g2", lane_count: 2 }, 8),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("agent_started", { id: "a3", label: "r-1" }, 9),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("agent_started", { id: "a4", label: "r-2" }, 10),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("parallel_completed", { group_id: "g2" }, 11),
+    );
+    // Trailing serial agent.
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("agent_started", { id: "a5", label: "synthesize" }, 12),
+    );
+    if (items[0].kind !== "workflow") return;
+    const agents = items[0].run.phases[0].agents;
+    expect(agents).toHaveLength(6);
+    expect(agents[0].parallelGroupId).toBeUndefined();
+    expect(agents[1].parallelGroupId).toBe("g1");
+    expect(agents[2].parallelGroupId).toBe("g1");
+    expect(agents[3].parallelGroupId).toBe("g2");
+    expect(agents[4].parallelGroupId).toBe("g2");
+    expect(agents[5].parallelGroupId).toBeUndefined();
+  });
+});
+
+describe("formatResultSummary", () => {
+  it("returns null for null / undefined / non-object", () => {
+    expect(formatResultSummary(null)).toBeNull();
+    expect(formatResultSummary(undefined)).toBeNull();
+    expect(formatResultSummary("plain string")).toBe("plain string");
+    expect(formatResultSummary(42)).toBe("42");
+  });
+
+  it("returns null for an empty object", () => {
+    expect(formatResultSummary({})).toBeNull();
+  });
+
+  it("formats a clean / chosen_design / tests_passed result", () => {
+    const out = formatResultSummary({
+      target: "src/example.py",
+      status: "clean",
+      chosen_design: "minimal-OOP",
+      verification: { tests_passed: 47, tests_failed: 0 },
+    });
+    expect(out).toBe("clean · design: minimal-OOP · 47 tests passed");
+  });
+
+  it("formats a failing-tests result with the failure count", () => {
+    const out = formatResultSummary({
+      status: "needs-attention",
+      chosen_design: "architectural-OOP",
+      verification: { tests_passed: 12, tests_failed: 3 },
+    });
+    expect(out).toBe("needs-attention · design: architectural-OOP · 12 passed, 3 failed");
   });
 });

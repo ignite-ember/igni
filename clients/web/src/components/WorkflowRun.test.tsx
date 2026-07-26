@@ -9,7 +9,7 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { WorkflowRun } from "./WorkflowRun";
 import type { WorkflowRunState } from "../chat/model";
 
@@ -105,5 +105,38 @@ describe("WorkflowRun", () => {
     const run = makeRun({ status: "running", phases: [] });
     render(<WorkflowRun run={run} />);
     expect(screen.getByText(/starting/)).toBeDefined();
+  });
+});
+
+describe("WorkflowRun — collapse / expand", () => {
+  afterEach(() => cleanup());
+
+  it("collapses a phase on header click; the agents disappear", async () => {
+    const run = makeRun({
+      phases: [
+        {
+          phaseId: "p1",
+          title: "Assess",
+          startedAtMs: 1_700_000_000_000,
+          status: "completed",
+          agents: [
+            {
+              agentId: "a1",
+              label: "assess",
+              status: "completed",
+              startedAtMs: 1_700_000_000_500,
+              endedAtMs: 1_700_000_001_000,
+            },
+          ],
+        },
+      ],
+    });
+    render(<WorkflowRun run={run} />);
+    expect(screen.getByText("assess")).toBeDefined();
+    const phaseButton = screen.getByText("Assess").closest("button")!;
+    fireEvent.click(phaseButton);
+    expect(screen.queryByText("assess")).toBeNull();
+    fireEvent.click(phaseButton);
+    expect(screen.getByText("assess")).toBeDefined();
   });
 });

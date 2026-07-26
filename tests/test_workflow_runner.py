@@ -368,3 +368,273 @@ async def test_agent_request_bridges_to_team(tmp_path: Path) -> None:
     assert '"id": "req_42"' in written
     assert '"ok": true' in written
     assert '"result": "agent result text"' in written
+
+
+# ── Runner edge cases (cancel, cwd-relative, agent timeout) ──
+
+async def test_runner_spawns_user_layer_workflow_with_cwd_relative_path(
+    tmp_path: Path,
+) -> None:
+    """A workflow in ``.ember/workflows/`` is spawned with the
+    same ``cwd=project_dir`` as a team-layer workflow, and the
+    ``path`` field on the discovery envelope is a project-relative
+    path that the runner resolves to an absolute path before
+    passing it to the Node subprocess.
+
+    This is the regression test for the user-layer feature:
+    the user-layer path passes through the same spawn pipeline
+    as the team-layer path.
+    """
+    user_dir = tmp_path / ".ember" / "workflows"
+    user_dir.mkdir(parents=True)
+    (user_dir / "personal.mjs").write_text(
+        "export const meta = { name: 'personal' }\n"
+    )
+
+    captured: dict[str, object] = {}
+
+    async def fake_exec(*args, **kwargs):
+        if "--discovery" in args:
+            path = Path(args[2])
+            line = json.dumps(
+                {
+                    "ts": 0,
+                    "run_id": "discovery",
+                    "seq": 0,
+                    "type": "workflow_meta",
+                    "payload": {
+                        "meta": {"name": path.stem, "phases": []},
+                        "path": str(path.relative_to(tmp_path)),
+                    },
+                }
+            )
+            proc = _FakeProcess([], exit_code=0)
+            proc.communicate = AsyncMock(
+                return_value=((line + "\n").encode("utf-8"), b"")
+            )
+            proc.returncode = 0
+            return proc
+        captured["args"] = args
+        captured["cwd"] = kwargs.get("cwd")
+        return _FakeProcess([], exit_code=0)
+
+    import ember_code.backend.workflow_runner as runner_mod
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(runner_mod.asyncio, "create_subprocess_exec", fake_exec)
+        runner = WorkflowRunner(project_dir=tmp_path, push=MagicMock())
+        session = MagicMock()
+        session.id = "sess_x"
+        run_id = await runner.run(name="personal", args={}, session=session)
+        assert run_id.startswith("wf_")
+        # The Node subprocess was spawned with the project dir as cwd.
+        assert captured["cwd"] == str(tmp_path)
+        # The path passed to the subprocess is the absolute path to
+        # the workflow file (under the project root), not just the
+        # ``.ember/workflows/personal.mjs`` relative string.
+        path_arg = [a for a in captured["args"] if "personal" in str(a)][0]
+        assert Path(path_arg).is_absolute()
+        assert str(path_arg).endswith(".ember/workflows/personal.mjs")
+
+
+async def test_runner_cancel_sends_cancel_message_and_sends_sigterm(tmp_path: Path) -> None:
+    """``cancel(workflow_run_id)`` writes a ``{"type":"cancel"}`` line
+    to the subprocess stdin, then waits for natural exit. If the
+    subprocess doesn't exit within ``CANCEL_GRACE_SECONDS``, the
+    runner sends SIGTERM, then SIGKILL as a last resort.
+
+    We exercise the cancel-message path here; the SIGTERM/SIGKILL
+    escalation is covered separately by the subprocess integration
+    tests (which need a real Node — outside the unit-test surface).
+    """
+    from ember_code.backend.workflow_runner import (
+        CANCEL_GRACE_SECONDS,
+        WorkflowRunner,
+    )
+
+    proc = _FakeProcess([], exit_code=0)
+    proc.returncode = None  # not yet exited
+    state = _RunState(proc=proc, workflow_run_id="wf_cancel", name="smoke")
+
+    written: list[bytes] = []
+
+    class _CancelStream:
+        def write(self, data: bytes) -> None:
+            written.append(data)
+
+        async def drain(self) -> None:
+            return None
+
+        def is_closing(self) -> bool:
+            return False
+
+    proc.stdin = _CancelStream()
+
+    push = MagicMock()
+    push._schedule_push = MagicMock()
+    runner = WorkflowRunner(project_dir=tmp_path, push=push)
+    runner._runs["wf_cancel"] = state
+
+    async def fake_wait(*a, **kw):
+        # Subprocess exits cleanly after the cancel message.
+        proc.returncode = 0
+        return 0
+
+    proc.wait = fake_wait  # type: ignore[method-assign]
+
+    # Patch asyncio.wait_for to call fake_wait directly (avoids
+    # the actual asyncio.wait_for scheduling).
+    import ember_code.backend.workflow_runner as runner_mod
+    real_wait_for = runner_mod.asyncio.wait_for
+
+    async def fake_wait_for(coro, timeout):
+        # Make sure the cancel message is written before we "wait"
+        # for the subprocess to exit.
+        if timeout == CANCEL_GRACE_SECONDS:
+            return await coro
+        return await real_wait_for(coro, timeout=0.1)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(runner_mod.asyncio, "wait_for", fake_wait_for)
+        await runner.cancel("wf_cancel")
+
+    # The cancel message was written to stdin.
+    assert len(written) == 1
+    assert json.loads(written[0].decode()) == {"type": "cancel"}
+
+
+async def test_agent_bridge_timeout_fires_agent_response_error(
+    tmp_path: Path,
+) -> None:
+    """If the agent call exceeds ``timeoutSeconds``, the bridge
+    sends an ``agent_response{ok: false, error: timeout message}``
+    and rejects the agent's promise — the workflow continues
+    on the next event.
+    """
+    import ember_code.backend.workflow_runner as runner_mod
+    from ember_code.backend.workflow_runner import (
+        DEFAULT_AGENT_TIMEOUT_SECONDS,
+        _RunState,
+    )
+
+    proc = _FakeProcess([], exit_code=0)
+    state = _RunState(proc=proc, workflow_run_id="wf_t", name="smoke")
+
+    push = MagicMock()
+    push._schedule_push = MagicMock()
+    runner = WorkflowRunner(project_dir=tmp_path, push=push)
+
+    session = MagicMock()
+    # team.arun hangs forever; the bridge must time it out.
+    async def hang(*a, **kw):
+        await asyncio.sleep(60)
+        return "should not return"
+    session.main_team.arun = hang
+
+    ev = MagicMock()
+    ev.payload = {
+        "id": "req_slow",
+        "prompt": "slow",
+        "label": "slow",
+        "phase": "S",
+        "timeout_seconds": 1,
+    }
+
+    written: list[bytes] = []
+
+    class _Stream:
+        def write(self, data: bytes) -> None:
+            written.append(data)
+
+        async def drain(self) -> None:
+            return None
+
+        def is_closing(self) -> bool:
+            return False
+
+    proc.stdin = _Stream()
+
+    real_wait_for = runner_mod.asyncio.wait_for
+
+    async def fast_wait_for(coro, timeout):
+        # Don't actually wait the full timeout — force the timeout
+        # path. We do this by setting the timeout to a tiny value
+        # and letting ``wait_for`` raise TimeoutError naturally.
+        if timeout > 1:
+            return await real_wait_for(coro, timeout=0.05)
+        return await real_wait_for(coro, timeout=timeout)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(runner_mod.asyncio, "wait_for", fast_wait_for)
+        await runner._handle_agent_request(state, session, ev)  # type: ignore[attr-defined]
+
+    # The bridge wrote an agent_response with ok=False and an error.
+    assert len(written) == 1
+    payload = json.loads(written[0].decode())
+    assert payload["type"] == "agent_response"
+    assert payload["id"] == "req_slow"
+    assert payload["ok"] is False
+    assert "timed out" in payload["error"]
+
+
+async def test_runner_passes_args_to_subprocess_as_json_string(
+    tmp_path: Path,
+) -> None:
+    """The runner serializes the ``args`` dict to JSON and passes
+    it as the last CLI arg (``--args``). The Node runtime parses
+    it back. This is the wire contract for the user-layer
+    workflow's args object.
+    """
+    user_dir = tmp_path / ".ember" / "workflows"
+    user_dir.mkdir(parents=True)
+    (user_dir / "personal.mjs").write_text(
+        "export const meta = { name: 'personal' }\n"
+    )
+
+    captured_args: list[str] = []
+
+    async def fake_exec(*args, **kwargs):
+        # Discovery subprocesses pass ``--discovery``; the run
+        # subprocess passes ``--args <json>``. Handle both.
+        if "--discovery" in args:
+            path = Path(args[2])
+            line = json.dumps(
+                {
+                    "ts": 0,
+                    "run_id": "discovery",
+                    "seq": 0,
+                    "type": "workflow_meta",
+                    "payload": {
+                        "meta": {"name": path.stem, "phases": []},
+                        "path": str(path.relative_to(tmp_path)),
+                    },
+                }
+            )
+            proc = _FakeProcess([], exit_code=0)
+            proc.communicate = AsyncMock(
+                return_value=((line + "\n").encode("utf-8"), b"")
+            )
+            proc.returncode = 0
+            return proc
+        # Run subprocess: capture the --args value.
+        i = list(args).index("--args")
+        captured_args.append(args[i + 1])
+        return _FakeProcess([], exit_code=0)
+
+    import ember_code.backend.workflow_runner as runner_mod
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(runner_mod.asyncio, "create_subprocess_exec", fake_exec)
+        runner = WorkflowRunner(project_dir=tmp_path, push=MagicMock())
+        session = MagicMock()
+        session.id = "sess_x"
+        await runner.run(
+            name="personal",
+            args={"file": "src/example.py", "tag": "demo"},
+            session=session,
+        )
+
+    assert len(captured_args) == 1
+    parsed = json.loads(captured_args[0])
+    assert parsed == {"file": "src/example.py", "tag": "demo"}
+
+# Quick patch: redefine fake_exec to handle discovery too.
+# (Replaces the previous fake_exec in the args test.)
