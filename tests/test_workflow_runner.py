@@ -30,7 +30,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ember_code.backend.schemas_workflows import WorkflowMeta
 from ember_code.backend.workflow_runner import WorkflowDiscovery, WorkflowRunner, _RunState
 
 
@@ -172,7 +171,6 @@ async def test_user_layer_shadows_team_layer(tmp_path: Path) -> None:
 
     async def fake_exec(*args, **kwargs):
         path = Path(args[2])
-        name = path.stem
         # Read the file's meta line to determine which copy ran.
         with open(path) as f:
             first_line = f.readline().strip()
@@ -512,7 +510,6 @@ async def test_agent_bridge_timeout_fires_agent_response_error(
     """
     import ember_code.backend.workflow_runner as runner_mod
     from ember_code.backend.workflow_runner import (
-        DEFAULT_AGENT_TIMEOUT_SECONDS,
         _RunState,
     )
 

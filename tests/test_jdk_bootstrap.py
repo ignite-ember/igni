@@ -8,14 +8,12 @@ The live download test is gated behind ``@pytest.mark.network``.
 from __future__ import annotations
 
 import asyncio
-import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pytest
 
-from ember_code.backend.jdk_bootstrap import JdkBootstrap, JdkBootstrapError
-
+from ember_code.backend.jdk_bootstrap import JdkBootstrap
 
 # ── Path resolution ────────────────────────────────────────────────
 
@@ -64,8 +62,9 @@ def _os_and_arch_for(platform_str: str, machine_str: str, tmp_path: Path) -> tup
         sys_mod.platform = platform_str
         object.__setattr__(platform_mod, "machine", lambda: machine_str)
 
-        import ember_code.backend.jdk_bootstrap as jdk_mod
         import importlib
+
+        import ember_code.backend.jdk_bootstrap as jdk_mod
 
         # Reload so patched values take effect in the module.
         importlib.reload(jdk_mod)

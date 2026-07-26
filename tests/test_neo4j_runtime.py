@@ -194,9 +194,7 @@ def test_default_tarball_url_format(tmp_path: Path, tarball_url: str) -> None:
 def test_runtime_resolves_paths_via_canonical_module(tmp_path: Path) -> None:
     """Paths must agree with :mod:`core.code_index.paths`."""
     from ember_code.core.code_index.paths import (
-        neo4j_auth_file,
         neo4j_data_dir,
-        neo4j_runtime_dir,
     )
 
     rt = Neo4jRuntime(data_dir=tmp_path)

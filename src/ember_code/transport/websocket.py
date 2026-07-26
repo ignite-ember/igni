@@ -223,11 +223,11 @@ class WebSocketServerTransport(ListeningTransport):
             # returning False even though our level is DEBUG. Emit
             # the record directly to the chunk-trace handler instead
             # so chunks actually land in the trace log.
-            chunk_msg = "[chunk tx] seq=%d len=%d thinking=%s preview=%r" % (
-                message.event_seq,
-                len(text),
-                getattr(message, "is_thinking", False),
-                text[:40],
+            chunk_msg = (
+                f"[chunk tx] seq={message.event_seq} "
+                f"len={len(text)} "
+                f"thinking={getattr(message, 'is_thinking', False)} "
+                f"preview={text[:40]!r}"
             )
             for h in logger.handlers:
                 if getattr(h, "_ember_chunk_trace", False):

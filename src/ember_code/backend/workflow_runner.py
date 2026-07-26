@@ -38,9 +38,9 @@ fresh-per-run isolation inside the bridge itself.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
-import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -269,7 +269,7 @@ class WorkflowRunner:
         self,
         *,
         project_dir: Path,
-        push: "PushNotificationBridge",
+        push: PushNotificationBridge,
     ):
         self._project_dir = Path(project_dir)
         self._push = push
@@ -288,7 +288,7 @@ class WorkflowRunner:
         *,
         name: str,
         args: dict[str, Any],
-        session: "Session",
+        session: Session,
     ) -> str:
         """Start a workflow run. Returns the ``workflow_run_id`` immediately.
 
@@ -404,7 +404,7 @@ class WorkflowRunner:
     # ── Internal tasks ────────────────────────────────────────────
 
     async def _drain_stdout(
-        self, state: _RunState, session: "Session"
+        self, state: _RunState, session: Session
     ) -> None:
         """Read stdout line-by-line; persist + push each event.
 
@@ -476,13 +476,12 @@ class WorkflowRunner:
     async def _handle_agent_request(
         self,
         state: _RunState,
-        session: "Session",
+        session: Session,
         event: WorkflowEvent,
     ) -> None:
         """Resolve one ``agent_request``: call ``team.arun`` and write the reply."""
         req_id = str(event.payload.get("id", ""))
         prompt = event.payload.get("prompt", "")
-        label = event.payload.get("label", "agent")
         timeout = int(event.payload.get("timeout_seconds", DEFAULT_AGENT_TIMEOUT_SECONDS))
         ok = False
         result: Any = None
@@ -527,7 +526,7 @@ class WorkflowRunner:
             )
 
     async def _bridge_agents(
-        self, state: _RunState, session: "Session"
+        self, state: _RunState, session: Session
     ) -> None:
         """Sentinel task — the actual agent bridging happens in
         :meth:`_handle_agent_request`, which the drain spawns per
@@ -542,7 +541,7 @@ class WorkflowRunner:
             raise
 
     async def _await_completion(
-        self, state: _RunState, session: "Session"
+        self, state: _RunState, session: Session
     ) -> None:
         """Wait for the subprocess to exit; synthesize failure event if needed."""
         try:
@@ -552,10 +551,8 @@ class WorkflowRunner:
         # Give the drain a moment to flush any final lines.
         for task in state.tasks:
             if task.get_name().startswith("workflow-drain-"):
-                try:
+                with contextlib.suppress(asyncio.TimeoutError, asyncio.CancelledError):
                     await asyncio.wait_for(task, timeout=2.0)
-                except (asyncio.TimeoutError, asyncio.CancelledError):
-                    pass
         # If the subprocess exited without a terminal event, the
         # workflow crashed (uncaught JS exception, OOM, etc.).
         # Emit a synthetic ``workflow_failed`` so the FE card

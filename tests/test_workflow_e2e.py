@@ -23,7 +23,6 @@ import pytest
 
 from ember_code.backend.workflow_runner import WorkflowRunner
 
-
 pytestmark = pytest.mark.skipif(
     shutil.which("node") is None,
     reason="Node not on PATH; workflow runner needs the Node bridge",
@@ -68,7 +67,7 @@ return { ok: true }
             break
         await asyncio.sleep(0.05)
     else:
-        pytest.fail(f"workflow did not complete within 10s; run_id still tracked")
+        pytest.fail("workflow did not complete within 10s; run_id still tracked")
 
     # 4 events: workflow_started, phase_started, log, phase_completed,
     # workflow_completed. We assert >=4 because the log event is

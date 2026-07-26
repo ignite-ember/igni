@@ -93,7 +93,7 @@ class WorkflowsRpcHandler(RpcHandler):
         cancelled = await runner.cancel(workflow_run_id)
         return {"cancelled": bool(cancelled), "workflow_run_id": workflow_run_id}
 
-    def _resolve_session(self, session_id: str) -> "Session":
+    def _resolve_session(self, session_id: str) -> Session:
         """Look up the live :class:`Session` for ``session_id``.
 
         Falls back to the default runtime's session when the id

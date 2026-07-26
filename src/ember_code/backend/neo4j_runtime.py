@@ -436,7 +436,7 @@ class Neo4jRuntime:
         # table. Keyed by ``(project_hash, commit_sha)`` tuple.
         # Each entry holds the subprocess, the cached driver, the
         # bolt/HTTP endpoints, and the refcount.
-        self._processes: dict[tuple[str, str], "_ProjectCommitState"] = {}
+        self._processes: dict[tuple[str, str], _ProjectCommitState] = {}
         self._lock = asyncio.Lock()
 
     # ── Public surface ─────────────────────────────────────────────
@@ -1149,7 +1149,7 @@ class Neo4jRuntime:
         # existing process via discovery) supports ``send_signal``
         # but not ``wait``. For internal processes we have the full
         # Popen handle.
-        is_internal = hasattr(proc, "wait") and callable(getattr(proc, "wait"))
+        is_internal = hasattr(proc, "wait") and callable(proc.wait)
         try:
             os.kill(pid, signal.SIGTERM)
         except (ProcessLookupError, PermissionError, OSError) as exc:
@@ -1202,10 +1202,8 @@ class Neo4jRuntime:
             state.driver = None
         # Best-effort delete the runtime file (it's stale; another
         # BE will spawn fresh if it queries for this pair).
-        try:
+        with contextlib.suppress(OSError):
             state.runtime_file.unlink()
-        except OSError:
-            pass
         logger.info(
             "neo4j (project=%s commit=%s pid=%d) shut down",
             project_hash,
