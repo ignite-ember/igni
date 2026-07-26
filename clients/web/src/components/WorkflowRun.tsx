@@ -83,9 +83,26 @@ export function WorkflowRun({ run }: { run: WorkflowRunState }) {
   const totalDuration =
     run.endedAtMs !== undefined ? run.endedAtMs - run.startedAtMs : undefined;
   const resultSummary = formatResultSummary(run.result);
+  const progressPct =
+    totalAgents > 0
+      ? Math.round((completedAgents / totalAgents) * 100)
+      : 0;
 
   return (
     <div className="workflow-run" data-status={status}>
+      <div
+        className="workflow-run-progress-track"
+        role="progressbar"
+        aria-valuenow={progressPct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={`${completedAgents} of ${totalAgents} agents completed`}
+      >
+        <div
+          className="workflow-run-progress-fill"
+          style={{ width: `${progressPct}%` }}
+        />
+      </div>
       <header className="workflow-run-header">
         <span className="workflow-run-glyph" aria-hidden>
           {statusGlyph(status)}
@@ -117,12 +134,10 @@ export function WorkflowRun({ run }: { run: WorkflowRunState }) {
       )}
 
       <ol className="workflow-run-phases">
-        {run.phases.map((phase, i) => (
+        {run.phases.map((phase) => (
           <PhaseRow
             key={phase.phaseId}
             phase={phase}
-            index={i + 1}
-            totalPhases={run.phases.length}
             collapsed={collapsed[phase.phaseId] ?? false}
             onToggle={() =>
               setCollapsed((c) => ({ ...c, [phase.phaseId]: !c[phase.phaseId] }))
@@ -137,7 +152,12 @@ export function WorkflowRun({ run }: { run: WorkflowRunState }) {
       {run.result !== undefined && (
         <details className="workflow-run-result">
           <summary>
-            <span className="workflow-run-result-label">Result</span>
+            <span className="workflow-run-result-label">
+              Result
+              <span className="workflow-run-result-chevron" aria-hidden>
+                ›
+              </span>
+            </span>
             {resultSummary !== null && (
               <span className="workflow-run-result-summary">
                 {resultSummary}
@@ -176,14 +196,10 @@ function formatResultSummary(result: unknown): string | null {
 
 function PhaseRow({
   phase,
-  index,
-  totalPhases,
   collapsed,
   onToggle,
 }: {
   phase: WorkflowPhase;
-  index: number;
-  totalPhases: number;
   collapsed: boolean;
   onToggle: () => void;
 }) {
@@ -191,6 +207,7 @@ function PhaseRow({
     <li
       className="workflow-phase"
       data-status={phase.status}
+      data-collapsed={collapsed}
       data-parallel={phase.agents.some((a) => a.parallelGroupId !== undefined)}
     >
       <button
@@ -199,14 +216,11 @@ function PhaseRow({
         onClick={onToggle}
         aria-expanded={!collapsed}
       >
-        <span className="workflow-phase-caret" aria-hidden>
-          {collapsed ? "▸" : "▾"}
-        </span>
-        <span className="workflow-phase-index">{index}/{totalPhases}</span>
-        <span className="workflow-phase-glyph" aria-hidden>
+        <span className="workflow-phase-node" aria-hidden>
           {statusGlyph(phase.status)}
         </span>
         <span className="workflow-phase-title">{phase.title}</span>
+        <span className="workflow-phase-caret" aria-hidden />
         <span className={`workflow-phase-pill tone-${statusTone(phase.status)}`}>
           {phase.status}
         </span>
