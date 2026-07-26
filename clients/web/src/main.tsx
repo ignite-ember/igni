@@ -6,6 +6,7 @@ import { HitlDemo } from "./dev/HitlDemo";
 import { OrchestrateDemo } from "./dev/OrchestrateDemo";
 import { PlanModeDemo } from "./dev/PlanModeDemo";
 import { VisualizerStreamDemo } from "./dev/VisualizerStreamDemo";
+import { WorkflowDemo } from "./dev/WorkflowDemo";
 import { host } from "./lib/host";
 import "./theme.css";
 
@@ -22,6 +23,9 @@ document.documentElement.dataset.host = host.kind;
 //   ?demo=hitl           — HITL permission dialog variants
 //   ?demo=chat-scroll    — headless Virtuoso scroll sandbox the
 //                          chat-scroll e2e tests drive
+//   ?demo=workflow       — workflow live-progress card sandbox
+//                          (replays a canned event tape through
+//                          reduceWorkflowEvent + <WorkflowRun/>)
 // Anything else loads the real app.
 const params = new URLSearchParams(window.location.search);
 const demo = params.get("demo");
@@ -32,6 +36,7 @@ function pickRoot() {
   if (demo === "hitl") return <HitlDemo />;
   if (demo === "chat-scroll") return <ChatScrollDemo />;
   if (demo === "viz-stream") return <VisualizerStreamDemo />;
+  if (demo === "workflow") return <WorkflowDemo />;
   return <App />;
 }
 

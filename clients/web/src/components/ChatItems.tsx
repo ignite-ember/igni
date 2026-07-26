@@ -1510,9 +1510,9 @@ export const ChatItemView = memo(function ChatItemView({
           onStopAgent={onStopAgent}
           onRetryAgent={onRetryAgent}
         />
+      );
     case "workflow":
       return <WorkflowRun run={item.run} />;
-      );
     case "loop":
       return <LoopIterationCard item={item} />;
     case "compact":
