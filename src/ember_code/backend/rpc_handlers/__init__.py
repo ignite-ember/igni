@@ -28,6 +28,7 @@ from ember_code.backend.rpc_handlers.scheduler import SchedulerRpcHandler
 from ember_code.backend.rpc_handlers.session import SessionRpcHandler
 from ember_code.backend.rpc_handlers.session_history import SessionHistoryRpcHandler
 from ember_code.backend.rpc_handlers.skills import SkillsRpcHandler
+from ember_code.backend.rpc_handlers.workflows import WorkflowsRpcHandler
 
 __all__ = [
     "POOL_LEVEL_RPCS",
@@ -48,5 +49,6 @@ __all__ = [
     "SessionHistoryRpcHandler",
     "SessionRpcHandler",
     "SkillsRpcHandler",
+    "WorkflowsRpcHandler",
     "rpc",
 ]

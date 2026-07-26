@@ -216,6 +216,18 @@ class BackendApp:
         # while the runtime downloads + spawns the per-process
         # Neo4j subprocess; subsequent ops hit the live driver.
         await self._orchestrator.attach_neo4j()
+        # Workflow runner (CC ``/workflows`` parity): the BE runs
+        # ``.claude/workflows/*.mjs`` scripts in a Node subprocess
+        # and streams live progress on the ``workflow_event`` push
+        # channel. The runner is attached to the default
+        # ``BackendServer`` so per-runtime RPC dispatch can find
+        # it via ``backend.workflow_runner``.
+        from ember_code.backend.workflow_runner import WorkflowRunner
+
+        self._backend.workflow_runner = WorkflowRunner(
+            project_dir=self._project_dir,
+            push=self._push_bridge,
+        )
         self._supervisor.start_evictor()
         self._supervisor.mark_running()
 

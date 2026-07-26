@@ -245,6 +245,15 @@ class RpcMethod(StrEnum):
     CODEINDEX_CLEAN = "codeindex_clean"
     CODEINDEX_INSTALL = "codeindex_install"
 
+    # ── Workflows (CC ``/workflows`` parity) ───────────────────────
+    # The BE acts as a runner for ``.claude/workflows/*.mjs``
+    # scripts — the same ones ClaudeCode drives. Discovery returns
+    # the meta block of every workflow; ``run_workflow`` spawns
+    # one, returns the ``workflow_run_id`` immediately, and
+    # streams progress on the ``workflow_event`` push channel.
+    LIST_WORKFLOWS = "list_workflows"
+    RUN_WORKFLOW = "run_workflow"
+
     # ── Plugins ───────────────────────────────────────────────────
     GET_PLUGIN_DETAILS = "get_plugin_details"
     GET_PLUGIN_CONTENTS = "get_plugin_contents"
