@@ -1,20 +1,31 @@
 /* ── Workflow live-progress card ──────────────────────────────────
-   Visual model: GitHub Actions / GitLab CI step list rendered as
-   a flat, modern chat item.
-   - Top: 3px progress bar (track + fill) tied to the run's status
-   - Header: glyph + name + status pill + counters
-   - Body: ordered list of phase rows; each phase is a row with
-     a status-colored node dot on the left + label + elapsed
-   - Phase body: agents as compact rows; parallel lanes get a
-     horizontal bracket above them, no text glyphs
-   - Footer: result disclosure with a chevron icon, no box-drawing
-   The tree relationship between phases and agents is conveyed
-   by 1px vertical/horizontal lines drawn with borders and
-   absolutely-positioned pseudo-elements — never text characters. */
+   Mirrors the team-progress (``orchestrate-log``) visual
+   language: rounded card chrome, status dot, status-tinted
+   left border, borderless status pills, nested agent cards.
+
+   Card hierarchy (outer → inner):
+     .workflow-run              (the whole run, single rounded
+                                  card with a status-tinted left
+                                  border)
+       .workflow-run-header     (status dot · name · status pill
+                                  · counters)
+       .workflow-phase          (one card per phase, nested
+                                  inside the run; status-tinted
+                                  left border; same visual
+                                  language as orch-agent.card)
+         .workflow-phase-header (chevron · status dot · name ·
+                                  status pill · elapsed)
+         .workflow-agent        (one card per agent call,
+                                  nested inside the phase;
+                                  smaller padding, no extra
+                                  card chrome — just the row)
+       .workflow-run-result     (the run's overall result,
+                                  styled like a card with a
+                                  chevron to expand the JSON) */
 
 .workflow-run {
   align-self: stretch;
-  background: var(--bg-raised);
+  background: var(--bg-inset);
   border: 1px solid var(--border-soft);
   border-left-width: 4px;
   border-radius: var(--radius);
@@ -31,44 +42,16 @@
 .workflow-run[data-status="failed"] { border-left-color: var(--accent-red, #e54848); }
 .workflow-run[data-status="cancelled"] { border-left-color: var(--ember-orange); }
 
-/* ── Top progress bar (track + fill) ─────────────────────────── */
-
-.workflow-run-progress-track {
-  position: relative;
-  height: 3px;
-  background: color-mix(in srgb, var(--border-soft) 60%, transparent);
-}
-
-.workflow-run-progress-fill {
-  position: absolute;
-  inset: 0;
-  width: 0%;
-  background: var(--accent-blue);
-  transition: width 240ms ease-out, background 240ms ease-out;
-}
-
-.workflow-run[data-status="completed"] .workflow-run-progress-fill {
-  background: var(--accent-green, #4caf50);
-}
-
-.workflow-run[data-status="failed"] .workflow-run-progress-fill {
-  background: var(--accent-red, #e54848);
-}
-
-.workflow-run[data-status="cancelled"] .workflow-run-progress-fill {
-  background: var(--ember-orange);
-}
-
-/* ── Header (single row: glyph · name · status · meta) ────────── */
+/* ── Header ────────────────────────────────────────────────────── */
 
 .workflow-run-header {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px 10px 14px;
+  width: 100%;
   background: var(--bg-surface);
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border-soft);
-  min-width: 0;
 }
 
 .workflow-run-glyph {
@@ -77,12 +60,11 @@
   justify-content: center;
   width: 18px;
   height: 18px;
-  font-size: 12px;
-  flex-shrink: 0;
   border-radius: 50%;
-  background: var(--bg-raised);
   border: 1.5px solid currentColor;
+  font-size: 10px;
   line-height: 1;
+  flex-shrink: 0;
 }
 
 .workflow-run[data-status="running"] .workflow-run-glyph { color: var(--accent-blue); }
@@ -102,73 +84,90 @@
 }
 
 .workflow-run-name {
-  font-family: var(--font-mono);
-  font-size: 12.5px;
   font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 13px;
   color: var(--fg);
-  letter-spacing: -0.01em;
   text-overflow: ellipsis;
   overflow: hidden;
+  letter-spacing: -0.01em;
 }
 
 .workflow-run-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 7px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-size: 10.5px;
   text-transform: uppercase;
-  border-radius: 999px;
-  border: 1px solid;
-  white-space: nowrap;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 9999px;
   flex-shrink: 0;
 }
 
 .workflow-run-pill.tone-running {
   color: var(--accent-blue);
-  border-color: color-mix(in srgb, var(--accent-blue) 40%, transparent);
   background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
 }
 
 .workflow-run-pill.tone-good {
   color: var(--accent-green, #4caf50);
-  border-color: color-mix(in srgb, var(--accent-green, #4caf50) 40%, transparent);
   background: color-mix(in srgb, var(--accent-green, #4caf50) 14%, transparent);
 }
 
 .workflow-run-pill.tone-warn {
   color: var(--ember-orange);
-  border-color: color-mix(in srgb, var(--ember-orange) 40%, transparent);
   background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
 }
 
 .workflow-run-pill.tone-bad {
   color: var(--accent-red, #e54848);
-  border-color: color-mix(in srgb, var(--accent-red, #e54848) 40%, transparent);
   background: color-mix(in srgb, var(--accent-red, #e54848) 14%, transparent);
 }
 
 .workflow-run-meta {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-left: auto;
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
   flex: 0 0 auto;
 }
 
-.workflow-run-progress {
+/* Counters styled like the team-progress card's orch-count. */
+.workflow-run-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  background: var(--bg-inset);
   color: var(--fg-muted);
   font-weight: 600;
+  white-space: nowrap;
+}
+
+.workflow-run-count.count-running {
+  color: var(--accent-blue);
+  background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
+}
+
+.workflow-run-count.count-done {
+  color: var(--accent-green, #4caf50);
+  background: color-mix(in srgb, var(--accent-green, #4caf50) 14%, transparent);
+}
+
+.workflow-run-count-icon {
+  font-size: 9px;
+  line-height: 1;
+}
+
+.workflow-run-count.count-running .workflow-run-count-icon {
+  animation: ember-pulse 1.4s ease-in-out infinite;
 }
 
 .workflow-run-error {
-  padding: 6px 12px;
+  padding: 6px 14px;
   background: color-mix(in srgb, var(--accent-red, #e54848) 8%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--accent-red, #e54848) 30%, transparent);
   color: var(--accent-red, #e54848);
@@ -181,36 +180,51 @@
   margin-right: 6px;
 }
 
-/* ── Phases (rows; agent tree = a vertical line down the left) ─ */
+@keyframes ember-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ── Phases (cards nested in the run card) ─────────────────────
+   Each phase is its own rounded card with a status-tinted
+   left border, matching the team-progress agent card
+   (``orch-agent.card``). Phase padding is 6px (matching
+   ``orch-agent.card``'s 6px margin) and the phase body
+   inherits the run's bg-inset so the cards "lift" off the
+   surface. */
 
 .workflow-run-phases {
   list-style: none;
   margin: 0;
-  padding: 4px 0 0;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .workflow-phase {
-  position: relative;
-  border-top: 1px solid transparent;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-soft);
+  border-left-width: 3px;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
-.workflow-phase + .workflow-phase {
-  border-top-color: var(--border-soft);
-}
+.workflow-phase[data-status="running"] { border-left-color: var(--accent-blue); }
+.workflow-phase[data-status="completed"] { border-left-color: var(--accent-green, #4caf50); }
+.workflow-phase[data-status="failed"] { border-left-color: var(--accent-red, #e54848); }
+.workflow-phase[data-status="cancelled"] { border-left-color: var(--ember-orange); }
 
-/* Phase row — the agent list hangs off the bottom of this row
-   like a sub-tree. The vertical "trunk" line is drawn on the
-   .workflow-phase-agents container (below). */
 .workflow-phase-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
   background: transparent;
   border: none;
-  padding: 7px 12px 7px 14px;
+  padding: 10px 14px;
   font-family: var(--font-ui);
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--fg);
   cursor: pointer;
   text-align: left;
@@ -220,22 +234,34 @@
   background: color-mix(in srgb, var(--accent-blue) 4%, transparent);
 }
 
-/* Status "node" — a small filled circle on the left of the
-   phase header, like a CI step's status badge. Communicates
-   state at-a-glance without reading the pill. */
+.workflow-phase-caret {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-faint);
+  transition: transform 120ms ease-out;
+  flex-shrink: 0;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.workflow-phase[data-collapsed="true"] .workflow-phase-caret {
+  transform: rotate(-90deg);
+}
+
 .workflow-phase-node {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background: var(--bg-raised);
-  border: 1.5px solid currentColor;
-  color: var(--fg-faint);
-  font-size: 9px;
+  background: currentColor;
   flex-shrink: 0;
-  line-height: 1;
 }
 
 .workflow-phase[data-status="running"] .workflow-phase-node { color: var(--accent-blue); }
@@ -244,33 +270,15 @@
 .workflow-phase[data-status="cancelled"] .workflow-phase-node { color: var(--ember-orange); }
 
 .workflow-phase[data-status="running"] .workflow-phase-node {
-  background: color-mix(in srgb, var(--accent-blue) 18%, transparent);
-}
-
-.workflow-phase-caret {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 12px;
-  font-size: 9px;
-  color: var(--fg-faint);
-  flex-shrink: 0;
-  transition: transform 120ms ease-out;
-  margin-left: 4px;
-  margin-right: 4px;
-}
-
-.workflow-phase-caret::before {
-  content: "▾";
-}
-
-.workflow-phase[data-collapsed="true"] .workflow-phase-caret::before {
-  content: "▸";
+  animation: ember-pulse 1.4s ease-in-out infinite;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-blue) 18%, transparent);
 }
 
 .workflow-phase-title {
   font-weight: 600;
-  letter-spacing: 0.01em;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--fg);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -279,42 +287,33 @@
 }
 
 .workflow-phase-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 6px;
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-size: 10.5px;
   text-transform: uppercase;
-  border-radius: 999px;
-  border: 1px solid;
-  white-space: nowrap;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 9999px;
   flex-shrink: 0;
 }
 
 .workflow-phase-pill.tone-running {
   color: var(--accent-blue);
-  border-color: color-mix(in srgb, var(--accent-blue) 40%, transparent);
-  background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
+  background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
 }
 
 .workflow-phase-pill.tone-good {
   color: var(--accent-green, #4caf50);
-  border-color: color-mix(in srgb, var(--accent-green, #4caf50) 40%, transparent);
-  background: color-mix(in srgb, var(--accent-green, #4caf50) 12%, transparent);
+  background: color-mix(in srgb, var(--accent-green, #4caf50) 14%, transparent);
 }
 
 .workflow-phase-pill.tone-warn {
   color: var(--ember-orange);
-  border-color: color-mix(in srgb, var(--ember-orange) 40%, transparent);
-  background: color-mix(in srgb, var(--ember-orange) 12%, transparent);
+  background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
 }
 
 .workflow-phase-pill.tone-bad {
   color: var(--accent-red, #e54848);
-  border-color: color-mix(in srgb, var(--accent-red, #e54848) 40%, transparent);
-  background: color-mix(in srgb, var(--accent-red, #e54848) 12%, transparent);
+  background: color-mix(in srgb, var(--accent-red, #e54848) 14%, transparent);
 }
 
 .workflow-phase-elapsed {
@@ -325,77 +324,61 @@
   flex-shrink: 0;
 }
 
-/* ── Agent list (the sub-tree) ──────────────────────────────────
-   A vertical 1px line drops from the phase header on the
-   left, and the agents hang off it as horizontal "branches"
-   (each agent gets a small left stub that connects to the
-   trunk). The "branch" is drawn with a `::before` 8px wide
-   horizontal line + a `::after` 1px vertical line down from
-   the next agent — together they form the typical
-   GitHub-style "│├" tree pattern. */
+/* ── Agent list inside a phase ─────────────────────────────────
+   Agents are smaller cards than phases (no border-left, no
+   extra chrome — they sit inside the phase card body and
+   inherit its surface). The parallel group wraps agents in a
+   horizontal grid; serial agents are vertical rows. */
 
 .workflow-phase-agents {
-  position: relative;
   list-style: none;
   margin: 0;
-  padding: 0 0 4px 30px;
-  background: color-mix(in srgb, var(--bg-surface) 30%, var(--bg-raised));
+  padding: 0 12px 8px;
   display: flex;
   flex-direction: column;
-}
-
-/* Vertical trunk on the left of the agent list — the
-   "parent line" that all agents hang off. Drawn as a
-   pseudo-element so it scales with the list. */
-.workflow-phase-agents::before {
-  content: "";
-  position: absolute;
-  left: 14px;
-  top: 0;
-  bottom: 6px;
-  width: 1px;
-  background: var(--border);
-  opacity: 0.5;
+  gap: 4px;
 }
 
 .workflow-phase-empty {
-  position: relative;
-  padding: 4px 12px 4px 18px;
-  margin-left: -18px;
+  padding: 4px 14px 4px 38px;
   color: var(--fg-faint);
-  font-size: 11px;
+  font-size: 11.5px;
   font-style: italic;
 }
 
 .workflow-agent {
-  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 0;
-  font-size: 11.5px;
+  padding: 4px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  font-size: 12px;
   min-width: 0;
 }
 
-/* Horizontal branch line from the trunk to the agent. */
-.workflow-agent::before {
-  content: "";
-  position: absolute;
-  left: -16px;
-  top: 50%;
-  width: 12px;
-  height: 1px;
-  background: var(--border);
-  opacity: 0.5;
-  transform: translateY(-0.5px);
+.workflow-agent[data-status="running"] {
+  border-left: 2px solid var(--accent-blue);
+}
+.workflow-agent[data-status="completed"] {
+  border-left: 2px solid var(--accent-green, #4caf50);
+}
+.workflow-agent[data-status="failed"] {
+  border-left: 2px solid var(--accent-red, #e54848);
+}
+.workflow-agent[data-status="timeout"] {
+  border-left: 2px solid var(--ember-orange);
 }
 
 .workflow-agent-glyph {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 12px;
-  font-size: 10px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
   flex-shrink: 0;
 }
 
@@ -416,42 +399,33 @@
 }
 
 .workflow-agent-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 0 5px;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-size: 9.5px;
   text-transform: uppercase;
-  border-radius: 999px;
-  border: 1px solid;
-  white-space: nowrap;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  padding: 0 5px;
+  border-radius: 9999px;
   flex-shrink: 0;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .workflow-agent-pill.tone-running {
   color: var(--accent-blue);
-  border-color: color-mix(in srgb, var(--accent-blue) 40%, transparent);
   background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
 }
 
 .workflow-agent-pill.tone-good {
   color: var(--accent-green, #4caf50);
-  border-color: color-mix(in srgb, var(--accent-green, #4caf50) 40%, transparent);
   background: color-mix(in srgb, var(--accent-green, #4caf50) 14%, transparent);
 }
 
 .workflow-agent-pill.tone-warn {
   color: var(--ember-orange);
-  border-color: color-mix(in srgb, var(--ember-orange) 40%, transparent);
   background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
 }
 
 .workflow-agent-pill.tone-bad {
   color: var(--accent-red, #e54848);
-  border-color: color-mix(in srgb, var(--accent-red, #e54848) 40%, transparent);
   background: color-mix(in srgb, var(--accent-red, #e54848) 14%, transparent);
 }
 
@@ -477,34 +451,18 @@
 }
 
 /* ── Parallel lane group ──────────────────────────────────────
-   A horizontal "bracket" line above the lanes, with a small
-   vertical drop to each lane. The bracket spans the full
-   width of the lane group (border-top on the wrapper) + a
-   small "shoulder" line drawn on each lane (border-left on
-   a 1px pseudo-element). All drawn with borders, no text
-   glyphs. */
+   A horizontal grid of agent cards. No bracket — the cards
+   themselves convey the grouping. The "PARALLEL LANES" label
+   sits above as a small chip. */
 
 .workflow-parallel {
   position: relative;
   list-style: none;
-  margin: 8px 0 4px;
-  padding: 6px 0 0;
+  margin: 0;
+  padding: 8px 0 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
-}
-
-/* The bracket — a horizontal line at the top of the group
-   spanning the full width. Lanes hang off this. */
-.workflow-parallel::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 1px;
-  background: var(--border);
-  opacity: 0.5;
 }
 
 .workflow-parallel-marker {
@@ -512,57 +470,37 @@
   align-items: center;
   gap: 6px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--accent-blue);
   margin-bottom: 4px;
-  padding-left: 0;
 }
 
 .workflow-parallel-glyph {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--accent-blue);
 }
 
 .workflow-parallel-lanes {
   display: grid;
   grid-template-columns: repeat(var(--lane-count, 2), minmax(0, 1fr));
-  gap: 2px 12px;
+  gap: 4px 8px;
   list-style: none;
   margin: 0;
   padding: 0;
-  position: relative;
-}
-
-.workflow-parallel-lanes > li {
-  margin: 0;
-  padding: 0;
-  position: relative;
-}
-
-/* Each lane's branch stub — a short horizontal tick from the
-   bracket to the agent. The trunk on .workflow-phase-agents
-   already provides the vertical line; this draws the
-   horizontal connection. */
-.workflow-parallel-lanes > li::before {
-  content: "";
-  position: absolute;
-  left: -16px;
-  top: 50%;
-  width: 12px;
-  height: 1px;
-  background: var(--border);
-  opacity: 0.5;
-  transform: translateY(-0.5px);
 }
 
 .workflow-parallel-lanes > li {
   margin: 0;
   padding: 0;
   display: flex;
-  align-items: center;
+  align-items: stretch;
+}
+
+.workflow-parallel-lanes > li > .workflow-agent {
+  width: 100%;
 }
 
 .workflow-parallel[data-parallel-count="2"] .workflow-parallel-lanes {
@@ -577,10 +515,10 @@
   --lane-count: 4;
 }
 
-/* ── Run-level Result disclosure ──────────────────────────────
-   A clean card-level disclosure with a chevron icon. The
-   summary line shows the human-readable result; clicking
-   expands to the full JSON. No box-drawing characters. */
+/* ── Result disclosure (bottom of the run card) ───────────────
+   A small card with a chevron to expand the JSON. Matches the
+   surface treatments used by the team-progress card's
+   optional preview blocks. */
 
 .workflow-run-result {
   margin: 0;
@@ -598,22 +536,10 @@
   cursor: pointer;
   list-style: none;
   user-select: none;
-  position: relative;
 }
 
 .workflow-run-result > summary::-webkit-details-marker {
   display: none;
-}
-
-.workflow-run-result > summary::before {
-  content: "";
-  position: absolute;
-  left: 30px;
-  top: 50%;
-  width: 10px;
-  height: 1px;
-  background: var(--border);
-  opacity: 0.5;
 }
 
 .workflow-run-result > summary:hover {
@@ -633,16 +559,18 @@
 }
 
 .workflow-run-result-chevron {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
-  font-size: 9px;
   color: var(--fg-faint);
-  border: 1px solid var(--border);
-  border-radius: 4px;
   transition: transform 120ms ease-out;
+  flex-shrink: 0;
+  font-size: 9px;
+  cursor: pointer;
 }
 
 .workflow-run-result[open] .workflow-run-result-chevron {
@@ -665,12 +593,11 @@
 
 .workflow-run-result > pre {
   margin: 0;
-  padding: 8px 14px 12px 38px;
+  padding: 10px 14px 12px;
   border-top: 1px solid var(--border-soft);
   overflow: auto;
   max-height: 240px;
   color: var(--fg);
   font-size: 11px;
   line-height: 1.4;
-  position: relative;
 }

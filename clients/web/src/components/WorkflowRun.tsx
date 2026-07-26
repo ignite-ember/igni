@@ -2,11 +2,14 @@
  * WorkflowRun — live-progress card for a CC-style workflow run.
  *
  * Renders the typed :class:`WorkflowRunState` the FE reducer
- * builds from ``workflow_event`` pushes. Composition mirrors
- * the team-progress / tool-card chrome: bordered surface with a
- * 3px status-colored left accent, a single header row carrying
- * the run's identity + live counters, and a list of phase rows
- * whose agents render inline as compact pills.
+ * builds from ``workflow_event`` pushes. Visual model mirrors
+ * the team-progress / tool-card chrome exactly: rounded card
+ * chrome with a status-tinted left border, a status dot on
+ * the header, nested cards for each phase, nested rows for
+ * each agent, and a chevron-driven Result disclosure at the
+ * bottom. No progress bar, no tree lines, no special parallel
+ * bracket — the nested-card structure + the grid for
+ * ``parallel()`` lanes carries the visual hierarchy.
  *
  * NOT a :class:`JsonRenderView` catalog entry — workflow UI is
  * trusted application chrome with timers, parallel lanes, and
@@ -54,23 +57,6 @@ function statusTone(
   }
 }
 
-function statusGlyph(s: string): string {
-  switch (s) {
-    case "running":
-      return "●";
-    case "completed":
-      return "✓";
-    case "failed":
-      return "✗";
-    case "cancelled":
-      return "⊘";
-    case "timeout":
-      return "◷";
-    default:
-      return "·";
-  }
-}
-
 export function WorkflowRun({ run }: { run: WorkflowRunState }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
@@ -80,32 +66,25 @@ export function WorkflowRun({ run }: { run: WorkflowRunState }) {
     (n, p) => n + p.agents.filter((a) => a.status !== "running").length,
     0,
   );
+  const runningAgents = run.phases.reduce(
+    (n, p) => n + p.agents.filter((a) => a.status === "running").length,
+    0,
+  );
   const totalDuration =
     run.endedAtMs !== undefined ? run.endedAtMs - run.startedAtMs : undefined;
   const resultSummary = formatResultSummary(run.result);
-  const progressPct =
-    totalAgents > 0
-      ? Math.round((completedAgents / totalAgents) * 100)
-      : 0;
 
   return (
     <div className="workflow-run" data-status={status}>
-      <div
-        className="workflow-run-progress-track"
-        role="progressbar"
-        aria-valuenow={progressPct}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-label={`${completedAgents} of ${totalAgents} agents completed`}
-      >
-        <div
-          className="workflow-run-progress-fill"
-          style={{ width: `${progressPct}%` }}
-        />
-      </div>
       <header className="workflow-run-header">
         <span className="workflow-run-glyph" aria-hidden>
-          {statusGlyph(status)}
+          {status === "completed"
+            ? "✓"
+            : status === "failed"
+              ? "✗"
+              : status === "cancelled"
+                ? "⊘"
+                : "●"}
         </span>
         <div className="workflow-run-title">
           <span className="workflow-run-name">{run.name}</span>
@@ -114,13 +93,24 @@ export function WorkflowRun({ run }: { run: WorkflowRunState }) {
           </span>
         </div>
         <div className="workflow-run-meta">
+          {runningAgents > 0 && (
+            <span className="workflow-run-count count-running">
+              <span className="workflow-run-count-icon" aria-hidden>
+                ●
+              </span>
+              {runningAgents}
+            </span>
+          )}
           {totalAgents > 0 && (
-            <span className="workflow-run-progress">
+            <span className="workflow-run-count count-done">
+              <span className="workflow-run-count-icon" aria-hidden>
+                ✓
+              </span>
               {completedAgents} / {totalAgents}
             </span>
           )}
           {totalDuration !== undefined && (
-            <span className="workflow-run-duration">
+            <span className="workflow-run-count">
               {fmtDuration(totalDuration)}
             </span>
           )}
@@ -153,10 +143,10 @@ export function WorkflowRun({ run }: { run: WorkflowRunState }) {
         <details className="workflow-run-result">
           <summary>
             <span className="workflow-run-result-label">
-              Result
               <span className="workflow-run-result-chevron" aria-hidden>
-                ›
+                ▸
               </span>
+              Result
             </span>
             {resultSummary !== null && (
               <span className="workflow-run-result-summary">
@@ -208,7 +198,6 @@ function PhaseRow({
       className="workflow-phase"
       data-status={phase.status}
       data-collapsed={collapsed}
-      data-parallel={phase.agents.some((a) => a.parallelGroupId !== undefined)}
     >
       <button
         type="button"
@@ -216,11 +205,11 @@ function PhaseRow({
         onClick={onToggle}
         aria-expanded={!collapsed}
       >
-        <span className="workflow-phase-node" aria-hidden>
-          {statusGlyph(phase.status)}
+        <span className="workflow-phase-caret" aria-hidden>
+          ▾
         </span>
+        <span className="workflow-phase-node" aria-hidden />
         <span className="workflow-phase-title">{phase.title}</span>
-        <span className="workflow-phase-caret" aria-hidden />
         <span className={`workflow-phase-pill tone-${statusTone(phase.status)}`}>
           {phase.status}
         </span>
@@ -275,12 +264,16 @@ function AgentList({ agents }: { agents: WorkflowAgentRun[] }) {
             data-parallel-count={group.agents.length}
           >
             <span className="workflow-parallel-marker">
-              <span className="workflow-parallel-glyph" aria-hidden>⇉</span>
+              <span className="workflow-parallel-glyph" aria-hidden>
+                ⇉
+              </span>
               {group.agents.length} parallel lanes
             </span>
             <ol className="workflow-parallel-lanes">
               {group.agents.map((a) => (
-                <AgentRow key={a.agentId} agent={a} />
+                <li key={a.agentId}>
+                  <AgentRow agent={a} />
+                </li>
               ))}
             </ol>
           </li>
@@ -292,10 +285,8 @@ function AgentList({ agents }: { agents: WorkflowAgentRun[] }) {
 
 function AgentRow({ agent }: { agent: WorkflowAgentRun }) {
   return (
-    <li className="workflow-agent" data-status={agent.status}>
-      <span className="workflow-agent-glyph" aria-hidden>
-        {statusGlyph(agent.status)}
-      </span>
+    <div className="workflow-agent" data-status={agent.status}>
+      <span className="workflow-agent-glyph" aria-hidden />
       <span className="workflow-agent-label" title={agent.label}>
         {agent.label}
       </span>
@@ -310,6 +301,6 @@ function AgentRow({ agent }: { agent: WorkflowAgentRun }) {
           {agent.error}
         </span>
       )}
-    </li>
+    </div>
   );
 }
