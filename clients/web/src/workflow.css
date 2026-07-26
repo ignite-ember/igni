@@ -1,129 +1,136 @@
 /* ── Workflow live-progress card ──────────────────────────────────
-   Renders a CC-style workflow run (phases + agents + parallel
-   groups) as a single chat item. Same visual weight as the
-   team-progress / tool cards: bordered surface with status
-   accents, a header that carries the run's identity + a live
-   progress bar, a list of phase cards, and an optional result
-   disclosure. */
+   Same visual language as the team-progress / tool-card chrome:
+   bordered surface with a 4px status-colored left accent, a
+   single header row, a list of phase rows whose agents render
+   inline. Compact by design — five 1-line phases should fit
+   on a single screen. */
+
 .workflow-run {
   align-self: stretch;
+  background: var(--bg-raised);
   border: 1px solid var(--border-soft);
+  border-left-width: 4px;
   border-radius: var(--radius);
-  background: var(--bg-inset);
   overflow: hidden;
   font-family: var(--font-ui);
+  color: var(--fg);
+  font-size: 13px;
 }
 
-/* Status accent strip on the left edge — the same idea as
-   .orch-agent.card border-left, but driven by the run's
-   terminal status. While a run is in flight the accent is
-   the brand blue; on completion it turns green; on failure
-   it goes red. */
-.workflow-run[data-status="running"] { border-left: 3px solid var(--accent-blue); }
-.workflow-run[data-status="completed"] { border-left: 3px solid var(--accent-green, #4caf50); }
-.workflow-run[data-status="failed"] { border-left: 3px solid var(--accent-red, #e54848); }
-.workflow-run[data-status="cancelled"] { border-left: 3px solid var(--ember-orange); }
+.workflow-run[data-status="running"] { border-left-color: var(--accent-blue); }
+.workflow-run[data-status="completed"] { border-left-color: var(--accent-green, #4caf50); }
+.workflow-run[data-status="failed"] { border-left-color: var(--accent-red, #e54848); }
+.workflow-run[data-status="cancelled"] { border-left-color: var(--ember-orange); }
+
+/* ── Header (single row: glyph · name · status · meta) ────────── */
 
 .workflow-run-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
+  gap: 10px;
+  padding: 8px 12px;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-soft);
   min-width: 0;
 }
 
+.workflow-run-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.workflow-run[data-status="running"] .workflow-run-glyph { color: var(--accent-blue); }
+.workflow-run[data-status="completed"] .workflow-run-glyph { color: var(--accent-green, #4caf50); }
+.workflow-run[data-status="failed"] .workflow-run-glyph { color: var(--accent-red, #e54848); }
+.workflow-run[data-status="cancelled"] .workflow-run-glyph { color: var(--ember-orange); }
+
 .workflow-run-title {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
-}
-
-.workflow-run-icon {
-  font-size: 14px;
-  color: var(--fg-muted);
-  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workflow-run-name {
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--fg);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
   letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  overflow: hidden;
 }
 
 .workflow-run-pill {
   display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
+  padding: 1px 7px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   border-radius: 999px;
   border: 1px solid;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .workflow-run-pill.tone-running {
   color: var(--accent-blue);
   border-color: color-mix(in srgb, var(--accent-blue) 40%, transparent);
-  background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
+  background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
 }
 
 .workflow-run-pill.tone-good {
   color: var(--accent-green, #4caf50);
   border-color: color-mix(in srgb, var(--accent-green, #4caf50) 40%, transparent);
-  background: color-mix(in srgb, var(--accent-green, #4caf50) 12%, transparent);
+  background: color-mix(in srgb, var(--accent-green, #4caf50) 14%, transparent);
 }
 
 .workflow-run-pill.tone-warn {
   color: var(--ember-orange);
   border-color: color-mix(in srgb, var(--ember-orange) 40%, transparent);
-  background: color-mix(in srgb, var(--ember-orange) 12%, transparent);
+  background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
 }
 
 .workflow-run-pill.tone-bad {
   color: var(--accent-red, #e54848);
   border-color: color-mix(in srgb, var(--accent-red, #e54848) 40%, transparent);
-  background: color-mix(in srgb, var(--accent-red, #e54848) 12%, transparent);
+  background: color-mix(in srgb, var(--accent-red, #e54848) 14%, transparent);
 }
 
 .workflow-run-meta {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   margin-left: auto;
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
   flex: 0 0 auto;
 }
 
 .workflow-run-progress {
-  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
 }
 
-.workflow-run-duration {
-  font-variant-numeric: tabular-nums;
-}
-
-/* Inline error banner at the top of the card when a run
-   fails — keeps the user from scrolling past it. */
 .workflow-run-error {
-  padding: 8px 14px;
+  padding: 6px 12px;
   background: color-mix(in srgb, var(--accent-red, #e54848) 8%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--accent-red, #e54848) 30%, transparent);
   color: var(--accent-red, #e54848);
-  font-size: 12px;
+  font-size: 11.5px;
   font-family: var(--font-mono);
 }
 
@@ -132,48 +139,52 @@
   margin-right: 6px;
 }
 
+/* ── Phases (rows, not cards-in-cards) ─────────────────────────── */
+
 .workflow-run-phases {
   list-style: none;
   margin: 0;
-  padding: 6px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  padding: 0;
 }
-
-.workflow-run-empty {
-  padding: 14px 18px;
-  color: var(--fg-faint);
-  font-size: 12px;
-  font-style: italic;
-}
-
-/* ── Per-phase card ───────────────────────────────────────────── */
 
 .workflow-phase {
-  margin: 0 12px 4px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  border-left-width: 3px;
-  overflow: hidden;
+  position: relative;
+  border-top: 1px solid var(--border-soft);
 }
 
-.workflow-phase[data-status="running"] { border-left-color: var(--accent-blue); }
-.workflow-phase[data-status="completed"] { border-left-color: var(--accent-green, #4caf50); }
-.workflow-phase[data-status="failed"] { border-left-color: var(--accent-red, #e54848); }
-.workflow-phase[data-status="cancelled"] { border-left-color: var(--ember-orange); }
+.workflow-phase:first-child {
+  border-top: none;
+}
+
+/* 1px status-tinted left strip on the phase — a thin left edge
+   so the user can scan the run top-to-bottom and see at a
+   glance which phase is which state. */
+.workflow-phase::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  pointer-events: none;
+}
+
+.workflow-phase[data-status="running"]::before { background: var(--accent-blue); }
+.workflow-phase[data-status="completed"]::before { background: var(--accent-green, #4caf50); }
+.workflow-phase[data-status="failed"]::before { background: var(--accent-red, #e54848); }
+.workflow-phase[data-status="cancelled"]::before { background: var(--ember-orange); }
 
 .workflow-phase-header {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
   background: transparent;
   border: none;
-  padding: 8px 12px;
+  padding: 7px 12px 7px 14px;
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--fg);
   cursor: pointer;
   text-align: left;
@@ -194,25 +205,50 @@
   transition: transform 120ms ease-out;
 }
 
+.workflow-phase-index {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg-faint);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.workflow-phase-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.workflow-phase[data-status="running"] .workflow-phase-glyph { color: var(--accent-blue); }
+.workflow-phase[data-status="completed"] .workflow-phase-glyph { color: var(--accent-green, #4caf50); }
+.workflow-phase[data-status="failed"] .workflow-phase-glyph { color: var(--accent-red, #e54848); }
+
 .workflow-phase-title {
   font-weight: 600;
   letter-spacing: 0.01em;
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workflow-phase-pill {
   display: inline-flex;
   align-items: center;
-  padding: 1px 7px;
+  padding: 1px 6px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   border-radius: 999px;
   border: 1px solid;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .workflow-phase-pill.tone-running {
@@ -241,108 +277,53 @@
 
 .workflow-phase-elapsed {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
+
+/* ── Agent list (compact rows, no extra card chrome) ──────────── */
 
 .workflow-phase-agents {
   list-style: none;
   margin: 0;
-  padding: 0 12px 8px;
+  padding: 0 0 6px 28px;
+  background: color-mix(in srgb, var(--bg-surface) 50%, var(--bg-raised));
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  border-top: 1px solid var(--border-soft);
-  padding-top: 6px;
 }
 
 .workflow-phase-empty {
-  padding: 6px 4px;
+  padding: 4px 14px 4px 28px;
   color: var(--fg-faint);
-  font-size: 11.5px;
+  font-size: 11px;
   font-style: italic;
+  background: color-mix(in srgb, var(--bg-surface) 50%, var(--bg-raised));
 }
-
-/* ── Parallel lane group ─────────────────────────────────────────
-   When a phase contains a ``parallel()`` call, its agents are
-   rendered as side-by-side lanes (a grid). The row is tagged
-   with ``data-parallel-count`` so the cell widths tune to the
-   lane count — 3 lanes = 3 equal columns, 2 = 2 — instead of
-   stacking vertically and wasting horizontal space. */
-
-.workflow-parallel {
-  position: relative;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.workflow-parallel-label {
-  position: absolute;
-  top: -1px;
-  left: 6px;
-  z-index: 1;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--accent-blue);
-  background: var(--bg-raised);
-  padding: 1px 6px;
-  border-radius: 4px;
-  border: 1px solid color-mix(in srgb, var(--accent-blue) 30%, transparent);
-}
-
-.workflow-parallel-lanes {
-  display: grid;
-  grid-template-columns: repeat(var(--lane-count, 2), minmax(0, 1fr));
-  gap: 6px;
-  margin-top: 8px;
-  padding: 4px 0;
-}
-
-.workflow-parallel-lanes > li {
-  margin: 0;
-}
-
-.workflow-parallel[data-parallel-count="2"] .workflow-parallel-lanes {
-  --lane-count: 2;
-}
-
-.workflow-parallel[data-parallel-count="3"] .workflow-parallel-lanes {
-  --lane-count: 3;
-}
-
-.workflow-parallel[data-parallel-count="4"] .workflow-parallel-lanes {
-  --lane-count: 4;
-}
-
-/* ── Per-agent card ───────────────────────────────────────────── */
 
 .workflow-agent {
   display: flex;
-  flex-direction: column;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  border-left-width: 2px;
-  overflow: hidden;
-}
-
-.workflow-agent[data-status="running"] { border-left-color: var(--accent-blue); }
-.workflow-agent[data-status="completed"] { border-left-color: var(--accent-green, #4caf50); }
-.workflow-agent[data-status="failed"] { border-left-color: var(--accent-red, #e54848); }
-.workflow-agent[data-status="timeout"] { border-left-color: var(--ember-orange); }
-
-.workflow-agent-row {
-  display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
-  font-size: 12px;
+  padding: 3px 0;
+  font-size: 11.5px;
+  min-width: 0;
 }
+
+.workflow-agent-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.workflow-agent[data-status="running"] .workflow-agent-glyph { color: var(--accent-blue); }
+.workflow-agent[data-status="completed"] .workflow-agent-glyph { color: var(--accent-green, #4caf50); }
+.workflow-agent[data-status="failed"] .workflow-agent-glyph { color: var(--accent-red, #e54848); }
+.workflow-agent[data-status="timeout"] .workflow-agent-glyph { color: var(--ember-orange); }
 
 .workflow-agent-label {
   font-family: var(--font-mono);
@@ -358,39 +339,41 @@
 .workflow-agent-pill {
   display: inline-flex;
   align-items: center;
-  padding: 1px 6px;
+  padding: 0 5px;
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   border-radius: 999px;
   border: 1px solid;
   white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 1.5;
 }
 
 .workflow-agent-pill.tone-running {
   color: var(--accent-blue);
   border-color: color-mix(in srgb, var(--accent-blue) 40%, transparent);
-  background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
+  background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
 }
 
 .workflow-agent-pill.tone-good {
   color: var(--accent-green, #4caf50);
   border-color: color-mix(in srgb, var(--accent-green, #4caf50) 40%, transparent);
-  background: color-mix(in srgb, var(--accent-green, #4caf50) 12%, transparent);
+  background: color-mix(in srgb, var(--accent-green, #4caf50) 14%, transparent);
 }
 
 .workflow-agent-pill.tone-warn {
   color: var(--ember-orange);
   border-color: color-mix(in srgb, var(--ember-orange) 40%, transparent);
-  background: color-mix(in srgb, var(--ember-orange) 12%, transparent);
+  background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
 }
 
 .workflow-agent-pill.tone-bad {
   color: var(--accent-red, #e54848);
   border-color: color-mix(in srgb, var(--accent-red, #e54848) 40%, transparent);
-  background: color-mix(in srgb, var(--accent-red, #e54848) 12%, transparent);
+  background: color-mix(in srgb, var(--accent-red, #e54848) 14%, transparent);
 }
 
 .workflow-agent-elapsed {
@@ -398,75 +381,141 @@
   font-size: 10.5px;
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  min-width: 48px;
+  text-align: right;
 }
 
 .workflow-agent-error {
-  padding: 6px 10px;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--accent-red, #e54848);
-  border-top: 1px solid color-mix(in srgb, var(--accent-red, #e54848) 25%, transparent);
-  background: color-mix(in srgb, var(--accent-red, #e54848) 6%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 30%;
+  flex-shrink: 1;
 }
 
-.workflow-agent-result {
-  border-top: 1px solid var(--border-soft);
-  background: var(--bg-inset);
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
+/* ── Parallel lane group ────────────────────────────────────── */
 
-.workflow-agent-result summary {
-  padding: 6px 10px;
-  cursor: pointer;
-  color: var(--fg-muted);
-  font-size: 11px;
-}
-
-.workflow-agent-result summary:hover {
-  color: var(--fg);
-}
-
-.workflow-agent-result pre {
+.workflow-parallel {
+  position: relative;
+  list-style: none;
   margin: 0;
-  padding: 6px 10px 10px;
-  overflow: auto;
-  max-height: 240px;
-  color: var(--fg);
-  font-size: 11px;
-  line-height: 1.4;
+  padding: 4px 0 2px;
 }
 
-/* ── Run-level Result disclosure ───────────────────────────────── */
-
-.workflow-run-result {
-  margin: 0 12px 10px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
+.workflow-parallel-marker {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-blue);
+  margin-bottom: 2px;
+  letter-spacing: 0.04em;
 }
 
-.workflow-run-result summary {
-  padding: 6px 10px;
-  cursor: pointer;
-  color: var(--fg-muted);
-  font-size: 11.5px;
-  font-weight: 600;
+.workflow-parallel-glyph {
+  font-size: 11px;
+  color: var(--accent-blue);
+}
+
+.workflow-parallel-lanes {
+  display: grid;
+  grid-template-columns: repeat(var(--lane-count, 2), minmax(0, 1fr));
+  gap: 4px 12px;
+  margin: 0;
+  padding: 0;
   list-style: none;
 }
 
+.workflow-parallel-lanes > li {
+  margin: 0;
+  padding: 0;
+}
+
+.workflow-parallel[data-parallel-count="2"] .workflow-parallel-lanes {
+  --lane-count: 2;
+}
+
+.workflow-parallel[data-parallel-count="3"] .workflow-parallel-lanes {
+  --lane-count: 3;
+}
+
+.workflow-parallel[data-parallel-count="4"] .workflow-parallel-lanes {
+  --lane-count: 4;
+}
+
+/* ── Run-level Result disclosure (with collapsed summary) ────── */
+
+.workflow-run-result {
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg-surface);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.workflow-run-result summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.workflow-run-result summary::-webkit-details-marker {
+  display: none;
+}
+
+.workflow-run-result summary::before {
+  content: "▸";
+  color: var(--fg-faint);
+  font-size: 10px;
+  transition: transform 120ms ease-out;
+}
+
+.workflow-run-result[open] summary::before {
+  content: "▾";
+}
+
 .workflow-run-result summary:hover {
+  background: color-mix(in srgb, var(--accent-blue) 4%, transparent);
+}
+
+.workflow-run-result-label {
+  font-weight: 600;
+  color: var(--fg-muted);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.workflow-run-result-summary {
   color: var(--fg);
+  font-size: 11.5px;
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 400;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workflow-run-result pre {
   margin: 0;
-  padding: 6px 10px 10px;
+  padding: 8px 12px 10px;
   border-top: 1px solid var(--border-soft);
   overflow: auto;
-  max-height: 320px;
+  max-height: 240px;
   color: var(--fg);
   font-size: 11px;
   line-height: 1.4;

@@ -2,23 +2,11 @@
  * WorkflowRun — live-progress card for a CC-style workflow run.
  *
  * Renders the typed :class:`WorkflowRunState` the FE reducer
- * builds from ``workflow_event`` pushes. Each phase is a
- * collapsible card with the agents inside; agents get a status
- * pill + elapsed-time label.
- *
- * Layout:
- *   <WorkflowRun>
- *     <status banner — running | completed | failed | cancelled>
- *     <phase card> Assess
- *       <agent card> assess — running
- *       <agent card> assess — completed (2.3s)
- *     </phase card>
- *     <phase card> Design
- *       <agent card> design:oop-minimal
- *       <agent card> design:oop-architectural
- *       <agent card> design:oop-consistency
- *     </phase card>
- *     ...
+ * builds from ``workflow_event`` pushes. Composition mirrors
+ * the team-progress / tool-card chrome: bordered surface with a
+ * 3px status-colored left accent, a single header row carrying
+ * the run's identity + live counters, and a list of phase rows
+ * whose agents render inline as compact pills.
  *
  * NOT a :class:`JsonRenderView` catalog entry — workflow UI is
  * trusted application chrome with timers, parallel lanes, and
@@ -33,6 +21,7 @@ import type {
 } from "../chat/model";
 
 function fmtDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "—";
   if (ms < 1000) return `${ms}ms`;
   const s = ms / 1000;
   if (s < 60) return `${s.toFixed(1)}s`;
@@ -65,6 +54,23 @@ function statusTone(
   }
 }
 
+function statusGlyph(s: string): string {
+  switch (s) {
+    case "running":
+      return "●";
+    case "completed":
+      return "✓";
+    case "failed":
+      return "✗";
+    case "cancelled":
+      return "⊘";
+    case "timeout":
+      return "◷";
+    default:
+      return "·";
+  }
+}
+
 export function WorkflowRun({ run }: { run: WorkflowRunState }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
@@ -76,22 +82,24 @@ export function WorkflowRun({ run }: { run: WorkflowRunState }) {
   );
   const totalDuration =
     run.endedAtMs !== undefined ? run.endedAtMs - run.startedAtMs : undefined;
+  const resultSummary = formatResultSummary(run.result);
 
   return (
     <div className="workflow-run" data-status={status}>
       <header className="workflow-run-header">
+        <span className="workflow-run-glyph" aria-hidden>
+          {statusGlyph(status)}
+        </span>
         <div className="workflow-run-title">
-          <span className="workflow-run-icon" aria-hidden>⚙</span>
           <span className="workflow-run-name">{run.name}</span>
           <span className={`workflow-run-pill tone-${statusTone(status)}`}>
             {status}
           </span>
         </div>
         <div className="workflow-run-meta">
-          <span className="workflow-run-id">{run.workflowRunId}</span>
           {totalAgents > 0 && (
             <span className="workflow-run-progress">
-              {completedAgents} / {totalAgents} agents
+              {completedAgents} / {totalAgents}
             </span>
           )}
           {totalDuration !== undefined && (
@@ -109,10 +117,12 @@ export function WorkflowRun({ run }: { run: WorkflowRunState }) {
       )}
 
       <ol className="workflow-run-phases">
-        {run.phases.map((phase) => (
-          <PhaseCard
+        {run.phases.map((phase, i) => (
+          <PhaseRow
             key={phase.phaseId}
             phase={phase}
+            index={i + 1}
+            totalPhases={run.phases.length}
             collapsed={collapsed[phase.phaseId] ?? false}
             onToggle={() =>
               setCollapsed((c) => ({ ...c, [phase.phaseId]: !c[phase.phaseId] }))
@@ -126,7 +136,14 @@ export function WorkflowRun({ run }: { run: WorkflowRunState }) {
 
       {run.result !== undefined && (
         <details className="workflow-run-result">
-          <summary>Result</summary>
+          <summary>
+            <span className="workflow-run-result-label">Result</span>
+            {resultSummary !== null && (
+              <span className="workflow-run-result-summary">
+                {resultSummary}
+              </span>
+            )}
+          </summary>
           <pre>{JSON.stringify(run.result, null, 2)}</pre>
         </details>
       )}
@@ -134,17 +151,48 @@ export function WorkflowRun({ run }: { run: WorkflowRunState }) {
   );
 }
 
-function PhaseCard({
+function formatResultSummary(result: unknown): string | null {
+  if (result === null || result === undefined) return null;
+  if (typeof result !== "object") return String(result);
+  const r = result as Record<string, unknown>;
+  const parts: string[] = [];
+  if (typeof r.status === "string") parts.push(r.status);
+  if (typeof r.chosen_design === "string")
+    parts.push(`design: ${r.chosen_design}`);
+  const v = r.verification;
+  if (v && typeof v === "object") {
+    const ver = v as Record<string, unknown>;
+    if (typeof ver.tests_passed === "number") {
+      const t = ver.tests_passed;
+      const f = typeof ver.tests_failed === "number" ? ver.tests_failed : 0;
+      parts.push(
+        f === 0 ? `${t} tests passed` : `${t} passed, ${f} failed`,
+      );
+    }
+  }
+  if (parts.length === 0) return null;
+  return parts.join(" · ");
+}
+
+function PhaseRow({
   phase,
+  index,
+  totalPhases,
   collapsed,
   onToggle,
 }: {
   phase: WorkflowPhase;
+  index: number;
+  totalPhases: number;
   collapsed: boolean;
   onToggle: () => void;
 }) {
   return (
-    <li className="workflow-phase" data-status={phase.status}>
+    <li
+      className="workflow-phase"
+      data-status={phase.status}
+      data-parallel={phase.agents.some((a) => a.parallelGroupId !== undefined)}
+    >
       <button
         type="button"
         className="workflow-phase-header"
@@ -154,6 +202,10 @@ function PhaseCard({
         <span className="workflow-phase-caret" aria-hidden>
           {collapsed ? "▸" : "▾"}
         </span>
+        <span className="workflow-phase-index">{index}/{totalPhases}</span>
+        <span className="workflow-phase-glyph" aria-hidden>
+          {statusGlyph(phase.status)}
+        </span>
         <span className="workflow-phase-title">{phase.title}</span>
         <span className={`workflow-phase-pill tone-${statusTone(phase.status)}`}>
           {phase.status}
@@ -162,34 +214,7 @@ function PhaseCard({
           {elapsed(phase.startedAtMs, phase.endedAtMs)}
         </span>
       </button>
-      {!collapsed && (
-        <AgentList agents={phase.agents} />
-      )}
-    </li>
-  );
-}
-
-function AgentCard({ agent }: { agent: WorkflowAgentRun }) {
-  return (
-    <li className="workflow-agent" data-status={agent.status}>
-      <div className="workflow-agent-row">
-        <span className="workflow-agent-label">{agent.label}</span>
-        <span className={`workflow-agent-pill tone-${statusTone(agent.status)}`}>
-          {agent.status}
-        </span>
-        <span className="workflow-agent-elapsed">
-          {elapsed(agent.startedAtMs, agent.endedAtMs)}
-        </span>
-      </div>
-      {agent.error !== undefined && (
-        <div className="workflow-agent-error">{agent.error}</div>
-      )}
-      {agent.result !== undefined && agent.status !== "running" && (
-        <details className="workflow-agent-result">
-          <summary>Result</summary>
-          <pre>{JSON.stringify(agent.result, null, 2)}</pre>
-        </details>
-      )}
+      {!collapsed && <AgentList agents={phase.agents} />}
     </li>
   );
 }
@@ -202,9 +227,7 @@ function AgentList({ agents }: { agents: WorkflowAgentRun[] }) {
   // — those are the lanes of a single ``parallel()`` call. The
   // CSS grid renders the lanes side-by-side; the row gets
   // ``data-parallel-count`` so the cell widths tune to the lane
-  // count (3 lanes = 3 equal columns; 2 = 2). A small "parallel"
-  // label tags the row so the user can see why those cards are
-  // aligned.
+  // count (3 lanes = 3 equal columns; 2 = 2).
   const groups: Array<{
     kind: "serial" | "parallel";
     agents: WorkflowAgentRun[];
@@ -229,7 +252,7 @@ function AgentList({ agents }: { agents: WorkflowAgentRun[] }) {
       {groups.map((group, gi) =>
         group.kind === "serial" ? (
           group.agents.map((a) => (
-            <AgentCard key={a.agentId} agent={a} />
+            <AgentRow key={a.agentId} agent={a} />
           ))
         ) : (
           <li
@@ -237,15 +260,42 @@ function AgentList({ agents }: { agents: WorkflowAgentRun[] }) {
             className="workflow-parallel"
             data-parallel-count={group.agents.length}
           >
-            <span className="workflow-parallel-label">parallel</span>
-            <div className="workflow-parallel-lanes">
+            <span className="workflow-parallel-marker">
+              <span className="workflow-parallel-glyph" aria-hidden>⇉</span>
+              {group.agents.length} parallel lanes
+            </span>
+            <ol className="workflow-parallel-lanes">
               {group.agents.map((a) => (
-                <AgentCard key={a.agentId} agent={a} />
+                <AgentRow key={a.agentId} agent={a} />
               ))}
-            </div>
+            </ol>
           </li>
         ),
       )}
     </ul>
+  );
+}
+
+function AgentRow({ agent }: { agent: WorkflowAgentRun }) {
+  return (
+    <li className="workflow-agent" data-status={agent.status}>
+      <span className="workflow-agent-glyph" aria-hidden>
+        {statusGlyph(agent.status)}
+      </span>
+      <span className="workflow-agent-label" title={agent.label}>
+        {agent.label}
+      </span>
+      <span className={`workflow-agent-pill tone-${statusTone(agent.status)}`}>
+        {agent.status}
+      </span>
+      <span className="workflow-agent-elapsed">
+        {elapsed(agent.startedAtMs, agent.endedAtMs)}
+      </span>
+      {agent.error !== undefined && (
+        <span className="workflow-agent-error" title={agent.error}>
+          {agent.error}
+        </span>
+      )}
+    </li>
   );
 }

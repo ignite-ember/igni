@@ -38,7 +38,11 @@ import { WorkflowRun } from "../components/WorkflowRun";
 //    and re-emits on the ``workflow_event`` push channel. ──────
 
 const RUN_ID = "wf_demo";
-const START_MS = 1_700_000_000_000;
+// Demo tape: timestamps 1 hour ago + 50ms apart. Use a real
+// "now - 1h" anchor so the displayed elapsed time is sensible
+// when the demo runs (the canned ts values would otherwise be
+// pinned to 2023-11-14, making every card show -3 years).
+const START_MS = Date.now() - 60 * 60 * 1000;
 
 function ts(seq: number): number {
   return START_MS + seq * 50;

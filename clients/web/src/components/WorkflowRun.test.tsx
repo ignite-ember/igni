@@ -33,7 +33,6 @@ describe("WorkflowRun", () => {
     render(<WorkflowRun run={run} />);
     expect(screen.getByText("smoke")).toBeDefined();
     expect(screen.getByText("running")).toBeDefined();
-    expect(screen.getByText("wf_test")).toBeDefined();
   });
 
   it("renders completed runs with a final status pill", () => {
