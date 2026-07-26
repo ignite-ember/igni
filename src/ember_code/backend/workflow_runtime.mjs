@@ -187,6 +187,9 @@ function writeStdin(obj) {
 // ── Globals provided to the workflow script ────────────────────────
 
 const phaseStack = []
+let phaseCounter = 0
+let parallelCounter = 0
+let pipelineCounter = 0
 
 function phase(title) {
   while (phaseStack.length > 0) {
@@ -198,7 +201,12 @@ function phase(title) {
       duration_ms: Date.now() - prev.started_at_ms,
     })
   }
-  const phase_id = `phase_${phaseStack.length + 1}_${Date.now().toString(36)}`
+  // Monotonic counter so each phase has a unique id across the
+  // whole run (the per-call Date.now() approach was racy at ms
+  // granularity and produced colliding ids for phases that
+  // started in the same millisecond).
+  phaseCounter++
+  const phase_id = `phase_${phaseCounter}_${Date.now().toString(36)}`
   phaseStack.push({ phase_id, title, started_at_ms: Date.now() })
   emit("phase_started", { phase_id, title })
 }
@@ -283,7 +291,7 @@ function agent(prompt, opts = {}) {
 }
 
 function parallel(thunks) {
-  const group_id = `par_${Date.now().toString(36)}`
+  const group_id = `par_${++parallelCounter}_${Date.now().toString(36)}`
   const started_at_ms = Date.now()
   emit("parallel_started", {
     group_id,
@@ -339,7 +347,7 @@ function parallel(thunks) {
 }
 
 function pipeline(steps) {
-  const group_id = `pipe_${Date.now().toString(36)}`
+  const group_id = `pipe_${++pipelineCounter}_${Date.now().toString(36)}`
   const started_at_ms = Date.now()
   emit("pipeline_started", {
     group_id,
@@ -413,6 +421,17 @@ const ctx = createContext({
         parts.map((p) => (typeof p === "string" ? p : JSON.stringify(p))).join(" "),
       ),
   },
+  // Useful standard-library bindings a workflow might want. The
+  // sandbox intentionally excludes Node-only APIs (fs, process,
+  // etc.) — those are bridged through the BE, not the runtime.
+  setTimeout,
+  clearTimeout,
+  setInterval,
+  clearInterval,
+  URL,
+  URLSearchParams,
+  TextEncoder,
+  TextDecoder,
 })
 
 // Always wrap the script in an async IIFE — workflow files use
