@@ -19,6 +19,22 @@ import {
   visualizationItem,
   type ChatItem,
   type OrchestrateEvent,
+  restoredItem,
+  restoredStatsItem,
+  errorItem,
+  infoItem,
+  isOrchestrateActive,
+  loopItem,
+  mergePlanTasks,
+  normalizePlanTasks,
+  planItem,
+  reduceWorkflowEvent,
+  shellItem,
+  userItem,
+  visualizationItem,
+  workflowItem,
+  type ChatItem,
+  type OrchestrateEvent,
 } from "./chat/model";
 import { applyVisualizationDelta } from "./chat/visualizationStream";
 import { nextObserverBusyState } from "./chat/observerBusy";
@@ -1056,6 +1072,20 @@ export default function App() {
               },
             ];
           });
+        } else if (m.channel === "workflow_event") {
+          // Live progress from the BE's workflow runner (the
+          // process that executes .claude/workflows/*.mjs). Each
+          // event is a single line from the Node subprocess's
+          // stdout, already validated + envelope-wrapped by the
+          // BE. We fold into the matching workflow chat item by
+          // ``workflow_run_id``; a fresh event with an unknown
+          // id (e.g. the user opened a new tab on a long run)
+          // creates a card on the fly.
+          const ev = m.payload as import("./chat/model").WorkflowEvent;
+          if (ev && typeof ev.workflow_run_id === "string") {
+            setItems((prev) => reduceWorkflowEvent(prev, ev));
+          }
+          return;
         } else if (m.channel === "orchestrate_progress") {
           // Legacy text channel — kept for backward compat in case a
           // path in orchestrate.py still emits strings. Wraps the
@@ -1617,6 +1647,57 @@ export default function App() {
   // message in the chat. Typed slash commands keep echoing.
   const runCommand = useCallback(
     async (text: string, echo = true) => {
+      // /workflows <name> [json-args] — client-side intercept so
+      // the BE's command dispatcher doesn't have to grow a new
+      // verb. The RPC returns a ``workflow_run_id``; we
+      // optimistically create a chat item and the push channel
+      // folds subsequent ``workflow_event`` updates into it.
+      const wfMatch = /^\/workflows(?:\s+(\S+))?(?:\s+(\{[\s\S]*\}))?$/.exec(
+        text.trim(),
+      );
+      if (wfMatch) {
+        const [, name, rawArgs] = wfMatch;
+        if (!name) {
+          // No name → list workflows. Discovery through the BE.
+          try {
+            const list = await client.rpc<unknown[]>("list_workflows");
+            const lines = (list ?? []).map((w) => {
+              const wf = w as { name?: string; description?: string; phases?: unknown[] };
+              return `- \`${wf.name ?? "?"}\` — ${wf.description ?? "(no description)"} (${(wf.phases ?? []).length} phases)`;
+            });
+            append(
+              infoItem(
+                lines.length > 0
+                  ? `Available workflows:\n${lines.join("\n")}`
+                  : "No workflows found in .claude/workflows/",
+              ),
+            );
+          } catch (err) {
+            append(errorItem(`/workflows: list failed: ${err}`));
+          }
+          return;
+        }
+        let parsedArgs: Record<string, unknown> = {};
+        if (rawArgs) {
+          try {
+            parsedArgs = JSON.parse(rawArgs);
+          } catch (err) {
+            append(errorItem(`/workflows: invalid JSON args: ${err}`));
+            return;
+          }
+        }
+        try {
+          const resp = await client.rpc<{ workflow_run_id: string; name: string }>(
+            "run_workflow",
+            { name, args: parsedArgs, session_id: client.sessionId },
+          );
+          const item = workflowItem(resp.name, resp.workflow_run_id);
+          setItems((prev) => [...prev, item]);
+        } catch (err) {
+          append(errorItem(`/workflows: run failed: ${err}`));
+        }
+        return;
+      }
       if (echo) append(userItem(text));
       try {
         const result = await client.handleCommand(text);
@@ -2184,6 +2265,7 @@ export default function App() {
                     [
                       ["/agents", "Dispatch to a specialist — architect, debugger, …"],
                       ["/skills", "Workflows like /commit and /resolve-issues"],
+                      ["/workflows", "Run a CC-style multi-phase workflow"],
                       ["/codeindex", "Semantic search across your repo"],
                       ["/schedule", "Background tasks that report back"],
                       ["/loop", "Repeat a prompt across a batch until done"],

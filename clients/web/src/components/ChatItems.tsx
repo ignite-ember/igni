@@ -9,6 +9,7 @@ import type { Spec } from "@json-render/core";
 import { ChevronIcon } from "./Icons";
 import { FilePill } from "./FilePill";
 import { JsonRenderView } from "./JsonRenderView";
+import { WorkflowRun } from "./WorkflowRun";
 import { host } from "../lib/host";
 
 /** Isolates render failures inside a single visualization card so a
@@ -1509,6 +1510,8 @@ export const ChatItemView = memo(function ChatItemView({
           onStopAgent={onStopAgent}
           onRetryAgent={onRetryAgent}
         />
+    case "workflow":
+      return <WorkflowRun run={item.run} />;
       );
     case "loop":
       return <LoopIterationCard item={item} />;

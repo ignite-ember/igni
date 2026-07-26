@@ -926,3 +926,164 @@ describe("restoredStatsItem", () => {
     expect(out.corrected).toBe(true);
   });
 });
+
+// ── Workflow reducer ────────────────────────────────────────────
+
+import {
+  reduceWorkflowEvent,
+  restoreWorkflowFromEvents,
+  workflowItem,
+  type WorkflowEvent,
+} from "./model";
+
+function wfEvent(
+  type: string,
+  payload: Record<string, unknown>,
+  seq = 0,
+  runId = "wf_test",
+): WorkflowEvent {
+  return {
+    workflow_run_id: runId,
+    name: "smoke",
+    ts: 1_700_000_000_000 + seq,
+    seq,
+    type,
+    payload,
+  };
+}
+
+describe("workflowItem", () => {
+  it("creates a fresh running card", () => {
+    const item = workflowItem("smoke", "wf_abc");
+    expect(item.kind).toBe("workflow");
+    if (item.kind !== "workflow") return;
+    expect(item.run.name).toBe("smoke");
+    expect(item.run.workflowRunId).toBe("wf_abc");
+    expect(item.run.status).toBe("running");
+    expect(item.run.phases).toEqual([]);
+    expect(item.run.events).toEqual([]);
+  });
+});
+
+describe("reduceWorkflowEvent", () => {
+  it("creates a card on the first event for an unknown id", () => {
+    const events: WorkflowEvent[] = [
+      wfEvent("workflow_started", { name: "smoke" }, 0),
+    ];
+    const items = reduceWorkflowEvent([], events[0]);
+    expect(items).toHaveLength(1);
+    expect(items[0].kind).toBe("workflow");
+    if (items[0].kind !== "workflow") return;
+    expect(items[0].run.name).toBe("smoke");
+    expect(items[0].run.status).toBe("running");
+  });
+
+  it("appends a phase_started into the typed structure", () => {
+    let items = reduceWorkflowEvent([], wfEvent("workflow_started", {}, 0));
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("phase_started", { phase_id: "p1", title: "Assess" }, 1),
+    );
+    if (items[0].kind !== "workflow") return;
+    expect(items[0].run.phases).toHaveLength(1);
+    expect(items[0].run.phases[0].title).toBe("Assess");
+    expect(items[0].run.phases[0].status).toBe("running");
+  });
+
+  it("completes the phase on phase_completed and appends the next", () => {
+    let items: import("./model").ChatItem[] = [];
+    items = reduceWorkflowEvent(items, wfEvent("workflow_started", {}, 0));
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("phase_started", { phase_id: "p1", title: "A" }, 1),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("phase_completed", { phase_id: "p1", status: "completed" }, 2),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("phase_started", { phase_id: "p2", title: "B" }, 3),
+    );
+    if (items[0].kind !== "workflow") return;
+    expect(items[0].run.phases).toHaveLength(2);
+    expect(items[0].run.phases[0].status).toBe("completed");
+    expect(items[0].run.phases[1].status).toBe("running");
+  });
+
+  it("appends an agent under the current running phase", () => {
+    let items: import("./model").ChatItem[] = [];
+    items = reduceWorkflowEvent(items, wfEvent("workflow_started", {}, 0));
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("phase_started", { phase_id: "p1", title: "P" }, 1),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent(
+        "agent_started",
+        { id: "req_1", label: "audit" },
+        2,
+      ),
+    );
+    if (items[0].kind !== "workflow") return;
+    expect(items[0].run.phases[0].agents).toHaveLength(1);
+    expect(items[0].run.phases[0].agents[0].label).toBe("audit");
+    expect(items[0].run.phases[0].agents[0].status).toBe("running");
+  });
+
+  it("flips status to completed on workflow_completed", () => {
+    let items: import("./model").ChatItem[] = [];
+    items = reduceWorkflowEvent(items, wfEvent("workflow_started", {}, 0));
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent(
+        "workflow_completed",
+        { status: "completed", result: { ok: true } },
+        1,
+      ),
+    );
+    if (items[0].kind !== "workflow") return;
+    expect(items[0].run.status).toBe("completed");
+    expect(items[0].run.result).toEqual({ ok: true });
+  });
+
+  it("preserves the raw event tape on every run.events", () => {
+    let items: import("./model").ChatItem[] = [];
+    const evs = [
+      wfEvent("workflow_started", {}, 0),
+      wfEvent("phase_started", { phase_id: "p1", title: "A" }, 1),
+      wfEvent("phase_completed", { phase_id: "p1" }, 2),
+      wfEvent("workflow_completed", { status: "completed" }, 3),
+    ];
+    for (const ev of evs) items = reduceWorkflowEvent(items, ev);
+    if (items[0].kind !== "workflow") return;
+    expect(items[0].run.events).toHaveLength(4);
+  });
+});
+
+describe("restoreWorkflowFromEvents", () => {
+  it("rebuilds phase structure from a sequence of persisted events", () => {
+    const events: WorkflowEvent[] = [
+      wfEvent("workflow_started", {}, 0),
+      wfEvent("phase_started", { phase_id: "p1", title: "Assess" }, 1),
+      wfEvent("phase_completed", { phase_id: "p1", status: "completed" }, 2),
+      wfEvent("phase_started", { phase_id: "p2", title: "Design" }, 3),
+      wfEvent("workflow_completed", { status: "completed", result: { ok: true } }, 4),
+    ];
+    const run = restoreWorkflowFromEvents(events);
+    expect(run).not.toBeNull();
+    if (!run) return;
+    expect(run.phases).toHaveLength(2);
+    expect(run.phases[0].title).toBe("Assess");
+    expect(run.phases[0].status).toBe("completed");
+    expect(run.phases[1].title).toBe("Design");
+    expect(run.phases[1].status).toBe("running");
+    expect(run.status).toBe("completed");
+    expect(run.result).toEqual({ ok: true });
+  });
+
+  it("returns null for an empty event list", () => {
+    expect(restoreWorkflowFromEvents([])).toBeNull();
+  });
+});

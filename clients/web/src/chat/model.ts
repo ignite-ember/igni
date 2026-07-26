@@ -535,7 +535,67 @@ export type ChatItem =
       /** Set to true once App.tsx has overwritten ``inputTokens`` with
        *  the real session size from ``count_context_tokens``. */
       corrected: boolean;
+    }
+  | {
+      /** Live-progress card for a CC-style workflow run. The
+       *  ``events`` list is the raw event tape the BE pushed;
+       *  ``run`` is the typed view the renderer consumes. */
+      kind: "workflow";
+      id: number;
+      run: WorkflowRunState;
     };
+
+// ── Workflow run shape ──────────────────────────────────────────
+
+/** Live-progress state for one workflow run. The renderer
+ *  reads from the typed structure; the raw event tape lives
+ *  in ``events`` for replays + diagnostics. */
+export interface WorkflowRunState {
+  workflowRunId: string;
+  name: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  startedAtMs: number;
+  endedAtMs?: number;
+  phases: WorkflowPhase[];
+  events: WorkflowEvent[];
+  result?: unknown;
+  error?: string;
+}
+
+export interface WorkflowPhase {
+  /** Stable id the BE assigned in the ``phase_started`` event. */
+  phaseId: string;
+  title: string;
+  startedAtMs: number;
+  endedAtMs?: number;
+  status: "running" | "completed" | "failed" | "cancelled";
+  agents: WorkflowAgentRun[];
+}
+
+export interface WorkflowAgentRun {
+  /** Request id the BE assigned in the ``agent_started`` event.
+   *  Stable across the whole run — used to key text deltas. */
+  agentId: string;
+  label: string;
+  status: "running" | "completed" | "failed" | "timeout";
+  startedAtMs: number;
+  endedAtMs?: number;
+  result?: unknown;
+  error?: string;
+}
+
+/** Raw event as pushed by the BE. Mirrors the BE's
+ *  :class:`WorkflowEvent` envelope (the BE stores one row per
+ *  event in ``session_data.event_log`` and re-emits on the
+ *  ``workflow_event`` push channel). */
+export interface WorkflowEvent {
+  workflow_run_id: string;
+  name: string;
+  ts: number;
+  seq: number;
+  type: string;
+  payload: Record<string, unknown>;
+}
 
 let itemId = 0;
 const nid = () => ++itemId;
@@ -1115,4 +1175,248 @@ export function applyEvent(items: ChatItem[], msg: ServerMessage): ChatItem[] {
     default:
       return items;
   }
+}
+
+// ── Workflow run helpers ──────────────────────────────────────────
+
+/** Build the initial state for a freshly-issued workflow run. */
+export function workflowItem(name: string, workflowRunId: string): ChatItem {
+  const now = Date.now();
+  return {
+    kind: "workflow",
+    id: nid(),
+    run: {
+      workflowRunId,
+      name,
+      status: "running",
+      startedAtMs: now,
+      phases: [],
+      events: [],
+    },
+  };
+}
+
+/** Append one workflow event to the matching run, creating the
+ *  run's typed structure as we go. Pure function — feeds
+ *  ``setItems((prev) => reduceWorkflowEvent(prev, ev))``.
+ *
+ *  Phase + agent records are matched by their BE-assigned ids
+ *  (stable across the run); the raw event tape is preserved in
+ *  ``run.events`` for diagnostics + rehydration. */
+export function reduceWorkflowEvent(
+  items: ChatItem[],
+  ev: WorkflowEvent,
+): ChatItem[] {
+  let foundIdx = -1;
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it.kind === "workflow" && it.run.workflowRunId === ev.workflow_run_id) {
+      foundIdx = i;
+      break;
+    }
+  }
+  if (foundIdx === -1) {
+    // No card yet — the FE's slash command creates one
+    // optimistically, but a refresh-restored run might race the
+    // first event. Make a fresh one.
+    const newRun: WorkflowRunState = {
+      workflowRunId: ev.workflow_run_id,
+      name: ev.name,
+      status: "running",
+      startedAtMs: ev.ts,
+      phases: [],
+      events: [],
+    };
+    const newItem: ChatItem = { kind: "workflow", id: nid(), run: newRun };
+    const next = [...items, newItem];
+    return reduceWorkflowEvent(next, ev);
+  }
+  const it = items[foundIdx];
+  if (it.kind !== "workflow") return items;
+  const run: WorkflowRunState = {
+    ...it.run,
+    events: [...it.run.events, ev],
+  };
+
+  switch (ev.type) {
+    case "workflow_started": {
+      const { name, args } = ev.payload as { name?: string; args?: unknown };
+      if (typeof name === "string" && name) run.name = name;
+      void args;
+      break;
+    }
+    case "phase_started": {
+      const { phase_id, title } = ev.payload as {
+        phase_id: string;
+        title: string;
+      };
+      run.phases = [
+        ...run.phases,
+        {
+          phaseId: phase_id,
+          title: typeof title === "string" ? title : "(unnamed phase)",
+          startedAtMs: ev.ts,
+          status: "running",
+          agents: [],
+        },
+      ];
+      break;
+    }
+    case "phase_completed": {
+      const { phase_id, status, duration_ms } = ev.payload as {
+        phase_id: string;
+        status?: "completed" | "failed" | "cancelled";
+        duration_ms?: number;
+      };
+      run.phases = run.phases.map((p) =>
+        p.phaseId === phase_id
+          ? {
+              ...p,
+              status: status ?? "completed",
+              endedAtMs: ev.ts,
+            }
+          : p,
+      );
+      void duration_ms;
+      break;
+    }
+    case "agent_started": {
+      const phase = currentPhase(run);
+      if (phase === null) break;
+      const { id, label } = ev.payload as { id: string; label: string };
+      const agent: WorkflowAgentRun = {
+        agentId: id,
+        label: typeof label === "string" ? label : "agent",
+        status: "running",
+        startedAtMs: ev.ts,
+      };
+      run.phases = run.phases.map((p) =>
+        p.phaseId === phase.phaseId
+          ? { ...p, agents: [...p.agents, agent] }
+          : p,
+      );
+      break;
+    }
+    case "agent_completed": {
+      const { id, status, result, error, duration_ms } = ev.payload as {
+        id: string;
+        status?: "completed" | "failed" | "timeout";
+        result?: unknown;
+        error?: string;
+        duration_ms?: number;
+      };
+      run.phases = run.phases.map((p) => ({
+        ...p,
+        agents: p.agents.map((a) =>
+          a.agentId === id
+            ? {
+                ...a,
+                status: status ?? "completed",
+                endedAtMs: ev.ts,
+                result,
+                error,
+              }
+            : a,
+        ),
+      }));
+      void duration_ms;
+      break;
+    }
+    case "workflow_completed": {
+      const { status, result } = ev.payload as {
+        status?: "completed" | "cancelled";
+        result?: unknown;
+      };
+      run.status = status === "cancelled" ? "cancelled" : "completed";
+      run.endedAtMs = ev.ts;
+      run.result = result;
+      break;
+    }
+    case "workflow_failed": {
+      const { error, status } = ev.payload as {
+        error?: string;
+        status?: "failed";
+      };
+      run.status = status ?? "failed";
+      run.endedAtMs = ev.ts;
+      run.error = typeof error === "string" ? error : "workflow failed";
+      break;
+    }
+    default:
+      // parallel_*, pipeline_*, log, agent_request, workflow_meta
+      // — captured in events[] for diagnostics; the renderer
+      // ignores them today.
+      break;
+  }
+
+  const next = [...items];
+  next[foundIdx] = { ...it, run };
+  return next;
+}
+
+function currentPhase(run: WorkflowRunState): WorkflowPhase | null {
+  for (let i = run.phases.length - 1; i >= 0; i--) {
+    if (run.phases[i].status === "running") return run.phases[i];
+  }
+  return run.phases.length > 0 ? run.phases[run.phases.length - 1] : null;
+}
+
+/** Rebuild a :class:`WorkflowRunState` from a chronological
+ *  sequence of persisted ``workflow_event`` rows. Called by
+ *  :func:`fetchHistoryItems` on page refresh so the chat item
+ *  re-renders with the run's full structure (phases, agents,
+ *  final status) instead of replaying one event at a time. */
+export function restoreWorkflowFromEvents(
+  events: WorkflowEvent[],
+): WorkflowRunState | null {
+  if (events.length === 0) return null;
+  // Seed the state from the first event's metadata; the reducer
+  // handles the rest as we fold.
+  const seed = workflowItem(events[0].name, events[0].workflow_run_id);
+  let run: WorkflowRunState = seed.run;
+  for (const ev of events) {
+    // Inline a tiny reducer (avoid creating intermediate ChatItem
+    // arrays for every event).
+    run = { ...run, events: [...run.events, ev] };
+    switch (ev.type) {
+      case "phase_started": {
+        const { phase_id, title } = ev.payload as {
+          phase_id: string;
+          title: string;
+        };
+        run.phases = [
+          ...run.phases,
+          {
+            phaseId: phase_id,
+            title: typeof title === "string" ? title : "(unnamed phase)",
+            startedAtMs: ev.ts,
+            status: "running",
+            agents: [],
+          },
+        ];
+        break;
+      }
+      case "phase_completed": {
+        const { phase_id, status } = ev.payload as {
+          phase_id: string;
+          status?: "completed" | "failed" | "cancelled";
+        };
+        run.phases = run.phases.map((p) =>
+          p.phaseId === phase_id ? { ...p, status: status ?? "completed", endedAtMs: ev.ts } : p,
+        );
+        break;
+      }
+      case "workflow_completed":
+        run.status = "completed";
+        run.endedAtMs = ev.ts;
+        run.result = (ev.payload as { result?: unknown }).result;
+        break;
+      case "workflow_failed":
+        run.status = "failed";
+        run.endedAtMs = ev.ts;
+        run.error = (ev.payload as { error?: string }).error;
+        break;
+    }
+  }
+  return run;
 }
