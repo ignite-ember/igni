@@ -411,6 +411,12 @@ export function WorkflowDemo() {
   const [status, setStatus] = useState<Status>("idle");
   const [cursor, setCursor] = useState(0);
   const timerRef = useRef<number | null>(null);
+  // The most-recent tape the user started or jumped to. The
+  // ``onRerun`` callback on each rendered workflow card reads
+  // this to know which tape to replay when the user clicks the
+  // Rerun button. Defaults to EVENTS (success) so the first
+  // render has a valid tape to point at.
+  const lastTapeRef = useRef<WorkflowEvent[]>(EVENTS);
 
   const stop = useCallback(() => {
     if (timerRef.current !== null) {
@@ -430,6 +436,7 @@ export function WorkflowDemo() {
     (tape: WorkflowEvent[] = EVENTS) => {
       reset();
       setStatus("streaming");
+      lastTapeRef.current = tape;
       // Optimistic card so the user sees something before the first
       // event lands.
       setItems([workflowItem("refactor-to-standards", RUN_ID)]);
@@ -450,6 +457,7 @@ export function WorkflowDemo() {
   const jumpToEnd = useCallback(
     (tape: WorkflowEvent[] = EVENTS) => {
       reset();
+      lastTapeRef.current = tape;
       let next: ChatItem[] = [workflowItem("refactor-to-standards", RUN_ID)];
       for (const ev of tape) {
         next = reduceWorkflowEvent(next, ev);
@@ -550,15 +558,24 @@ export function WorkflowDemo() {
             <div key={item.id} className="wf-demo-item">
               <WorkflowRun
                 run={item.kind === "workflow" ? item.run : (null as never)}
-                onRerun={(_run) => {
-                  // Demo: clicking Rerun in the demo is a no-op.
+                onRerun={() => {
+                  // Demo: clicking the in-card Rerun button
+                  // replays the same tape the user originally
+                  // ran (success → success, failure → failure).
                   // In a real session this would re-fire the
                   // run_workflow RPC with the same name + args.
+                  jumpToEnd(lastTapeRef.current);
                 }}
-                onCancel={(_run) => {
-                  // Demo: clicking Cancel in the demo is a no-op.
-                  // In a real session this would call the
-                  // cancel_workflow RPC.
+                onCancel={() => {
+                  // Demo: clicking the in-card Cancel button
+                  // stops any in-flight timer (cancels the stream
+                  // mid-run). For runs that are already done
+                  // (jumped to end), this is a no-op. In a real
+                  // session this would call the cancel_workflow
+                  // RPC, which writes {"type":"cancel"} to the
+                  // subprocess stdin and escalates to SIGTERM
+                  // after a grace period.
+                  stop();
                 }}
               />
             </div>
