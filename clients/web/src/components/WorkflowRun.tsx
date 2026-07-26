@@ -163,14 +163,7 @@ function PhaseCard({
         </span>
       </button>
       {!collapsed && (
-        <ul className="workflow-phase-agents">
-          {phase.agents.map((agent) => (
-            <AgentCard key={agent.agentId} agent={agent} />
-          ))}
-          {phase.agents.length === 0 && (
-            <li className="workflow-phase-empty">no agents yet</li>
-          )}
-        </ul>
+        <AgentList agents={phase.agents} />
       )}
     </li>
   );
@@ -198,5 +191,61 @@ function AgentCard({ agent }: { agent: WorkflowAgentRun }) {
         </details>
       )}
     </li>
+  );
+}
+
+function AgentList({ agents }: { agents: WorkflowAgentRun[] }) {
+  if (agents.length === 0) {
+    return <div className="workflow-phase-empty">no agents yet</div>;
+  }
+  // Group consecutive agents that share a ``parallelGroupId``
+  // — those are the lanes of a single ``parallel()`` call. The
+  // CSS grid renders the lanes side-by-side; the row gets
+  // ``data-parallel-count`` so the cell widths tune to the lane
+  // count (3 lanes = 3 equal columns; 2 = 2). A small "parallel"
+  // label tags the row so the user can see why those cards are
+  // aligned.
+  const groups: Array<{
+    kind: "serial" | "parallel";
+    agents: WorkflowAgentRun[];
+  }> = [];
+  for (const agent of agents) {
+    const last = groups[groups.length - 1];
+    if (
+      agent.parallelGroupId !== undefined &&
+      last?.kind === "parallel" &&
+      last.agents[0].parallelGroupId === agent.parallelGroupId
+    ) {
+      last.agents.push(agent);
+    } else {
+      groups.push({
+        kind: agent.parallelGroupId !== undefined ? "parallel" : "serial",
+        agents: [agent],
+      });
+    }
+  }
+  return (
+    <ul className="workflow-phase-agents">
+      {groups.map((group, gi) =>
+        group.kind === "serial" ? (
+          group.agents.map((a) => (
+            <AgentCard key={a.agentId} agent={a} />
+          ))
+        ) : (
+          <li
+            key={`par-${gi}-${group.agents[0].parallelGroupId}`}
+            className="workflow-parallel"
+            data-parallel-count={group.agents.length}
+          >
+            <span className="workflow-parallel-label">parallel</span>
+            <div className="workflow-parallel-lanes">
+              {group.agents.map((a) => (
+                <AgentCard key={a.agentId} agent={a} />
+              ))}
+            </div>
+          </li>
+        ),
+      )}
+    </ul>
   );
 }

@@ -1087,3 +1087,47 @@ describe("restoreWorkflowFromEvents", () => {
     expect(restoreWorkflowFromEvents([])).toBeNull();
   });
 });
+
+describe("reduceWorkflowEvent — parallel grouping", () => {
+  it("tags agents with the active parallel group_id during a parallel() block", () => {
+    let items: ChatItem[] = [];
+    items = reduceWorkflowEvent(items, wfEvent("workflow_started", {}, 0));
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("phase_started", { phase_id: "p1", title: "Design" }, 1),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("parallel_started", { group_id: "par_x", lane_count: 3 }, 2),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("agent_started", { id: "a1", label: "design:minimal" }, 3),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("agent_started", { id: "a2", label: "design:arch" }, 4),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("agent_started", { id: "a3", label: "design:cons" }, 5),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("parallel_completed", { group_id: "par_x" }, 6),
+    );
+    // Serial agent after the parallel block.
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("agent_started", { id: "a4", label: "judge" }, 7),
+    );
+    if (items[0].kind !== "workflow") return;
+    const agents = items[0].run.phases[0].agents;
+    expect(agents).toHaveLength(4);
+    expect(agents[0].parallelGroupId).toBe("par_x");
+    expect(agents[1].parallelGroupId).toBe("par_x");
+    expect(agents[2].parallelGroupId).toBe("par_x");
+    // Serial agent after the parallel block has no group.
+    expect(agents[3].parallelGroupId).toBeUndefined();
+  });
+});

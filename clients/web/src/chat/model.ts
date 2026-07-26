@@ -582,6 +582,11 @@ export interface WorkflowAgentRun {
   endedAtMs?: number;
   result?: unknown;
   error?: string;
+  /** ``group_id`` of the surrounding ``parallel()`` block (if
+   *  any). The renderer groups consecutive agents with the same
+   *  ``parallelGroupId`` into a side-by-side grid. ``undefined``
+   *  means "serial" (most agents). */
+  parallelGroupId?: string;
 }
 
 /** Raw event as pushed by the BE. Mirrors the BE's
@@ -1237,6 +1242,12 @@ export function reduceWorkflowEvent(
     ...it.run,
     events: [...it.run.events, ev],
   };
+  // Active parallel group tracker — agent_started events
+  // arriving between parallel_started and parallel_completed
+  // belong to this group. Kept on the run state so the renderer
+  // can group consecutive agents into a side-by-side grid.
+  const activeParallelGroupId = (it.run as WorkflowRunState & { _activeParallelGroupId?: string })
+    ._activeParallelGroupId;
 
   switch (ev.type) {
     case "workflow_started": {
@@ -1280,6 +1291,15 @@ export function reduceWorkflowEvent(
       void duration_ms;
       break;
     }
+    case "parallel_started": {
+      const { group_id } = ev.payload as { group_id: string };
+      (run as WorkflowRunState & { _activeParallelGroupId?: string })._activeParallelGroupId = group_id;
+      break;
+    }
+    case "parallel_completed": {
+      (run as WorkflowRunState & { _activeParallelGroupId?: string })._activeParallelGroupId = undefined;
+      break;
+    }
     case "agent_started": {
       const phase = currentPhase(run);
       if (phase === null) break;
@@ -1289,6 +1309,7 @@ export function reduceWorkflowEvent(
         label: typeof label === "string" ? label : "agent",
         status: "running",
         startedAtMs: ev.ts,
+        parallelGroupId: activeParallelGroupId,
       };
       run.phases = run.phases.map((p) =>
         p.phaseId === phase.phaseId

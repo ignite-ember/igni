@@ -9,6 +9,7 @@ import { VisualizerStreamDemo } from "./dev/VisualizerStreamDemo";
 import { WorkflowDemo } from "./dev/WorkflowDemo";
 import { host } from "./lib/host";
 import "./theme.css";
+import "./workflow.css";
 
 // Stamp ``data-host`` on <html> so host-conditional CSS
 // (VSCode's ``--vscode-*`` bridge, JB/Tauri layout tweaks) has
