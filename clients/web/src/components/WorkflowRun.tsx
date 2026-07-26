@@ -22,7 +22,7 @@ import type {
   WorkflowPhase,
   WorkflowRunState,
 } from "../chat/model";
-import { CheckIcon, ChevronIcon, CircleIcon, StatusIcon } from "./Icons";
+import { CheckIcon, ChevronIcon, CircleIcon, StatusIcon, XIcon } from "./Icons";
 
 function fmtDuration(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) return "—";
@@ -58,7 +58,23 @@ function statusTone(
   }
 }
 
-export function WorkflowRun({ run }: { run: WorkflowRunState }) {
+export function WorkflowRun({
+  run,
+  onRerun,
+  onCancel,
+}: {
+  run: WorkflowRunState;
+  /** Called when the user clicks the run's "Rerun" button. The
+   *  host (App.tsx) is responsible for re-firing the
+   *  ``run_workflow`` RPC with the same ``name`` + ``args``. */
+  onRerun?: (run: WorkflowRunState) => void;
+  /** Called when the user clicks the run's "Cancel" button. The
+   *  host sends a ``cancel_workflow`` RPC; the BE's
+   *  ``WorkflowRunner.cancel`` writes a ``{"type":"cancel"}`` line
+   *  to the subprocess stdin, which causes in-flight agent
+   *  calls to reject and the workflow to wind down. */
+  onCancel?: (run: WorkflowRunState) => void;
+}) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   const status = run.status;
@@ -71,9 +87,20 @@ export function WorkflowRun({ run }: { run: WorkflowRunState }) {
     (n, p) => n + p.agents.filter((a) => a.status === "running").length,
     0,
   );
+  const failedAgents = run.phases.reduce(
+    (n, p) =>
+      n +
+      p.agents.filter(
+        (a) => a.status === "failed" || a.status === "timeout",
+      ).length,
+    0,
+  );
   const totalDuration =
     run.endedAtMs !== undefined ? run.endedAtMs - run.startedAtMs : undefined;
   const resultSummary = formatResultSummary(run.result);
+  const canRerun =
+    (status === "failed" || status === "cancelled") && onRerun !== undefined;
+  const canCancel = status === "running" && onCancel !== undefined;
 
   return (
     <div className="workflow-run" data-status={status}>
@@ -88,6 +115,17 @@ export function WorkflowRun({ run }: { run: WorkflowRunState }) {
           </span>
         </div>
         <div className="workflow-run-meta">
+          {failedAgents > 0 && (
+            <span
+              className="workflow-run-count count-failed"
+              data-testid="wf-failed-count"
+            >
+              <span className="workflow-run-count-icon" aria-hidden>
+                <XIcon size={9} />
+              </span>
+              {failedAgents} failed
+            </span>
+          )}
           {runningAgents > 0 && (
             <span className="workflow-run-count count-running">
               <span className="workflow-run-count-icon" aria-hidden>
@@ -109,12 +147,63 @@ export function WorkflowRun({ run }: { run: WorkflowRunState }) {
               {fmtDuration(totalDuration)}
             </span>
           )}
+          {canRerun && (
+            <button
+              type="button"
+              className="workflow-run-rerun"
+              data-testid="wf-rerun"
+              onClick={() => onRerun!(run)}
+              title="Re-run the same workflow with the same args"
+            >
+              <span aria-hidden>↻</span>
+              Rerun
+            </button>
+          )}
+          {canCancel && (
+            <button
+              type="button"
+              className="workflow-run-cancel"
+              data-testid="wf-cancel"
+              onClick={() => onCancel!(run)}
+              title="Cancel the running workflow"
+            >
+              Cancel
+            </button>
+          )}
         </div>
       </header>
 
-      {run.error !== undefined && (
-        <div className="workflow-run-error">
-          <strong>Error:</strong> {run.error}
+      {status === "failed" && run.error !== undefined && (
+        <div
+          className="workflow-run-banner tone-bad"
+          data-testid="wf-run-error"
+        >
+          <span className="workflow-run-banner-icon" aria-hidden>
+            <XIcon size={12} />
+          </span>
+          <span className="workflow-run-banner-label">Run failed</span>
+          <span className="workflow-run-banner-message">{run.error}</span>
+          {canRerun && (
+            <button
+              type="button"
+              className="workflow-run-banner-rerun"
+              onClick={() => onRerun!(run)}
+            >
+              Rerun workflow
+            </button>
+          )}
+        </div>
+      )}
+
+      {status === "cancelled" && (
+        <div
+          className="workflow-run-banner tone-warn"
+          data-testid="wf-run-cancelled"
+        >
+          <span className="workflow-run-banner-icon" aria-hidden>
+            <XIcon size={12} />
+          </span>
+          <span className="workflow-run-banner-label">Run cancelled</span>
         </div>
       )}
 
@@ -189,6 +278,9 @@ function PhaseRow({
   collapsed: boolean;
   onToggle: () => void;
 }) {
+  const failedAgents = phase.agents.filter(
+    (a) => a.status === "failed" || a.status === "timeout",
+  );
   return (
     <li
       className="workflow-phase"
@@ -210,10 +302,40 @@ function PhaseRow({
         <span className={`workflow-phase-pill tone-${statusTone(phase.status)}`}>
           {phase.status}
         </span>
+        {failedAgents.length > 0 && (
+          <span
+            className="workflow-phase-failed-count"
+            data-testid="wf-phase-failed"
+          >
+            <XIcon size={9} />
+            {failedAgents.length} failed
+          </span>
+        )}
         <span className="workflow-phase-elapsed">
           {elapsed(phase.startedAtMs, phase.endedAtMs)}
         </span>
       </button>
+      {!collapsed && failedAgents.length > 0 && (
+        <ul
+          className="workflow-phase-errors"
+          data-testid="wf-phase-errors"
+        >
+          {failedAgents.map((a) => (
+            <li
+              key={a.agentId}
+              className="workflow-phase-error-item"
+              data-status={a.status}
+            >
+              <span className="workflow-phase-error-label">{a.label}</span>
+              {a.error !== undefined && (
+                <span className="workflow-phase-error-message">
+                  {a.error}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
       {!collapsed && <AgentList agents={phase.agents} />}
     </li>
   );

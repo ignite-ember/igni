@@ -379,6 +379,28 @@ class WorkflowRunner:
                 await state.proc.wait()
         return True
 
+    async def resume(self, workflow_run_id: str) -> str | None:
+        """Resume a previously-cancelled workflow from where it stopped.
+
+        The CC workflow contract is one-shot — scripts re-run from
+        the top on a fresh call. A true resume requires the
+        workflow script to support resumability (typically via
+        ``args.startFromPhase`` or a saved checkpoint), which the
+        refactor-to-standards.mjs does not. This method exists as
+        the seam for that future work: it returns ``None`` for now
+        so the FE can show a "Resume not supported" hint instead
+        of crashing on a missing RPC.
+
+        For now, callers should fall back to :meth:`run` (which
+        always re-runs from the top — the user re-runs the whole
+        workflow, not just the failed phase).
+        """
+        # TODO(workflow): wire a ``--start-phase`` CLI flag
+        # through ``workflow_runtime.mjs`` + the script's own
+        # ``args`` parsing, then update this method to spawn a
+        # subprocess with the right start arg.
+        return None
+
     # ── Internal tasks ────────────────────────────────────────────
 
     async def _drain_stdout(

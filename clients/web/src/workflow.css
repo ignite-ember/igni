@@ -590,3 +590,211 @@
   font-size: 11px;
   line-height: 1.4;
 }
+
+/* ── Failure UX (banner, per-phase rollup, agent error) ───── */
+
+/* Run-level banner — prominent red strip across the top of the
+   card on failure. Same color treatment as the existing
+   ``workflow-run-error`` but more readable and has an action
+   button on the right. */
+.workflow-run-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-family: var(--font-ui);
+  border-bottom: 1px solid transparent;
+}
+
+.workflow-run-banner.tone-bad {
+  background: color-mix(in srgb, var(--accent-red, #e54848) 14%, transparent);
+  border-bottom-color: color-mix(
+    in srgb,
+    var(--accent-red, #e54848) 35%,
+    transparent
+  );
+  color: var(--accent-red, #e54848);
+}
+
+.workflow-run-banner.tone-warn {
+  background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
+  border-bottom-color: color-mix(
+    in srgb,
+    var(--ember-orange) 35%,
+    transparent
+  );
+  color: var(--ember-orange);
+}
+
+.workflow-run-banner-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.workflow-run-banner-label {
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.workflow-run-banner-message {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.workflow-run-banner-rerun {
+  appearance: none;
+  background: var(--bg-raised);
+  border: 1px solid currentColor;
+  color: inherit;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.workflow-run-banner-rerun:hover {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+/* Per-phase failure count (e.g. "1 failed") in the phase header. */
+.workflow-phase-failed-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--accent-red, #e54848) 14%, transparent);
+  color: var(--accent-red, #e54848);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Per-phase error list — a row of "label: error message" pairs
+   between the phase header and the agent list, only shown when
+   a phase has at least one failed agent. */
+.workflow-phase-errors {
+  list-style: none;
+  margin: 0;
+  padding: 6px 14px 6px 38px;
+  background: color-mix(in srgb, var(--accent-red, #e54848) 8%, transparent);
+  border-top: 1px solid color-mix(
+    in srgb,
+    var(--accent-red, #e54848) 25%,
+    transparent
+  );
+  border-bottom: 1px solid color-mix(
+    in srgb,
+    var(--accent-red, #e54848) 25%,
+    transparent
+  );
+}
+
+.workflow-phase-error-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg);
+  padding: 2px 0;
+}
+
+.workflow-phase-error-item + .workflow-phase-error-item {
+  margin-top: 2px;
+}
+
+.workflow-phase-error-label {
+  color: var(--accent-red, #e54848);
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.workflow-phase-error-message {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* Failed-agent count chip in the run header. */
+.workflow-run-count.count-failed {
+  color: var(--accent-red, #e54848);
+  background: color-mix(in srgb, var(--accent-red, #e54848) 14%, transparent);
+}
+
+/* Rerun button in the run header. */
+.workflow-run-rerun {
+  appearance: none;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.workflow-run-rerun:hover {
+  background: color-mix(in srgb, var(--accent-blue) 8%, var(--bg-raised));
+  border-color: color-mix(in srgb, var(--accent-blue) 40%, var(--border));
+}
+
+.workflow-run-rerun[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Cancel button in the run header (only shown while running). */
+.workflow-run-cancel {
+  appearance: none;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--accent-red, #e54848) 40%, transparent);
+  color: var(--accent-red, #e54848);
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.workflow-run-cancel:hover {
+  background: color-mix(in srgb, var(--accent-red, #e54848) 14%, transparent);
+}

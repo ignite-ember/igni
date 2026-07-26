@@ -1555,6 +1555,37 @@ export default function App() {
     [runUserMessage],
   );
 
+  // ── Workflow actions (rerun / cancel) ─────────────────────────
+  // Both wrap the same ``run_workflow`` / ``cancel_workflow``
+  // RPCs the ``/workflows`` slash command uses, but driven
+  // directly from the chat item so the user can recover from a
+  // failure without re-typing the command.
+  const onRerunWorkflow = useCallback(
+    (run: { name: string; args?: Record<string, unknown> }) => {
+      // Optimistically append a new workflow item so the user
+      // sees the result immediately. The RPC result will fold
+      // into it via the workflow_event reducer.
+      const newItem = workflowItem(run.name, `wf_${Math.random().toString(36).slice(2, 14)}`);
+      setItems((prev) => [...prev, newItem]);
+      void client
+        .rpc("run_workflow", {
+          name: run.name,
+          args: run.args ?? {},
+          session_id: client.sessionId,
+        })
+        .catch((err) => console.warn("run_workflow failed", err));
+    },
+    [client, setItems],
+  );
+  const onCancelWorkflow = useCallback(
+    (run: { workflowRunId: string }) => {
+      void client
+        .rpc("cancel_workflow", { workflow_run_id: run.workflowRunId })
+        .catch((err) => console.warn("cancel_workflow failed", err));
+    },
+    [client],
+  );
+
   // ── Plan-card actions (row 50) ──────────────────────────────────
   // Approve = call ``approve_plan(run_id)`` on the BE so the
   // decision is persisted (survives reload), then send a brief
@@ -2327,6 +2358,8 @@ export default function App() {
                     onApprovePlan={onApprovePlan}
                     onRejectPlan={onRejectPlan}
                     onDispatchVisualizationAction={onDispatchVisualizationAction}
+                    onRerunWorkflow={onRerunWorkflow}
+                    onCancelWorkflow={onCancelWorkflow}
                   />
                 </div>
               );

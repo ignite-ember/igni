@@ -560,6 +560,10 @@ export interface WorkflowRunState {
   events: WorkflowEvent[];
   result?: unknown;
   error?: string;
+  /** The original args dict the user passed to ``run_workflow``.
+   * Set from the ``workflow_started`` event's ``args`` payload so
+   * the FE can re-fire the same command on a Rerun click. */
+  args?: Record<string, unknown>;
 }
 
 export interface WorkflowPhase {
@@ -1253,7 +1257,9 @@ export function reduceWorkflowEvent(
     case "workflow_started": {
       const { name, args } = ev.payload as { name?: string; args?: unknown };
       if (typeof name === "string" && name) run.name = name;
-      void args;
+      if (args && typeof args === "object" && !Array.isArray(args)) {
+        run.args = args as Record<string, unknown>;
+      }
       break;
     }
     case "phase_started": {

@@ -8,7 +8,7 @@
  * status pills + elapsed time.
  */
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { WorkflowRun } from "./WorkflowRun";
 import type { WorkflowRunState } from "../chat/model";
@@ -138,5 +138,129 @@ describe("WorkflowRun — collapse / expand", () => {
     expect(screen.queryByText("assess")).toBeNull();
     fireEvent.click(phaseButton);
     expect(screen.getByText("assess")).toBeDefined();
+  });
+});
+
+describe("WorkflowRun — Rerun + Cancel actions", () => {
+  afterEach(() => cleanup());
+
+  it("shows a Cancel button while running; clicking it calls onCancel", () => {
+    const onCancel = vi.fn();
+    const run = makeRun({ status: "running" });
+    render(<WorkflowRun run={run} onCancel={onCancel} />);
+    const cancelBtn = screen.getByTestId("wf-cancel");
+    expect(cancelBtn).toBeDefined();
+    fireEvent.click(cancelBtn);
+    expect(onCancel).toHaveBeenCalledWith(run);
+  });
+
+  it("hides the Cancel button when the run is not running", () => {
+    const onCancel = vi.fn();
+    const run = makeRun({ status: "completed" });
+    render(<WorkflowRun run={run} onCancel={onCancel} />);
+    expect(screen.queryByTestId("wf-cancel")).toBeNull();
+  });
+
+  it("shows a Rerun button on failure; clicking it calls onRerun with the run", () => {
+    const onRerun = vi.fn();
+    const run = makeRun({
+      status: "failed",
+      error: "boom",
+    });
+    render(<WorkflowRun run={run} onRerun={onRerun} />);
+    const rerunBtn = screen.getByTestId("wf-rerun");
+    expect(rerunBtn).toBeDefined();
+    fireEvent.click(rerunBtn);
+    expect(onRerun).toHaveBeenCalledWith(run);
+  });
+
+  it("shows a Rerun button on cancellation too", () => {
+    const onRerun = vi.fn();
+    const run = makeRun({ status: "cancelled" });
+    render(<WorkflowRun run={run} onRerun={onRerun} />);
+    expect(screen.getByTestId("wf-rerun")).toBeDefined();
+  });
+
+  it("hides the Rerun button on success", () => {
+    const onRerun = vi.fn();
+    const run = makeRun({ status: "completed" });
+    render(<WorkflowRun run={run} onRerun={onRerun} />);
+    expect(screen.queryByTestId("wf-rerun")).toBeNull();
+  });
+
+  it("renders the run-level error banner with the error message", () => {
+    const run = makeRun({ status: "failed", error: "boom — agent timeout" });
+    render(<WorkflowRun run={run} />);
+    const banner = screen.getByTestId("wf-run-error");
+    expect(banner).toBeDefined();
+    expect(banner.textContent).toContain("boom — agent timeout");
+  });
+
+  it("renders a 'X failed' chip in the header when any agent failed", () => {
+    const run = makeRun({
+      status: "failed",
+      phases: [
+        {
+          phaseId: "p1",
+          title: "Design",
+          startedAtMs: 1,
+          endedAtMs: 2,
+          status: "completed",
+          agents: [
+            {
+              agentId: "a1",
+              label: "ok-agent",
+              status: "completed",
+              startedAtMs: 1,
+              endedAtMs: 2,
+            },
+            {
+              agentId: "a2",
+              label: "bad-agent",
+              status: "failed",
+              startedAtMs: 1,
+              endedAtMs: 2,
+              error: "boom",
+            },
+          ],
+        },
+      ],
+    });
+    render(<WorkflowRun run={run} />);
+    const failedChip = screen.getByTestId("wf-failed-count");
+    expect(failedChip.textContent).toContain("1 failed");
+  });
+
+  it("renders per-phase failure count + error message under the phase header", () => {
+    const run = makeRun({
+      status: "failed",
+      phases: [
+        {
+          phaseId: "p1",
+          title: "Design",
+          startedAtMs: 1,
+          endedAtMs: 2,
+          status: "failed",
+          agents: [
+            {
+              agentId: "a1",
+              label: "d-1",
+              status: "failed",
+              startedAtMs: 1,
+              endedAtMs: 2,
+              error: "free-function-with-state-arg still present",
+            },
+          ],
+        },
+      ],
+    });
+    render(<WorkflowRun run={run} />);
+    const phaseFailed = screen.getByTestId("wf-phase-failed");
+    expect(phaseFailed.textContent).toContain("1 failed");
+    const phaseErrors = screen.getByTestId("wf-phase-errors");
+    expect(phaseErrors.textContent).toContain("d-1");
+    expect(phaseErrors.textContent).toContain(
+      "free-function-with-state-arg still present",
+    );
   });
 });

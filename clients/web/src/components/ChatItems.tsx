@@ -1442,6 +1442,8 @@ export const ChatItemView = memo(function ChatItemView({
   onApprovePlan,
   onRejectPlan,
   onDispatchVisualizationAction,
+  onRerunWorkflow,
+  onCancelWorkflow,
 }: {
   item: ChatItem;
   /** Raw markdown text of the assistant turn this stats item closes.
@@ -1480,6 +1482,13 @@ export const ChatItemView = memo(function ChatItemView({
     action: string,
     params: Record<string, unknown>,
   ) => Promise<unknown>;
+  /** Re-fire the same workflow with the same args. Wired to the
+   *  "Rerun" button on a failed / cancelled ``workflow`` chat
+   *  item. */
+  onRerunWorkflow?: (run: Extract<ChatItem, { kind: "workflow" }>["run"]) => void;
+  /** Stop a running workflow. Wired to the "Cancel" button on a
+   *  ``workflow`` chat item whose status is ``running``. */
+  onCancelWorkflow?: (run: Extract<ChatItem, { kind: "workflow" }>["run"]) => void;
 }) {
   switch (item.kind) {
     case "attachments":
@@ -1512,7 +1521,13 @@ export const ChatItemView = memo(function ChatItemView({
         />
       );
     case "workflow":
-      return <WorkflowRun run={item.run} />;
+      return (
+        <WorkflowRun
+          run={item.run}
+          onRerun={onRerunWorkflow}
+          onCancel={onCancelWorkflow}
+        />
+      );
     case "loop":
       return <LoopIterationCard item={item} />;
     case "compact":

@@ -251,8 +251,12 @@ class RpcMethod(StrEnum):
     # the meta block of every workflow; ``run_workflow`` spawns
     # one, returns the ``workflow_run_id`` immediately, and
     # streams progress on the ``workflow_event`` push channel.
+    # ``cancel_workflow`` stops a running subprocess cleanly
+    # (writes a cancel message, escalates to SIGTERM after a
+    # grace period).
     LIST_WORKFLOWS = "list_workflows"
     RUN_WORKFLOW = "run_workflow"
+    CANCEL_WORKFLOW = "cancel_workflow"
 
     # ── Plugins ───────────────────────────────────────────────────
     GET_PLUGIN_DETAILS = "get_plugin_details"

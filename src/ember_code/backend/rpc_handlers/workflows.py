@@ -69,6 +69,30 @@ class WorkflowsRpcHandler(RpcHandler):
         )
         return {"workflow_run_id": workflow_run_id, "name": name}
 
+    @rpc(RpcMethod.CANCEL_WORKFLOW)
+    async def cancel_workflow(self, args: dict) -> dict[str, Any]:
+        """Stop a running workflow. The runner writes a
+        ``{"type":"cancel"}`` line to the subprocess stdin and
+        escalates to SIGTERM after a grace period.
+
+        Returns ``{"cancelled": true}`` if a run was found and
+        signalled, ``{"cancelled": false}`` if no such run is
+        active (already completed, already cancelled, or
+        unknown id — all the same outcome from the caller's
+        perspective).
+        """
+        runner = getattr(self._ctx.backend, "workflow_runner", None)
+        if runner is None:
+            raise RuntimeError(
+                "workflow_runner not initialised — BackendApp.run "
+                "didn't construct one (check the boot path)"
+            )
+        workflow_run_id = str(args.get("workflow_run_id", ""))
+        if not workflow_run_id:
+            raise ValueError("cancel_workflow: 'workflow_run_id' is required")
+        cancelled = await runner.cancel(workflow_run_id)
+        return {"cancelled": bool(cancelled), "workflow_run_id": workflow_run_id}
+
     def _resolve_session(self, session_id: str) -> "Session":
         """Look up the live :class:`Session` for ``session_id``.
 

@@ -219,3 +219,56 @@ async def test_rpc_method_enum_values_match_wire_string() -> None:
     string drift)."""
     assert RpcMethod.LIST_WORKFLOWS.value == "list_workflows"
     assert RpcMethod.RUN_WORKFLOW.value == "run_workflow"
+
+async def test_cancel_workflow_returns_cancelled_true_when_run_exists() -> None:
+    """``cancel_workflow`` calls the runner's ``cancel`` and
+    surfaces the boolean as a dict."""
+    runner = MagicMock()
+    runner.cancel = AsyncMock(return_value=True)
+    handler = _make_handler(runner=runner)
+
+    out = await handler.cancel_workflow({"workflow_run_id": "wf_abc"})
+
+    assert out == {"cancelled": True, "workflow_run_id": "wf_abc"}
+    runner.cancel.assert_awaited_once_with("wf_abc")
+
+
+async def test_cancel_workflow_returns_cancelled_false_when_no_run() -> None:
+    """If the runner doesn't have the run (already completed,
+    cancelled, or unknown id), the handler returns ``cancelled:
+    false`` — the caller's UI shows "already stopped"."""
+    runner = MagicMock()
+    runner.cancel = AsyncMock(return_value=False)
+    handler = _make_handler(runner=runner)
+
+    out = await handler.cancel_workflow({"workflow_run_id": "wf_unknown"})
+
+    assert out == {"cancelled": False, "workflow_run_id": "wf_unknown"}
+
+
+async def test_cancel_workflow_surfaces_runtime_error() -> None:
+    """If the runner's cancel hits a runtime error (e.g. the
+    BE hasn't booted the runner), the handler propagates it."""
+    runner = MagicMock()
+    runner.cancel = AsyncMock(
+        side_effect=RuntimeError("workflow_runner not initialised")
+    )
+    handler = _make_handler(runner=runner)
+
+    with pytest.raises(RuntimeError, match="workflow_runner not initialised"):
+        await handler.cancel_workflow({"workflow_run_id": "wf_x"})
+
+
+async def test_cancel_workflow_rejects_empty_id() -> None:
+    """Empty id is a programmer error — fail fast, don't touch
+    the runner."""
+    runner = MagicMock()
+    handler = _make_handler(runner=runner)
+    with pytest.raises(ValueError, match="'workflow_run_id' is required"):
+        await handler.cancel_workflow({})
+    runner.cancel.assert_not_called()
+
+
+def test_rpc_method_includes_cancel_workflow() -> None:
+    """The wire string for the new RPC matches the enum value."""
+    assert RpcMethod.CANCEL_WORKFLOW.value == "cancel_workflow"
