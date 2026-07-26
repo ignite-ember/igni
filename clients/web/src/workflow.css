@@ -62,9 +62,10 @@
   height: 18px;
   border-radius: 50%;
   border: 1.5px solid currentColor;
-  font-size: 10px;
   line-height: 1;
   flex-shrink: 0;
+  padding: 2px;
+  box-sizing: border-box;
 }
 
 .workflow-run[data-status="running"] .workflow-run-glyph { color: var(--accent-blue); }
@@ -243,25 +244,18 @@
   align-items: center;
   justify-content: center;
   color: var(--fg-faint);
-  transition: transform 120ms ease-out;
   flex-shrink: 0;
   cursor: pointer;
-  font-size: 10px;
-}
-
-.workflow-phase[data-collapsed="true"] .workflow-phase-caret {
-  transform: rotate(-90deg);
 }
 
 .workflow-phase-node {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: currentColor;
+  width: 14px;
+  height: 14px;
   flex-shrink: 0;
+  color: var(--fg-faint);
 }
 
 .workflow-phase[data-status="running"] .workflow-phase-node { color: var(--accent-blue); }
@@ -380,6 +374,9 @@
   border-radius: 50%;
   background: currentColor;
   flex-shrink: 0;
+  /* Empty — the dot is the glyph. The status color comes
+     from currentColor, which the host element sets via the
+     ``data-status`` attribute. */
 }
 
 .workflow-agent[data-status="running"] .workflow-agent-glyph { color: var(--accent-blue); }
@@ -546,6 +543,19 @@
   background: color-mix(in srgb, var(--accent-blue) 4%, transparent);
 }
 
+/* Chevron icon — rotates 90° when the parent <details> is
+   open. Same pattern as the plan card / tool card. */
+.workflow-run-result > summary > svg {
+  color: var(--fg-faint);
+  transition: transform 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.workflow-run-result[open] > summary > svg {
+  transform: rotate(90deg);
+  color: var(--fg-muted);
+}
+
 .workflow-run-result-label {
   font-weight: 600;
   color: var(--fg-muted);
@@ -554,28 +564,7 @@
   text-transform: uppercase;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
   flex-shrink: 0;
-}
-
-.workflow-run-result-chevron {
-  appearance: none;
-  background: transparent;
-  border: none;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--fg-faint);
-  transition: transform 120ms ease-out;
-  flex-shrink: 0;
-  font-size: 9px;
-  cursor: pointer;
-}
-
-.workflow-run-result[open] .workflow-run-result-chevron {
-  transform: rotate(90deg);
-  color: var(--fg-muted);
 }
 
 .workflow-run-result-summary {

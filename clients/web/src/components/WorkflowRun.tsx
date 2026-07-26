@@ -22,6 +22,7 @@ import type {
   WorkflowPhase,
   WorkflowRunState,
 } from "../chat/model";
+import { CheckIcon, ChevronIcon, CircleIcon, StatusIcon } from "./Icons";
 
 function fmtDuration(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) return "—";
@@ -78,13 +79,7 @@ export function WorkflowRun({ run }: { run: WorkflowRunState }) {
     <div className="workflow-run" data-status={status}>
       <header className="workflow-run-header">
         <span className="workflow-run-glyph" aria-hidden>
-          {status === "completed"
-            ? "✓"
-            : status === "failed"
-              ? "✗"
-              : status === "cancelled"
-                ? "⊘"
-                : "●"}
+          <StatusIcon status={status} size={11} />
         </span>
         <div className="workflow-run-title">
           <span className="workflow-run-name">{run.name}</span>
@@ -96,7 +91,7 @@ export function WorkflowRun({ run }: { run: WorkflowRunState }) {
           {runningAgents > 0 && (
             <span className="workflow-run-count count-running">
               <span className="workflow-run-count-icon" aria-hidden>
-                ●
+                <CircleIcon size={9} filled />
               </span>
               {runningAgents}
             </span>
@@ -104,7 +99,7 @@ export function WorkflowRun({ run }: { run: WorkflowRunState }) {
           {totalAgents > 0 && (
             <span className="workflow-run-count count-done">
               <span className="workflow-run-count-icon" aria-hidden>
-                ✓
+                <CheckIcon size={9} />
               </span>
               {completedAgents} / {totalAgents}
             </span>
@@ -142,12 +137,8 @@ export function WorkflowRun({ run }: { run: WorkflowRunState }) {
       {run.result !== undefined && (
         <details className="workflow-run-result">
           <summary>
-            <span className="workflow-run-result-label">
-              <span className="workflow-run-result-chevron" aria-hidden>
-                ▸
-              </span>
-              Result
-            </span>
+            <ChevronIcon size={12} />
+            <span className="workflow-run-result-label">Result</span>
             {resultSummary !== null && (
               <span className="workflow-run-result-summary">
                 {resultSummary}
@@ -204,11 +195,12 @@ function PhaseRow({
         className="workflow-phase-header"
         onClick={onToggle}
         aria-expanded={!collapsed}
+        aria-label={collapsed ? "Expand" : "Collapse"}
       >
-        <span className="workflow-phase-caret" aria-hidden>
-          ▾
+        <ChevronIcon size={12} down={!collapsed} />
+        <span className="workflow-phase-node" aria-hidden>
+          <StatusIcon status={phase.status} size={10} />
         </span>
-        <span className="workflow-phase-node" aria-hidden />
         <span className="workflow-phase-title">{phase.title}</span>
         <span className={`workflow-phase-pill tone-${statusTone(phase.status)}`}>
           {phase.status}
