@@ -150,6 +150,109 @@ async def test_resolve_unknown_returns_none(tmp_path: Path) -> None:
     assert await disc.resolve("does-not-exist") is None
 
 
+async def test_user_layer_shadows_team_layer(tmp_path: Path) -> None:
+    """A workflow with the same name in both layers is resolved to
+    the user-layer copy. ``list_workflows`` returns one entry
+    per name (no duplicates). The path field reports the
+    user-layer location.
+    """
+    team_dir = tmp_path / ".claude" / "workflows"
+    user_dir = tmp_path / ".ember" / "workflows"
+    team_dir.mkdir(parents=True)
+    user_dir.mkdir(parents=True)
+    (team_dir / "shared.mjs").write_text(
+        "export const meta = { name: 'team-version' }\n"
+    )
+    (user_dir / "shared.mjs").write_text(
+        "export const meta = { name: 'user-version' }\n"
+    )
+    (user_dir / "personal.mjs").write_text(
+        "export const meta = { name: 'personal' }\n"
+    )
+
+    async def fake_exec(*args, **kwargs):
+        path = Path(args[2])
+        name = path.stem
+        # Read the file's meta line to determine which copy ran.
+        with open(path) as f:
+            first_line = f.readline().strip()
+        if "team-version" in first_line:
+            label = "team-version"
+        else:
+            label = "user-version" if "user-version" in first_line else "personal"
+        line = json.dumps(
+            {
+                "ts": 0,
+                "run_id": "discovery",
+                "seq": 0,
+                "type": "workflow_meta",
+                "payload": {
+                    "meta": {"name": label, "phases": []},
+                    "path": str(path.relative_to(tmp_path)),
+                },
+            }
+        )
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(
+            return_value=((line + "\n").encode("utf-8"), b"")
+        )
+        proc.returncode = 0
+        return proc
+
+    import ember_code.backend.workflow_runner as runner_mod
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(runner_mod.asyncio, "create_subprocess_exec", fake_exec)
+        disc = WorkflowDiscovery(project_dir=tmp_path)
+        result = await disc.list_workflows()
+        # Two unique workflows (one deduplicated by shadow).
+        assert [env.meta.name for env in result] == ["personal", "user-version"]
+        # The shadowed "shared" name resolves to user-version.
+        shared = await disc.resolve("shared")
+        assert shared is not None
+        assert shared.meta.name == "user-version"
+        assert shared.path == ".ember/workflows/shared.mjs"
+
+
+async def test_discovery_scans_both_layers_independently(tmp_path: Path) -> None:
+    """The two layers are scanned independently — a project with
+    only a user layer (no team layer) still works, and vice versa.
+    """
+    user_dir = tmp_path / ".ember" / "workflows"
+    user_dir.mkdir(parents=True)
+    (user_dir / "user-only.mjs").write_text(
+        "export const meta = { name: 'user-only' }\n"
+    )
+
+    async def fake_exec(*args, **kwargs):
+        path = Path(args[2])
+        line = json.dumps(
+            {
+                "ts": 0,
+                "run_id": "discovery",
+                "seq": 0,
+                "type": "workflow_meta",
+                "payload": {
+                    "meta": {"name": "user-only", "phases": []},
+                    "path": str(path.relative_to(tmp_path)),
+                },
+            }
+        )
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(
+            return_value=((line + "\n").encode("utf-8"), b"")
+        )
+        proc.returncode = 0
+        return proc
+
+    import ember_code.backend.workflow_runner as runner_mod
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(runner_mod.asyncio, "create_subprocess_exec", fake_exec)
+        disc = WorkflowDiscovery(project_dir=tmp_path)
+        result = await disc.list_workflows()
+        assert [env.meta.name for env in result] == ["user-only"]
+        assert result[0].path == ".ember/workflows/user-only.mjs"
+
+
 async def test_event_drain_persists_and_pushes(tmp_path: Path) -> None:
     """Three stdout lines → three session.append_event + three push calls."""
     lines = [

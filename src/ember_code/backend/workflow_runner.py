@@ -64,9 +64,21 @@ logger = logging.getLogger(__name__)
 # Path to the Node bridge runtime (ships next to this module).
 RUNTIME_PATH = Path(__file__).parent / "workflow_runtime.mjs"
 
-# Where we look for workflow files by default. Overridable per
-# :class:`WorkflowDiscovery` instantiation (e.g. for tests).
-DEFAULT_WORKFLOW_DIR = Path(".claude") / "workflows"
+# Where we look for workflow files. Two layers:
+#
+# 1. **Team layer** (committed to the repo): ``<project>/.claude/workflows``
+#    — the CC convention. Workflows that ship with the project and
+#    are version-controlled alongside the code.
+#
+# 2. **Per-user layer** (uncommitted): ``<project>/.ember/workflows`` —
+#    personal overrides or additions that don't belong in the repo.
+#    Same convention as ``.ember/skills/`` / ``.ember/agents/`` /
+#    ``.ember/hooks/`` already in use.
+#
+# On name collisions, the per-user layer wins (typical override
+# semantics: your local copy is the source of truth for you).
+DEFAULT_WORKFLOW_DIR_TEAM = Path(".claude") / "workflows"
+DEFAULT_WORKFLOW_DIR_USER = Path(".ember") / "workflows"
 
 # Per-agent timeout. 10 minutes matches ClaudeCode's default for
 # one-shot agent calls. Workflow callers can override per call via
@@ -81,38 +93,92 @@ CANCEL_GRACE_SECONDS = 5.0
 
 
 class WorkflowDiscovery:
-    """Scan a directory of ``.mjs`` files and read their ``meta`` export.
+    """Scan two workflow directories and read each file's ``meta`` export.
 
-    The discovery path spawns the runtime once per file with
-    ``--discovery``, which evaluates the file in a fresh
-    :class:`vm.Script` context and emits a single ``workflow_meta``
-    event. Cached by mtime — re-running discovery on a directory
-    that hasn't changed is free.
+    Workflows live in two layers:
+
+    1. **Team layer** — ``<project>/.claude/workflows``. The CC
+       convention; workflows that ship with the project and are
+       version-controlled.
+    2. **Per-user layer** — ``<project>/.ember/workflows``. The
+       Ember override directory; personal additions or
+       replacements that don't belong in the repo.
+
+    On name collisions the per-user layer wins (you can
+    override a team workflow by placing a file with the same
+    stem in ``.ember/workflows/``). Discovery spawns the
+    runtime once per file with ``--discovery`` (evaluates the
+    file in a fresh :class:`vm.Script` context and emits a
+    single ``workflow_meta`` event). Cached by mtime per file.
     """
 
     def __init__(self, *, project_dir: Path):
         self._project_dir = Path(project_dir)
-        self._workflows_dir = self._project_dir / DEFAULT_WORKFLOW_DIR
+        self._team_dir = self._project_dir / DEFAULT_WORKFLOW_DIR_TEAM
+        self._user_dir = self._project_dir / DEFAULT_WORKFLOW_DIR_USER
         self._cache: dict[Path, tuple[float, WorkflowMetaEnvelope]] = {}
 
     @property
     def workflows_dir(self) -> Path:
-        return self._workflows_dir
+        """The team-layer directory (``.claude/workflows``).
+
+        Exists for backwards compat with any caller that read the
+        single ``workflows_dir`` attribute — most should now
+        use :meth:`list_workflows` which walks both layers.
+        """
+        return self._team_dir
+
+    def _iter_paths(self) -> list[Path]:
+        """All ``*.mjs`` files across both layers, with the
+        per-user layer listed LAST so it wins name collisions in
+        the shadow pass (later entries overwrite earlier ones).
+        """
+        out: list[Path] = []
+        if self._team_dir.is_dir():
+            out.extend(sorted(self._team_dir.glob("*.mjs")))
+        if self._user_dir.is_dir():
+            out.extend(sorted(self._user_dir.glob("*.mjs")))
+        return out
+
+    def _shadow(self, paths: list[Path]) -> dict[str, Path]:
+        """Reduce a list of paths to ``{name: path}``; later
+        entries shadow earlier ones.
+
+        ``name`` is the file stem (``refactor-to-standards`` for
+        ``refactor-to-standards.mjs``). Callers pass paths in
+        team-first / user-last order so the user layer wins.
+        """
+        out: dict[str, Path] = {}
+        for p in paths:
+            out[p.stem] = p
+        return out
 
     async def list_workflows(self) -> list[WorkflowMetaEnvelope]:
-        """Return every workflow's meta, scanning if the dir changed."""
-        if not self._workflows_dir.is_dir():
-            return []
+        """Return every workflow's meta, user-layer shadows team-layer.
+
+        Sorted by workflow name (the user-visible label) for a
+        stable ``?demo=workflow`` rendering and a predictable
+        CLI completion order.
+        """
+        shadowed = self._shadow(self._iter_paths())
         results: list[WorkflowMetaEnvelope] = []
-        for path in sorted(self._workflows_dir.glob("*.mjs")):
-            env = await self._meta_for(path)
+        for name in sorted(shadowed):
+            env = await self._meta_for(shadowed[name])
             if env is not None:
                 results.append(env)
         return results
 
     async def resolve(self, name: str) -> WorkflowMetaEnvelope | None:
-        """Return the meta for a single named workflow (or ``None``)."""
-        for path in sorted(self._workflows_dir.glob("*.mjs")):
+        """Return the meta for a single named workflow.
+
+        User-layer wins on conflict — same shadow semantics as
+        :meth:`list_workflows`. The ``_iter_paths`` ordering has
+        team first and user second, so a plain ``for`` over it
+        would return the team version. We reverse-iterate to
+        find the user-layer match first, falling back to team
+        if the user layer doesn't define this name.
+        """
+        for path in reversed(self._iter_paths()):
             if path.stem == name:
                 return await self._meta_for(path)
         return None
