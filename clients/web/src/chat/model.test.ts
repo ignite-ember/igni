@@ -1235,3 +1235,89 @@ describe("formatResultSummary", () => {
     expect(out).toBe("needs-attention · design: architectural-OOP · 12 passed, 3 failed");
   });
 });
+
+describe("reduceWorkflowEvent — failure tape", () => {
+  it("treats workflow_completed{status: 'failed'} as a failed run", () => {
+    let items: ChatItem[] = [];
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("workflow_started", {}, 0),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("phase_started", { phase_id: "p1", title: "Design" }, 1),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("agent_started", { id: "a1", label: "design" }, 2),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("agent_completed", {
+        id: "a1", label: "design", status: "failed",
+        error: "boom",
+      }, 3),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("phase_completed", { phase_id: "p1", status: "failed" }, 4),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("workflow_failed", { error: "Design phase failed" }, 5),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("workflow_completed", {
+        status: "failed",
+        result: { status: "needs-attention" },
+      }, 6),
+    );
+    if (items[0].kind !== "workflow") return;
+    expect(items[0].run.status).toBe("failed");
+    expect(items[0].run.error).toBe("Design phase failed");
+  });
+});
+
+describe("reduceWorkflowEvent — failure tape", () => {
+  it("treats workflow_completed{status: 'failed'} as a failed run", () => {
+    let items: ChatItem[] = [];
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("workflow_started", {}, 0),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("phase_started", { phase_id: "p1", title: "Design" }, 1),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("agent_started", { id: "a1", label: "design" }, 2),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("agent_completed", {
+        id: "a1", label: "design", status: "failed",
+        error: "boom",
+      }, 3),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("phase_completed", { phase_id: "p1", status: "failed" }, 4),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("workflow_failed", { error: "Design phase failed" }, 5),
+    );
+    items = reduceWorkflowEvent(
+      items,
+      wfEvent("workflow_completed", {
+        status: "failed",
+        result: { status: "needs-attention" },
+      }, 6),
+    );
+    if (items[0].kind !== "workflow") return;
+    expect(items[0].run.status).toBe("failed");
+    expect(items[0].run.error).toBe("Design phase failed");
+  });
+});

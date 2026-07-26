@@ -272,6 +272,134 @@ const EVENTS: WorkflowEvent[] = [
   },
 ];
 
+// ── Failed-run tape (the same workflow, but with one failed
+//    reviewer + a failed phase + a run-level error). Same shape
+//    as EVENTS so the same reducer + component render the whole
+//    failure UX (banner, per-phase rollup, Rerun/Cancel buttons).
+const FAILED_TAPE: WorkflowEvent[] = [
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(0), seq: 0, type: "workflow_started",
+    payload: { name: "refactor-to-standards", args: { file: "src/example.py" } },
+  },
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(1), seq: 1, type: "phase_started",
+    payload: { phase_id: "phase_1_demo", title: "Assess" },
+  },
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(2), seq: 2, type: "agent_started",
+    payload: { id: "req_assess", label: "assess", phase: "Assess" },
+  },
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(3), seq: 3, type: "agent_completed",
+    payload: {
+      id: "req_assess", label: "assess", status: "completed",
+      result: { file_summary: "Module-level functions, no classes.", oop_offenders: 3 },
+    },
+  },
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(4), seq: 4, type: "log",
+    payload: { text: "Audit complete: 3 OOP offenders found." },
+  },
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(5), seq: 5, type: "phase_completed",
+    payload: { phase_id: "phase_1_demo", status: "completed" },
+  },
+
+  // Design: 3 parallel designers, 1 succeeds, 2 fail.
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(6), seq: 6, type: "phase_started",
+    payload: { phase_id: "phase_2_demo", title: "Design" },
+  },
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(7), seq: 7, type: "parallel_started",
+    payload: { group_id: "par_design", lane_count: 3 },
+  },
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(8), seq: 8, type: "agent_started",
+    payload: { id: "req_d_minimal", label: "design:oop-minimal", phase: "Design" },
+  },
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(8), seq: 9, type: "agent_started",
+    payload: { id: "req_d_arch", label: "design:oop-architectural", phase: "Design" },
+  },
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(8), seq: 10, type: "agent_started",
+    payload: { id: "req_d_cons", label: "design:oop-consistency", phase: "Design" },
+  },
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(9), seq: 11, type: "agent_completed",
+    payload: {
+      id: "req_d_minimal", label: "design:oop-minimal", status: "completed",
+      result: { approach_name: "minimal-OOP", target_grade: "B+" },
+    },
+  },
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(10), seq: 12, type: "agent_completed",
+    payload: {
+      id: "req_d_arch", label: "design:oop-architectural", status: "failed",
+      error: "free-function-with-state-arg still present in d-architectural",
+    },
+  },
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(10), seq: 13, type: "agent_completed",
+    payload: {
+      id: "req_d_cons", label: "design:oop-consistency", status: "timeout",
+      error: "agent timed out after 600s",
+    },
+  },
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(11), seq: 14, type: "parallel_completed",
+    payload: { group_id: "par_design", status: "failed" },
+  },
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(12), seq: 15, type: "log",
+    payload: { text: "Design phase failed — 2 of 3 lanes broken." },
+  },
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(13), seq: 16, type: "phase_completed",
+    payload: { phase_id: "phase_2_demo", status: "failed" },
+  },
+
+  // Run-level failure.
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(14), seq: 17, type: "workflow_failed",
+    payload: {
+      error: "Design phase failed: 2 of 3 design lanes reported blockers",
+    },
+  },
+  {
+    workflow_run_id: RUN_ID, name: "refactor-to-standards",
+    ts: ts(15), seq: 18, type: "workflow_completed",
+    payload: {
+      status: "failed",
+      result: {
+        target: "src/example.py",
+        status: "needs-attention",
+        chosen_design: "minimal-OOP",
+        verification: { tests_passed: 0, tests_failed: 0 },
+      },
+    },
+  },
+];
+
 // ── Replay loop ──────────────────────────────────────────────────
 
 type Status = "idle" | "streaming" | "done";
@@ -298,34 +426,40 @@ export function WorkflowDemo() {
     setStatus("idle");
   }, [stop]);
 
-  const start = useCallback(() => {
-    reset();
-    setStatus("streaming");
-    // Optimistic card so the user sees something before the first
-    // event lands.
-    setItems([workflowItem("refactor-to-standards", RUN_ID)]);
-    let pos = 0;
-    timerRef.current = window.setInterval(() => {
-      pos = Math.min(EVENTS.length, pos + 1);
-      setCursor(pos);
-      setItems((prev) => reduceWorkflowEvent(prev, EVENTS[pos - 1]));
-      if (pos >= EVENTS.length) {
-        stop();
-        setStatus("done");
-      }
-    }, STEP_MS);
-  }, [reset, stop]);
+  const start = useCallback(
+    (tape: WorkflowEvent[] = EVENTS) => {
+      reset();
+      setStatus("streaming");
+      // Optimistic card so the user sees something before the first
+      // event lands.
+      setItems([workflowItem("refactor-to-standards", RUN_ID)]);
+      let pos = 0;
+      timerRef.current = window.setInterval(() => {
+        pos = Math.min(tape.length, pos + 1);
+        setCursor(pos);
+        setItems((prev) => reduceWorkflowEvent(prev, tape[pos - 1]));
+        if (pos >= tape.length) {
+          stop();
+          setStatus("done");
+        }
+      }, STEP_MS);
+    },
+    [reset, stop],
+  );
 
-  const jumpToEnd = useCallback(() => {
-    reset();
-    let next: ChatItem[] = [workflowItem("refactor-to-standards", RUN_ID)];
-    for (const ev of EVENTS) {
-      next = reduceWorkflowEvent(next, ev);
-    }
-    setItems(next);
-    setCursor(EVENTS.length);
-    setStatus("done");
-  }, [reset]);
+  const jumpToEnd = useCallback(
+    (tape: WorkflowEvent[] = EVENTS) => {
+      reset();
+      let next: ChatItem[] = [workflowItem("refactor-to-standards", RUN_ID)];
+      for (const ev of tape) {
+        next = reduceWorkflowEvent(next, ev);
+      }
+      setItems(next);
+      setCursor(tape.length);
+      setStatus("done");
+    },
+    [reset],
+  );
 
   // Free the timer on unmount.
   useEffect(() => () => stop(), [stop]);
@@ -352,18 +486,36 @@ export function WorkflowDemo() {
           <button
             type="button"
             data-testid="wf-stream"
-            onClick={start}
+            onClick={() => start(EVENTS)}
             disabled={status === "streaming"}
           >
-            Stream (150ms/event)
+            Stream success (150ms/event)
+          </button>
+          <button
+            type="button"
+            data-testid="wf-stream-failed"
+            onClick={() => start(FAILED_TAPE)}
+            disabled={status === "streaming"}
+            title="Replay a failure scenario: 2 of 3 design lanes fail,
+              the phase fails, the run ends with a Rerun button visible."
+          >
+            Stream failure
           </button>
           <button
             type="button"
             data-testid="wf-jump"
-            onClick={jumpToEnd}
+            onClick={() => jumpToEnd(EVENTS)}
             disabled={status === "streaming"}
           >
-            Jump to end
+            Jump to success
+          </button>
+          <button
+            type="button"
+            data-testid="wf-jump-failed"
+            onClick={() => jumpToEnd(FAILED_TAPE)}
+            disabled={status === "streaming"}
+          >
+            Jump to failure
           </button>
           <button
             type="button"
@@ -396,7 +548,19 @@ export function WorkflowDemo() {
         ) : (
           items.map((item) => (
             <div key={item.id} className="wf-demo-item">
-              <WorkflowRun run={item.kind === "workflow" ? item.run : null as never} />
+              <WorkflowRun
+                run={item.kind === "workflow" ? item.run : (null as never)}
+                onRerun={(_run) => {
+                  // Demo: clicking Rerun in the demo is a no-op.
+                  // In a real session this would re-fire the
+                  // run_workflow RPC with the same name + args.
+                }}
+                onCancel={(_run) => {
+                  // Demo: clicking Cancel in the demo is a no-op.
+                  // In a real session this would call the
+                  // cancel_workflow RPC.
+                }}
+              />
             </div>
           ))
         )}
@@ -405,11 +569,20 @@ export function WorkflowDemo() {
       <style>{`
         .wf-demo {
           max-width: 900px;
-          margin: 24px auto;
+          margin: 0 auto;
           padding: 24px;
           font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
           color: var(--fg);
+          /* Constrain the whole demo to the viewport so the
+             body becomes scrollable rather than the page
+             itself — the user never has to scroll the demo
+             shell, only the workflow card inside it. */
+          height: 100vh;
+          display: flex;
+          flex-direction: column;
         }
+        .wf-demo > header { flex: 0 0 auto; }
+        .wf-demo > main { flex: 1 1 auto; min-height: 0; }
         .wf-demo header { margin-bottom: 24px; }
         .wf-demo h1 { font-size: 18px; margin: 0 0 8px; }
         .wf-demo-hint {
@@ -457,6 +630,43 @@ export function WorkflowDemo() {
           display: flex;
           flex-direction: column;
           gap: 16px;
+          /* The full 5-phase + 9-agent run card is ~900 px tall
+             on its own — too big to fit on one screen next to the
+             page header + controls. Constrain the body to a
+             viewport-sized scrollable region so the user can pan
+             the full card without leaving the page. */
+          max-height: min(70vh, 720px);
+          overflow-y: auto;
+          padding: 4px 4px 12px;
+          /* Fade out the top + bottom of the scroll region so it's
+             obvious the content continues. */
+          mask-image: linear-gradient(
+            to bottom,
+            transparent 0,
+            black 12px,
+            black calc(100% - 12px),
+            transparent 100%
+          );
+          -webkit-mask-image: linear-gradient(
+            to bottom,
+            transparent 0,
+            black 12px,
+            black calc(100% - 12px),
+            transparent 100%
+          );
+        }
+
+        /* Custom thin scrollbar so the fade-out masks don't fight
+           with a chunky default one. */
+        .wf-demo-body::-webkit-scrollbar {
+          width: 6px;
+        }
+        .wf-demo-body::-webkit-scrollbar-thumb {
+          background: var(--border);
+          border-radius: 3px;
+        }
+        .wf-demo-body::-webkit-scrollbar-track {
+          background: transparent;
         }
         .wf-demo-empty {
           padding: 40px;

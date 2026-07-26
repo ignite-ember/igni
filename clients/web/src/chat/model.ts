@@ -1351,10 +1351,16 @@ export function reduceWorkflowEvent(
     }
     case "workflow_completed": {
       const { status, result } = ev.payload as {
-        status?: "completed" | "cancelled";
+        status?: "completed" | "cancelled" | "failed";
         result?: unknown;
       };
-      run.status = status === "cancelled" ? "cancelled" : "completed";
+      if (status === "failed") {
+        run.status = "failed";
+      } else if (status === "cancelled") {
+        run.status = "cancelled";
+      } else {
+        run.status = "completed";
+      }
       run.endedAtMs = ev.ts;
       run.result = result;
       break;
