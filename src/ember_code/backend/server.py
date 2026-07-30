@@ -99,7 +99,7 @@ if TYPE_CHECKING:
         SlashCommandEntry,
     )
     from ember_code.backend.schemas_plan import LatestPlanResult
-    from ember_code.backend.schemas_rpc import CloudPlan, LoginResult
+    from ember_code.backend.schemas_rpc import CloudPlan, GroupPolicyPackResult, LoginResult
     from ember_code.backend.schemas_search import SearchCodeResult
     from ember_code.backend.schemas_visualization import VisualizationActionResult
     from ember_code.backend.server_files import (
@@ -1116,6 +1116,10 @@ class BackendServer:
     def get_output_styles(self) -> OutputStylesResult:
         """See :meth:`PanelsController.output_styles`."""
         return self.panels.output_styles()
+
+    def get_group_policy(self) -> GroupPolicyPackResult:
+        """See :meth:`PanelsController.group_policy`."""
+        return self.panels.group_policy()
 
     def get_slash_commands(self) -> list[SlashCommandEntry]:
         """See :meth:`PanelsController.slash_commands`."""

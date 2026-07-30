@@ -240,7 +240,7 @@ class HitlController:
                 requirements=main_resolved_reqs,
                 stream=True,
                 stream_events=True,
-            )
+            )  # type: ignore[call-overload]  # kwargs + agno overload interplay
         ):
             yield proto
 

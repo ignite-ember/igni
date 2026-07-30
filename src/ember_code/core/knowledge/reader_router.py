@@ -33,23 +33,23 @@ from agno.knowledge.reader.youtube_reader import YouTubeReader
 try:
     from agno.knowledge.reader.docx_reader import DocxReader as _DocxReader
 except ImportError:
-    _DocxReader = None  # type: ignore[assignment]
+    _DocxReader = None  # type: ignore[assignment,misc]
 try:
     from agno.knowledge.reader.pptx_reader import PPTXReader as _PPTXReader
 except ImportError:
-    _PPTXReader = None  # type: ignore[assignment]
+    _PPTXReader = None  # type: ignore[assignment,misc]
 try:
     from agno.knowledge.reader.excel_reader import ExcelReader as _ExcelReader
 except ImportError:
-    _ExcelReader = None  # type: ignore[assignment]
+    _ExcelReader = None  # type: ignore[assignment,misc]
 try:
     from agno.knowledge.reader.csv_reader import CSVReader as _CSVReader
 except ImportError:
-    _CSVReader = None  # type: ignore[assignment]
+    _CSVReader = None  # type: ignore[assignment,misc]
 try:
     from agno.knowledge.reader.json_reader import JSONReader as _JSONReader
 except ImportError:
-    _JSONReader = None  # type: ignore[assignment]
+    _JSONReader = None  # type: ignore[assignment,misc]
 
 _OPTIONAL_READERS: dict[str, type[Any]] = {
     suffix: cls

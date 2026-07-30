@@ -28,7 +28,9 @@ from ember_code.backend.schemas_workflows import WorkflowMetaEnvelope
 from ember_code.protocol.rpc import RpcMethod
 
 
-def _envelope(name: str = "smoke", path: str = ".claude/workflows/smoke.mjs") -> WorkflowMetaEnvelope:
+def _envelope(
+    name: str = "smoke", path: str = ".claude/workflows/smoke.mjs"
+) -> WorkflowMetaEnvelope:
     """A canned discovery result the runner would emit."""
     from ember_code.backend.schemas_workflows import WorkflowMeta
 
@@ -43,7 +45,9 @@ def _envelope(name: str = "smoke", path: str = ".claude/workflows/smoke.mjs") ->
     )
 
 
-def _make_handler(*, runner: MagicMock | None, session: object | None = None) -> WorkflowsRpcHandler:
+def _make_handler(
+    *, runner: MagicMock | None, session: object | None = None
+) -> WorkflowsRpcHandler:
     """Build a handler with a fake ctx — bypasses the real
     ``BackendServer`` so we can test the handler in isolation.
     """
@@ -144,9 +148,7 @@ async def test_run_workflow_surfaces_file_not_found() -> None:
     FileNotFoundError propagates so the BE's RPC layer returns
     it as a JSON-RPC error to the FE."""
     runner = MagicMock()
-    runner.run = AsyncMock(
-        side_effect=FileNotFoundError("workflow 'missing' not found")
-    )
+    runner.run = AsyncMock(side_effect=FileNotFoundError("workflow 'missing' not found"))
     handler = _make_handler(runner=runner)
 
     with pytest.raises(FileNotFoundError, match="missing"):
@@ -157,9 +159,7 @@ async def test_run_workflow_surfaces_runtime_error() -> None:
     """If the workflow_runtime.mjs is missing on disk, the
     runner raises a RuntimeError; the handler propagates it."""
     runner = MagicMock()
-    runner.run = AsyncMock(
-        side_effect=RuntimeError("workflow runtime missing at /tmp/x.mjs")
-    )
+    runner.run = AsyncMock(side_effect=RuntimeError("workflow runtime missing at /tmp/x.mjs"))
     handler = _make_handler(runner=runner)
 
     with pytest.raises(RuntimeError, match="workflow runtime missing"):
@@ -220,6 +220,7 @@ async def test_rpc_method_enum_values_match_wire_string() -> None:
     assert RpcMethod.LIST_WORKFLOWS.value == "list_workflows"
     assert RpcMethod.RUN_WORKFLOW.value == "run_workflow"
 
+
 async def test_cancel_workflow_returns_cancelled_true_when_run_exists() -> None:
     """``cancel_workflow`` calls the runner's ``cancel`` and
     surfaces the boolean as a dict."""
@@ -250,9 +251,7 @@ async def test_cancel_workflow_surfaces_runtime_error() -> None:
     """If the runner's cancel hits a runtime error (e.g. the
     BE hasn't booted the runner), the handler propagates it."""
     runner = MagicMock()
-    runner.cancel = AsyncMock(
-        side_effect=RuntimeError("workflow_runner not initialised")
-    )
+    runner.cancel = AsyncMock(side_effect=RuntimeError("workflow_runner not initialised"))
     handler = _make_handler(runner=runner)
 
     with pytest.raises(RuntimeError, match="workflow_runner not initialised"):

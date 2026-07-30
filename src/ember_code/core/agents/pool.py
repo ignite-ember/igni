@@ -221,23 +221,34 @@ class AgentPool(LegacyAgentPoolMixin):
         settings: Settings,
         project_dir: Path | None = None,
         codeindex_available: bool = False,
+        group_agents_dir: Path | None = None,
     ) -> LoadReport:
         """Parse all agent ``.md`` files and resolve priorities.
 
         No :class:`Agent` objects are created — just data. Returns
         the :class:`LoadReport` so callers can surface parse
-        errors (``report.errors``) to the FE / audit log."""
+        errors (``report.errors``) to the FE / audit log.
+
+        ``group_agents_dir`` is the optional ORG_GROUP tier
+        (``:class:`AgentPriority.ORG_GROUP```); when set, ``.md`` files
+        under it beat user/project-local copies. The path is populated
+        by ``Session`` from the policy cache directory — kept off the
+        pool defaults so tests and ad-hoc ``AgentPool`` constructions
+        keep their prior behavior.
+        """
         if project_dir is None:
             project_dir = Path.cwd()
 
         self._settings = settings
         self._base_dir = str(project_dir)
         self._codeindex_available_flag = bool(codeindex_available)
+        self._group_agents_dir = group_agents_dir
 
         loader = AgentDefinitionLoader(
             settings=settings,
             project_dir=project_dir,
             codeindex_available=codeindex_available,
+            group_agents_dir=group_agents_dir,
         )
         report = loader.load()
         self._merge(report)
@@ -508,6 +519,7 @@ class AgentPool(LegacyAgentPoolMixin):
             settings=self._settings_or_bare(),
             project_dir=Path(self._base_dir) if self._base_dir else Path.cwd(),
             codeindex_available=codeindex_available,
+            group_agents_dir=getattr(self, "_group_agents_dir", None),
         )
 
     def _ensure_builder(self) -> AgentBuilder:

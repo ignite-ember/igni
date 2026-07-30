@@ -1067,7 +1067,7 @@ export default function App() {
           // ``workflow_run_id``; a fresh event with an unknown
           // id (e.g. the user opened a new tab on a long run)
           // creates a card on the fly.
-          const ev = m.payload as import("./chat/model").WorkflowEvent;
+          const ev = m.payload as unknown as import("./chat/model").WorkflowEvent;
           if (ev && typeof ev.workflow_run_id === "string") {
             setItems((prev) => reduceWorkflowEvent(prev, ev));
           }

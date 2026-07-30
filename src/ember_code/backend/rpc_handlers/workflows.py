@@ -58,9 +58,7 @@ class WorkflowsRpcHandler(RpcHandler):
             raise ValueError("run_workflow: 'name' is required")
         run_args = args.get("args") or {}
         if not isinstance(run_args, dict):
-            raise TypeError(
-                f"run_workflow: 'args' must be a dict, got {type(run_args).__name__}"
-            )
+            raise TypeError(f"run_workflow: 'args' must be a dict, got {type(run_args).__name__}")
         session = self._resolve_session(args.get("session_id", ""))
         workflow_run_id = await runner.run(
             name=name,

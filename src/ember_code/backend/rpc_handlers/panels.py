@@ -25,6 +25,7 @@ from ember_code.backend.schemas_panels import (
 from ember_code.backend.schemas_rpc import (
     DirListResult,
     FileCompletion,
+    GroupPolicyPackResult,
     PickDirResult,
     RunShellResult,
 )
@@ -121,3 +122,7 @@ class PanelRpcHandler(RpcHandler):
     @rpc(RpcMethod.GET_OUTPUT_STYLES)
     def get_output_styles(self, args: dict) -> OutputStylesResult:
         return self._ctx.backend.get_output_styles()
+
+    @rpc(RpcMethod.GET_GROUP_POLICY)
+    def get_group_policy(self, args: dict) -> GroupPolicyPackResult:
+        return self._ctx.backend.get_group_policy()

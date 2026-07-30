@@ -85,7 +85,7 @@ class HookHandlerRegistry:
         Returns ``None`` for unknown types (silent skip — parity
         with the pre-refactor debug-log-and-continue).
         """
-        handler = self._handlers.get(hook.type)
+        handler = self._handlers.get(hook.type)  # type: ignore[call-overload,arg-type]  # HookType literal narrowing lives at registration time
         if handler is None:
             logger.debug("Unknown hook type %r — skipping", hook.type)
             return None

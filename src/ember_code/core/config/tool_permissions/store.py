@@ -108,14 +108,15 @@ class ToolPermissions:
         — same as the pre-refactor behaviour.
         """
         defaults = self._defaults
-        for level, tools in self._category_map.iter_config_levels(cfg):
-            if level not in ("allow", "ask", "deny"):
+        for raw_level, tools in self._category_map.iter_config_levels(cfg):
+            if raw_level not in ("allow", "ask", "deny"):
                 logger.warning(
                     "PermissionsConfig has invalid level %r for tools %s; skipping",
-                    level,
+                    raw_level,
                     tools,
                 )
                 continue
+            level: PermissionLevel = raw_level  # type: ignore[assignment]  # narrowed by the membership check above
             for tool in tools:
                 if defaults.for_tool(tool) != level:
                     self._tool_levels[tool] = level

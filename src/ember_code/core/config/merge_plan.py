@@ -39,6 +39,7 @@ from ember_code.core.config.config_io import YamlSource
 from ember_code.core.config.managed_policy import ManagedPolicySource
 
 if TYPE_CHECKING:
+    from ember_code.core.config.group_policy import GroupPolicyPack
     from ember_code.core.config.models import CliOverrides
     from ember_code.core.config.schemas.models import ModelsConfig
 
@@ -160,6 +161,32 @@ class CloudMigrationTier(Tier):
         return accumulator.merge_models(result.models)
 
 
+class GroupPolicyTier(Tier):
+    """Org-group policy overrides — fetched from ember-server, cached locally.
+
+    Sits ABOVE CliTier (group-defined settings beat user CLI flags) and
+    BELOW ManagedTier (sysadmin file still wins over any org policy).
+
+    ``fetcher`` is a zero-argument callable that returns a
+    :class:`~ember_code.core.config.group_policy.GroupPolicyPack` or
+    ``None`` when the user has no group. It is invoked once per
+    :meth:`Tier.apply` call; callers should memoize or cache at the
+    fetcher level to avoid repeated network calls.
+    """
+
+    def __init__(
+        self,
+        fetcher: Callable[[], GroupPolicyPack | None],  # type: ignore[name-defined]
+    ) -> None:
+        self._fetcher = fetcher
+
+    def apply(self, accumulator: SettingsAccumulator) -> SettingsAccumulator:
+        pack = self._fetcher()
+        if pack is None:
+            return accumulator
+        return accumulator.merge(pack.to_settings_dict())
+
+
 class SettingsMergePlan:
     """Ordered pipeline of :class:`Tier` instances.
 
@@ -191,6 +218,7 @@ class SettingsMergePlan:
         settings_cls: type,
         defaults_models: ModelsConfig,
         managed_path_provider: Callable[[], Path | None] = ManagedPolicySource.platform_path,
+        group_policy_fetcher: Callable[[], GroupPolicyPack | None] | None = None,  # type: ignore[name-defined]
     ) -> SettingsMergePlan:
         """Build the standard 7-tier plan from filesystem paths.
 
@@ -218,7 +246,9 @@ class SettingsMergePlan:
             JsonFragmentTier(project_ember / "settings.local.json"),
             # CLI
             CliTier(cli),
-            # Managed policy — last, so it wins over CLI.
+            # Org-group policy — wins over CLI, loses to sysadmin ManagedPolicy.
+            *([GroupPolicyTier(fetcher=group_policy_fetcher)] if group_policy_fetcher else []),
+            # Managed policy — last, so it wins over CLI and group policy.
             ManagedTier(path_provider=managed_path_provider),
             # Migration — replaces cloud rows with shipping defaults.
             CloudMigrationTier(defaults=defaults_models),

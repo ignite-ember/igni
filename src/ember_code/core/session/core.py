@@ -204,6 +204,15 @@ class Session:
         self._init_loop_state()
         self._init_per_session_scratch()
 
+        # Group-policy on-disk roots — same paths that
+        # :class:`GroupPolicyCache` writes to, so the cached overrides
+        # land where the loaders will read them. ``expanduser`` mirrors
+        # how :class:`PluginLoader` resolves its default ``data_dir``
+        # (``~/.ember``).
+        data_dir = Path(settings.storage.data_dir).expanduser()
+        self._group_agents_dir = data_dir / "group-policy" / "agents"
+        self._group_mcps_dir = data_dir / "group-policy" / "mcps"
+
         # ── First-run initialization (agents, skills, hooks, ember.md) ─
         ProjectInitializer.initialize(self.project_dir)
 
@@ -520,7 +529,7 @@ class Session:
         # populate at Result time.
         self.mcp_failures: dict[str, str] = {}
         self.plugin_loader.apply_to_mcp(
-            MCPConfigLoader(self.project_dir),
+            MCPConfigLoader(self.project_dir, group_mcps_dir=self._group_mcps_dir),
             self.mcp_manager.configs,
             disabled=self._disabled_plugins,
         )
@@ -643,7 +652,10 @@ class Session:
         """
         self.pool = AgentPool(db=self.db, broadcast=self.broadcast)
         self.pool.load_definitions(
-            settings, self.project_dir, codeindex_available=self._codeindex_available
+            settings,
+            self.project_dir,
+            codeindex_available=self._codeindex_available,
+            group_agents_dir=self._group_agents_dir,
         )
         self.plugin_loader.apply_to_agents(self.pool, disabled=self._disabled_plugins)
         if settings.orchestration.generate_ephemeral:

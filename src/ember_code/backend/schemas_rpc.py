@@ -128,6 +128,17 @@ class CloudPlan(BaseModel):
         return cls(tier=info.tier, org_name=info.org_display_name)
 
 
+class GroupPolicyPackResult(BaseModel):
+    """Wire shape for the ``get_group_policy`` RPC — the active
+    org-group override pack for the current user. Nullable because
+    a user may belong to no group."""
+
+    group_id: str | None = None
+    group_name: str | None = None
+    fetched_at: str | None = None
+    override_count: int = 0
+
+
 class FileCompletion(BaseModel):
     """Wire shape for the ``complete_files`` RPC — @-mention picker
     hits + a running total (used to render "N more matches" when the

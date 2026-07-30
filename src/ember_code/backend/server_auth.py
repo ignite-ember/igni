@@ -24,9 +24,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import webbrowser
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ember_code.backend.schemas_rpc import CloudPlan, LoginResult
@@ -38,6 +40,8 @@ from ember_code.core.auth.credentials import (
 from ember_code.core.auth.portal_client import PortalClient
 from ember_code.core.auth.schemas import JwtClaims
 from ember_code.protocol import messages as msg
+
+logger = logging.getLogger(__name__)
 
 # Re-exported so ``from ember_code.backend.server_auth import CloudPlan``
 # keeps working (server.py TYPE_CHECKING import) — the canonical
@@ -111,6 +115,31 @@ class AuthController:
         # single path source (previously two independent free-function
         # calls both defaulted to ``~/.ember/credentials.json``).
         self._store = CredentialsStore(self._settings.auth.credentials_file)
+        # Serializes concurrent :meth:`_hydrate_group_policy` calls so a
+        # cold-start hook and a fresh login can't race on the same
+        # ``pack_meta.json`` write. Lazy because ``asyncio.Lock`` binds
+        # to the current event loop; constructed on first async use.
+        self._hydration_lock: asyncio.Lock | None = None
+
+        # Hydrate the on-disk group-policy cache from the portal if a
+        # stored token already exists. Fire-and-forget — start-up does
+        # not block on the fetch; cold-start failures just mean the
+        # next CLI invocation will retry (after the 5-min TTL or the
+        # next login, whichever comes first). ``asyncio.create_task``
+        # needs a running loop; the loop exists in every backend
+        # process we ship, but catch the corner case so a bare CLI
+        # utility import doesn't blow up.
+        try:
+            existing_token = self._settings.auth.access_token
+        except Exception:
+            existing_token = None
+        if existing_token:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is not None:
+                loop.create_task(self._hydrate_group_policy(existing_token))
 
     async def login(self, on_status: StatusCallback = None) -> LoginResult:
         """Run the browser-callback login flow.
@@ -152,11 +181,86 @@ class AuthController:
             else:
                 self._store.save(Credentials.new(token, email))
 
+            # Refresh the on-disk group policy pack with the freshly
+            # issued token so admin-side overrides take effect
+            # immediately on the next request rather than waiting for
+            # the 5-min TTL. Failures are non-fatal: the cold-start
+            # hook already fires on every backend start-up.
+            await self._hydrate_group_policy(token)
+
             self.reload_cloud_credentials()
             return LoginResult(ok=True, email=email)
 
         except Exception as exc:
             return LoginResult(ok=False, error=str(exc))
+
+    async def _hydrate_group_policy(self, token: str) -> bool:
+        """Refresh the cached group policy pack if stale.
+
+        Wraps ``GroupPolicyCache.refresh`` so this controller doesn't
+        need to know which on-disk path the cache writes to — that
+        decision lives in :mod:`core.config.group_policy`.
+
+        Constructs a fresh :class:`PluginInstaller` so plugin overrides
+        with ``source_url`` get git-installed instead of being logged
+        and skipped. The installer is built per-call (cheap, no IO at
+        construction) rather than cached on ``self`` because hydration
+        is rare and the installer's state is per-data-dir.
+
+        Outcomes are surfaced via ``_status_provider`` and the
+        ``logger`` so FE / ops see when the portal is unreachable
+        instead of silently seeing "no group" for hours.
+        """
+        from ember_code.core.config.group_policy import refresh as _refresh
+        from ember_code.core.plugins.installer import PluginInstaller
+
+        data_dir = Path(self._settings.storage.data_dir).expanduser()
+        installer = PluginInstaller(data_dir=data_dir)
+
+        # Serialize concurrent hydrations (cold-start + login race) so
+        # two parallel ``refresh`` calls don't trample each other's
+        # ``pack_meta.json`` writes. Lazy bind to the running loop.
+        if self._hydration_lock is None:
+            self._hydration_lock = asyncio.Lock()
+
+        async def _emit(message: str) -> None:
+            # Status provider returns a fresh StatusUpdate — harmless
+            # to call when the FE isn't listening. Echo through the
+            # logger so the audit log picks it up.
+            with contextlib.suppress(Exception):
+                self._status_provider()
+            logger.info("group-policy: %s", message)
+
+        async with self._hydration_lock:
+            if not token:
+                await _emit("skipped hydration (no bearer token)")
+                return False
+            try:
+                # Cheap stale check first so we don't surface noise on
+                # every CLI invocation when the cache is fresh.
+                from ember_code.core.config.group_policy import GroupPolicyCache
+
+                cache_dir = data_dir / "group-policy"
+                cache = GroupPolicyCache(cache_dir=cache_dir, data_dir=data_dir)
+                if not cache._is_stale():
+                    return False
+                refreshed = await _refresh(
+                    token,
+                    fetch=self._portal.fetch_group_pack,
+                    data_dir=data_dir,
+                    installer=installer,
+                )
+                if refreshed:
+                    await _emit("group policy pack refreshed")
+                return bool(refreshed)
+            except Exception as exc:
+                # Network blip, schema drift, or PortalClient bug — at
+                # minimum log loud; the cached pack (if any) is left
+                # untouched so the next invocation can retry.
+                logger.warning("group-policy hydration failed: %s", exc)
+                with contextlib.suppress(Exception):
+                    self._status_provider()
+                return False
 
     def reload_cloud_credentials(self) -> msg.StatusUpdate:
         """Reload cloud credentials after login."""

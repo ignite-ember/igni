@@ -132,7 +132,7 @@ class CodeIndexItemView(BaseModel):
     item: CodeIndexItem
 
     def to_command_result(self) -> CommandResult:
-        preview = self.item.content
+        preview = self.item.content or ""
         if len(preview) > self.PREVIEW_LIMIT:
             preview = preview[: self.PREVIEW_LIMIT] + "..."
         return CommandResult.markdown(

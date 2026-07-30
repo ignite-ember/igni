@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from ember_code.backend.schemas_history import (
     AgnoRunView,
@@ -53,6 +53,7 @@ from ember_code.backend.schemas_history import (
     VisualizationDeltaPayload,
     VisualizationTurn,
 )
+from ember_code.backend.schemas_plan import PlanState
 from ember_code.backend.server_history_walker import RunWalker
 
 if TYPE_CHECKING:
@@ -161,7 +162,7 @@ class ChatHistoryRebuilder:
                 continue
             recorded = decisions.get(turn.run_id) if turn.run_id else None
             if recorded in ("approved", "dismissed"):
-                turn.state = recorded
+                turn.state = cast(PlanState, recorded)
             elif i == latest_idx:
                 turn.state = "pending"
             else:

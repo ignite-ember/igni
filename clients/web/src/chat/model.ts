@@ -1189,7 +1189,7 @@ export function applyEvent(items: ChatItem[], msg: ServerMessage): ChatItem[] {
 // ── Workflow run helpers ──────────────────────────────────────────
 
 /** Build the initial state for a freshly-issued workflow run. */
-export function workflowItem(name: string, workflowRunId: string): ChatItem {
+export function workflowItem(name: string, workflowRunId: string): Extract<ChatItem, { kind: "workflow" }> {
   const now = Date.now();
   return {
     kind: "workflow",

@@ -152,7 +152,7 @@ class LegacyAgentPoolMixin:
 
     # --- _load_directory ────────────────────────────────────────
 
-    def _load_directory(
+    def _load_directory(  # type: ignore[misc]
         self: AgentPool,
         path: Path,
         priority: AgentPriority | int,

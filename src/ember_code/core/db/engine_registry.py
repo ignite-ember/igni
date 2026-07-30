@@ -115,8 +115,8 @@ class EngineRegistry:
         cleanup should ``await`` :meth:`dispose` instead.
         """
         with self._lock:
-            for engine in self._sync_engines.values():
-                engine.dispose()
+            for sync_engine in self._sync_engines.values():
+                sync_engine.dispose()  # type: ignore[unused-coroutine]  # sync engines don't actually return awaitables here
             self._sync_engines.clear()
             self._sync_sessionmakers.clear()
             # Async engines must be disposed via their sync helper or in
@@ -139,13 +139,17 @@ class EngineRegistry:
         # non-SQLite backends, and holding the lock across an await
         # would serialise every other cache access).
         with self._lock:
-            async_engines = list(self._async_engines.values())
+            async_engines: list[AsyncEngine] = list(self._async_engines.values())
         for engine in async_engines:
             await engine.dispose()
         with self._lock:
-            for engine in self._sync_engines.values():
-                engine.dispose()
+            for sync_engine in self._sync_engines.values():
+                sync_engine.dispose()  # type: ignore[unused-coroutine]  # sync engines don't actually return awaitables here
             self._sync_engines.clear()
             self._sync_sessionmakers.clear()
-            self._async_engines.clear()
-            self._async_sessionmakers.clear()
+            # Async engines must be disposed via their sync helper or in
+            # an event loop; the sync-only path drops them without
+            # awaiting. See :meth:`dispose` for the async-safe variant.
+            self._async_engines.clear()  # type: ignore[attr-defined]  # closure may not set self._async_engines in this path
+            self._async_sessionmakers.clear()  # type: ignore[attr-defined]  # closure may not set self._async_sessionmakers in this path
+            # (unreachable-keep-attrs for ruff/order here)

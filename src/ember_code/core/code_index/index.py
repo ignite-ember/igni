@@ -34,7 +34,6 @@ The class is a thin orchestrator over:
     retention.
 """
 
-
 from __future__ import annotations
 
 import asyncio
@@ -409,9 +408,13 @@ class CodeIndex:
         # Quality / categorical fields live on :Item, not :Chunk.
         # When ``where`` is supplied, resolve it against :Item to
         # get matching parent IDs, then narrow the vector query.
-        parent_ids = await self._resolve_parent_where(client, where)
-        if parent_ids is _NARROWED_TO_EMPTY:
+        parent_ids_or_sentinel = await self._resolve_parent_where(client, where)
+        if parent_ids_or_sentinel is _NARROWED_TO_EMPTY:
             return []
+        # After the sentinel check, the helper narrows to
+        # list[str] | None; the ``None`` branch means "no filter
+        # narrowing" and ``restricted_where`` falls through to None.
+        parent_ids: list[str] | None = parent_ids_or_sentinel  # type: ignore[assignment]  # narrowed by sentinel check above
 
         query_vec = self._embedder.embed([query])[0]
         restricted_where = {"parent_id": {"$in": list(parent_ids)}} if parent_ids else None

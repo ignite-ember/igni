@@ -63,6 +63,7 @@ class AgentPriority(IntEnum):
     PROJECT_CLAUDE = 2
     PROJECT_LOCAL = 3
     PROJECT_EMBER = 4
+    ORG_GROUP = 5
     EPHEMERAL = 10
 
 

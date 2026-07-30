@@ -1,5 +1,7 @@
 """Schedule tools — lets the AI agent create, list, and cancel scheduled tasks."""
 
+from datetime import datetime
+
 from agno.tools import Toolkit
 
 from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
@@ -47,26 +49,27 @@ class ScheduleTools(Toolkit):
         result = Recurrence.parse(when)
         if result is not None:
             canonical = result.recurrence.canonical()
-            scheduled_at = result.first_scheduled
+            first_scheduled = result.first_scheduled
             task = ScheduledTask.new(
                 description=description,
-                scheduled_at=scheduled_at,
+                scheduled_at=first_scheduled,
                 recurrence=canonical,
             )
             await self._ensure_store().add(task)
             return (
                 f'Scheduled recurring task `{task.id}`: "{description}" '
-                f"({canonical}, first run at {scheduled_at.strftime('%Y-%m-%d %H:%M')})."
+                f"({canonical}, first run at {first_scheduled.strftime('%Y-%m-%d %H:%M')})."
             )
 
         # One-shot
-        scheduled_at = parse_time(when)
-        if scheduled_at is None:
+        scheduled_at_parsed = parse_time(when)
+        if scheduled_at_parsed is None:
             return (
                 f"Could not parse time: '{when}'. Try:\n"
                 "  One-shot: 'in 30 minutes', 'at 5pm', 'tomorrow'\n"
                 "  Recurring: 'daily', 'every 2 hours', 'weekly at 9am'"
             )
+        scheduled_at: datetime = scheduled_at_parsed
 
         task = ScheduledTask.new(
             description=description,

@@ -181,6 +181,7 @@ class RpcMethod(StrEnum):
     SWITCH_MODEL = "switch_model"
     GET_MODEL_REGISTRY = "get_model_registry"
     GET_DISPLAY_CONFIG = "get_display_config"
+    GET_GROUP_POLICY = "get_group_policy"
     TOGGLE_VERBOSE = "toggle_verbose"
 
     # ── Permissions ──────────────────────────────────────────────

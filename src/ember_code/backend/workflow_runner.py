@@ -367,9 +367,7 @@ class WorkflowRunner:
             logger.debug("cancel: stdin notify failed for %s (%s)", workflow_run_id, exc)
         # Wait briefly for graceful exit; escalate to SIGTERM.
         try:
-            await asyncio.wait_for(
-                state.proc.wait(), timeout=CANCEL_GRACE_SECONDS
-            )
+            await asyncio.wait_for(state.proc.wait(), timeout=CANCEL_GRACE_SECONDS)
         except asyncio.TimeoutError:
             state.proc.terminate()
             try:
@@ -403,9 +401,7 @@ class WorkflowRunner:
 
     # ── Internal tasks ────────────────────────────────────────────
 
-    async def _drain_stdout(
-        self, state: _RunState, session: Session
-    ) -> None:
+    async def _drain_stdout(self, state: _RunState, session: Session) -> None:
         """Read stdout line-by-line; persist + push each event.
 
         When the line is an ``agent_request``, fan out a coroutine
@@ -428,14 +424,10 @@ class WorkflowRunner:
                 try:
                     event = WorkflowEvent.model_validate_json(raw)
                 except ValidationError as exc:
-                    logger.debug(
-                        "workflow event validation failed: %s — %s", exc, raw[:200]
-                    )
+                    logger.debug("workflow event validation failed: %s — %s", exc, raw[:200])
                     continue
                 if event.run_id != state.workflow_run_id:
-                    event = event.model_copy(
-                        update={"run_id": state.workflow_run_id}
-                    )
+                    event = event.model_copy(update={"run_id": state.workflow_run_id})
 
                 # agent_request is special — the runtime is blocked
                 # awaiting our reply. Resolve it concurrently so the
@@ -458,9 +450,7 @@ class WorkflowRunner:
                 try:
                     await session.append_event("workflow_event", payload)
                 except Exception:
-                    logger.exception(
-                        "workflow event persist failed for %s", state.workflow_run_id
-                    )
+                    logger.exception("workflow event persist failed for %s", state.workflow_run_id)
                 self._push._schedule_push("workflow_event", payload)
                 if event.type == "workflow_completed":
                     state.final_status = "completed"
@@ -515,19 +505,24 @@ class WorkflowRunner:
             )
             return
         try:
-            line = json.dumps(
-                {"type": "agent_response", "id": req_id, "ok": ok, "result": result, "error": error}
-            ) + "\n"
+            line = (
+                json.dumps(
+                    {
+                        "type": "agent_response",
+                        "id": req_id,
+                        "ok": ok,
+                        "result": result,
+                        "error": error,
+                    }
+                )
+                + "\n"
+            )
             state.proc.stdin.write(line.encode("utf-8"))
             await state.proc.stdin.drain()
         except Exception as exc:
-            logger.warning(
-                "agent response write failed for %s: %s", state.workflow_run_id, exc
-            )
+            logger.warning("agent response write failed for %s: %s", state.workflow_run_id, exc)
 
-    async def _bridge_agents(
-        self, state: _RunState, session: Session
-    ) -> None:
+    async def _bridge_agents(self, state: _RunState, session: Session) -> None:
         """Sentinel task — the actual agent bridging happens in
         :meth:`_handle_agent_request`, which the drain spawns per
         ``agent_request`` event. This coroutine just keeps the
@@ -540,9 +535,7 @@ class WorkflowRunner:
         except asyncio.CancelledError:
             raise
 
-    async def _await_completion(
-        self, state: _RunState, session: Session
-    ) -> None:
+    async def _await_completion(self, state: _RunState, session: Session) -> None:
         """Wait for the subprocess to exit; synthesize failure event if needed."""
         try:
             rc = await state.proc.wait()

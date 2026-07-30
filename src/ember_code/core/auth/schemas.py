@@ -141,6 +141,7 @@ class JwtClaims(BaseModel):
     exp: int | None = None
     org: str | None = None
     org_name: str | None = None
+    group_id: str | None = None
 
     @classmethod
     def decode(cls, token: str) -> JwtClaims | None:

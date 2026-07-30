@@ -27,6 +27,7 @@ PluginRoot = Literal[
     "user-ember",  # ~/.ember/plugins/
     "project-claude",  # <project>/.claude/plugins/
     "project-ember",  # <project>/.ember/plugins/
+    "group-policy-ember",  # <data_dir>/group-policy/plugins/
     "managed-claude",  # sysadmin <managed>/.claude/plugins/
     "managed-ember",  # sysadmin <managed>/.ember/plugins/
 ]

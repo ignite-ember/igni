@@ -65,6 +65,9 @@ from ember_code.core.config.merge_plan import (
 from ember_code.core.config.model_entry import ModelRegistryEntry
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from ember_code.core.config.group_policy import GroupPolicyPack
     from ember_code.core.config.models import CliOverrides
     from ember_code.core.config.settings import Settings
 
@@ -243,6 +246,7 @@ class SettingsLoader:
         cls,
         cli_overrides: CliOverrides | dict[str, Any] | None = None,
         project_dir: Path | None = None,
+        group_policy_fetcher: Callable[[], GroupPolicyPack | None] | None = None,
     ) -> Settings:
         """Run the full multi-tier merge and return a validated
         ``Settings``. See class docstring for precedence.
@@ -264,6 +268,7 @@ class SettingsLoader:
             settings_cls=Settings,
             defaults_models=Settings.defaults().models,
             managed_path_provider=cls.platform_managed_settings_path,
+            group_policy_fetcher=group_policy_fetcher,
         )
         return plan.run()
 

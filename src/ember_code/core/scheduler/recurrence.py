@@ -149,9 +149,11 @@ class Recurrence(BaseModel):
         m = _PHRASE_PATTERN.match(text)
         if m:
             amount = int(m.group(1)) if m.group(1) else 1
-            unit = RecurrenceUnit.from_token(m.group(2))
-            if unit is None:
+            unit_candidate = RecurrenceUnit.from_token(m.group(2))
+            if unit_candidate is None:
                 return None
+            assert isinstance(unit_candidate, RecurrenceUnit)
+            unit = unit_candidate  # type: ignore[misc,assignment]  # narrow through sentinel above; the for-loop binding on line 140 only exists in its own scope
             recurrence = cls(amount=amount, unit=unit)
             rest = text[m.end() :].strip()
             first = recurrence._first_from_suffix(rest)

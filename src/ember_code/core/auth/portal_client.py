@@ -42,6 +42,10 @@ from ember_code.core.auth.schemas import (
     UserInfo,
     ValidateResult,
 )
+from ember_code.core.config.group_policy import (
+    GroupPolicyOverrideEntry,
+    GroupPolicyPack,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -177,3 +181,65 @@ class PortalClient:
             )
         except Exception as exc:
             return LoginResult(ok=False, reason="handler_error", error=str(exc))
+
+    async def get_my_group_summary(self, token: str) -> dict | None:
+        """Fetch /v1/portal/me/group and return the group summary dict or None."""
+        url = f"{self._api_url.rstrip('/')}/v1/portal/me/group"
+        try:
+            async with httpx.AsyncClient(timeout=self._http_timeout) as client:
+                resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+        except Exception as exc:
+            logger.debug("get_my_group_summary network error: %s", exc)
+            return None
+
+        if resp.status_code == 404 or resp.status_code == 200 and not resp.json():
+            return None
+        if resp.status_code != 200:
+            return None
+
+        try:
+            payload = resp.json()
+            if payload is None:
+                return None
+            return payload
+        except Exception:
+            return None
+
+    async def fetch_group_pack(self, token: str) -> GroupPolicyPack | None:
+        """Fetch /v1/portal/me/group/pack and return a GroupPolicyPack or None.
+
+        Returns None when the user has no group or on any network/parse error.
+        """
+        url = f"{self._api_url.rstrip('/')}/v1/portal/me/group/pack"
+        try:
+            async with httpx.AsyncClient(timeout=self._http_timeout) as client:
+                resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+        except Exception as exc:
+            logger.debug("fetch_group_pack network error: %s", exc)
+            return None
+
+        if resp.status_code == 404:
+            return None
+        if resp.status_code == 204:
+            return None
+        if resp.status_code != 200:
+            logger.debug("fetch_group_pack got status %s", resp.status_code)
+            return None
+
+        try:
+            payload = resp.json()
+        except Exception as exc:
+            logger.debug("fetch_group_pack decode error: %s", exc)
+            return None
+
+        try:
+            overrides = [GroupPolicyOverrideEntry(**o) for o in payload.get("overrides", [])]
+            return GroupPolicyPack(
+                group_id=payload.get("group_id", ""),
+                group_name=payload.get("group_name", ""),
+                fetched_at=payload.get("fetched_at"),
+                overrides=overrides,
+            )
+        except Exception as exc:
+            logger.debug("fetch_group_pack schema error: %s", exc)
+            return None

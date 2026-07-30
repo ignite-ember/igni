@@ -55,11 +55,13 @@ class AgentDefinitionLoader:
         project_dir: Path,
         codeindex_available: bool,
         restriction_policy: PluginRestrictionPolicy | None = None,
+        group_agents_dir: Path | None = None,
     ) -> None:
         self._settings = settings
         self._project_dir = project_dir
         self._codeindex_available = codeindex_available
         self._policy = restriction_policy
+        self._group_agents_dir = group_agents_dir
 
     def load(self) -> LoadReport:
         """Scan the five standard roots and return an aggregated
@@ -75,6 +77,9 @@ class AgentDefinitionLoader:
             (project_dir / ".ember" / "agents.local", AgentPriority.PROJECT_LOCAL),
             (project_dir / ".ember" / "agents", AgentPriority.PROJECT_EMBER),
         ]
+
+        if self._group_agents_dir is not None:
+            dirs.append((self._group_agents_dir, AgentPriority.ORG_GROUP))
 
         if settings.agents.cross_tool_support:
             dirs.append((project_dir / ".claude" / "agents", AgentPriority.PROJECT_CLAUDE))

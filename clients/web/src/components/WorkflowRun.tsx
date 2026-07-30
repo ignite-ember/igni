@@ -46,7 +46,6 @@ function statusTone(
     case "running":
       return "running";
     case "completed":
-    case "good":
       return "good";
     case "cancelled":
       return "warn";

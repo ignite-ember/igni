@@ -37,7 +37,9 @@ from ember_code.backend.schemas_panels import (  # noqa: F401 — public re-expo
     PromoteEphemeralResult,
     SlashCommandEntry,
 )
+from ember_code.backend.schemas_rpc import GroupPolicyPackResult
 from ember_code.core.agents import AgentInfo
+from ember_code.core.config.group_policy import GroupPolicyCache
 from ember_code.core.skills import SkillPool
 from ember_code.core.skills.parser import SkillInfo
 from ember_code.protocol import messages as msg
@@ -117,6 +119,19 @@ class PanelsController:
 
     def output_styles(self) -> OutputStylesResult:
         return self._output_styles.snapshot()
+
+    def group_policy(self) -> GroupPolicyPackResult:
+        """Read the cached group policy pack metadata and return a result for the FE RPC."""
+        cache = GroupPolicyCache()
+        meta = cache.read_pack_meta()
+        if meta is None:
+            return GroupPolicyPackResult()
+        return GroupPolicyPackResult(
+            group_id=meta.get("group_id"),
+            group_name=meta.get("group_name"),
+            fetched_at=meta.get("fetched_at"),
+            override_count=meta.get("override_count", 0),
+        )
 
 
 __all__ = [

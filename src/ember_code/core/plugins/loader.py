@@ -1,13 +1,22 @@
 """Plugin discovery + namespace-prefixed apply to existing loaders.
 
-Scans six roots in priority order (later wins same-name collisions):
+Scans seven roots in priority order (higher priority wins same-name
+collisions):
 
     1. ~/.claude/plugins/                       (Claude user-global)
     2. ~/.ember/plugins/                        (ember user-global)
     3. <project>/.claude/plugins/               (Claude project-local)
     4. <project>/.ember/plugins/                (ember project-local)
-    5. <managed>/.claude/plugins/               (sysadmin, cross-tool)
-    6. <managed>/.ember/plugins/                (sysadmin, ember-native)
+    5. <data_dir>/group-policy/plugins/          (org Group Policy)
+    6. <managed>/.claude/plugins/                (sysadmin, cross-tool)
+    7. <managed>/.ember/plugins/                 (sysadmin, ember-native)
+
+The new tier 5 (``group-policy-ember``) holds plugins installed
+from URL/ref/subdir specified in :class:`GroupPolicyOverrideEntry`
+via :class:`PluginInstaller`. It sits between project-local
+installs (3/4) and the OS-managed tiers (6/7) so org-shared
+plugins override personal + project-local copies, but MDM/
+sysadmin bundles still pin at the top of the same-name tie.
 
 ``<managed>`` is the OS-specific write-protected directory used
 by the managed-settings tier (see
@@ -78,8 +87,12 @@ def _platform_managed_plugins_root() -> Path | None:
 class PluginLoader:
     """Discovers plugins and applies their bundled extensions."""
 
-    def __init__(self) -> None:
+    def __init__(self, data_dir: str | Path = "~/.ember") -> None:
         self._plugins: dict[str, PluginDefinition] = {}
+        # Used to compute the org-installed ``group-policy`` root.
+        # ``Path.home()`` is still the default for the user-tier
+        # roots below so existing callers don't need to update.
+        self._data_dir = Path(str(data_dir)).expanduser()
 
     # ── Discovery ────────────────────────────────────────────────────
 
@@ -90,7 +103,7 @@ class PluginLoader:
         higher-priority root wins. Plugins disabled via state are still
         recorded here — the apply steps are where ``disabled`` is
         honored, so the panel can still show disabled plugins. Managed
-        plugins (priorities 5/6) win above project (3/4) and are
+        plugins (priorities 6/7) win above project (3/4) and are
         always enabled — see :attr:`PluginDefinition.is_managed`.
         """
         if project_dir is None:
@@ -103,13 +116,32 @@ class PluginLoader:
             ("project-ember", project_dir / ".ember" / "plugins", 4),
         ]
 
+        # Group-policy tier — plugins installed from
+        # :class:`GroupPolicyOverrideEntry.source_url` by
+        # :class:`PluginInstaller`. Priority 5 sits above project
+        # installs (3/4) so org-shared plugins beat local dev
+        # overrides, and below the sysadmin-managed tiers (6/7)
+        # so MDM/org-IT still wins on the same-name tie.
+        # The collision rule (line ~181) compares ``priority >
+        # existing.source.priority`` strictly, so the integers
+        # we pick determine precedence — no insertion-order
+        # hidden dependence.
+        roots.append(
+            (
+                "group-policy-ember",
+                self._data_dir / "group-policy" / "plugins",
+                5,
+            )
+        )
+
         # Managed tier — sysadmin-controlled, sibling to the
         # managed-settings file. ``None`` on platforms with no
-        # defined managed location.
+        # defined managed location. Bumped to 6/7 so the
+        # group-policy tier (priority 5) wins on name clashes.
         managed_root = _platform_managed_plugins_root()
         if managed_root is not None:
-            roots.append(("managed-claude", managed_root / ".claude" / "plugins", 5))
-            roots.append(("managed-ember", managed_root / ".ember" / "plugins", 6))
+            roots.append(("managed-claude", managed_root / ".claude" / "plugins", 6))
+            roots.append(("managed-ember", managed_root / ".ember" / "plugins", 7))
 
         for root_kind, root_path, priority in roots:
             self._load_root(root_kind, root_path, priority)

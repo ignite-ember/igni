@@ -56,7 +56,13 @@ def _meta_line(name: str = "smoke", phases: int = 2) -> str:
 
 def _event(type_: str, payload: dict, seq: int = 0, run_id: str = "wf_abc") -> str:
     return json.dumps(
-        {"ts": 1_700_000_000_000 + seq, "run_id": run_id, "seq": seq, "type": type_, "payload": payload}
+        {
+            "ts": 1_700_000_000_000 + seq,
+            "run_id": run_id,
+            "seq": seq,
+            "type": type_,
+            "payload": payload,
+        }
     )
 
 
@@ -113,16 +119,19 @@ async def test_discovery_aggregates_and_caches(tmp_path: Path) -> None:
         line = _meta_line(name=name, phases=3)
         proc = AsyncMock()
         proc.returncode = 0
-        proc.communicate = AsyncMock(return_value=(
-            (line + "\n").encode("utf-8"),
-            b"",
-        ))
+        proc.communicate = AsyncMock(
+            return_value=(
+                (line + "\n").encode("utf-8"),
+                b"",
+            )
+        )
         return proc
 
     # Patch the symbol where the runner uses it (its module's
     # local binding), NOT the asyncio module — direct attribute
     # assignment on asyncio leaks across other tests.
     import ember_code.backend.workflow_runner as runner_mod
+
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(runner_mod.asyncio, "create_subprocess_exec", fake_exec)
         disc = WorkflowDiscovery(project_dir=tmp_path)
@@ -159,15 +168,9 @@ async def test_user_layer_shadows_team_layer(tmp_path: Path) -> None:
     user_dir = tmp_path / ".ember" / "workflows"
     team_dir.mkdir(parents=True)
     user_dir.mkdir(parents=True)
-    (team_dir / "shared.mjs").write_text(
-        "export const meta = { name: 'team-version' }\n"
-    )
-    (user_dir / "shared.mjs").write_text(
-        "export const meta = { name: 'user-version' }\n"
-    )
-    (user_dir / "personal.mjs").write_text(
-        "export const meta = { name: 'personal' }\n"
-    )
+    (team_dir / "shared.mjs").write_text("export const meta = { name: 'team-version' }\n")
+    (user_dir / "shared.mjs").write_text("export const meta = { name: 'user-version' }\n")
+    (user_dir / "personal.mjs").write_text("export const meta = { name: 'personal' }\n")
 
     async def fake_exec(*args, **kwargs):
         path = Path(args[2])
@@ -191,13 +194,12 @@ async def test_user_layer_shadows_team_layer(tmp_path: Path) -> None:
             }
         )
         proc = AsyncMock()
-        proc.communicate = AsyncMock(
-            return_value=((line + "\n").encode("utf-8"), b"")
-        )
+        proc.communicate = AsyncMock(return_value=((line + "\n").encode("utf-8"), b""))
         proc.returncode = 0
         return proc
 
     import ember_code.backend.workflow_runner as runner_mod
+
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(runner_mod.asyncio, "create_subprocess_exec", fake_exec)
         disc = WorkflowDiscovery(project_dir=tmp_path)
@@ -217,9 +219,7 @@ async def test_discovery_scans_both_layers_independently(tmp_path: Path) -> None
     """
     user_dir = tmp_path / ".ember" / "workflows"
     user_dir.mkdir(parents=True)
-    (user_dir / "user-only.mjs").write_text(
-        "export const meta = { name: 'user-only' }\n"
-    )
+    (user_dir / "user-only.mjs").write_text("export const meta = { name: 'user-only' }\n")
 
     async def fake_exec(*args, **kwargs):
         path = Path(args[2])
@@ -236,13 +236,12 @@ async def test_discovery_scans_both_layers_independently(tmp_path: Path) -> None
             }
         )
         proc = AsyncMock()
-        proc.communicate = AsyncMock(
-            return_value=((line + "\n").encode("utf-8"), b"")
-        )
+        proc.communicate = AsyncMock(return_value=((line + "\n").encode("utf-8"), b""))
         proc.returncode = 0
         return proc
 
     import ember_code.backend.workflow_runner as runner_mod
+
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(runner_mod.asyncio, "create_subprocess_exec", fake_exec)
         disc = WorkflowDiscovery(project_dir=tmp_path)
@@ -256,7 +255,10 @@ async def test_event_drain_persists_and_pushes(tmp_path: Path) -> None:
     lines = [
         _event("workflow_started", {"name": "smoke"}, seq=0).encode("utf-8") + b"\n",
         _event("phase_started", {"phase_id": "p1", "title": "A"}, seq=1).encode("utf-8") + b"\n",
-        _event("workflow_completed", {"status": "completed", "result": {"ok": True}}, seq=2).encode("utf-8") + b"\n",
+        _event("workflow_completed", {"status": "completed", "result": {"ok": True}}, seq=2).encode(
+            "utf-8"
+        )
+        + b"\n",
     ]
     proc = _FakeProcess(lines, exit_code=0)
 
@@ -327,21 +329,24 @@ async def test_agent_request_bridges_to_team(tmp_path: Path) -> None:
     runner = WorkflowRunner(project_dir=tmp_path, push=push)
     state = _RunState(proc=proc, workflow_run_id="wf_call", name="smoke")
 
-    req = json.dumps(
-        {
-            "ts": 1,
-            "run_id": "wf_call",
-            "seq": 0,
-            "type": "agent_request",
-            "payload": {
-                "id": "req_42",
-                "prompt": "do the thing",
-                "label": "test-agent",
-                "phase": None,
-                "timeout_seconds": 30,
-            },
-        }
-    ).encode("utf-8") + b"\n"
+    req = (
+        json.dumps(
+            {
+                "ts": 1,
+                "run_id": "wf_call",
+                "seq": 0,
+                "type": "agent_request",
+                "payload": {
+                    "id": "req_42",
+                    "prompt": "do the thing",
+                    "label": "test-agent",
+                    "phase": None,
+                    "timeout_seconds": 30,
+                },
+            }
+        ).encode("utf-8")
+        + b"\n"
+    )
     # Force a read so the drain sees the line.
     proc.stdout._lines = [req]  # type: ignore[attr-defined]
 
@@ -370,6 +375,7 @@ async def test_agent_request_bridges_to_team(tmp_path: Path) -> None:
 
 # ── Runner edge cases (cancel, cwd-relative, agent timeout) ──
 
+
 async def test_runner_spawns_user_layer_workflow_with_cwd_relative_path(
     tmp_path: Path,
 ) -> None:
@@ -385,9 +391,7 @@ async def test_runner_spawns_user_layer_workflow_with_cwd_relative_path(
     """
     user_dir = tmp_path / ".ember" / "workflows"
     user_dir.mkdir(parents=True)
-    (user_dir / "personal.mjs").write_text(
-        "export const meta = { name: 'personal' }\n"
-    )
+    (user_dir / "personal.mjs").write_text("export const meta = { name: 'personal' }\n")
 
     captured: dict[str, object] = {}
 
@@ -407,9 +411,7 @@ async def test_runner_spawns_user_layer_workflow_with_cwd_relative_path(
                 }
             )
             proc = _FakeProcess([], exit_code=0)
-            proc.communicate = AsyncMock(
-                return_value=((line + "\n").encode("utf-8"), b"")
-            )
+            proc.communicate = AsyncMock(return_value=((line + "\n").encode("utf-8"), b""))
             proc.returncode = 0
             return proc
         captured["args"] = args
@@ -417,6 +419,7 @@ async def test_runner_spawns_user_layer_workflow_with_cwd_relative_path(
         return _FakeProcess([], exit_code=0)
 
     import ember_code.backend.workflow_runner as runner_mod
+
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(runner_mod.asyncio, "create_subprocess_exec", fake_exec)
         runner = WorkflowRunner(project_dir=tmp_path, push=MagicMock())
@@ -482,6 +485,7 @@ async def test_runner_cancel_sends_cancel_message_and_sends_sigterm(tmp_path: Pa
     # Patch asyncio.wait_for to call fake_wait directly (avoids
     # the actual asyncio.wait_for scheduling).
     import ember_code.backend.workflow_runner as runner_mod
+
     real_wait_for = runner_mod.asyncio.wait_for
 
     async def fake_wait_for(coro, timeout):
@@ -521,10 +525,12 @@ async def test_agent_bridge_timeout_fires_agent_response_error(
     runner = WorkflowRunner(project_dir=tmp_path, push=push)
 
     session = MagicMock()
+
     # team.arun hangs forever; the bridge must time it out.
     async def hang(*a, **kw):
         await asyncio.sleep(60)
         return "should not return"
+
     session.main_team.arun = hang
 
     ev = MagicMock()
@@ -583,9 +589,7 @@ async def test_runner_passes_args_to_subprocess_as_json_string(
     """
     user_dir = tmp_path / ".ember" / "workflows"
     user_dir.mkdir(parents=True)
-    (user_dir / "personal.mjs").write_text(
-        "export const meta = { name: 'personal' }\n"
-    )
+    (user_dir / "personal.mjs").write_text("export const meta = { name: 'personal' }\n")
 
     captured_args: list[str] = []
 
@@ -607,9 +611,7 @@ async def test_runner_passes_args_to_subprocess_as_json_string(
                 }
             )
             proc = _FakeProcess([], exit_code=0)
-            proc.communicate = AsyncMock(
-                return_value=((line + "\n").encode("utf-8"), b"")
-            )
+            proc.communicate = AsyncMock(return_value=((line + "\n").encode("utf-8"), b""))
             proc.returncode = 0
             return proc
         # Run subprocess: capture the --args value.
@@ -618,6 +620,7 @@ async def test_runner_passes_args_to_subprocess_as_json_string(
         return _FakeProcess([], exit_code=0)
 
     import ember_code.backend.workflow_runner as runner_mod
+
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(runner_mod.asyncio, "create_subprocess_exec", fake_exec)
         runner = WorkflowRunner(project_dir=tmp_path, push=MagicMock())
@@ -632,6 +635,7 @@ async def test_runner_passes_args_to_subprocess_as_json_string(
     assert len(captured_args) == 1
     parsed = json.loads(captured_args[0])
     assert parsed == {"file": "src/example.py", "tag": "demo"}
+
 
 # Quick patch: redefine fake_exec to handle discovery too.
 # (Replaces the previous fake_exec in the args test.)
