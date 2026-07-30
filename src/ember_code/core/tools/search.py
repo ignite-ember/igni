@@ -5,6 +5,31 @@ from pathlib import Path
 
 from agno.tools import Toolkit
 
+_RG_TIMEOUT_S = 30
+_MAX_OUTPUT_CHARS = 10_000
+_SKIP_DIRS = frozenset(
+    {"__pycache__", ".git", "node_modules", ".venv", "venv", ".tox", ".mypy_cache"}
+)
+
+
+def _run_rg(cmd: list[str]) -> tuple[bool, str]:
+    """Run ripgrep and return ``(ok, output)``.
+
+    ``ok`` is False only for hard failures (rg missing, timeout,
+    non-1 stderr). rg's exit code 1 (no matches) is treated as a
+    normal outcome, since callers stringify to the agent either way.
+    """
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=_RG_TIMEOUT_S)
+    except FileNotFoundError:
+        return False, "Error: ripgrep (rg) is not installed. Install it: brew install ripgrep"
+    except subprocess.TimeoutExpired:
+        return False, f"Error: Search timed out after {_RG_TIMEOUT_S} seconds."
+
+    if result.returncode in (0, 1):
+        return True, result.stdout
+    return False, f"Error running ripgrep: {result.stderr}"
+
 
 class GrepTools(Toolkit):
     """Content search using ripgrep (rg)."""
@@ -15,6 +40,9 @@ class GrepTools(Toolkit):
         self.register(self.grep)
         self.register(self.grep_files)
         self.register(self.grep_count)
+
+    def _resolve(self, path: str) -> str:
+        return str(self.base_dir / path) if path else str(self.base_dir)
 
     def grep(
         self,
@@ -47,24 +75,12 @@ class GrepTools(Toolkit):
         if file_type:
             cmd.extend(["--type", file_type])
 
-        cmd.extend(["-m", str(max_results)])
-        cmd.append(pattern)
+        cmd.extend(["-m", str(max_results), pattern, self._resolve(path)])
 
-        search_path = str(self.base_dir / path) if path else str(self.base_dir)
-        cmd.append(search_path)
-
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            if result.returncode == 0:
-                return result.stdout[:10000] or "No matches found."
-            elif result.returncode == 1:
-                return "No matches found."
-            else:
-                return f"Error running ripgrep: {result.stderr}"
-        except FileNotFoundError:
-            return "Error: ripgrep (rg) is not installed. Install it: brew install ripgrep"
-        except subprocess.TimeoutExpired:
-            return "Error: Search timed out after 30 seconds."
+        ok, out = _run_rg(cmd)
+        if not ok:
+            return out
+        return (out[:_MAX_OUTPUT_CHARS] if out else "") or "No matches found."
 
     def grep_files(self, pattern: str, path: str = "", glob: str = "") -> str:
         """Search and return only matching file paths.
@@ -80,16 +96,12 @@ class GrepTools(Toolkit):
         cmd = ["rg", "--files-with-matches"]
         if glob:
             cmd.extend(["--glob", glob])
-        cmd.append(pattern)
+        cmd.extend([pattern, self._resolve(path)])
 
-        search_path = str(self.base_dir / path) if path else str(self.base_dir)
-        cmd.append(search_path)
-
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            return result.stdout or "No matching files found."
-        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-            return f"Error: {e}"
+        ok, out = _run_rg(cmd)
+        if not ok:
+            return out
+        return out or "No matching files found."
 
     def grep_count(self, pattern: str, path: str = "") -> str:
         """Return match counts per file.
@@ -101,15 +113,11 @@ class GrepTools(Toolkit):
         Returns:
             File paths with match counts.
         """
-        cmd = ["rg", "--count", pattern]
-        search_path = str(self.base_dir / path) if path else str(self.base_dir)
-        cmd.append(search_path)
-
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            return result.stdout or "No matches found."
-        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-            return f"Error: {e}"
+        cmd = ["rg", "--count", pattern, self._resolve(path)]
+        ok, out = _run_rg(cmd)
+        if not ok:
+            return out
+        return out or "No matches found."
 
 
 class GlobTools(Toolkit):
@@ -136,9 +144,7 @@ class GlobTools(Toolkit):
         if not search_dir.exists():
             return f"Error: Directory not found: {search_dir}"
 
-        _SKIP_DIRS = {"__pycache__", ".git", "node_modules", ".venv", "venv", ".tox", ".mypy_cache"}
-
-        matches = []
+        matches: list[Path] = []
         for p in search_dir.glob(pattern):
             if p.is_file() and not (_SKIP_DIRS & set(p.parts)):
                 matches.append(p)

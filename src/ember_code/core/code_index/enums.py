@@ -181,3 +181,53 @@ class Section(StrEnum):
     RECOMMENDATIONS = "recommendations"  # file.recommendations
     HEALTH_SCORE = "health_score"  # folder.module_health_score
     ENTITIES = "entities"  # file.entities — list of entities contained in the file
+
+    def concrete_names(self) -> frozenset[str]:
+        """Return the concrete section names this semantic group covers.
+
+        The indexer's LLM-summary pass writes ``content`` as
+        ``[SECTION:<name>]…[/SECTION]`` blocks. The concrete section
+        names differ per item type (file / entity / folder); this
+        method maps each semantic group (``Section.SECURITY``) to the
+        set of concrete names that carry that meaning across item
+        types. Consumers (``SectionMarkup``) call this to expand a
+        requested group into the wanted-name set before matching.
+
+        The mapping lives in ``_SECTION_CONCRETE_NAMES`` at module
+        level — placing a ``ClassVar[dict]`` inside the ``StrEnum`` body
+        would confuse the enum metaclass (it would try to interpret the
+        dict values as new members). Reading a module-level dict via
+        this method sidesteps that footgun while keeping the behavior
+        attached to the enum.
+        """
+        return _SECTION_CONCRETE_NAMES.get(self, frozenset())
+
+    @classmethod
+    def default_group(cls) -> tuple[Section, ...]:
+        """The section group services fall back to when the caller
+        didn't request one. Summary-only keeps responses compact.
+        """
+        return (cls.SUMMARY,)
+
+
+# Concrete section names per semantic group. Defined at module level
+# (not as a ``ClassVar`` on the enum body) because ``StrEnum``'s
+# metaclass would otherwise interpret ``dict`` values as new members.
+# Access via ``Section.concrete_names()`` — the enum's own method — so
+# the enum owns the behavior even though the data lives beside it.
+_SECTION_CONCRETE_NAMES: dict[Section, frozenset[str]] = {
+    Section.SUMMARY: frozenset({"summary", "purpose_and_functionality", "module_purpose"}),
+    Section.QUALITY: frozenset({"quality_assessment", "code_quality", "quality_patterns"}),
+    Section.SECURITY: frozenset({"security_analysis", "security", "security_posture"}),
+    Section.ISSUES: frozenset(
+        {"issues_and_concerns", "issues_and_technical_debt", "common_issues"}
+    ),
+    Section.TESTING: frozenset({"testing_status", "testing_and_reliability"}),
+    Section.ARCHITECTURE: frozenset(
+        {"architecture_and_design", "organization_and_structure", "architectural_assessment"}
+    ),
+    Section.DEPENDENCIES: frozenset({"dependencies_and_impact"}),
+    Section.RECOMMENDATIONS: frozenset({"recommendations"}),
+    Section.HEALTH_SCORE: frozenset({"module_health_score"}),
+    Section.ENTITIES: frozenset({"entities"}),
+}

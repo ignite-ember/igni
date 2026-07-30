@@ -11,11 +11,15 @@
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "gen:visualizer-prompt": "tsx scripts/gen-visualizer-prompt.ts"
   },
   "dependencies": {
+    "@json-render/core": "^0.19.0",
+    "@json-render/react": "^0.19.0",
     "highlight.js": "^11.11.1",
     "mermaid": "^11.15.0",
+    "partial-json": "^0.1.7",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^9.0.1",
@@ -23,7 +27,9 @@
     "rehype-highlight": "^7.0.2",
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "tsx": "^4.23.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.0",

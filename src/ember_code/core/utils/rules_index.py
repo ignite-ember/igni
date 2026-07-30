@@ -22,7 +22,8 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ember_code.core.utils.context import _parse_frontmatter, _resolve_imports
+from ember_code.core.utils.context_frontmatter import parse_frontmatter
+from ember_code.core.utils.context_imports import resolve_imports
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +195,7 @@ class RulesIndex:
                 except (OSError, UnicodeDecodeError) as exc:
                     logger.debug("RulesIndex scoped read %s failed: %s", path, exc)
                     continue
-                globs, body = _parse_frontmatter(content)
+                globs, body = parse_frontmatter(content)
                 if not globs:
                     # Unconditional — handled by the eager loader.
                     continue
@@ -258,7 +259,7 @@ class RulesIndex:
                 # Inline ``@<path>.md`` references, scoped to
                 # project_dir so an errant ``@/etc/passwd`` in a
                 # rules file can't reach outside the repo.
-                content = _resolve_imports(content, rules_file, self.project_dir)
+                content = resolve_imports(content, rules_file, self.project_dir)
                 self._shown.add(rules_file)
                 dir_results.append((rules_file, content))
             if dir_results:
@@ -298,7 +299,7 @@ class RulesIndex:
             for pattern in rule.globs:
                 if any(fnmatch.fnmatch(c, pattern) for c in candidates):
                     self._shown.add(rule.path)
-                    body = _resolve_imports(rule.body, rule.path, self.project_dir)
+                    body = resolve_imports(rule.body, rule.path, self.project_dir)
                     out.append((rule.path, body))
                     break
         return out

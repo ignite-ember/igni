@@ -27,7 +27,7 @@ class TestHooksCrossToolSupport:
 
         with patch.object(Path, "home", return_value=fake_home):
             loader = HookLoader(tmp_path, cross_tool_support=True)
-            hooks = loader.load()
+            hooks = loader.load().registry.raw
 
         assert "PreToolUse" in hooks
         assert hooks["PreToolUse"][0].command == "echo claude"
@@ -45,7 +45,7 @@ class TestHooksCrossToolSupport:
 
         with patch.object(Path, "home", return_value=fake_home):
             loader = HookLoader(tmp_path, cross_tool_support=False)
-            hooks = loader.load()
+            hooks = loader.load().registry.raw
 
         assert hooks == {}
 
@@ -59,7 +59,7 @@ class TestHooksCrossToolSupport:
 
         with patch.object(Path, "home", return_value=fake_home):
             loader = HookLoader(tmp_path, cross_tool_support=True)
-            hooks = loader.load()
+            hooks = loader.load().registry.raw
 
         assert "Stop" in hooks
         assert hooks["Stop"][0].command == "echo user-claude"
@@ -77,7 +77,7 @@ class TestHooksCrossToolSupport:
 
         with patch.object(Path, "home", return_value=fake_home):
             loader = HookLoader(tmp_path, cross_tool_support=True)
-            hooks = loader.load()
+            hooks = loader.load().registry.raw
 
         assert "PostToolUse" in hooks
 
@@ -102,7 +102,7 @@ class TestHooksCrossToolSupport:
 
         with patch.object(Path, "home", return_value=fake_home):
             loader = HookLoader(tmp_path, cross_tool_support=True)
-            hooks = loader.load()
+            hooks = loader.load().registry.raw
 
         assert "PreToolUse" in hooks
         assert "Stop" in hooks
@@ -126,6 +126,6 @@ class TestHooksCrossToolSupport:
 
         with patch.object(Path, "home", return_value=fake_home):
             loader = HookLoader(tmp_path, cross_tool_support=True)
-            hooks = loader.load()
+            hooks = loader.load().registry.raw
 
         assert len(hooks["PreToolUse"]) == 2

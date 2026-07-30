@@ -18,12 +18,37 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ember_code.core.lsp import manager as manager_mod
 from ember_code.core.lsp.client import LspClient, LspClientError
-from ember_code.core.lsp.config import LspServerConfig, _parse_servers_dict, load_lsp_config
+from ember_code.core.lsp.loader import LspConfigLoader, load_lsp_config
 from ember_code.core.lsp.manager import LspServerManager
+from ember_code.core.lsp.schemas import (
+    JsonRpcNotification,
+    JsonRpcRequest,
+    JsonRpcResponse,
+    LspConfigFile,
+    LspServerConfig,
+)
 from ember_code.core.tools.lsp import LspTools
 
 # ── Config parsing ────────────────────────────────────────────
+
+
+def _parse_servers_dict(raw: dict, namespace: str = "") -> dict[str, LspServerConfig]:
+    """Test helper — replicates the pre-refactor free function
+    on top of :meth:`LspServerConfig.from_raw` and
+    :class:`LspConfigFile` so the semantic contract stays under
+    test without re-introducing a module-level parser."""
+    try:
+        typed = LspConfigFile.model_validate(raw if isinstance(raw, dict) else {})
+    except Exception:
+        return {}
+    out: dict[str, LspServerConfig] = {}
+    for name, entry in typed.lspServers.items():
+        parsed = LspServerConfig.from_raw(name, entry, namespace=namespace)
+        if parsed is not None:
+            out[parsed.name] = parsed
+    return out
 
 
 class TestParseServersDict:
@@ -106,6 +131,24 @@ class TestParseServersDict:
         assert _parse_servers_dict({}) == {}
         assert _parse_servers_dict({"lspServers": "not a dict"}) == {}
 
+    def test_camelcase_alias_wins_on_collision(self):
+        """When both ``rootUri`` (alias) and ``root_uri`` (snake)
+        appear in one entry, the LSP-spec camelCase key wins.
+        Documenting the tie-break so future field additions don't
+        accidentally flip it."""
+        out = _parse_servers_dict(
+            {
+                "lspServers": {
+                    "x": {
+                        "command": "x",
+                        "rootUri": "file:///camel",
+                        "root_uri": "file:///snake",
+                    }
+                }
+            }
+        )
+        assert out["x"].root_uri == "file:///camel"
+
 
 class TestLoadLspConfig:
     def _write_json(self, path: Path, payload: dict) -> None:
@@ -113,6 +156,8 @@ class TestLoadLspConfig:
         path.write_text(json.dumps(payload))
 
     def test_project_only(self, tmp_path, monkeypatch):
+        """Uses the back-compat ``load_lsp_config`` wrapper — the
+        legacy return type is a bare ``dict[str, LspServerConfig]``."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
         (tmp_path / "home").mkdir()
         self._write_json(
@@ -139,6 +184,8 @@ class TestLoadLspConfig:
         assert out["shared"].command == "project-cmd"
 
     def test_plugin_namespacing(self, tmp_path, monkeypatch):
+        """Uses :class:`LspConfigLoader` directly to exercise the
+        typed result surface (and its typed error list)."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
         (tmp_path / "home").mkdir()
         plugin_dir = tmp_path / "plugins" / "my-plugin"
@@ -147,12 +194,13 @@ class TestLoadLspConfig:
             plugin_dir / ".lsp.json",
             {"lspServers": {"pyright": {"command": "plugin-pyright"}}},
         )
-        out = load_lsp_config(
+        result = LspConfigLoader(
             tmp_path,
             plugin_roots=[(plugin_dir, "my-plugin")],
-        )
-        assert "my-plugin:pyright" in out
-        assert out["my-plugin:pyright"].command == "plugin-pyright"
+        ).load()
+        assert "my-plugin:pyright" in result.servers
+        assert result.servers["my-plugin:pyright"].command == "plugin-pyright"
+        assert result.errors == []
 
     def test_missing_files_return_empty(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
@@ -161,12 +209,40 @@ class TestLoadLspConfig:
 
     def test_invalid_json_is_no_op(self, tmp_path, monkeypatch):
         """A malformed ``.lsp.json`` shouldn't sink config loading
-        — log + skip."""
+        — the back-compat wrapper still yields an empty dict."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
         (tmp_path / "home").mkdir()
         (tmp_path / ".lsp.json").write_text("{not json")
         out = load_lsp_config(tmp_path)
         assert out == {}
+
+    def test_invalid_json_surfaces_as_typed_error(self, tmp_path, monkeypatch):
+        """The typed :class:`LspConfigLoadResult` surfaces the
+        parse failure so the panel can show *why* a file was
+        skipped."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        (tmp_path / "home").mkdir()
+        (tmp_path / ".lsp.json").write_text("{not json")
+        result = LspConfigLoader(tmp_path).load()
+        assert result.servers == {}
+        assert len(result.errors) == 1
+        err = result.errors[0]
+        assert err.entry_name is None
+        assert err.path.endswith(".lsp.json")
+        assert "read/decode failed" in err.reason
+
+    def test_missing_command_surfaces_as_per_entry_error(self, tmp_path, monkeypatch):
+        """A per-entry parse failure lands in ``.errors`` with the
+        offending server key set."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        (tmp_path / "home").mkdir()
+        self._write_json(
+            tmp_path / ".lsp.json",
+            {"lspServers": {"bad": {"args": ["--stdio"]}}},
+        )
+        result = LspConfigLoader(tmp_path).load()
+        assert result.servers == {}
+        assert any(e.entry_name == "bad" and "command" in e.reason for e in result.errors)
 
 
 # ── Client framing (no subprocess) ────────────────────────────
@@ -194,7 +270,9 @@ class TestClientFraming:
         )
         body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"hello": 1}}).encode()
         msg = await client._read_message(_stream(_frame(body)))
-        assert msg == {"jsonrpc": "2.0", "id": 1, "result": {"hello": 1}}
+        assert isinstance(msg, JsonRpcResponse)
+        assert msg.id == 1
+        assert msg.result == {"hello": 1}
 
     @pytest.mark.asyncio
     async def test_eof_returns_none(self):
@@ -232,9 +310,9 @@ class TestClientDispatch:
             LspServerConfig(name="x", command="x"),
             project_dir=Path("/"),
         )
-        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
         client._pending[7] = fut
-        client._dispatch({"jsonrpc": "2.0", "id": 7, "result": {"ok": True}})
+        client._dispatch(JsonRpcResponse(id=7, result={"ok": True}))
         assert (await fut) == {"ok": True}
 
     @pytest.mark.asyncio
@@ -243,10 +321,16 @@ class TestClientDispatch:
             LspServerConfig(name="x", command="x"),
             project_dir=Path("/"),
         )
-        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
         client._pending[7] = fut
         client._dispatch(
-            {"jsonrpc": "2.0", "id": 7, "error": {"code": -32601, "message": "Method not found"}}
+            JsonRpcResponse.model_validate(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 7,
+                    "error": {"code": -32601, "message": "Method not found"},
+                }
+            )
         )
         with pytest.raises(LspClientError) as exc_info:
             await fut
@@ -261,7 +345,7 @@ class TestClientDispatch:
             project_dir=Path("/"),
         )
         # No pending future for id=99. Should not raise.
-        client._dispatch({"jsonrpc": "2.0", "id": 99, "result": None})
+        client._dispatch(JsonRpcResponse(id=99, result=None))
 
     def test_dispatch_ignores_notifications(self):
         """A no-id message is a server-side notification
@@ -270,7 +354,26 @@ class TestClientDispatch:
             LspServerConfig(name="x", command="x"),
             project_dir=Path("/"),
         )
-        client._dispatch({"jsonrpc": "2.0", "method": "window/logMessage", "params": {}})
+        client._dispatch(JsonRpcNotification(method="window/logMessage", params={}))
+
+    def test_shutdown_request_serializes_params_as_null(self):
+        """The LSP ``shutdown`` request and ``exit`` notification
+        pass ``params=None`` — some servers require the key to be
+        present as JSON ``null``, not omitted. Guard the wire
+        shape so a future ``exclude_none=True`` regression is
+        caught here."""
+        envelope = JsonRpcRequest(id=1, method="shutdown", params=None)
+        payload = envelope.model_dump(exclude_none=False)
+        assert payload == {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "shutdown",
+            "params": None,
+        }
+        assert (
+            json.dumps(payload)
+            == '{"jsonrpc": "2.0", "id": 1, "method": "shutdown", "params": null}'
+        )
 
 
 # ── Manager lifecycle ────────────────────────────────────────
@@ -304,8 +407,6 @@ class TestLspServerManager:
         configs = {"x": LspServerConfig(name="x", command="x")}
         manager = LspServerManager(configs, tmp_path)
 
-        from ember_code.core.lsp import manager as manager_mod
-
         start_count = 0
 
         class _FakeClient:
@@ -334,8 +435,6 @@ class TestLspServerManager:
         configs = {"x": LspServerConfig(name="x", command="not-a-real-binary-xyz")}
         manager = LspServerManager(configs, tmp_path)
 
-        from ember_code.core.lsp import manager as manager_mod
-
         class _BrokenClient:
             def __init__(self, *a, **kw):
                 pass
@@ -355,8 +454,6 @@ class TestLspServerManager:
     async def test_query_routes_through_ensure(self, tmp_path, monkeypatch):
         configs = {"x": LspServerConfig(name="x", command="x")}
         manager = LspServerManager(configs, tmp_path)
-
-        from ember_code.core.lsp import manager as manager_mod
 
         captured = []
 
@@ -383,8 +480,6 @@ class TestLspServerManager:
     async def test_shutdown_all_clears_clients(self, tmp_path, monkeypatch):
         configs = {"x": LspServerConfig(name="x", command="x")}
         manager = LspServerManager(configs, tmp_path)
-
-        from ember_code.core.lsp import manager as manager_mod
 
         shutdown_calls = []
 

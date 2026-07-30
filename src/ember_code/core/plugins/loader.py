@@ -1,17 +1,26 @@
 """Plugin discovery + namespace-prefixed apply to existing loaders.
 
-Scans six roots in priority order (later wins same-name collisions):
+Scans seven roots in priority order (higher priority wins same-name
+collisions):
 
     1. ~/.claude/plugins/                       (Claude user-global)
     2. ~/.ember/plugins/                        (ember user-global)
     3. <project>/.claude/plugins/               (Claude project-local)
     4. <project>/.ember/plugins/                (ember project-local)
-    5. <managed>/.claude/plugins/               (sysadmin, cross-tool)
-    6. <managed>/.ember/plugins/                (sysadmin, ember-native)
+    5. <data_dir>/group-policy/plugins/          (org Group Policy)
+    6. <managed>/.claude/plugins/                (sysadmin, cross-tool)
+    7. <managed>/.ember/plugins/                 (sysadmin, ember-native)
+
+The new tier 5 (``group-policy-ember``) holds plugins installed
+from URL/ref/subdir specified in :class:`GroupPolicyOverrideEntry`
+via :class:`PluginInstaller`. It sits between project-local
+installs (3/4) and the OS-managed tiers (6/7) so org-shared
+plugins override personal + project-local copies, but MDM/
+sysadmin bundles still pin at the top of the same-name tie.
 
 ``<managed>`` is the OS-specific write-protected directory used
 by the managed-settings tier (see
-``settings._platform_managed_settings_path``). Managed plugins
+``ManagedPolicySource.platform_path``). Managed plugins
 beat project plugins on same-name collisions and can't be
 disabled by the user — the "you can't `--auto-approve` your way
 out of org policy" rule extends to "you can't disable an
@@ -32,6 +41,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ember_code.core.hooks.schemas import HookLoadResult
 from ember_code.core.plugins.models import (
     PluginDefinition,
     PluginManifest,
@@ -39,10 +49,11 @@ from ember_code.core.plugins.models import (
 )
 
 if TYPE_CHECKING:
+    from ember_code.core.agents import AgentPool
     from ember_code.core.hooks.loader import HookLoader
-    from ember_code.core.hooks.schemas import HookDefinition
+    from ember_code.core.hooks.registry import HookRegistry
+    from ember_code.core.hooks.schemas import HookLoadResult
     from ember_code.core.mcp.config import MCPConfigLoader, MCPServerConfig
-    from ember_code.core.pool import AgentPool
     from ember_code.core.skills.loader import SkillPool
 
 logger = logging.getLogger(__name__)
@@ -76,8 +87,12 @@ def _platform_managed_plugins_root() -> Path | None:
 class PluginLoader:
     """Discovers plugins and applies their bundled extensions."""
 
-    def __init__(self) -> None:
+    def __init__(self, data_dir: str | Path = "~/.ember") -> None:
         self._plugins: dict[str, PluginDefinition] = {}
+        # Used to compute the org-installed ``group-policy`` root.
+        # ``Path.home()`` is still the default for the user-tier
+        # roots below so existing callers don't need to update.
+        self._data_dir = Path(str(data_dir)).expanduser()
 
     # ── Discovery ────────────────────────────────────────────────────
 
@@ -88,7 +103,7 @@ class PluginLoader:
         higher-priority root wins. Plugins disabled via state are still
         recorded here — the apply steps are where ``disabled`` is
         honored, so the panel can still show disabled plugins. Managed
-        plugins (priorities 5/6) win above project (3/4) and are
+        plugins (priorities 6/7) win above project (3/4) and are
         always enabled — see :attr:`PluginDefinition.is_managed`.
         """
         if project_dir is None:
@@ -101,13 +116,32 @@ class PluginLoader:
             ("project-ember", project_dir / ".ember" / "plugins", 4),
         ]
 
+        # Group-policy tier — plugins installed from
+        # :class:`GroupPolicyOverrideEntry.source_url` by
+        # :class:`PluginInstaller`. Priority 5 sits above project
+        # installs (3/4) so org-shared plugins beat local dev
+        # overrides, and below the sysadmin-managed tiers (6/7)
+        # so MDM/org-IT still wins on the same-name tie.
+        # The collision rule (line ~181) compares ``priority >
+        # existing.source.priority`` strictly, so the integers
+        # we pick determine precedence — no insertion-order
+        # hidden dependence.
+        roots.append(
+            (
+                "group-policy-ember",
+                self._data_dir / "group-policy" / "plugins",
+                5,
+            )
+        )
+
         # Managed tier — sysadmin-controlled, sibling to the
         # managed-settings file. ``None`` on platforms with no
-        # defined managed location.
+        # defined managed location. Bumped to 6/7 so the
+        # group-policy tier (priority 5) wins on name clashes.
         managed_root = _platform_managed_plugins_root()
         if managed_root is not None:
-            roots.append(("managed-claude", managed_root / ".claude" / "plugins", 5))
-            roots.append(("managed-ember", managed_root / ".ember" / "plugins", 6))
+            roots.append(("managed-claude", managed_root / ".claude" / "plugins", 6))
+            roots.append(("managed-ember", managed_root / ".ember" / "plugins", 7))
 
         for root_kind, root_path, priority in roots:
             self._load_root(root_kind, root_path, priority)
@@ -194,43 +228,50 @@ class PluginLoader:
     ) -> None:
         """Load each enabled plugin's ``agents/`` into the AgentPool.
 
-        AgentPool exposes ``_load_directory`` (single-underscore — used
-        across the package, not strictly private). The namespacing
-        rule mirrors skills: ``<plugin>:<agent>``. Plugin agents are
-        loaded with ``plugin_restricted=True`` so their definitions
-        get sanitised (no hooks / mcpServers / permissionMode) and
-        forced into per-spawn worktree isolation — CC parity row 37.
+        The namespacing rule mirrors skills: ``<plugin>:<agent>``.
+        Plugin agents are loaded via
+        :meth:`AgentPool.load_plugin_directory` so their
+        definitions get sanitised (no hooks / mcpServers /
+        permissionMode) and forced into per-spawn worktree
+        isolation — CC parity row 37.
         """
         disabled = disabled or set()
         for plugin in self._plugins.values():
             if plugin.name in disabled or not plugin.has_agents:
                 continue
-            agent_pool._load_directory(
+            agent_pool.load_plugin_directory(
                 plugin.root_path / "agents",
                 priority=plugin.source.priority,
                 namespace=plugin.name,
-                plugin_restricted=True,
             )
 
     def apply_to_hooks(
         self,
         hook_loader: HookLoader,
-        hooks: dict[str, list[HookDefinition]],
+        registry: HookRegistry,
         *,
         disabled: set[str] | None = None,
-    ) -> None:
-        """Merge each enabled plugin's ``hooks/hooks.json`` into *hooks*.
+    ) -> HookLoadResult:
+        """Merge each enabled plugin's ``hooks/hooks.json`` into *registry*.
 
         Plugins are *prepended* to each event's bucket so project-level
         hooks (which were loaded last by ``HookLoader.load()``) still
         run after plugin hooks — giving the project's veto/transform
         the final word in any chain.
+
+        Returns a combined :class:`HookLoadResult` referencing the
+        shared registry plus every warning that surfaced across all
+        plugins. The caller (typically ``session.core``) logs these
+        via its module logger rather than dumping them to stderr.
         """
         disabled = disabled or set()
+        combined = HookLoadResult(registry=registry, warnings=[])
         for plugin in self._plugins.values():
             if plugin.name in disabled or not plugin.has_hooks:
                 continue
-            hook_loader.load_plugin_hooks(plugin.root_path, hooks)
+            plugin_result = hook_loader.load_plugin_hooks(plugin.root_path, registry)
+            combined = combined.merge(plugin_result)
+        return combined
 
     def apply_to_mcp(
         self,
@@ -276,7 +317,7 @@ class PluginLoader:
     ) -> list[tuple[Path, str]]:
         """Return ``(plugin_root, plugin_name)`` for every enabled
         plugin that bundles a ``.lsp.json``. Consumed by
-        :func:`ember_code.core.lsp.config.load_lsp_config` to
+        :class:`ember_code.core.lsp.loader.LspConfigLoader` to
         register plugin-bundled language servers under the
         plugin's namespace."""
         disabled = disabled or set()

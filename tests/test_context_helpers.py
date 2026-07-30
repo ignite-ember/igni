@@ -18,10 +18,14 @@ or @-import behaviour.
 
 from __future__ import annotations
 
-from ember_code.core.utils.context import (
-    _mask_code_regions,
-    _resolve_at_path,
-    _unmask_code_regions,
+from ember_code.core.utils.context_imports import (
+    mask_code_regions as _mask_code_regions,
+)
+from ember_code.core.utils.context_imports import (
+    resolve_at_path as _resolve_at_path,
+)
+from ember_code.core.utils.context_imports import (
+    unmask_code_regions as _unmask_code_regions,
 )
 
 # ── _resolve_at_path ────────────────────────────────────────

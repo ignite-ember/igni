@@ -6,9 +6,9 @@ table is keyed by ``session_id`` so other per-session knobs can be
 added as additional columns without a migration story.
 
 User-level defaults still live in ``~/.ember/config.yaml`` (written
-by ``save_default_model``); this store layers on top so a resumed
-session keeps the model it was last using even if the user has
-since picked a different default for new sessions.
+by ``UserConfigStore.set_default_model``); this store layers on top
+so a resumed session keeps the model it was last using even if the
+user has since picked a different default for new sessions.
 
 Lives in the same project-local ``state.db`` Agno uses, so no new
 file is needed. ``CREATE TABLE IF NOT EXISTS`` runs on first use;

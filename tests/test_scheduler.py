@@ -5,11 +5,8 @@ from datetime import datetime, timedelta
 import pytest
 
 from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
-from ember_code.core.scheduler.parser import (
-    next_occurrence_from_recurrence,
-    parse_recurrence,
-    parse_time,
-)
+from ember_code.core.scheduler.parser import parse_time
+from ember_code.core.scheduler.recurrence import Recurrence
 from ember_code.core.scheduler.store import TaskStore
 
 # ── Time parser ─────────────────────────────────────────────────
@@ -77,61 +74,62 @@ class TestParseTime:
 
 class TestParseRecurrence:
     def test_every_minutes(self):
-        recurrence, scheduled = parse_recurrence("every 30 minutes")
-        assert recurrence == "every 30 minutes"
-        assert scheduled is not None
-        assert scheduled > datetime.now()
+        result = Recurrence.parse("every 30 minutes")
+        assert result is not None
+        assert result.recurrence.canonical() == "every 30 minutes"
+        assert result.first_scheduled > datetime.now()
 
     def test_every_hours(self):
-        recurrence, scheduled = parse_recurrence("every 2 hours")
-        assert recurrence == "every 2 hours"
-        assert scheduled is not None
+        result = Recurrence.parse("every 2 hours")
+        assert result is not None
+        assert result.recurrence.canonical() == "every 2 hours"
 
     def test_daily(self):
-        recurrence, scheduled = parse_recurrence("daily")
-        assert recurrence == "every 1 days"
-        assert scheduled is not None
+        result = Recurrence.parse("daily")
+        assert result is not None
+        assert result.recurrence.canonical() == "every 1 days"
 
     def test_hourly(self):
-        recurrence, scheduled = parse_recurrence("hourly")
-        assert recurrence == "every 1 hours"
-        assert scheduled is not None
+        result = Recurrence.parse("hourly")
+        assert result is not None
+        assert result.recurrence.canonical() == "every 1 hours"
 
     def test_weekly(self):
-        recurrence, scheduled = parse_recurrence("weekly")
-        assert recurrence == "every 7 days"
-        assert scheduled is not None
+        result = Recurrence.parse("weekly")
+        assert result is not None
+        assert result.recurrence.canonical() == "every 7 days"
 
     def test_daily_at_time(self):
-        recurrence, scheduled = parse_recurrence("daily at 9am")
-        assert recurrence == "every 1 days"
-        assert scheduled is not None
-        assert scheduled.hour == 9
+        result = Recurrence.parse("daily at 9am")
+        assert result is not None
+        assert result.recurrence.canonical() == "every 1 days"
+        assert result.first_scheduled.hour == 9
 
     def test_invalid(self):
-        recurrence, scheduled = parse_recurrence("not a pattern")
-        assert recurrence == ""
-        assert scheduled is None
+        assert Recurrence.parse("not a pattern") is None
 
 
 class TestNextOccurrence:
     def test_from_daily(self):
         last = datetime(2026, 3, 19, 9, 0)
-        next_at = next_occurrence_from_recurrence("every 1 days", last)
-        assert next_at == datetime(2026, 3, 20, 9, 0)
+        recurrence = Recurrence.from_canonical("every 1 days")
+        assert recurrence is not None
+        assert recurrence.next_after(last) == datetime(2026, 3, 20, 9, 0)
 
     def test_from_hourly(self):
         last = datetime(2026, 3, 19, 14, 0)
-        next_at = next_occurrence_from_recurrence("every 1 hours", last)
-        assert next_at == datetime(2026, 3, 19, 15, 0)
+        recurrence = Recurrence.from_canonical("every 1 hours")
+        assert recurrence is not None
+        assert recurrence.next_after(last) == datetime(2026, 3, 19, 15, 0)
 
     def test_from_30_minutes(self):
         last = datetime(2026, 3, 19, 14, 30)
-        next_at = next_occurrence_from_recurrence("every 30 minutes", last)
-        assert next_at == datetime(2026, 3, 19, 15, 0)
+        recurrence = Recurrence.from_canonical("every 30 minutes")
+        assert recurrence is not None
+        assert recurrence.next_after(last) == datetime(2026, 3, 19, 15, 0)
 
     def test_invalid_pattern(self):
-        assert next_occurrence_from_recurrence("garbage", datetime.now()) is None
+        assert Recurrence.from_canonical("garbage") is None
 
 
 # ── Task store (async) ──────────────────────────────────────────

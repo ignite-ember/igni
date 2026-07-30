@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
+from ember_code.core.code_index.delta import DeltaStats
 from ember_code.core.code_index.fetcher import (
     ChangesetFetcher,
     ChangesetFetchError,
@@ -231,8 +232,6 @@ class TestPullAndApply:
             captured["jsonl_path"] = Path(jsonl_path)
             captured["index"] = index
             captured["file_refs"] = file_refs
-            from ember_code.core.code_index.delta import DeltaStats
-
             return DeltaStats(items_upserted=3)
 
         monkeypatch.setattr("ember_code.core.code_index.fetcher.apply_delta", fake_apply)
@@ -264,8 +263,6 @@ class TestPullAndApply:
         fetcher.download = delta_called  # type: ignore[method-assign]
 
         async def fake_apply(*, index, file_refs, jsonl_path, on_progress=None):
-            from ember_code.core.code_index.delta import DeltaStats
-
             return DeltaStats(items_upserted=1)
 
         monkeypatch.setattr("ember_code.core.code_index.fetcher.apply_delta", fake_apply)

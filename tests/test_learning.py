@@ -1,36 +1,46 @@
 """Tests for learning integration — LearningMachine creation from config."""
 
+from agno.db.in_memory import InMemoryDb
+
 from ember_code.core.config.settings import Settings
-from ember_code.core.learn import create_learning_machine
+from ember_code.core.learn import LearnBootResult, create_learning_machine
 
 
 class TestCreateLearningMachine:
-    def test_disabled_returns_none(self):
-        """When learning.enabled is False, returns None."""
+    def test_disabled_returns_not_ok(self):
+        """When learning.enabled is False, returns a not-ok envelope
+        with an actionable reason string."""
         s = Settings()
         s.learning.enabled = False
-        assert create_learning_machine(s) is None
+        result = create_learning_machine(s)
+        assert isinstance(result, LearnBootResult)
+        assert result.ok is False
+        assert result.machine is None
+        assert result.reason == "disabled in settings"
 
-    def test_enabled_no_db_returns_none(self):
-        """When learning is enabled but no db, returns None."""
+    def test_enabled_no_db_returns_not_ok(self):
+        """When learning is enabled but no db, returns a not-ok
+        envelope naming the missing dependency."""
         s = Settings()
         s.learning.enabled = True
-        assert create_learning_machine(s, db=None) is None
+        result = create_learning_machine(s, db=None)
+        assert result.ok is False
+        assert result.machine is None
+        assert result.reason == "no database configured"
 
     def test_enabled_with_db(self):
-        """When learning is enabled with a db, returns a LearningMachine."""
-        from agno.db.in_memory import InMemoryDb
-
+        """When learning is enabled with a db, returns an ok envelope
+        wrapping a LearningMachine."""
         s = Settings()
         s.learning.enabled = True
         db = InMemoryDb()
-        lm = create_learning_machine(s, db=db)
-        assert lm is not None
+        result = create_learning_machine(s, db=db)
+        assert result.ok is True
+        assert result.machine is not None
+        assert result.reason == ""
 
     def test_config_flags_passed_through(self):
         """Config flags are forwarded to LearningMachine."""
-        from agno.db.in_memory import InMemoryDb
-
         s = Settings()
         s.learning.enabled = True
         s.learning.user_profile = True
@@ -40,7 +50,9 @@ class TestCreateLearningMachine:
         s.learning.learned_knowledge = False
         db = InMemoryDb()
 
-        lm = create_learning_machine(s, db=db)
+        result = create_learning_machine(s, db=db)
+        assert result.machine is not None
+        lm = result.machine
         assert lm.user_profile is True
         assert lm.user_memory is False
         assert lm.session_context is True
@@ -49,8 +61,6 @@ class TestCreateLearningMachine:
 
     def test_all_disabled_flags(self):
         """Even with learning enabled, individual stores can be disabled."""
-        from agno.db.in_memory import InMemoryDb
-
         s = Settings()
         s.learning.enabled = True
         s.learning.user_profile = False
@@ -60,7 +70,9 @@ class TestCreateLearningMachine:
         s.learning.learned_knowledge = False
         db = InMemoryDb()
 
-        lm = create_learning_machine(s, db=db)
+        result = create_learning_machine(s, db=db)
+        assert result.ok is True
+        lm = result.machine
         assert lm is not None
         assert lm.user_profile is False
         assert lm.user_memory is False

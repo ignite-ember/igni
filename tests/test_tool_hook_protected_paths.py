@@ -3,27 +3,32 @@
 import pytest
 
 from ember_code.core.hooks.executor import HookExecutor
-from ember_code.core.hooks.tool_hook import ToolEventHook, _is_protected_path
+from ember_code.core.hooks.permission_pipeline import ProtectedPathStage
+from ember_code.core.hooks.tool_hook import ToolEventHook
 
 
 class TestIsProtectedPath:
+    """Pins :meth:`ProtectedPathStage.matches_pattern` — the pure
+    static predicate the pre-refactor ``_is_protected_path`` shim
+    used to wrap."""
+
     def test_exact_match(self):
-        assert _is_protected_path(".env", [".env"])
+        assert ProtectedPathStage.matches_pattern(".env", [".env"])
 
     def test_glob(self):
-        assert _is_protected_path(".env.production", [".env.*"])
+        assert ProtectedPathStage.matches_pattern(".env.production", [".env.*"])
 
     def test_wildcard_ext(self):
-        assert _is_protected_path("server.pem", ["*.pem"])
+        assert ProtectedPathStage.matches_pattern("server.pem", ["*.pem"])
 
     def test_no_match(self):
-        assert not _is_protected_path("app.py", [".env", "*.pem"])
+        assert not ProtectedPathStage.matches_pattern("app.py", [".env", "*.pem"])
 
     def test_full_path(self):
-        assert _is_protected_path("/project/.env", [".env"])
+        assert ProtectedPathStage.matches_pattern("/project/.env", [".env"])
 
     def test_empty_patterns(self):
-        assert not _is_protected_path(".env", [])
+        assert not ProtectedPathStage.matches_pattern(".env", [])
 
 
 class TestToolEventHookProtectedPaths:

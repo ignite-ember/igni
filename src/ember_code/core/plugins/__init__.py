@@ -9,19 +9,23 @@ collisions across plugins.
 
 The package owns discovery (:class:`PluginLoader`), persisted state
 (disabled list, install pins — see :mod:`state`), and the marketplace
-registry (Phase 2). The actual loading of skills/agents/hooks/MCP/tools
-goes through the existing per-type loaders — this module just hands
-them the right directories with a namespace prefix.
+registry (:class:`MarketplaceRegistryStore` in :mod:`marketplace_store`,
+schemas in :mod:`models`). The actual loading of
+skills/agents/hooks/MCP/tools goes through the existing per-type
+loaders — this module just hands them the right directories with a
+namespace prefix.
 """
 
 from ember_code.core.plugins.git import GitClient, GitError
 from ember_code.core.plugins.installer import PluginError, PluginInstaller
 from ember_code.core.plugins.loader import PluginLoader
+from ember_code.core.plugins.marketplace_store import (
+    DEFAULT_MARKETPLACES,
+    CatalogFetchResult,
+    MarketplaceRefreshOutcome,
+    MarketplaceRegistryStore,
+)
 from ember_code.core.plugins.marketplaces import (
-    MarketplaceCatalog,
-    MarketplaceEntry,
-    MarketplacePluginEntry,
-    MarketplaceRegistry,
     add_marketplace,
     fetch_catalog,
     load_registry,
@@ -31,12 +35,20 @@ from ember_code.core.plugins.marketplaces import (
     save_registry,
 )
 from ember_code.core.plugins.models import (
+    InstallRef,
+    MarketplaceCatalog,
+    MarketplaceEntry,
+    MarketplaceGitSubdirSource,
     MarketplaceInfo,
+    MarketplacePluginEntry,
     MarketplacePluginInfo,
+    MarketplaceRegistry,
+    MarketplaceUrlSource,
     PluginDefinition,
     PluginInfo,
     PluginManifest,
     PluginSource,
+    ResolvedSource,
 )
 from ember_code.core.plugins.state import (
     PluginsState,
@@ -59,8 +71,16 @@ __all__ = [
     "PluginsState",
     "MarketplaceCatalog",
     "MarketplaceEntry",
+    "MarketplaceGitSubdirSource",
     "MarketplacePluginEntry",
     "MarketplaceRegistry",
+    "MarketplaceUrlSource",
+    "ResolvedSource",
+    "InstallRef",
+    "CatalogFetchResult",
+    "MarketplaceRefreshOutcome",
+    "MarketplaceRegistryStore",
+    "DEFAULT_MARKETPLACES",
     "load_state",
     "save_state",
     "load_registry",

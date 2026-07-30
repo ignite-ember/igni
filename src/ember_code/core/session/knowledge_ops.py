@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ember_code.core.config.settings import Settings
 from ember_code.core.knowledge.index import KnowledgeIndex
-from ember_code.core.knowledge.ingest import Ingester, IngestError
+from ember_code.core.knowledge.ingest import Ingester
 from ember_code.core.knowledge.models import (
     KnowledgeAddResult,
     KnowledgeSearchResponse,
@@ -84,13 +84,8 @@ class SessionKnowledgeManager:
             return KnowledgeAddResult.fail(
                 "Knowledge base is not enabled. Set knowledge.enabled=true in config."
             )
-        try:
-            count = await Ingester(self.knowledge).add_url(url, metadata=metadata)
-        except IngestError as exc:
-            return KnowledgeAddResult.fail(str(exc))
-        if count == 0:
-            return KnowledgeAddResult.fail(f"No content extracted from {url}")
-        return KnowledgeAddResult.ok(f"Added {count} document(s) from {url}")
+        result = await Ingester(self.knowledge).add_url(url, metadata=metadata)
+        return KnowledgeAddResult.from_ingest(result, source_label=url)
 
     async def add_path(
         self,
@@ -103,13 +98,8 @@ class SessionKnowledgeManager:
             return KnowledgeAddResult.fail(
                 "Knowledge base is not enabled. Set knowledge.enabled=true in config."
             )
-        try:
-            count = await Ingester(self.knowledge).add_path(path, metadata=metadata)
-        except IngestError as exc:
-            return KnowledgeAddResult.fail(str(exc))
-        if count == 0:
-            return KnowledgeAddResult.fail(f"No content extracted from {path}")
-        return KnowledgeAddResult.ok(f"Added {count} document(s) from {path}")
+        result = await Ingester(self.knowledge).add_path(path, metadata=metadata)
+        return KnowledgeAddResult.from_ingest(result, source_label=path)
 
     async def search(
         self,
@@ -126,19 +116,43 @@ class SessionKnowledgeManager:
             logger.debug("Knowledge search failed: %s", exc)
             return KnowledgeSearchResponse(query=query)
 
-        results = [
-            KnowledgeSearchResult(
+        results = [self._coerce_hit(r) for r in raw]
+        return KnowledgeSearchResponse(query=query, results=results, total=len(results))
+
+    @staticmethod
+    def _coerce_hit(r: object) -> KnowledgeSearchResult:
+        """Normalize search hits into :class:`KnowledgeSearchResult`.
+
+        The index returns typed hits already, but tests stub the facade
+        with dict payloads — accept both. Merges the hit's ``project``
+        label into ``metadata`` so downstream consumers (the search
+        panel, the agent toolkit) can render a per-project ribbon
+        without a separate lookup.
+        """
+        if isinstance(r, KnowledgeSearchResult):
+            merged_meta = {
+                **{k: str(v) for k, v in r.metadata.items()},
+                **({"project": r.project} if r.project else {}),
+            }
+            return r.model_copy(update={"metadata": merged_meta})
+        # Legacy dict shape (test fixtures, external stubs).
+        if isinstance(r, dict):
+            project = r.get("project") or ""
+            merged_meta = {
+                **{k: str(v) for k, v in (r.get("metadata") or {}).items()},
+                **({"project": project} if project else {}),
+            }
+            return KnowledgeSearchResult(
+                entry_id=r.get("entry_id", ""),
                 content=r.get("content", ""),
                 name=r.get("name", "") or r.get("source", ""),
+                source=r.get("source", ""),
+                project=project,
+                parent_content=r.get("parent_content", ""),
                 score=r.get("score"),
-                metadata={
-                    **{k: str(v) for k, v in (r.get("metadata") or {}).items()},
-                    **({"project": r["project"]} if r.get("project") else {}),
-                },
+                metadata=merged_meta,
             )
-            for r in raw
-        ]
-        return KnowledgeSearchResponse(query=query, results=results, total=len(results))
+        return KnowledgeSearchResult()
 
     async def sync_from_file(self) -> KnowledgeSyncResult:
         if not self.share_enabled():
@@ -188,9 +202,12 @@ class SessionKnowledgeManager:
     def _mirror_to_yaml(self, *, text: str, source: str, entry_id: str) -> None:
         syncer = KnowledgeSyncer(file_path=self.file_path())
         entries = syncer.load_file()
-        if any(e.get("id") == entry_id for e in entries):
+        if any(e.id == entry_id for e in entries):
             return
-        entry = KnowledgeSyncer.make_entry(content=text, source=source)
-        entry["id"] = entry_id
+        entry = syncer.make_entry(content=text, source=source)
+        # Caller supplies the canonical entry_id so the mirror row
+        # matches the vector-store row exactly — override the
+        # content-hash id ``make_entry`` produced by default.
+        entry = entry.model_copy(update={"id": entry_id})
         entries.append(entry)
         syncer.save_file(entries)

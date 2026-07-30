@@ -27,8 +27,9 @@ from agno.run.agent import (
     RunPausedEvent,
     RunStartedEvent,
 )
+from pydantic import BaseModel
 
-from ember_code.core.sub_agent_hitl import SubAgentHITLCoordinator
+from ember_code.core.sub_agent_hitl import SubAgentHITLCoordinator, _PendingEntry
 from ember_code.core.tools.orchestrate import _run_agent_streaming
 
 
@@ -341,3 +342,54 @@ class TestSubAgentHITLPlumbing:
         # Mutating the original list must not bleed into the entry.
         path.append("editor")
         assert entry.agent_path == ["architect", "reviewer"]
+
+
+class TestPendingEntryModel:
+    """Post-refactor ``_PendingEntry`` is a Pydantic BaseModel (Rule 1
+    compliance — was a dataclass before). These tests lock in that the
+    coordinator's public methods still round-trip data cleanly and
+    that the mutable fields (``surfaced`` + ``event``) still flip
+    from within the coordinator's methods."""
+
+    def test_pending_entry_is_pydantic(self):
+        assert issubclass(_PendingEntry, BaseModel)
+
+    def test_pending_entry_defaults_and_mutability(self):
+        entry = _PendingEntry(requirement=object(), run_id="r1")
+        # Defaults survive the dataclass → BaseModel migration.
+        assert entry.agent_path == []
+        assert entry.surfaced is False
+        assert isinstance(entry.event, asyncio.Event)
+        # Coordinator mutates ``surfaced`` and ``event`` from its
+        # methods — must remain assignable post-refactor.
+        entry.surfaced = True
+        entry.event.set()
+        assert entry.surfaced is True
+        assert entry.event.is_set() is True
+
+    @pytest.mark.asyncio
+    async def test_coordinator_still_works_end_to_end(self):
+        """Regression net: the pydantic migration must not break the
+        push → list_new_pending → resolve lifecycle."""
+        coord = SubAgentHITLCoordinator()
+        req = _FakeRequirement()
+        req_id = await coord.push_requirement(req, run_id="run-x", agent_path=["arch"])
+        # Newly-pushed entry surfaces exactly once.
+        new_1 = coord.list_new_pending()
+        assert len(new_1) == 1
+        assert new_1[0][0] == req_id
+        assert new_1[0][1].run_id == "run-x"
+        assert new_1[0][1].agent_path == ["arch"]
+        # Second call returns nothing (already surfaced).
+        assert coord.list_new_pending() == []
+        assert coord.has_unresolved() is True
+        # Resolve → future wait resolves.
+        assert coord.resolve(req_id, "confirm") is True
+        resolved = await coord.wait_resolved(req_id)
+        assert resolved is req
+        # Confirm side effect on the fake requirement.
+        assert req.confirmed is True
+        assert coord.has_unresolved() is False
+        # Cleanup drops the record.
+        coord.cleanup(req_id)
+        assert coord.list_new_pending() == []

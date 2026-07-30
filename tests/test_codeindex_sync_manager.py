@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ember_code.core.code_index import sync_manager as sm
 from ember_code.core.code_index.delta import DeltaStats
 from ember_code.core.code_index.fetcher import (
     ChangesetFetchError,
@@ -24,7 +25,6 @@ from ember_code.core.config.settings import Settings
 
 def _patch_preflight(monkeypatch, result: PreflightResult) -> None:
     """Default helper: short-circuit ChangesetFetcher.preflight to return ``result``."""
-    from ember_code.core.code_index import sync_manager as sm
 
     async def _fake(self, *, repository_id, commit_sha, client=None):
         return result
@@ -45,7 +45,7 @@ def _stub_resolver(resolved: ResolvedRepository | None = None):
 
 def _stub_index():
     index = MagicMock()
-    index._file_reference_service = MagicMock(return_value=MagicMock())
+    index.file_reference_service = MagicMock(return_value=MagicMock())
     # Default to "target not indexed locally" so skip-path tests still
     # reach the resolver/preflight/network checks. Tests that want to
     # exercise the short-circuit (e.g. ``test_target_already_local…``)
@@ -169,8 +169,6 @@ class TestSyncSuccessAndErrors:
             credentials=_stub_credentials(),
         )
 
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(monkeypatch, _OK)
         captured = {}
 
@@ -207,8 +205,6 @@ class TestSyncSuccessAndErrors:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(monkeypatch, _OK)
 
         async def boom(self, **_kwargs):
@@ -230,8 +226,6 @@ class TestSyncSuccessAndErrors:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(monkeypatch, _OK)
 
         async def kaboom(self, **_kwargs):
@@ -277,8 +271,6 @@ class TestSnapshotVsDeltaRouting:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(monkeypatch, PreflightResult(status=PreflightStatus.OK, parent_sha=None))
         delta_called = AsyncMock(return_value=DeltaStats(items_upserted=1))
         snapshot_called = AsyncMock(return_value=DeltaStats(items_upserted=99))
@@ -312,8 +304,6 @@ class TestSnapshotVsDeltaRouting:
             resolver=resolver,
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         preflight = AsyncMock()
         delta_called = AsyncMock(return_value=DeltaStats(items_upserted=1))
         snapshot_called = AsyncMock(return_value=DeltaStats(items_upserted=99))
@@ -345,8 +335,6 @@ class TestSnapshotVsDeltaRouting:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(monkeypatch, PreflightResult(status=PreflightStatus.OK, parent_sha=None))
         snapshot_called = AsyncMock(return_value=DeltaStats(items_upserted=99))
         monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply", AsyncMock())
@@ -376,8 +364,6 @@ class TestSnapshotVsDeltaRouting:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(monkeypatch, PreflightResult(status=PreflightStatus.OK, parent_sha=None))
         snapshot_called = AsyncMock(return_value=DeltaStats(items_upserted=1))
         monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply", AsyncMock())
@@ -394,13 +380,13 @@ class TestSnapshotVsDeltaRouting:
         # manager's progress fields.
         cb = kwargs["on_progress"]
         assert callable(cb), "on_progress must be a callable"
-        mgr._apply_done = 0
-        mgr._apply_total = 0
-        mgr._apply_step = ""
         cb(7, 28, "math_utils.py")
-        assert (mgr._apply_done, mgr._apply_total, mgr._apply_step) == (7, 28, "math_utils.py"), (
-            "callback must update the SyncManager's own progress state"
-        )
+        snap = mgr._apply_progress.snapshot()
+        assert (snap.apply_done, snap.apply_total, snap.apply_step) == (
+            7,
+            28,
+            "math_utils.py",
+        ), "callback must update the SyncManager's own progress state"
 
     @pytest.mark.asyncio
     async def test_applying_flag_and_progress_lifecycle(self, tmp_path, monkeypatch):
@@ -418,23 +404,25 @@ class TestSnapshotVsDeltaRouting:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(monkeypatch, PreflightResult(status=PreflightStatus.OK, parent_sha=None))
 
         snapshots: list[tuple[bool, int, int, str]] = []
+
+        def _snap() -> tuple[bool, int, int, str]:
+            s = mgr._apply_progress.snapshot()
+            return (s.applying, s.apply_done, s.apply_total, s.apply_step)
 
         async def fake_snapshot(self, *, index, file_refs, repository_id, commit_sha, on_progress):
             # Simulate what apply_delta does: invoke the callback at
             # several points; record the manager's state at each so
             # the test can assert the live update.
-            snapshots.append((mgr._applying, mgr._apply_done, mgr._apply_total, mgr._apply_step))
+            snapshots.append(_snap())
             on_progress(0, 28, "preparing")
-            snapshots.append((mgr._applying, mgr._apply_done, mgr._apply_total, mgr._apply_step))
+            snapshots.append(_snap())
             on_progress(14, 28, "math_utils.py::evaluate")
-            snapshots.append((mgr._applying, mgr._apply_done, mgr._apply_total, mgr._apply_step))
+            snapshots.append(_snap())
             on_progress(28, 28, "security_helpers.py::run_shell")
-            snapshots.append((mgr._applying, mgr._apply_done, mgr._apply_total, mgr._apply_step))
+            snapshots.append(_snap())
             return DeltaStats(items_upserted=28)
 
         monkeypatch.setattr(sm.ChangesetFetcher, "pull_and_apply_snapshot", fake_snapshot)
@@ -442,7 +430,7 @@ class TestSnapshotVsDeltaRouting:
         result = await mgr.sync_now(sha="abc1234", force_snapshot=True)
 
         assert result.succeeded
-        # Snapshot just before the first callback — _applying flipped
+        # Snapshot just before the first callback — applying flipped
         # True, counters reset to 0.
         assert snapshots[0] == (True, 0, 0, "")
         # After "preparing" with total=28.
@@ -451,13 +439,15 @@ class TestSnapshotVsDeltaRouting:
         assert snapshots[2] == (True, 14, 28, "math_utils.py::evaluate")
         # Final callback before fetcher returns.
         assert snapshots[3] == (True, 28, 28, "security_helpers.py::run_shell")
-        # After the call returns, the finally clause flips _applying
-        # back to False even though the counters still reflect the
-        # last state — that's fine because the TUI gates its
-        # "syncing" display on _applying, not the counters.
-        assert mgr._applying is False
-        assert mgr._apply_done == 28
-        assert mgr._apply_total == 28
+        # After the call returns, the ``active_scope`` context-manager
+        # exit flips ``applying`` back to False even though the
+        # counters still reflect the last state — that's fine because
+        # the TUI gates its "syncing" display on ``applying``, not the
+        # counters.
+        final = mgr._apply_progress.snapshot()
+        assert final.applying is False
+        assert final.apply_done == 28
+        assert final.apply_total == 28
 
     @pytest.mark.asyncio
     async def test_applying_flag_clears_on_error(self, tmp_path, monkeypatch):
@@ -473,8 +463,6 @@ class TestSnapshotVsDeltaRouting:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(monkeypatch, PreflightResult(status=PreflightStatus.OK, parent_sha=None))
 
         async def boom(self, **_kwargs):
@@ -485,7 +473,7 @@ class TestSnapshotVsDeltaRouting:
         result = await mgr.sync_now(sha="abc1234", force_snapshot=True)
 
         assert not result.succeeded
-        assert mgr._applying is False
+        assert mgr._apply_progress.snapshot().applying is False
 
     @pytest.mark.asyncio
     async def test_force_snapshot_overrides_routing(self, tmp_path, monkeypatch):
@@ -499,8 +487,6 @@ class TestSnapshotVsDeltaRouting:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(
             monkeypatch,
             PreflightResult(status=PreflightStatus.OK, parent_sha="parentsha"),
@@ -528,8 +514,6 @@ class TestSnapshotVsDeltaRouting:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(
             monkeypatch,
             PreflightResult(status=PreflightStatus.OK, parent_sha="parentsha"),
@@ -555,8 +539,6 @@ class TestSnapshotVsDeltaRouting:
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
-        from ember_code.core.code_index import sync_manager as sm
-
         _patch_preflight(
             monkeypatch,
             PreflightResult(status=PreflightStatus.OK, parent_sha="parentsha"),
@@ -644,8 +626,6 @@ class TestConcurrentSyncSerializes:
             await asyncio.sleep(0.02)
             in_flight -= 1
             return DeltaStats(items_upserted=1)
-
-        from ember_code.core.code_index import sync_manager as sm
 
         _patch_preflight(monkeypatch, _OK)
         # ``_OK.parent_sha=None`` + ``has_commit=False`` → snapshot
@@ -790,8 +770,6 @@ class TestPreflightBranching:
         endpoint and surface a confusing error."""
         _patch_preflight(monkeypatch, PreflightResult(status=PreflightStatus.IN_PROGRESS))
 
-        from ember_code.core.code_index import sync_manager as sm
-
         called = False
 
         async def fail_pull(*_args, **_kwargs):
@@ -818,17 +796,17 @@ class TestWatcherInProgressRetry:
 
     @pytest.mark.asyncio
     async def test_in_progress_sha_polled_again_after_retry_interval(self, tmp_path, monkeypatch):
-        from ember_code.core.code_index import sync_manager as sm
-
-        # Make the retry interval tiny so the test runs in milliseconds.
-        monkeypatch.setattr(sm, "IN_PROGRESS_RETRY_SECONDS", 0.05)
-
         mgr = _make_mgr(
             project_dir=tmp_path,
             code_index=_stub_index(),
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
+
+        # Make the retry interval tiny so the test runs in milliseconds.
+        # ``InProgressRetryLedger`` holds the cadence — poking it directly
+        # is the same shape as the old module-constant monkeypatch.
+        mgr._retry_ledger._interval = 0.05
 
         # HEAD never changes — still 'aaaa…'
         mgr.current_sha = lambda: "a" * 40
@@ -856,16 +834,13 @@ class TestWatcherInProgressRetry:
     @pytest.mark.asyncio
     async def test_in_progress_state_cleared_when_head_moves(self, tmp_path, monkeypatch):
         """If the user switches branches mid-poll, drop the stale retry state."""
-        from ember_code.core.code_index import sync_manager as sm
-
-        monkeypatch.setattr(sm, "IN_PROGRESS_RETRY_SECONDS", 5.0)  # never fires in this test
-
         mgr = _make_mgr(
             project_dir=tmp_path,
             code_index=_stub_index(),
             resolver=_stub_resolver(_RESOLVED),
             credentials=_stub_credentials(),
         )
+        mgr._retry_ledger._interval = 5.0  # never fires in this test
 
         sequence = iter(["a" * 40, "a" * 40, "b" * 40, "b" * 40])
         mgr.current_sha = lambda: next(sequence, None)
@@ -889,4 +864,4 @@ class TestWatcherInProgressRetry:
         assert "a" * 40 in called_shas
         assert "b" * 40 in called_shas
         # And after a successful 'b', the in_progress retry state should be clear.
-        assert mgr._in_progress_sha is None
+        assert mgr._retry_ledger.in_progress_sha is None

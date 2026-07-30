@@ -55,3 +55,54 @@ def commit_chroma_path(
 
 def manifest_path(project: str | Path, *, data_dir: str | Path = "~/.ember") -> Path:
     return code_index_dir(project, data_dir=data_dir) / "manifest.json"
+
+
+# ── Neo4j sidecar layout ──────────────────────────────────────────
+#
+#     ~/.ember/
+#       neo4j/                            # shared: distribution + per-commit state
+#         state/<project_hash>-<sha>/     # PER-COMMIT: data, auth, runtime.json
+#
+# The Neo4j distribution (and its JDK) is project-independent — one
+# download shared by every project — so ``neo4j_data_dir`` takes no
+# project argument. Per-commit process state lives under ``state/``.
+
+
+def neo4j_data_dir(data_dir: str | Path = "~/.ember") -> Path:
+    """Shared Neo4j root: distribution cache + per-commit process state.
+
+    Project-independent — the downloaded Neo4j (and bundled JDK) is
+    reused across every project, mirroring the Tauri backend-python
+    cache pattern.
+    """
+    return data_root(data_dir) / "neo4j"
+
+
+def neo4j_runtime_dir(
+    project: str | Path, commit_sha: str, *, data_dir: str | Path = "~/.ember"
+) -> Path:
+    """Per-(project, commit) Neo4j process state directory.
+
+    Holds the commit's ``data/``, ``auth.txt``, and ``runtime.json``.
+    Keyed by ``<project_hash>-<commit_sha>`` so each commit gets its
+    own isolated Neo4j process/store.
+    """
+    slug = f"{resolve_project_id(project)}-{commit_sha}"
+    return neo4j_data_dir(data_dir) / "state" / slug
+
+
+def neo4j_auth_file(
+    project: str | Path, commit_sha: str, *, data_dir: str | Path = "~/.ember"
+) -> Path:
+    """Path to the generated Neo4j password file for this commit."""
+    return neo4j_runtime_dir(project, commit_sha, data_dir=data_dir) / "auth.txt"
+
+
+def neo4j_migrated_marker_path(project: str | Path, *, data_dir: str | Path = "~/.ember") -> Path:
+    """Sentinel marking that the chroma+sqlite→Neo4j cutover ran.
+
+    Lives in the per-project ``code_index/`` dir (not the shared
+    Neo4j root) because the cutover is project-scoped — it drops that
+    project's ``code_index_*`` SQLite tables and chroma dirs.
+    """
+    return code_index_dir(project, data_dir=data_dir) / ".neo4j_migrated"

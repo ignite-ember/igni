@@ -1,6 +1,6 @@
 """Pydantic models for the codeindex toolkit.
 
-Three groups:
+Five groups:
 
   - **Output envelopes** — what the toolkit returns to the agent.
     :class:`ItemsResponse` is shared by both ``codeindex_query`` and
@@ -11,6 +11,18 @@ Three groups:
   - **Internal filter envelopes** — :class:`_CategoricalFilters` and
     :class:`_ListFilters` carry the agent's structured query args from
     the toolkit method down to the where-builder and post-filter.
+  - **Query + tree input** — :class:`QueryInput` bundles the full
+    ``codeindex_query`` arg surface so the service doesn't accept 34
+    kwargs. Owns validation, empty-call detection, and filter-envelope
+    splitting. :class:`TreeInput` does the same for ``codeindex_tree``.
+    Both expose ``from_tool_kwargs`` classmethods so the toolkit
+    stops re-listing every field name. :class:`RenderedRow` wraps a
+    :class:`CodeIndexResult` with its pre/post section-filter content
+    so the tree builder consumes typed rows instead of reaching for
+    sidecar attributes.
+  - **Telemetry** — :class:`TelemetryEntry` is the typed record
+    :class:`TelemetryLog` writes to disk, replacing the two raw-dict
+    literals the old toolkit built inline.
 
 All ``_``-prefixed names are package-private; ``ItemsResponse`` and
 ``ErrorResponse`` are the only public schemas the agent sees.
@@ -20,7 +32,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ember_code.core.code_index.enums import (
     CohesionLevel,
@@ -32,6 +44,8 @@ from ember_code.core.code_index.enums import (
     PerformanceLevel,
     PriorityLevel,
     QualityLevel,
+    Relation,
+    Section,
     SecurityLevel,
     StabilityLevel,
     TechnicalDebtLevel,
@@ -39,6 +53,7 @@ from ember_code.core.code_index.enums import (
     TestingLevel,
 )
 from ember_code.core.code_index.schema.items import CodeIndexResult
+from ember_code.core.code_index.schema.where_filter import ChromaWhereFilter
 
 # ── Disambiguation refs ──────────────────────────────────────────────
 
@@ -189,6 +204,111 @@ class _CategoricalFilters(BaseModel):
     stability: StabilityLevel | list[StabilityLevel] | None = None
     priority: PriorityLevel | list[PriorityLevel] | None = None
 
+    @classmethod
+    def from_flat_args(cls, params: QueryInput) -> _CategoricalFilters:
+        """Build a categorical envelope from a :class:`QueryInput`.
+
+        Keeps envelope construction next to the envelope definition
+        instead of scattering it inside the service.
+        """
+        return cls(
+            kind=params.kind,
+            type=params.type,
+            entity_type=params.entity_type,
+            file_extension=params.file_extension,
+            path_prefix=params.path_prefix,
+            quality=params.quality,
+            complexity=params.complexity,
+            security=params.security,
+            testing=params.testing,
+            testability=params.testability,
+            documentation=params.documentation,
+            performance=params.performance,
+            issues=params.issues,
+            maintainability=params.maintainability,
+            architecture=params.architecture,
+            technical_debt=params.technical_debt,
+            cohesion=params.cohesion,
+            coupling=params.coupling,
+            stability=params.stability,
+            priority=params.priority,
+            needs_refactoring=params.needs_refactoring,
+        )
+
+    def to_where(self) -> ChromaWhereFilter | None:
+        """Translate this envelope into a :class:`ChromaWhereFilter`.
+
+        Every non-``None`` field becomes one clause; multiple clauses
+        combine under a top-level ``$and`` at the chroma boundary.
+        Single values become direct equality, lists become ``$in``.
+
+        List-shaped multi-value categories live on :class:`_ListFilters`
+        and are applied Python-side — chroma metadata ``where`` lacks a
+        ``$contains`` operator, so they can't be pushed down here.
+
+        Returns ``None`` when no filters were supplied so the index code
+        skips the where-clause entirely (chroma rejects ``where={}``).
+
+        Mirrors the sibling :meth:`_ListFilters.matches` pattern — both
+        envelopes own the translation of their fields into the shape
+        the downstream layer needs, so the service stays out of the
+        filter-shape business.
+        """
+        where = ChromaWhereFilter()
+        any_set = False
+
+        # Direct exact-match scope filters. StrEnum values render as
+        # their plain string via ``str(v)`` — no defensive helper
+        # needed because every field is already typed as StrEnum (or
+        # list-of-StrEnum) at the Pydantic layer.
+        if self.kind is not None:
+            where.equals["kind"] = str(self.kind)
+            any_set = True
+        if self.type is not None:
+            where.equals["type"] = self.type
+            any_set = True
+        if self.file_extension is not None:
+            where.equals["file_extension"] = self.file_extension
+            any_set = True
+        # ``path_prefix`` is reserved — chroma metadata where has no
+        # $contains/prefix operator, so we accept the arg and ignore it
+        # rather than silently emit a broken filter. Re-enable once
+        # there's a where-document-based path matcher.
+
+        # ``entity_type`` — single value or list.
+        if self.entity_type is not None:
+            if isinstance(self.entity_type, list):
+                where.in_["entity_type"] = [str(x) for x in self.entity_type]
+            else:
+                where.equals["entity_type"] = str(self.entity_type)
+            any_set = True
+
+        # ``needs_refactoring`` is bool.
+        if self.needs_refactoring is not None:
+            where.equals["needs_refactoring"] = bool(self.needs_refactoring)
+            any_set = True
+
+        # Quality categoricals.
+        for field in _CATEGORICAL_QUALITY_FIELDS:
+            v = getattr(self, field)
+            if v is None:
+                continue
+            if isinstance(v, list):
+                values = [str(x) for x in v if x is not None]
+                if not values:
+                    continue
+                if len(values) == 1:
+                    where.equals[field] = values[0]
+                else:
+                    where.in_[field] = values
+            else:
+                where.equals[field] = str(v)
+            any_set = True
+
+        if not any_set:
+            return None
+        return where
+
 
 # Names of the quality categoricals — used by the where-builder loop
 # so adding a new dimension doesn't require a second hand-edit. Scope
@@ -249,3 +369,336 @@ class _ListFilters(BaseModel):
             if not present.intersection(wanted):
                 return False
         return True
+
+    @classmethod
+    def from_flat_args(cls, params: QueryInput) -> _ListFilters:
+        """Build a list-filter envelope from a :class:`QueryInput`.
+
+        ``None`` gets normalised to ``[]`` here so downstream code can
+        assume every field is an actual list.
+        """
+        return cls(
+            vulnerabilities=params.vulnerabilities or [],
+            frameworks=params.frameworks or [],
+            domain=params.domain or [],
+            concerns=params.concerns or [],
+            layers=params.layers or [],
+            patterns=params.patterns or [],
+            keywords=params.keywords or [],
+            file_issues=params.file_issues or [],
+        )
+
+
+# ── Query input + rendered-row wrapper ───────────────────────────────
+
+
+# Field names on :class:`QueryInput` that carry NARROWING intent for the
+# empty-call detector. Output-control (``sections`` / ``limit`` /
+# ``commit`` / ``include_tests``) is intentionally NOT in this list —
+# passing ``sections=[…]`` should not count as narrowing. Naming these
+# explicitly on the model prevents the caller-discipline bug the old
+# ``**kwargs`` helper had (any new output-control arg would silently
+# defeat empty-call detection).
+_NARROWING_FIELDS: tuple[str, ...] = (
+    "query_text",
+    "ids",
+    "kind",
+    "type",
+    "entity_type",
+    "file_extension",
+    "path_prefix",
+    "quality",
+    "complexity",
+    "security",
+    "testing",
+    "testability",
+    "documentation",
+    "performance",
+    "issues",
+    "maintainability",
+    "architecture",
+    "technical_debt",
+    "cohesion",
+    "coupling",
+    "stability",
+    "priority",
+    "needs_refactoring",
+    "vulnerabilities",
+    "frameworks",
+    "domain",
+    "concerns",
+    "layers",
+    "patterns",
+    "keywords",
+    "file_issues",
+)
+
+
+class QueryInput(BaseModel):
+    """Full ``codeindex_query`` parameter bundle.
+
+    Collapses the 34-arg service surface into a single typed input
+    object. Owns validation (mutual exclusion of ``query_text`` and
+    ``ids``), empty-call detection, and construction of the two filter
+    envelopes.
+
+    The agent-facing :meth:`CodeIndexTools.codeindex_query` keeps its
+    flat signature — agno derives the LLM tool schema from that method
+    directly. The toolkit builds a :class:`QueryInput` on the first
+    line and forwards it to :class:`QueryService.run` so all the
+    downstream code sees a single typed object instead of 34 loose
+    kwargs.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    # ── search / direct fetch ──
+    query_text: str | None = None
+    ids: list[str] | None = None
+
+    # ── structural scope ──
+    kind: Kind | None = None
+    type: str | None = None
+    entity_type: str | list[str] | None = None
+    file_extension: str | None = None
+    path_prefix: str | None = None
+
+    # ── quality categoricals ──
+    quality: QualityLevel | list[QualityLevel] | None = None
+    complexity: ComplexityLevel | list[ComplexityLevel] | None = None
+    security: SecurityLevel | list[SecurityLevel] | None = None
+    testing: TestingLevel | list[TestingLevel] | None = None
+    testability: TestabilityLevel | list[TestabilityLevel] | None = None
+    documentation: DocumentationLevel | list[DocumentationLevel] | None = None
+    performance: PerformanceLevel | list[PerformanceLevel] | None = None
+    issues: IssuesSeverity | list[IssuesSeverity] | None = None
+    maintainability: QualityLevel | list[QualityLevel] | None = None
+    architecture: QualityLevel | list[QualityLevel] | None = None
+    technical_debt: TechnicalDebtLevel | list[TechnicalDebtLevel] | None = None
+    cohesion: CohesionLevel | list[CohesionLevel] | None = None
+    coupling: CouplingLevel | list[CouplingLevel] | None = None
+    stability: StabilityLevel | list[StabilityLevel] | None = None
+    priority: PriorityLevel | list[PriorityLevel] | None = None
+    needs_refactoring: bool | None = None
+
+    # ── list-shaped categories ──
+    vulnerabilities: list[str] | None = None
+    frameworks: list[str] | None = None
+    domain: list[str] | None = None
+    concerns: list[str] | None = None
+    layers: list[str] | None = None
+    patterns: list[str] | None = None
+    keywords: list[str] | None = None
+    file_issues: list[str] | None = None
+
+    # ── output control ──
+    sections: list[Section] | None = None
+    limit: int = 20
+    commit: str | None = None
+    include_tests: bool = False
+
+    @classmethod
+    def from_tool_kwargs(cls, **kwargs: Any) -> QueryInput:
+        """Build a :class:`QueryInput` from the toolkit method's kwargs.
+
+        Filters ``kwargs`` through :attr:`model_fields` so callers can
+        splat ``**locals()`` (or any superset) without pulling in
+        stray frame locals like ``self``. Keeps the toolkit method
+        from re-listing every field name — that duplication was the
+        audit's biggest offender in ``tool.py``.
+        """
+        allowed = set(cls.model_fields) & kwargs.keys()
+        return cls(**{name: kwargs[name] for name in allowed})
+
+    def validate_scope(self) -> ErrorResponse | None:
+        """Return a mutual-exclusion :class:`ErrorResponse` when the
+        caller supplied both ``query_text`` and ``ids``. ``None`` when
+        the scope is well-formed.
+        """
+        if self.query_text and self.ids:
+            return ErrorResponse(error="pass either query_text or ids, not both")
+        return None
+
+    def is_empty_call(self) -> bool:
+        """True iff no narrowing input was supplied.
+
+        A call is "empty" when every narrowing field is ``None`` (or an
+        empty list for list-shaped categories). Bool ``needs_refactoring``
+        is meaningful even when ``False`` — that's the "items that don't
+        need refactoring" query, so any non-``None`` bool counts as
+        narrowing.
+        """
+        if self.query_text:
+            return False
+        if self.ids:
+            return False
+        for name in _NARROWING_FIELDS:
+            if name in ("query_text", "ids"):
+                continue
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if isinstance(value, list) and not value:
+                continue
+            return False
+        return True
+
+    def empty_call_error(self) -> ErrorResponse:
+        """The didactic error surfaced when :meth:`is_empty_call` fires.
+
+        Lives on the model so the didactic prose sits next to the
+        check that decides whether to raise it — the error text names
+        the exact filters the model knows about.
+        """
+        return ErrorResponse(
+            error=(
+                "codeindex_query was called without any narrowing input — "
+                "no query_text, no ids, no filters set. The call would return "
+                "arbitrary items.\n\n"
+                "If you meant to triage by severity / quality, pass a typed filter with "
+                "actual values, not `None`. Examples:\n"
+                "  codeindex_query(security=['major-issues','critical'])\n"
+                "  codeindex_query(vulnerabilities=['hardcoded-secret','sql-injection'])\n"
+                "  codeindex_query(needs_refactoring=True, priority=['high','critical'])\n\n"
+                "Note: passing `security=None` (or any other typed-filter arg as None) "
+                "is the SAME as not passing it — None means 'no filter on this dimension'. "
+                "Pass a list of severity values instead."
+            )
+        )
+
+    def categorical_filters(self) -> _CategoricalFilters:
+        """Build the :class:`_CategoricalFilters` envelope (chroma-side)."""
+        return _CategoricalFilters.from_flat_args(self)
+
+    def list_filters(self) -> _ListFilters:
+        """Build the :class:`_ListFilters` envelope (Python-side)."""
+        return _ListFilters.from_flat_args(self)
+
+    def telemetry_dict(self) -> dict[str, Any]:
+        """Return a compact args dict for eval telemetry.
+
+        Drops ``None`` and empty-list values so the log entry stays
+        readable; ``include_tests`` is only surfaced when ``True`` (the
+        default is boring — logging every ``False`` clutters diffs).
+        """
+        raw = self.model_dump(exclude_none=True)
+        out: dict[str, Any] = {}
+        for k, v in raw.items():
+            if v == [] or v == "":
+                continue
+            if k == "include_tests" and not v:
+                continue
+            if k == "limit" and v == 20:
+                # Default limit — no reason to log it.
+                continue
+            out[k] = v
+        return out
+
+
+class RenderedRow(BaseModel):
+    """A :class:`CodeIndexResult` paired with its raw and filtered content.
+
+    The tree builder needs BOTH shapes: matched leaves get the section-
+    filtered content (only what the caller asked for), while intermediate
+    ancestor nodes fall back to the unfiltered raw content so their
+    ``summary`` field survives when the caller requested a non-summary
+    section like ``security``.
+
+    Previously the query service smuggled the raw content back onto the
+    ``CodeIndexResult`` via a ``_raw_content`` sidecar attribute; this
+    wrapper replaces that pattern with a proper typed pair. Ancestors
+    fetched during tree walk get ``raw_content == filtered_content``
+    (they aren't filtered at fetch time).
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    row: CodeIndexResult
+    raw_content: str = ""
+    filtered_content: str = ""
+
+    @classmethod
+    def wrap_ancestor(cls, row: CodeIndexResult) -> RenderedRow:
+        """Wrap an ancestor row where the raw and filtered content are the same.
+
+        Ancestors are fetched by id during tree walk and never section-
+        filtered, so both fields collapse to ``row.content``.
+        """
+        return cls(row=row, raw_content=row.content, filtered_content=row.content)
+
+
+# ── Tree input ───────────────────────────────────────────────────────
+
+
+class TreeInput(BaseModel):
+    """``codeindex_tree`` parameter bundle.
+
+    Mirrors :class:`QueryInput`'s shape for the drill-down tool so
+    the toolkit method can hand a single typed object to
+    :meth:`TreeService.run` and to the telemetry recorder — without
+    re-listing every field name.
+
+    The public ``id`` kwarg name is preserved on the model (agno
+    derives the LLM tool schema from the toolkit method's signature,
+    which still uses ``id``). :meth:`for_service` renames ``id`` to
+    ``item_id`` internally so ``TreeService.run`` keeps its existing
+    signature.
+    """
+
+    id: str
+    sections: list[Section] | None = None
+    relations: list[Relation] | None = None
+    commit: str | None = None
+
+    @classmethod
+    def from_tool_kwargs(cls, **kwargs: Any) -> TreeInput:
+        """Build a :class:`TreeInput` from the toolkit method's kwargs.
+
+        Filters ``kwargs`` through :attr:`model_fields` so ``**locals()``
+        stays safe (stray frame locals like ``self`` are ignored).
+        """
+        allowed = set(cls.model_fields) & kwargs.keys()
+        return cls(**{name: kwargs[name] for name in allowed})
+
+    def for_service(self) -> dict[str, Any]:
+        """Return the kwargs :meth:`TreeService.run` accepts.
+
+        Renames the public ``id`` to the service's ``item_id`` so the
+        tool method doesn't have to translate. Values are passed
+        through unchanged (including ``None`` sections / relations /
+        commit — the service treats those as "use defaults").
+        """
+        return {
+            "item_id": self.id,
+            "sections": self.sections,
+            "relations": self.relations,
+            "commit": self.commit,
+        }
+
+    def telemetry_dict(self) -> dict[str, Any]:
+        """Return a compact args dict for eval telemetry.
+
+        Drops ``None`` and empty-list values so the log entry stays
+        readable. Matches :meth:`QueryInput.telemetry_dict` shape.
+        """
+        raw = self.model_dump(exclude_none=True)
+        return {k: v for k, v in raw.items() if v != [] and v != ""}
+
+
+# ── Telemetry ────────────────────────────────────────────────────────
+
+
+class TelemetryEntry(BaseModel):
+    """One row in the eval telemetry log.
+
+    Replaces the two raw-dict literals the old toolkit built inline
+    in ``codeindex_query`` and ``codeindex_tree``. Serialized as one
+    JSON line per invocation via :meth:`TelemetryLog.record`.
+    """
+
+    ts: float
+    tool: str
+    duration_ms: float
+    args: dict[str, Any]
+    response: str
+    response_chars: int

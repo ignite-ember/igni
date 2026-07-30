@@ -58,7 +58,8 @@ class TestSessionMemoryManager:
         settings = Settings()
         mgr = SessionMemoryManager(db=None, settings=settings, user_id="user")
         result = await mgr.optimize()
-        assert "error" in result
+        assert not result.success
+        assert result.error is not None
 
     @pytest.mark.asyncio
     async def test_optimize_not_enough_memories(self):
@@ -76,5 +77,5 @@ class TestSessionMemoryManager:
         ):
             result = await mgr.optimize()
 
-        assert result["count_before"] == 1
-        assert "Not enough" in result["message"]
+        assert result.count_before == 1
+        assert "Not enough" in result.message

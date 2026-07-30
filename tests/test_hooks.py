@@ -50,7 +50,8 @@ class TestHookLoader:
         fake_home.mkdir()
         with patch.object(Path, "home", return_value=fake_home):
             loader = HookLoader(tmp_path)
-            hooks = loader.load()
+            result = loader.load()
+        hooks = result.registry.raw
         assert hooks == {}
 
     def test_load_from_project_settings(self, tmp_path):
@@ -73,7 +74,7 @@ class TestHookLoader:
 
         with patch.object(Path, "home", return_value=fake_home):
             loader = HookLoader(tmp_path)
-            hooks = loader.load()
+            hooks = loader.load().registry.raw
         assert "PreToolUse" in hooks
         assert len(hooks["PreToolUse"]) == 1
         assert hooks["PreToolUse"][0].command == "echo check"
@@ -99,7 +100,7 @@ class TestHookLoader:
 
         with patch.object(Path, "home", return_value=fake_home):
             loader = HookLoader(tmp_path)
-            hooks = loader.load()
+            hooks = loader.load().registry.raw
         assert len(hooks) == 3
         assert hooks["Stop"][0].type == "http"
         assert hooks["Stop"][0].url == "https://example.com/hook"
@@ -108,7 +109,7 @@ class TestHookLoader:
         fake_home = tmp_path / "home"
         fake_home.mkdir()
         with patch.object(Path, "home", return_value=fake_home):
-            hooks = HookLoader(tmp_path).load()
+            hooks = HookLoader(tmp_path).load().registry.raw
         assert hooks == {}
 
     def test_hook_definition_defaults(self):
@@ -127,8 +128,10 @@ class TestHookLoader:
 
         with patch.object(Path, "home", return_value=fake_home):
             loader = HookLoader(tmp_path)
-            hooks = loader.load()
-        assert hooks == {}
+            result = loader.load()
+        assert result.registry.raw == {}
+        assert len(result.warnings) >= 1
+        assert result.warnings[0].kind == "invalid_json"
 
     def test_ignores_non_list_hooks(self, tmp_path):
         fake_home = tmp_path / "home"
@@ -141,8 +144,10 @@ class TestHookLoader:
 
         with patch.object(Path, "home", return_value=fake_home):
             loader = HookLoader(tmp_path)
-            hooks = loader.load()
-        assert hooks == {}
+            result = loader.load()
+        assert result.registry.raw == {}
+        assert len(result.warnings) >= 1
+        assert result.warnings[0].kind == "non_dict_block"
 
 
 class TestHookExecutor:

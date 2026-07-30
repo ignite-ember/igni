@@ -2,9 +2,9 @@
 
 Two layers cooperate:
 
-* ``save_default_model`` — writes to ``~/.ember/config.yaml`` so a
+* :class:`UserConfigStore` — writes to ``~/.ember/config.yaml`` so a
   fresh session opened after restart loads the chosen model.
-* ``SessionPreferencesStore`` — writes to ``state.db`` keyed by
+* :class:`SessionPreferencesStore` — writes to ``state.db`` keyed by
   ``session_id`` so ``--continue`` restores the model the user was
   using in that specific session, even if the user has since picked
   a different default for new sessions.
@@ -18,9 +18,24 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
+from ember_code.backend.server import BackendServer
+from ember_code.core.code_index.paths import state_db_path
+from ember_code.core.config.settings import Settings
+from ember_code.core.config.user_config_store import UserConfigStore
+from ember_code.core.session.session_preferences import SessionPreferencesStore
+
+
+def _save_default_model(name: str) -> None:
+    """Thin adapter that mirrors the deleted ``save_default_model``
+    shim so the existing test bodies read naturally after the OOP-
+    refactor promoted the persistence logic onto
+    :class:`UserConfigStore`."""
+    UserConfigStore().set_default_model(name)
+
 
 class TestSaveDefaultModel:
-    """``save_default_model`` round-trips through ``~/.ember/config.yaml``."""
+    """``UserConfigStore.set_default_model`` round-trips through
+    ``~/.ember/config.yaml``."""
 
     def test_writes_default_to_user_config(self, tmp_path, monkeypatch):
         """Setting a default writes a minimal ``models.default`` key
@@ -28,9 +43,7 @@ class TestSaveDefaultModel:
         unrelated keys."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
-        from ember_code.core.config.settings import save_default_model
-
-        save_default_model("MiniMax-M2.7")
+        _save_default_model("MiniMax-M2.7")
 
         cfg_path = tmp_path / ".ember" / "config.yaml"
         assert cfg_path.exists()
@@ -52,9 +65,7 @@ class TestSaveDefaultModel:
             )
         )
 
-        from ember_code.core.config.settings import save_default_model
-
-        save_default_model("gpt-7")
+        _save_default_model("gpt-7")
 
         cfg = yaml.safe_load((cfg_dir / "config.yaml").read_text())
         assert cfg["display"] == {"color_theme": "dark"}
@@ -68,10 +79,8 @@ class TestSaveDefaultModel:
         no list."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
-        from ember_code.core.config.settings import save_default_model
-
-        save_default_model("first")
-        save_default_model("second")
+        _save_default_model("first")
+        _save_default_model("second")
 
         cfg = yaml.safe_load((tmp_path / ".ember" / "config.yaml").read_text())
         assert cfg["models"]["default"] == "second"
@@ -86,9 +95,7 @@ class TestSaveDefaultModel:
         cfg_dir.mkdir(parents=True)
         (cfg_dir / "config.yaml").write_text(yaml.safe_dump({"models": ["bogus", "list"]}))
 
-        from ember_code.core.config.settings import save_default_model
-
-        save_default_model("MiniMax-M2.7")
+        _save_default_model("MiniMax-M2.7")
 
         cfg = yaml.safe_load((cfg_dir / "config.yaml").read_text())
         assert cfg["models"] == {"default": "MiniMax-M2.7"}
@@ -99,23 +106,17 @@ class TestSessionPreferencesStore:
 
     def test_set_then_get_returns_model(self, tmp_path):
         """Basic upsert + read."""
-        from ember_code.core.session.session_preferences import SessionPreferencesStore
-
         store = SessionPreferencesStore(tmp_path / "state.db")
         store.set_model("sess-a", "MiniMax-M2.7")
         assert store.get_model("sess-a") == "MiniMax-M2.7"
 
     def test_get_unknown_session_returns_none(self, tmp_path):
         """No row → ``None``, not an error."""
-        from ember_code.core.session.session_preferences import SessionPreferencesStore
-
         store = SessionPreferencesStore(tmp_path / "state.db")
         assert store.get_model("never-set") is None
 
     def test_set_is_per_session(self, tmp_path):
         """Two sessions don't share preferences."""
-        from ember_code.core.session.session_preferences import SessionPreferencesStore
-
         store = SessionPreferencesStore(tmp_path / "state.db")
         store.set_model("sess-a", "model-a")
         store.set_model("sess-b", "model-b")
@@ -125,8 +126,6 @@ class TestSessionPreferencesStore:
     def test_set_upserts(self, tmp_path):
         """Repeat ``set_model`` overwrites — no duplicate rows, no
         history."""
-        from ember_code.core.session.session_preferences import SessionPreferencesStore
-
         store = SessionPreferencesStore(tmp_path / "state.db")
         store.set_model("sess", "old")
         store.set_model("sess", "new")
@@ -135,8 +134,6 @@ class TestSessionPreferencesStore:
     def test_survives_reopen(self, tmp_path):
         """Closing and reopening the store yields the same value —
         i.e. the data is genuinely on disk, not just in memory."""
-        from ember_code.core.session.session_preferences import SessionPreferencesStore
-
         db_path = tmp_path / "state.db"
         SessionPreferencesStore(db_path).set_model("sess", "MiniMax-M2.7")
         # Fresh instance — new connection, no shared cache.
@@ -144,8 +141,6 @@ class TestSessionPreferencesStore:
 
     @pytest.mark.asyncio
     async def test_async_wrappers(self, tmp_path):
-        from ember_code.core.session.session_preferences import SessionPreferencesStore
-
         store = SessionPreferencesStore(tmp_path / "state.db")
         await store.aset_model("sess", "MiniMax-M2.7")
         assert await store.aget_model("sess") == "MiniMax-M2.7"
@@ -158,8 +153,6 @@ class TestBackendServerResumeOverride:
 
     @staticmethod
     def _make_settings(tmp_path, registry):
-        from ember_code.core.config.settings import Settings
-
         settings = Settings()
         settings.storage.data_dir = str(tmp_path / "ember")
         settings.models.default = "user-level-default"
@@ -184,16 +177,11 @@ class TestBackendServerResumeOverride:
             return m
 
         with patch("ember_code.core.session.Session", side_effect=fake_session):
-            from ember_code.backend.server import BackendServer
-
             BackendServer(settings, project_dir=project_dir, **kwargs)
 
     def test_resume_overrides_default_with_persisted_choice(self, tmp_path):
         """The model the user was on last time wins over the
         user-level default."""
-        from ember_code.core.code_index.paths import state_db_path
-        from ember_code.core.session.session_preferences import SessionPreferencesStore
-
         project_dir = tmp_path / "proj"
         project_dir.mkdir()
         db_path = state_db_path(project_dir, data_dir=str(tmp_path / "ember"))
@@ -219,9 +207,6 @@ class TestBackendServerResumeOverride:
     def test_resume_falls_back_when_persisted_model_missing_from_registry(self, tmp_path):
         """Stale row pointing at a model no longer in the registry
         must NOT override — the user would get a broken team."""
-        from ember_code.core.code_index.paths import state_db_path
-        from ember_code.core.session.session_preferences import SessionPreferencesStore
-
         project_dir = tmp_path / "proj"
         project_dir.mkdir()
         db_path = state_db_path(project_dir, data_dir=str(tmp_path / "ember"))
@@ -245,9 +230,6 @@ class TestBackendServerResumeOverride:
         """No ``resume_session_id`` → no per-session lookup. The
         user-level default stays in place even if some other
         session in the same store has a different model."""
-        from ember_code.core.code_index.paths import state_db_path
-        from ember_code.core.session.session_preferences import SessionPreferencesStore
-
         project_dir = tmp_path / "proj"
         project_dir.mkdir()
         db_path = state_db_path(project_dir, data_dir=str(tmp_path / "ember"))

@@ -45,9 +45,9 @@ export interface OrchestrateAgent {
 
 /** Cap on how many preview lines we keep per agent. 5 lines is enough
  *  to see a coherent thought without consuming bubble height — and
- *  matches the BE's ``PREVIEW_WINDOW`` in
- *  ``core/tools/orchestrate.py`` (the BE is the source of truth for
- *  the window contents). */
+ *  matches the BE's ``PreviewFormatter.WINDOW`` in
+ *  ``core/tools/orchestrate_preview.py`` (the BE is the source of
+ *  truth for the window contents). */
 export const PREVIEW_WINDOW = 5;
 
 export interface OrchestrateToolCall {
@@ -242,7 +242,8 @@ export function applyOrchestrateEvent(
       // non-empty lines of the agent's accumulated streaming content,
       // joined by ``\n``. We split + replace rather than append so the
       // FE never has to reconstruct lines from token-sized deltas —
-      // see ``_build_preview`` in core/tools/orchestrate.py.
+      // see ``PreviewFormatter.format_content_buffer`` in
+      // ``core/tools/orchestrate_preview.py``.
       const raw = ev.text || "";
       const parsed = raw
         .split("\n")
@@ -487,6 +488,29 @@ export type ChatItem =
    *  reports the corrected ``count_context_tokens`` — Agno's
    *  ``input_tokens`` from RunCompleted sums across model iterations
    *  and inflates 2-3× compared to the actual session size. */
+  /** A json-render UI spec emitted by the visualizer sub-agent via the
+   *  ``visualization`` push channel. Rendered inline via
+   *  ``<JsonRenderView spec={...} />``. Payloads travel one-way from
+   *  BE→FE; the FE never sends them back.
+   *
+   *  ``specId`` is the BE-stamped dedupe key (one per visualizer
+   *  run). Repeated visualize() calls with the same ``specId`` update
+   *  the existing card in place instead of appending a new one — the
+   *  streaming-update path. Different id = different card. */
+  | {
+      kind: "visualization";
+      id: number;
+      specId: string;
+      /** The json-render flat-tree spec. Passed through verbatim to
+       *  ``@json-render/react``'s ``Renderer`` — this component treats
+       *  the object reference as immutable (memoized on identity). */
+      spec: unknown;
+      /** Optional short label shown above the card. */
+      title: string;
+      /** Which agent emitted the spec (currently always ``visualizer``,
+       *  but kept as a string so future callers can attribute). */
+      sourceAgent: string;
+    }
   | {
       kind: "stats";
       id: number;
@@ -511,7 +535,76 @@ export type ChatItem =
       /** Set to true once App.tsx has overwritten ``inputTokens`` with
        *  the real session size from ``count_context_tokens``. */
       corrected: boolean;
+    }
+  | {
+      /** Live-progress card for a CC-style workflow run. The
+       *  ``events`` list is the raw event tape the BE pushed;
+       *  ``run`` is the typed view the renderer consumes. */
+      kind: "workflow";
+      id: number;
+      run: WorkflowRunState;
     };
+
+// ── Workflow run shape ──────────────────────────────────────────
+
+/** Live-progress state for one workflow run. The renderer
+ *  reads from the typed structure; the raw event tape lives
+ *  in ``events`` for replays + diagnostics. */
+export interface WorkflowRunState {
+  workflowRunId: string;
+  name: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  startedAtMs: number;
+  endedAtMs?: number;
+  phases: WorkflowPhase[];
+  events: WorkflowEvent[];
+  result?: unknown;
+  error?: string;
+  /** The original args dict the user passed to ``run_workflow``.
+   * Set from the ``workflow_started`` event's ``args`` payload so
+   * the FE can re-fire the same command on a Rerun click. */
+  args?: Record<string, unknown>;
+}
+
+export interface WorkflowPhase {
+  /** Stable id the BE assigned in the ``phase_started`` event. */
+  phaseId: string;
+  title: string;
+  startedAtMs: number;
+  endedAtMs?: number;
+  status: "running" | "completed" | "failed" | "cancelled";
+  agents: WorkflowAgentRun[];
+}
+
+export interface WorkflowAgentRun {
+  /** Request id the BE assigned in the ``agent_started`` event.
+   *  Stable across the whole run — used to key text deltas. */
+  agentId: string;
+  label: string;
+  status: "running" | "completed" | "failed" | "timeout";
+  startedAtMs: number;
+  endedAtMs?: number;
+  result?: unknown;
+  error?: string;
+  /** ``group_id`` of the surrounding ``parallel()`` block (if
+   *  any). The renderer groups consecutive agents with the same
+   *  ``parallelGroupId`` into a side-by-side grid. ``undefined``
+   *  means "serial" (most agents). */
+  parallelGroupId?: string;
+}
+
+/** Raw event as pushed by the BE. Mirrors the BE's
+ *  :class:`WorkflowEvent` envelope (the BE stores one row per
+ *  event in ``session_data.event_log`` and re-emits on the
+ *  ``workflow_event`` push channel). */
+export interface WorkflowEvent {
+  workflow_run_id: string;
+  name: string;
+  ts: number;
+  seq: number;
+  type: string;
+  payload: Record<string, unknown>;
+}
 
 let itemId = 0;
 const nid = () => ++itemId;
@@ -526,6 +619,22 @@ export function planItem(plan: string, tasks: PlanTask[] = [], runId = ""): Chat
 
 export function attachmentsItem(files: { name: string; path: string }[]): ChatItem {
   return { kind: "attachments", id: nid(), files };
+}
+
+export function visualizationItem(
+  spec: unknown,
+  title: string,
+  sourceAgent: string,
+  specId: string,
+): ChatItem {
+  return {
+    kind: "visualization",
+    id: nid(),
+    specId,
+    spec,
+    title,
+    sourceAgent,
+  };
 }
 
 /** Pull file paths out of a restored user message — used to rebuild
@@ -545,112 +654,6 @@ export function extractAttachedPaths(content: string): string[] {
   let m: RegExpExecArray | null;
   while ((m = AT_PATH_RE.exec(content)) !== null) paths.push(m[1]);
   return paths;
-}
-
-/**
- * Streaming <think>-tag parser state. Some models (e.g. MiniMax) wrap
- * reasoning in literal <think>…</think> tags inside the content
- * stream instead of using separate reasoning events. Mirrors the
- * TUI's rules (run_controller._on_content_chunk):
- *
- * - `<think>` flips to thinking mode; `</think>` flips back.
- * - After a tool call, these models resume thinking WITHOUT an
- *   opening tag (only emitting `</think>` later), so tool boundaries
- *   pre-enter thinking mode — but only once the model has proven it
- *   uses think tags (`usesThinkTags`).
- * - A tag may arrive split across deltas; `carry` buffers a trailing
- *   partial tag (e.g. "…<thi") until the next delta resolves it.
- */
-export interface StreamState {
-  inThinking: boolean;
-  usesThinkTags: boolean;
-  carry: string;
-  /** Map of Agno ``run_id`` → agent name. Populated on every
-   *  ``run_started`` event (top-level + sub-agents). Tool events
-   *  carry their owning ``run_id`` but not the agent name, so we
-   *  consult this map to attribute tool cards to the agent that
-   *  ran them during a broadcast. */
-  runToAgent: Map<string, string>;
-  /** Wall-clock (ms) when the last visible ``content_delta`` arrived.
-   *  ``streaming_done`` reads this so the message timestamp reflects
-   *  when the last chunk actually landed, not when the (later)
-   *  ``streaming_done`` signal fired — the two can drift by hundreds
-   *  of ms on slow networks. ``ContentDelta`` itself carries no
-   *  ``run_id`` on the wire, but the BE serialises runs (one
-   *  ``_run_lock`` per session), so a single rolling value is safe:
-   *  ``streaming_done`` consumes and resets it. */
-  lastContentAt?: number;
-}
-
-export function newStreamState(): StreamState {
-  return {
-    inThinking: false,
-    usesThinkTags: false,
-    carry: "",
-    runToAgent: new Map(),
-  };
-}
-
-const OPEN_TAG = "<think>";
-const CLOSE_TAG = "</think>";
-
-/** Longest suffix of `s` that is a proper prefix of an open/close tag. */
-function partialTagSuffix(s: string): string {
-  for (let len = Math.min(s.length, CLOSE_TAG.length - 1); len > 0; len--) {
-    const tail = s.slice(-len);
-    if (OPEN_TAG.startsWith(tail) || CLOSE_TAG.startsWith(tail)) return tail;
-  }
-  return "";
-}
-
-/**
- * Split one content delta into [text, isThinking] segments, updating
- * `state` in place. Exposed for tests.
- */
-export function splitThinkTags(state: StreamState, delta: string): [string, boolean][] {
-  let text = state.carry + delta;
-  state.carry = "";
-  const out: [string, boolean][] = [];
-
-  for (;;) {
-    const tag = state.inThinking ? CLOSE_TAG : OPEN_TAG;
-    const at = text.indexOf(tag);
-    if (at === -1) break;
-    const before = text.slice(0, at);
-    if (before) out.push([before, state.inThinking]);
-    if (!state.inThinking) state.usesThinkTags = true;
-    state.inThinking = !state.inThinking;
-    text = text.slice(at + tag.length);
-    // Content resuming after </think> starts with cosmetic newlines.
-    if (!state.inThinking) text = text.replace(/^\n+/, "");
-  }
-
-  // Models that use think tags close without reopening; a bare
-  // </think> can also arrive when we never saw <think> (post-tool
-  // resume). Treat a stray close tag while NOT thinking as a no-op
-  // boundary rather than rendering it literally.
-  if (!state.inThinking && text.includes(CLOSE_TAG)) {
-    const [before, after] = [
-      text.slice(0, text.indexOf(CLOSE_TAG)),
-      text.slice(text.indexOf(CLOSE_TAG) + CLOSE_TAG.length),
-    ];
-    if (before) out.push([before, true]);
-    text = after.replace(/^\n+/, "");
-  }
-
-  const partial = partialTagSuffix(text);
-  if (partial) {
-    state.carry = partial;
-    text = text.slice(0, text.length - partial.length);
-  }
-  if (text) out.push([text, state.inThinking]);
-  return out;
-}
-
-/** Tool boundary: reset thinking, pre-enter if the model uses tags. */
-export function onToolBoundary(state: StreamState): void {
-  state.carry = "";
-  state.inThinking = state.usesThinkTags;
 }
 
 export function userItem(text: string): ChatItem {
@@ -921,6 +924,22 @@ export function restoredItem(turn: Record<string, unknown>): ChatItem | null {
     }
     return item;
   }
+  if (role === "visualization") {
+    // Synthetic viz turn spliced by ``get_chat_history`` from the
+    // BE session event log — restores the json-render card inline
+    // at the run + tool call it belonged to. The spec is the
+    // final one the visualizer sub-agent produced (BE-driven, no
+    // FE persist RPC).
+    const spec = turn.spec;
+    const specId = String(turn.spec_id ?? "");
+    if (!specId || !spec || typeof spec !== "object") return null;
+    return visualizationItem(
+      spec,
+      "",
+      String(turn.source_agent ?? "visualizer"),
+      specId,
+    );
+  }
   return null;
 }
 
@@ -937,43 +956,25 @@ function appendText(items: ChatItem[], text: string, thinking: boolean): ChatIte
 
 /**
  * Apply one streamed event to the item list, returning a new list.
- * Pure w.r.t. items; `stream` (the <think> parser state) is mutated.
+ * Pure w.r.t. items.
+ *
+ * The ``content_delta`` branch routes by ``is_thinking`` directly
+ * — the BE's :func:`ember_code.core.text_tags.split_inline_think_tags`
+ * already peeled any literal `` tags out of the wire (see
+ * ``docs/STREAMING_BUG_INVESTIGATION.md``), so the FE never has
+ * to think about partial carries or React StrictMode replay. The
+ * legacy parser-carry state (``streamRef``, ``splitThinkTags``,
+ * ``onToolBoundary``) was deleted when this branch was simplified.
  */
-export function applyEvent(
-  items: ChatItem[],
-  msg: ServerMessage,
-  stream: StreamState = newStreamState(),
-): ChatItem[] {
+export function applyEvent(items: ChatItem[], msg: ServerMessage): ChatItem[] {
   switch (msg.type) {
     case "content_delta": {
       if (!msg.text) return items;
-      // Track when the latest visible chunk landed so the user item
-      // can stamp ``streamingEndedAt`` from this (rather than from
-      // ``streaming_done``, which can lag by hundreds of ms).
-      if (!msg.is_thinking) {
-        stream.lastContentAt = Date.now();
-      }
-      // Agno-level reasoning events are already tagged; inline
-      // <think> tags need the streaming parser.
-      if (msg.is_thinking) {
-        // Some providers emit reasoning_content that itself contains
-        // literal "<think>" / "</think>" tags (MiniMax in particular
-        // mixes the two conventions). Strip them defensively — the
-        // thinking bubble is the wrapper, the tags are redundant noise.
-        const cleaned = msg.text.replace(/<\/?think>/g, "");
-        return appendText(items, cleaned, true);
-      }
-      let next = items;
-      for (const [seg, thinking] of splitThinkTags(stream, msg.text)) {
-        next = appendText(next, seg, thinking);
-      }
-      return next;
+      // BE has already classified the chunk; route to the right bubble.
+      return appendText(items, msg.text, !!msg.is_thinking);
     }
 
     case "tool_started":
-      // Tool boundary closes any open thinking block (TUI parity).
-      stream.inThinking = false;
-      stream.carry = "";
       return [
         ...items,
         {
@@ -986,17 +987,10 @@ export function applyEvent(
           result: "",
           isError: false,
           diffRows: null,
-          // Attribute the tool to its agent — looked up via the
-          // StreamState's run_id→agent map. Empty when this is a
-          // top-level main-team tool call (no badge wanted there).
-          agentName: stream.runToAgent.get(msg.run_id),
         },
       ];
 
     case "tool_completed": {
-      // Models that use <think> tags resume thinking after a tool
-      // WITHOUT re-opening the tag — pre-enter thinking mode.
-      onToolBoundary(stream);
       // Update the most recent running tool card for this run.
       for (let i = items.length - 1; i >= 0; i--) {
         const it = items[i];
@@ -1026,12 +1020,6 @@ export function applyEvent(
     }
 
     case "run_started":
-      // Stash the run_id → agent mapping so tool_started can stamp
-      // its tool card with the owning agent's name. Both top-level
-      // and sub-agent runs are recorded.
-      if (msg.run_id && msg.agent_name) {
-        stream.runToAgent.set(msg.run_id, msg.agent_name);
-      }
       // Sub-agent dispatch marker (the main run has no parent).
       // Sub-agents that run under spawn_team / spawn_agent get a
       // structured ``agent_started`` orchestrate event that puts
@@ -1072,16 +1060,16 @@ export function applyEvent(
 
     case "streaming_done": {
       // Stash the wall-clock when the visible stream ended on the
-      // matching user item. Prefer the timestamp of the *last
-      // content chunk* over ``Date.now()`` here — ``streaming_done``
-      // can lag the final delta by hundreds of ms on slow networks,
-      // which would show up as bogus "extra time" on the stats line.
+      // matching user item. Caller (``App.tsx``) passes the timestamp
+      // via ``msg.text``-side metadata? No — we rely on the
+      // previously-recorded ``startedAt`` plus the
+      // ``display_duration`` computed by ``run_completed``. Real
+      // user-perceived latency needs a per-event timestamp from
+      // the BE; until that lands, leave the user item alone and
+      // rely on Agno's reported duration.
       if (!msg.run_id) return items;
       const runId = msg.run_id;
-      const endedAt = stream.lastContentAt ?? Date.now();
-      // Reset so the next run starts with a clean slate (and we fall
-      // back to ``Date.now()`` if it streams nothing).
-      stream.lastContentAt = undefined;
+      const endedAt = Date.now();
       for (let i = items.length - 1; i >= 0; i--) {
         const it = items[i];
         if (it.kind === "user" && it.runId === runId) {
@@ -1107,11 +1095,12 @@ export function applyEvent(
       // card's ``streaming`` flag off so the collapsed header drops
       // its spinner. Cheap: short walk from the end, only fires when
       // a card is actually present.
+      let out = items;
       if (!msg.parent_run_id) {
         for (let i = items.length - 1; i >= 0; i--) {
           const it = items[i];
           if (it.kind === "orchestrate" && it.streaming) {
-            items = [
+            out = [
               ...items.slice(0, i),
               { ...it, streaming: false },
               ...items.slice(i + 1),
@@ -1128,8 +1117,8 @@ export function applyEvent(
       // invisible scratch (tool-routing JSON, internal chain steps).
       // Agno's billing numbers are still kept on the item so the
       // tooltip can show them.
-      if (msg.parent_run_id) return items;
-      if (!msg.input_tokens && !msg.output_tokens) return items;
+      if (msg.parent_run_id) return out;
+      if (!msg.input_tokens && !msg.output_tokens) return out;
       // Locate the user item that owns this run. We need it for two
       // reasons: (a) to compute the user-perceived duration, (b) to
       // insert the stats line at the right position — right BEFORE the
@@ -1156,7 +1145,7 @@ export function applyEvent(
       // Token counts: walk just the slice that belongs to this turn
       // (the items between this run's user message and the next one,
       // or end of list) rather than "everything since last user".
-      const turn = collectVisibleForRun(items, userIdx);
+      const turn = collectVisibleForRun(out, userIdx);
       const stats: ChatItem = {
         kind: "stats",
         id: nid(),
@@ -1172,15 +1161,15 @@ export function applyEvent(
       // Where to insert? Right before the next user item after
       // ``userIdx`` — that's the logical "end of this turn". Fall back
       // to appending if we couldn't locate the run's user item.
-      if (userIdx < 0) return [...items, stats];
-      let insertAt = items.length;
-      for (let i = userIdx + 1; i < items.length; i++) {
-        if (items[i].kind === "user") {
+      if (userIdx < 0) return [...out, stats];
+      let insertAt = out.length;
+      for (let i = userIdx + 1; i < out.length; i++) {
+        if (out[i].kind === "user") {
           insertAt = i;
           break;
         }
       }
-      return [...items.slice(0, insertAt), stats, ...items.slice(insertAt)];
+      return [...out.slice(0, insertAt), stats, ...out.slice(insertAt)];
     }
 
     case "run_error":
@@ -1195,4 +1184,272 @@ export function applyEvent(
     default:
       return items;
   }
+}
+
+// ── Workflow run helpers ──────────────────────────────────────────
+
+/** Build the initial state for a freshly-issued workflow run. */
+export function workflowItem(name: string, workflowRunId: string): Extract<ChatItem, { kind: "workflow" }> {
+  const now = Date.now();
+  return {
+    kind: "workflow",
+    id: nid(),
+    run: {
+      workflowRunId,
+      name,
+      status: "running",
+      startedAtMs: now,
+      phases: [],
+      events: [],
+    },
+  };
+}
+
+/** Append one workflow event to the matching run, creating the
+ *  run's typed structure as we go. Pure function — feeds
+ *  ``setItems((prev) => reduceWorkflowEvent(prev, ev))``.
+ *
+ *  Phase + agent records are matched by their BE-assigned ids
+ *  (stable across the run); the raw event tape is preserved in
+ *  ``run.events`` for diagnostics + rehydration. */
+export function reduceWorkflowEvent(
+  items: ChatItem[],
+  ev: WorkflowEvent,
+): ChatItem[] {
+  let foundIdx = -1;
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it.kind === "workflow" && it.run.workflowRunId === ev.workflow_run_id) {
+      foundIdx = i;
+      break;
+    }
+  }
+  if (foundIdx === -1) {
+    // No card yet — the FE's slash command creates one
+    // optimistically, but a refresh-restored run might race the
+    // first event. Make a fresh one.
+    const newRun: WorkflowRunState = {
+      workflowRunId: ev.workflow_run_id,
+      name: ev.name,
+      status: "running",
+      startedAtMs: ev.ts,
+      phases: [],
+      events: [],
+    };
+    const newItem: ChatItem = { kind: "workflow", id: nid(), run: newRun };
+    const next = [...items, newItem];
+    return reduceWorkflowEvent(next, ev);
+  }
+  const it = items[foundIdx];
+  if (it.kind !== "workflow") return items;
+  const run: WorkflowRunState = {
+    ...it.run,
+    events: [...it.run.events, ev],
+  };
+  // Active parallel group tracker — agent_started events
+  // arriving between parallel_started and parallel_completed
+  // belong to this group. Kept on the run state so the renderer
+  // can group consecutive agents into a side-by-side grid.
+  const activeParallelGroupId = (it.run as WorkflowRunState & { _activeParallelGroupId?: string })
+    ._activeParallelGroupId;
+
+  switch (ev.type) {
+    case "workflow_started": {
+      const { name, args } = ev.payload as { name?: string; args?: unknown };
+      if (typeof name === "string" && name) run.name = name;
+      if (args && typeof args === "object" && !Array.isArray(args)) {
+        run.args = args as Record<string, unknown>;
+      }
+      break;
+    }
+    case "phase_started": {
+      const { phase_id, title } = ev.payload as {
+        phase_id: string;
+        title: string;
+      };
+      run.phases = [
+        ...run.phases,
+        {
+          phaseId: phase_id,
+          title: typeof title === "string" ? title : "(unnamed phase)",
+          startedAtMs: ev.ts,
+          status: "running",
+          agents: [],
+        },
+      ];
+      break;
+    }
+    case "phase_completed": {
+      const { phase_id, status, duration_ms } = ev.payload as {
+        phase_id: string;
+        status?: "completed" | "failed" | "cancelled";
+        duration_ms?: number;
+      };
+      run.phases = run.phases.map((p) =>
+        p.phaseId === phase_id
+          ? {
+              ...p,
+              status: status ?? "completed",
+              endedAtMs: ev.ts,
+            }
+          : p,
+      );
+      void duration_ms;
+      break;
+    }
+    case "parallel_started": {
+      const { group_id } = ev.payload as { group_id: string };
+      (run as WorkflowRunState & { _activeParallelGroupId?: string })._activeParallelGroupId = group_id;
+      break;
+    }
+    case "parallel_completed": {
+      (run as WorkflowRunState & { _activeParallelGroupId?: string })._activeParallelGroupId = undefined;
+      break;
+    }
+    case "agent_started": {
+      const phase = currentPhase(run);
+      if (phase === null) break;
+      const { id, label } = ev.payload as { id: string; label: string };
+      const agent: WorkflowAgentRun = {
+        agentId: id,
+        label: typeof label === "string" ? label : "agent",
+        status: "running",
+        startedAtMs: ev.ts,
+        parallelGroupId: activeParallelGroupId,
+      };
+      run.phases = run.phases.map((p) =>
+        p.phaseId === phase.phaseId
+          ? { ...p, agents: [...p.agents, agent] }
+          : p,
+      );
+      break;
+    }
+    case "agent_completed": {
+      const { id, status, result, error, duration_ms } = ev.payload as {
+        id: string;
+        status?: "completed" | "failed" | "timeout";
+        result?: unknown;
+        error?: string;
+        duration_ms?: number;
+      };
+      run.phases = run.phases.map((p) => ({
+        ...p,
+        agents: p.agents.map((a) =>
+          a.agentId === id
+            ? {
+                ...a,
+                status: status ?? "completed",
+                endedAtMs: ev.ts,
+                result,
+                error,
+              }
+            : a,
+        ),
+      }));
+      void duration_ms;
+      break;
+    }
+    case "workflow_completed": {
+      const { status, result } = ev.payload as {
+        status?: "completed" | "cancelled" | "failed";
+        result?: unknown;
+      };
+      if (status === "failed") {
+        run.status = "failed";
+      } else if (status === "cancelled") {
+        run.status = "cancelled";
+      } else {
+        run.status = "completed";
+      }
+      run.endedAtMs = ev.ts;
+      run.result = result;
+      break;
+    }
+    case "workflow_failed": {
+      const { error, status } = ev.payload as {
+        error?: string;
+        status?: "failed";
+      };
+      run.status = status ?? "failed";
+      run.endedAtMs = ev.ts;
+      run.error = typeof error === "string" ? error : "workflow failed";
+      break;
+    }
+    default:
+      // parallel_*, pipeline_*, log, agent_request, workflow_meta
+      // — captured in events[] for diagnostics; the renderer
+      // ignores them today.
+      break;
+  }
+
+  const next = [...items];
+  next[foundIdx] = { ...it, run };
+  return next;
+}
+
+function currentPhase(run: WorkflowRunState): WorkflowPhase | null {
+  for (let i = run.phases.length - 1; i >= 0; i--) {
+    if (run.phases[i].status === "running") return run.phases[i];
+  }
+  return run.phases.length > 0 ? run.phases[run.phases.length - 1] : null;
+}
+
+/** Rebuild a :class:`WorkflowRunState` from a chronological
+ *  sequence of persisted ``workflow_event`` rows. Called by
+ *  :func:`fetchHistoryItems` on page refresh so the chat item
+ *  re-renders with the run's full structure (phases, agents,
+ *  final status) instead of replaying one event at a time. */
+export function restoreWorkflowFromEvents(
+  events: WorkflowEvent[],
+): WorkflowRunState | null {
+  if (events.length === 0) return null;
+  // Seed the state from the first event's metadata; the reducer
+  // handles the rest as we fold.
+  const seed = workflowItem(events[0].name, events[0].workflow_run_id);
+  let run: WorkflowRunState = seed.run;
+  for (const ev of events) {
+    // Inline a tiny reducer (avoid creating intermediate ChatItem
+    // arrays for every event).
+    run = { ...run, events: [...run.events, ev] };
+    switch (ev.type) {
+      case "phase_started": {
+        const { phase_id, title } = ev.payload as {
+          phase_id: string;
+          title: string;
+        };
+        run.phases = [
+          ...run.phases,
+          {
+            phaseId: phase_id,
+            title: typeof title === "string" ? title : "(unnamed phase)",
+            startedAtMs: ev.ts,
+            status: "running",
+            agents: [],
+          },
+        ];
+        break;
+      }
+      case "phase_completed": {
+        const { phase_id, status } = ev.payload as {
+          phase_id: string;
+          status?: "completed" | "failed" | "cancelled";
+        };
+        run.phases = run.phases.map((p) =>
+          p.phaseId === phase_id ? { ...p, status: status ?? "completed", endedAtMs: ev.ts } : p,
+        );
+        break;
+      }
+      case "workflow_completed":
+        run.status = "completed";
+        run.endedAtMs = ev.ts;
+        run.result = (ev.payload as { result?: unknown }).result;
+        break;
+      case "workflow_failed":
+        run.status = "failed";
+        run.endedAtMs = ev.ts;
+        run.error = (ev.payload as { error?: string }).error;
+        break;
+    }
+  }
+  return run;
 }

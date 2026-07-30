@@ -1,5 +1,6 @@
 """Shared test fixtures."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,33 @@ from ember_code.core.config.settings import load_settings
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 if _ENV_FILE.is_file():
     load_dotenv(_ENV_FILE, override=False)
+
+
+def pytest_configure(config):
+    """Register the ``integration`` marker so ``--strict-markers`` and
+    the warning filter don't flag it."""
+    config.addinivalue_line(
+        "markers",
+        "integration: test needs a live Neo4j (set NEO4J_TEST_URI to run).",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip ``@pytest.mark.integration`` tests unless ``NEO4J_TEST_URI``
+    is set.
+
+    Lives in ``conftest.py`` (not the test module) because pytest only
+    invokes this hook from conftest/plugin scope — a copy inside a test
+    module is silently ignored, which previously let the integration
+    suite error out with fixture ``KeyError`` / ``NameError`` instead
+    of skipping cleanly.
+    """
+    if os.environ.get("NEO4J_TEST_URI"):
+        return
+    skip = pytest.mark.skip(reason="NEO4J_TEST_URI not set; integration tests skipped")
+    for item in items:
+        if "integration" in item.keywords:
+            item.add_marker(skip)
 
 
 @pytest.fixture(autouse=True)

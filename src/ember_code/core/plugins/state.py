@@ -28,10 +28,16 @@ class PluginsState(BaseModel):
     install-managed plugin to the git ref (SHA or tag) it was installed
     at — used by ``/plugin update`` to detect drift and by the panel
     to display the installed version.
+
+    ``group_disabled`` is a list of plugin names forced-disabled by
+    the user's org group policy. It is merged on top of ``disabled``
+    so group admins can block plugins even if a user has manually
+    re-enabled them.
     """
 
     disabled: list[str] = Field(default_factory=list)
     pins: dict[str, str] = Field(default_factory=dict)
+    group_disabled: list[str] = Field(default_factory=list)
 
 
 def state_path(data_dir: str | Path = "~/.ember") -> Path:

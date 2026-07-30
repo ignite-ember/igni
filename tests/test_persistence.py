@@ -23,6 +23,7 @@ class TestSessionPersistence:
     async def test_list_sessions_returns_formatted(self):
         mock_session = MagicMock()
         mock_session.session_id = "s1"
+        mock_session.agent_id = "ember"  # top-level session (see filter)
         mock_session.runs = [1, 2]
         mock_session.summary = MagicMock(summary="Test session")
         mock_session.agent_data = {"name": "editor"}
@@ -46,6 +47,7 @@ class TestSessionPersistence:
     async def test_list_sessions_handles_tuple_return(self):
         mock_session = MagicMock()
         mock_session.session_id = "s1"
+        mock_session.agent_id = "ember"
         mock_session.runs = []
         mock_session.summary = None
         mock_session.agent_data = None
@@ -59,6 +61,67 @@ class TestSessionPersistence:
         p = SessionPersistence(db=db, session_id="current")
         result = await p.list_sessions()
         assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_hides_sub_agent_scratch_rows(self):
+        """Regression: sub-agents (visualizer, editor, every specialist)
+        share the top-level DB so paused runs can resume — but their
+        scratch sessions must NOT appear in the user-facing session
+        list. Symptom pre-fix: the sidebar filled with "Chat - <time>"
+        rows that opened to an empty view because they were
+        sub-agent runs, not user chats.
+        """
+
+        def _mock(session_id: str, agent_id: str) -> MagicMock:
+            m = MagicMock()
+            m.session_id = session_id
+            m.agent_id = agent_id
+            m.runs = [1]
+            m.summary = None
+            m.agent_data = None
+            m.session_data = None
+            m.created_at = 0
+            m.updated_at = 0
+            return m
+
+        rows = [
+            _mock("top-1", "ember"),
+            _mock("viz-uuid-a", "visualizer"),
+            _mock("top-2", "ember"),
+            _mock("editor-uuid-b", "editor"),
+            _mock("planner-uuid-c", "planner"),
+        ]
+        db = MagicMock()
+        db.get_sessions = AsyncMock(return_value=rows)
+
+        p = SessionPersistence(db=db, session_id="current")
+        result = await p.list_sessions()
+
+        ids = [r["session_id"] for r in result]
+        assert ids == ["top-1", "top-2"]
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_keeps_row_when_agent_id_missing(self):
+        # Defensive: rows written by earlier BE versions might have
+        # ``agent_id == ""`` or missing entirely. Those must NOT be
+        # filtered out — otherwise a user could lose access to
+        # historical chats.
+        m = MagicMock()
+        m.session_id = "legacy"
+        m.agent_id = ""
+        m.runs = [1]
+        m.summary = None
+        m.agent_data = None
+        m.session_data = None
+        m.created_at = 0
+        m.updated_at = 0
+
+        db = MagicMock()
+        db.get_sessions = AsyncMock(return_value=[m])
+
+        p = SessionPersistence(db=db, session_id="current")
+        result = await p.list_sessions()
+        assert [r["session_id"] for r in result] == ["legacy"]
 
     @pytest.mark.asyncio
     async def test_list_sessions_handles_exception(self):

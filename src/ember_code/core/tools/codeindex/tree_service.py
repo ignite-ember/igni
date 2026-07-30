@@ -22,12 +22,8 @@ import logging
 from ember_code.core.code_index.enums import Relation, Section
 from ember_code.core.code_index.index import CodeIndex
 from ember_code.core.code_index.schema.items import CodeIndexResult, ReferenceTarget
-from ember_code.core.tools.codeindex.filters import (
-    DEFAULT_SECTIONS,
-    filter_sections,
-    shorten_summary,
-)
 from ember_code.core.tools.codeindex.schemas import ErrorResponse, ItemsResponse, _TreeNode
+from ember_code.core.tools.codeindex.section_markup import SectionMarkup
 
 logger = logging.getLogger(__name__)
 
@@ -71,21 +67,25 @@ class TreeService:
         sections: list[Section] | None,
         relations: list[Relation] | None,
         commit: str | None,
-        json_dumps,
-    ) -> str:
+    ) -> ItemsResponse | ErrorResponse:
+        """Fetch one item, attach its edge graph, return the response envelope.
+
+        Returns a typed union — the toolkit serializes at the agent
+        boundary via :class:`JsonSerializer`.
+        """
         sha = commit or self._idx.head()
         if not sha:
-            return json_dumps(ErrorResponse(error="no head commit; index may be empty"))
+            return ErrorResponse(error="no head commit; index may be empty")
         if not self._idx.has_commit(sha):
-            return json_dumps(ErrorResponse(error=f"no chroma index for commit {sha}"))
+            return ErrorResponse(error=f"no chroma index for commit {sha}")
 
         rows = await self._idx.filter_items(ids=[item_id], limit=1, commit=sha)
         if not rows:
-            return json_dumps(ErrorResponse(error=f"no item with id {item_id!r}"))
+            return ErrorResponse(error=f"no item with id {item_id!r}")
 
         item = rows[0]
-        section_tuple = tuple(sections) if sections else DEFAULT_SECTIONS
-        item.content = filter_sections(item.content, section_tuple)
+        section_tuple = tuple(sections) if sections else Section.default_group()
+        item.content = SectionMarkup(item.content).keep(section_tuple)
 
         await self._attach_references(item, relations=relations)
 
@@ -114,7 +114,7 @@ class TreeService:
             items=[node],
             total=1,
             truncated=False,
-        ).model_dump_json(indent=2, exclude_none=True)
+        )
 
     # ── private ──────────────────────────────────────────────────────
 
@@ -136,10 +136,12 @@ class TreeService:
 
         relations_str = [str(r) for r in relations] if relations else None
         try:
-            edges = await self._idx._file_reference_service().get_by_uuids(
+            edges = await self._idx.file_reference_service().get_by_uuids(
                 uuids=[item.item_id], relations=relations_str
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — CodeIndex has no typed exception surface.
+            # Follow-up: narrow once chroma / sqlite exceptions bubble
+            # up as a documented class.
             logger.exception("failed to attach references")
             return
 
@@ -234,12 +236,16 @@ class TreeService:
             target_items = await self._idx.filter_items(
                 ids=list(unique_ids), limit=len(unique_ids), commit=sha
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — CodeIndex has no typed exception surface.
+            # Follow-up: narrow once chroma / sqlite exceptions bubble
+            # up as a documented class.
             logger.exception("failed to fetch target items for reference summaries")
             return
 
         id_to_summary = {
-            it.item_id: short for it in target_items if (short := shorten_summary(it.content))
+            it.item_id: short
+            for it in target_items
+            if (short := SectionMarkup(it.content).shorten())
         }
 
         for targets in item.references.values():

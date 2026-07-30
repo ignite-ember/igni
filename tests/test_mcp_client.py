@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from ember_code.core.mcp.client import MCPClientManager
+from ember_code.core.mcp.config import MCPPolicy
 
 
 class TestMCPClientManager:
@@ -17,8 +18,6 @@ class TestMCPClientManager:
             MockLoader.return_value.load.return_value = configs or {}
             # Auto-approve everything in existing tests
             MockApproval.return_value.check_approval.return_value = True
-            from ember_code.core.mcp.config import MCPPolicy
-
             mock_from.return_value = MCPPolicy()
             return MCPClientManager(project_dir="/tmp/test")
 
@@ -35,16 +34,13 @@ class TestMCPClientManager:
         mgr = self._make_manager({"s1": MagicMock()})
         assert mgr.list_connected() == []
 
-    def test_get_error_empty_initially(self):
-        mgr = self._make_manager()
-        assert mgr.get_error("unknown") == ""
-
     @pytest.mark.asyncio
     async def test_connect_missing_config(self):
         mgr = self._make_manager()
         result = await mgr.connect("nonexistent")
-        assert result is None
-        assert "No config" in mgr.get_error("nonexistent")
+        assert result.ok is False
+        assert result.client is None
+        assert "No config" in result.reason
 
     @pytest.mark.asyncio
     async def test_connect_unsupported_type(self):
@@ -52,8 +48,8 @@ class TestMCPClientManager:
         config.type = "grpc"
         mgr = self._make_manager({"test": config})
         result = await mgr.connect("test")
-        assert result is None
-        assert "Unsupported" in mgr.get_error("test")
+        assert result.ok is False
+        assert "Unsupported" in result.reason
 
     @pytest.mark.asyncio
     async def test_connect_sse_missing_url(self):
@@ -62,8 +58,8 @@ class TestMCPClientManager:
         config.url = ""
         mgr = self._make_manager({"sse-server": config})
         result = await mgr.connect("sse-server")
-        assert result is None
-        assert "url" in mgr.get_error("sse-server").lower()
+        assert result.ok is False
+        assert "url" in result.reason.lower()
 
     @pytest.mark.asyncio
     async def test_connect_stdio_success(self):
@@ -78,10 +74,11 @@ class TestMCPClientManager:
 
         mgr = self._make_manager({"my-server": config})
         with patch.object(
-            mgr, "_connect_stdio", new_callable=AsyncMock, return_value=mock_mcp_tools
+            mgr._stdio_binding, "open", new_callable=AsyncMock, return_value=mock_mcp_tools
         ):
             result = await mgr.connect("my-server")
-            assert result is mock_mcp_tools
+            assert result.ok is True
+            assert result.client is mock_mcp_tools
             assert "my-server" in mgr.list_connected()
 
     @pytest.mark.asyncio
@@ -97,11 +94,13 @@ class TestMCPClientManager:
 
         mgr = self._make_manager({"cached": config})
         with patch.object(
-            mgr, "_connect_stdio", new_callable=AsyncMock, return_value=mock_mcp_tools
+            mgr._stdio_binding, "open", new_callable=AsyncMock, return_value=mock_mcp_tools
         ):
             first = await mgr.connect("cached")
             second = await mgr.connect("cached")
-            assert first is second
+            assert first.ok is True
+            assert second.ok is True
+            assert first.client is second.client
 
     @pytest.mark.asyncio
     async def test_connect_no_tools_closes(self):
@@ -117,11 +116,11 @@ class TestMCPClientManager:
 
         mgr = self._make_manager({"empty": config})
         with patch.object(
-            mgr, "_connect_stdio", new_callable=AsyncMock, return_value=mock_mcp_tools
+            mgr._stdio_binding, "open", new_callable=AsyncMock, return_value=mock_mcp_tools
         ):
             result = await mgr.connect("empty")
-            assert result is None
-            assert "no tools" in mgr.get_error("empty").lower()
+            assert result.ok is False
+            assert "no tools" in result.reason.lower()
 
     @pytest.mark.asyncio
     async def test_connect_import_error(self):
@@ -132,10 +131,14 @@ class TestMCPClientManager:
         config.env = {}
 
         mgr = self._make_manager({"broken": config})
-        with patch("agno.tools.mcp.MCPTools", side_effect=ImportError("no mcp")):
+        # Post-refactor the client imports MCPTools at module top with a
+        # try/except ImportError guard (mirrors the ``pwd`` pattern in
+        # ``frontend/tui/app.py``). Simulate the missing-dep case by
+        # patching the module-local name to None.
+        with patch("ember_code.core.mcp.client._MCPTools", None):
             result = await mgr.connect("broken")
-            assert result is None
-            assert "not installed" in mgr.get_error("broken").lower()
+            assert result.ok is False
+            assert "not installed" in result.reason.lower()
 
     @pytest.mark.asyncio
     async def test_disconnect_all(self):

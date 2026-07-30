@@ -4,6 +4,11 @@ Tests the settings/behavior that CLI flags control, not the CLI invocation itsel
 CLI invocation tests are in test_cli.py.
 """
 
+from pathlib import Path
+
+from click.testing import CliRunner
+
+from ember_code.cli import cli
 from ember_code.core.config.settings import Settings
 
 
@@ -12,10 +17,6 @@ class TestCLIFlagBehaviors:
 
     def test_version_flag(self):
         """--version should output version string."""
-        from click.testing import CliRunner
-
-        from ember_code.cli import cli
-
         runner = CliRunner()
         result = runner.invoke(cli, ["--version"])
         assert result.exit_code == 0
@@ -29,10 +30,6 @@ class TestCLIFlagBehaviors:
 
     def test_no_color_flag_exists(self):
         """--no-color should be a recognized CLI option."""
-        from click.testing import CliRunner
-
-        from ember_code.cli import cli
-
         runner = CliRunner()
         # Should not raise "no such option"
         result = runner.invoke(cli, ["--no-color", "--help"])
@@ -89,8 +86,6 @@ class TestCLIFlagBehaviors:
 
     def test_add_dir_setting(self):
         """--add-dir stores additional directories."""
-        from pathlib import Path
-
         # This is handled in cli.py, not Settings — just verify the pattern
         dirs = [Path("/tmp/dir1"), Path("/tmp/dir2")]
         assert len(dirs) == 2

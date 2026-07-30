@@ -15,14 +15,13 @@ The contract:
   * ``False`` is meaningful for bool filters (it's the
     "items that don't need refactoring" query — unusual but
     real) → NOT empty
-  * Caller-discipline contract: the only call site
-    (``query_service.codeindex_query``) does NOT pass output-
-    control args (``sections`` / ``limit`` / ``commit``) into
-    ``is_empty_call``. The helper itself doesn't know about
-    those names — if a future caller passes them, the helper
-    will treat them as narrowing input and the empty-call
-    detection will silently break. The test below pins the
-    actual behaviour so a change is a deliberate choice.
+  * Output-control args (``sections`` / ``limit`` / ``commit``)
+    are NOT narrowing input — the model knows the difference,
+    so passing them alone still counts as empty.
+
+The module-level ``is_empty_call`` remains as a compatibility
+shim; the real implementation lives on
+:meth:`QueryInput.is_empty_call`.
 """
 
 from __future__ import annotations
@@ -72,25 +71,21 @@ class TestEmptyCallEmptyShapes:
             is True
         )
 
-    def test_caller_must_filter_output_control_args(self):
-        # The DOCSTRING claims ``sections`` / ``limit`` / ``commit``
-        # don't count toward narrowing — but the helper doesn't
-        # actually know the names. If a future caller forwards
-        # those raw kwargs, the helper treats them as narrowing
-        # input (non-None, non-empty list/scalar).
-        #
-        # This test pins the ACTUAL behaviour so the divergence
-        # from the docstring is visible. The only call site today
-        # (query_service.codeindex_query) carefully excludes
-        # output-control args from the kwargs it forwards, which
-        # is what makes the case-11 detection work.
+    def test_output_control_only_is_empty(self):
+        # Output-control args (``sections`` / ``limit`` / ``commit``)
+        # aren't narrowing input — passing them alone still leaves
+        # the call with no dimension to narrow on. The model owns
+        # the field list, so it correctly distinguishes the two
+        # kinds (unlike the pre-refactor ``**kwargs`` helper, which
+        # required caller discipline to exclude output-control names
+        # and silently broke when new args were added).
         assert (
             is_empty_call(
                 sections=["preview", "graph"],
                 limit=15,
                 commit="abc123",
             )
-            is False
+            is True
         )
 
 

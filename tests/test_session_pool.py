@@ -12,7 +12,15 @@ from ember_code.backend.session_pool import (
     SessionRuntime,
     SessionStampingTransport,
 )
+from ember_code.backend.session_stamping_transport import (
+    SessionStampingTransport as SessionStampingTransportDirect,
+)
 from ember_code.protocol import messages as msg
+
+# The re-export from session_pool must resolve to the same class as
+# the direct import from session_stamping_transport — this keeps the
+# one-release-cycle shim honest.
+assert SessionStampingTransport is SessionStampingTransportDirect
 
 
 def _runtime(session_id: str) -> SessionRuntime:
@@ -90,9 +98,9 @@ class TestRouting:
         pool = _pool("default-s", created)
         rt = await pool.get_or_create("old-chat")
         # Simulate /clear: internal id changes, alias retained.
-        rt.remember_id()
+        rt.register_id()
         rt.backend.session_id = "renewed-id"
-        rt.remember_id()
+        rt.register_id()
 
         stale = await pool.get_or_create("old-chat")
         fresh = await pool.get_or_create("renewed-id")
@@ -104,9 +112,13 @@ class TestRouting:
     async def test_shutdown_closes_every_runtime(self):
         pool = _pool("default-s")
         rt = await pool.get_or_create("other")
-        await pool.shutdown()
+        reports = await pool.shutdown()
         pool.default.backend.shutdown.assert_awaited_once()
         rt.backend.shutdown.assert_awaited_once()
+        # Every runtime yields a typed ShutdownReport; both are OK
+        # in this test since the mock ``shutdown`` doesn't raise.
+        assert len(reports) == 2
+        assert all(r.ok for r in reports)
 
 
 class TestIdleEviction:
@@ -160,8 +172,8 @@ class TestIdleEviction:
         one, breaking session continuity."""
         pool, _ = self._build_pool(fake_clock, idle_timeout=10.0)
         fake_clock.advance(10_000)  # way past timeout
-        evicted = await pool.evict_idle()
-        assert evicted == []
+        report = await pool.evict_idle()
+        assert report.evicted_ids == []
         assert pool.default is pool.runtimes[0]
 
     @pytest.mark.asyncio
@@ -171,8 +183,8 @@ class TestIdleEviction:
         # rt was just created → last_used_at = clock now. Advance past
         # the timeout.
         fake_clock.advance(61.0)
-        evicted = await pool.evict_idle()
-        assert evicted == ["alpha"]
+        report = await pool.evict_idle()
+        assert report.evicted_ids == ["alpha"]
         rt.backend.shutdown.assert_awaited_once()
         # Pool no longer holds it.
         assert all(r is not rt for r in pool.runtimes)
@@ -185,8 +197,8 @@ class TestIdleEviction:
         # A find() call updates last_used_at — keeps the runtime live.
         pool.find("alpha")
         fake_clock.advance(40.0)  # 70s since creation, but 40s since use
-        evicted = await pool.evict_idle()
-        assert evicted == []
+        report = await pool.evict_idle()
+        assert report.evicted_ids == []
         assert rt in pool.runtimes
 
     @pytest.mark.asyncio
@@ -198,15 +210,15 @@ class TestIdleEviction:
         rt = await pool.get_or_create("alpha")
         rt.backend.processing = True
         fake_clock.advance(120.0)
-        evicted = await pool.evict_idle()
-        assert evicted == []
+        report = await pool.evict_idle()
+        assert report.evicted_ids == []
         assert rt in pool.runtimes
         rt.backend.shutdown.assert_not_called()
 
         # Once it finishes processing, the next sweep evicts it.
         rt.backend.processing = False
-        evicted = await pool.evict_idle()
-        assert evicted == ["alpha"]
+        report = await pool.evict_idle()
+        assert report.evicted_ids == ["alpha"]
 
     @pytest.mark.asyncio
     async def test_evicted_session_respawns_via_factory_on_next_message(self, fake_clock):
@@ -234,8 +246,8 @@ class TestIdleEviction:
         fake_clock.advance(120.0)
         pool.find("")  # refreshes default
         # Default's last_used_at is now > cutoff for the next sweep.
-        evicted = await pool.evict_idle()
-        assert evicted == []
+        report = await pool.evict_idle()
+        assert report.evicted_ids == []
         # Sanity: default is still the first runtime.
         assert pool.default is pool.runtimes[0]
 

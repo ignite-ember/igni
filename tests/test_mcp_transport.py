@@ -1,5 +1,7 @@
 """Tests for mcp/transport.py — stdio transport for MCP servers."""
 
+import asyncio
+
 from ember_code.core.mcp.transport import StdioTransport
 
 
@@ -25,7 +27,5 @@ class TestStdioTransport:
         assert t.stdout is None
 
     def test_stop_without_start(self):
-        import asyncio
-
         t = StdioTransport("echo")
         asyncio.run(t.stop())  # should not raise

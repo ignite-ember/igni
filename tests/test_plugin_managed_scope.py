@@ -19,8 +19,23 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from ember_code.backend import server as server_mod
+from ember_code.backend.server import BackendServer
+from ember_code.core.config.managed_policy import ManagedPolicySource
+from ember_code.core.plugins import state as state_mod
 from ember_code.core.plugins.loader import PluginLoader, _platform_managed_plugins_root
-from ember_code.core.plugins.models import PluginInfo
+from ember_code.core.plugins.models import (
+    PluginDefinition,
+    PluginInfo,
+    PluginManifest,
+    PluginSource,
+)
+
+# Alias for the deleted ``settings._platform_managed_settings_path``
+# shim — kept as a local name so the assertion site below reads
+# naturally after the OOP-refactor moved the discovery onto
+# :class:`ManagedPolicySource`.
+_platform_managed_settings_path = ManagedPolicySource.platform_path
 
 
 def _make_plugin(root: Path, name: str, version: str = "0.1.0") -> None:
@@ -65,8 +80,6 @@ class TestPlatformManagedPluginsRoot:
         managed-settings file. A sysadmin drops settings,
         instructions, and plugins under one OS-protected
         directory."""
-        from ember_code.core.config.settings import _platform_managed_settings_path
-
         plugin_root = _platform_managed_plugins_root()
         settings_path = _platform_managed_settings_path()
         if plugin_root is None:
@@ -201,13 +214,6 @@ class TestSetPluginEnabledRefusesManaged:
     def test_disable_managed_returns_explanatory_error(self, tmp_path, monkeypatch):
         """The RPC must refuse to mark a managed plugin disabled —
         a sysadmin policy isn't optional."""
-        from ember_code.backend.server import BackendServer
-        from ember_code.core.plugins.models import (
-            PluginDefinition,
-            PluginManifest,
-            PluginSource,
-        )
-
         managed_plugin = PluginDefinition(
             manifest=PluginManifest(name="org-policy"),
             source=PluginSource(
@@ -235,15 +241,6 @@ class TestSetPluginEnabledRefusesManaged:
         """Enabling a managed plugin should NOT trip the refusal
         path that disable hits. Stubbed save/reload so the test
         only exercises the branch logic in ``set_plugin_enabled``."""
-        from ember_code.backend import server as server_mod
-        from ember_code.backend.server import BackendServer
-        from ember_code.core.plugins import state as state_mod
-        from ember_code.core.plugins.models import (
-            PluginDefinition,
-            PluginManifest,
-            PluginSource,
-        )
-
         managed_plugin = PluginDefinition(
             manifest=PluginManifest(name="org-policy"),
             source=PluginSource(

@@ -27,6 +27,8 @@ async def _mock_stream(content="agent response"):
 
 
 def _mock_pool(content: str = "agent response"):
+    from ember_code.core.tools.orchestrate_budget import SpawnBudget
+
     pool = MagicMock()
     agent = MagicMock()
     agent.arun = MagicMock(return_value=_mock_stream(content))
@@ -40,8 +42,10 @@ def _mock_pool(content: str = "agent response"):
     defn = MagicMock()
     defn.description = "Test agent"
     defn.tools = ["Read", "Write"]
+    defn.force_isolation = None
     pool.get.return_value = agent
     pool.get_definition.return_value = defn
+    pool.spawn_budget.return_value = SpawnBudget(20)
     return pool
 
 
@@ -94,8 +98,12 @@ class TestOrchestrateTools:
     async def test_spawn_team_success(self):
         t = OrchestrateTools(pool=_mock_pool(), settings=_settings())
         with (
-            patch("agno.team.team.Team"),
-            patch("ember_code.core.config.models.ModelRegistry") as MockReg,
+            # Post-refactor ``Team`` and ``ModelRegistry`` are imported
+            # at ``orchestrate.py``'s module top (iter 30 Rule-2 sweep),
+            # so we patch the local bindings. Patching the source module
+            # wouldn't affect the names captured at import time.
+            patch("ember_code.core.tools.orchestrate.Team"),
+            patch("ember_code.core.tools.orchestrate.ModelRegistry") as MockReg,
             patch(
                 "ember_code.core.tools.orchestrate._run_team_streaming",
                 new=AsyncMock(return_value=("team result", [])),

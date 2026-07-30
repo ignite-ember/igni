@@ -112,6 +112,105 @@ export function StopIcon({ size = 12 }: IconProps) {
   );
 }
 
+/* ── Status glyphs (run / phase / agent state) ────────────────
+   Each is a small SVG that takes ``currentColor`` so the
+   colour comes from the host element. Filled (not stroked)
+   for visual weight parity with the team-progress card's
+   agent status dot. */
+
+export function CheckIcon({ size = 10 }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+      style={{ display: "block", flexShrink: 0, fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }}
+    >
+      <path d="M3 8.5l3.2 3.2L13 4.8" />
+    </svg>
+  );
+}
+
+export function XIcon({ size = 10 }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+      style={{ display: "block", flexShrink: 0, stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", fill: "none" }}
+    >
+      <path d="M4 4l8 8M12 4l-8 8" />
+    </svg>
+  );
+}
+
+export function CircleIcon({ size = 8, filled = false }: IconProps & { filled?: boolean }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+      style={{ display: "block", flexShrink: 0, fill: filled ? "currentColor" : "none", stroke: "currentColor", strokeWidth: 2 }}
+    >
+      <circle cx="8" cy="8" r="5" />
+    </svg>
+  );
+}
+
+export function CancelIcon({ size = 10 }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+      style={{ display: "block", flexShrink: 0, fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }}
+    >
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M5.5 5.5l5 5M10.5 5.5l-5 5" />
+    </svg>
+  );
+}
+
+export function ClockIcon({ size = 10 }: IconProps) {
+  return (
+    <Svg size={size}>
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M8 5.2V8l1.8 1.5" />
+    </Svg>
+  );
+}
+
+/** Pick the right status icon for a workflow run / phase / agent
+ *  status string. The host element controls the colour via
+ *  ``currentColor``. Returns ``null`` for unknown statuses so
+ *  callers can render a fallback dot. */
+export function StatusIcon({
+  status,
+  size = 10,
+}: {
+  status: "running" | "completed" | "failed" | "cancelled" | "timeout" | string;
+  size?: number;
+}) {
+  switch (status) {
+    case "running":
+      return <CircleIcon size={size} filled />;
+    case "completed":
+      return <CheckIcon size={size} />;
+    case "failed":
+      return <XIcon size={size} />;
+    case "cancelled":
+      return <CancelIcon size={size} />;
+    case "timeout":
+      return <ClockIcon size={size} />;
+    default:
+      return <CircleIcon size={size} />;
+  }
+}
+
 /** Right-pointing chevron; rotate via the host element (e.g.
  * `.tool-chevron.open`) or the `down` prop. */
 export function ChevronIcon({ size = 10, down = false }: IconProps & { down?: boolean }) {

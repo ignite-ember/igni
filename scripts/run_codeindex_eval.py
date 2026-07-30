@@ -80,7 +80,7 @@ async def main() -> int:
 
     from ember_code.core.config.settings import Settings
     from ember_code.core.evals.loader import load_eval_file
-    from ember_code.core.evals.reporter import format_results
+    from ember_code.core.evals.reporter import EvalReport
     from ember_code.core.evals.runner import SuiteResult
     from ember_code.core.session.core import Session
 
@@ -207,7 +207,7 @@ async def main() -> int:
         project_dir=project_dir,
     )
 
-    print(format_results([result]))
+    print(EvalReport([result]).render())
 
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)

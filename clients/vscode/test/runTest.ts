@@ -19,6 +19,16 @@ async function main() {
     await runTests({
       extensionDevelopmentPath,
       extensionTestsPath,
+      // Pin to a VSCode build that ships a layout @vscode/test-electron
+      // 3.x can actually spawn on macOS-arm64 GitHub runners.
+      // 1.131.0 changed the macOS arm64 helper layout (puts Electron
+      // at a path test-electron 3.x doesn't probe), so spawning the
+      // downloaded bundle fails with ``Electron ENOENT``. 1.129.0
+      // is the last build with the original layout — keep this
+      // pinned until upstream test-electron catches up. (Ubuntu and
+      // Windows runners use their own native layout, so the pin only
+      // affects the macos-latest job.)
+      version: "1.129.0",
       // ``--disable-extensions`` keeps the test environment hermetic;
       // we don't want the user's locally-installed extensions
       // affecting activation events or commands. ``--user-data-dir``

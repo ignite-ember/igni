@@ -23,7 +23,11 @@ SQLite so the regression can't return:
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
+
+from agno.db.base import SessionType
+from agno.session.agent import AgentSession
 
 from ember_code.core.session.persistence import SessionPersistence
 
@@ -181,11 +185,6 @@ class TestRealDbCoExistence:
         # If something else (Agno itself, a future feature)
         # writes a different key into session_data, our
         # write must preserve it.
-        import time
-
-        from agno.db.base import SessionType
-        from agno.session.agent import AgentSession
-
         db = _make_db(tmp_path)
         # Seed with a row that has an unrelated key already.
         # ``created_at``/``updated_at`` are NOT NULL in the
@@ -215,3 +214,124 @@ class TestRealDbCoExistence:
         assert sd.get("session_name") == "My Session"
         assert sd.get("custom_thing") == 42
         assert sd.get("plan_decisions") == {"run-1": "approved"}
+
+
+class TestRealDbEventLog:
+    """Event-log round-trip against real SQLite.
+
+    Different pattern from ``save_todos`` / ``save_plan_decisions``:
+    the event log is append-only — writes come from
+    :meth:`Session.append_event`, not a bulk-replace API. But
+    ``SessionPersistence.save_event_log`` still does an atomic
+    replace at the DB layer (the in-memory list is the append
+    buffer). Tests verify the DB pass-through works and survives a
+    restart cycle.
+    """
+
+    async def test_appends_and_reads_back(self, tmp_path):
+        db = _make_db(tmp_path)
+        persistence = SessionPersistence(db=db, session_id="sess-evlog")
+        entry = {
+            "seq": 1,
+            "run_id": "run-a",
+            "timestamp_ms": 1000,
+            "type": "visualization_delta",
+            "payload": {"spec_id": "s1", "json": "{}", "final": True},
+        }
+        await persistence.save_event_log([entry])
+        loaded = await persistence.load_event_log()
+        assert loaded == [entry]
+
+    async def test_survives_restart(self, tmp_path):
+        # The headline event-log regression: viz cards must survive
+        # a BE restart without any FE-driven save RPC. Write via
+        # one persistence instance, throw it away, read via a new
+        # instance — same DB.
+        db = _make_db(tmp_path)
+        writer = SessionPersistence(db=db, session_id="sess-evlog-restart")
+        entries = [
+            {
+                "seq": 1,
+                "run_id": "run-1",
+                "timestamp_ms": 1000,
+                "type": "visualization_delta",
+                "payload": {"spec_id": "s1", "json": '{"root":"r"}', "final": True},
+            },
+            {
+                "seq": 2,
+                "run_id": "run-1",
+                "timestamp_ms": 1100,
+                "type": "visualization_delta",
+                "payload": {"spec_id": "s2", "json": '{"root":"q"}', "final": True},
+            },
+        ]
+        await writer.save_event_log(entries)
+
+        reader = SessionPersistence(db=db, session_id="sess-evlog-restart")
+        loaded = await reader.load_event_log()
+        assert loaded == entries
+
+    async def test_atomic_replace_preserves_order(self, tmp_path):
+        # Sequential ``save_event_log`` calls model the in-memory
+        # append + full-persist pattern. Order and content must be
+        # exactly what the caller passed on the last write.
+        db = _make_db(tmp_path)
+        persistence = SessionPersistence(db=db, session_id="sess-evlog-order")
+
+        await persistence.save_event_log(
+            [{"seq": 1, "run_id": "r1", "timestamp_ms": 1, "type": "x", "payload": {}}]
+        )
+        await persistence.save_event_log(
+            [
+                {"seq": 1, "run_id": "r1", "timestamp_ms": 1, "type": "x", "payload": {}},
+                {"seq": 2, "run_id": "r1", "timestamp_ms": 2, "type": "y", "payload": {}},
+            ]
+        )
+
+        loaded = await persistence.load_event_log()
+        seqs = [e["seq"] for e in loaded]
+        assert seqs == [1, 2]
+
+    async def test_coexists_with_todos_and_plan_decisions(self, tmp_path):
+        # The three session_data writers must not clobber each
+        # other. Same merge-in-place guarantee as the plan/todo
+        # pair — extended to the new event_log key.
+        db = _make_db(tmp_path)
+        persistence = SessionPersistence(db=db, session_id="sess-triple")
+
+        await persistence.save_todos([{"content": "A", "status": "pending"}])
+        await persistence.save_plan_decisions({"run-x": "approved"})
+        await persistence.save_event_log(
+            [{"seq": 1, "run_id": "run-x", "timestamp_ms": 1, "type": "t", "payload": {}}]
+        )
+
+        assert (await persistence.load_todos()) == [
+            {"content": "A", "status": "pending", "activeForm": ""}
+        ]
+        assert (await persistence.load_plan_decisions()) == {"run-x": "approved"}
+        assert len(await persistence.load_event_log()) == 1
+
+    async def test_concurrent_writes_all_survive(self, tmp_path):
+        # Three concurrent writes fired at once must all land — the
+        # write lock serialises the load-modify-write against the
+        # session row so no writer sees a stale pre-image and
+        # clobbers a concurrent write's key. Without the lock this
+        # test races and one of the three keys goes missing.
+        import asyncio as _asyncio
+
+        db = _make_db(tmp_path)
+        persistence = SessionPersistence(db=db, session_id="sess-race")
+
+        await _asyncio.gather(
+            persistence.save_todos([{"content": "A", "status": "pending"}]),
+            persistence.save_plan_decisions({"r1": "approved"}),
+            persistence.save_event_log(
+                [{"seq": 1, "run_id": "r1", "timestamp_ms": 1, "type": "t", "payload": {}}]
+            ),
+        )
+
+        assert (await persistence.load_todos()) == [
+            {"content": "A", "status": "pending", "activeForm": ""}
+        ]
+        assert (await persistence.load_plan_decisions()) == {"r1": "approved"}
+        assert len(await persistence.load_event_log()) == 1

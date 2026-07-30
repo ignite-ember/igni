@@ -2,11 +2,14 @@
 
 import pytest
 
+from ember_code.core.config.model_entry import ModelRegistryEntry
 from ember_code.core.config.models import (
     DEFAULT_CONTEXT_WINDOW,
     ContextWindowResolver,
     ModelRegistry,
 )
+from ember_code.core.config.permissions import AllowlistPattern
+from ember_code.core.config.provider_builders import ProviderClientBuilder
 from ember_code.core.config.settings import ModelsConfig, Settings, load_settings
 
 
@@ -41,13 +44,15 @@ class TestModelRegistry:
     def test_resolve_default_entry(self, registry):
         entry = registry._resolve_entry("MiniMax-M2.7")
         assert entry is not None
-        assert entry["provider"] == "openai_like"
-        assert entry["model_id"] == "MiniMaxAI/MiniMax-M2.7"
-        assert entry["context_window"] == 204_800
+        assert entry.provider == "openai_like"
+        assert entry.model_id == "MiniMaxAI/MiniMax-M2.7"
+        assert entry.context_window == 204_800
 
     def test_resolve_provider_colon_format(self, registry):
         entry = registry._resolve_entry("openai_like:gpt-4o")
-        assert entry == {"provider": "openai_like", "model_id": "gpt-4o"}
+        assert entry is not None
+        assert entry.provider == "openai_like"
+        assert entry.model_id == "gpt-4o"
 
     def test_resolve_unknown_returns_none(self, registry):
         entry = registry._resolve_entry("nonexistent-model")
@@ -67,7 +72,7 @@ class TestModelRegistry:
         )
         reg = ModelRegistry(settings)
         entry = reg._resolve_entry("MiniMax-M2.7")
-        assert entry["model_id"] == "custom-override"
+        assert entry.model_id == "custom-override"
 
     def test_resolve_custom_model(self):
         settings = Settings(
@@ -83,7 +88,7 @@ class TestModelRegistry:
         )
         reg = ModelRegistry(settings)
         entry = reg._resolve_entry("my-model")
-        assert entry["model_id"] == "my-custom-id"
+        assert entry.model_id == "my-custom-id"
 
     def test_get_model_unknown_raises(self, registry):
         with pytest.raises(ValueError, match="Unknown model"):
@@ -91,16 +96,16 @@ class TestModelRegistry:
 
     def test_resolve_api_key_from_env(self, monkeypatch):
         monkeypatch.setenv("TEST_KEY", "secret123")
-        key = ModelRegistry._resolve_api_key({"api_key_env": "TEST_KEY"})
-        assert key == "secret123"
+        entry = ModelRegistryEntry(model_id="x", api_key_env="TEST_KEY")
+        assert entry.resolve_api_key() == "secret123"
 
     def test_resolve_api_key_missing_env(self):
-        key = ModelRegistry._resolve_api_key({"api_key_env": "NONEXISTENT_KEY_12345"})
-        assert key is None
+        entry = ModelRegistryEntry(model_id="x", api_key_env="NONEXISTENT_KEY_12345")
+        assert entry.resolve_api_key() is None
 
     def test_resolve_api_key_no_config(self):
-        key = ModelRegistry._resolve_api_key({})
-        assert key is None
+        entry = ModelRegistryEntry(model_id="x")
+        assert entry.resolve_api_key() is None
 
     def test_env_model_override(self, monkeypatch, registry):
         """``EMBER_MODEL`` selects an entry from the registry. The
@@ -108,20 +113,22 @@ class TestModelRegistry:
         discovery would normally populate."""
         monkeypatch.setenv("EMBER_MODEL", "MiniMax-M2.7")
         entry = registry._resolve_entry("MiniMax-M2.7")
-        assert entry["model_id"] == "MiniMaxAI/MiniMax-M2.7"
+        assert entry.model_id == "MiniMaxAI/MiniMax-M2.7"
 
     def test_register_provider(self, registry):
-        class FakeProvider:
-            pass
+        class FakeBuilder(ProviderClientBuilder):
+            def build(self, entry, *, cloud_token, llm_logger):
+                return object()
 
-        registry.register_provider("fake", FakeProvider)
-        assert "fake" in registry.PROVIDERS
+        registry.register_provider("fake", FakeBuilder())
+        assert registry._catalog.has("fake")
 
     def test_generate_pattern_command(self):
-        from ember_code.core.config.permissions import PermissionGuard
-
-        assert PermissionGuard._generate_pattern("npm test") == "npm *"
-        assert PermissionGuard._generate_pattern("pytest tests/") == "pytest *"
+        # New API: pattern derivation lives on ``AllowlistPattern``.
+        # ``PermissionGuard._generate_pattern`` is kept as a shim
+        # covered by test_permissions.py::test_generate_pattern.
+        assert AllowlistPattern.from_value("npm test").pattern == "npm *"
+        assert AllowlistPattern.from_value("pytest tests/").pattern == "pytest *"
 
     def test_get_context_window_from_registry(self, registry):
         ctx = registry.get_context_window("MiniMax-M2.7")
@@ -168,13 +175,14 @@ class TestEffectiveDefault:
         )
         assert ModelRegistry(s)._effective_default() == "alpha"
 
-    def test_empty_default_and_empty_registry_raises(self):
-        """Brand-new install with no login + no user override → can't
-        resolve. The error names the next step (login, or add an
-        entry) instead of failing later as a cryptic "Unknown model"."""
+    def test_empty_default_and_empty_registry_returns_empty(self):
+        """Brand-new install with no login + no user override →
+        ``_effective_default`` returns ``""`` so the session can
+        still construct. :meth:`get_model` maps the empty case to a
+        :class:`NoModelConfigured` placeholder — see
+        ``test_get_model_returns_placeholder_when_unconfigured``."""
         s = self._settings_with("", {})
-        with pytest.raises(ValueError, match="No model configured"):
-            ModelRegistry(s)._effective_default()
+        assert ModelRegistry(s)._effective_default() == ""
 
     def test_get_model_uses_effective_default(self):
         """``get_model(None)`` and ``get_model("")`` both flow through
@@ -196,13 +204,14 @@ class TestEffectiveDefault:
         # entry resolution under the same fallback path.
         entry = reg._resolve_entry(reg._effective_default())
         assert entry is not None
-        assert entry["model_id"] == "a"
+        assert entry.model_id == "a"
 
 
 class TestContextWindowResolver:
     def test_explicit_config(self):
         r = ContextWindowResolver()
-        result = r.resolve("anything", {"context_window": 32_000})
+        entry = ModelRegistryEntry(model_id="anything", context_window=32_000)
+        result = r.resolve("anything", entry)
         assert result == 32_000
 
     def test_unknown_model_fallback(self):
@@ -217,7 +226,8 @@ class TestContextWindowResolver:
     @pytest.mark.asyncio
     async def test_aresolve_explicit(self):
         r = ContextWindowResolver()
-        result = await r.aresolve("x", {"context_window": 16_000})
+        entry = ModelRegistryEntry(model_id="x", context_window=16_000)
+        result = await r.aresolve("x", entry)
         assert result == 16_000
 
     @pytest.mark.asyncio
@@ -225,3 +235,104 @@ class TestContextWindowResolver:
         r = ContextWindowResolver()
         result = await r.aresolve("unknown-model-xyz")
         assert result == DEFAULT_CONTEXT_WINDOW
+
+
+class TestContextWindowFetchOutcome:
+    """Categorised fetch outcomes distinguish network / status /
+    decode / missing-key failures on the ``/models/{id}`` path.
+
+    The public :meth:`ContextWindowResolver.aresolve` still returns a
+    plain ``int`` (falling back to :data:`DEFAULT_CONTEXT_WINDOW`),
+    but the internal :class:`_FetchOutcome` model gives the debug log
+    a name for each failure category and gives tests a way to assert
+    that narrow-exception handling actually distinguishes them.
+    """
+
+    @pytest.mark.asyncio
+    async def test_missing_key_when_payload_omits_context_field(self, monkeypatch):
+        from ember_code.core.config import context_window as cw
+
+        async def fake_get(self, url, headers=None):  # type: ignore[no-untyped-def]
+            class Resp:
+                status_code = 200
+
+                def json(self):
+                    return {"unrelated": 1}
+
+            return Resp()
+
+        monkeypatch.setattr(cw.httpx.AsyncClient, "get", fake_get)
+        r = ContextWindowResolver()
+        outcome = await r._fetch_from_api(model_id="m", base_url="https://x.example/v1")
+        assert outcome.reason == "missing_key"
+        assert outcome.value is None
+
+    @pytest.mark.asyncio
+    async def test_bad_status_when_endpoint_returns_non_200(self, monkeypatch):
+        from ember_code.core.config import context_window as cw
+
+        async def fake_get(self, url, headers=None):  # type: ignore[no-untyped-def]
+            class Resp:
+                status_code = 404
+
+                def json(self):
+                    raise AssertionError("json should not be called on non-200")
+
+            return Resp()
+
+        monkeypatch.setattr(cw.httpx.AsyncClient, "get", fake_get)
+        r = ContextWindowResolver()
+        outcome = await r._fetch_from_api(model_id="m", base_url="https://x.example/v1")
+        assert outcome.reason == "bad_status"
+        assert outcome.value is None
+
+    @pytest.mark.asyncio
+    async def test_http_error_when_network_fails(self, monkeypatch):
+        from ember_code.core.config import context_window as cw
+
+        async def fake_get(self, url, headers=None):  # type: ignore[no-untyped-def]
+            raise cw.httpx.ConnectError("boom")
+
+        monkeypatch.setattr(cw.httpx.AsyncClient, "get", fake_get)
+        r = ContextWindowResolver()
+        outcome = await r._fetch_from_api(model_id="m", base_url="https://x.example/v1")
+        assert outcome.reason == "http_error"
+        assert outcome.value is None
+
+    @pytest.mark.asyncio
+    async def test_decode_error_when_payload_not_int_coercible(self, monkeypatch):
+        from ember_code.core.config import context_window as cw
+
+        async def fake_get(self, url, headers=None):  # type: ignore[no-untyped-def]
+            class Resp:
+                status_code = 200
+
+                def json(self):
+                    return {"context_window": {"nested": "not-a-number"}}
+
+            return Resp()
+
+        monkeypatch.setattr(cw.httpx.AsyncClient, "get", fake_get)
+        r = ContextWindowResolver()
+        outcome = await r._fetch_from_api(model_id="m", base_url="https://x.example/v1")
+        assert outcome.reason == "decode_error"
+        assert outcome.value is None
+
+    @pytest.mark.asyncio
+    async def test_ok_when_context_window_present(self, monkeypatch):
+        from ember_code.core.config import context_window as cw
+
+        async def fake_get(self, url, headers=None):  # type: ignore[no-untyped-def]
+            class Resp:
+                status_code = 200
+
+                def json(self):
+                    return {"context_window": 200_000}
+
+            return Resp()
+
+        monkeypatch.setattr(cw.httpx.AsyncClient, "get", fake_get)
+        r = ContextWindowResolver()
+        outcome = await r._fetch_from_api(model_id="m", base_url="https://x.example/v1")
+        assert outcome.reason == "ok"
+        assert outcome.value == 200_000

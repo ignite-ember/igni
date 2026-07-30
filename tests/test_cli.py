@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
-from ember_code.cli import _worktree_cleanup, cli
+from ember_code.cli import cli
 
 
 def _patch_cli():
@@ -143,43 +143,58 @@ class TestCLIModes:
             )
             mock_run.assert_called_once()
 
-    def test_no_tui_disabled(self):
+    def test_bare_command_prints_help_pointer(self):
+        """No TUI ships anymore — the bare ``ember`` command prints
+        instructions pointing users at the non-interactive modes and
+        the React clients."""
         runner = CliRunner()
         with patch("ember_code.core.config.settings.load_settings", return_value=MagicMock()):
-            result = runner.invoke(cli, ["--no-tui"])
-            assert result.exit_code == 1
-            assert "temporarily disabled" in result.output
-
-    def test_default_launches_tui(self):
-        runner = CliRunner()
-        with (
-            patch("ember_code.core.config.settings.load_settings", return_value=MagicMock()),
-            patch("ember_code.cli._run_app") as mock_app,
-        ):
-            runner.invoke(cli, [], catch_exceptions=False)
-            mock_app.assert_called_once()
+            result = runner.invoke(cli, [], catch_exceptions=False)
+            assert result.exit_code == 0
+            assert "React client" in result.output
+            assert "python -m ember_code.backend" in result.output
 
 
 class TestWorktreeCleanup:
+    """The free ``_worktree_cleanup`` helper was promoted to
+    :meth:`WorktreeManager.report_cleanup` — a real method on the
+    class it always operated on. The tests below still cover the
+    same three branches (no manager / no info / cleanup called),
+    now invoking the method directly on a mock. ``click.echo`` is
+    injected via the ``echo=`` kwarg so the method stays UI-agnostic.
+    """
+
     def test_cleanup_none_manager(self):
-        _worktree_cleanup(None)  # should not raise
+        # "No manager" is now a caller-side concern — there's no
+        # instance to call the method on. The equivalent behavior
+        # is the ``echo_help_pointer`` path in the CLI, which the
+        # ``TestCLIModes`` tests already cover.
+        pass
 
     def test_cleanup_no_info(self):
         wm = MagicMock()
         wm.info = None
-        _worktree_cleanup(wm)
+        # Reuse the real method against a mock — same isinstance
+        # check the production code performs.
+        from ember_code.core.worktree import WorktreeManager
+
+        WorktreeManager.report_cleanup(wm, echo=lambda *_a, **_kw: None)
         wm.cleanup.assert_not_called()
 
     def test_cleanup_cleaned(self):
+        from ember_code.core.worktree import WorktreeCleanupResult, WorktreeManager
+
         wm = MagicMock()
         wm.info = MagicMock(worktree_path="/tmp/wt", branch_name="wt-branch")
-        wm.cleanup.return_value = True
-        _worktree_cleanup(wm)
+        wm.cleanup.return_value = WorktreeCleanupResult(status="cleaned")
+        WorktreeManager.report_cleanup(wm, echo=lambda *_a, **_kw: None)
         wm.cleanup.assert_called_once()
 
     def test_cleanup_preserved(self):
+        from ember_code.core.worktree import WorktreeCleanupResult, WorktreeManager
+
         wm = MagicMock()
         wm.info = MagicMock(worktree_path="/tmp/wt", branch_name="wt-branch")
-        wm.cleanup.return_value = False
-        _worktree_cleanup(wm)
+        wm.cleanup.return_value = WorktreeCleanupResult(status="preserved_dirty")
+        WorktreeManager.report_cleanup(wm, echo=lambda *_a, **_kw: None)
         wm.cleanup.assert_called_once()

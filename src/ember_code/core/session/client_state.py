@@ -19,6 +19,7 @@ import logging
 import sqlite3
 from pathlib import Path
 
+from ember_code.core.code_index.paths import data_root
 from ember_code.core.session._sqlite_utils import connect_kv
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,6 @@ class ClientStateStore:
 
     @classmethod
     def from_data_dir(cls, data_dir: str | Path) -> ClientStateStore:
-        from ember_code.core.code_index.paths import data_root
 
         return cls(data_root(data_dir) / "client_state.db")
 

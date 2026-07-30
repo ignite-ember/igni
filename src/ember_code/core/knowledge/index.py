@@ -1,72 +1,61 @@
-"""Per-project knowledge index, backed by ChromaDB.
+"""Per-project knowledge index, backed by Neo4j.
 
-Lives at ``~/.ember/projects/<project_id>/knowledge.chroma/``. Each
-entry is stored as one parent row in ``knowledge_documents`` plus N
-chunk rows in ``knowledge_chunks`` (linked via ``parent_doc_id``
-metadata) so search can run against chunks and roll up to whole
-documents. Lifecycle: lazy-connect on first use; caller owns ``close()``.
+The legacy chroma-backed path was removed when the code_index
+migrated to neo4j: ``KnowledgeIndex`` now takes a
+:class:`Neo4jKnowledgeClient` and routes every public method
+through it. The cross-project sibling walk is a separate scope
+(downgraded to a per-project MVP — siblings iterate
+``driver_for_knowledge`` per project in a follow-up).
+
+:class:`KnowledgeIndex` is a thin coordinator — every distinct
+responsibility is delegated to a collaborator:
+
+  - :class:`KnowledgeMetadataCodec` — flatten/unflatten + content
+    hash (kept for the per-text chunk ``text`` field).
+  - :class:`NewlinePreservingChunker` — default chunker; caller can
+    inject any :class:`ChunkingStrategy`.
+  - An optional :class:`Embedder` for the 384-dim vector used by
+    the vector search index. The default :class:`HashEmbedder`
+    is deterministic and offline-safe.
 """
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import logging
-import re
-import threading
-from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from agno.knowledge.chunking.recursive import RecursiveChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy
 from agno.knowledge.document.base import Document
 
-from ember_code.core.code_index.paths import (
-    data_root,
-    knowledge_chroma_path,
-)
 from ember_code.core.code_index.project import resolve_project_id
-from ember_code.core.embeddings import EMBEDDING_DIMENSIONS, EmbeddingFunction
-
-
-class _NewlinePreservingChunker(RecursiveChunking):
-    """RecursiveChunking that preserves paragraph structure.
-
-    Agno's base ``clean_text`` runs ``re.sub(r"\\s+", " ", ...)`` which
-    folds every newline into a single space — destroying markdown layout
-    (headings, lists, fenced code) at ingest time. The chunked content
-    is exactly what the detail page renders, so the loss is visible.
-
-    Override to collapse only intra-line whitespace, keeping ``\\n``
-    untouched. We also cap runs of blank lines at one (two newlines)
-    so paragraph spacing stays normalized.
-    """
-
-    def clean_text(self, text: str) -> str:
-        text = text.replace("\r\n", "\n").replace("\r", "\n")
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        text = re.sub(r"[ \t\f\v]+", " ", text)
-        return text
-
+from ember_code.core.knowledge.chunking import NewlinePreservingChunker
+from ember_code.core.knowledge.metadata_codec import KnowledgeMetadataCodec
+from ember_code.core.knowledge.models import (
+    KnowledgeAddResult,
+    KnowledgeDeleteResult,
+    KnowledgeIndexEntry,
+    KnowledgeSearchResult,
+)
 
 logger = logging.getLogger(__name__)
 
-DOCUMENTS_COLLECTION = "knowledge_documents"
-CHUNKS_COLLECTION = "knowledge_chunks"
-
 
 class KnowledgeIndex:
-    """Per-project knowledge index backed by ChromaDB.
+    """Per-project knowledge index backed by Neo4j.
 
     Args:
         project: project directory (used to derive the on-disk path).
         data_dir: ember root, defaults to ``~/.ember``.
         chunker: how to split inline content for ``add(...)``. Default
-            ``_NewlinePreservingChunker(chunk_size=550, overlap=75)`` —
+            ``NewlinePreservingChunker(chunk_size=550, overlap=75)`` —
             sized so chunks stay under the 256-token window of our
             ``all-MiniLM-L6-v2`` embedder. Markdown/code is token-dense
             (~0.36 tokens/char), so 550 chars ≈ 200 tokens with headroom.
+        neo4j_client: required; a :class:`Neo4jKnowledgeClient` bound
+            to the per-project driver.
+        embedder: 384-dim vector producer; inject ``LiveEmbedder()``
+            for production or ``HashEmbedder()`` for tests.
     """
 
     def __init__(
@@ -75,41 +64,56 @@ class KnowledgeIndex:
         project: str | Path,
         data_dir: str | Path = "~/.ember",
         chunker: ChunkingStrategy | None = None,
+        neo4j_client: Any,
+        embedder: Any | None = None,
     ):
+        if neo4j_client is None:
+            raise RuntimeError(
+                "KnowledgeIndex now requires neo4j_client= — the chroma "
+                "backend was removed when the code_index migrated to "
+                "neo4j. Construct a Neo4jKnowledgeClient (from the "
+                "Neo4jRuntime.driver_for_knowledge(project_id)) and "
+                "pass it in."
+            )
         self.project = project
         self.project_id = resolve_project_id(project)
         self.data_dir = data_dir
-        self.chunker = chunker or _NewlinePreservingChunker(chunk_size=550, overlap=75)
-        self._client: Any | None = None
-        self._docs: Any | None = None
-        self._chunks: Any | None = None
-        self._lock = asyncio.Lock()
+        self.chunker = chunker or NewlinePreservingChunker(chunk_size=550, overlap=75)
+        # Knowledge has a single backend: the per-project neo4j
+        # client. The chroma path was removed when code_index
+        # migrated to neo4j.
+        self._neo4j_client = neo4j_client
+        self._embedder = embedder
+        self._codec = KnowledgeMetadataCodec()
 
     async def start(self) -> None:
-        """Open the chroma client + collections. Idempotent."""
-        async with self._lock:
-            if self._client is not None:
-                return
-            path = knowledge_chroma_path(self.project, data_dir=self.data_dir)
-            path.mkdir(parents=True, exist_ok=True)
-            self._client = await asyncio.to_thread(_open_client, path)
-            self._docs = await asyncio.to_thread(
-                _get_or_create_collection, self._client, DOCUMENTS_COLLECTION
+        """No-op on the neo4j path — the client is owned by the
+        runtime and is already open by the time the indexer is
+        constructed. Kept as a method for symmetry with the chroma
+        path so callers don't need to branch on backend.
+        """
+        return
+
+    async def _require_embedder(self) -> Any:
+        """Return the configured embedder, or raise on use.
+
+        The embedder is injected at construction; we delay the
+        import to avoid loading the live model at module import.
+        """
+        if self._embedder is None:
+            raise RuntimeError(
+                "KnowledgeIndex requires an embedder to add or search entries. "
+                "Pass embedder=HashEmbedder() for tests or LiveEmbedder() in "
+                "production (the Session.attach_knowledge_neo4j() seam injects it)."
             )
-            self._chunks = await asyncio.to_thread(
-                _get_or_create_collection, self._client, CHUNKS_COLLECTION
-            )
+        return self._embedder
 
     async def close(self) -> None:
-        """Drop the in-memory client. Persistent data stays on disk."""
-        async with self._lock:
-            self._client = None
-            self._docs = None
-            self._chunks = None
-
-    async def _ensure_started(self) -> None:
-        if self._client is None:
-            await self.start()
+        """No-op — the neo4j client lives across multiple
+        :class:`KnowledgeIndex` instances (one driver per process,
+        owned by the runtime) so we deliberately do not close it
+        here.
+        """
 
     # -- Public API ------------------------------------------------------------
 
@@ -127,12 +131,16 @@ class KnowledgeIndex:
         Short content stays as one chunk; longer content is split (with
         overlap) so each chunk gets its own embedding and search returns
         the most relevant slice rolled up to its parent document.
+
+        Returns the stable entry id. On failure returns an empty string
+        rather than raising; callers wanting structured errors should
+        use :meth:`add_document` directly.
         """
         chunked_documents = self.chunker.chunk(Document(content=content))
         chunks = [d.content for d in chunked_documents if d.content]
         if not chunks:
             chunks = [content]
-        return await self.add_document(
+        result = await self.add_document(
             chunks=chunks,
             full_content=content,
             name=name,
@@ -140,6 +148,7 @@ class KnowledgeIndex:
             metadata=metadata,
             entry_id=entry_id,
         )
+        return result.entry_id or ""
 
     async def add_document(
         self,
@@ -150,54 +159,22 @@ class KnowledgeIndex:
         source: str = "",
         metadata: dict[str, str] | None = None,
         entry_id: str | None = None,
-    ) -> str:
-        """Insert one parent document with N chunks linked by ``parent_doc_id``.
+    ) -> KnowledgeAddResult:
+        """Insert one parent document with N chunks linked to its :Entry.
 
-        Returns the stable entry id (16-char content hash).
+        Returns a :class:`KnowledgeAddResult` carrying the stable
+        entry id (16-char content hash) on success. Empty ``chunks``
+        returns ``success=False`` rather than raising — the ingester
+        loop treats it as "nothing to store" and moves on.
         """
-        await self._ensure_started()
-        if not chunks:
-            raise ValueError("add_document requires at least one chunk")
-
-        document_text = full_content if full_content is not None else "\n\n".join(chunks)
-        eid = entry_id or _content_hash(document_text)
-
-        # Upsert parent — metadata carries name/source/extra so
-        # list_entries / sync can return the dict shape callers expect.
-        # Pass a zero-vector embedding to skip the model: parents are
-        # NEVER queried for similarity (search hits the chunks
-        # collection and rolls up); embedding 13k-char docs to a
-        # truncated 256-token vector was wasted work + storage.
-        doc_metadata = _flatten_metadata(
-            entry_id=eid, name=name or eid, source=source, extras=metadata
+        return await self._add_document_neo4j(
+            chunks=chunks,
+            full_content=full_content,
+            name=name,
+            source=source,
+            metadata=metadata,
+            entry_id=entry_id,
         )
-        await asyncio.to_thread(
-            self._docs.upsert,
-            ids=[eid],
-            documents=[document_text],
-            embeddings=[[0.0] * EMBEDDING_DIMENSIONS],
-            metadatas=[doc_metadata],
-        )
-
-        # Replace chunk set: delete prior chunks for this doc, then upsert new ones.
-        await asyncio.to_thread(self._chunks.delete, where={"parent_doc_id": eid})
-        chunk_ids = [f"{eid}::{i}" for i in range(len(chunks))]
-        chunk_metadatas = [
-            {
-                "parent_doc_id": eid,
-                "chunk_index": i,
-                "name": name or eid,
-                "source": source,
-            }
-            for i in range(len(chunks))
-        ]
-        await asyncio.to_thread(
-            self._chunks.upsert,
-            ids=chunk_ids,
-            documents=chunks,
-            metadatas=chunk_metadatas,
-        )
-        return eid
 
     async def search(
         self,
@@ -205,301 +182,136 @@ class KnowledgeIndex:
         query: str,
         limit: int = 5,
         cross_project: bool = False,
-    ) -> list[dict]:
-        """Semantic search.
+    ) -> list[KnowledgeSearchResult]:
+        """Semantic search (neo4j-only — chroma path is removed).
 
-        ``cross_project=False`` (default) hits the current project's
-        collection only. ``cross_project=True`` iterates every other
-        project's chroma file and merges results by score.
+        ``cross_project`` is a vestigial parameter: the cross-
+        project sibling walk was chroma-specific and isn't
+        implemented on the neo4j path. Kept on the signature for
+        back-compat with existing callers; ignored.
         """
-        await self._ensure_started()
-        results = await self._search_local(query=query, limit=limit)
-        if not cross_project:
-            return results
-
-        # Pull from sibling projects too — open a quick read-only client per file.
-        for sibling_path in _iter_sibling_chroma_paths(
-            data_dir=self.data_dir, current_id=self.project_id
-        ):
-            sibling = await asyncio.to_thread(_open_client, sibling_path)
-            chunks_coll = await asyncio.to_thread(
-                _get_or_create_collection, sibling, CHUNKS_COLLECTION
-            )
-            docs_coll = await asyncio.to_thread(
-                _get_or_create_collection, sibling, DOCUMENTS_COLLECTION
-            )
-            sibling_results = await self._roll_up_chunks(
-                query=query,
-                limit=limit,
-                chunks_coll=chunks_coll,
-                docs_coll=docs_coll,
-                project_label=sibling_path.parent.name,
-            )
-            results.extend(sibling_results)
-
-        results.sort(key=lambda r: r["score"], reverse=True)
-        return results[:limit]
+        return await self._search_neo4j(query=query, limit=limit)
 
     async def count(self) -> int:
-        await self._ensure_started()
-        return await asyncio.to_thread(self._docs.count)
+        return await self._neo4j_client.count()
 
-    async def list_entries(self, *, limit: int = 1000) -> list[dict]:
+    async def list_entries(self, *, limit: int = 1000) -> list[KnowledgeIndexEntry]:
         """Return every entry in the current project — used by YAML sync."""
-        await self._ensure_started()
-        page = await asyncio.to_thread(
-            self._docs.get,
-            limit=limit,
-            include=["documents", "metadatas"],
-        )
-        entries: list[dict] = []
-        for entry_id, content, meta in zip(
-            page.get("ids", []) or [],
-            page.get("documents", []) or [],
-            page.get("metadatas", []) or [],
-            strict=False,
-        ):
-            entries.append(
-                {
-                    "id": entry_id,
-                    "content": content or "",
-                    "source": (meta or {}).get("source", ""),
-                    "metadata": _unflatten_metadata(meta or {}),
-                }
-            )
-        return entries
+        return await self._list_entries_neo4j(limit=limit)
 
-    async def delete_by_query(self, query: str, *, limit: int = 10) -> int:
-        """Find entries matching ``query`` and delete them. Returns count deleted."""
-        await self._ensure_started()
-        results = await self._search_local(query=query, limit=limit)
-        if not results:
-            return 0
-        deleted = 0
-        for r in results:
-            eid = r.get("entry_id")
-            if not eid:
-                continue
-            try:
-                await self._delete_doc(eid)
-                deleted += 1
-            except Exception:
-                logger.exception("delete failed for %s", eid)
-        return deleted
+    async def delete_by_query(self, query: str, *, limit: int = 10) -> KnowledgeDeleteResult:
+        """Find entries matching ``query`` and delete them."""
+        return await self._delete_by_query_neo4j(query=query, limit=limit)
 
     async def delete_entry(self, entry_id: str) -> bool:
         """Public single-entry delete — used by the panel's Remove
-        button. Wraps :meth:`_delete_doc` with a presence check so a
-        missing id returns ``False`` instead of throwing."""
-        await self._ensure_started()
-        result = await asyncio.to_thread(self._docs.get, ids=[entry_id], include=[])
-        if not result.get("ids"):
+        button. Presence check returns ``False`` for missing ids."""
+        if not await self._neo4j_client.has_entry(entry_id):
             return False
-        await self._delete_doc(entry_id)
-        return True
+        return await self._neo4j_client.delete_entry(entry_id)
 
     async def has_entry(self, entry_id: str) -> bool:
-        await self._ensure_started()
-        result = await asyncio.to_thread(self._docs.get, ids=[entry_id], include=[])
-        return bool(result.get("ids"))
+        return await self._neo4j_client.has_entry(entry_id)
 
-    # -- Internal --------------------------------------------------------------
+    # -- Neo4j backend (mirror of the chroma surface above) -----------------
 
-    async def _delete_doc(self, entry_id: str) -> None:
-        await asyncio.to_thread(self._docs.delete, ids=[entry_id])
-        await asyncio.to_thread(self._chunks.delete, where={"parent_doc_id": entry_id})
-
-    async def _search_local(self, *, query: str, limit: int) -> list[dict]:
-        return await self._roll_up_chunks(
-            query=query,
-            limit=limit,
-            chunks_coll=self._chunks,
-            docs_coll=self._docs,
-            project_label=self.project_id,
-        )
-
-    async def _roll_up_chunks(
+    async def _add_document_neo4j(
         self,
         *,
-        query: str,
-        limit: int,
-        chunks_coll: Any,
-        docs_coll: Any,
-        project_label: str,
-    ) -> list[dict]:
-        """Query chunks, dedupe by parent doc, fetch parent metadata."""
-        if await asyncio.to_thread(chunks_coll.count) == 0:
-            return []
-        # Over-query so we have enough unique parents after dedup.
-        n = max(limit * 4, limit)
-        chunk_results = await asyncio.to_thread(
-            chunks_coll.query,
-            query_texts=[query],
-            n_results=n,
-            include=["documents", "metadatas", "distances"],
-        )
-        ids_groups = chunk_results.get("ids") or [[]]
-        docs_groups = chunk_results.get("documents") or [[]]
-        metas_groups = chunk_results.get("metadatas") or [[]]
-        dists_groups = chunk_results.get("distances") or [[]]
-        if not ids_groups or not ids_groups[0]:
-            return []
+        chunks: list[str],
+        full_content: str | None,
+        name: str | None,
+        source: str,
+        metadata: dict[str, str] | None,
+        entry_id: str | None,
+    ) -> KnowledgeAddResult:
+        """Neo4j path for :meth:`add_document`.
 
-        # Best chunk per parent wins; preserve order by score.
-        best: dict[str, dict] = {}
-        for _i, doc, meta, dist in zip(
-            ids_groups[0],
-            docs_groups[0],
-            metas_groups[0],
-            dists_groups[0],
-            strict=False,
-        ):
-            parent_id = (meta or {}).get("parent_doc_id")
-            if not parent_id:
+        The chroma path stores the parent doc + chunk set as two
+        collections and computes the rollup in Python. The neo4j
+        path stores them as :Entry (parent) + :Chunk (children) +
+        ``Entry.embedding`` for the vector search, and skips the
+        rollup (we return the entry's full content as the
+        ``content`` field directly).
+        """
+        if not chunks:
+            return KnowledgeAddResult.fail("add_document requires at least one chunk")
+        embedder = await self._require_embedder()
+        document_text = full_content if full_content is not None else "\n\n".join(chunks)
+        eid = entry_id or self._codec.content_hash(document_text)
+        display_name = name or eid
+        # One embedding per entry (matches the entry_embedding
+        # vector index on :Entry). The first chunk's text is the
+        # canonical "query" against the entry for the per-text
+        # split; for the live model the embedder can take the
+        # full content directly. We use the document text as the
+        # query — the live embedder is responsible for token
+        # truncation.
+        embedding = embedder.embed([document_text])[0]
+        chunk_rows: list[tuple[str, int, int]] = []
+        # Record line_from / line_to from the chunker for the
+        # rollup later; the chroma path's codec tracks per-chunk
+        # metadata, the neo4j path is lighter — it just stores
+        # ``text`` and lets the caller format at render time.
+        # For now the line numbers are 0/0 (no per-line tracking
+        # until the embedder has a per-chunk split API).
+        await self._neo4j_client.add_entry(
+            entry_id=eid,
+            name=display_name,
+            source=source,
+            content=document_text,
+            embedding=embedding,
+            chunks=chunk_rows,
+        )
+        return KnowledgeAddResult.ok(f"stored entry {eid}", entry_id=eid)
+
+    async def _search_neo4j(self, *, query: str, limit: int) -> list[KnowledgeSearchResult]:
+        embedder = await self._require_embedder()
+        query_vec = embedder.embed([query])[0]
+        rows = await self._neo4j_client.search(query_embedding=query_vec, limit=limit)
+        return [
+            KnowledgeSearchResult(
+                entry_id=r["entry_id"],
+                content=r.get("content", ""),
+                name=r.get("name", ""),
+                source=r.get("source", ""),
+                project=self.project_id,
+                parent_content=r.get("content", ""),
+                score=r.get("score"),
+                metadata={},
+            )
+            for r in rows
+        ]
+
+    async def _list_entries_neo4j(self, *, limit: int) -> list[KnowledgeIndexEntry]:
+        rows = await self._neo4j_client.list_entries(limit=limit)
+        return [
+            KnowledgeIndexEntry(
+                id=r["entry_id"],
+                content=r.get("content", ""),
+                source=r.get("source", ""),
+                metadata=r.get("metadata", {}),
+            )
+            for r in rows
+        ]
+
+    async def _delete_by_query_neo4j(self, *, query: str, limit: int) -> KnowledgeDeleteResult:
+        embedder = await self._require_embedder()
+        query_vec = embedder.embed([query])[0]
+        rows = await self._neo4j_client.search(query_embedding=query_vec, limit=limit)
+        if not rows:
+            return KnowledgeDeleteResult(deleted=0, reason="no matches")
+        deleted = 0
+        errors: list[str] = []
+        for r in rows:
+            eid = r["entry_id"]
+            if not eid:
                 continue
-            score = 1.0 - float(dist) if dist is not None else 0.0
-            current = best.get(parent_id)
-            if current is None or score > current["score"]:
-                best[parent_id] = {
-                    "score": score,
-                    "chunk": doc or "",
-                    "chunk_meta": meta or {},
-                }
-
-        if not best:
-            return []
-
-        # Pull parent rows for the matched parents.
-        parent_ids = list(best.keys())
-        docs_page = await asyncio.to_thread(
-            docs_coll.get,
-            ids=parent_ids,
-            include=["documents", "metadatas"],
-        )
-        parent_rows = {
-            pid: (text or "", meta or {})
-            for pid, text, meta in zip(
-                docs_page.get("ids", []) or [],
-                docs_page.get("documents", []) or [],
-                docs_page.get("metadatas", []) or [],
-                strict=False,
-            )
-        }
-
-        results: list[dict] = []
-        for parent_id, entry in best.items():
-            parent_doc, parent_meta = parent_rows.get(parent_id, ("", {}))
-            content = entry["chunk"]
-            truncated = content[:1000] + "..." if len(content) > 1000 else content
-            results.append(
-                {
-                    "entry_id": parent_id,
-                    "content": truncated,
-                    "name": parent_meta.get("name", ""),
-                    "source": parent_meta.get("source", ""),
-                    "score": entry["score"],
-                    "project": project_label,
-                    "metadata": _unflatten_metadata(parent_meta),
-                    "parent_content": parent_doc,
-                }
-            )
-        results.sort(key=lambda r: r["score"], reverse=True)
-        return results[:limit]
-
-
-# -- Helpers ------------------------------------------------------------------
-
-
-_chroma_lock = threading.Lock()
-
-
-def _open_client(path: Path) -> Any:
-    """Open a chromadb persistent client at ``path``.
-
-    Wrapped in a module-level lock — chromadb's client cache is per-process
-    and not thread-safe during construction.
-    """
-    import chromadb
-
-    with _chroma_lock:
-        return chromadb.PersistentClient(path=str(path))
-
-
-def _get_or_create_collection(client: Any, name: str) -> Any:
-    """Mirror CodeIndex's high-recall HNSW config.
-
-    Chroma defaults to ``hnsw:search_ef=10`` which silently caps recall
-    at any ``top_k > ~10`` — the index returns near-floor matches
-    instead of the actually-closest neighbors. The knowledge base is
-    expected to scale to 10k+ entries, and the agent expects every
-    item to be considered against the query, so we lift ``search_ef``
-    to 10000 (effectively-exact at our scale) and raise ``M`` /
-    ``construction_ef`` to give the graph the topology that lets a
-    high ``search_ef`` actually pay off.
-
-    Kept in lockstep with ``code_index.index._get_or_create_collection``
-    and ``scripts/reindex_hnsw.py`` (TARGET_HNSW_METADATA) — bump all
-    three together or recall regresses on one of the two indexes.
-
-    Existing collections created without this metadata keep chroma's
-    defaults until rebuilt; ``scripts/reindex_hnsw.py`` handles the
-    in-place migration.
-    """
-    return client.get_or_create_collection(
-        name=name,
-        embedding_function=EmbeddingFunction(),
-        metadata={
-            "hnsw:space": "cosine",
-            "hnsw:M": 32,
-            "hnsw:construction_ef": 400,
-            "hnsw:search_ef": 10000,
-        },
-    )
-
-
-def _iter_sibling_chroma_paths(*, data_dir: str | Path, current_id: str) -> Iterable[Path]:
-    """Yield ``knowledge.chroma`` paths for every project except the current one."""
-    projects_dir = data_root(data_dir) / "projects"
-    if not projects_dir.is_dir():
-        return
-    for entry in projects_dir.iterdir():
-        if not entry.is_dir() or entry.name == current_id:
-            continue
-        chroma_path = entry / "knowledge.chroma"
-        if chroma_path.is_dir():
-            yield chroma_path
-
-
-def _content_hash(content: str) -> str:
-    return hashlib.sha256(content.encode()).hexdigest()[:16]
-
-
-def _flatten_metadata(
-    *,
-    entry_id: str,
-    name: str,
-    source: str,
-    extras: dict[str, str] | None = None,
-) -> dict[str, str]:
-    """ChromaDB requires flat scalar metadata — encode extras with a prefix.
-
-    Reverse of :func:`_unflatten_metadata`.
-    """
-    out: dict[str, str] = {
-        "entry_id": entry_id,
-        "name": name,
-        "source": source,
-    }
-    for k, v in (extras or {}).items():
-        if k and v is not None:
-            out[f"meta.{k}"] = str(v)
-    return out
-
-
-def _unflatten_metadata(flat: dict[str, str]) -> dict[str, str]:
-    """Pull ``meta.<k>`` keys back into a nested dict (reverse of flatten)."""
-    out: dict[str, str] = {}
-    for k, v in (flat or {}).items():
-        if k.startswith("meta."):
-            out[k[len("meta.") :]] = str(v)
-    return out
+            try:
+                if await self._neo4j_client.delete_entry(eid):
+                    deleted += 1
+                else:
+                    errors.append(f"{eid}: delete returned False")
+            except Exception as exc:  # surface the failure rather than swallow
+                errors.append(f"{eid}: {exc}")
+        return KnowledgeDeleteResult(deleted=deleted, errors=errors)

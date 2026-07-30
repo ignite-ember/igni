@@ -4,10 +4,15 @@ Covers: Read (via Agno FileTools), Grep, LS, Bash execution.
 Edit and Glob already have good coverage in test_tools.py.
 """
 
+import subprocess
 from unittest.mock import patch
 
 import pytest
+from agno.tools.file import FileTools
+from agno.tools.shell import ShellTools
 
+from ember_code.core.config.tool_permissions import ToolPermissions
+from ember_code.core.tools.registry import ToolRegistry
 from ember_code.core.tools.search import GrepTools
 
 # ── Read (Agno FileTools) ────────────────────────────────────────
@@ -17,23 +22,17 @@ class TestReadTool:
     """Test that the Read toolkit can read files."""
 
     def test_read_file_returns_content(self, tmp_path):
-        from agno.tools.file import FileTools
-
         (tmp_path / "test.txt").write_text("hello world")
         tools = FileTools(base_dir=tmp_path, enable_read_file=True)
         result = tools.read_file(file_name=str(tmp_path / "test.txt"))
         assert "hello world" in result
 
     def test_read_file_nonexistent(self, tmp_path):
-        from agno.tools.file import FileTools
-
         tools = FileTools(base_dir=tmp_path, enable_read_file=True)
         result = tools.read_file(file_name=str(tmp_path / "nonexistent.txt"))
         assert "error" in result.lower() or "not found" in result.lower() or "No such" in result
 
     def test_read_file_chunk(self, tmp_path):
-        from agno.tools.file import FileTools
-
         lines = "\n".join(f"line {i}" for i in range(100))
         (tmp_path / "big.txt").write_text(lines)
         tools = FileTools(base_dir=tmp_path, enable_read_file_chunk=True)
@@ -45,8 +44,6 @@ class TestReadTool:
         assert "line 10" in result or "line 11" in result
 
     def test_list_files(self, tmp_path):
-        from agno.tools.file import FileTools
-
         (tmp_path / "a.py").write_text("pass")
         (tmp_path / "b.txt").write_text("hello")
         sub = tmp_path / "sub"
@@ -125,8 +122,6 @@ class TestGrepTool:
 
     @pytest.mark.skipif(not _has_rg, reason="ripgrep not in PATH")
     def test_grep_timeout(self, tmp_path):
-        import subprocess
-
         tools = GrepTools(base_dir=str(tmp_path))
         with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("rg", 30)):
             result = tools.grep("test")
@@ -140,23 +135,17 @@ class TestBashTool:
     """Test shell command execution."""
 
     def test_shell_runs_command(self):
-        from agno.tools.shell import ShellTools
-
         tools = ShellTools()
         result = tools.run_shell_command(args=["echo", "hello"])
         assert "hello" in result
 
     def test_shell_captures_stderr(self):
-        from agno.tools.shell import ShellTools
-
         tools = ShellTools()
         result = tools.run_shell_command(args=["ls", "/nonexistent_dir_xyz"])
         # Should contain error output, not crash
         assert isinstance(result, str)
 
     def test_shell_respects_tail(self):
-        from agno.tools.shell import ShellTools
-
         tools = ShellTools()
         result = tools.run_shell_command(
             args=["bash", "-c", "for i in $(seq 1 100); do echo line$i; done"],
@@ -174,9 +163,6 @@ class TestToolRegistryResolve:
     """Test that all tools resolve correctly."""
 
     def test_resolve_read(self):
-        from ember_code.core.config.tool_permissions import ToolPermissions
-        from ember_code.core.tools.registry import ToolRegistry
-
         registry = ToolRegistry(
             base_dir=".",
             permissions=ToolPermissions(),
@@ -185,9 +171,6 @@ class TestToolRegistryResolve:
         assert len(tools) == 1
 
     def test_resolve_grep(self):
-        from ember_code.core.config.tool_permissions import ToolPermissions
-        from ember_code.core.tools.registry import ToolRegistry
-
         registry = ToolRegistry(
             base_dir=".",
             permissions=ToolPermissions(),
@@ -196,9 +179,6 @@ class TestToolRegistryResolve:
         assert len(tools) == 1
 
     def test_resolve_all_standard(self):
-        from ember_code.core.config.tool_permissions import ToolPermissions
-        from ember_code.core.tools.registry import ToolRegistry
-
         registry = ToolRegistry(
             base_dir=".",
             permissions=ToolPermissions(),
@@ -214,9 +194,6 @@ class TestToolRegistryResolveEdges:
     cases that decide what tools the agent actually gets."""
 
     def _registry(self, permissions=None):
-        from ember_code.core.config.tool_permissions import ToolPermissions
-        from ember_code.core.tools.registry import ToolRegistry
-
         return ToolRegistry(
             base_dir=".",
             permissions=permissions or ToolPermissions(),
@@ -250,8 +227,6 @@ class TestToolRegistryResolveEdges:
         # silently drops out of the resolved list. The agent
         # gets the surviving tools; the audit log records the
         # deny separately.
-        from ember_code.core.config.tool_permissions import ToolPermissions
-
         perms = ToolPermissions()
         # Mark Bash as denied via the internal level map.
         perms._tool_levels["Bash"] = "deny"  # type: ignore[attr-defined]
@@ -353,8 +328,6 @@ class TestToolRegistryResolveEdges:
         # Counterpart: when permissions explicitly allow a
         # tool, ``needs_confirmation`` is False → factory gets
         # ``confirm=False`` → tool runs without HITL pause.
-        from ember_code.core.config.tool_permissions import ToolPermissions
-
         # Construct permissions with Read explicitly allowed.
         perms = ToolPermissions()
         perms._tool_levels["Read"] = "allow"  # type: ignore[attr-defined]

@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 
 from ember_code.protocol.messages import ContentDelta, Info, UserMessage
+from ember_code.protocol.registry import MessageRegistry
 from ember_code.transport.in_process import InProcessTransport
+from ember_code.transport.unix_socket import (
+    UnixSocketClientTransport,
+    UnixSocketServerTransport,
+)
 
 
 class TestInProcessTransport:
@@ -64,11 +69,6 @@ class TestInProcessTransport:
 class TestUnixSocketTransport:
     @pytest.mark.asyncio
     async def test_send_receive_over_socket(self):
-        from ember_code.transport.unix_socket import (
-            UnixSocketClientTransport,
-            UnixSocketServerTransport,
-        )
-
         with tempfile.TemporaryDirectory() as tmpdir:
             sock_path = Path(tmpdir) / "test.sock"
 
@@ -103,11 +103,6 @@ class TestUnixSocketTransport:
 
     @pytest.mark.asyncio
     async def test_multiple_messages(self):
-        from ember_code.transport.unix_socket import (
-            UnixSocketClientTransport,
-            UnixSocketServerTransport,
-        )
-
         with tempfile.TemporaryDirectory() as tmpdir:
             sock_path = Path(tmpdir) / "test.sock"
 
@@ -139,23 +134,17 @@ class TestUnixSocketTransport:
 
     @pytest.mark.asyncio
     async def test_deserialize_unknown_type(self):
-        from ember_code.transport.unix_socket import deserialize_message
-
-        result = deserialize_message('{"type": "unknown_type", "payload": {}}')
+        result = MessageRegistry.default().deserialize('{"type": "unknown_type", "payload": {}}')
         assert result is None
 
     @pytest.mark.asyncio
     async def test_deserialize_invalid_json(self):
-        from ember_code.transport.unix_socket import deserialize_message
-
-        result = deserialize_message("not json at all")
+        result = MessageRegistry.default().deserialize("not json at all")
         assert result is None
 
     @pytest.mark.asyncio
     async def test_deserialize_valid_message(self):
-        from ember_code.transport.unix_socket import deserialize_message
-
-        result = deserialize_message(
+        result = MessageRegistry.default().deserialize(
             '{"type": "content_delta", "text": "hello", "is_thinking": false}'
         )
         assert isinstance(result, ContentDelta)
@@ -163,8 +152,6 @@ class TestUnixSocketTransport:
 
     @pytest.mark.asyncio
     async def test_socket_cleanup(self):
-        from ember_code.transport.unix_socket import UnixSocketServerTransport
-
         with tempfile.TemporaryDirectory() as tmpdir:
             sock_path = Path(tmpdir) / "test.sock"
             server = UnixSocketServerTransport(sock_path)

@@ -11,7 +11,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from ember_code.core.code_index.pg import models as _code_index_models  # noqa: F401
+from ember_code.core.code_index.db import models as _code_index_models  # noqa: F401
 from ember_code.core.db.base import Base
 from ember_code.core.loop import db_models as _loop_models  # noqa: F401
 from ember_code.core.scheduler import db_models as _scheduler_models  # noqa: F401

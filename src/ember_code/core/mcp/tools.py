@@ -22,7 +22,7 @@ class MCPToolProvider:
         """
         tools = []
         for name in mcp_server_names:
-            mcp_tools = await self.mcp_manager.connect(name)
-            if mcp_tools is not None:
-                tools.append(mcp_tools)
+            result = await self.mcp_manager.connect(name)
+            if result.ok and result.client is not None:
+                tools.append(result.client)
         return tools

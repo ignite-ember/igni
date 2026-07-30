@@ -1,6 +1,8 @@
 """MCP transport layer — stdio and HTTP transport handling."""
 
+import asyncio
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +20,6 @@ class StdioTransport:
 
     async def start(self):
         """Start the subprocess."""
-        import asyncio
-        import os
 
         full_env = {**os.environ, **self.env}
 

@@ -19,6 +19,15 @@ class MCPTransport(str, Enum):
     sse = "sse"
 
 
+# Mirror the agent-side ORG_GROUP tier (5) so org-pushed MCP servers
+# override the user-home / project-local roots, matching what
+# AgentPriority.ORG_GROUP does for agents.
+MCP_PRIORITY_GROUP = 5
+
+# Stored file extension for per-server group policy MCP configs.
+_GROUP_MCP_SUFFIX = ".json"
+
+
 class MCPServerConfig(BaseModel):
     """Configuration for a single MCP server."""
 
@@ -30,6 +39,10 @@ class MCPServerConfig(BaseModel):
     url: str = ""
     source_path: str = ""
     """Filesystem path of the .mcp.json file that defined this server."""
+    source: str = "user"
+    """Loader tier — ``"user"``, ``"project"``, ``"group-policy"``, or ``"plugin"``.
+    Group-policy servers (org Group Policy) beat everything except managed-policy
+    denials; see :data:`MCP_PRIORITY_GROUP`."""
 
 
 class MCPPolicy(BaseModel):
@@ -88,11 +101,26 @@ class MCPPolicy(BaseModel):
 class MCPConfigLoader:
     """Loads MCP server configurations from .mcp.json files."""
 
-    def __init__(self, project_dir: Path | None = None):
+    def __init__(
+        self,
+        project_dir: Path | None = None,
+        group_mcps_dir: Path | None = None,
+    ):
         self.project_dir = project_dir or Path.cwd()
+        # Optional: directory of per-server MCP overrides materialised by
+        # :class:`GroupPolicyCache`. When set, each ``<name>.json`` file
+        # is read with priority :data:`MCP_PRIORITY_GROUP` so org-pushed
+        # servers override the user-home / project-local roots.
+        self.group_mcps_dir = group_mcps_dir
 
     def load(self) -> dict[str, MCPServerConfig]:
-        """Load MCP server configurations from all locations."""
+        """Load MCP server configurations from all locations.
+
+        Scans the three standard roots first (later writes win by
+        re-assignment: project-local beats user-home), then layers the
+        optional group-policy directory on top so ORG-pushed servers
+        override everything except managed-policy denials.
+        """
         servers: dict[str, MCPServerConfig] = {}
 
         paths = [
@@ -104,9 +132,18 @@ class MCPConfigLoader:
         for path in paths:
             self._load_from_file(path, servers)
 
+        if self.group_mcps_dir is not None and self.group_mcps_dir.is_dir():
+            for path in sorted(self.group_mcps_dir.glob(f"*{_GROUP_MCP_SUFFIX}")):
+                self._load_from_file(path, servers, source="group-policy")
+
         return servers
 
-    def _load_from_file(self, path: Path, servers: dict[str, MCPServerConfig]) -> None:
+    def _load_from_file(
+        self,
+        path: Path,
+        servers: dict[str, MCPServerConfig],
+        source: str = "user",
+    ) -> None:
         """Load config from a single .mcp.json file."""
         if not path.exists():
             return
@@ -129,6 +166,7 @@ class MCPConfigLoader:
                     env=config.get("env", {}),
                     url=config.get("url", ""),
                     source_path=str(path),
+                    source=source,
                 )
             except Exception as exc:
                 logger.warning("MCP server '%s' in %s has invalid config: %s", name, path, exc)
@@ -188,6 +226,7 @@ class MCPConfigLoader:
                     env=config.get("env", {}),
                     url=config.get("url", ""),
                     source_path=str(path),
+                    source="plugin",
                 )
             except Exception as exc:
                 logger.warning(

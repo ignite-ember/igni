@@ -189,7 +189,7 @@ def test_loader_parses_prompt_fields(tmp_path: Any, monkeypatch: Any) -> None:
     with monkeypatch.context() as m:
         m.setattr(Path, "home", lambda: fake_home)
         loader = HookLoader(tmp_path)
-        hooks = loader.load()
+        hooks = loader.load().registry.raw
 
     pre = hooks["PreToolUse"]
     assert pre[0].type == "prompt"

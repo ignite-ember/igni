@@ -6170,9 +6170,15 @@ button {
 /* ── HITL prompt: rises inside the composer box ────────────────── */
 /* The .composer-hitl wrapper grows from zero height so the input
    panel itself extends upward. No fixed positioning, no separate
-   modal — it's just a section above the editor. */
+   modal — it's just a section above the editor.
+   ``max-height`` is bounded by viewport (not just the entrance
+   animation) so a huge tool payload can't push the action buttons
+   off-screen. The inner ``.hitl-card`` scrolls if content exceeds
+   the cap; buttons are pinned at the bottom of the card via
+   ``.dialog-actions`` sticky positioning below. */
 .composer-hitl {
   overflow: hidden;
+  max-height: min(70vh, 620px);
   animation: composer-hitl-expand 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.12);
 }
 
@@ -6182,7 +6188,7 @@ button {
     opacity: 0;
   }
   to {
-    max-height: 520px;
+    max-height: min(70vh, 620px);
     opacity: 1;
   }
 }
@@ -6191,6 +6197,27 @@ button {
   padding: 12px 4px 10px;
   border-bottom: 1px solid var(--border-soft);
   margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  max-height: min(70vh, 620px);
+  overflow: hidden;
+}
+
+/* The card lays out as: title → sub → args (scrolls, flex-grow) →
+   actions (natural height, pinned at bottom). ``flex-shrink: 0``
+   here + on the title/sub rows guarantees the confirm/reject row
+   never gets squeezed to zero when the args block is huge. */
+.hitl-card > .dialog-title,
+.hitl-card > .dialog-sub,
+.hitl-card > .dialog-actions {
+  flex-shrink: 0;
+}
+
+/* Wrapping div (for the acceptEdits shortcut variant) is inline-flex
+   in the tsx; still needs to stay at natural height at the bottom
+   of the flex column and not be squished. */
+.hitl-card > div:last-child {
+  flex-shrink: 0;
 }
 
 /* ── HITL: pretty argument rendering ───────────────────────────── */
@@ -6200,6 +6227,13 @@ button {
   grid-template-columns: minmax(72px, max-content) 1fr;
   gap: 4px 14px;
   margin: 8px 0 14px;
+  /* Bound the args pane so a huge payload (long shell command,
+     multi-KB file contents, deep JSON) never pushes the action
+     buttons off-screen. Users scroll the args block; the accept /
+     reject row stays reachable at the bottom of the card. */
+  overflow: auto;
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
 .hitl-arg-row {
@@ -6313,6 +6347,11 @@ button {
   color: var(--ember-orange);
   white-space: pre-wrap;
   word-break: break-word;
+  /* Match the pre/diff blocks — cap height so a giant one-liner
+     doesn't push the confirm/reject buttons off-screen. Inner
+     scroll keeps the whole command reachable. */
+  max-height: 200px;
+  overflow: auto;
 }
 
 .hitl-shell::before {

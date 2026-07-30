@@ -1,7 +1,7 @@
-"""Tests for ``protocol/agno_events.extract_result`` — the
+"""Tests for :meth:`AgnoToolEventFormatter.extract_result` — the
 summary-computation branch (post-diff path).
 
-The function builds a ``ToolResultData`` for any non-Edit tool
+The method builds a ``ToolResultData`` for any non-Edit tool
 event. Visible fields:
 
   * ``summary`` — one-line label shown on the collapsed tool
@@ -22,7 +22,22 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from ember_code.protocol.agno_events import extract_result
+from ember_code.protocol.agno_tool_formatter import AgnoToolEventFormatter
+
+# One formatter instance drives every test — no diff renderer is
+# injected because these tests deliberately exercise the non-diff
+# branch (the diff branch has its own test module).
+_formatter = AgnoToolEventFormatter()
+
+
+def extract_result(event: Any):
+    """Shim keeping the pre-refactor call sites unchanged.
+
+    The migration moved the free function onto a coordinator
+    class; wrapping it here means the assertions below stay
+    focused on behavior, not on API rewiring.
+    """
+    return _formatter.extract_result(event)
 
 
 def _event(

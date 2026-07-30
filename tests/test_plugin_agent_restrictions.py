@@ -22,19 +22,37 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ember_code.core.pool import (
+from ember_code.core.agents import (
     AgentDefinition,
+    AgentMarkdownFile,
     AgentPool,
-    _apply_plugin_restrictions,
-    _raw_frontmatter_keys,
+    PluginRestrictionPolicy,
 )
 from ember_code.core.tools.orchestrate import OrchestrateTools
 
 
+def _apply_plugin_restrictions(
+    definition: AgentDefinition,
+    raw_keys: set,
+    plugin_name: str = "",
+) -> AgentDefinition:
+    """Local test helper — replaces the deleted free function that
+    used to live on ``core/pool.py``. Delegates to the canonical
+    :meth:`PluginRestrictionPolicy.apply`."""
+    return PluginRestrictionPolicy().apply(definition, raw_keys, plugin_name)
+
+
+def _raw_frontmatter_keys(path: Path) -> set:
+    """Local test helper — replaces the deleted free function on
+    ``core/pool.py``. Delegates to
+    :meth:`AgentMarkdownFile.raw_frontmatter_keys`."""
+    return AgentMarkdownFile(path).raw_frontmatter_keys()
+
+
 @pytest.fixture
 def captured_pool_warnings(monkeypatch):
-    """Spy on ``ember_code.core.pool.logger.warning`` directly and
-    yield the list of captured messages.
+    """Spy on the canonical plugin-policy logger's ``warning``
+    method and yield the list of captured messages.
 
     Why not pytest ``caplog``: when the full suite runs, an earlier
     test imports a dependency (chromadb) whose telemetry layer
@@ -42,11 +60,17 @@ def captured_pool_warnings(monkeypatch):
     our module logger. Patching the bound method on the logger
     instance is immune to that — we own the recording surface
     regardless of what other test code did to the global logger
-    config."""
-    from ember_code.core import pool as pool_mod
+    config.
+
+    Patches ``plugin_policy.logger`` directly (the canonical
+    emitter) rather than the ``core/pool.py`` shim's re-bound
+    ``logger`` — both are the same singleton but the canonical
+    path is grep-friendly for future maintainers.
+    """
+    from ember_code.core.agents import plugin_policy as _plugin_policy_mod
 
     messages: list[str] = []
-    real_warning = pool_mod.logger.warning
+    real_warning = _plugin_policy_mod.logger.warning
 
     def _capture(fmt: str, *args: object, **kwargs: object) -> None:
         try:
@@ -57,7 +81,7 @@ def captured_pool_warnings(monkeypatch):
         # (file handler, audit pipe) keeps seeing the events.
         real_warning(fmt, *args, **kwargs)
 
-    monkeypatch.setattr(pool_mod.logger, "warning", _capture)
+    monkeypatch.setattr(_plugin_policy_mod.logger, "warning", _capture)
     yield messages
 
 
@@ -248,6 +272,8 @@ def _mock_stream(content: str):
 
 
 def _mock_pool_with_definition(definition: AgentDefinition):
+    from ember_code.core.tools.orchestrate_budget import SpawnBudget
+
     pool = MagicMock()
     agent = MagicMock()
     agent.arun = MagicMock(return_value=_mock_stream("ok"))
@@ -258,6 +284,7 @@ def _mock_pool_with_definition(definition: AgentDefinition):
     agent.tools = []
     pool.get.return_value = agent
     pool.get_definition.return_value = definition
+    pool.spawn_budget.return_value = SpawnBudget(20)
     return pool
 
 

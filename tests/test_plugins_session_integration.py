@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ember_code.core.config.settings import Settings
+from ember_code.core.session.core import Session
 
 # ── Helpers ─────────────────────────────────────────────────────────
 
@@ -71,8 +72,6 @@ def _session_under_test(tmp_path: Path):
         cc.org_id = None
         cc.org_name = None
         cc.email = None
-
-        from ember_code.core.session.core import Session
 
         settings = Settings()
         settings.storage.data_dir = str(tmp_path / "ember")

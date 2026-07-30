@@ -116,6 +116,16 @@ class RpcMethod(StrEnum):
     # after every turn — there's no push channel yet.
     GET_TODOS = "get_todos"
 
+    # ── Visualization actions (json-render round-trip) ───────────
+    # User interacted with a component inside a ``<JsonRenderView>``
+    # card (e.g. clicked a Button, changed a Select). The FE
+    # forwards the action name + params here so agents can react.
+    # BE stashes the last N events into ``session._visualization_actions``
+    # and pushes ``visualization_action_dispatched`` so any
+    # listener (or a future agent tool that polls for actions) can
+    # observe them. Returns ``{ok: bool, action, params}``.
+    DISPATCH_VISUALIZATION_ACTION = "dispatch_visualization_action"
+
     # ── Background-process watcher panel ─────────────────────────
     # The FE's right-side watcher panel surfaces every
     # backgrounded ``run_shell_command`` for view-only tail +
@@ -171,6 +181,7 @@ class RpcMethod(StrEnum):
     SWITCH_MODEL = "switch_model"
     GET_MODEL_REGISTRY = "get_model_registry"
     GET_DISPLAY_CONFIG = "get_display_config"
+    GET_GROUP_POLICY = "get_group_policy"
     TOGGLE_VERBOSE = "toggle_verbose"
 
     # ── Permissions ──────────────────────────────────────────────
@@ -234,6 +245,19 @@ class RpcMethod(StrEnum):
     CODEINDEX_RESYNC = "codeindex_resync"
     CODEINDEX_CLEAN = "codeindex_clean"
     CODEINDEX_INSTALL = "codeindex_install"
+
+    # ── Workflows (CC ``/workflows`` parity) ───────────────────────
+    # The BE acts as a runner for ``.claude/workflows/*.mjs``
+    # scripts — the same ones ClaudeCode drives. Discovery returns
+    # the meta block of every workflow; ``run_workflow`` spawns
+    # one, returns the ``workflow_run_id`` immediately, and
+    # streams progress on the ``workflow_event`` push channel.
+    # ``cancel_workflow`` stops a running subprocess cleanly
+    # (writes a cancel message, escalates to SIGTERM after a
+    # grace period).
+    LIST_WORKFLOWS = "list_workflows"
+    RUN_WORKFLOW = "run_workflow"
+    CANCEL_WORKFLOW = "cancel_workflow"
 
     # ── Plugins ───────────────────────────────────────────────────
     GET_PLUGIN_DETAILS = "get_plugin_details"

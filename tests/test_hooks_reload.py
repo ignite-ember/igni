@@ -2,11 +2,24 @@
 
 import pytest
 
+from ember_code.backend.command_handler import CommandHandler
 from ember_code.core.config.settings import Settings
-from ember_code.core.hooks.schemas import HookDefinition
+from ember_code.core.hooks.registry import HookRegistry
+from ember_code.core.hooks.schemas import HookDefinition, HookLoadResult
+from ember_code.core.session.core import Session
 
 # Reuse the shared patching infrastructure
 from tests.test_session import _session_patches, _start_patches, _stop_patches
+
+
+def _load_result(hooks: dict) -> HookLoadResult:
+    """Build a :class:`HookLoadResult` for mocking ``HookLoader.load``.
+
+    ``session.reload_hooks`` now unwraps ``load().registry.raw``, so
+    the mock must return a full result envelope rather than the raw
+    dict the old contract used.
+    """
+    return HookLoadResult(registry=HookRegistry(hooks), warnings=[])
 
 
 class TestHooksReload:
@@ -17,8 +30,6 @@ class TestHooksReload:
         patches = _session_patches()
         _start_patches(patches)
 
-        from ember_code.core.session.core import Session
-
         s = Session(Settings(), project_dir=tmp_path)
         yield s
         _stop_patches(patches)
@@ -26,20 +37,22 @@ class TestHooksReload:
     def test_reload_hooks_returns_count(self, session):
         """reload_hooks() returns number of hooks loaded."""
         # Mock the loader to return 2 hooks
-        session._hook_loader.load.return_value = {
-            "PreToolUse": [
-                HookDefinition(type="command", command="echo pre"),
-            ],
-            "PostToolUse": [
-                HookDefinition(type="command", command="echo post"),
-            ],
-        }
+        session._hook_loader.load.return_value = _load_result(
+            {
+                "PreToolUse": [
+                    HookDefinition(type="command", command="echo pre"),
+                ],
+                "PostToolUse": [
+                    HookDefinition(type="command", command="echo post"),
+                ],
+            }
+        )
         count = session.reload_hooks()
         assert count == 2
 
     def test_reload_hooks_zero_when_empty(self, session):
         """reload_hooks() returns 0 when no hooks configured."""
-        session._hook_loader.load.return_value = {}
+        session._hook_loader.load.return_value = _load_result({})
         count = session.reload_hooks()
         assert count == 0
 
@@ -48,13 +61,13 @@ class TestHooksReload:
         new_hooks = {
             "Stop": [HookDefinition(type="command", command="echo stop")],
         }
-        session._hook_loader.load.return_value = new_hooks
+        session._hook_loader.load.return_value = _load_result(new_hooks)
         session.reload_hooks()
         assert "Stop" in session.hooks_map
 
     def test_reload_calls_hook_loader(self, session):
         """reload_hooks() calls the loader to refresh hooks."""
-        session._hook_loader.load.return_value = {}
+        session._hook_loader.load.return_value = _load_result({})
         session.reload_hooks()
         # Loader should have been called during reload (in addition to __init__)
         assert session._hook_loader.load.call_count >= 1
@@ -68,14 +81,12 @@ class TestHooksReloadCommand:
         patches = _session_patches()
         _start_patches(patches)
 
-        from ember_code.core.session.core import Session
-
         session = Session(Settings(), project_dir=tmp_path)
-        session._hook_loader.load.return_value = {
-            "PreToolUse": [HookDefinition(type="command", command="echo test")],
-        }
-
-        from ember_code.backend.command_handler import CommandHandler
+        session._hook_loader.load.return_value = _load_result(
+            {
+                "PreToolUse": [HookDefinition(type="command", command="echo test")],
+            }
+        )
 
         handler = CommandHandler(session)
         await handler.handle("/hooks reload")
@@ -90,12 +101,8 @@ class TestHooksReloadCommand:
         patches = _session_patches()
         _start_patches(patches)
 
-        from ember_code.core.session.core import Session
-
         session = Session(Settings(), project_dir=tmp_path)
         session.hooks_map = {}
-
-        from ember_code.backend.command_handler import CommandHandler
 
         handler = CommandHandler(session)
         # Should not raise (just returns result)

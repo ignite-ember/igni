@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from ember_code.core.code_index.enums import Relation
+from ember_code.core.code_index.schema.items import CodeIndexResult
 from ember_code.core.tools.codeindex.disambiguation import DisambiguationService
 
 
@@ -38,7 +39,7 @@ def _make_service(edges: list) -> DisambiguationService:
     idx = MagicMock()
     file_ref_service = MagicMock()
     file_ref_service.get_by_uuids = AsyncMock(return_value=edges)
-    idx._file_reference_service = MagicMock(return_value=file_ref_service)
+    idx.file_reference_service = MagicMock(return_value=file_ref_service)
     return DisambiguationService(idx)
 
 
@@ -286,7 +287,7 @@ async def test_collect_edges_returns_none_on_fetch_exception() -> None:
     idx = MagicMock()
     file_ref_service = MagicMock()
     file_ref_service.get_by_uuids = AsyncMock(side_effect=RuntimeError("boom"))
-    idx._file_reference_service = MagicMock(return_value=file_ref_service)
+    idx.file_reference_service = MagicMock(return_value=file_ref_service)
     service = DisambiguationService(idx)
 
     per_item, target_meta = await service._collect_edges(["A"])
@@ -306,8 +307,6 @@ async def test_build_group_dedupes_self_loops_between_directions() -> None:
 
     async def _search_among_stub(*, query, candidate_ids, **_):
         # Echo candidates back in order with name/path metadata.
-        from ember_code.core.code_index.schema.items import CodeIndexResult
-
         return [
             CodeIndexResult(
                 item_id=cid,

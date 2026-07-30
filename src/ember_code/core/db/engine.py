@@ -1,112 +1,119 @@
-"""SQLAlchemy engine + sessionmaker factories.
+"""SQLAlchemy engine + sessionmaker access — owned by an :class:`EngineCache` instance.
+
+The canonical entry point is :class:`EngineCache`. It composes an
+:class:`ember_code.core.db.engine_registry.EngineRegistry` (which owns the
+real engine + sessionmaker caches + lock) and exposes them as instance
+methods so the historical module-level call surface (``get_engine``,
+``get_sessionmaker``, ``get_async_engine``, ``get_async_sessionmaker``,
+``dispose_all``) becomes a single shared object — not five free functions
+reaching into module globals.
 
 SQLite-only (per-project ``state.db`` files plus a global ``ember.db``).
-Both sync and async flavors are exported. Engines and sessionmakers are
-cached per (path, mode) so callers can request them freely without pool
-churn — alembic uses the sync flavor under the hood; everything in
-code_index uses the async flavor via ``aiosqlite``.
+Both sync and async flavours are exported. Engines and sessionmakers
+are cached by normalised path so callers can request them freely
+without pool churn — alembic uses the sync flavour under the hood;
+everything in code_index uses the async flavour via ``aiosqlite``.
+
+Back-compat: ``database.py``, ``migrations.py``, and existing tests
+import the five names from this module. We keep them working by
+attaching bound-method aliases at import time so legacy
+``from ember_code.core.db.engine import get_engine`` calls still
+resolve. New callers should ``from ember_code.core.db.engine import
+cache`` and call ``cache.get_engine(path)`` directly.
+
+The module-level :data:`cache` is a single shared :class:`EngineCache`
+instance — same singleton convention as :data:`migrator` in
+``migrations.py``. Tests that need isolation should construct their
+own ``EngineCache(EngineRegistry())`` instead of touching the shared
+one (mixing a fresh registry with the shared cache on the SAME path
+would create two pools on one file — the exact bug the cache exists
+to prevent).
 """
 
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine
-from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from sqlalchemy import Engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session, sessionmaker
 
-_lock = threading.Lock()
-_sync_engines: dict[str, Engine] = {}
-_sync_sessionmakers: dict[str, sessionmaker[Session]] = {}
-_async_engines: dict[str, AsyncEngine] = {}
-_async_sessionmakers: dict[str, async_sessionmaker[AsyncSession]] = {}
+from ember_code.core.db.engine_registry import EngineRegistry
+from ember_code.core.db.urls import _ensure_parent, _normalize_path, async_url, sync_url
+
+__all__ = [
+    "EngineCache",
+    "EngineRegistry",
+    "_ensure_parent",
+    "_normalize_path",
+    "async_url",
+    "cache",
+    "dispose_all",
+    "get_async_engine",
+    "get_async_sessionmaker",
+    "get_engine",
+    "get_sessionmaker",
+    "sync_url",
+]
 
 
-def _normalize_path(path: str | Path) -> str:
-    """Resolve ``~`` and relative paths to a canonical absolute path."""
-    return str(Path(str(path)).expanduser().resolve())
+class EngineCache:
+    """Coordinator that exposes an :class:`EngineRegistry` as instance methods.
+
+    Owns the registry so the historical module-level call surface
+    (``get_engine`` / ``get_sessionmaker`` / etc.) is real OOP — each
+    name is a bound method on a class instance, not a free function
+    reaching into a module global. The underlying caches + lock still
+    live on the injected :class:`EngineRegistry`.
+    """
+
+    def __init__(self, registry: EngineRegistry) -> None:
+        self._registry = registry
+
+    @property
+    def registry(self) -> EngineRegistry:
+        """The underlying :class:`EngineRegistry` — exposed for callers
+        that already speak the registry API directly (e.g. ``cache.registry``
+        replaces the historical ``engine.registry`` module global)."""
+        return self._registry
+
+    def get_engine(self, path: str | Path) -> Engine:
+        return self._registry.get_engine(path)
+
+    def get_sessionmaker(self, path: str | Path) -> sessionmaker[Session]:
+        return self._registry.get_sessionmaker(path)
+
+    def get_async_engine(self, path: str | Path) -> AsyncEngine:
+        return self._registry.get_async_engine(path)
+
+    def get_async_sessionmaker(self, path: str | Path) -> async_sessionmaker[AsyncSession]:
+        return self._registry.get_async_sessionmaker(path)
+
+    def dispose_all(self) -> None:
+        """Close every cached engine — used in tests and on shutdown.
+
+        Delegates to :meth:`EngineRegistry.dispose_sync` (NOT the async
+        :meth:`EngineRegistry.dispose`) to preserve the historical
+        sync-drop-without-await behaviour for async engines.
+        """
+        self._registry.dispose_sync()
 
 
-def sync_url(path: str | Path) -> str:
-    """SQLAlchemy URL for sync access (used by alembic)."""
-    return f"sqlite:///{_normalize_path(path)}"
+# Module-level singleton — production-wide shared cache. Tests and
+# callers that need isolation should construct their own
+# ``EngineCache(EngineRegistry())`` instead of touching this one.
+cache = EngineCache(EngineRegistry())
 
 
-def async_url(path: str | Path) -> str:
-    """SQLAlchemy URL for async access via aiosqlite."""
-    return f"sqlite+aiosqlite:///{_normalize_path(path)}"
-
-
-def _ensure_parent(path: str | Path) -> None:
-    Path(_normalize_path(path)).parent.mkdir(parents=True, exist_ok=True)
-
-
-def get_engine(path: str | Path) -> Engine:
-    key = _normalize_path(path)
-    with _lock:
-        engine = _sync_engines.get(key)
-        if engine is None:
-            _ensure_parent(path)
-            engine = create_engine(
-                sync_url(path),
-                pool_pre_ping=True,
-                future=True,
-            )
-            _sync_engines[key] = engine
-        return engine
-
-
-def get_sessionmaker(path: str | Path) -> sessionmaker[Session]:
-    key = _normalize_path(path)
-    engine = get_engine(path)
-    with _lock:
-        sm = _sync_sessionmakers.get(key)
-        if sm is None:
-            sm = sessionmaker(bind=engine, expire_on_commit=False, future=True)
-            _sync_sessionmakers[key] = sm
-        return sm
-
-
-def get_async_engine(path: str | Path) -> AsyncEngine:
-    key = _normalize_path(path)
-    with _lock:
-        engine = _async_engines.get(key)
-        if engine is None:
-            _ensure_parent(path)
-            engine = create_async_engine(
-                async_url(path),
-                pool_pre_ping=True,
-                future=True,
-            )
-            _async_engines[key] = engine
-        return engine
-
-
-def get_async_sessionmaker(path: str | Path) -> async_sessionmaker[AsyncSession]:
-    key = _normalize_path(path)
-    engine = get_async_engine(path)
-    with _lock:
-        sm = _async_sessionmakers.get(key)
-        if sm is None:
-            sm = async_sessionmaker(bind=engine, expire_on_commit=False)
-            _async_sessionmakers[key] = sm
-        return sm
-
-
-def dispose_all() -> None:
-    """Close every cached engine — used in tests and on shutdown."""
-    with _lock:
-        for engine in _sync_engines.values():
-            engine.dispose()
-        _sync_engines.clear()
-        _sync_sessionmakers.clear()
-        # Async engines must be disposed via their sync helper or in an event
-        # loop; callers expecting async cleanup should ``await engine.dispose()``.
-        _async_engines.clear()
-        _async_sessionmakers.clear()
+# Back-compat: legacy callers (database.py, migrations.py, tests) still
+# ``from ember_code.core.db.engine import get_engine``. Re-bind the
+# five methods as module-level names so those imports keep working
+# without forcing every caller to switch to ``cache.get_engine``.
+# These are BOUND METHODS on ``cache`` (an instance attribute), not
+# free functions — the OOP shape is preserved even at the import
+# surface.
+get_engine = cache.get_engine
+get_sessionmaker = cache.get_sessionmaker
+get_async_engine = cache.get_async_engine
+get_async_sessionmaker = cache.get_async_sessionmaker
+dispose_all = cache.dispose_all

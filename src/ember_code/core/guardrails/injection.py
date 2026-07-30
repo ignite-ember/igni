@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import ClassVar
 
 from ember_code.core.guardrails.base import Guardrail, GuardrailResult
 
@@ -30,6 +31,7 @@ class PromptInjectionGuardrail(Guardrail):
     """Detects common prompt-injection patterns via regex."""
 
     name: str = "prompt_injection"
+    gate_key: ClassVar[str] = "prompt_injection"
 
     def check(self, text: str) -> GuardrailResult:
         findings: list[str] = []

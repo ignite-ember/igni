@@ -1,79 +1,128 @@
-"""Tests for config/tool_permissions.py — permission resolution with argument rules."""
+"""Tests for config/tool_permissions — permission resolution with argument rules.
+
+Rewritten alongside the module→package refactor: the old private
+helpers (``_parse_rule`` / ``_args_to_str`` / ``_extract_domain`` /
+``_match_rule_args``) are gone; the equivalent behaviour now lives
+on :class:`PermissionRule` (``.parse`` classmethod) and
+:class:`ToolInvocationArgs` (``.primary_string`` / ``.domain``). The
+tests below exercise the same behaviours through the class API.
+"""
 
 import json
+from unittest.mock import patch
 
 from ember_code.core.config.tool_permissions import (
     FUNC_TO_TOOL,
+    PermissionRule,
+    ToolInvocationArgs,
     ToolPermissions,
-    _args_to_str,
-    _extract_domain,
-    _match_rule_args,
-    _parse_rule,
 )
 
 
 class TestParseRule:
     def test_bare_tool(self):
-        assert _parse_rule("Bash") == ("Bash", None)
+        rule = PermissionRule.parse("Bash")
+        assert rule is not None
+        assert rule.tool_name == "Bash"
+        assert rule.arg_pattern.raw == ""
 
     def test_tool_with_args(self):
-        assert _parse_rule("Bash(git status)") == ("Bash", "git status")
+        rule = PermissionRule.parse("Bash(git status)")
+        assert rule is not None
+        assert rule.tool_name == "Bash"
+        assert rule.arg_pattern.raw == "git status"
 
     def test_tool_with_pattern(self):
-        assert _parse_rule("WebFetch(domain:github.com)") == ("WebFetch", "domain:github.com")
+        rule = PermissionRule.parse("WebFetch(domain:github.com)")
+        assert rule is not None
+        assert rule.tool_name == "WebFetch"
+        assert rule.arg_pattern.raw == "domain:github.com"
 
     def test_whitespace(self):
-        assert _parse_rule("  Read  ") == ("Read", None)
+        rule = PermissionRule.parse("  Read  ")
+        assert rule is not None
+        assert rule.tool_name == "Read"
+        assert rule.arg_pattern.raw == ""
 
 
 class TestArgsToStr:
     def test_none(self):
-        assert _args_to_str(None) == ""
+        assert ToolInvocationArgs.from_dict(None).primary_string() == ""
 
     def test_args_list(self):
-        assert _args_to_str({"args": ["git", "push"]}) == "git push"
+        assert (
+            ToolInvocationArgs.from_dict({"args": ["git", "push"]}).primary_string() == "git push"
+        )
 
     def test_path_key(self):
-        assert _args_to_str({"path": "/src/main.py"}) == "/src/main.py"
+        assert (
+            ToolInvocationArgs.from_dict({"path": "/src/main.py"}).primary_string()
+            == "/src/main.py"
+        )
 
     def test_file_path_key(self):
-        assert _args_to_str({"file_path": "test.py"}) == "test.py"
+        assert ToolInvocationArgs.from_dict({"file_path": "test.py"}).primary_string() == "test.py"
 
     def test_fallback(self):
-        result = _args_to_str({"x": "hello", "y": "world"})
+        result = ToolInvocationArgs.from_dict({"x": "hello", "y": "world"}).primary_string()
         assert "hello" in result
         assert "world" in result
 
 
 class TestExtractDomain:
     def test_simple_url(self):
-        assert _extract_domain("https://github.com/foo") == "github.com"
+        assert (
+            ToolInvocationArgs.from_dict({"url": "https://github.com/foo"}).domain() == "github.com"
+        )
 
     def test_with_port(self):
-        assert _extract_domain("http://localhost:3000/api") == "localhost:3000"
+        assert (
+            ToolInvocationArgs.from_dict({"url": "http://localhost:3000/api"}).domain()
+            == "localhost:3000"
+        )
 
     def test_invalid(self):
-        assert _extract_domain("not a url") == ""
+        assert ToolInvocationArgs.from_dict({"url": "not a url"}).domain() == ""
 
 
 class TestMatchRuleArgs:
     def test_exact_match(self):
-        assert _match_rule_args("git status", "Bash", {"args": ["git", "status"]})
+        rule = PermissionRule.parse("Bash(git status)", level="allow")
+        assert rule is not None
+        assert rule.matches("Bash", ToolInvocationArgs.from_dict({"args": ["git", "status"]}))
 
     def test_prefix_wildcard(self):
-        assert _match_rule_args("git:*", "Bash", {"args": ["git", "push", "origin"]})
+        rule = PermissionRule.parse("Bash(git:*)", level="allow")
+        assert rule is not None
+        assert rule.matches(
+            "Bash", ToolInvocationArgs.from_dict({"args": ["git", "push", "origin"]})
+        )
 
     def test_domain_match(self):
-        assert _match_rule_args("domain:github.com", "WebFetch", {"url": "https://github.com/foo"})
+        rule = PermissionRule.parse("WebFetch(domain:github.com)", level="allow")
+        assert rule is not None
+        assert rule.matches(
+            "WebFetch", ToolInvocationArgs.from_dict({"url": "https://github.com/foo"})
+        )
 
     def test_domain_mismatch(self):
-        assert not _match_rule_args("domain:github.com", "WebFetch", {"url": "https://evil.com"})
+        rule = PermissionRule.parse("WebFetch(domain:github.com)", level="allow")
+        assert rule is not None
+        assert not rule.matches(
+            "WebFetch", ToolInvocationArgs.from_dict({"url": "https://evil.com"})
+        )
 
     def test_path_match(self):
-        assert _match_rule_args("path:src/*", "Read", {"file_path": "src/main.py"})
+        rule = PermissionRule.parse("Read(path:src/*)", level="allow")
+        assert rule is not None
+        assert rule.matches("Read", ToolInvocationArgs.from_dict({"file_path": "src/main.py"}))
 
     def test_path_mismatch(self):
-        assert not _match_rule_args("path:src/*", "Read", {"file_path": "tests/test.py"})
+        rule = PermissionRule.parse("Read(path:src/*)", level="allow")
+        assert rule is not None
+        assert not rule.matches(
+            "Read", ToolInvocationArgs.from_dict({"file_path": "tests/test.py"})
+        )
 
 
 class TestToolPermissions:
@@ -133,9 +182,16 @@ class TestToolPermissions:
         home_ember.mkdir()
 
         perms = ToolPermissions(project_dir=tmp_path)
-        from unittest.mock import patch
-
-        with patch("ember_code.core.config.tool_permissions.Path.home", return_value=tmp_path):
+        # ``SettingsFileWriter`` reads ``Path.home()`` when no
+        # ``project_dir`` is set; the store passes project_dir, so
+        # writes always go to the project's ``.ember/settings.local.json``.
+        # The patch below keeps parity with the original test that
+        # covered the home-fallback branch — the writer must not
+        # accidentally hit the real home directory during CI.
+        with patch(
+            "ember_code.core.config.tool_permissions.settings_files.Path.home",
+            return_value=tmp_path,
+        ):
             perms.save_rule("Bash(git push)", "allow")
 
         settings_path = tmp_path / ".ember" / "settings.local.json"
