@@ -136,12 +136,29 @@ def _git_init_and_commit(work_dir: Path) -> str:
             ["add", "."],
             ["commit", "-m", "eval fixture initial commit"],
         ):
-            subprocess.run(
+            r = subprocess.run(
                 ["git", *args], cwd=str(work_dir), env=full_env,
-                capture_output=True, text=True, check=True,
+                capture_output=True, text=True,
             )
+            if r.returncode != 0:
+                logger.warning(
+                    "data-architect cypher eval: git %s returned rc=%d "
+                    "stderr=%s (proceeding; CodeIndex is mocked anyway)",
+                    args,
+                    r.returncode,
+                    r.stderr[:200],
+                )
     out = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=str(work_dir),
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True,
     )
+    if out.returncode != 0:
+        # No commit yet — the commit step earlier may have been a
+        # no-op (sandbox env stripped our git config, etc.). The
+        # CodeIndex is mocked anyway, so the HEAD sha is decorative.
+        logger.warning(
+            "data-architect cypher eval: no HEAD available "
+            "(returning empty sha; CodeIndex is mocked)"
+        )
+        return ""
     return out.stdout.strip()
