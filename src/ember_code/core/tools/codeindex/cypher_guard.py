@@ -124,6 +124,7 @@ ALLOWED_PARAM_NAMES: Final[frozenset[str]] = frozenset(
         "kind",
         "type",
         "quality",
+        "path_prefix",
     }
 )
 

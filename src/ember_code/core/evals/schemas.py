@@ -50,7 +50,7 @@ class ToolArgAssertion(BaseModel):
 
 
 class CypherAssertion(BaseModel):
-    """Cypher-specific assertion for the ``data-architect`` eval suite.
+    """Cypher-specific assertion for the ``codeindex-architect`` eval suite.
 
     Three check kinds:
 
@@ -204,7 +204,7 @@ class EvalCase(BaseModel):
     # (e.g. ``spawn_team`` with ``mode: coordinate`` rather than
     # ``broadcast``).
     tool_arg_assertions: list[ToolArgAssertion] | None = None
-    # Cypher-specific assertions for the data-architect eval suite.
+    # Cypher-specific assertions for the codeindex-architect eval suite.
     # Each entry validates a captured ``codeindex_cypher`` call
     # against one of the three CypherAssertion kinds. The
     # runner applies these via :class:`CypherAssertionDriver`.
@@ -269,7 +269,7 @@ class CaseResult(BaseModel):
     file_results: list[FileCheckResult] = Field(default_factory=list)
     tool_arg_passed: bool | None = None
     tool_arg_detail: str = ""
-    # Cypher-specific assertion outcome (data-architect eval). When
+    # Cypher-specific assertion outcome (codeindex-architect eval). When
     # the case carried ``cypher_assertions``, the runner applies
     # them all and folds the per-kind pass/fail into these fields.
     # ``None`` means the case had no cypher_assertions (skipped).

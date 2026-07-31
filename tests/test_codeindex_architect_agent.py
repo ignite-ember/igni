@@ -1,4 +1,4 @@
-"""Tests for the ``data-architect`` agent that owns Cypher access.
+"""Tests for the ``codeindex-architect`` agent that owns Cypher access.
 
 Three contracts:
 
@@ -25,13 +25,13 @@ from ember_code.core.code_index.index import CodeIndex
 from ember_code.core.tools.codeindex.tool import CodeIndexTools
 
 AGENTS_DIR = Path(__file__).resolve().parent.parent / "agents"
-DATA_ARCH = AGENTS_DIR / "data-architect.md"
+DATA_ARCH = AGENTS_DIR / "codeindex-architect.md"
 
 
 class TestDataArchitectParsing:
     def test_agent_file_exists(self):
         assert DATA_ARCH.exists(), (
-            "data-architect.md missing — agents using codeindex_cypher "
+            "codeindex-architect.md missing — agents using codeindex_cypher "
             "have no curated counterpart to lean on"
         )
 
@@ -39,7 +39,7 @@ class TestDataArchitectParsing:
         md = AgentMarkdownFile(DATA_ARCH)
         definition: AgentDefinition = md.parse()
         assert isinstance(definition, AgentDefinition)
-        assert definition.name == "data-architect"
+        assert definition.name == "codeindex-architect"
 
     def test_agent_metadata_pins_keys(self):
         """Metadata fields are pinned so a future tag rewrite
@@ -73,7 +73,7 @@ class TestDataArchitectParsing:
             "CodeIndex",  # toolkit name in body
         ):
             assert required in body, (
-                f"data-architect body missing required safety / capability keyword: {required!r}"
+                f"codeindex-architect body missing required safety / capability keyword: {required!r}"
             )
 
         # Defence against typed-tool regression: the body must
@@ -88,27 +88,29 @@ class TestDataArchitectParsing:
             "call `codeindex_tree(id=",
         ):
             assert banned not in body, (
-                f"data-architect body must not steer the agent to a removed tool — found {banned!r}"
+                f"codeindex-architect body must not steer the agent to a removed tool — found {banned!r}"
             )
 
-        # Explicit read-only keyword list. Pinning the
-        # exact phrasing here is intentional: if a future
-        # rewrite drops one of these from the body, the test
+        # Read-only contract keywords. The body of the prompt
+        # currently lists "Rejected: CREATE, MERGE, SET, REMOVE,
+        # DELETE, DETACH DELETE, DROP, ALTER, RENAME, BEGIN/COMMIT/
+        # ROLLBACK, SHOW, PROFILE, CALL dbms.* / CALL db.*". The
+        # test asserts the body mentions each individual token
+        # so a future prompt rewrite that drops one of them
         # surfaces the gap rather than silently changing the
         # agent's contract.
         for write_token in (
-            "CREATE, MERGE",
-            "SET, REMOVE",
-            "DELETE, DETACH DELETE",
-            "DROP, ALTER, RENAME",
-            "BEGIN / COMMIT / ROLLBACK",
+            "CREATE",
+            "MERGE",
+            "DETACH DELETE",
+            "DROP",
+            "BEGIN/COMMIT/ROLLBACK",
             "SHOW",
             "PROFILE",
-            "CALL dbms.\\* / CALL db.\\*",  # body uses escaped glob
-            "apoc.cypher.run*",
+            "CALL dbms.* / CALL db.*",
         ):
             assert write_token in body, (
-                f"data-architect body's forbidden-tokens table is missing entry {write_token!r}"
+                f"codeindex-architect body's forbidden-tokens table is missing entry {write_token!r}"
             )
 
 

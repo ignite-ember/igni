@@ -101,7 +101,7 @@ class CodeIndexTools(Toolkit):
         """Run a **read-only** raw Cypher query against the CodeIndex.
 
         This is the only agent-facing path to the indexed data
-        store. Specialist agents (the ``data-architect`` agent,
+        store. Specialist agents (the ``codeindex-architect`` agent,
         primarily) author Cypher against the schema documented at
         ``core/code_index/neo4j_schema.GRAPH_SCHEMA_DESCRIPTION``.
 

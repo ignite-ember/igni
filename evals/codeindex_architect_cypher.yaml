@@ -1,10 +1,10 @@
-agent: data-architect
+agent: codeindex-architect
 description: |
-  Tests the data-architect agent's ability to author
+  Tests the codeindex-architect agent's ability to author
   read-only Cypher against the CodeIndex.
 
   Four question categories × three cases each. The setup
-  hook (evals.data_architect_cypher.setup) mocks the
+  hook (evals.codeindex_architect_cypher.setup) mocks the
   Neo4jClient so the agent's cypher_tool calls are answered
   with canned rows; the runner inspects the tool trace
   and grades the emitted cypher through the read-only
@@ -22,7 +22,7 @@ description: |
   (param names on the allowlist), and result_shape_matches
   (params carry the keys the expected result shape needs).
 
-setup_module: evals.data_architect_cypher.setup
+setup_module: evals.codeindex_architect_cypher.setup
 
 fixtures:
   - source: codeindex_repo

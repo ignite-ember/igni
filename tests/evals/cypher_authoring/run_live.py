@@ -1,4 +1,4 @@
-"""Live-LLM runner for the data-architect Cypher authoring eval.
+"""Live-LLM runner for the codeindex-architect Cypher authoring eval.
 
 Drives the full pipeline (real model, real tool calls, real
 Cypher) using credentials supplied via env vars. Designed to be
@@ -14,12 +14,14 @@ path than the ``uv run`` subprocess does. On a normal dev
 machine, the sandbox-less resolution at the top of the script
 is the right one.
 """
+
 from __future__ import annotations
 
 import asyncio
 import os
 import sys
 from pathlib import Path
+
 
 # Sandbox-aware repo-root resolution. Try the unsandboxed path
 # first (works on a normal dev machine); fall back to the
@@ -28,11 +30,12 @@ from pathlib import Path
 def _resolve_repo_root() -> Path:
     candidates = [
         Path(__file__).resolve().parents[3],
-        Path("/System/Volumes/Data") / Path(__file__).resolve().parents[3].relative_to(Path.cwd().anchor or "/"),
+        Path("/System/Volumes/Data")
+        / Path(__file__).resolve().parents[3].relative_to(Path.cwd().anchor or "/"),
         Path("/System/Volumes/Data/Users/dmytrozezyk/ai_coding/ember-code"),
     ]
     for c in candidates:
-        if (c / "evals" / "data_architect_cypher.yaml").exists():
+        if (c / "evals" / "codeindex_architect_cypher.yaml").exists():
             return c
     return candidates[0]
 
@@ -43,9 +46,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from ember_code.core.evals.loader import load_eval_file  # noqa: E402
 
-AGENT_NAME = "data-architect"
-EVAL_FILE = REPO_ROOT / "evals" / "data_architect_cypher.yaml"
-AGENT_FILE = REPO_ROOT / "agents" / "data-architect.md"
+AGENT_NAME = "codeindex-architect"
+EVAL_FILE = REPO_ROOT / "evals" / "codeindex_architect_cypher.yaml"
+AGENT_FILE = REPO_ROOT / "agents" / "codeindex-architect.md"
 
 
 def build_settings():
@@ -65,6 +68,11 @@ def build_settings():
                     provider="openai_like",
                     url=base_url,
                     api_key=api_key,
+                    # temperature=0 makes the eval deterministic
+                    # — same input, same Cypher. Default sampling
+                    # is what was making the pass rate fluctuate
+                    # between 4/12 and 8/12 across runs.
+                    temperature=0.0,
                 ),
             },
             "default": "MiniMax-M2.7",
@@ -93,22 +101,20 @@ async def run_one_case(agent, settings, case):
     dataset; the workspace allocates its own tempdir as
     ``work_dir`` and tears it down after each case.
     """
+    from ember_code.core.agents.pool import AgentPool
     from ember_code.core.evals.runner import SuiteRunner
     from ember_code.core.evals.schemas import EvalSuite
-    from ember_code.core.agents.pool import AgentPool
 
     suite = EvalSuite(
         agent=AGENT_NAME,
         description=f"live one-case: {case.name}",
-        setup_module="evals.data_architect_cypher.setup",
+        setup_module="evals.codeindex_architect_cypher.setup",
         cases=[case],
     )
     pool = AgentPool()
     pool._agents[AGENT_NAME] = agent  # type: ignore[attr-defined]
 
-    runner = SuiteRunner(
-        suite=suite, pool=pool, settings=settings, project_dir=REPO_ROOT
-    )
+    runner = SuiteRunner(suite=suite, pool=pool, settings=settings, project_dir=REPO_ROOT)
     suite_result = await runner.run()
     case_result = suite_result.case_results[0]
     return {
@@ -148,8 +154,7 @@ async def main():
         status = "PASS" if r.get("passed") else "FAIL"
         detail = r.get("cypher_detail") or r.get("error", "") or ""
         print(
-            f"  [{status}] {r['name']:<48} "
-            f"{r.get('elapsed', 0):5.1f}s  {detail[:80]}",
+            f"  [{status}] {r['name']:<48} {r.get('elapsed', 0):5.1f}s  {detail[:80]}",
             flush=True,
         )
 

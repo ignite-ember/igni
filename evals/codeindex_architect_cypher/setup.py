@@ -1,8 +1,8 @@
-"""Eval setup for the data-architect Cypher authoring suite.
+"""Eval setup for the codeindex-architect Cypher authoring suite.
 
 The ``codeindex.cypher`` eval (codeindex.yaml) exercises the typed
 ``codeindex_query`` surface — the cypher eval (this file) exercises
-the raw ``codeindex_cypher`` surface that the data-architect agent
+the raw ``codeindex_cypher`` surface that the codeindex-architect agent
 is the curated owner of. We share the ``codeindex_repo`` fixture
 so the agent has a real schema to author against.
 
@@ -70,14 +70,14 @@ async def setup(work_dir: Path, project_dir: Path) -> None:
     """
     from ember_code.core.code_index.index import CodeIndex  # noqa: PLC0415 — lazy
 
-    # 1. git init + commit so HEAD has a real SHA (the data-architect
+    # 1. git init + commit so HEAD has a real SHA (the codeindex-architect
     #    reads the same fixture the codeindex eval does).
     head_sha = _git_init_and_commit(work_dir)
-    logger.info("data-architect cypher eval: HEAD=%s", head_sha[:8])
+    logger.info("codeindex-architect cypher eval: HEAD=%s", head_sha[:8])
 
     # 2. Patch the *singleton* CodeIndex (the agent's session creates
     #    its own; we patch client_for on the class so every instance
-    #    gets the stub). The class is per-process but the data-architect
+    #    gets the stub). The class is per-process but the codeindex-architect
     #    agent always runs in this process, so this is safe.
     client = MagicMock()
     client.execute_query = AsyncMock(side_effect=_dispatch)
@@ -116,7 +116,7 @@ def _git_init_and_commit(work_dir: Path) -> str:
     """Initialize a git repo in ``work_dir`` and return the new HEAD sha.
 
     Mirrors the helper in ``evals.codeindex.setup`` so the
-    data-architect's read of ``git HEAD`` resolves. Idempotent:
+    codeindex-architect's read of ``git HEAD`` resolves. Idempotent:
     re-uses an existing HEAD if ``work_dir`` is already a repo.
     """
     import os
@@ -142,7 +142,7 @@ def _git_init_and_commit(work_dir: Path) -> str:
             )
             if r.returncode != 0:
                 logger.warning(
-                    "data-architect cypher eval: git %s returned rc=%d "
+                    "codeindex-architect cypher eval: git %s returned rc=%d "
                     "stderr=%s (proceeding; CodeIndex is mocked anyway)",
                     args,
                     r.returncode,
@@ -157,7 +157,7 @@ def _git_init_and_commit(work_dir: Path) -> str:
         # no-op (sandbox env stripped our git config, etc.). The
         # CodeIndex is mocked anyway, so the HEAD sha is decorative.
         logger.warning(
-            "data-architect cypher eval: no HEAD available "
+            "codeindex-architect cypher eval: no HEAD available "
             "(returning empty sha; CodeIndex is mocked)"
         )
         return ""
