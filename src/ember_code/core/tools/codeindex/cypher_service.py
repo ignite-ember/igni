@@ -20,7 +20,7 @@ import logging
 from typing import Any
 
 from ember_code.core.code_index.index import CodeIndex
-from ember_code.core.tools.codeindex.schemas import CypherResponse
+from ember_code.core.tools.codeindex.schemas import CypherInput, CypherResponse
 
 logger = logging.getLogger(__name__)
 
@@ -37,23 +37,17 @@ class CypherService:
     def __init__(self, index: CodeIndex) -> None:
         self._index = index
 
-    async def run(
-        self,
-        *,
-        cypher: str,
-        params: dict[str, Any],
-        limit: int,
-        commit: str | None,
-    ) -> str:
-        """Execute a pre-validated Cypher query and return a JSON envelope.
+    async def run(self, input: CypherInput) -> str:
+        """Execute a pre-validated Cypher input and return a JSON envelope.
 
         Args:
-            cypher: read-only Cypher that has already passed
-                :func:`cypher_guard.assert_read_only_cypher`.
-            params: typed parameter dict (only names on the
-                ``ALLOWED_PARAM_NAMES`` allowlist were permitted).
-            limit: cap on rows returned to the agent.
-            commit: optional commit SHA; defaults to head.
+            input: a typed :class:`CypherInput` already past
+                :func:`cypher_guard.assert_read_only_cypher`
+                (the toolkit does this before calling). The
+                service destructures ``input.cypher`` /
+                ``input.params`` / ``input.limit`` / ``input.commit``
+                — keeping the seam typed so a future field can be
+                added without a dict spread signature change here.
 
         Returns: a :class:`CypherResponse` envelope carrying the
         rows + row_count + truncated flag + the limit that was
@@ -67,7 +61,7 @@ class CypherService:
         # so by the time we get here the only remaining error
         # surface is the driver.
         try:
-            client = await self._index.client_for(commit)
+            client = await self._index.client_for(input.commit)
         except Exception as exc:
             logger.warning("client_for failed: %s", exc)
             return _err(str(exc), kind="client_for_failed")
@@ -77,21 +71,24 @@ class CypherService:
                 "configured with a runtime= or neo4j_client=.",
                 kind="no_backend",
             )
-        scoped_params: dict[str, Any] = {"proj": self._index.project_id, **params}
+        scoped_params: dict[str, Any] = {
+            "proj": self._index.project_id,
+            **input.params,
+        }
         try:
-            rows = await client.execute_query(cypher, **scoped_params)
+            rows = await client.execute_query(input.cypher, **scoped_params)
         except Exception as exc:
             logger.warning("execute_query failed: %s", exc)
             return _err(str(exc), kind="cypher_failed")
         # Cap.
-        truncated = len(rows) > limit
-        rows = rows[:limit]
+        truncated = len(rows) > input.limit
+        rows = rows[: input.limit]
         return CypherResponse(
             rows=[_serialise_row(r) for r in rows],
             row_count=len(rows),
             truncated=truncated,
-            limit=limit,
-            commit=commit,
+            limit=input.limit,
+            commit=input.commit,
         )
 
 

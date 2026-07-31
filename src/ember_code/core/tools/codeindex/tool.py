@@ -196,9 +196,8 @@ class CodeIndexTools(Toolkit):
         cypher_input_dict["cypher"] = validated_cypher
         runtime_input = CypherInput(**cypher_input_dict)
 
-        service_kwargs = runtime_input.for_service()
         return await self._recorder.invoke(
             tool_name="codeindex_cypher",
             telemetry_args=runtime_input.telemetry_dict(),
-            coro=self._services.cypher().run(**service_kwargs),
+            coro=self._services.cypher().run(runtime_input),
         )

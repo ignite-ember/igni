@@ -749,13 +749,17 @@ class CypherInput(BaseModel):
         allowed = set(cls.model_fields) & kwargs.keys()
         return cls(**{name: kwargs[name] for name in allowed})
 
-    def for_service(self) -> dict[str, Any]:
-        return {
-            "cypher": self.cypher,
-            "params": dict(self.params),
-            "limit": self.limit,
-            "commit": self.commit,
-        }
+    def for_service(self) -> CypherInput:
+        """Return the typed input the service consumes.
+
+        The toolkit builds a fresh :class:`CypherInput` after
+        validation (the ``cypher`` string has been through
+        :func:`assert_read_only_cypher`, so it would be a re-build
+        to fork the ``dict`` here). Returning the model itself
+        preserves the typed seam — the service takes a
+        :class:`CypherInput`, not a borrowed dict shape.
+        """
+        return self
 
     def telemetry_dict(self) -> dict[str, Any]:
         # Never log full Cypher — record length + a token-count,

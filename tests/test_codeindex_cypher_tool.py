@@ -42,6 +42,7 @@ from ember_code.core.tools.codeindex.cypher_guard import (
     CypherUnknownParam,
     assert_read_only_cypher,
 )
+from ember_code.core.tools.codeindex.schemas import CypherInput
 from ember_code.core.tools.codeindex.tool import CodeIndexTools
 
 # ── Group 1: pure guard ───────────────────────────────────────────────
@@ -417,3 +418,115 @@ class TestCypherBoundary:
                 f"Neo4jClient.{tool_name} appearing on the class "
                 "would be an agent-callable bypass of the toolkit."
             )
+
+
+# ── Group 4: typed input/output boundary ──────────────────────────────
+
+
+class TestCypherServiceTypedBoundary:
+    """The toolkit↔service seam is the typed :class:`CypherInput`
+    (not a borrowed dict). Pin it explicitly so a future
+    regression that falls back to dict-spread surfaces here
+    rather than at runtime.
+    """
+
+    def test_for_service_returns_typed_cypher_input(self):
+        """``CypherInput.for_service()`` returns the same
+        :class:`CypherInput`, identity-equivalent. A dict
+        return type would be a regression — the service
+        signature ``run(input: CypherInput)`` would no longer
+        type-check."""
+        ci = CypherInput(
+            cypher="MATCH (i:Item {project_hash: $proj}) RETURN i LIMIT 5",
+            params={"quality": "major-issues"},
+            limit=42,
+            confirm_raw_cypher=True,
+            commit="abc123",
+        )
+        out = ci.for_service()
+        assert isinstance(out, CypherInput)
+        assert out is ci, (
+            "CypherInput.for_service should return self — the "
+            "service takes the typed model directly, no copy needed."
+        )
+        assert out.cypher == ci.cypher
+        assert out.params == ci.params
+        assert out.limit == ci.limit
+        assert out.commit == ci.commit
+        assert out.confirm_raw_cypher is True
+
+    def test_cypher_service_run_signature_accepts_cypher_input(self):
+        """``CypherService.run(input: CypherInput)`` is the
+        typed seam. Verify the signature accepts a
+        :class:`CypherInput` via runtime inspection — a
+        regression to dict kwargs would break this.
+        """
+        # Pull the signature via ``inspect``; the parameter
+        # name + annotation are what we care about.
+        import inspect
+
+        from ember_code.core.tools.codeindex.cypher_service import CypherService
+
+        sig = inspect.signature(CypherService.run)  # type: ignore[attr-defined]
+        params = list(sig.parameters.values())
+        # ``self`` + ``input``: exactly two positional-or-keyword
+        # parameters, no kwargs spread (the typed model is the
+        # whole seam).
+        assert [p.name for p in params] == ["self", "input"], (
+            f"CypherService.run signature changed shape — "
+            f"expected ['self', 'input'], got "
+            f"{[p.name for p in params]!r}. The dict-spread "
+            "seam must not return without an explicit test "
+            "update so reviewers can audit it."
+        )
+        assert params[-1].annotation in ("CypherInput", "Optional[CypherInput]") or str(
+            params[-1].annotation
+        ).endswith("CypherInput"), (
+            f"Last param of CypherService.run must be "
+            f"annotated CypherInput, got {params[-1].annotation!r}."
+        )
+
+    def test_tool_routes_typed_input_into_service(self):
+        """End-to-end: ``CodeIndexTools.codeindex_cypher``
+        builds a typed :class:`CypherInput`, threads it
+        through ``CypherService.run``, and never goes
+        through a borrowed dict."""
+        captured: dict[str, CypherInput] = {}
+
+        async def capture_run(input: CypherInput):
+            captured["input"] = input
+            from ember_code.core.tools.codeindex.schemas import CypherResponse
+
+            return CypherResponse(
+                rows=[],
+                row_count=0,
+                truncated=False,
+                limit=10,
+                commit=None,
+            )
+
+        mock_index = MagicMock(spec=CodeIndex)
+        mock_index.project_id = "x"
+        mock_index.client_for = AsyncMock(return_value=None)
+        # Stub the CypherService to capture the input.
+        tools = CodeIndexTools(project_dir=".", index=mock_index)
+        tools._services.cypher = MagicMock(return_value=MagicMock(run=capture_run))
+
+        cypher = "MATCH (i:Item {project_hash: $proj}) RETURN i LIMIT 10"
+        asyncio.run(
+            tools.codeindex_cypher(
+                cypher=cypher,
+                confirm_raw_cypher=True,
+                limit=10,
+            )
+        )
+
+        # A CypherInput was passed in to ``run`` — not a dict.
+        assert "input" in captured, (
+            "CodeIndexTools.codeindex_cypher did not thread a "
+            "CypherInput into CypherService.run (no dict spread)."
+        )
+        assert isinstance(captured["input"], CypherInput)
+        assert captured["input"].cypher == cypher
+        assert captured["input"].limit == 10
+        assert captured["input"].commit is None
