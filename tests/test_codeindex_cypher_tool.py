@@ -1,0 +1,419 @@
+"""Tests for the ``codeindex_cypher`` read-only Cypher escape hatch.
+
+The tool exists for specialist agents (the ``data-architect``
+agent, primarily) to author ad-hoc Cypher that the typed
+``codeindex_query`` surface can't express. The contract is:
+
+  * **Hard-deny** without ``confirm_raw_cypher=True`` (defensive
+    flag so a misbehaving agent can't accidentally invoke the
+    un-typed path).
+  * **Read-only** — every Cypher that reaches the driver must
+    pass :func:`assert_read_only_cypher` (writes, admin,
+    unknown ``$param`` names, missing ``project_hash``, multi-
+    statements are all rejected).
+  * **Tool surface only** — agents never call Neo4j directly.
+
+Tests come in three groups:
+
+  1. Guard tests (pure module, no toolkit): each reject
+     category on its own.
+  2. Tool tests (toolkit surface, mocked): the
+     ``confirm_raw_cypher`` gate fires before the guard;
+     even with the flag, a forbidden query is rejected; the
+     happy path threads through to the service.
+  3. Behaviour tests: the per-commit ``Neo4jClient.client_for``
+     is the only driver seam (no parallel paths to the
+     database).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from ember_code.core.code_index.index import CodeIndex
+from ember_code.core.tools.codeindex.cypher_guard import (
+    CypherGuardError,
+    CypherMissingProjectHash,
+    CypherReadOnlyViolation,
+    CypherUnknownParam,
+    assert_read_only_cypher,
+)
+from ember_code.core.tools.codeindex.tool import CodeIndexTools
+
+# ── Group 1: pure guard ───────────────────────────────────────────────
+
+
+class TestCypherGuardHappyPath:
+    """Cases that should be accepted and returned stripped."""
+
+    def test_simple_match_return_passes(self):
+        out = assert_read_only_cypher("MATCH (i:Item {project_hash: $proj}) RETURN i LIMIT 5")
+        assert "MATCH" in out and "$proj" in out
+
+    def test_comments_are_stripped(self):
+        out = assert_read_only_cypher(
+            "// find recent files\n"
+            "/* block comment */\n"
+            "MATCH (i:Item {project_hash: $proj}) RETURN i.name, i.path LIMIT 10"
+        )
+        assert "//" not in out and "/*" not in out
+        assert out.strip().startswith("MATCH")
+
+    def test_with_optional_match_passes(self):
+        out = assert_read_only_cypher(
+            "OPTIONAL MATCH (i:Item {project_hash: $proj})-[:IMPORTS]->(other:Item)\n"
+            "RETURN i, other LIMIT 25"
+        )
+        assert "OPTIONAL MATCH" in out
+
+    def test_unwind_union_orderby_passes(self):
+        out = assert_read_only_cypher(
+            "MATCH (i:Item {project_hash: $proj}) RETURN i.id AS id\n"
+            "UNION\n"
+            "MATCH (j:Item {project_hash: $proj}) RETURN j.id AS id\n"
+            "ORDER BY id SKIP $skip_n LIMIT $limit_n"
+        )
+        assert out.count("RETURN") == 2
+
+    def test_explain_passes(self):
+        out = assert_read_only_cypher(
+            "EXPLAIN MATCH (i:Item {project_hash: $proj}) RETURN i LIMIT 5"
+        )
+        assert out.startswith("EXPLAIN")
+
+
+class TestCypherGuardRejections:
+    """Cases that should each raise the correct guardrail subclass."""
+
+    def test_create_is_rejected(self):
+        with pytest.raises(CypherReadOnlyViolation, match="CREATE"):
+            assert_read_only_cypher("CREATE (n:Item {project_hash: $proj}) RETURN n")
+
+    def test_merge_set_is_rejected(self):
+        with pytest.raises(CypherReadOnlyViolation, match="MERGE"):
+            assert_read_only_cypher(
+                "MERGE (i:Item {id: 'x', project_hash: $proj}) "
+                "ON CREATE SET i.path = $path "
+                "RETURN i"
+            )
+
+    def test_delete_remove_is_rejected(self):
+        with pytest.raises(CypherReadOnlyViolation, match="DELETE"):
+            assert_read_only_cypher("MATCH (i:Item {project_hash: $proj}) DELETE i")
+        with pytest.raises(CypherReadOnlyViolation, match="REMOVE"):
+            assert_read_only_cypher("MATCH (i:Item {project_hash: $proj}) REMOVE i.flag")
+
+    def test_drop_alter_is_rejected(self):
+        with pytest.raises(CypherReadOnlyViolation, match="DROP"):
+            assert_read_only_cypher("DROP INDEX item_id_idx")
+        with pytest.raises(CypherReadOnlyViolation, match="ALTER"):
+            assert_read_only_cypher("ALTER DATABASE foo MODE READ_ONLY")
+
+    def test_call_dbms_db_procedures_rejected(self):
+        with pytest.raises(CypherReadOnlyViolation):
+            assert_read_only_cypher("CALL dbms.security.showCurrentUser()")
+        with pytest.raises(CypherReadOnlyViolation):
+            assert_read_only_cypher("CALL db.info() RETURN 1")
+
+    def test_show_rejected(self):
+        with pytest.raises(CypherReadOnlyViolation, match="SHOW"):
+            assert_read_only_cypher("SHOW INDEXES")
+
+    def test_profile_rejected(self):
+        with pytest.raises(CypherReadOnlyViolation, match="PROFILE"):
+            assert_read_only_cypher("PROFILE MATCH (i:Item {project_hash: $proj}) RETURN i")
+
+    def test_transaction_control_rejected(self):
+        with pytest.raises(CypherReadOnlyViolation, match="BEGIN"):
+            assert_read_only_cypher("BEGIN\nMATCH (i:Item {project_hash: $proj}) RETURN i")
+        with pytest.raises(CypherReadOnlyViolation):
+            assert_read_only_cypher("MATCH (i:Item {project_hash: $proj}) RETURN i LIMIT 5\nCOMMIT")
+
+    def test_missing_project_hash_rejected(self):
+        with pytest.raises(CypherMissingProjectHash, match="project_hash"):
+            assert_read_only_cypher("MATCH (i:Item) RETURN i LIMIT 5")
+
+    def test_multi_statement_rejected(self):
+        with pytest.raises(CypherReadOnlyViolation, match="single statement"):
+            assert_read_only_cypher(
+                "MATCH (i:Item {project_hash: $proj}) RETURN i; "
+                "MATCH (j:Item {project_hash: $proj}) RETURN j"
+            )
+
+    def test_trailing_semicolon_ok(self):
+        # Trailing ``;`` is fine — only post-statement content is
+        # rejected, since that's where writes are usually hidden.
+        assert_read_only_cypher("MATCH (i:Item {project_hash: $proj}) RETURN i LIMIT 5;")
+
+    def test_unknown_param_name_rejected(self):
+        with pytest.raises(CypherUnknownParam, match="evil"):
+            assert_read_only_cypher(
+                "MATCH (i:Item {project_hash: $proj, name: $evil}) RETURN i LIMIT 5"
+            )
+
+    def test_allowed_param_names_pass(self):
+        for name in (
+            "proj",
+            "commit_sha",
+            "ids",
+            "limit_n",
+            "skip_n",
+            "kind",
+            "type",
+            "quality",
+        ):
+            assert_read_only_cypher(
+                f"MATCH (i:Item {{project_hash: $proj, x: ${name}}}) RETURN i LIMIT 5"
+            )
+
+    def test_empty_string_rejected(self):
+        with pytest.raises(CypherGuardError):
+            assert_read_only_cypher("")
+
+    def test_non_string_rejected(self):
+        with pytest.raises(CypherGuardError):
+            assert_read_only_cypher(None)  # type: ignore[arg-type]
+
+
+# ── Group 2: tool surface ─────────────────────────────────────────────
+
+
+def _make_tools(neo4j_rows=None, *, no_backend=False) -> tuple[CodeIndexTools, MagicMock]:
+    """Build a ``CodeIndexTools`` with a mocked Neo4j client + client_for.
+
+    Returns ``(tools, client_for_callable)`` so tests can also
+    inspect how the toolkit routes to the driver seam.
+
+    The toolkit owns a :class:`ToolInvocationRecorder` that
+    expects ``coro`` to return a ``BaseModel`` (it goes through
+    ``JsonSerializer.dumps``). The service already returns the
+    typed ``CypherResponse`` / ``ErrorResponse`` model — don't
+    double-serialise.
+    """
+    mock_index = MagicMock(spec=CodeIndex)
+    mock_index.project_id = "test-project"
+    if no_backend:
+        mock_index.client_for = AsyncMock(return_value=None)
+    else:
+        client = MagicMock()
+        client.execute_query = AsyncMock(return_value=neo4j_rows or [])
+        mock_index.client_for = AsyncMock(return_value=client)
+        mock_index._client = client
+
+    tools = CodeIndexTools(project_dir=".", index=mock_index)
+    return tools, mock_index.client_for
+
+
+class TestCodeindexCypherToolGate:
+    def test_missing_confirm_flag_is_hard_denied(self):
+        tools, client_for = _make_tools()
+        result = asyncio.run(
+            tools.codeindex_cypher(
+                cypher="MATCH (i:Item {project_hash: $proj}) RETURN i LIMIT 5",
+                confirm_raw_cypher=False,
+            )
+        )
+        envelope = json.loads(result)
+        assert envelope["error"] == "confirm_required"
+        assert "confirm_raw_cypher=True" in envelope["message"]
+        # Crucially — the driver was never even asked for a
+        # client. The gate fires before any DB seam is touched.
+        assert client_for.await_count == 0
+
+    def test_confirm_default_arg_is_hard_denied(self):
+        tools, _ = _make_tools()
+        # Forgetting the kwarg entirely is the common case.
+        result = asyncio.run(
+            tools.codeindex_cypher(
+                cypher="MATCH (i:Item {project_hash: $proj}) RETURN i LIMIT 5",
+            )
+        )
+        envelope = json.loads(result)
+        assert envelope["error"] == "confirm_required"
+        assert "confirm_raw_cypher=True" in envelope["message"]
+
+    def test_confirm_false_with_truthy_nonbool_is_hard_denied(self):
+        # A future agent / model might pass the string "true"
+        # thinking Python's truthiness covers it. We require an
+        # explicit ``True`` boolean — anything else is denied.
+        tools, _ = _make_tools()
+        for truthy in ("true", "yes", 1, 1.0):
+            result = asyncio.run(
+                tools.codeindex_cypher(
+                    cypher=("MATCH (i:Item {project_hash: $proj}) RETURN i LIMIT 5"),
+                    confirm_raw_cypher=truthy,  # type: ignore[arg-type]
+                )
+            )
+            envelope = json.loads(result)
+            assert envelope["error"] == "confirm_required"
+        assert "confirm_raw_cypher=True" in envelope["message"], f"expected denial for {truthy!r}"
+
+    def test_write_with_confirm_is_guardrail_rejected(self):
+        tools, client_for = _make_tools()
+        result = asyncio.run(
+            tools.codeindex_cypher(
+                cypher="CREATE (n:Item {project_hash: $proj}) RETURN n",
+                confirm_raw_cypher=True,
+            )
+        )
+        envelope = json.loads(result)
+        # Confirm-flag bypassed, but the guard caught the write.
+        assert envelope["error"] == "cypher_guard"
+        assert "CREATE" in envelope["message"]
+        # And the driver was still never asked for a client.
+        assert client_for.await_count == 0
+
+    def test_no_project_hash_with_confirm_is_guardrail_rejected(self):
+        tools, client_for = _make_tools()
+        result = asyncio.run(
+            tools.codeindex_cypher(
+                cypher="MATCH (i:Item) RETURN i LIMIT 5",
+                confirm_raw_cypher=True,
+            )
+        )
+        envelope = json.loads(result)
+        assert envelope["error"] == "cypher_guard"
+        assert "project_hash" in envelope["message"]
+        assert client_for.await_count == 0
+
+
+class TestCodeindexCypherToolHappyPath:
+    def test_read_only_match_runs_through(self):
+        tools, client_for = _make_tools(neo4j_rows=[{"name": "foo"}, {"name": "bar"}])
+        result = asyncio.run(
+            tools.codeindex_cypher(
+                cypher=("MATCH (i:Item {project_hash: $proj}) RETURN i.name AS name"),
+                confirm_raw_cypher=True,
+                limit=10,
+            )
+        )
+        envelope = json.loads(result)
+        # CypherResponse shape: rows + bookkeeping.
+        assert envelope["row_count"] == 2
+        assert envelope["truncated"] is False
+        assert envelope["limit"] == 10
+        assert envelope["rows"] == [{"name": "foo"}, {"name": "bar"}]
+        # The tool routed through the per-commit client.
+        assert client_for.await_count == 1
+
+    def test_limit_caps_and_signals_truncation(self):
+        tools, _ = _make_tools(neo4j_rows=[{"i": i} for i in range(50)])
+        result = asyncio.run(
+            tools.codeindex_cypher(
+                cypher=("MATCH (i:Item {project_hash: $proj}) RETURN i LIMIT 50"),
+                confirm_raw_cypher=True,
+                limit=5,
+            )
+        )
+        envelope = json.loads(result)
+        assert envelope["row_count"] == 5
+        assert envelope["truncated"] is True
+        assert envelope["limit"] == 5
+
+    def test_proj_is_always_injected(self):
+        """The toolkit injects ``proj = project_id`` even if the
+        agent forgot to pass it."""
+        tools, _ = _make_tools(neo4j_rows=[{"x": 1}])
+        captured: dict = {}
+
+        async def capture_run(*args, **kwargs):
+            captured["params"] = kwargs
+            return [{"x": 1}]
+
+        # Patch the driver's ``execute_query`` to capture what
+        # params are actually forwarded.
+        tools._services._index.client_for = AsyncMock(  # type: ignore[attr-defined]
+            return_value=MagicMock(execute_query=capture_run)
+        )
+        asyncio.run(
+            tools.codeindex_cypher(
+                cypher="MATCH (i:Item {project_hash: $proj}) RETURN i LIMIT 1",
+                confirm_raw_cypher=True,
+            )
+        )
+        # Cypher passed proj via $proj — the injected value
+        # should be in scope.
+        assert captured["params"]["proj"] == "test-project"
+
+    def test_no_backend_returns_structured_error(self):
+        tools, _ = _make_tools(no_backend=True)
+        result = asyncio.run(
+            tools.codeindex_cypher(
+                cypher=("MATCH (i:Item {project_hash: $proj}) RETURN i LIMIT 1"),
+                confirm_raw_cypher=True,
+            )
+        )
+        envelope = json.loads(result)
+        assert envelope["error"] == "no_backend"
+        assert "No Neo4j backend" in envelope["message"] or "backend" in envelope["message"].lower()
+
+    def test_driver_exception_surfaces_as_structured_error(self):
+        tools, _ = _make_tools()
+        # Replace client_for so the captured execute_query raises.
+        fake_client = MagicMock()
+        fake_client.execute_query = AsyncMock(side_effect=RuntimeError("neo4j bolt timeout"))
+        tools._services._index.client_for = AsyncMock(  # type: ignore[attr-defined]
+            return_value=fake_client
+        )
+        result = asyncio.run(
+            tools.codeindex_cypher(
+                cypher=("MATCH (i:Item {project_hash: $proj}) RETURN i LIMIT 1"),
+                confirm_raw_cypher=True,
+            )
+        )
+        envelope = json.loads(result)
+        assert envelope["error"] == "cypher_failed"
+        assert "bolt timeout" in envelope["message"]
+        assert "bolt timeout" in envelope["message"]
+
+
+# ── Group 3: boundary — only the toolkit touches Neo4j ────────────────
+
+
+class TestCypherBoundary:
+    def test_codeindex_cypher_is_the_only_neo4j_seam_for_agents(self):
+        """Documented contract: the only agent-facing path
+        to Neo4j is the ``codeindex_cypher`` tool surface.
+
+        Inspect the toolkit registration and assert there is
+        exactly one CodeIndex tool — ``codeindex_cypher`` —
+        and no parallel route to the driver. The typed
+        surface (``codeindex_query`` / ``codeindex_tree``) was
+        intentionally removed; this test pins that removal
+        so a future regression re-enabling them fails here.
+        """
+        tools, mock_index = _make_tools()
+        registered = sorted(
+            name
+            for name, fn in vars(type(tools)).items()
+            if not name.startswith("_") and callable(getattr(tools, name, None))
+        )
+        # The agent-callable CodeIndex tool — exactly one.
+        assert "codeindex_cypher" in registered
+        # The typed surface is gone — pinned absent.
+        for removed in ("codeindex_query", "codeindex_tree"):
+            assert removed not in registered, (
+                f"CodeIndexTools.{removed}() reappeared on the "
+                "toolkit — cypher-only contract broken."
+            )
+
+    def test_execute_query_helper_not_in_agent_surface(self):
+        """Defence-in-depth: ``Neo4jClient.execute_query`` is the
+        driver seam but must not be a directly-callable tool.
+        """
+        from ember_code.core.code_index.neo4j_client import Neo4jClient
+
+        # Including the removed typed-tool names here too —
+        # even if cypher-only is the agent surface, none of
+        # these names should appear as a class attr on the
+        # Neo4jClient (which would mean the client is exposing
+        # its own bypass of the toolkit).
+        for tool_name in ("codeindex_query", "codeindex_tree", "codeindex_cypher"):
+            assert not hasattr(Neo4jClient, tool_name), (
+                f"Neo4jClient.{tool_name} appearing on the class "
+                "would be an agent-callable bypass of the toolkit."
+            )

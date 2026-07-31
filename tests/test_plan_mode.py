@@ -234,7 +234,7 @@ class TestExitPlanModeValidation:
         result = tool.exit_plan_mode("Refactor the auth thing. It will be great.")
         assert "Plan rejected" in result
         assert "research pass 1/3" in result
-        assert "codeindex_query" in result.lower()
+        assert "codeindex_cypher" in result.lower()
         # Plan store NOT mutated on rejection.
         assert session.plan_store.latest == ""
         # Attempt counter incremented.

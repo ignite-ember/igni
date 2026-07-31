@@ -6,7 +6,7 @@
 
 ## 1. Executive Summary
 
-**igni is a beta-stage, multi-agent AI coding assistant built on the Agno orchestration framework.** Its core architectural differentiator is **CodeIndex** — a pre-built semantic + metadata index over the codebase produced by a separate backend (`ember-server`) and consumed locally as a per-commit **Neo4j graph + vector store** (BE-spawned, no Docker), so search runs on the user's machine and the server never holds a copy of the index. Self-published benchmarks put it at 82% directly-mergeable outputs vs Claude Code's 52% on a 12-case suite, but at ~33% slower wall time and 1/80th the per-run cost (driven by a smaller default model, MiniMax-M2.7, plus the pre-computed index). It holds extensive Claude Code parity (33/61 rows ✅, 1 explicit gap, 5 partials, 17 igni-only extras) and ships across four surfaces (Tauri desktop + VSCode + JetBrains + browser) from a single React bundle.
+**igni is a multi-agent AI coding assistant built on the Agno orchestration framework — released as v1.0.0 on 2026-07-30 (`git tag v1.0.0`).** Its core architectural differentiator is **CodeIndex** — a pre-built semantic + metadata index over the codebase produced by a separate backend (`ember-server`) and consumed locally as a per-commit **Neo4j graph + vector store** (BE-spawned, no Docker), so search runs on the user's machine and the server never holds a copy of the index. Self-published benchmarks put it at 82% directly-mergeable outputs vs Claude Code's 52% on a 12-case suite, but at ~33% slower wall time and 1/80th the per-run cost (driven by a smaller default model, MiniMax-M2.7, plus the pre-computed index). It holds extensive Claude Code parity (33/61 rows ✅, 1 explicit gap, 5 partials, 17 igni-only extras) and ships across four surfaces (Tauri desktop + VSCode + JetBrains + browser) from a single React bundle.
 
 ---
 
@@ -17,7 +17,7 @@
 | Capability | Evidence |
 |---|---|
 | **Multi-agent team orchestration** | Orchestrator dynamically assembles 5–13 specialist agents from `.md` files using five team modes (Single, Route, Coordinate, Broadcast, Tasks). Unlimited agent nesting depth (vs Claude Code's one-level cap). |
-| **Pre-built semantic CodeIndex** | Per-commit JSONL changeset pipeline from `ember-server` → GCS → local **Neo4j** graph+vector store (BE-spawned, one DB per commit, no Docker) → agent writes raw **Cypher** queries against the data model (`core/code_index/neo4j_client.py:174-206` — `run(cypher, **params)`). Index is the architect/debugger/explorer/reviewer/security/simplifier agents' default first move. |
+| **Pre-built semantic CodeIndex** | Per-commit JSONL changeset pipeline from `ember-server` → GCS → local **Neo4j** graph+vector store (BE-spawned, one DB per commit, no Docker). The agent-facing surface is a single tool in ``core/tools/codeindex/tool.py`` — ``codeindex_cypher(cypher=..., confirm_raw_cypher=True, ...)`` — read-only Cypher over the graph store, with ``confirm_raw_cypher=True`` + ``project_hash`` scoping + ``$param`` allowlist enforced by the toolkit. The ``data-architect`` agent is the curated owner; other agents come through it. Index access is the toolkit's single seam — agents never touch the Neo4j driver directly. |
 | **Four shipping surfaces** | Tauri desktop (signed + notarized), VSCode (webview), JetBrains (JCEF), browser (Vite/React). All four surfaces load the same `clients/web` bundle. The earlier Textual TUI is no longer shipped. |
 | **Built-in specialist agents** | 13 base agents (architect, conversational, debugger, diagnostician, docs, editor, explorer, git, planner, qa, reviewer, security, simplifier) + 6 `.codeindex.md` variants that auto-activate when the repo has a built index. |
 | **Permission system** | 5 modes (`default`/`dontAsk`/`acceptEdits`/`bypassPermissions`/`plan`), 6-step evaluation pipeline, scope-prefixed deny rules that survive bypass mode (a `Bash(rm *)` deny holds even under `bypassPermissions`). |
@@ -105,8 +105,8 @@ Short list — focused on what a stakeholder will actually ask "can igni do X?" 
 
 | Use case | What igni does |
 |---|---|
-| **Long-form refactor on a real codebase** | Mandatory "What already exists" preamble forces reuse-naming first; CodeIndex-first agents locate the right target via Cypher. |
-| **Triage of large repos** | Index-backed `*.codeindex.md` specialists auto-activate; agents write raw Cypher against the local Neo4j DB. |
+| **Long-form refactor on a real codebase** | Mandatory "What already exists" preamble forces reuse-naming first; agents come through the ``data-architect`` agent, which authors read-only ``codeindex_cypher(...)`` to identify the right target. |
+| **Triage of large repos** | The ``data-architect`` agent walks the index via ``codeindex_cypher(...)`` (multi-hop walks, aggregates, ``EXPLAIN``). Other `*.codeindex.md` specialists route their graph questions through it. |
 | **Multi-language codebase** | Producer side covers **58 languages** via tree-sitter. |
 | **IDE work** | Four GUI surfaces — Tauri desktop, VSCode, JetBrains, browser — all load the same React bundle. |
 | **Scheduled / recurring automation** | `/schedule` (cron + one-shot), `/loop`, `/fork`. Claude Code has `/loop`/`/fork`/`CronCreate`; igni's edge is the first-class `/schedule` UI and persistent `scheduler_tasks` table. |
@@ -408,7 +408,7 @@ The **honest caveats** for a stakeholder weighing it:
 
 1. Its quality claims rest on a self-published benchmark with no third-party reproduction.
 2. The cost ratio is partly a function of running a smaller default model, not just the architecture.
-3. It's still beta.
+3. v1.0.0 reflects surface completeness, not yet battle-tested stability — the 2026-06-25 / 2026-06-26 shipping spree is "feature breadth before stabilizability" by any reasonable read.
 4. One explicit gap and five partials exist vs Claude Code.
 5. Self-hosting requires running two repos worth of infrastructure plus a GCS bucket.
 6. No head-to-head benchmark against Cursor/Aider/Cline/Continue/Cody exists, so comparison against those is structural, not empirical.
