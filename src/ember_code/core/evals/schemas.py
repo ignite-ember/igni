@@ -49,6 +49,46 @@ class ToolArgAssertion(BaseModel):
     args_must_contain: dict[str, Any] = Field(default_factory=dict)
 
 
+class CypherAssertion(BaseModel):
+    """Cypher-specific assertion for the ``data-architect`` eval suite.
+
+    Three check kinds:
+
+    * ``guardrail_accepted`` — the captured ``cypher`` arg passes
+      :func:`assert_read_only_cypher` (the read-only guard).
+    * ``schema_valid`` — the Cypher references only labels and
+      properties documented in
+      ``core/code_index/neo4j_schema.GRAPH_SCHEMA_DESCRIPTION``.
+      Implemented as a denylist of known-fake labels/properties
+      plus a parse for the MATCH patterns; bypasses the heavier
+      grammar dependency for CI speed.
+    * ``result_shape_matches`` — the mocked driver was invoked
+      with the expected parameter keys, so the question
+      actually drove a query (not a no-op).
+
+    The captured cypher is sourced from the most recent
+    :class:`ToolTraceEntry` with ``name == "codeindex_cypher"`` —
+    one captured Cypher per case is enough for the assertion
+    shape we want to verify.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    kind: str = "guardrail_accepted"  # guardrail_accepted | schema_valid | result_shape_matches
+    # Optional Cypher-shape predicate — e.g. ``"MATCH (i:Item"``
+    # to confirm the agent picks the Item node, not a hallucinated
+    # one. Pinning these strings in the eval case gives a stronger
+    # signal than just "the cypher parsed" — the LLM has to hit
+    # the right node labels and relationship types.
+    cypher_contains: list[str] = Field(default_factory=list)
+    # Param keys that must be in the captured CypherInput.
+    params_must_contain: list[str] = Field(default_factory=list)
+    # Detail message rendered into CheckResult.detail on failure
+    # so the YAML case can be debugged from the eval report
+    # without re-running.
+    detail_on_fail: str = ""
+
+
 class ToolTraceEntry(BaseModel):
     """One tool invocation captured during an eval run.
 
@@ -164,6 +204,11 @@ class EvalCase(BaseModel):
     # (e.g. ``spawn_team`` with ``mode: coordinate`` rather than
     # ``broadcast``).
     tool_arg_assertions: list[ToolArgAssertion] | None = None
+    # Cypher-specific assertions for the data-architect eval suite.
+    # Each entry validates a captured ``codeindex_cypher`` call
+    # against one of the three CypherAssertion kinds. The
+    # runner applies these via :class:`CypherAssertionDriver`.
+    cypher_assertions: list[CypherAssertion] | None = None
 
 
 class EvalSuite(BaseModel):
@@ -224,6 +269,12 @@ class CaseResult(BaseModel):
     file_results: list[FileCheckResult] = Field(default_factory=list)
     tool_arg_passed: bool | None = None
     tool_arg_detail: str = ""
+    # Cypher-specific assertion outcome (data-architect eval). When
+    # the case carried ``cypher_assertions``, the runner applies
+    # them all and folds the per-kind pass/fail into these fields.
+    # ``None`` means the case had no cypher_assertions (skipped).
+    cypher_passed: bool | None = None
+    cypher_detail: str = ""
 
     error: str | None = None
     elapsed: float = 0.0
@@ -245,6 +296,7 @@ class CaseResult(BaseModel):
             self.unexpected_passed,
             self.accuracy_passed,
             self.tool_arg_passed,
+            self.cypher_passed,
         ]
         for c in checks:
             if c is False:

@@ -1,0 +1,174 @@
+agent: data-architect
+description: |
+  Tests the data-architect agent's ability to author
+  read-only Cypher against the CodeIndex.
+
+  Four question categories × three cases each. The setup
+  hook (evals.data_architect_cypher.setup) mocks the
+  Neo4jClient so the agent's cypher_tool calls are answered
+  with canned rows; the runner inspects the tool trace
+  and grades the emitted cypher through the read-only
+  guardrail, the schema allowlist, and the result-shape
+  parameters.
+
+  Categories:
+  1. audit-by-shape — quality/security/vulnerability filters
+  2. multi-hop — reference graph walks
+  3. aggregates — count / sum / collect
+  4. path-structural — folder fanout, kind=file/entity filters
+
+  Each case carries three cypher_assertions:
+  guardrail_accepted (the cypher parses), schema_valid
+  (param names on the allowlist), and result_shape_matches
+  (params carry the keys the expected result shape needs).
+
+setup_module: evals.data_architect_cypher.setup
+
+fixtures:
+  - source: codeindex_repo
+    target: .
+
+cases:
+
+# ── 1. audit-by-shape ─────────────────────────────────────────────
+- name: cypher_finds_sql_injection_files
+  case_timeout: 240
+  input: |
+    Find every file or function in this repo flagged for
+    SQL-injection risk. Use a cypher query — show me the
+    paths and the entities.
+  cypher_assertions:
+    - kind: guardrail_accepted
+      cypher_contains: ["MATCH", "Item", "project_hash: $proj"]
+    - kind: schema_valid
+    - kind: result_shape_matches
+
+- name: cypher_finds_refactor_candidates
+  case_timeout: 240
+  input: |
+    List the top refactor candidates — files flagged
+    needs_refactoring=true, ordered by complexity.
+  cypher_assertions:
+    - kind: guardrail_accepted
+      cypher_contains: ["needs_refactoring", "MATCH"]
+    - kind: schema_valid
+    - kind: result_shape_matches
+
+- name: cypher_finds_major_security_files
+  case_timeout: 240
+  input: |
+    Audit: which files have major security issues that I
+    should look at first? I want paths and the vulnerability
+    labels.
+  cypher_assertions:
+    - kind: guardrail_accepted
+      cypher_contains: ["MATCH", "Item", "security"]
+    - kind: schema_valid
+    - kind: result_shape_matches
+
+# ── 2. multi-hop ────────────────────────────────────────────────
+- name: cypher_blast_radius_of_run_raw
+  case_timeout: 240
+  input: |
+    I'm thinking about changing the signature of ``run_raw``
+    in src/db/queries.py. Use a cypher walk to estimate
+    blast radius — list every caller.
+  cypher_assertions:
+    - kind: guardrail_accepted
+      cypher_contains: ["CALLS", "Item"]
+    - kind: schema_valid
+    - kind: result_shape_matches
+
+- name: cypher_callers_of_callers
+  case_timeout: 240
+  input: |
+    For the function ``authenticate`` in src/auth/login.py,
+    show me the callers-of-callers chain using a 2-hop
+    cypher walk.
+  cypher_assertions:
+    - kind: guardrail_accepted
+      cypher_contains: ["CALLS*"]
+    - kind: schema_valid
+    - kind: result_shape_matches
+
+- name: cypher_what_calls_auth_middleware
+  case_timeout: 240
+  input: |
+    List every entity in the codebase that calls the
+    authentication middleware. cypher walk please.
+  cypher_assertions:
+    - kind: guardrail_accepted
+      cypher_contains: ["MATCH", "Item", "CALLS"]
+    - kind: schema_valid
+    - kind: result_shape_matches
+
+# ── 3. aggregates ────────────────────────────────────────────────
+- name: cypher_count_files_per_quality_band
+  case_timeout: 240
+  input: |
+    How many files are there per quality band? I want a
+    per-band count — write a cypher with ``count()`` and
+    ``collect()`` so the result is a grouped shape.
+  cypher_assertions:
+    - kind: guardrail_accepted
+      cypher_contains: ["count("]
+    - kind: schema_valid
+    - kind: result_shape_matches
+
+- name: cypher_count_high_complexity_functions
+  case_timeout: 240
+  input: |
+    How many functions in this codebase have high
+    complexity? Use a cypher aggregate.
+  cypher_assertions:
+    - kind: guardrail_accepted
+      cypher_contains: ["MATCH", "count("]
+    - kind: schema_valid
+    - kind: result_shape_matches
+
+- name: cypher_domain_distribution
+  case_timeout: 240
+  input: |
+    What's the distribution of files across domains? Use
+    a cypher ``count()`` grouped by ``domain`` so the result
+    is a per-domain count.
+  cypher_assertions:
+    - kind: guardrail_accepted
+      cypher_contains: ["domain", "count("]
+    - kind: schema_valid
+    - kind: result_shape_matches
+
+# ── 4. path-structural ──────────────────────────────────────────
+- name: cypher_folders_in_services
+  case_timeout: 240
+  input: |
+    List every folder under the services/ directory. Use
+    cypher — type=folder, path_prefix.
+  cypher_assertions:
+    - kind: guardrail_accepted
+      cypher_contains: ["type: 'folder'", "MATCH"]
+    - kind: schema_valid
+    - kind: result_shape_matches
+
+- name: cypher_class_definitions_in_auth
+  case_timeout: 240
+  input: |
+    Find every class definition in the auth module. Use
+    cypher with entity_type='class_definition' and
+    path_prefix on src/auth/.
+  cypher_assertions:
+    - kind: guardrail_accepted
+      cypher_contains: ["class_definition"]
+    - kind: schema_valid
+    - kind: result_shape_matches
+
+- name: cypher_test_files_in_db
+  case_timeout: 240
+  input: |
+    Show me the test files under src/db. Use cypher with
+    path_prefix and a type filter.
+  cypher_assertions:
+    - kind: guardrail_accepted
+      cypher_contains: ["test", "MATCH"]
+    - kind: schema_valid
+    - kind: result_shape_matches

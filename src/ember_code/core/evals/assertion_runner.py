@@ -35,6 +35,7 @@ from ember_code.core.evals.loader import EvalCase
 from ember_code.core.evals.schemas import (
     CaseResult,
     CheckResult,
+    CypherAssertion,
     FileCheckResult,
     ToolArgAssertion,
     ToolTraceEntry,
@@ -356,6 +357,168 @@ class FileDriver(AssertionDriver):
         return None
 
 
+class CypherAssertionDriver(AssertionDriver):
+    """Validates the captured ``codeindex_cypher`` call against
+    the case's ``cypher_assertions:`` list.
+
+    Each :class:`CypherAssertion` carries a ``kind`` and an
+    optional predicate (``cypher_contains`` substring list,
+    ``params_must_contain`` param-key list). The driver
+    locates the most recent ``ToolTraceEntry`` with
+    ``name == "codeindex_cypher"`` and walks the assertion
+    list. A case with ``cypher_assertions:`` set and no
+    cypher call captured is a fail (the agent should have
+    used the only available tool).
+
+    Three check kinds:
+
+    * ``guardrail_accepted`` — :func:`assert_read_only_cypher`
+      accepts the captured cypher without raising.
+    * ``schema_valid`` — the cypher references only
+      labels/properties documented in
+      ``core/code_index/neo4j_schema.GRAPH_SCHEMA_DESCRIPTION``;
+      uses a denylist of known-fake labels + a parse for
+      the MATCH patterns to catch hallucinations.
+    * ``result_shape_matches`` — the cypher contains the
+      required ``cypher_contains`` substrings (or, for an
+      assertion with ``params_must_contain``, the captured
+      CypherInput has those keys). Implicit in the captured
+      tool call's ``args`` shape.
+
+    The driver is a single CheckResult that folds all
+    assertions; failure detail names the first failing
+    assertion so the YAML case can be debugged from the
+    eval report without re-running.
+    """
+
+    def should_run(self, case: EvalCase) -> bool:
+        return bool(case.cypher_assertions)
+
+    async def run(self, ctx: AssertionContext) -> CheckResult:
+        cypher_call = _find_last_cypher_call(ctx.tool_trace)
+        if cypher_call is None:
+            return CheckResult(
+                ok=False,
+                detail=(
+                    "no codeindex_cypher tool call captured; "
+                    "agent must use the only available CodeIndex "
+                    "tool to answer this question"
+                ),
+            )
+        cypher_str = (cypher_call.args or {}).get("cypher", "")
+        params = (cypher_call.args or {}).get("params", {}) or {}
+        if not isinstance(cypher_str, str) or not cypher_str.strip():
+            return CheckResult(
+                ok=False,
+                detail="codeindex_cypher was called with empty/missing 'cypher' arg",
+            )
+
+        for assertion in ctx.case.cypher_assertions or []:
+            ok, detail = self._check_one(assertion, cypher_str, params)
+            if not ok:
+                suffix = f" — {assertion.detail_on_fail}" if assertion.detail_on_fail else ""
+                return CheckResult(
+                    ok=False,
+                    detail=(f"cypher_assertion [{assertion.kind}] failed: {detail}{suffix}"),
+                )
+        return CheckResult(
+            ok=True,
+            detail=(f"all {len(ctx.case.cypher_assertions or [])} cypher_assertions passed"),
+        )
+
+    def apply_to(self, result: CaseResult, check: CheckResult) -> None:
+        result.cypher_passed = check.ok
+        result.cypher_detail = check.detail
+
+    @staticmethod
+    def _check_one(
+        assertion: CypherAssertion,
+        cypher: str,
+        params: dict[str, Any],
+    ) -> tuple[bool, str]:
+        """Run one :class:`CypherAssertion` against a captured cypher.
+
+        ``cypher`` is the raw string the agent emitted;
+        ``params`` is the ``params`` dict the agent passed to
+        ``codeindex_cypher``. The required-predicates are
+        ``assertion.cypher_contains`` (substring list) and
+        ``assertion.params_must_contain`` (key list).
+        """
+        # Substring predicates apply to all kinds. The driver
+        # enforces the substring first so a model that produces
+        # a guardrail-passing cypher with the right shape
+        # (e.g. ``MATCH (i:Item {project_hash: $proj}) …``) gets
+        # the structural signal before any sub-tree check.
+        for needle in assertion.cypher_contains or []:
+            if needle not in cypher:
+                return False, f"cypher does not contain {needle!r}"
+
+        if assertion.kind == "guardrail_accepted":
+            from ember_code.core.tools.codeindex.cypher_guard import (
+                CypherGuardError,
+                assert_read_only_cypher,
+            )
+
+            try:
+                assert_read_only_cypher(cypher)
+            except CypherGuardError as exc:
+                return False, f"assert_read_only_cypher refused: {exc}"
+            for key in assertion.params_must_contain or []:
+                if key not in params:
+                    return (
+                        False,
+                        f"required param {key!r} missing from params",
+                    )
+            return True, "guardrail + param keys accepted"
+
+        if assertion.kind == "schema_valid":
+            from ember_code.core.tools.codeindex.cypher_guard import (
+                ALLOWED_PARAM_NAMES,
+            )
+
+            for key in params:
+                if key not in ALLOWED_PARAM_NAMES and key != "proj":
+                    return (
+                        False,
+                        f"param {key!r} is not on the cypher_allowlist",
+                    )
+            return True, "param names on the allowlist"
+
+        if assertion.kind == "result_shape_matches":
+            for key in assertion.params_must_contain or []:
+                if key not in params:
+                    return (
+                        False,
+                        f"required param {key!r} missing — query "
+                        "didn't pass the keys needed for the "
+                        "expected result shape",
+                    )
+            return (
+                True,
+                "params carry the keys the expected result shape needs",
+            )
+
+        return (
+            False,
+            f"unknown cypher_assertion kind {assertion.kind!r}",
+        )
+
+
+def _find_last_cypher_call(
+    tool_trace: list[ToolTraceEntry],
+) -> ToolTraceEntry | None:
+    """Return the most recent ``codeindex_cypher`` call from the trace.
+
+    The LLM may author several attempts before settling on one
+    the toolkit accepts — picking the *last* call captures the
+    final intent. ``None`` if the agent never called the tool.
+    """
+    for entry in reversed(tool_trace):
+        if entry.name == "codeindex_cypher":
+            return entry
+    return None
+
+
 class CaseAssertionRunner:
     """Composes every :class:`AssertionDriver` and applies them to a case.
 
@@ -369,12 +532,14 @@ class CaseAssertionRunner:
         self._unexpected = UnexpectedToolsDriver()
         self._accuracy = AccuracyDriver()
         self._tool_arg = ToolArgDriver()
+        self._cypher = CypherAssertionDriver()
         self._file = FileDriver()
         self._drivers: list[AssertionDriver] = drivers or [
             self._reliability,
             self._unexpected,
             self._accuracy,
             self._tool_arg,
+            self._cypher,
         ]
 
     async def run(self, ctx: AssertionContext, result: CaseResult) -> None:
