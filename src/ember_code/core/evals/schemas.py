@@ -50,7 +50,7 @@ class ToolArgAssertion(BaseModel):
 
 
 class CypherAssertion(BaseModel):
-    """Cypher-specific assertion for the ``codeindex-architect`` eval suite.
+    """Cypher-specific assertion for the ``data-architect`` eval suite.
 
     Three check kinds:
 
@@ -204,7 +204,7 @@ class EvalCase(BaseModel):
     # (e.g. ``spawn_team`` with ``mode: coordinate`` rather than
     # ``broadcast``).
     tool_arg_assertions: list[ToolArgAssertion] | None = None
-    # Cypher-specific assertions for the codeindex-architect eval suite.
+    # Cypher-specific assertions for the data-architect eval suite.
     # Each entry validates a captured ``codeindex_cypher`` call
     # against one of the three CypherAssertion kinds. The
     # runner applies these via :class:`CypherAssertionDriver`.

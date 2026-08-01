@@ -1,4 +1,4 @@
-"""Tests for the ``codeindex-architect`` agent that owns Cypher access.
+"""Tests for the ``data-architect`` agent that owns Cypher access.
 
 Three contracts:
 
@@ -25,13 +25,13 @@ from ember_code.core.code_index.index import CodeIndex
 from ember_code.core.tools.codeindex.tool import CodeIndexTools
 
 AGENTS_DIR = Path(__file__).resolve().parent.parent / "agents"
-DATA_ARCH = AGENTS_DIR / "codeindex-architect.md"
+DATA_ARCH = AGENTS_DIR / "data-architect.codeindex.md"
 
 
 class TestDataArchitectParsing:
     def test_agent_file_exists(self):
         assert DATA_ARCH.exists(), (
-            "codeindex-architect.md missing — agents using codeindex_cypher "
+            "data-architect.codeindex.md missing — agents using codeindex_cypher "
             "have no curated counterpart to lean on"
         )
 
@@ -39,7 +39,7 @@ class TestDataArchitectParsing:
         md = AgentMarkdownFile(DATA_ARCH)
         definition: AgentDefinition = md.parse()
         assert isinstance(definition, AgentDefinition)
-        assert definition.name == "codeindex-architect"
+        assert definition.name == "data-architect"
 
     def test_agent_metadata_pins_keys(self):
         """Metadata fields are pinned so a future tag rewrite
@@ -73,7 +73,7 @@ class TestDataArchitectParsing:
             "CodeIndex",  # toolkit name in body
         ):
             assert required in body, (
-                f"codeindex-architect body missing required safety / capability keyword: {required!r}"
+                f"data-architect body missing required safety / capability keyword: {required!r}"
             )
 
         # Defence against typed-tool regression: the body must
@@ -88,7 +88,7 @@ class TestDataArchitectParsing:
             "call `codeindex_tree(id=",
         ):
             assert banned not in body, (
-                f"codeindex-architect body must not steer the agent to a removed tool — found {banned!r}"
+                f"data-architect body must not steer the agent to a removed tool — found {banned!r}"
             )
 
         # Read-only contract keywords. The body of the prompt
@@ -110,7 +110,7 @@ class TestDataArchitectParsing:
             "CALL dbms.* / CALL db.*",
         ):
             assert write_token in body, (
-                f"codeindex-architect body's forbidden-tokens table is missing entry {write_token!r}"
+                f"data-architect body's forbidden-tokens table is missing entry {write_token!r}"
             )
 
 

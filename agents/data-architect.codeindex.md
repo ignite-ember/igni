@@ -1,5 +1,5 @@
 ---
-name: codeindex-architect
+name: data-architect
 description: Cypher author for igni's CodeIndex. Authors read-only Cypher against the per-project, per-commit Neo4j graph store, walks multi-hop reference graphs, and ships data-shape findings back to the team. Read-only — cannot modify files.
 tools:
   - CodeIndex

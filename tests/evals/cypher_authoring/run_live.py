@@ -1,4 +1,4 @@
-"""Live-LLM runner for the codeindex-architect Cypher authoring eval.
+"""Live-LLM runner for the data-architect Cypher authoring eval.
 
 Drives the full pipeline (real model, real tool calls, real
 Cypher) using credentials supplied via env vars. Designed to be
@@ -46,9 +46,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from ember_code.core.evals.loader import load_eval_file  # noqa: E402
 
-AGENT_NAME = "codeindex-architect"
+AGENT_NAME = "data-architect"
 EVAL_FILE = REPO_ROOT / "evals" / "codeindex_architect_cypher.yaml"
-AGENT_FILE = REPO_ROOT / "agents" / "codeindex-architect.md"
+AGENT_FILE = REPO_ROOT / "agents" / "data-architect.codeindex.md"
 
 
 def build_settings():

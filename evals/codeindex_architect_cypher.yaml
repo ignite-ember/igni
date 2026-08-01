@@ -1,6 +1,6 @@
-agent: codeindex-architect
+agent: data-architect
 description: |
-  Tests the codeindex-architect agent's ability to author
+  Tests the data-architect agent's ability to author
   read-only Cypher against the CodeIndex.
 
   Four question categories × three cases each. The setup

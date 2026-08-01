@@ -1,4 +1,4 @@
-"""Pytest wrapper for the codeindex-architect Cypher authoring eval.
+"""Pytest wrapper for the data-architect Cypher authoring eval.
 
 Drives :class:`SuiteRunner` against the YAML eval file
 (``evals/codeindex_architect_cypher.yaml``) and asserts the captured
@@ -199,7 +199,7 @@ def test_all_three_assertions_pass_together():
 def test_yaml_loads_with_twelve_cases():
     suite = load_eval_file(EVAL_FILE)
     assert suite is not None
-    assert suite.agent == "codeindex-architect"
+    assert suite.agent == "data-architect"
     assert len(suite.cases) == 12
     for case in suite.cases:
         assert case.cypher_assertions, f"case {case.name!r} has no cypher_assertions"

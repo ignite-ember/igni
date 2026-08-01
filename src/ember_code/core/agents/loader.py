@@ -138,22 +138,21 @@ class AgentDefinitionLoader:
         """Filter out the wrong CodeIndex variant per
         ``self._codeindex_available``.
 
-        Two families of CodeIndex-gated agents:
+        Convention: every CodeIndex-aware agent ships as a
+        variant pair — ``<name>.md`` (plain, no-CodeIndex) +
+        sibling ``<name>.codeindex.md`` (with CodeIndex). The
+        loader picks the right one based on
+        ``_codeindex_available``:
 
-        * **Variant pair** (legacy): ``<name>.md`` + sibling
-          ``<name>.codeindex.md`` in the same directory. The
-          ``.codeindex.md`` is loaded when CodeIndex is
-          available; the plain ``.md`` is loaded when it isn't.
-        * **Single-file CodeIndex-gated** (e.g.
-          ``codeindex-architect.md``): the file name itself
-          indicates the agent depends on CodeIndex. Skip it
-          entirely when CodeIndex is unavailable — there is no
-          plain counterpart to fall back to.
+        * If CodeIndex is available, prefer the ``.codeindex.md``
+          variant. The plain ``<name>.md`` is skipped when the
+          sibling exists.
+        * If CodeIndex is unavailable, prefer the plain
+          ``<name>.md`` and skip the ``.codeindex.md`` variant.
 
-        Together these cover both shapes: dual-variant (most
-        existing agents) and single-file CodeIndex-gated (the
-        data-architect / future agents named with a
-        ``codeindex-`` or ``codeindex_`` prefix).
+        If only one of the pair exists (older draft state), it
+        is always loaded — whichever variant is present, with
+        the agent's own no-CodeIndex fallback as a follow-up.
         """
         use_codeindex = self._codeindex_available
         codeindex_stems = {
@@ -162,24 +161,9 @@ class AgentDefinitionLoader:
         picked: list[Path] = []
         for md_file in files:
             is_codeindex_variant = md_file.name.endswith(".codeindex.md")
-            # Single-file CodeIndex-gated agent: filename
-            # itself indicates CodeIndex dependency. Skip
-            # when the index isn't reachable. The ``codeindex-``
-            # dash form is the project's naming convention
-            # for the architect / data-architect family; the
-            # ``codeindex_`` underscore form is reserved for
-            # future spec files.
-            is_codeindex_gated = md_file.stem.startswith(
-                ("codeindex-", "codeindex_")
-            )
             if is_codeindex_variant and not use_codeindex:
                 continue
             if not is_codeindex_variant and use_codeindex and md_file.stem in codeindex_stems:
-                continue
-            if is_codeindex_gated and not use_codeindex:
-                # Single-file CodeIndex-gated agent: no plain
-                # counterpart to fall back to, so the entire
-                # agent is gated on the index being reachable.
                 continue
             picked.append(md_file)
         return picked

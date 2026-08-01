@@ -338,16 +338,21 @@ class TestSpawnAgentForceIsolation:
 
 class TestPickVariants:
     """``AgentDefinitionLoader._pick_variants`` filters agents
-    based on ``codeindex_available``. Two shapes:
+    based on ``codeindex_available``.
 
-    * **Variant pair** (legacy): ``<name>.md`` + sibling
-      ``<name>.codeindex.md``. The .codeindex.md is loaded
-      when the index is reachable; the plain .md when it isn't.
-    * **Single-file CodeIndex-gated** (e.g. ``codeindex-architect.md``):
-      the file name itself indicates CodeIndex dependency. Skip
-      entirely when the index is unavailable — there is no plain
-      counterpart to fall back to.
+    Convention: every CodeIndex-aware agent ships as a
+    variant pair — ``<name>.md`` (plain, no-CodeIndex) +
+    sibling ``<name>.codeindex.md`` (with CodeIndex). The
+    loader picks the right one based on
+    ``_codeindex_available``.
+
+    Critical invariant: when only the ``.codeindex.md``
+    variant exists (no plain sibling) and the index is
+    unavailable, the agent is gated out entirely — there is
+    no fallback. The user's directive: "if CodeIndex is not
+    available, this agent should not be loaded at all."
     """
+
 
     def _loader(self, codeindex_available, files):
         """Build a minimal loader with the given available flag and
@@ -382,38 +387,30 @@ class TestPickVariants:
         assert "explorer.md" not in picked
 
     def test_codeindex_gated_agent_skipped_when_unavailable(self, tmp_path):
-        """Single-file CodeIndex-gated: ``codeindex-architect.md``
-        is the entire agent — when CodeIndex is unavailable, the
-        agent must not be loaded at all (no tool fallbacks).
+        """Only the ``.codeindex.md`` exists (no plain sibling).
+        When CodeIndex is unavailable, the agent must NOT be
+        loaded — the user's directive: "if CodeIndex is not
+        available, this agent should not be loaded at all."
         """
-        gated = tmp_path / "codeindex-architect.md"
+        gated = tmp_path / "data-architect.codeindex.md"
         plain = tmp_path / "explorer.md"
         gated.write_text("gated")
         plain.write_text("plain")
         picked = [f.name for f in self._loader(False, [gated, plain])]
-        assert "codeindex-architect.md" not in picked, (
+        assert "data-architect.codeindex.md" not in picked, (
             "data-architect must not load when CodeIndex is unavailable"
         )
         assert "explorer.md" in picked
 
     def test_codeindex_gated_agent_loaded_when_available(self, tmp_path):
-        gated = tmp_path / "codeindex-architect.md"
+        """Only the ``.codeindex.md`` exists. When CodeIndex
+        IS available, the agent is loaded (the data-architect
+        is the canonical example here).
+        """
+        gated = tmp_path / "data-architect.codeindex.md"
         plain = tmp_path / "explorer.md"
         gated.write_text("gated")
         plain.write_text("plain")
         picked = [f.name for f in self._loader(True, [gated, plain])]
-        assert "codeindex-architect.md" in picked
+        assert "data-architect.codeindex.md" in picked
         assert "explorer.md" in picked
-
-    def test_underscore_codeindex_prefix_also_gated(self, tmp_path):
-        """``codeindex_<name>.md`` (underscore form) is also gated —
-        reserved for future spec files. Same behavior as the dash
-        form."""
-        gated = tmp_path / "codeindex_querybuilder.md"
-        plain = tmp_path / "explorer.md"
-        gated.write_text("gated")
-        plain.write_text("plain")
-        picked_unavail = [f.name for f in self._loader(False, [gated, plain])]
-        assert "codeindex_querybuilder.md" not in picked_unavail
-        picked_avail = [f.name for f in self._loader(True, [gated, plain])]
-        assert "codeindex_querybuilder.md" in picked_avail

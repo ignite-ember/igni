@@ -1,6 +1,6 @@
 """Tests for the ``codeindex_cypher`` read-only Cypher escape hatch.
 
-The tool exists for specialist agents (the ``codeindex-architect``
+The tool exists for specialist agents (the ``data-architect``
 agent, primarily) to author ad-hoc Cypher that the typed
 ``codeindex_query`` surface can't express. The contract is:
 
