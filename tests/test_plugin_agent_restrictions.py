@@ -335,3 +335,85 @@ class TestSpawnAgentForceIsolation:
         result = await tool.spawn_agent("do work", "user-agent")
         # No worktree footer in the response — non-isolated spawn.
         assert "Worktree" not in result
+
+class TestPickVariants:
+    """``AgentDefinitionLoader._pick_variants`` filters agents
+    based on ``codeindex_available``. Two shapes:
+
+    * **Variant pair** (legacy): ``<name>.md`` + sibling
+      ``<name>.codeindex.md``. The .codeindex.md is loaded
+      when the index is reachable; the plain .md when it isn't.
+    * **Single-file CodeIndex-gated** (e.g. ``codeindex-architect.md``):
+      the file name itself indicates CodeIndex dependency. Skip
+      entirely when the index is unavailable — there is no plain
+      counterpart to fall back to.
+    """
+
+    def _loader(self, codeindex_available, files):
+        """Build a minimal loader with the given available flag and
+        file set. ``_pick_variants`` is the only API we exercise."""
+        from unittest.mock import MagicMock
+
+        from ember_code.core.agents.loader import AgentDefinitionLoader
+
+        return AgentDefinitionLoader(
+            settings=MagicMock(),
+            project_dir=MagicMock(),
+            codeindex_available=codeindex_available,
+        )._pick_variants(files)
+
+    def test_codeindex_variant_skipped_when_unavailable(self, tmp_path):
+        """The legacy variant pair: .codeindex.md skipped when False."""
+        plain = tmp_path / "explorer.md"
+        codeidx = tmp_path / "explorer.codeindex.md"
+        plain.write_text("plain")
+        codeidx.write_text("codeindex")
+        picked = [f.name for f in self._loader(False, [plain, codeidx])]
+        assert "explorer.md" in picked
+        assert "explorer.codeindex.md" not in picked
+
+    def test_codeindex_variant_loaded_when_available(self, tmp_path):
+        plain = tmp_path / "explorer.md"
+        codeidx = tmp_path / "explorer.codeindex.md"
+        plain.write_text("plain")
+        codeidx.write_text("codeindex")
+        picked = [f.name for f in self._loader(True, [plain, codeidx])]
+        assert "explorer.codeindex.md" in picked
+        assert "explorer.md" not in picked
+
+    def test_codeindex_gated_agent_skipped_when_unavailable(self, tmp_path):
+        """Single-file CodeIndex-gated: ``codeindex-architect.md``
+        is the entire agent — when CodeIndex is unavailable, the
+        agent must not be loaded at all (no tool fallbacks).
+        """
+        gated = tmp_path / "codeindex-architect.md"
+        plain = tmp_path / "explorer.md"
+        gated.write_text("gated")
+        plain.write_text("plain")
+        picked = [f.name for f in self._loader(False, [gated, plain])]
+        assert "codeindex-architect.md" not in picked, (
+            "data-architect must not load when CodeIndex is unavailable"
+        )
+        assert "explorer.md" in picked
+
+    def test_codeindex_gated_agent_loaded_when_available(self, tmp_path):
+        gated = tmp_path / "codeindex-architect.md"
+        plain = tmp_path / "explorer.md"
+        gated.write_text("gated")
+        plain.write_text("plain")
+        picked = [f.name for f in self._loader(True, [gated, plain])]
+        assert "codeindex-architect.md" in picked
+        assert "explorer.md" in picked
+
+    def test_underscore_codeindex_prefix_also_gated(self, tmp_path):
+        """``codeindex_<name>.md`` (underscore form) is also gated —
+        reserved for future spec files. Same behavior as the dash
+        form."""
+        gated = tmp_path / "codeindex_querybuilder.md"
+        plain = tmp_path / "explorer.md"
+        gated.write_text("gated")
+        plain.write_text("plain")
+        picked_unavail = [f.name for f in self._loader(False, [gated, plain])]
+        assert "codeindex_querybuilder.md" not in picked_unavail
+        picked_avail = [f.name for f in self._loader(True, [gated, plain])]
+        assert "codeindex_querybuilder.md" in picked_avail

@@ -138,12 +138,22 @@ class AgentDefinitionLoader:
         """Filter out the wrong CodeIndex variant per
         ``self._codeindex_available``.
 
-        * If CodeIndex is available, skip any plain ``*.md``
-          whose sibling ``*.codeindex.md`` is also present in
-          the same directory.
-        * If CodeIndex is unavailable, skip every
-          ``*.codeindex.md`` file (loading it would tell the
-          agent to call a tool it doesn't have).
+        Two families of CodeIndex-gated agents:
+
+        * **Variant pair** (legacy): ``<name>.md`` + sibling
+          ``<name>.codeindex.md`` in the same directory. The
+          ``.codeindex.md`` is loaded when CodeIndex is
+          available; the plain ``.md`` is loaded when it isn't.
+        * **Single-file CodeIndex-gated** (e.g.
+          ``codeindex-architect.md``): the file name itself
+          indicates the agent depends on CodeIndex. Skip it
+          entirely when CodeIndex is unavailable — there is no
+          plain counterpart to fall back to.
+
+        Together these cover both shapes: dual-variant (most
+        existing agents) and single-file CodeIndex-gated (the
+        data-architect / future agents named with a
+        ``codeindex-`` or ``codeindex_`` prefix).
         """
         use_codeindex = self._codeindex_available
         codeindex_stems = {
@@ -152,9 +162,24 @@ class AgentDefinitionLoader:
         picked: list[Path] = []
         for md_file in files:
             is_codeindex_variant = md_file.name.endswith(".codeindex.md")
+            # Single-file CodeIndex-gated agent: filename
+            # itself indicates CodeIndex dependency. Skip
+            # when the index isn't reachable. The ``codeindex-``
+            # dash form is the project's naming convention
+            # for the architect / data-architect family; the
+            # ``codeindex_`` underscore form is reserved for
+            # future spec files.
+            is_codeindex_gated = md_file.stem.startswith(
+                ("codeindex-", "codeindex_")
+            )
             if is_codeindex_variant and not use_codeindex:
                 continue
             if not is_codeindex_variant and use_codeindex and md_file.stem in codeindex_stems:
+                continue
+            if is_codeindex_gated and not use_codeindex:
+                # Single-file CodeIndex-gated agent: no plain
+                # counterpart to fall back to, so the entire
+                # agent is gated on the index being reachable.
                 continue
             picked.append(md_file)
         return picked
