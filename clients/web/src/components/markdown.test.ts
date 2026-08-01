@@ -70,4 +70,46 @@ describe("normalizeAssistantMarkdown", () => {
     const out = normalizeAssistantMarkdown(before);
     expect(out).toContain("|---|---|\n");
   });
+
+  it("splits a horizontal rule glued to a heading on the same line", () => {
+    // Common case: the model emits `---` as a section divider and
+    // forgets to put it on its own line, so it gets concatenated to
+    // the next heading. Without the fix the whole line renders as
+    // literal text "---## …".
+    const before = "---## The Training Recipe: SSP";
+    expect(normalizeAssistantMarkdown(before)).toBe(
+      "---\n\n## The Training Recipe: SSP",
+    );
+  });
+
+  it("splits a horizontal rule glued to plain paragraph text", () => {
+    // Less common but the same fix: `---` followed by text on the
+    // same line should still render the HR.
+    const before = "intro paragraph\n---Then this happened.";
+    expect(normalizeAssistantMarkdown(before)).toBe(
+      "intro paragraph\n\n---\n\nThen this happened.",
+    );
+  });
+
+  it("leaves a bare horizontal rule alone", () => {
+    expect(normalizeAssistantMarkdown("---")).toBe("---");
+  });
+
+  it("leaves a horizontal rule with trailing whitespace alone", () => {
+    // Both already parse as <hr> in CommonMark — don't touch.
+    expect(normalizeAssistantMarkdown("--- ")).toBe("--- ");
+    expect(normalizeAssistantMarkdown("---   ")).toBe("---   ");
+  });
+
+  it("leaves a 4+ dash line alone (still a valid HR)", () => {
+    expect(normalizeAssistantMarkdown("----")).toBe("----");
+    expect(normalizeAssistantMarkdown("-----")).toBe("-----");
+  });
+
+  it("splits multiple glued HRs in one message", () => {
+    const before = "---## First\n\nbody\n---## Second";
+    expect(normalizeAssistantMarkdown(before)).toBe(
+      "---\n\n## First\n\nbody\n\n---\n\n## Second",
+    );
+  });
 });

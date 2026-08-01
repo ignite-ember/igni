@@ -335,6 +335,12 @@ class WebSearchSpec(ToolSpec):
     Overrides :meth:`build` to raise a helpful ``ImportError`` when the
     extra isn't installed — replaces the inline try/except import at
     the old ``_make_web_search`` call site (Rule 2 violation).
+
+    Forces ``backend="auto"`` so ``web_search`` routes through
+    ``ddgs.text(backend="auto")`` instead of the broken
+    ``ddgs.text(backend="duckduckgo")`` path (which raises
+    ``DDGSException("No results found.")`` in ddgs 9.x regardless of
+    query). ``search_news`` is unaffected — it was already working.
     """
 
     name: str = "WebSearch"
@@ -352,7 +358,7 @@ class WebSearchSpec(ToolSpec):
             raise ImportError(
                 "Web search requires duckduckgo-search. Install: pip install ember-code[web]"
             )
-        kwargs: dict[str, Any] = {}
+        kwargs: dict[str, Any] = {"backend": "auto"}
         if confirm:
             kwargs["requires_confirmation_tools"] = list(self.confirm_function_names)
         return DuckDuckGoTools(**kwargs)

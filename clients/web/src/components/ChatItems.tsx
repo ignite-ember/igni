@@ -405,6 +405,23 @@ export function normalizeAssistantMarkdown(text: string): string {
     "$1\n\n$2",
   );
 
+  // Horizontal rule ``---`` glued to non-whitespace on the same line
+  // (e.g. ``---## Heading``, ``---Some paragraph``). CommonMark
+  // requires the line to be only dashes (with optional surrounding
+  // whitespace) for ``<hr>``; otherwise the whole line parses as a
+  // literal-text paragraph and the dashes render as plain ``---``.
+  // Two passes:
+  //   1. If ``---`` is preceded by content on the prior line, insert
+  //      a blank line before it. CommonMark needs a blank line before
+  //      a thematic break (unless it's at the start of the document)
+  //      or the break becomes part of the preceding paragraph.
+  //   2. Split ``---`` from any following non-whitespace, non-dash
+  //      char. The non-dash guard keeps ``----`` (a valid HR with 4
+  //      dashes) untouched; the non-whitespace guard keeps bare
+  //      ``---`` and trailing-space ``--- `` untouched.
+  out = out.replace(/([^\n])\n(---)/g, "$1\n\n$2");
+  out = out.replace(/^(---)([^\s-].*)$/gm, "$1\n\n$2");
+
   // GFM table fix — keep the original behaviour: split a single-line
   // table back onto rows.
   if (out.includes("|") && /\|\s*-{2,}/.test(out)) {
