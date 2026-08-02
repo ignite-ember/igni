@@ -336,6 +336,7 @@ class TestSpawnAgentForceIsolation:
         # No worktree footer in the response — non-isolated spawn.
         assert "Worktree" not in result
 
+
 class TestPickVariants:
     """``AgentDefinitionLoader._pick_variants`` filters agents
     based on ``codeindex_available``.
@@ -352,7 +353,6 @@ class TestPickVariants:
     no fallback. The user's directive: "if CodeIndex is not
     available, this agent should not be loaded at all."
     """
-
 
     def _loader(self, codeindex_available, files):
         """Build a minimal loader with the given available flag and
