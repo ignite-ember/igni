@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { normalizeAssistantMarkdown } from "./ChatItems";
+import { createElement } from "react";
+import {
+  extractUnfoldableSource,
+  hasBoxDrawingChars,
+  normalizeAssistantMarkdown,
+} from "./ChatItems";
 
 describe("normalizeAssistantMarkdown", () => {
   it("inserts blank line before a heading glued to prior text", () => {
@@ -69,5 +74,179 @@ describe("normalizeAssistantMarkdown", () => {
     const before = "| a | b | |---|---| | 1 | 2 |";
     const out = normalizeAssistantMarkdown(before);
     expect(out).toContain("|---|---|\n");
+  });
+
+  it("splits a horizontal rule glued to a heading on the same line", () => {
+    // Common case: the model emits `---` as a section divider and
+    // forgets to put it on its own line, so it gets concatenated to
+    // the next heading. Without the fix the whole line renders as
+    // literal text "---## …".
+    const before = "---## The Training Recipe: SSP";
+    expect(normalizeAssistantMarkdown(before)).toBe(
+      "---\n\n## The Training Recipe: SSP",
+    );
+  });
+
+  it("splits a horizontal rule glued to plain paragraph text", () => {
+    // Less common but the same fix: `---` followed by text on the
+    // same line should still render the HR.
+    const before = "intro paragraph\n---Then this happened.";
+    expect(normalizeAssistantMarkdown(before)).toBe(
+      "intro paragraph\n\n---\n\nThen this happened.",
+    );
+  });
+
+  it("leaves a bare horizontal rule alone", () => {
+    expect(normalizeAssistantMarkdown("---")).toBe("---");
+  });
+
+  it("leaves a horizontal rule with trailing whitespace alone", () => {
+    // Both already parse as <hr> in CommonMark — don't touch.
+    expect(normalizeAssistantMarkdown("--- ")).toBe("--- ");
+    expect(normalizeAssistantMarkdown("---   ")).toBe("---   ");
+  });
+
+  it("leaves a 4+ dash line alone (still a valid HR)", () => {
+    expect(normalizeAssistantMarkdown("----")).toBe("----");
+    expect(normalizeAssistantMarkdown("-----")).toBe("-----");
+  });
+
+  it("splits multiple glued HRs in one message", () => {
+    const before = "---## First\n\nbody\n---## Second";
+    expect(normalizeAssistantMarkdown(before)).toBe(
+      "---\n\n## First\n\nbody\n\n---\n\n## Second",
+    );
+  });
+});
+
+// ── extractUnfoldableSource ─────────────────────────────
+//
+// Dispatcher helper used by MarkdownPre to detect fenced blocks
+// that should be unfolded as inline markdown (prose, calculations,
+// ASCII diagrams) instead of rendered as a code pill. Triggers on:
+//   - explicit ``language-md`` / ``language-markdown``
+//   - ``language-text`` / ``language-plain`` (the "not really code"
+//     hints)
+//   - no language at all — the agent uses bare ``\`\`\`…\`\`\``
+//     fences for chat content that isn't code
+// Any other language (Python, JSON, etc.) keeps the CodeBlock
+// path with its copy chip and collapse chevron.
+
+describe("extractUnfoldableSource", () => {
+  // ReactMarkdown hands MarkdownPre a single <code> element with
+  // the language class and the source as children. Mimic that
+  // shape with a real React element so isValidElement matches.
+  const codeEl = (className: string, children: string) =>
+    createElement("code", { className }, children);
+
+  it("returns the source for language-md", () => {
+    const el = codeEl("language-md", "# Heading\n\nSome prose");
+    expect(extractUnfoldableSource(el)).toBe("# Heading\n\nSome prose");
+  });
+
+  it("returns the source for language-markdown", () => {
+    const el = codeEl("language-markdown", "**bold** text");
+    expect(extractUnfoldableSource(el)).toBe("**bold** text");
+  });
+
+  it("returns the source for language-text", () => {
+    const el = codeEl("language-text", "plain prose");
+    expect(extractUnfoldableSource(el)).toBe("plain prose");
+  });
+
+  it("returns the source for language-plain", () => {
+    const el = codeEl("language-plain", "raw text");
+    expect(extractUnfoldableSource(el)).toBe("raw text");
+  });
+
+  it("unfolds a bare (no-language) fence — the agent's main case", () => {
+    // The agent writes ``\`\`\`…\`\`\`` for prose / calculations /
+    // ASCII diagrams. Without a language class the dispatcher
+    // must treat it as unfoldable, NOT as a code pill.
+    const el = codeEl("", "100 × 200 = 20000");
+    expect(extractUnfoldableSource(el)).toBe("100 × 200 = 20000");
+  });
+
+  it("handles language classes mixed with other tokens", () => {
+    // rehype-highlight may attach multiple class tokens
+    // (e.g. ``hljs language-md``). Match on the presence of the
+    // marker, not on exact string equality.
+    const el = codeEl("hljs language-md", "x");
+    expect(extractUnfoldableSource(el)).toBe("x");
+  });
+
+  it("strips a single trailing newline (the Fence-Node artifact)", () => {
+    // CommonMark and remark leave a trailing \n on fenced-block
+    // source; strip it so the unfolded prose doesn't start with
+    // a blank line.
+    const el = codeEl("language-md", "# H\n");
+    expect(extractUnfoldableSource(el)).toBe("# H");
+  });
+
+  it("returns null for a real code language", () => {
+    const el = codeEl("language-python", "print(1)");
+    expect(extractUnfoldableSource(el)).toBeNull();
+  });
+
+  it("returns null when an unfold-lang is mixed with a real code lang", () => {
+    // Edge case: the agent wrote ```md something — the language
+    // is ambiguous. Default to code (safer — at worst the user
+    // sees a code pill; unfolding code would render it as
+    // markdown and could lose syntax).
+    const el = codeEl("language-md language-python", "print('# H')");
+    expect(extractUnfoldableSource(el)).toBeNull();
+  });
+
+  it("returns null for non-ReactElement children", () => {
+    // The dispatcher guard — a stray text node, null, etc. should
+    // not crash, just return null so the fallback CodeBlock path
+    // takes over.
+    expect(extractUnfoldableSource("plain string")).toBeNull();
+    expect(extractUnfoldableSource(null)).toBeNull();
+    expect(extractUnfoldableSource(undefined)).toBeNull();
+    expect(extractUnfoldableSource(42)).toBeNull();
+  });
+});
+
+// ── hasBoxDrawingChars ──────────────────────────────────
+//
+// Detection helper for the monospace <pre> route in MarkdownBlock.
+// Box-drawing glyphs (┌─┐│└┘ ├┤ ┬┴┼ ─) need column alignment
+// that ReactMarkdown's inline render can't provide. Plain ASCII
+// math or arrows don't need this treatment — only true
+// drawing glyphs.
+
+describe("hasBoxDrawingChars", () => {
+  it("detects the box-drawing characters the agent uses", () => {
+    expect(hasBoxDrawingChars("┌──┐")).toBe(true);
+    expect(hasBoxDrawingChars("│ hi │")).toBe(true);
+    expect(hasBoxDrawingChars("└──┘")).toBe(true);
+    expect(hasBoxDrawingChars("─")).toBe(true);
+    expect(hasBoxDrawingChars("│")).toBe(true);
+  });
+
+  it("returns true even when only one drawing char is present", () => {
+    // The check is "any drawing glyph triggers the monospace
+    // path" — the user wants column alignment preserved for
+    // anything visually structured, not just diagrams that are
+    // 100% drawing chars.
+    expect(hasBoxDrawingChars("hello ┌─ world")).toBe(true);
+  });
+
+  it("returns false for plain prose without drawing glyphs", () => {
+    expect(hasBoxDrawingChars("# Heading\n\nSome **bold** prose")).toBe(false);
+    expect(hasBoxDrawingChars("100 × 200 = 20000")).toBe(false);
+  });
+
+  it("returns false for math arrows that aren't box-drawing", () => {
+    // The math arrows ↑→↓←≈ are not in the Box Drawing block.
+    // They render fine in a proportional font; routing them
+    // through the monospace path would just look weird.
+    expect(hasBoxDrawingChars("↑ → ↓ ←")).toBe(false);
+    expect(hasBoxDrawingChars("≈ × ÷")).toBe(false);
+  });
+
+  it("returns false for empty / non-string-ish inputs", () => {
+    expect(hasBoxDrawingChars("")).toBe(false);
   });
 });

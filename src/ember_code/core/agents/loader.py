@@ -138,12 +138,21 @@ class AgentDefinitionLoader:
         """Filter out the wrong CodeIndex variant per
         ``self._codeindex_available``.
 
-        * If CodeIndex is available, skip any plain ``*.md``
-          whose sibling ``*.codeindex.md`` is also present in
-          the same directory.
-        * If CodeIndex is unavailable, skip every
-          ``*.codeindex.md`` file (loading it would tell the
-          agent to call a tool it doesn't have).
+        Convention: every CodeIndex-aware agent ships as a
+        variant pair — ``<name>.md`` (plain, no-CodeIndex) +
+        sibling ``<name>.codeindex.md`` (with CodeIndex). The
+        loader picks the right one based on
+        ``_codeindex_available``:
+
+        * If CodeIndex is available, prefer the ``.codeindex.md``
+          variant. The plain ``<name>.md`` is skipped when the
+          sibling exists.
+        * If CodeIndex is unavailable, prefer the plain
+          ``<name>.md`` and skip the ``.codeindex.md`` variant.
+
+        If only one of the pair exists (older draft state), it
+        is always loaded — whichever variant is present, with
+        the agent's own no-CodeIndex fallback as a follow-up.
         """
         use_codeindex = self._codeindex_available
         codeindex_stems = {

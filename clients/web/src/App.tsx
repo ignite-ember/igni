@@ -5,6 +5,7 @@ import {
   assistantItem,
   compactItem,
   correctStatsCtx,
+  markUserRunPersisted,
   restoredItem,
   restoredStatsItem,
   errorItem,
@@ -15,6 +16,7 @@ import {
   normalizePlanTasks,
   planItem,
   reduceWorkflowEvent,
+  shouldSkipTruncateRpc,
   shellItem,
   userItem,
   visualizationItem,
@@ -645,6 +647,12 @@ export default function App() {
         // isn't skipped when the FE was already in "finalizing".
         setRunPhase("done");
         const runId = m.run_id;
+        // The BE has just persisted the run — flip the matching
+        // user item's ``persisted`` flag so a subsequent edit/delete
+        // calls ``truncate_history`` instead of falling back to a
+        // local-only trim. Must be a separate setItems call from
+        // the stats fix below so both run in the same render pass.
+        setItems((prev) => markUserRunPersisted(prev, runId));
         void client
           .rpc<number>("count_context_tokens")
           .then((ctx) => {
@@ -701,8 +709,14 @@ export default function App() {
           const item = restoredItem(turn);
           if (item) {
             // Attach the BE-side run_id to user items so they're
-            // edit/delete-targetable after a session restore.
-            if (item.kind === "user" && runId) item.runId = runId;
+            // edit/delete-targetable after a session restore. The
+            // run is by definition already in the BE (that's where
+            // the history came from), so stamp ``persisted: true``
+            // up front — edit/delete can skip the local-only path.
+            if (item.kind === "user" && runId) {
+              item.runId = runId;
+              item.persisted = true;
+            }
             if (item.kind === "assistant" && runId) {
               const prev = assistantTextByRun.get(runId) ?? "";
               assistantTextByRun.set(runId, prev ? `${prev} ${item.text}` : item.text);
@@ -1480,18 +1494,26 @@ export default function App() {
   const truncateAndTrim = useCallback(
     async (target: Extract<ChatItem, { kind: "user" }>): Promise<boolean> => {
       if (!target.runId || !sessionId) return false;
-      try {
-        const r = await client.rpc<{ removed?: number; error?: string }>(
-          "truncate_history",
-          { session_id: sessionId, run_id: target.runId },
-        );
-        if (r?.error) {
-          append(errorItem(`Couldn't edit/delete: ${r.error}`));
+      // Run was cancelled or errored before the BE persisted it
+      // (``run_completed`` never fired for this ``runId``). The RPC
+      // would round-trip only to be told the run isn't in the
+      // session; skip it and trim locally. Decision logic lives in
+      // ``shouldSkipTruncateRpc`` so it's unit-testable without
+      // rendering the App.
+      if (!shouldSkipTruncateRpc(target)) {
+        try {
+          const r = await client.rpc<{ removed?: number; error?: string }>(
+            "truncate_history",
+            { session_id: sessionId, run_id: target.runId },
+          );
+          if (r?.error) {
+            append(errorItem(`Couldn't edit/delete: ${r.error}`));
+            return false;
+          }
+        } catch (e) {
+          append(errorItem(`Couldn't edit/delete: ${e instanceof Error ? e.message : String(e)}`));
           return false;
         }
-      } catch (e) {
-        append(errorItem(`Couldn't edit/delete: ${e instanceof Error ? e.message : String(e)}`));
-        return false;
       }
       // Local trim: keep everything strictly BEFORE the target item.
       setItems((prev) => {

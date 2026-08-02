@@ -158,7 +158,37 @@ class ItemsResponse(BaseModel):
 
 
 class ErrorResponse(BaseModel):
+    """Compact error envelope shared across all codeindex tools.
+
+    ``error`` is a short stable category string (e.g.
+    ``"confirm_required"``, ``"cypher_guard"``, ``"no_backend"``)
+    suitable for branching in agent logic. ``message`` carries
+    the human-readable detail (e.g. the offending query or the
+    driver stack-truncation). Optional because a tool may only
+    set ``error`` for the historical compact shape — every
+    codepath here now sets both, but the model stays additive.
+    """
+
     error: str
+    message: str | None = None
+
+
+class CypherResponse(BaseModel):
+    """Response envelope for ``codeindex_cypher``.
+
+    Distinct from :class:`ItemsResponse` (which carries a forest
+    of typed tree nodes) because Cypher result rows are
+    user-authored shapes — we can't safely type them as
+    :class:`_TreeNode`. The envelope caps the row count and
+    records whether the cap hit, so the agent can decide to
+    refine the query instead of guessing "there might be more".
+    """
+
+    rows: list[dict[str, Any]]
+    row_count: int
+    truncated: bool
+    limit: int
+    commit: str | None = None
 
 
 # ── Internal filter envelopes ────────────────────────────────────────
@@ -683,6 +713,65 @@ class TreeInput(BaseModel):
         """
         raw = self.model_dump(exclude_none=True)
         return {k: v for k, v in raw.items() if v != [] and v != ""}
+
+
+# ── Cypher input ─────────────────────────────────────────────────────
+
+
+class CypherInput(BaseModel):
+    """``codeindex_cypher`` parameter bundle.
+
+    The raw-cypher tool is **read-only**. Every call must:
+
+    - explicitly opt in via ``confirm_raw_cypher=True`` (a defensive
+      flag so a misbehaving agent that "happens to" call the tool
+      triggers this guard, not the query);
+    - include ``project_hash`` in the query (so the agent can't
+      double-spend across projects); and
+    - reference only parameter names on the typed allowlist
+      (so a Cypher placeholder can't be smuggled back in as a
+      second-order write).
+
+    The hard validator lives at
+    :func:`ember_code.core.tools.codeindex.cypher_guard.assert_read_only_cypher`
+    — keep the rules in one place so the test surface doesn't
+    fragment across model + service.
+    """
+
+    cypher: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    limit: int = Field(default=50, ge=1, le=500)
+    confirm_raw_cypher: bool = False
+    commit: str | None = None
+
+    @classmethod
+    def from_tool_kwargs(cls, **kwargs: Any) -> CypherInput:
+        allowed = set(cls.model_fields) & kwargs.keys()
+        return cls(**{name: kwargs[name] for name in allowed})
+
+    def for_service(self) -> CypherInput:
+        """Return the typed input the service consumes.
+
+        The toolkit builds a fresh :class:`CypherInput` after
+        validation (the ``cypher`` string has been through
+        :func:`assert_read_only_cypher`, so it would be a re-build
+        to fork the ``dict`` here). Returning the model itself
+        preserves the typed seam — the service takes a
+        :class:`CypherInput`, not a borrowed dict shape.
+        """
+        return self
+
+    def telemetry_dict(self) -> dict[str, Any]:
+        # Never log full Cypher — record length + a token-count,
+        # not the string itself. Eval can rerun the query against
+        # the same telemetry-named index if it wants the full text.
+        return {
+            "cypher_chars": len(self.cypher),
+            "cypher_lines": self.cypher.count("\n") + 1,
+            "param_count": len(self.params),
+            "limit": self.limit,
+            "has_commit": self.commit is not None,
+        }
 
 
 # ── Telemetry ────────────────────────────────────────────────────────

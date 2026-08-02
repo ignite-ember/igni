@@ -5,10 +5,12 @@ import {
   extractAttachedPaths,
   formatStats,
   loopItem,
+  markUserRunPersisted,
   mergePlanTasks,
   normalizePlanTask,
   normalizePlanTasks,
   parseLoopIteration,
+  shouldSkipTruncateRpc,
   type PlanTask,
   restoredItem,
   restoredStatsItem,
@@ -815,6 +817,136 @@ describe("correctStatsCtx", () => {
     correctStatsCtx([stats], "run-a", 250);
     expect(stats.inputTokens).toBe(100); // unchanged
     expect(stats.corrected).toBe(false); // unchanged
+  });
+});
+
+// ── markUserRunPersisted ───────────────────────────────────
+//
+// Stamps ``persisted: true`` on the user item owning a given
+// runId. Called from App.tsx's ``run_completed`` handler — the
+// BE has just confirmed it persisted the run, so a subsequent
+// edit/delete can call ``truncate_history`` instead of falling
+// back to a local-only trim. Mirrors the walk-backward pattern
+// used by the ``run_started`` backfill so an out-of-order event
+// still finds the right item.
+
+describe("markUserRunPersisted", () => {
+  const user = (
+    id: number,
+    text: string,
+    runId?: string,
+    persisted?: boolean,
+  ): ChatItem => ({
+    kind: "user",
+    id,
+    text,
+    runId,
+    persisted,
+  });
+
+  it("stamps persisted: true on the matching user item", () => {
+    const items: ChatItem[] = [user(1, "hello", "run-a")];
+    const out = markUserRunPersisted(items, "run-a");
+    expect(out[0]).toMatchObject({ kind: "user", persisted: true });
+  });
+
+  it("leaves already-persisted items alone (idempotent)", () => {
+    // ``run_completed`` could fire twice (BE retry / duplicate
+    // event). The guard prevents a fresh object every time, which
+    // would invalidate React.memo on the item row.
+    const items: ChatItem[] = [user(1, "hello", "run-a", true)];
+    const out = markUserRunPersisted(items, "run-a");
+    expect(out[0]).toBe(items[0]);
+  });
+
+  it("walks backward and stamps the most recent matching user", () => {
+    // Multiple user items; the run_completed event corresponds to
+    // the LAST one. Earlier ones keep their prior persisted state.
+    const items: ChatItem[] = [
+      user(1, "first", "run-x", true),
+      user(2, "second", "run-a"),
+    ];
+    const out = markUserRunPersisted(items, "run-a");
+    expect((out[0] as Extract<ChatItem, { kind: "user" }>).persisted).toBe(true);
+    expect((out[1] as Extract<ChatItem, { kind: "user" }>).persisted).toBe(true);
+    // First item must still be the same reference (not a re-stamp).
+    expect(out[0]).toBe(items[0]);
+  });
+
+  it("stops walking at an earlier user item with a different runId", () => {
+    // Mirror of the run_started backfill: once we hit an earlier
+    // user (any runId), stop. Otherwise an event for run-a could
+    // accidentally stamp run-b's user if it was somehow first.
+    const items: ChatItem[] = [
+      user(1, "earlier", "run-b"),
+      user(2, "current", "run-a"),
+    ];
+    const out = markUserRunPersisted(items, "run-a");
+    expect((out[1] as Extract<ChatItem, { kind: "user" }>).persisted).toBe(true);
+    expect((out[0] as Extract<ChatItem, { kind: "user" }>).persisted).toBeUndefined();
+  });
+
+  it("returns the input unchanged when no user matches the runId", () => {
+    const items: ChatItem[] = [user(1, "hello", "run-other")];
+    const out = markUserRunPersisted(items, "run-a");
+    expect(out).toBe(items);
+  });
+
+  it("does not mutate the input items in place", () => {
+    const items: ChatItem[] = [user(1, "hello", "run-a")];
+    markUserRunPersisted(items, "run-a");
+    expect((items[0] as Extract<ChatItem, { kind: "user" }>).persisted).toBeUndefined();
+  });
+});
+
+// ── shouldSkipTruncateRpc ───────────────────────────────
+//
+// Decision extracted from App.tsx's ``truncateAndTrim``. When a
+// user cancels a run mid-flight, ``run_completed`` never fires
+// and the BE has no record of the run. Without this guard, the
+// FE would call ``truncate_history`` and the BE would return
+// "run_id … not in session" — surfaced as a confusing error toast
+// for a perfectly valid delete.
+
+describe("shouldSkipTruncateRpc", () => {
+  const user = (
+    runId: string | undefined,
+    persisted: boolean | undefined,
+  ): Extract<ChatItem, { kind: "user" }> => ({
+    kind: "user",
+    id: 1,
+    text: "hi",
+    runId,
+    persisted,
+  });
+
+  it("returns true when the run has not been persisted yet", () => {
+    // The cancel-mid-flight case from the bug report. The FE
+    // knows run_completed never fired (no markUserRunPersisted
+    // call), so the BE definitely has no record.
+    expect(shouldSkipTruncateRpc(user("run-a", undefined))).toBe(true);
+  });
+
+  it("returns true when persisted is explicitly false", () => {
+    // Future-proof: a code path could stamp ``persisted: false``
+    // explicitly. Should still skip the RPC.
+    expect(shouldSkipTruncateRpc(user("run-a", false))).toBe(true);
+  });
+
+  it("returns false when persisted is true", () => {
+    // Normal case: run_completed fired, BE has the run, RPC is
+    // the right call.
+    expect(shouldSkipTruncateRpc(user("run-a", true))).toBe(false);
+  });
+
+  it("uses strict === true — accidental truthy values still skip", () => {
+    // Belt-and-braces: even if a future code path stamps
+    // persisted=1 or persisted="yes" by accident, we treat anything
+    // that isn't literal true as "not persisted". Better to fall
+    // back to the local trim than to round-trip and surface an
+    // error.
+    expect(shouldSkipTruncateRpc(user("run-a", 1 as unknown as boolean))).toBe(true);
+    expect(shouldSkipTruncateRpc(user("run-a", "yes" as unknown as boolean))).toBe(true);
   });
 });
 

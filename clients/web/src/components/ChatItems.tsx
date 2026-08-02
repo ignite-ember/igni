@@ -117,11 +117,23 @@ const COLLAPSED_MAX_PX = 220;
 
 /** Dispatcher for fenced-block rendering. Routes:
  *  - ``language-mermaid`` → MermaidBlock (text → SVG diagram)
+ *  - no language / ``language-md`` / ``language-markdown`` /
+ *    ``language-text`` → MarkdownBlock (unfolds the source as
+ *    inline markdown). The agent uses plain ``\`\`\`…\`\`\``
+ *    fences to wrap prose / calculations / ASCII diagrams that
+ *    should render as chat content, not as code; ``\`\`\`md``
+ *    is the explicit form of the same intent. Fences with any
+ *    other language tag (``\`\`\`python``, ``\`\`\`json``,
+ *    etc.) are treated as actual code.
  *  - Everything else → CodeBlock (copy chip, collapse chevron). */
 function MarkdownPre({ children }: { children?: ReactNode }) {
   const mermaidSource = extractMermaidSource(children);
   if (mermaidSource !== null) {
     return <MermaidBlock source={mermaidSource} />;
+  }
+  const markdownSource = extractUnfoldableSource(children);
+  if (markdownSource !== null) {
+    return <MarkdownBlock source={markdownSource} />;
   }
   return <CodeBlock>{children}</CodeBlock>;
 }
@@ -137,6 +149,94 @@ function extractMermaidSource(children: ReactNode): string | null {
   const cls = props.className ?? "";
   if (!cls.split(/\s+/).includes("language-mermaid")) return null;
   return String(props.children ?? "").replace(/\n$/, "");
+}
+
+/** Extract the raw source string from a fenced block that should
+ *  be unfolded as inline markdown. Triggers on:
+ *    - ``language-md`` / ``language-markdown`` (explicit)
+ *    - ``language-text`` / ``language-plain`` (the agent's "this
+ *      isn't really code" hints)
+ *    - no language class at all — the agent writes
+ *      ``\`\`\`…\`\`\`` for prose / calculations / ASCII diagrams
+ *      that should render as chat content, not as code
+ *  Returns null for any other language (Python, JSON, etc.) so
+ *  the CodeBlock path keeps the copy chip and collapse chevron. */
+export function extractUnfoldableSource(children: ReactNode): string | null {
+  if (!isValidElement(children)) return null;
+  const props = children.props as { className?: string; children?: ReactNode };
+  const cls = props.className ?? "";
+  const tokens = cls.split(/\s+/).filter(Boolean);
+  const codeLangs = tokens.filter((t) => t.startsWith("language-"));
+  // No language at all (plain ```…```) — unfold.
+  if (codeLangs.length === 0) {
+    return String(props.children ?? "").replace(/\n$/, "");
+  }
+  // Only "unfold" languages (md / markdown / text / plain) — unfold.
+  const unfoldLangs = new Set([
+    "language-md",
+    "language-markdown",
+    "language-text",
+    "language-plain",
+  ]);
+  if (codeLangs.every((c) => unfoldLangs.has(c))) {
+    return String(props.children ?? "").replace(/\n$/, "");
+  }
+  return null;
+}
+
+/** Unfolds a fenced block as inline markdown. The agent uses
+ *  ``\`\`\`…\`\`\`` (or ``\`\`\`md``) for prose / calculations /
+ *  ASCII diagrams that should render as chat content rather than
+ *  a code pill.
+ *
+ *  Two render paths:
+ *    - Box-drawing / block-element content (U+2500–U+257F and
+ *      U+2580–U+259F) needs column alignment that ReactMarkdown's
+ *      inline render can't provide. Route those to a monospace
+ *      ``<pre>`` so the diagram keeps its shape.
+ *    - Everything else (prose, lists, tables, bold) goes through
+ *      the normal ReactMarkdown pipeline.
+ *
+ *  Recursion guard: the inner ReactMarkdown uses the default
+ *  ``components.pre`` (no MarkdownPre override), so a ``language-md``
+ *  block nested inside a ``language-md`` block would re-render as a
+ *  plain ``<pre>`` rather than re-entering this dispatcher. */
+function MarkdownBlock({ source }: { source: string }) {
+  if (hasBoxDrawingChars(source)) {
+    return (
+      <pre className="markdown-block-pre">
+        <code>{source}</code>
+      </pre>
+    );
+  }
+  return (
+    <div className="markdown-block-wrap">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+      >
+        {normalizeAssistantMarkdown(source)}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+/** True if the string contains any box-drawing or block-element
+ *  glyphs that need monospace alignment. U+2500–U+257F covers
+ *  ┌─┐│└┘ ├┤ ┬┴┼ ─ │ etc.; U+2580–U+259F covers ▀▄ ▌▐ ░▒▓.
+ *  The agent emits these for ASCII diagrams (RAM/SSD layers, the
+ *  user-flow tree in the latency section, etc.). They render
+ *  unreadably in a proportional font. */
+export function hasBoxDrawingChars(s: string): boolean {
+  // Use explicit Unicode escape ranges so the regex is grep-able
+  // and reviewable. ─–╿ is the Box Drawing block; the
+  // narrower detection is intentional — math arrows / block
+  // elements stay on the markdown path unless a true drawing
+  // glyph is present.
+  // U+2500–U+257F is the Box Drawing block. The ``g`` flag
+  // catches the first instance anywhere; we don't need to
+  // count occurrences.
+  return /[─-╿]/.test(s);
 }
 
 function CodeBlock({ children }: { children?: ReactNode }) {
@@ -404,6 +504,23 @@ export function normalizeAssistantMarkdown(text: string): string {
     /^(#{1,6}\s+\S[^\n`]*?)\s*(```[\w-]*)\s*$/gm,
     "$1\n\n$2",
   );
+
+  // Horizontal rule ``---`` glued to non-whitespace on the same line
+  // (e.g. ``---## Heading``, ``---Some paragraph``). CommonMark
+  // requires the line to be only dashes (with optional surrounding
+  // whitespace) for ``<hr>``; otherwise the whole line parses as a
+  // literal-text paragraph and the dashes render as plain ``---``.
+  // Two passes:
+  //   1. If ``---`` is preceded by content on the prior line, insert
+  //      a blank line before it. CommonMark needs a blank line before
+  //      a thematic break (unless it's at the start of the document)
+  //      or the break becomes part of the preceding paragraph.
+  //   2. Split ``---`` from any following non-whitespace, non-dash
+  //      char. The non-dash guard keeps ``----`` (a valid HR with 4
+  //      dashes) untouched; the non-whitespace guard keeps bare
+  //      ``---`` and trailing-space ``--- `` untouched.
+  out = out.replace(/([^\n])\n(---)/g, "$1\n\n$2");
+  out = out.replace(/^(---)([^\s-].*)$/gm, "$1\n\n$2");
 
   // GFM table fix — keep the original behaviour: split a single-line
   // table back onto rows.

@@ -314,6 +314,27 @@ class CodeIndex:
 
     # -- Indexing --------------------------------------------------------------
 
+    async def client_for(self, sha: str | None = None) -> Any | None:
+        """Public accessor for the per-commit ``Neo4jClient``.
+
+        Args:
+            sha: explicit commit SHA. Defaults to the head commit
+                (``self.head()``).
+
+        Returns: the :class:`Neo4jClient` for that commit, or
+        ``None`` when no runtime / injected client is configured
+        (the test escape hatch of ``chroma``-backed runs).
+
+        Used by ``codeindex_cypher`` to thread a Cypher call
+        through the same per-commit driver as the typed methods.
+        Lives here (rather than reaching into the underscored
+        ``_client_for``) so the toolkit has a stable surface.
+        """
+        target = sha or self.head()
+        if target is None:
+            return None
+        return await self._client_for(target)
+
     async def _client_for(self, sha: str) -> Any | None:
         """Return the per-commit ``Neo4jClient`` (or None if no backend).
 

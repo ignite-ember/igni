@@ -8310,3 +8310,40 @@ button {
   border: 1px dashed var(--border-soft);
   border-radius: 6px;
 }
+
+/* Unfolded ``language-md`` block. Renders a fenced code block whose
+   content is itself markdown as inline prose — the chat agent
+   sometimes wraps prose in ```md fences for visual separation, and
+   the user wants that rendered as markdown, not as a code pill.
+   Strip the inset/background/border that the regular code-block
+   surfaces use, so the result reads as plain chat content. */
+.markdown-block-wrap {
+  margin: 12px 0;
+}
+
+.markdown-block-wrap > :first-child {
+  margin-top: 0;
+}
+
+.markdown-block-wrap > :last-child {
+  margin-bottom: 0;
+}
+
+/* Monospace path for unfolded blocks whose content is an ASCII
+   diagram (box-drawing glyphs). MarkdownBlock detects this and
+   renders through a plain <pre><code> so the box-drawing
+   alignment survives. Same inset/border as the regular code
+   block so the visual weight matches — just no copy chip / no
+   collapse toggle, since the content isn't really code. */
+.markdown-block-pre {
+  margin: 12px 0;
+  padding: 14px 16px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-x: auto;
+  white-space: pre;
+}

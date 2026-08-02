@@ -376,6 +376,14 @@ export type ChatItem =
       /** Wall-clock epoch (ms) when ``streaming_done`` fired — i.e.
        *  when the visible answer finished from the user's POV. */
       streamingEndedAt?: number;
+      /** True once the BE has persisted the run (i.e. ``run_completed``
+       *  fired for this ``runId``). Stamped on history restore (where
+       *  every run is already in the BE) and on the live ``run_completed``
+       *  handler. Edit/delete uses this to decide whether to call
+       *  ``truncate_history`` (persisted) or skip the RPC and just do a
+       *  local-only trim (cancelled or errored before the BE ever saw
+       *  the run — otherwise the BE returns "run_id … not in session"). */
+      persisted?: boolean;
     }
   | { kind: "assistant"; id: number; text: string }
   | { kind: "thinking"; id: number; text: string }
@@ -799,6 +807,42 @@ export function correctStatsCtx(
       ? { ...it, inputTokens: contextTokens, corrected: true }
       : it,
   );
+}
+
+/** Stamp ``persisted: true`` on the user item owning ``runId``.
+ *  Called from the ``run_completed`` handler — the BE has just
+ *  confirmed it persisted the run, so edit/delete can safely call
+ *  ``truncate_history``. Walks backward like the ``run_started``
+ *  backfill so an out-of-order event still finds the right item. */
+export function markUserRunPersisted(
+  items: ChatItem[],
+  runId: string,
+): ChatItem[] {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.kind === "user" && it.runId === runId && !it.persisted) {
+      return [...items.slice(0, i), { ...it, persisted: true }, ...items.slice(i + 1)];
+    }
+    if (it.kind === "user") break; // earlier user → stop walking
+  }
+  return items;
+}
+
+/** Decision: should ``truncateAndTrim`` skip the ``truncate_history``
+ *  RPC for this user item? ``true`` when the run was cancelled or
+ *  errored before the BE persisted it — the RPC would round-trip
+ *  only to be told the run isn't in the session
+ *  (see ``server_context.py:truncate_history``), surfacing a
+ *  confusing error toast for a no-op delete. Caller falls through to
+ *  the local-only ``setItems`` slice instead. ``run_error`` is also
+ *  "not persisted" — Agno drops the run on error.
+ *
+ *  Extracted from App.tsx's ``truncateAndTrim`` so the decision is
+ *  testable without rendering the whole App tree. */
+export function shouldSkipTruncateRpc(
+  target: Extract<ChatItem, { kind: "user" }>,
+): boolean {
+  return target.persisted !== true;
 }
 
 export function assistantItem(text: string): ChatItem {

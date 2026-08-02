@@ -335,3 +335,82 @@ class TestSpawnAgentForceIsolation:
         result = await tool.spawn_agent("do work", "user-agent")
         # No worktree footer in the response — non-isolated spawn.
         assert "Worktree" not in result
+
+
+class TestPickVariants:
+    """``AgentDefinitionLoader._pick_variants`` filters agents
+    based on ``codeindex_available``.
+
+    Convention: every CodeIndex-aware agent ships as a
+    variant pair — ``<name>.md`` (plain, no-CodeIndex) +
+    sibling ``<name>.codeindex.md`` (with CodeIndex). The
+    loader picks the right one based on
+    ``_codeindex_available``.
+
+    Critical invariant: when only the ``.codeindex.md``
+    variant exists (no plain sibling) and the index is
+    unavailable, the agent is gated out entirely — there is
+    no fallback. The user's directive: "if CodeIndex is not
+    available, this agent should not be loaded at all."
+    """
+
+    def _loader(self, codeindex_available, files):
+        """Build a minimal loader with the given available flag and
+        file set. ``_pick_variants`` is the only API we exercise."""
+        from unittest.mock import MagicMock
+
+        from ember_code.core.agents.loader import AgentDefinitionLoader
+
+        return AgentDefinitionLoader(
+            settings=MagicMock(),
+            project_dir=MagicMock(),
+            codeindex_available=codeindex_available,
+        )._pick_variants(files)
+
+    def test_codeindex_variant_skipped_when_unavailable(self, tmp_path):
+        """The legacy variant pair: .codeindex.md skipped when False."""
+        plain = tmp_path / "explorer.md"
+        codeidx = tmp_path / "explorer.codeindex.md"
+        plain.write_text("plain")
+        codeidx.write_text("codeindex")
+        picked = [f.name for f in self._loader(False, [plain, codeidx])]
+        assert "explorer.md" in picked
+        assert "explorer.codeindex.md" not in picked
+
+    def test_codeindex_variant_loaded_when_available(self, tmp_path):
+        plain = tmp_path / "explorer.md"
+        codeidx = tmp_path / "explorer.codeindex.md"
+        plain.write_text("plain")
+        codeidx.write_text("codeindex")
+        picked = [f.name for f in self._loader(True, [plain, codeidx])]
+        assert "explorer.codeindex.md" in picked
+        assert "explorer.md" not in picked
+
+    def test_codeindex_gated_agent_skipped_when_unavailable(self, tmp_path):
+        """Only the ``.codeindex.md`` exists (no plain sibling).
+        When CodeIndex is unavailable, the agent must NOT be
+        loaded — the user's directive: "if CodeIndex is not
+        available, this agent should not be loaded at all."
+        """
+        gated = tmp_path / "data-architect.codeindex.md"
+        plain = tmp_path / "explorer.md"
+        gated.write_text("gated")
+        plain.write_text("plain")
+        picked = [f.name for f in self._loader(False, [gated, plain])]
+        assert "data-architect.codeindex.md" not in picked, (
+            "data-architect must not load when CodeIndex is unavailable"
+        )
+        assert "explorer.md" in picked
+
+    def test_codeindex_gated_agent_loaded_when_available(self, tmp_path):
+        """Only the ``.codeindex.md`` exists. When CodeIndex
+        IS available, the agent is loaded (the data-architect
+        is the canonical example here).
+        """
+        gated = tmp_path / "data-architect.codeindex.md"
+        plain = tmp_path / "explorer.md"
+        gated.write_text("gated")
+        plain.write_text("plain")
+        picked = [f.name for f in self._loader(True, [gated, plain])]
+        assert "data-architect.codeindex.md" in picked
+        assert "explorer.md" in picked
