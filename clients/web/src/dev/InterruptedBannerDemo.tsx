@@ -112,7 +112,11 @@ const SCENARIOS: Scenario[] = [
 ];
 
 /** Build a ChatItem with the right shape for the assistant render path. */
-function assistantItem(id: number, text: string, reason?: AssistantInterrupted): ChatItem {
+function assistantItem(
+  id: number,
+  text: string,
+  reason?: AssistantInterrupted,
+): Extract<ChatItem, { kind: "assistant" }> {
   return reason
     ? { kind: "assistant", id, text, interrupted: reason }
     : { kind: "assistant", id, text };
