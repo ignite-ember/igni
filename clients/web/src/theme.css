@@ -1504,6 +1504,139 @@ button {
   background: var(--bg-raised);
 }
 
+/* ── Interrupted-assistant banner ────────────────────────────────
+ *
+ * Mounts below the assistant bubble when ``item.interrupted`` is
+ * set (cancel mid-stream, run_error, or BE-side interruption on
+ * restart). Provides three actions so the user can recover without
+ * scrolling up to find the user message and re-editing it from
+ * scratch — see [[feedback-interrupted-messages]].
+ *
+ * Visual treatment: muted background (the same raised-tone as the
+ * other in-bubble UI affordances), a small left-border accent in
+ * the reason's colour, italic label, and three buttons sized to
+ * the bubble's existing pill-button aesthetic. ``:focus-visible``
+ * gets a clear ring so keyboard-only users see the focused action
+ * after the auto-focus on mount. The fade-in animation is a CSS
+ * transition keyed off the banner mount — no JS animation lib.
+ */
+.msg-assistant-interrupted {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border-left: 3px solid var(--accent-orange);
+  background: var(--bg-raised);
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.4;
+  outline: none;
+  animation: msg-assistant-interrupted-fade-in 180ms ease-out;
+}
+
+.msg-assistant-interrupted:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-blue);
+}
+
+.msg-assistant-interrupted--cancelled {
+  border-left-color: var(--accent-orange);
+}
+
+.msg-assistant-interrupted--errored {
+  border-left-color: var(--accent-red, #f97583);
+}
+
+.msg-assistant-interrupted--abandoned {
+  border-left-color: var(--accent-yellow, #ffb454);
+}
+
+.msg-assistant-interrupted-label {
+  font-style: italic;
+  color: var(--fg-muted);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.msg-assistant-interrupted-actions {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.msg-assistant-interrupted-action {
+  appearance: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 4px 10px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, transform 0.06s;
+}
+
+.msg-assistant-interrupted-action:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+.msg-assistant-interrupted-action:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.msg-assistant-interrupted-action:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-blue);
+}
+
+.msg-assistant-interrupted-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.msg-assistant-interrupted-action--primary {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: var(--bg);
+  font-weight: 500;
+}
+
+.msg-assistant-interrupted-action--primary:hover:not(:disabled) {
+  background: var(--accent-blue-hover, var(--accent-blue));
+  border-color: var(--accent-blue-hover, var(--accent-blue));
+  filter: brightness(1.08);
+}
+
+.msg-assistant-interrupted-action--danger {
+  color: var(--accent-red, #f97583);
+}
+
+.msg-assistant-interrupted-action--danger:hover:not(:disabled) {
+  background: var(--accent-red-soft, rgba(249, 117, 131, 0.12));
+  border-color: var(--accent-red, #f97583);
+}
+
+@keyframes msg-assistant-interrupted-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg-assistant-interrupted {
+    animation: none;
+  }
+}
+
 /* Each fenced code block gets a hover-revealed copy button via
    ``MarkdownPre`` (react-markdown ``components.pre`` override). The
    wrapper is a positioning context; the inner <pre> keeps all the
@@ -8341,9 +8474,15 @@ button {
   background: var(--bg-inset);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-  font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.65;
   overflow-x: auto;
+  white-space: pre-wrap;
+  /* default font is the regular UI font — switch to mono on the
+     modifier class for box-drawing / flow-chart content. */
+}
+
+.markdown-block-pre--mono {
+  font-family: var(--font-mono);
   white-space: pre;
 }

@@ -18,6 +18,11 @@ the sibling :mod:`schemas_context` module — same pattern as
   every later run from the Agno session.
 * :meth:`ContextController.get_pending_messages` — surface
   pre-persisted user messages that never completed a run.
+* :meth:`ContextController.get_interrupted_runs` — durable
+  interrupted-run records (cancel + error stamped). Drives the
+  FE's banner UI for show / retry / discard / edit-prompt.
+* :meth:`ContextController.discard_interrupted_run` — hard-delete
+  one interrupted record; FE "Discard" action.
 """
 
 from __future__ import annotations
@@ -29,6 +34,8 @@ from typing import TYPE_CHECKING
 
 from ember_code.backend.schemas_context import (
     PENDING_STALENESS_SECONDS,
+    DiscardInterruptedRunResult,
+    InterruptedRun,
     PendingMessage,
     TruncateHistoryResult,
 )
@@ -172,3 +179,55 @@ class ContextController:
         cutoff = int(time.time()) - PENDING_STALENESS_SECONDS
         rows = [r for r in rows if r.received_at <= cutoff]
         return [PendingMessage.from_pending_row(r) for r in rows]
+
+    async def get_interrupted_runs(self, session_id: str) -> list[InterruptedRun]:
+        """Durable interrupted-run records for the session.
+
+        Distinct from :meth:`get_pending_messages` in three ways:
+
+        1. Returns ONLY rows explicitly stamped by the cancel +
+           error paths in :class:`RunController`. A row that's
+           ``pending`` but never stamped (very old data, or the
+           stamp write was lost on crash) is invisible here.
+        2. No staleness cutoff — an interrupted row that just
+           landed is the most useful one to surface (the user just
+           hit Esc and is staring at the spinner).
+        3. Carries ``reason`` + ``last_error`` so the FE can
+           render the right banner label ("Run cancelled" vs
+           "Run stopped — model timeout") and surface the error
+           text on hover.
+
+        Returns wire models via
+        :meth:`InterruptedRun.from_interrupted_row` so the
+        controller stays out of the field-mapping business.
+        """
+        try:
+            rows = await self._pending_store.alist_interrupted(session_id)
+        except Exception as exc:
+            logger.debug("get_interrupted_runs failed: %s", exc)
+            return []
+        return [InterruptedRun.from_interrupted_row(r) for r in rows]
+
+    async def discard_interrupted_run(
+        self, session_id: str, message_id: str
+    ) -> DiscardInterruptedRunResult:
+        """Hard-delete one interrupted run — the FE's "Discard" action.
+
+        Idempotent: deleting a row that no longer exists returns
+        ``ok=True`` so the FE can stop polling / re-trying. The
+        row is matched by ``message_id`` (the wire-level id we
+        exposed via :meth:`get_interrupted_runs`).
+
+        Does NOT touch other interrupted rows for the session —
+        only the one the user picked. The "discard all" semantics
+        are reserved for the ``user_message(force=true)`` retry
+        path (see :meth:`PendingMessageStore.discard_all_for_session`).
+        """
+        if not message_id:
+            return DiscardInterruptedRunResult(ok=False, error="message_id is required")
+        try:
+            await self._pending_store.adiscard(message_id)
+        except Exception as exc:
+            logger.warning("discard_interrupted_run failed: %s", exc)
+            return DiscardInterruptedRunResult(ok=False, error=str(exc))
+        return DiscardInterruptedRunResult(ok=True)

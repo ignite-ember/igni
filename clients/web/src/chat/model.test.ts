@@ -3,14 +3,18 @@ import {
   applyEvent,
   correctStatsCtx,
   extractAttachedPaths,
+  findPrecedingUserItem,
   formatStats,
+  isAssistantInterrupted,
   loopItem,
+  markAssistantInterrupted,
   markUserRunPersisted,
   mergePlanTasks,
   normalizePlanTask,
   normalizePlanTasks,
   parseLoopIteration,
   shouldSkipTruncateRpc,
+  type AssistantInterrupted,
   type PlanTask,
   restoredItem,
   restoredStatsItem,
@@ -947,6 +951,196 @@ describe("shouldSkipTruncateRpc", () => {
     // error.
     expect(shouldSkipTruncateRpc(user("run-a", 1 as unknown as boolean))).toBe(true);
     expect(shouldSkipTruncateRpc(user("run-a", "yes" as unknown as boolean))).toBe(true);
+  });
+});
+
+// ── markAssistantInterrupted ───────────────────────────────
+//
+// Stamps ``interrupted: reason`` on the trailing assistant bubble
+// so the Retry / Discard / Edit-prompt banner renders (see
+// ``InterruptedBanner`` in ``ChatItems.tsx``). Called from the
+// cancel + error paths in App.tsx.
+
+describe("markAssistantInterrupted", () => {
+  const user = (id: number): ChatItem => ({ kind: "user", id, text: "hi" });
+  const assistant = (id: number, text: string): ChatItem => ({
+    kind: "assistant",
+    id,
+    text,
+  });
+  const tool = (id: number): ChatItem => ({
+    kind: "tool",
+    id,
+    runId: "r1",
+    name: "x",
+    args: "{}",
+    status: "done",
+    result: "",
+    isError: false,
+    diffRows: null,
+  });
+
+  it("stamps the trailing assistant item with the reason", () => {
+    const items: ChatItem[] = [user(1), assistant(2, "partial answer")];
+    const out = markAssistantInterrupted(items, "cancelled");
+    expect(out[1]).toMatchObject({ kind: "assistant", interrupted: "cancelled" });
+    expect(out[1]).not.toBe(items[1]); // new object, not mutation
+    expect(items[1]).not.toHaveProperty("interrupted"); // original untouched
+  });
+
+  it("walks past tool / thinking / agent items to find the assistant", () => {
+    // Stream ended on a tool call before any assistant text landed
+    // (rare but happens on tool-error early in the run). The
+    // banner should still appear on the assistant bubble above
+    // the tool, not float above an unrelated bubble.
+    const items: ChatItem[] = [
+      user(1),
+      assistant(2, "thinking…"),
+      tool(3),
+    ];
+    const out = markAssistantInterrupted(items, "errored");
+    expect(out[1]).toMatchObject({ kind: "assistant", interrupted: "errored" });
+    expect(out[2]).toBe(items[2]); // tool untouched
+  });
+
+  it("stops walking when it hits the preceding user item", () => {
+    // No assistant after the user — run was cancelled before any
+    // text streamed. Returns the list unchanged; the FE can still
+    // surface the interrupted user message via its own banner
+    // (or just leave it; the spinner cleared via setRunPhase).
+    const items: ChatItem[] = [user(1), tool(2)];
+    const out = markAssistantInterrupted(items, "cancelled");
+    expect(out).toBe(items);
+  });
+
+  it("is idempotent on the same reason", () => {
+    // Re-running with the same reason returns the SAME array
+    // reference so React's referential-equality check skips a
+    // re-render. Different reason still updates the bubble.
+    const items: ChatItem[] = [user(1), assistant(2, "p")];
+    const once = markAssistantInterrupted(items, "cancelled");
+    const twice = markAssistantInterrupted(once, "cancelled");
+    expect(twice).toBe(once);
+    const escalated = markAssistantInterrupted(once, "errored");
+    expect(escalated).not.toBe(once);
+    expect(escalated[1]).toMatchObject({ interrupted: "errored" });
+  });
+
+  it("preserves the original assistant text on the stamped item", () => {
+    // The banner should NOT clobber the partial response — the
+    // user wants to see what was streamed so they can decide
+    // between retry / discard / edit-prompt.
+    const items: ChatItem[] = [
+      user(1),
+      assistant(2, "I was about to say that the answer is 42 because…"),
+    ];
+    const out = markAssistantInterrupted(items, "abandoned");
+    expect(out[1]).toMatchObject({
+      kind: "assistant",
+      text: "I was about to say that the answer is 42 because…",
+      interrupted: "abandoned",
+    });
+  });
+
+  it("accepts every AssistantInterrupted variant", () => {
+    const variants: AssistantInterrupted[] = ["cancelled", "errored", "abandoned"];
+    for (const v of variants) {
+      const items: ChatItem[] = [user(1), assistant(2, "p")];
+      const out = markAssistantInterrupted(items, v);
+      expect(out[1]).toMatchObject({ interrupted: v });
+    }
+  });
+});
+
+// ── findPrecedingUserItem ─────────────────────────────────
+//
+// Used by the banner's Retry / Discard / Edit-prompt actions to
+// find the user message that triggered the interrupted run.
+// All three need to act on that user item (truncate, re-fire, or
+// seed the composer).
+
+describe("findPrecedingUserItem", () => {
+  const user = (id: number, text = "hi"): ChatItem => ({
+    kind: "user",
+    id,
+    text,
+  });
+  const assistant = (id: number, text = "a"): ChatItem => ({
+    kind: "assistant",
+    id,
+    text,
+  });
+
+  it("finds the user item immediately preceding the given assistant", () => {
+    const items: ChatItem[] = [
+      user(1, "first"),
+      assistant(2, "first reply"),
+      user(3, "second"),
+      assistant(4, "partial…"),
+    ];
+    expect(findPrecedingUserItem(items, 4)).toMatchObject({
+      kind: "user",
+      id: 3,
+      text: "second",
+    });
+  });
+
+  it("returns undefined when the assistant has no preceding user", () => {
+    // Edge case: assistant at the head of the items list, with no
+    // user message before it. Shouldn't happen in practice (the
+    // user always precedes the assistant), but the undefined-return
+    // lets the caller bail gracefully.
+    const items: ChatItem[] = [assistant(1, "orphan")];
+    expect(findPrecedingUserItem(items, 1)).toBeUndefined();
+  });
+
+  it("returns undefined when the assistant id is not in the list", () => {
+    const items: ChatItem[] = [user(1, "hi"), assistant(2, "reply")];
+    expect(findPrecedingUserItem(items, 999)).toBeUndefined();
+  });
+
+  it("ignores items after the target assistant", () => {
+    // Walks from the end — items appended after the target (e.g.
+    // a tool call fired after the cancelled assistant text) must
+    // not be considered as "preceding" the assistant.
+    const items: ChatItem[] = [
+      user(1, "ask"),
+      assistant(2, "partial"),
+      user(3, "follow-up typed while streaming"),
+    ];
+    expect(findPrecedingUserItem(items, 2)).toMatchObject({ id: 1, text: "ask" });
+  });
+
+  it("accepts readonly arrays", () => {
+    // The helper is exposed as ``readonly ChatItem[]`` to make it
+    // clear it's a pure lookup. The function works the same way.
+    const items: readonly ChatItem[] = [user(1, "q"), assistant(2, "a")];
+    expect(findPrecedingUserItem(items, 2)).toMatchObject({ id: 1, text: "q" });
+  });
+});
+
+// ── isAssistantInterrupted ────────────────────────────────
+//
+// Type guard used by the render path to narrow an assistant item
+// into the banner-rendering shape without losing the reason.
+
+describe("isAssistantInterrupted", () => {
+  const assistant = (interrupted?: AssistantInterrupted): ChatItem =>
+    interrupted ? { kind: "assistant", id: 1, text: "x", interrupted } : { kind: "assistant", id: 1, text: "x" };
+
+  it("returns true when interrupted is a valid reason", () => {
+    for (const reason of ["cancelled", "errored", "abandoned"] as AssistantInterrupted[]) {
+      expect(isAssistantInterrupted(assistant(reason))).toBe(true);
+    }
+  });
+
+  it("returns false when interrupted is absent", () => {
+    expect(isAssistantInterrupted(assistant(undefined))).toBe(false);
+  });
+
+  it("returns false for non-assistant items", () => {
+    expect(isAssistantInterrupted({ kind: "user", id: 1, text: "x" })).toBe(false);
+    expect(isAssistantInterrupted({ kind: "thinking", id: 1, text: "x" })).toBe(false);
   });
 });
 

@@ -214,14 +214,25 @@ export class EmberClient {
   /**
    * Send a user message; `onMessage` receives every streamed event
    * for this run. Resolves when `stream_end` arrives.
+   *
+   * The fourth ``options`` arg is optional — currently just the
+   * ``force`` flag that tells the BE to supersede any pending /
+   * interrupted rows for the session before starting. Used by the
+   * FE's Retry action on an interrupted banner so a stale
+   * interrupted record doesn't linger after the retry.
    */
   runMessage(
     text: string,
     onMessage: StreamHandler,
     fileContents?: Record<string, string>,
+    options: { force?: boolean } = {},
   ): Promise<void> {
     const id = genId("run");
-    return this.stream(fe.userMessage(text, id, this.clientId, fileContents), id, onMessage);
+    return this.stream(
+      fe.userMessage(text, id, this.clientId, fileContents, options),
+      id,
+      onMessage,
+    );
   }
 
   /** Queue a message while a run is in flight. Fire-and-forget. */

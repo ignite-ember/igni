@@ -80,7 +80,12 @@ if TYPE_CHECKING:
         CodeIndexStatus,
         CodeIndexSyncResult,
     )
-    from ember_code.backend.schemas_context import PendingMessage, TruncateHistoryResult
+    from ember_code.backend.schemas_context import (
+        DiscardInterruptedRunResult,
+        InterruptedRun,
+        PendingMessage,
+        TruncateHistoryResult,
+    )
     from ember_code.backend.schemas_history import ChatSearchHit
     from ember_code.backend.schemas_hitl import RunRequirement
     from ember_code.backend.schemas_knowledge import KnowledgeStatus
@@ -850,6 +855,16 @@ class BackendServer:
     async def get_pending_messages(self, session_id: str) -> list[PendingMessage]:
         """See :meth:`ContextController.get_pending_messages`."""
         return await self.context.get_pending_messages(session_id)
+
+    async def get_interrupted_runs(self, session_id: str) -> list[InterruptedRun]:
+        """See :meth:`ContextController.get_interrupted_runs`."""
+        return await self.context.get_interrupted_runs(session_id)
+
+    async def discard_interrupted_run(
+        self, session_id: str, message_id: str
+    ) -> DiscardInterruptedRunResult:
+        """See :meth:`ContextController.discard_interrupted_run`."""
+        return await self.context.discard_interrupted_run(session_id, message_id)
 
     async def truncate_history(self, session_id: str, run_id: str) -> TruncateHistoryResult:
         """See :meth:`ContextController.truncate_history`."""

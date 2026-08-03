@@ -82,6 +82,14 @@ class RpcMethod(StrEnum):
     GET_CHAT_HISTORY = "get_chat_history"
     SEARCH_CHAT = "search_chat"
     GET_PENDING_MESSAGES = "get_pending_messages"
+    # Explicit interrupted-run record (durable; survives restart).
+    # The FE renders these as banners with Retry/Discard/Edit-prompt
+    # actions on the assistant bubble that was in-flight when the
+    # run stopped.
+    GET_INTERRUPTED_RUNS = "get_interrupted_runs"
+    # Hard-delete a single interrupted run — used by the FE's
+    # "Discard" action.
+    DISCARD_INTERRUPTED_RUN = "discard_interrupted_run"
     LIST_SESSIONS = "list_sessions"
     SWITCH_SESSION = "switch_session"
     CANCEL_RUN = "cancel_run"

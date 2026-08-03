@@ -16,7 +16,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ember_code.core.session.pending_messages import PendingMessageStore
+    from ember_code.core.session.pending_messages import (
+        InterruptedReason,
+        PendingMessageStore,
+    )
 
 
 class PendingMessageJournal:
@@ -50,6 +53,32 @@ class PendingMessageJournal:
         """Flip a pre-persisted row to ``completed`` — called on the
         natural end-of-run path."""
         await self._store.amark_completed(pending_id)
+
+    async def mark_interrupted(
+        self,
+        pending_id: str,
+        reason: InterruptedReason,
+        last_error: str | None = None,
+    ) -> None:
+        """Stamp the row as an explicitly-interrupted run — called
+        from the cancel + error paths in :class:`RunController`.
+
+        Idempotent on ``status='completed'``: the underlying
+        :meth:`PendingMessageStore.mark_interrupted` no-ops when the
+        row was already marked completed, so a late-arriving cancel
+        after natural completion never resurrects the row.
+        """
+        await self._store.amark_interrupted(pending_id, reason, last_error)
+
+    async def discard_all_for_session(self) -> int:
+        """Hard-delete every pending + interrupted row for the
+        session — used by the ``user_message(force=true)`` retry path
+        to supersede stale interrupted state.
+
+        Returns the number of rows deleted so callers can log it
+        for debugging. Completed rows are NOT touched.
+        """
+        return await self._store.adiscard_all_for_session(self._session_id)
 
     def queue_drops(self, ids: list[str]) -> None:
         """Stash pending-row ids surfaced by ``detect_interrupted_run``

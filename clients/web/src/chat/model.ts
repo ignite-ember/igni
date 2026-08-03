@@ -355,6 +355,31 @@ export function mergePlanTasks(existing: PlanTask[], todos: unknown): PlanTask[]
   });
 }
 
+/**
+ * Why the assistant turn didn't complete cleanly. Drives both the
+ * banner label ("Run cancelled" / "Run stopped" / "Run interrupted")
+ * and the discard-vs-retry semantics on the BE — the FE mirrors the
+ * wire-side ``InterruptedRun.reason`` field (see ``protocol/messages.ts``).
+ *
+ * - ``cancelled``: user hit Esc or clicked Stop. Stream was actively
+ *   killed mid-flight; recoverable via Retry (re-fires the prompt) or
+ *   Discard (drops the partial).
+ * - ``errored``: the agent raised mid-run (model timeout, tool crash,
+ *   etc.). The error string is in ``InterruptedRun.last_error`` and is
+ *   surfaced in the banner so the user can tell apart "I stopped it"
+ *   from "it crashed".
+ * - ``abandoned``: the BE shut down or lost the connection without a
+ *   clean terminal event. Treated like ``cancelled`` for retry but
+ *   labelled separately so a power-user notices.
+ */
+export type AssistantInterrupted = "cancelled" | "errored" | "abandoned";
+
+export const ASSISTANT_INTERRUPTED_LABELS: Record<AssistantInterrupted, string> = {
+  cancelled: "Run cancelled",
+  errored: "Run stopped",
+  abandoned: "Run interrupted",
+};
+
 export type ChatItem =
   | {
       kind: "user";
@@ -385,7 +410,27 @@ export type ChatItem =
        *  the run — otherwise the BE returns "run_id … not in session"). */
       persisted?: boolean;
     }
-  | { kind: "assistant"; id: number; text: string }
+  | {
+      kind: "assistant";
+      id: number;
+      text: string;
+      /**
+       * Set when the assistant turn didn't complete normally — the
+       * user cancelled mid-stream, the BE errored, or the run was
+       * abandoned. Drives the interrupt banner with Retry / Discard /
+       * Edit-prompt actions (see ``markAssistantInterrupted`` +
+       * ``findPrecedingUserItem``). Stamped:
+       *
+       *  - live, on Esc / Stop (``reason='cancelled'``)
+       *  - live, on ``run_error`` (``reason='errored'``)
+       *  - on history restore from ``GET_INTERRUPTED_RUNS`` when the
+       *    BE has the durable interrupted record (see [[feedback-
+       *    interrupted-messages]] for the UX rationale).
+       *
+       * Undefined on normally-completed assistant turns.
+       */
+      interrupted?: AssistantInterrupted;
+    }
   | { kind: "thinking"; id: number; text: string }
   | {
       kind: "tool";
@@ -828,6 +873,97 @@ export function markUserRunPersisted(
   return items;
 }
 
+/**
+ * Walk items backward from the end and stamp ``interrupted: reason``
+ * on the trailing assistant turn. Used by the cancel + error paths
+ * in App.tsx so the partial assistant bubble gets the Retry / Discard
+ * / Edit-prompt banner.
+ *
+ * Why "trailing assistant": when the run stops mid-stream, the FE's
+ * items list usually ends with the in-flight assistant ChatItem
+ * (because the user types *after* the assistant, not before). But
+ * the stream sometimes ends on a tool / thinking / agent item —
+ * e.g. the model emitted a tool call but no text yet, or hit a
+ * tool-error before any assistant delta landed. Walk past those
+ * so we don't leave an orphaned banner floating above an unrelated
+ * bubble. If no assistant item is found at all (e.g. the run was
+ * cancelled before any assistant token streamed), the items list
+ * is returned unchanged — the FE can still surface the
+ * corresponding interrupted user message via its own banner.
+ *
+ * Idempotent: re-running with the same reason on an already-stamped
+ * item leaves the items list byte-identical (early-return after the
+ * ``kind === "assistant" && it.interrupted === reason`` guard). The
+ * caller doesn't need to dedupe at the call site.
+ *
+ * Pure — no mutation. Returns a new array only when the stamp lands;
+ * the unchanged branch returns the same array reference so React's
+ * referential-equality check skips a re-render.
+ */
+export function markAssistantInterrupted(
+  items: ChatItem[],
+  reason: AssistantInterrupted,
+): ChatItem[] {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.kind === "user") break; // walked past the run boundary
+    if (it.kind === "assistant") {
+      if (it.interrupted === reason) return items; // idempotent
+      return [
+        ...items.slice(0, i),
+        { ...it, interrupted: reason },
+        ...items.slice(i + 1),
+      ];
+    }
+  }
+  return items;
+}
+
+/**
+ * Find the user ChatItem that triggered the run owning the given
+ * assistant item. Used by the banner's Retry / Discard / Edit-prompt
+ * actions — all three need to act on the user message (truncate
+ * + re-fire for Retry, truncate-only for Discard, pre-fill the
+ * edit modal for Edit-prompt).
+ *
+ * Walks backward from ``assistantItemId`` and stops at the first
+ * ``kind: "user"`` item. Returns ``undefined`` if no user message
+ * precedes the assistant — that shouldn't happen in practice (the
+ * user message always precedes the assistant turn), but the
+ * undefined-return lets the caller bail gracefully instead of
+ * crashing on an empty lookup.
+ *
+ * O(n) in the worst case (the assistant item is at the head). The
+ * click handler that calls this only fires on user action, so the
+ * cost is acceptable.
+ */
+export function findPrecedingUserItem(
+  items: readonly ChatItem[],
+  assistantItemId: number,
+): Extract<ChatItem, { kind: "user" }> | undefined {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.id === assistantItemId) {
+      // Now walk backward from i-1 to find the preceding user item.
+      for (let j = i - 1; j >= 0; j--) {
+        const jt = items[j];
+        if (jt.kind === "user") return jt;
+      }
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/** Type guard — narrowed ChatItem for the banner render path. */
+export function isAssistantInterrupted(
+  item: ChatItem,
+): item is Extract<ChatItem, { kind: "assistant" }> & {
+  interrupted: AssistantInterrupted;
+} {
+  return item.kind === "assistant" && typeof item.interrupted === "string";
+}
+
 /** Decision: should ``truncateAndTrim`` skip the ``truncate_history``
  *  RPC for this user item? ``true`` when the run was cancelled or
  *  errored before the BE persisted it — the RPC would round-trip
@@ -847,6 +983,13 @@ export function shouldSkipTruncateRpc(
 
 export function assistantItem(text: string): ChatItem {
   return { kind: "assistant", id: nid(), text };
+}
+
+export function interruptedAssistantItem(
+  text: string,
+  reason: AssistantInterrupted,
+): ChatItem {
+  return { kind: "assistant", id: nid(), text, interrupted: reason };
 }
 
 const SYSTEM_CONTEXT_RE = /<system-context>[\s\S]*?<\/system-context>\s*/g;

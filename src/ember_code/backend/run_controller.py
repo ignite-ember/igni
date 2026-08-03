@@ -105,6 +105,11 @@ class RunController:
         # task) holds. See :attr:`run_lock` / :attr:`current_run_task`.
         self._run_lock = asyncio.Lock()
         self._current_run_task: asyncio.Task | None = None
+        # The pending-message id stamped by :meth:`_run_locked`
+        # before streaming starts. Held on the instance so the
+        # sync :meth:`cancel_run` can mark the row as interrupted
+        # without an async hop — see ``_stamp_interrupted``.
+        self._pending_id_for_cancel: str | None = None
 
     # ── Public API used by BackendServer ────────────────────────────
 
@@ -239,6 +244,13 @@ class RunController:
         Moved from ``BackendServer.cancel_run``. Fetches the run id
         off the main team, cancels the Agno run, and then cancels
         the outer task tracked by :attr:`current_run_task`.
+
+        Also stamps the pending user message as an explicit
+        interrupted run (``reason='cancelled'``) so the FE has a
+        durable record on next render — instead of inferring
+        interruption from a dangling pending row + the legacy
+        ``RunStatus.running`` heuristic. The stamp is fire-and-
+        forget so the cancel response doesn't wait on the disk.
         """
         if supervisors.default().cancel_foreground():
             logger.info("Killed foreground process on cancel")
@@ -251,10 +263,46 @@ class RunController:
         except Exception as exc:
             logger.debug("Failed to cancel run: %s", exc)
 
+        self._stamp_interrupted("cancelled", last_error=None)
+
         task = self._current_run_task
         if task and not task.done():
             logger.info("Cancelling run task %s", task.get_name())
             task.cancel()
+
+    def _stamp_interrupted(
+        self,
+        reason: str,
+        last_error: str | None,
+    ) -> None:
+        """Schedule a fire-and-forget mark-interrupted on the pending row.
+
+        No-op if no pending row is currently bound to a run
+        (``_pending_id_for_cancel is None``) — that means the run
+        finished cleanly or hasn't started yet. The cancel RPC is
+        safe to call from either of those states.
+
+        The task is intentionally un-awaited: the WS cancel handler
+        returns to the client immediately, and the SQLite write is
+        small enough that a dropped task (e.g. process exit
+        immediately after cancel) is harmless — at worst the next
+        boot falls back to the legacy ``RunStatus.running``
+        heuristic.
+        """
+        pending_id = self._pending_id_for_cancel
+        if pending_id is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                self._pending_journal.mark_interrupted(pending_id, reason, last_error),
+                name=f"mark_interrupted:{reason}:{pending_id[:8]}",
+            )
+        except RuntimeError:
+            # No running loop — happens in __new__-bypass test
+            # fixtures. Skip silently; the legacy heuristic covers
+            # this in tests.
+            pass
 
     def cancel_agent_run(self, run_id: str) -> CancelAgentRunResult:
         """Cancel a specific sub-agent run by its Agno ``run_id``.
@@ -359,6 +407,11 @@ class RunController:
         # lose it. On success the row is marked completed; on crash
         # it stays pending and the next --continue boot surfaces it.
         pending_id = await self._pending_journal.record(text)
+        # Stash on the instance so the sync ``cancel_run`` can
+        # stamp the row as interrupted without an async hop. Cleared
+        # below on natural completion + in the error branch so a
+        # later cancel that arrives after completion is a no-op.
+        self._pending_id_for_cancel = pending_id
 
         # Periodic checkpoint task — see SessionCheckpointer.run_forever
         # (BackendServer._periodic_checkpoint is the late-binding hook).
@@ -375,8 +428,16 @@ class RunController:
             # Natural end-of-run — mark the pre-persisted user
             # message as completed.
             await self._pending_journal.mark_completed(pending_id)
+            self._pending_id_for_cancel = None
             self._transition_to(RunPhase.finalizing)
-        except Exception:
+        except Exception as exc:
+            # Error mid-run: stamp the pending row as an explicit
+            # interrupted run so the FE can recover (show a banner
+            # with Retry/Discard) on next render. We do this BEFORE
+            # re-raising so the mark survives even if the upstream
+            # WS handler aborts on the exception.
+            self._pending_id_for_cancel = None
+            await self._pending_journal.mark_interrupted(pending_id, "errored", last_error=str(exc))
             self._transition_to(RunPhase.errored)
             raise
         finally:

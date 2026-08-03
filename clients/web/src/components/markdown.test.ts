@@ -3,6 +3,8 @@ import { createElement } from "react";
 import {
   extractUnfoldableSource,
   hasBoxDrawingChars,
+  hasFlowChartArrows,
+  isNoLanguageFence,
   normalizeAssistantMarkdown,
 } from "./ChatItems";
 
@@ -248,5 +250,64 @@ describe("hasBoxDrawingChars", () => {
 
   it("returns false for empty / non-string-ish inputs", () => {
     expect(hasBoxDrawingChars("")).toBe(false);
+  });
+});
+
+// ── hasFlowChartArrows ──────────────────────────────────
+//
+// Complements hasBoxDrawingChars for the PreformattedBlock
+// dispatcher. The agent's "latency" section uses ↓ between
+// pipeline stages; those arrows only line up vertically in a
+// monospace font.
+
+describe("hasFlowChartArrows", () => {
+  it("detects the arrow chars the agent uses", () => {
+    expect(hasFlowChartArrows("↓")).toBe(true);
+    expect(hasFlowChartArrows("↑ ↓ → ←")).toBe(true);
+    expect(hasFlowChartArrows("⇄")).toBe(true);
+  });
+
+  it("returns true even when only one arrow is present", () => {
+    expect(hasFlowChartArrows("User hits send\n    ↓\nBackend responds")).toBe(true);
+  });
+
+  it("returns false for plain text without arrows", () => {
+    expect(hasFlowChartArrows("100 × 200 = 20000")).toBe(false);
+  });
+});
+
+// ── isNoLanguageFence ───────────────────────────────────
+//
+// Detects a bare ```…``` fence (no language class). The
+// dispatcher routes these to PreformattedBlock so line breaks
+// and runs of spaces are preserved. A bare fence is also
+// captured by extractUnfoldableSource (returns the source for
+// "no language"), so this helper is the split point between
+// the preformatted and markdown paths.
+
+describe("isNoLanguageFence", () => {
+  const codeEl = (className: string, children: string) =>
+    createElement("code", { className }, children);
+
+  it("returns true for a bare fence (no className)", () => {
+    expect(isNoLanguageFence(codeEl("", "100 × 200 = 20000"))).toBe(true);
+  });
+
+  it("returns true for a fence whose only class is non-language (e.g. hljs)", () => {
+    // rehype-highlight may add a ``hljs`` class with no language.
+    // That's still effectively "no language" — treat as bare fence.
+    expect(isNoLanguageFence(codeEl("hljs", "x"))).toBe(true);
+  });
+
+  it("returns false for an explicit language fence", () => {
+    expect(isNoLanguageFence(codeEl("language-md", "x"))).toBe(false);
+    expect(isNoLanguageFence(codeEl("language-python", "print(1)"))).toBe(false);
+    expect(isNoLanguageFence(codeEl("language-text", "x"))).toBe(false);
+  });
+
+  it("returns false for non-ReactElement children", () => {
+    expect(isNoLanguageFence("plain string")).toBe(false);
+    expect(isNoLanguageFence(null)).toBe(false);
+    expect(isNoLanguageFence(undefined)).toBe(false);
   });
 });
