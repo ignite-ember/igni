@@ -6,6 +6,19 @@ export interface HitlDecision {
   requirement_id: string;
   action: "confirm" | "reject";
   choice: string;
+  /**
+   * Optional atomic-mode-flip carried with the decision. When set,
+   * the BE applies the mode to the session BEFORE resuming the
+   * agent — so the next tool check after this HITL pause resolves
+   * already sees the new mode. Used by the "Accept all edits during
+   * this session" shortcut (sets ``"acceptEdits"``) so the agent's
+   * very next edit auto-approves instead of re-prompting.
+   *
+   * Empty string (default) is the no-op and matches the BE's
+   * "skip the flip" branch — back-compat with callers that don't
+   * know about this field.
+   */
+  set_permission_mode?: "acceptEdits" | "bypassPermissions" | "";
 }
 
 /** Tools that mutate files — the set ``acceptEdits`` mode auto-allows.
@@ -84,16 +97,27 @@ export function HitlDialog({
 
   const approveAllEditsInBatch = () => {
     // Confirm THIS req plus every remaining one in the batch with
-    // ``choice="once"``. Mode flip handles the rest of the current
-    // run; the parent flips it back off when the agent finishes
-    // so the gate doesn't quietly persist past the task.
-    const rest = requirements.slice(index).map((r) => ({
+    // ``choice="once"``. The CURRENT (in-flight) decision carries
+    // ``set_permission_mode="acceptEdits"`` so the BE flips the
+    // session mode atomically with the resume — the next tool
+    // permission check after this HITL pause resolves already
+    // sees the new mode, no race with a separate `/accept on`
+    // slash command. ``onAcceptEditsThisRun`` still flips the
+    // ref so the parent fires `/accept off` on ``streaming_done``
+    // and the gate doesn't quietly persist past this task.
+    const head: HitlDecision = {
+      requirement_id: req.requirement_id,
+      action: "confirm",
+      choice: "once",
+      set_permission_mode: "acceptEdits",
+    };
+    const rest = requirements.slice(index + 1).map((r) => ({
       requirement_id: r.requirement_id,
       action: "confirm" as const,
       choice: "once",
     }));
     onAcceptEditsThisRun?.();
-    onResolve([...decisions, ...rest]);
+    onResolve([...decisions, head, ...rest]);
   };
 
   return (

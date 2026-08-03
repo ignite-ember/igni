@@ -252,6 +252,18 @@ export interface HITLDecision {
   requirement_id: string;
   action: "confirm" | "reject";
   choice: "once" | "always" | "similar" | "";
+  /**
+   * Optional atomic-mode-flip carried with the decision. When set,
+   * the BE applies the named mode to the session BEFORE resuming the
+   * agent, so the next tool permission check sees the new mode.
+   * Closes a race where a separate `/accept on` slash command fired
+   * alongside this batch was dispatched concurrently and lost —
+   * the agent resumed under the OLD mode and re-prompted.
+   *
+   * Empty string is the no-op default for back-compat with clients
+   * that don't know about this field.
+   */
+  set_permission_mode?: "acceptEdits" | "bypassPermissions" | "";
 }
 
 export const fe = {

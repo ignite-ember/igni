@@ -71,12 +71,26 @@ class HITLResponse(Message):
 
 class HITLDecision(Message):
     """One row inside a ``HITLResponseBatch``. See :class:`HITLResponse`
-    for the ``action`` / ``choice`` typing note."""
+    for the ``action`` / ``choice`` typing note.
+
+    ``set_permission_mode`` is an optional atomic-mode-flip: when
+    set, the BE applies the named mode to the session BEFORE
+    resuming the agent — so the very next tool check after the
+    HITL pause resolves sees the new mode. Used by the FE's
+    "Accept all edits during this session" shortcut: a previous
+    version fired a separate ``/accept on`` slash command that
+    raced the resume and lost ~half the time, causing the next
+    edit to re-prompt instead of auto-approving. Default ``None``
+    keeps the wire shape unchanged for existing clients.
+    """
 
     type: Literal["hitl_decision"] = "hitl_decision"
     requirement_id: str = ""
     action: str = ""  # "confirm" | "reject" — see :class:`HITLAction`
     choice: str = ""  # "once" | "always" | "similar" — see :class:`HITLChoice`
+    set_permission_mode: str = (
+        ""  # "" | "acceptEdits" | "bypassPermissions" — atomic flip before resume
+    )
 
 
 class HITLResponseBatch(Message):

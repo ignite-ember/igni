@@ -981,14 +981,16 @@ export function shouldSkipTruncateRpc(
   return target.persisted !== true;
 }
 
-export function assistantItem(text: string): ChatItem {
+export function assistantItem(
+  text: string,
+): Extract<ChatItem, { kind: "assistant" }> {
   return { kind: "assistant", id: nid(), text };
 }
 
 export function interruptedAssistantItem(
   text: string,
   reason: AssistantInterrupted,
-): ChatItem {
+): Extract<ChatItem, { kind: "assistant" }> {
   return { kind: "assistant", id: nid(), text, interrupted: reason };
 }
 

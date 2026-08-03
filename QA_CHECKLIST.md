@@ -108,14 +108,14 @@
 ## P1 — Key Differentiators
 
 ### Agent system (the core architecture)
-- [x] Built-in agents loaded from package (13 agents: architect, conversational, debugger, diagnostician, docs, editor, explorer, git, planner, qa, reviewer, security, simplifier)
+- [x] Built-in agents loaded from package (10 base agents: architect, data-architect, debugger, docs, editor, explorer, qa, reviewer, security, simplifier — plus 6 `.codeindex.md` variants)
 - [x] `.ember/agents/*.md` — project agents loaded (dir doesn't exist, handled correctly)
 - [x] `~/.ember/agents/*.md` — user-global agents loaded (empty, handled correctly)
 - [x] `.claude/agents/*.md` — loaded if `cross_tool_support: true` (defaults true, empty dir handled)
 - [x] Agent with model override — uses specified model (format supported, none currently use it)
-- [x] Agent with custom tools list — only gets declared tools (all agents except conversational have tools)
-- [x] Agent with `reasoning: true` — reasoning enabled (6 agents: architect, debugger, diagnostician, planner, reviewer, security)
-- [x] Agent with `can_orchestrate: false` — cannot spawn sub-teams (5 agents: conversational, debugger, diagnostician, git, simplifier)
+- [x] Agent with custom tools list — only gets declared tools (all agents have tools)
+- [x] Agent with `reasoning: true` — reasoning enabled (4 agents: architect, debugger, reviewer, security)
+- [x] Agent with `can_orchestrate: false` — cannot spawn sub-teams (3 agents: debugger, simplifier, visualizer)
 - [x] `/agents` — lists all agents with tools
 - [x] `/agents ephemeral` — lists ephemeral agents (shows "No ephemeral agents.")
 

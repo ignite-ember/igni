@@ -271,9 +271,9 @@ You → Claude (single agent)
 **igni:**
 ```
 You → Orchestrator
-  → Assembles team: [planner, editor, reviewer] in coordinate mode
+  → Assembles team: [architect, editor, reviewer] in coordinate mode
 
-  1. Planner reads code, designs approach (Read, Grep, CodeIndex)
+  1. Architect reads code, designs approach (Read, Grep, CodeIndex)
   2. Editor implements rate limiting (Read, Edit, Write, Bash)
      └─ Editor spawns Explorer sub-team to understand Redis patterns
   3. Editor writes tests (Read, Edit, Write)

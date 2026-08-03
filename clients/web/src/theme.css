@@ -1524,12 +1524,12 @@ button {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
-  margin-top: 12px;
-  padding: 10px 14px;
-  border-radius: 8px;
-  border-left: 3px solid var(--accent-orange);
-  background: var(--bg-raised);
+  gap: 6px 10px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--ember-orange) 6%, transparent);
   color: var(--fg);
   font-size: 13px;
   line-height: 1.4;
@@ -1541,16 +1541,16 @@ button {
   box-shadow: 0 0 0 2px var(--accent-blue);
 }
 
-.msg-assistant-interrupted--cancelled {
-  border-left-color: var(--accent-orange);
-}
-
+/* Reason tint — mirrors the .msg-error border/bg blend. Default
+   is a soft orange wash (cancelled). Errored leans redder,
+   abandoned leans warmer. Low alpha so the banner reads as a
+   footer on the message, not a separate alert box. */
 .msg-assistant-interrupted--errored {
-  border-left-color: var(--accent-red, #f97583);
+  background: color-mix(in srgb, var(--danger, #cf222e) 7%, transparent);
 }
 
 .msg-assistant-interrupted--abandoned {
-  border-left-color: var(--accent-yellow, #ffb454);
+  background: color-mix(in srgb, var(--warning, #d9a644) 7%, transparent);
 }
 
 .msg-assistant-interrupted-label {
@@ -1558,66 +1558,13 @@ button {
   color: var(--fg-muted);
   flex: 1 1 auto;
   min-width: 0;
+  margin-right: 4px;
 }
 
 .msg-assistant-interrupted-actions {
   display: inline-flex;
   gap: 6px;
   flex-wrap: wrap;
-}
-
-.msg-assistant-interrupted-action {
-  appearance: none;
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  padding: 4px 10px;
-  background: var(--bg);
-  color: var(--fg);
-  font-size: 13px;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s, transform 0.06s;
-}
-
-.msg-assistant-interrupted-action:hover:not(:disabled) {
-  background: var(--bg-hover);
-  border-color: var(--border);
-}
-
-.msg-assistant-interrupted-action:active:not(:disabled) {
-  transform: translateY(1px);
-}
-
-.msg-assistant-interrupted-action:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--accent-blue);
-}
-
-.msg-assistant-interrupted-action:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.msg-assistant-interrupted-action--primary {
-  background: var(--accent-blue);
-  border-color: var(--accent-blue);
-  color: var(--bg);
-  font-weight: 500;
-}
-
-.msg-assistant-interrupted-action--primary:hover:not(:disabled) {
-  background: var(--accent-blue-hover, var(--accent-blue));
-  border-color: var(--accent-blue-hover, var(--accent-blue));
-  filter: brightness(1.08);
-}
-
-.msg-assistant-interrupted-action--danger {
-  color: var(--accent-red, #f97583);
-}
-
-.msg-assistant-interrupted-action--danger:hover:not(:disabled) {
-  background: var(--accent-red-soft, rgba(249, 117, 131, 0.12));
-  border-color: var(--accent-red, #f97583);
 }
 
 @keyframes msg-assistant-interrupted-fade-in {
@@ -8486,3 +8433,226 @@ button {
   font-family: var(--font-mono);
   white-space: pre;
 }
+
+/* ── Demo page layout (?demo=…) ──────────────────────────────
+ *
+ * Used by the dev/ demos in ``src/dev/*.tsx``. Scoped to
+ * ``.demo-page`` so the styles don't leak into the real app's
+ * rendering tree. Each demo has a header, a grid of scenario
+ * panels, and a console pane for click/keyboard event logging.
+ *
+ * ``body { overflow: hidden }`` (set above for the main app) means
+ * the shell never scrolls — demos need to provide their own scroll
+ * container. ``height: 100vh`` + ``overflow-y: auto`` on
+ * ``.demo-page`` gives a single scroll surface that scrolls
+ * independently of any host-shell (Tauri / VSCode / browser). */
+
+.demo-page {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 32px;
+  height: 100vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.demo-page-header {
+  margin-bottom: 32px;
+}
+
+.demo-page-header h1 {
+  margin: 0 0 12px;
+  font-size: 22px;
+  color: var(--fg);
+}
+
+.demo-page-lede {
+  margin: 0 0 8px;
+  color: var(--fg-muted);
+  font-size: 14px;
+  line-height: 1.55;
+  max-width: 760px;
+}
+
+.demo-page-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+@media (max-width: 920px) {
+  .demo-page-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.demo-page-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.demo-page-panel-title {
+  font-size: 15px;
+  margin: 0 0 6px;
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.demo-page-panel-subtitle {
+  font-size: 13px;
+  color: var(--fg-muted);
+  margin: 0 0 16px;
+  line-height: 1.5;
+}
+
+.demo-page-panel-body {
+  border-top: 1px solid var(--border-soft);
+  padding-top: 16px;
+}
+
+.demo-page-error-detail {
+  font-size: 12px;
+  color: var(--fg-faint);
+  margin: 16px 0 0;
+}
+.demo-page-error-detail code {
+  background: var(--bg-inset);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+}
+
+.demo-page-console {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 16px 24px;
+}
+
+.demo-page-console h3 {
+  font-size: 13px;
+  margin: 0 0 12px;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+}
+
+.demo-page-console-empty {
+  color: var(--fg-faint);
+  font-size: 13px;
+  margin: 0;
+}
+
+.demo-page-console ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.demo-page-console li {
+  padding: 4px 0;
+  color: var(--fg);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.demo-page-console li:last-child {
+  border-bottom: none;
+}
+
+.demo-page-console-ts {
+  color: var(--fg-faint);
+  margin-right: 8px;
+}
+
+/* Faux Composer — used by ``?demo=interrupted`` to show the
+   Composer area that fills when Edit prompt fires. Faithful
+   stub of the real Composer component so the demo doesn't
+   need an EmberClient or BE connection. */
+.demo-page-composer {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 16px 24px;
+  margin-bottom: 24px;
+}
+
+.demo-page-composer h3 {
+  font-size: 13px;
+  margin: 0 0 4px;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+}
+
+.demo-page-composer-subtitle {
+  font-size: 12px;
+  color: var(--fg-faint);
+  margin: 0 0 12px;
+}
+
+.demo-page-composer-edit {
+  background: var(--bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 12px 14px;
+  min-height: 80px;
+}
+
+.demo-page-composer-label {
+  display: block;
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin-bottom: 8px;
+}
+
+.demo-page-composer-label code {
+  background: var(--bg-inset);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+}
+
+.demo-page-composer-text {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.demo-page-composer-empty {
+  font-size: 13px;
+  color: var(--fg-faint);
+  font-style: italic;
+}
+
+.demo-page-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.demo-page-composer-send {
+  appearance: none;
+  border: 1px solid var(--accent-blue);
+  background: var(--accent-blue);
+  color: var(--bg);
+  font-weight: 500;
+  font-size: 13px;
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.demo-page-composer-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;

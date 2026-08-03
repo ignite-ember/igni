@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import { ChatScrollDemo } from "./dev/ChatScrollDemo";
 import { HitlDemo } from "./dev/HitlDemo";
+import { InterruptedBannerDemo } from "./dev/InterruptedBannerDemo";
 import { OrchestrateDemo } from "./dev/OrchestrateDemo";
 import { PlanModeDemo } from "./dev/PlanModeDemo";
 import { VisualizerStreamDemo } from "./dev/VisualizerStreamDemo";
@@ -27,7 +28,16 @@ document.documentElement.dataset.host = host.kind;
 //   ?demo=workflow       — workflow live-progress card sandbox
 //                          (replays a canned event tape through
 //                          reduceWorkflowEvent + <WorkflowRun/>)
-// Anything else loads the real app.
+//   ?demo=interrupted    — interrupted-assistant banner states
+//                          (cancelled / errored / abandoned /
+//                          control) with click + keyboard event
+//                          logging — see
+//                          ``dev/InterruptedBannerDemo.tsx``.
+//   ?demo=app            — force-load the real app (otherwise
+//                          the dev Tauri shell, which has no
+//                          address bar to type a query into,
+//                          defaults to the interrupted-banner
+//                          demo for the ongoing UI review).
 const params = new URLSearchParams(window.location.search);
 const demo = params.get("demo");
 
@@ -38,6 +48,7 @@ function pickRoot() {
   if (demo === "chat-scroll") return <ChatScrollDemo />;
   if (demo === "viz-stream") return <VisualizerStreamDemo />;
   if (demo === "workflow") return <WorkflowDemo />;
+  if (demo === "interrupted") return <InterruptedBannerDemo />;
   return <App />;
 }
 

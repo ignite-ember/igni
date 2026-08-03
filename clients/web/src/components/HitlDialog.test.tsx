@@ -285,9 +285,19 @@ describe("HitlDialog — acceptEdits shortcut", () => {
 
     expect(onAcceptEditsThisRun).toHaveBeenCalledTimes(1);
     expect(onResolve).toHaveBeenCalledTimes(1);
-    // All three should be confirmed in one shot.
+    // All three should be confirmed in one shot. The HEAD decision
+    // carries ``set_permission_mode="acceptEdits"`` so the BE
+    // flips the session mode atomically with the resume — see the
+    // ``approveAllEditsInBatch`` handler in HitlDialog.tsx and the
+    // ``HITLDecision.set_permission_mode`` docstring in
+    // protocol/messages.ts.
     expect(onResolve).toHaveBeenCalledWith([
-      { requirement_id: "r1", action: "confirm", choice: "once" },
+      {
+        requirement_id: "r1",
+        action: "confirm",
+        choice: "once",
+        set_permission_mode: "acceptEdits",
+      },
       { requirement_id: "r2", action: "confirm", choice: "once" },
       { requirement_id: "r3", action: "confirm", choice: "once" },
     ]);
@@ -315,9 +325,19 @@ describe("HitlDialog — acceptEdits shortcut", () => {
     fireEvent.click(screen.getByRole("button", { name: SHORTCUT_LABEL }));
 
     expect(onResolve).toHaveBeenCalledTimes(1);
+    // Prior decision (r1: reject) preserved. The shortcut's head
+    // decision is r2 — it carries ``set_permission_mode="acceptEdits"``
+    // because that's the in-flight req when the user clicked the
+    // shortcut (not r1, which was already answered). r3 follows
+    // without the field — it's just an auto-confirm tail entry.
     expect(onResolve).toHaveBeenCalledWith([
       { requirement_id: "r1", action: "reject", choice: "" },
-      { requirement_id: "r2", action: "confirm", choice: "once" },
+      {
+        requirement_id: "r2",
+        action: "confirm",
+        choice: "once",
+        set_permission_mode: "acceptEdits",
+      },
       { requirement_id: "r3", action: "confirm", choice: "once" },
     ]);
   });

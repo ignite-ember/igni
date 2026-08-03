@@ -235,7 +235,7 @@ Research $ARGUMENTS thoroughly:
 ```
 
 When `context: fork` is set, the `agent` field specifies which agent type runs the skill. Available types:
-- Any agent from the pool (by name): `explorer`, `editor`, `planner`, etc.
+- Any agent from the pool (by name): `explorer`, `editor`, `architect`, etc.
 - The Orchestrator can also assemble a team for forked skills when the task is complex
 
 ---

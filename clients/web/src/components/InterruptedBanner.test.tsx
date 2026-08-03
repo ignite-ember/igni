@@ -95,7 +95,7 @@ describe("AssistantMessage banner — click handlers", () => {
     // Anchor on the primary action's class so the test isn't
     // ambiguous with the Edit-prompt button (which contains
     // "retry" in its aria-label).
-    fireEvent.click(document.querySelector(".msg-assistant-interrupted-action--primary")!);
+    fireEvent.click(document.querySelector(".btn.btn-primary")!);
     expect(onRetry).toHaveBeenCalledWith(42);
   });
 

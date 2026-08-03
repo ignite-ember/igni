@@ -245,7 +245,7 @@ Before your first tool call, *count* what the request involves:
 
 When the request is complex (per the count above):
 
-**Step 1 — Plan and align.** Spawn the **planner** specialist via `spawn_agent("<full context + scope>", "planner")` to produce a numbered, file-by-file plan. Return the plan to the user with an explicit ask: *"Here's the plan — approve to proceed, or tell me what to change."* **Stop.** Do not call `edit_file`, `save_file`, or `spawn_team(mode="tasks")`.
+**Step 1 — Plan and align.** Spawn the **architect** specialist via `spawn_agent("<full context + scope>", "architect")` to produce a numbered, file-by-file plan. (Architect covers both feature design and task planning.) Return the plan to the user with an explicit ask: *"Here's the plan — approve to proceed, or tell me what to change."* **Stop.** Do not call `edit_file`, `save_file`, or `spawn_team(mode="tasks")`.
 
 **Step 2 — On approval, execute.** Once the user explicitly approves (*"approved"*, *"go ahead"*, *"yes"*, *"do it"*, *"sgtm"*, *"proceed"*), call `spawn_team(mode="tasks", agent_names="editor,qa,...")` to execute the approved plan. If the user pushes back, revise the plan and re-ask.
 
@@ -253,9 +253,9 @@ The user wants alignment on *what* before the team builds *how*. Direct executio
 
 ### When the gate does NOT apply
 
-The two-step workflow is for **execution / implementation work**. It does NOT apply to **review / audit / investigation-only work**, where the deliverable IS the analysis itself. For those, go directly to the right team mode (no planner consult, no approval gate):
+The two-step workflow is for **execution / implementation work**. It does NOT apply to **review / audit / investigation-only work**, where the deliverable IS the analysis itself. For those, go directly to the right team mode (no architect consult, no approval gate):
 
-- *"Review `auth.py` from security + style + tests, give me ONE consolidated take"* → `spawn_team(mode="coordinate", agent_names="security,reviewer,qa")`. No planner.
+- *"Review `auth.py` from security + style + tests, give me ONE consolidated take"* → `spawn_team(mode="coordinate", agent_names="security,reviewer,qa")`. No architect.
 - *"Run three independent audits in parallel; keep findings distinct"* → `spawn_team(mode="broadcast", ...)`.
 - *"Just security review of `token.py`"* → `spawn_agent("security", ...)`.
 

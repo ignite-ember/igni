@@ -16,11 +16,11 @@ User Message
 │ Orchestrator │──────▶│        Agent Pool             │
 │              │       │                               │
 │ • Analyzes   │       │  explorer.md    architect.md  │
-│   the task   │       │  planner.md     editor.md     │
-│ • Selects    │       │  simplifier.md  reviewer.md   │
-│   agents     │       │  security.md    qa.md         │
-│ • Picks team │       │  debugger.md    git.md        │
-│   mode       │       │  conversational.md            │
+│   the task   │       │  editor.md      reviewer.md   │
+│ • Selects    │       │  simplifier.md  security.md   │
+│   agents     │       │  qa.md          debugger.md   │
+│ • Picks team │       │  docs.md                      │
+│   mode       │       │  data-architect.codeindex.md  │
 │              │       │  your-custom-agent.md         │
 │              │       └───────────────────────────────┘
 │              │
@@ -185,13 +185,6 @@ reasoning: true
 tags: [architecture, design, read-only]
 ```
 
-**planner.md** — Analyzes tasks, produces structured implementation plans.
-```yaml
-tools: Glob, Grep, LS, Read, WebSearch
-reasoning: true
-tags: [planning, reasoning, read-only]
-```
-
 **editor.md** — Creates and modifies files. Can spawn sub-teams for exploration or review.
 ```yaml
 tools: Read, Write, Edit, Bash, Glob, Grep
@@ -232,24 +225,7 @@ reasoning: true
 tags: [debugging, diagnostics, bug-fix]
 ```
 
-**git.md** — Version control: commits, branches, PRs, diffs.
-```yaml
-tools: Bash, Read, Glob, Grep
-tags: [git, github, version-control]
-```
-
-**conversational.md** — General Q&A and explanations, no tools.
-```yaml
-tags: [chat, explain, no-tools]
-```
-
-**diagnostician.md** — System diagnostics and issue diagnosis.
-```yaml
-tools: Read, Bash, Glob, Grep
-reasoning: true
-tags: [diagnostics, system, troubleshooting]
-```
-
+> **Note:** Git operations (commits, branches, PRs, force-push safety) are handled by **editor.md**'s built-in safety protocol — there is no separate `git.md` agent.
 **docs.md** — Documentation writing and updates.
 ```yaml
 tools: Read, Write, Edit, Glob, Grep

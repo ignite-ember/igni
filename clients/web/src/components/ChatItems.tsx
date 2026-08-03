@@ -441,8 +441,15 @@ const ASSISTANT_MD_COMPONENTS: Components = {
 /** Assistant chat bubble with a hover-revealed copy-response
  *  button. Copies the raw markdown source (``item.text``) — that's
  *  what the user is actually looking at conceptually; copying the
- *  rendered HTML would lose code fences and structure. */
-const AssistantMessage = memo(function AssistantMessage({
+ *  rendered HTML would lose code fences and structure.
+ *
+ *  Exported so the ``?demo=interrupted`` sandbox can render the
+ *  banner states directly without going through ``ChatItemView``.
+ *  The production path always wraps ``AssistantMessage`` inside
+ *  ``ChatItemView`` (line ~1789) — exporting here doesn't change
+ *  that, just makes the component reachable from
+ *  ``dev/InterruptedBannerDemo.tsx``. */
+export const AssistantMessage = memo(function AssistantMessage({
   item,
   onRetry,
   onDiscard,
@@ -540,7 +547,7 @@ function InterruptedBanner({
       <div className="msg-assistant-interrupted-actions">
         <button
           type="button"
-          className="msg-assistant-interrupted-action msg-assistant-interrupted-action--primary"
+          className="btn btn-sm btn-primary"
           onClick={onRetry}
           disabled={!onRetry}
           aria-label={`Retry: ${label.toLowerCase()}`}
@@ -549,7 +556,7 @@ function InterruptedBanner({
         </button>
         <button
           type="button"
-          className="msg-assistant-interrupted-action"
+          className="btn btn-sm"
           onClick={onEditPrompt}
           disabled={!onEditPrompt}
           aria-label="Edit prompt for retry"
@@ -558,7 +565,7 @@ function InterruptedBanner({
         </button>
         <button
           type="button"
-          className="msg-assistant-interrupted-action msg-assistant-interrupted-action--danger"
+          className="btn btn-sm btn-danger"
           onClick={onDiscard}
           disabled={!onDiscard}
           aria-label="Discard the partial response"

@@ -28,6 +28,8 @@ import {
 } from "./chat/model";
 import { applyVisualizationDelta } from "./chat/visualizationStream";
 import { nextObserverBusyState } from "./chat/observerBusy";
+import { handleEsc } from "./chat/escHandler";
+import { buildContinuedPrompt } from "./chat/continueInterrupted";
 import {
   isProcessing,
   phaseFromProcFinalizing,
@@ -156,6 +158,15 @@ export default function App() {
   const client = useMemo(() => new EmberClient(), []);
   const [conn, setConn] = useState<ConnectionState>("connecting");
   const [items, setItems] = useState<ChatItem[]>([]);
+  // Mirror of ``items`` for callbacks whose deps don't include
+  // ``items`` (e.g. ``submit`` — see its long comment for why).
+  // The ref is updated on every render via the effect below so
+  // always points at the latest array; the callback can read it
+  // synchronously without depending on ``items`` in its closure.
+  const itemsRef = useRef<ChatItem[]>(items);
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
   // Single source of truth for run lifecycle. Every derived UI flag
   // (``processing``, ``finalizing``, spinner-visible, composer-enabled)
   // reads from this ONE state. Cancel is a single transition — the
@@ -1318,21 +1329,80 @@ export default function App() {
     return () => clearInterval(t);
   }, [conn, refreshStatus]);
 
-  // Esc cancels the in-flight run (TUI parity). Cancel is a SINGLE
-  // state transition — see ``chat/runPhase.ts``. Setting phase
-  // locally to "cancelled" immediately clears the spinner (fixing
-  // the STOP-button bug where "Finalizing…" stayed visible
-  // forever). The WS message tells the BE to actually stop.
+  // Esc behavior (single global handler, fires once per keydown):
+  //
+  //   1. **HITL dialog open** → reject all pending requirements.
+  //      The agent is paused waiting on user input; dismissing the
+  //      dialog also stops the run (the agent resumes the same
+  //      way as if the user clicked Reject on each row). Beats the
+  //      old behavior where Esc did nothing and the user felt
+  //      "bombarded" — every Esc should reduce pressure, not be
+  //      silently ignored.
+  //
+  //   2. **Active generation** (no HITL) → cancel the run (TUI
+  //      parity). Single state transition — see
+  //      ``chat/runPhase.ts``. Setting phase locally to "cancelled"
+  //      immediately clears the spinner; the WS message tells the
+  //      BE to actually stop.
+  //
+  //   3. **Idle** → no-op (lets the OS do its default — close
+  //      menus, exit popovers, etc.).
+  //
+  // **Fullscreen quirk**: when the app is in macOS-native
+  // fullscreen (green traffic-light button), WebKit fires the
+  // ``keydown`` event for Esc to JS BEFORE the OS intercepts it
+  // for the "exit fullscreen" gesture. Calling ``preventDefault()``
+  // here blocks the OS gesture so Esc stays in-app. Without this,
+  // every Esc inside fullscreen would exit the app — annoying
+  // when the agent is mid-stream.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && shouldShowSpinner(runPhaseRef.current) && !hitl) {
-        setRunPhase("cancelled");
-        client.cancel();
-        // Stamp the trailing assistant bubble as interrupted so the
-        // banner with Retry / Discard / Edit-prompt renders. The
-        // BE has just received the cancel RPC and is writing its
-        // own explicit ``interrupted_at`` record in parallel.
-        setItems((prev) => markAssistantInterrupted(prev, "cancelled"));
+      const action = handleEsc(e, {
+        hitl,
+        isProcessing: shouldShowSpinner(runPhaseRef.current),
+        isFullscreen: document.documentElement.dataset.fullscreen === "true",
+      });
+      if (action.preventDefault) e.preventDefault();
+      switch (action.decision?.kind) {
+        case "reject_hitl_and_cancel":
+          // Dismiss the dialog and reject every pending req in one
+          // batch. The BE resumes the agent, sees the rejections,
+          // aborts the run. ``resolveHitl`` is declared further
+          // down (line ~2140) — we can't reference it here due to
+          // the TDZ. Inline the minimal slice we need: ``setHitl``
+          // clears the dialog locally; ``client.resolveHitlBatch``
+          // sends the rejection. ``resolveHitl`` does more (sets
+          // the run phase, refreshes status, continues loops), but
+          // for the cancel path we cancel the run ourselves via
+          // ``client.cancel()`` + ``setRunPhase`` so the post-flow
+          // doesn't matter — the run is over.
+          const rejected = hitl!.map((req) => ({
+            requirement_id: req.requirement_id,
+            action: "reject" as const,
+            choice: "",
+          }));
+          setHitl(null);
+          void client.resolveHitlBatch(rejected, () => {});
+          setRunPhase("cancelled");
+          client.cancel();
+          setItems((prev) => markAssistantInterrupted(prev, "cancelled"));
+          return;
+        case "cancel_generation":
+          setRunPhase("cancelled");
+          client.cancel();
+          setItems((prev) => markAssistantInterrupted(prev, "cancelled"));
+          return;
+        case "block_fullscreen_exit":
+          // Esc was swallowed (preventDefault above) — the OS no
+          // longer gets to exit fullscreen on its own. The user
+          // can exit via the green button or by holding Esc for
+          // ~1s (WebKit's hold-to-exit hint) — both are explicit
+          // gestures, not accidental presses.
+          return;
+        default:
+          // null decision — let the event propagate so the OS /
+          // browser does its default (close menus, etc.).
+          return;
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1585,14 +1655,27 @@ export default function App() {
 
   const onRetryInterrupted = useCallback(
     async (assistantItemId: number) => {
-      const userItem = findPrecedingUserItem(items, assistantItemId);
-      if (!userItem || !userItem.runId) return;
+      // Local variable is named ``precedingUser`` to avoid shadowing
+      // the imported ``userItem`` factory — the previous version
+      // used the same name and ``append(userItem(precedingUser.text))``
+      // silently called the ChatItem object as a function, throwing
+      // TypeError after the trim had already cleared the items.
+      const precedingUser = findPrecedingUserItem(items, assistantItemId);
+      if (!precedingUser || !precedingUser.runId) return;
       // Snapshot the view-gen BEFORE the trim so the streamed
       // events from the new run still route to the live items
       // list (mirrors the runUserMessage path — see above).
       const gen = viewGenRef.current;
-      const ok = await truncateAndTrim(userItem);
+      const ok = await truncateAndTrim(precedingUser);
       if (!ok) return;
+      // Re-add the user bubble optimistically. Without this the
+      // WS ``UserMessageReceived`` echo gets suppressed by the
+      // client_id mirror filter (same client as before) and the
+      // user's message visually disappears — they'd see the agent
+      // working but with no record of what they asked. Mirrors
+      // what ``onEditUser`` does (trim → append fresh bubble →
+      // fire run).
+      append(userItem(precedingUser.text));
       // Re-fire with the original prompt + force=true so the BE
       // discards the stale interrupted record before writing the
       // new pending row. Without force, a retry on a cancelled run
@@ -1600,7 +1683,7 @@ export default function App() {
       // (the old one never got cleared).
       try {
         await client.runMessage(
-          userItem.text,
+          precedingUser.text,
           (m) => {
             if (gen === viewGenRef.current) onStreamEvent(m);
           },
@@ -1616,28 +1699,30 @@ export default function App() {
 
   const onDiscardInterrupted = useCallback(
     async (assistantItemId: number) => {
-      const userItem = findPrecedingUserItem(items, assistantItemId);
-      if (!userItem) return;
+      // Local ``precedingUser`` avoids shadowing the imported
+      // ``userItem`` factory — see onRetryInterrupted's comment.
+      const precedingUser = findPrecedingUserItem(items, assistantItemId);
+      if (!precedingUser) return;
       // Two-step discard: FE-local trim (drops the partial assistant
       // + any tool/think items in the tail) + BE-side
       // ``DISCARD_INTERRUPTED_RUN`` RPC so the durable interrupted
       // record is gone too. Either side failing is non-fatal — the
       // other cleanup still leaves the UI in a sane state.
-      await truncateAndTrim(userItem);
-      if (userItem.runId && sessionId) {
+      await truncateAndTrim(precedingUser);
+      if (precedingUser.runId && sessionId) {
         // Look up the interrupted record's message_id via
         // ``GET_INTERRUPTED_RUNS`` so we can target the right row.
         // The user prompt's text is also the message we recorded —
         // the BE matches on text+session, so we can also pass
-        // ``pending_message_text=userItem.text`` as a fallback key
-        // if the message_id round-trip is too chatty for the v1
-        // surface.
+        // ``pending_message_text=precedingUser.text`` as a fallback
+        // key if the message_id round-trip is too chatty for the
+        // v1 surface.
         try {
           const runs = await client.rpc<Array<{ message_id: string; content: string }>>(
             "get_interrupted_runs",
             { session_id: sessionId },
           );
-          const match = runs?.find((r) => r.content === userItem.text);
+          const match = runs?.find((r) => r.content === precedingUser.text);
           if (match) {
             await client.rpc("discard_interrupted_run", {
               session_id: sessionId,
@@ -1658,15 +1743,15 @@ export default function App() {
 
   const onEditPromptFromAssistant = useCallback(
     async (assistantItemId: number) => {
-      const userItem = findPrecedingUserItem(items, assistantItemId);
-      if (!userItem) return;
+      const precedingUser = findPrecedingUserItem(items, assistantItemId);
+      if (!precedingUser) return;
       // Trim first (FE-local), then seed the Composer with the
       // original prompt text so the user can re-edit it. The
       // ``n`` counter on the seed makes the Composer's seed-
       // effect refire even if the user re-uses the same prompt
       // text twice in a row.
-      await truncateAndTrim(userItem);
-      setComposerSeed({ text: userItem.text, n: Date.now() });
+      await truncateAndTrim(precedingUser);
+      setComposerSeed({ text: precedingUser.text, n: Date.now() });
     },
     [items, truncateAndTrim, setComposerSeed],
   );
@@ -2078,7 +2163,37 @@ export default function App() {
         append(infoItem("Queued — will run after the current turn."));
         return;
       }
-      await runUserMessage(text);
+      // If the previous assistant bubble was interrupted, the
+      // user typing any new message (including bare ``continue``)
+      // expects the agent to resume from the partial. The
+      // helper prepends a fenced context block; we send that
+      // to the BE but show the user's original text in the
+      // bubble — the partial was already visible in the chat
+      // before this submission.
+      //
+      // We use ``itemsRef.current`` (kept in sync with ``items``
+      // via an effect below) instead of the closure ``items``
+      // variable, because the submit useCallback's deps don't
+      // include ``items`` — when the user hits Send, the closure
+      // here is from the last render where ``items`` had NOT
+      // been mutated by the Esc handler's ``markAssistantInterrupted``
+      // call. Without the ref, ``buildContinuedPrompt`` would see
+      // a stale ``items`` array missing the interrupted bubble
+      // and silently no-op (the bug the user reported as "the AI
+      // knows nothing about the partial").
+      const continued = buildContinuedPrompt(itemsRef.current, text);
+      if (continued.clearIndex >= 0) {
+        // Clear the ``interrupted`` flag on the consumed bubble
+        // so the same partial isn't prepended twice.
+        setItems((prev) =>
+          prev.map((it, i) =>
+            i === continued.clearIndex && it.kind === "assistant" && it.interrupted
+              ? { ...it, interrupted: undefined }
+              : it,
+          ),
+        );
+      }
+      await runUserMessage(continued.text);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [client, runCommand, runUserMessage],
@@ -2573,9 +2688,17 @@ export default function App() {
                 onResolve={(d) => void resolveHitl(d)}
                 currentMode={status?.permission_mode}
                 onAcceptEditsThisRun={() => {
-                  // Mark so ``streaming_done`` reverts the flip.
+                  // Mark so ``streaming_done`` fires ``/accept off``
+                  // and the gate doesn't quietly persist past this
+                  // task. The mode flip itself now happens
+                  // atomically with the HITL resolve — the
+                  // ``set_permission_mode`` field on the decision
+                  // tells the BE to flip BEFORE resuming the agent,
+                  // closing the race where a separate ``/accept on``
+                  // slash command was dispatched concurrently and
+                  // lost. See ``HITLDecision.set_permission_mode``
+                  // in protocol/messages.ts.
                   autoAcceptForRunRef.current = true;
-                  void runCommand("/accept on", false);
                 }}
               />
             ) : null

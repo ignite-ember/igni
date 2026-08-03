@@ -289,9 +289,10 @@ class TeamStreamHandler(BaseStreamHandler[TeamStreamState]):
         tn = (te.tool_name or "tool") if te else "tool"
         ta = te.tool_args if te else {}
         args_preview = PREVIEWS.format_args(ta)
+        args_full = PREVIEWS.format_full_args(ta)
         self.state.current_tool = tn
         self._log_line(
-            f"  {LogSymbols.T_TRUNK.value}  {LogSymbols.T_BRANCH.value} {tn}({args_preview})"
+            f"  {LogSymbols.T_TRUNK.value}  {LogSymbols.T_BRANCH.value} {tn}({args_full})"
         )
         tc_id = getattr(te, "tool_call_id", None) if te else None
         self._emit(
@@ -313,9 +314,10 @@ class TeamStreamHandler(BaseStreamHandler[TeamStreamState]):
         )
         tc_id = getattr(te, "tool_call_id", None) if te else None
         result_preview = PREVIEWS.format_result(r)
+        result_full = "" if r is None else str(r)
         self._log_line(
             f"  {LogSymbols.T_TRUNK.value}  {LogSymbols.T_TRUNK.value}  "
-            f"{LogSymbols.T_LEAF.value} {result_preview}"
+            f"{LogSymbols.T_LEAF.value} {result_full}"
         )
         self._emit(
             ToolCompletedEvent(
@@ -338,7 +340,7 @@ class TeamStreamHandler(BaseStreamHandler[TeamStreamState]):
         err = str(getattr(event, "error", "?"))
         self._log_line(
             f"  {LogSymbols.T_TRUNK.value}  {LogSymbols.T_TRUNK.value}  "
-            f"{LogSymbols.T_LEAF.value} ERROR: {err[:60]}"
+            f"{LogSymbols.T_LEAF.value} ERROR: {err}"
         )
         self._emit(
             ToolCompletedEvent(
@@ -355,7 +357,7 @@ class TeamStreamHandler(BaseStreamHandler[TeamStreamState]):
     def _on_run_error(self, event: Any) -> None:
         ev_path, _name = self._event_agent_path(event)
         err = str(getattr(event, "content", "?"))
-        self._log_line(f"  {LogSymbols.T_TRUNK.value}  {LogSymbols.T_LEAF.value} ERROR: {err[:60]}")
+        self._log_line(f"  {LogSymbols.T_TRUNK.value}  {LogSymbols.T_LEAF.value} ERROR: {err}")
         self._emit(
             RunErrorEvent(
                 agent_path=ev_path,
