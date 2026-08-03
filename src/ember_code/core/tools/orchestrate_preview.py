@@ -90,6 +90,13 @@ class PreviewFormatter:
             parts.append(f"{k}={val}")
         return ", ".join(parts)
 
+    def format_full_args(self, tool_args: dict | None) -> str:
+        """All kwargs of a tool call with full values, for the
+        orchestrator activity log (no truncation)."""
+        if not tool_args:
+            return ""
+        return ", ".join(f"{k}={v}" for k, v in tool_args.items())
+
     def format_result(self, result: Any, limit: int | None = None) -> str:
         """One-line preview of a tool result, capped at ``limit``
         chars (default :attr:`RESULT_DEFAULT_LIMIT`).

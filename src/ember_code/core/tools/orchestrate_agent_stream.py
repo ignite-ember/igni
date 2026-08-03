@@ -203,12 +203,13 @@ class SubAgentStreamHandler(BaseStreamHandler[SubAgentStreamState]):
         tn = (te.tool_name or "tool") if te else "tool"
         ta = te.tool_args if te else {}
         args_preview = PREVIEWS.format_args(ta)
+        args_full = PREVIEWS.format_full_args(ta)
         tc_id = getattr(te, "tool_call_id", None) if te else None
         state.current_tool = tn
         if tn == "visualize" and isinstance(ta, dict) and isinstance(ta.get("spec"), dict):
             await self._emit_visualizer_final_delta(ta["spec"])
         self._log_line(
-            f"  {LogSymbols.T_TRUNK.value}  {LogSymbols.T_BRANCH.value} {tn}({args_preview})"
+            f"  {LogSymbols.T_TRUNK.value}  {LogSymbols.T_BRANCH.value} {tn}({args_full})"
         )
         self._emit(
             ToolStartedEvent(
@@ -258,9 +259,10 @@ class SubAgentStreamHandler(BaseStreamHandler[SubAgentStreamState]):
         tn = (te.tool_name if te else None) or state.current_tool or "tool"
         tc_id = getattr(te, "tool_call_id", None) if te else None
         result_preview = PREVIEWS.format_result(r)
+        result_full = "" if r is None else str(r)
         self._log_line(
             f"  {LogSymbols.T_TRUNK.value}  {LogSymbols.T_TRUNK.value}  "
-            f"{LogSymbols.T_LEAF.value} {result_preview}"
+            f"{LogSymbols.T_LEAF.value} {result_full}"
         )
         self._emit(
             ToolCompletedEvent(
@@ -282,7 +284,7 @@ class SubAgentStreamHandler(BaseStreamHandler[SubAgentStreamState]):
         err = str(getattr(event, "error", "?"))
         self._log_line(
             f"  {LogSymbols.T_TRUNK.value}  {LogSymbols.T_TRUNK.value}  "
-            f"{LogSymbols.T_LEAF.value} ERROR: {err[:60]}"
+            f"{LogSymbols.T_LEAF.value} ERROR: {err}"
         )
         self._emit(
             ToolCompletedEvent(
@@ -299,9 +301,7 @@ class SubAgentStreamHandler(BaseStreamHandler[SubAgentStreamState]):
     def _on_run_error(self, event: Any) -> None:
         state = self.state
         err = str(getattr(event, "content", "") or getattr(event, "error", "?"))
-        self._log_line(
-            f"  {LogSymbols.T_TRUNK.value}  {LogSymbols.WARNING.value} RUN ERROR: {err[:200]}"
-        )
+        self._log_line(f"  {LogSymbols.T_TRUNK.value}  {LogSymbols.WARNING.value} RUN ERROR: {err}")
         self._emit(
             RunErrorEvent(
                 agent_path=state.agent_path_id,
