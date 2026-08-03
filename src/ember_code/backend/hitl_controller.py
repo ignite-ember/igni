@@ -226,6 +226,29 @@ class HitlController:
         if not main_resolved_reqs:
             return  # everything was sub-agent or failed
 
+        # Atomic mode flip — applies BEFORE ``acontinue_run`` resumes
+        # the agent, so the very next tool permission check sees the
+        # new mode. Closes the race where a separate ``/accept on``
+        # slash command fired alongside this batch was dispatched
+        # concurrently by the WS orchestrator and lost the race —
+        # the agent resumed under the OLD mode and re-prompted for
+        # the next edit. The FE's "Accept all edits during this
+        # session" shortcut uses this field on the first decision;
+        # we scan the whole batch and take the first non-empty value
+        # so multiple callers (current req + ``once``/``always``
+        # choices) don't have to coordinate.
+        for d in decisions:
+            target_mode = d.set_permission_mode.strip() if d.set_permission_mode else ""
+            if not target_mode:
+                continue
+            status = self._session.set_permission_mode(target_mode)
+            _HITL_LLM_LOGGER.info(
+                "resolve_hitl_batch: atomic mode flip → %s (%s)",
+                target_mode,
+                status,
+            )
+            break  # first non-empty wins; ignore later decisions
+
         team = self._session.main_team
 
         _HITL_LLM_LOGGER.info(

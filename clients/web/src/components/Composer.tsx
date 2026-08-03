@@ -1030,6 +1030,15 @@ const MODE_OPTIONS: { value: string; label: string; desc: string }[] = [
   },
 ];
 
+/** Split send button — left half is a dropdown trigger that
+ *  reveals the four permission modes; right half is the actual
+ *  send action. The user can change the agent's permission
+ *  surface at the moment of sending instead of digging into
+ *  ``/plan`` / ``/accept`` / ``/bypass`` slash commands. The
+ *  left half is intentionally narrower than the right (~3:5
+ *  ratio) so the primary action — Send — stays the visually
+ *  dominant target.
+ */
 function SendButton({
   connected,
   canSend,

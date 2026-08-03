@@ -296,12 +296,24 @@ export function WatcherPanel({
             <strong>PID {selectedRow.pid}</strong>
           </span>
         ) : (
+          // The pill in the footer can show a count that the panel
+          // doesn't agree with — ``list_background_processes`` is
+          // sampled once on open, and pushes that landed between
+          // the pill render and the panel render (process exited
+          // mid-click) can leave us with "1 running" outside and
+          // "0 running" inside. ``Watcher (0 running)`` reads as a
+          // contradiction the user can't act on, so when nothing
+          // is actually running we drop the count entirely.
           <span>
             Watcher{" "}
             <span className="watcher-count">
-              ({runningCount} running{rowsList.length > runningCount
-                ? `, ${rowsList.length - runningCount} stopped`
-                : ""})
+              {runningCount === 0
+                ? "(no processes)"
+                : `(${runningCount} running${
+                    rowsList.length > runningCount
+                      ? `, ${rowsList.length - runningCount} stopped`
+                      : ""
+                  })`}
             </span>
           </span>
         )
