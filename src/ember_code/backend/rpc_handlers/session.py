@@ -29,6 +29,21 @@ class SessionRpcHandler(RpcHandler):
     def get_pending_messages(self, args: dict) -> Any:
         return self._ctx.backend.get_pending_messages(args["session_id"])
 
+    @rpc(RpcMethod.GET_INTERRUPTED_RUNS)
+    def get_interrupted_runs(self, args: dict) -> Any:
+        # Surface the explicit interrupted-run records the FE uses
+        # to render Retry / Discard / Edit-prompt banners. Distinct
+        # from ``get_pending_messages`` — see the controller docs.
+        return self._ctx.backend.get_interrupted_runs(args["session_id"])
+
+    @rpc(RpcMethod.DISCARD_INTERRUPTED_RUN)
+    def discard_interrupted_run(self, args: dict) -> Any:
+        # Hard-delete a single interrupted record. Idempotent on
+        # missing rows (the controller returns ``ok=True`` either
+        # way) so the FE can retry on transient errors without
+        # worrying about double-delete.
+        return self._ctx.backend.discard_interrupted_run(args["session_id"], args["message_id"])
+
     @rpc(RpcMethod.LIST_SESSIONS)
     def list_sessions(self, args: dict) -> Any:
         return self._ctx.backend.list_sessions()

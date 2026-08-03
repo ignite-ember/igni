@@ -3,7 +3,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark-dimmed.css";
-import { formatStats, type ChatItem } from "../chat/model";
+import { formatStats, type AssistantInterrupted, ASSISTANT_INTERRUPTED_LABELS, type ChatItem } from "../chat/model";
 import type { DiffRow } from "../protocol/messages";
 import type { Spec } from "@json-render/core";
 import { ChevronIcon } from "./Icons";
@@ -117,19 +117,23 @@ const COLLAPSED_MAX_PX = 220;
 
 /** Dispatcher for fenced-block rendering. Routes:
  *  - ``language-mermaid`` → MermaidBlock (text → SVG diagram)
- *  - no language / ``language-md`` / ``language-markdown`` /
- *    ``language-text`` → MarkdownBlock (unfolds the source as
- *    inline markdown). The agent uses plain ``\`\`\`…\`\`\``
- *    fences to wrap prose / calculations / ASCII diagrams that
- *    should render as chat content, not as code; ``\`\`\`md``
- *    is the explicit form of the same intent. Fences with any
- *    other language tag (``\`\`\`python``, ``\`\`\`json``,
- *    etc.) are treated as actual code.
- *  - Everything else → CodeBlock (copy chip, collapse chevron). */
+ *  - no language → PreformattedBlock (preserves line breaks /
+ *    spacing; the agent uses bare ``\`\`\`…\`\`\`` for
+ *    calculations, flow charts, and ASCII art where the
+ *    whitespace carries the meaning)
+ *  - ``language-md`` / ``language-markdown`` / ``language-text`` /
+ *    ``language-plain`` → MarkdownBlock (renders the source as
+ *    inline markdown — the agent explicitly tagged this as
+ *    prose that should be unfolded with formatting)
+ *  - Everything else → CodeBlock (copy chip, collapse chevron).
+ */
 function MarkdownPre({ children }: { children?: ReactNode }) {
   const mermaidSource = extractMermaidSource(children);
   if (mermaidSource !== null) {
     return <MermaidBlock source={mermaidSource} />;
+  }
+  if (isNoLanguageFence(children)) {
+    return <PreformattedBlock source={extractPreSource(children)} />;
   }
   const markdownSource = extractUnfoldableSource(children);
   if (markdownSource !== null) {
@@ -148,6 +152,28 @@ function extractMermaidSource(children: ReactNode): string | null {
   const props = children.props as { className?: string; children?: ReactNode };
   const cls = props.className ?? "";
   if (!cls.split(/\s+/).includes("language-mermaid")) return null;
+  return String(props.children ?? "").replace(/\n$/, "");
+}
+
+/** True for a bare ``\`\`\`…\`\`\`` fence (no language class).
+ *  This is the agent's "preformatted text" hint — calculations,
+ *  flow charts, ASCII art. We render these as ``<pre>`` blocks
+ *  so the whitespace carries through. */
+export function isNoLanguageFence(children: ReactNode): boolean {
+  if (!isValidElement(children)) return false;
+  const props = children.props as { className?: string; children?: ReactNode };
+  const cls = props.className ?? "";
+  // Any ``language-X`` class makes this an explicit language fence
+  // (md, text, plain, python, etc.) — not "no language".
+  return !cls.split(/\s+/).some((t) => t.startsWith("language-"));
+}
+
+/** Extract the raw source from a fence (any language) as a
+ *  preformatted string. Used by ``PreformattedBlock``. Same
+ *  trailing-newline strip as the markdown path. */
+function extractPreSource(children: ReactNode): string {
+  if (!isValidElement(children)) return "";
+  const props = children.props as { className?: string; children?: ReactNode };
   return String(props.children ?? "").replace(/\n$/, "");
 }
 
@@ -184,31 +210,24 @@ export function extractUnfoldableSource(children: ReactNode): string | null {
   return null;
 }
 
-/** Unfolds a fenced block as inline markdown. The agent uses
- *  ``\`\`\`…\`\`\`` (or ``\`\`\`md``) for prose / calculations /
- *  ASCII diagrams that should render as chat content rather than
- *  a code pill.
+/** Unfolds a fenced block. The agent uses ``\`\`\`…\`\`\`` (or
+ *  ``\`\`\`md``) for prose / calculations / ASCII diagrams that
+ *  should render as chat content rather than a code pill.
  *
- *  Two render paths:
- *    - Box-drawing / block-element content (U+2500–U+257F and
- *      U+2580–U+259F) needs column alignment that ReactMarkdown's
- *      inline render can't provide. Route those to a monospace
- *      ``<pre>`` so the diagram keeps its shape.
- *    - Everything else (prose, lists, tables, bold) goes through
- *      the normal ReactMarkdown pipeline.
- *
- *  Recursion guard: the inner ReactMarkdown uses the default
- *  ``components.pre`` (no MarkdownPre override), so a ``language-md``
- *  block nested inside a ``language-md`` block would re-render as a
- *  plain ``<pre>`` rather than re-entering this dispatcher. */
+ *  The dispatcher in ``MarkdownPre`` splits this into two explicit
+ *  paths based on the fence's language class:
+ *    - MarkdownBlock — for ``language-md`` / ``language-markdown``
+ *      / ``language-text`` / ``language-plain``. The agent wrote
+ *      it as markdown; render it as markdown.
+ *    - PreformattedBlock — for no language (bare ``\`\`\`…\`\`\``).
+ *      The agent wrote calculations / flow charts / ASCII art;
+ *      line breaks and spacing carry the meaning, and ReactMarkdown
+ *      would collapse them. Box-drawing / flow-chart glyphs route
+ *      to a monospace font so columns line up; other content
+ *      (single-line math, plain prose) uses the regular
+ *      proportional UI font.
+ */
 function MarkdownBlock({ source }: { source: string }) {
-  if (hasBoxDrawingChars(source)) {
-    return (
-      <pre className="markdown-block-pre">
-        <code>{source}</code>
-      </pre>
-    );
-  }
   return (
     <div className="markdown-block-wrap">
       <ReactMarkdown
@@ -221,6 +240,21 @@ function MarkdownBlock({ source }: { source: string }) {
   );
 }
 
+/** Bare-fence unfold target. Renders the source as preformatted
+ *  text in a ``<pre>``, with line breaks and runs of spaces
+ *  preserved (``white-space: pre-wrap``). Box-drawing and
+ *  flow-chart glyphs get a monospace font so vertical/horizontal
+ *  alignment survives; everything else uses the regular
+ *  proportional UI font. */
+function PreformattedBlock({ source }: { source: string }) {
+  const mono = hasBoxDrawingChars(source) || hasFlowChartArrows(source);
+  return (
+    <pre className={`markdown-block-pre${mono ? " markdown-block-pre--mono" : ""}`}>
+      <code>{source}</code>
+    </pre>
+  );
+}
+
 /** True if the string contains any box-drawing or block-element
  *  glyphs that need monospace alignment. U+2500–U+257F covers
  *  ┌─┐│└┘ ├┤ ┬┴┼ ─ │ etc.; U+2580–U+259F covers ▀▄ ▌▐ ░▒▓.
@@ -228,15 +262,19 @@ function MarkdownBlock({ source }: { source: string }) {
  *  user-flow tree in the latency section, etc.). They render
  *  unreadably in a proportional font. */
 export function hasBoxDrawingChars(s: string): boolean {
-  // Use explicit Unicode escape ranges so the regex is grep-able
-  // and reviewable. ─–╿ is the Box Drawing block; the
-  // narrower detection is intentional — math arrows / block
-  // elements stay on the markdown path unless a true drawing
-  // glyph is present.
   // U+2500–U+257F is the Box Drawing block. The ``g`` flag
   // catches the first instance anywhere; we don't need to
   // count occurrences.
   return /[─-╿]/.test(s);
+}
+
+/** True if the string contains flow-chart arrows that need
+ *  monospace alignment. U+2190–U+21FF covers the Arrows block
+ *  (← ↑ → ↓ ↔ ↕ ⇄ etc.). The agent's latency section uses
+ *  ``↓`` between pipeline stages — in a proportional font the
+ *  arrows don't line up vertically. */
+export function hasFlowChartArrows(s: string): boolean {
+  return /[←→↑↓⇄⇅]/.test(s);
 }
 
 function CodeBlock({ children }: { children?: ReactNode }) {
@@ -404,7 +442,17 @@ const ASSISTANT_MD_COMPONENTS: Components = {
  *  button. Copies the raw markdown source (``item.text``) — that's
  *  what the user is actually looking at conceptually; copying the
  *  rendered HTML would lose code fences and structure. */
-const AssistantMessage = memo(function AssistantMessage({ text }: { text: string }) {
+const AssistantMessage = memo(function AssistantMessage({
+  item,
+  onRetry,
+  onDiscard,
+  onEditPrompt,
+}: {
+  item: Extract<ChatItem, { kind: "assistant" }>;
+  onRetry?: (assistantItemId: number) => void;
+  onDiscard?: (assistantItemId: number) => void;
+  onEditPrompt?: (assistantItemId: number) => void;
+}) {
   return (
     <div className="msg-assistant">
       <div className="msg-assistant-body">
@@ -413,12 +461,114 @@ const AssistantMessage = memo(function AssistantMessage({ text }: { text: string
           rehypePlugins={[rehypeHighlight]}
           components={ASSISTANT_MD_COMPONENTS}
         >
-          {normalizeAssistantMarkdown(text)}
+          {normalizeAssistantMarkdown(item.text)}
         </ReactMarkdown>
       </div>
+      {item.interrupted && (
+        <InterruptedBanner
+          reason={item.interrupted}
+          onRetry={onRetry ? () => onRetry(item.id) : undefined}
+          onDiscard={onDiscard ? () => onDiscard(item.id) : undefined}
+          onEditPrompt={onEditPrompt ? () => onEditPrompt(item.id) : undefined}
+        />
+      )}
     </div>
   );
 });
+
+/**
+ * Recovery banner rendered below an assistant bubble whose run
+ * didn't complete normally. Provides three actions (Retry / Discard
+ * / Edit prompt) plus keyboard shortcuts (Enter / Backspace / e) so
+ * the user can recover from a stuck run without reaching for the
+ * mouse.
+ *
+ * Wired by ``AssistantMessage`` when ``item.interrupted`` is set;
+ * hidden on normally-completed bubbles so the chat stays clean.
+ * See [[feedback-interrupted-messages]] for the UX rationale — the
+ * "X message(s) above were interrupted" notice was the original
+ * complaint surface, and this banner is the top-notch replacement.
+ */
+function InterruptedBanner({
+  reason,
+  onRetry,
+  onDiscard,
+  onEditPrompt,
+}: {
+  reason: AssistantInterrupted;
+  onRetry?: () => void;
+  onDiscard?: () => void;
+  onEditPrompt?: () => void;
+}) {
+  // The banner mounts with a focus move so keyboard users see the
+  // actions immediately. The first button (Retry) gets focus by
+  // default — matches Claude Code's "interrupted" modal shape.
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    ref.current?.focus();
+  }, []);
+
+  const label = ASSISTANT_INTERRUPTED_LABELS[reason];
+
+  return (
+    <div
+      ref={ref}
+      tabIndex={0}
+      role="status"
+      aria-live="polite"
+      className={`msg-assistant-interrupted msg-assistant-interrupted--${reason}`}
+      onKeyDown={(e) => {
+        // Enter → Retry (most common action). Backspace/Delete →
+        // Discard. ``e`` → Edit prompt. The keyboard map is a
+        // power-user shortcut — primary interaction is still the
+        // three buttons below. ``preventDefault`` on the Backspace
+        // path stops the browser's "navigate back" gesture when
+        // the focus is here.
+        if (e.key === "Enter" && onRetry) {
+          e.preventDefault();
+          onRetry();
+        } else if ((e.key === "Backspace" || e.key === "Delete") && onDiscard) {
+          e.preventDefault();
+          onDiscard();
+        } else if (e.key === "e" && onEditPrompt) {
+          e.preventDefault();
+          onEditPrompt();
+        }
+      }}
+    >
+      <span className="msg-assistant-interrupted-label">{label}</span>
+      <div className="msg-assistant-interrupted-actions">
+        <button
+          type="button"
+          className="msg-assistant-interrupted-action msg-assistant-interrupted-action--primary"
+          onClick={onRetry}
+          disabled={!onRetry}
+          aria-label={`Retry: ${label.toLowerCase()}`}
+        >
+          Retry
+        </button>
+        <button
+          type="button"
+          className="msg-assistant-interrupted-action"
+          onClick={onEditPrompt}
+          disabled={!onEditPrompt}
+          aria-label="Edit prompt for retry"
+        >
+          Edit prompt
+        </button>
+        <button
+          type="button"
+          className="msg-assistant-interrupted-action msg-assistant-interrupted-action--danger"
+          onClick={onDiscard}
+          disabled={!onDiscard}
+          aria-label="Discard the partial response"
+        >
+          Discard
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /** Inline copy-response button rendered to the right of the stats
  *  line. The stats item carries no assistant text itself, so the
@@ -1561,6 +1711,9 @@ export const ChatItemView = memo(function ChatItemView({
   onDispatchVisualizationAction,
   onRerunWorkflow,
   onCancelWorkflow,
+  onRetryInterrupted,
+  onDiscardInterrupted,
+  onEditPromptFromAssistant,
 }: {
   item: ChatItem;
   /** Raw markdown text of the assistant turn this stats item closes.
@@ -1606,6 +1759,17 @@ export const ChatItemView = memo(function ChatItemView({
   /** Stop a running workflow. Wired to the "Cancel" button on a
    *  ``workflow`` chat item whose status is ``running``. */
   onCancelWorkflow?: (run: Extract<ChatItem, { kind: "workflow" }>["run"]) => void;
+  /** Banner "Retry" on an interrupted assistant bubble — re-fires the
+   *  original user prompt with ``force=true`` (BE supersedes stale
+   *  interrupted state). See ``App.tsx:onRetryInterrupted``. */
+  onRetryInterrupted?: (assistantItemId: number) => void;
+  /** Banner "Discard" — drops the partial + the BE-side
+   *  interrupted record. See ``App.tsx:onDiscardInterrupted``. */
+  onDiscardInterrupted?: (assistantItemId: number) => void;
+  /** Banner "Edit prompt" — drops the partial + seeds the Composer
+   *  with the original prompt so the user can re-edit before
+   *  re-firing. See ``App.tsx:onEditPromptFromAssistant``. */
+  onEditPromptFromAssistant?: (assistantItemId: number) => void;
 }) {
   switch (item.kind) {
     case "attachments":
@@ -1621,7 +1785,14 @@ export const ChatItemView = memo(function ChatItemView({
         />
       );
     case "assistant":
-      return <AssistantMessage text={item.text} />;
+      return (
+        <AssistantMessage
+          item={item}
+          onRetry={onRetryInterrupted}
+          onDiscard={onDiscardInterrupted}
+          onEditPrompt={onEditPromptFromAssistant}
+        />
+      );
     case "thinking":
       return <ThinkingBlock text={item.text} />;
     case "tool":

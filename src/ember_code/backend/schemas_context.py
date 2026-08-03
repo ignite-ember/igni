@@ -59,6 +59,9 @@ from ember_code.core.output_styles import OutputStyle
 
 if TYPE_CHECKING:
     from ember_code.core.session.pending_messages import (
+        InterruptedMessage as InterruptedMessageRow,
+    )
+    from ember_code.core.session.pending_messages import (
         PendingMessage as PendingMessageRow,
     )
     from ember_code.core.session.schemas import ContextBreakdown
@@ -111,6 +114,56 @@ class PendingMessage(BaseModel):
             received_at=row.received_at,
             message_id=row.message_id,
         )
+
+
+class InterruptedRun(BaseModel):
+    """Wire shape for one explicitly-interrupted run surfaced by
+    :meth:`ContextController.get_interrupted_runs`.
+
+    A row is "interrupted" when the cancel or error path in
+    :class:`RunController` stamped it with ``interrupted_at`` and
+    ``interrupted_reason``. The FE renders this as the banner on
+    the assistant bubble that was in-flight when the run stopped,
+    with Retry / Discard / Edit-prompt actions.
+
+    ``reason`` is one of ``"cancelled" | "errored" | "abandoned"``
+    — same set as the storage column. ``last_error`` is set when
+    ``reason == "errored"`` and ``None`` otherwise.
+    """
+
+    message_id: str
+    content: str
+    received_at: int
+    interrupted_at: int
+    reason: str
+    last_error: str | None = None
+
+    @classmethod
+    def from_interrupted_row(
+        cls,
+        row: InterruptedMessageRow,
+    ) -> InterruptedRun:
+        """Project a domain :class:`InterruptedMessage` storage row
+        onto the wire model. Keeps the controller free of literal
+        field-by-field mapping — see the sibling
+        :meth:`PendingMessage.from_pending_row`."""
+        return cls(
+            message_id=row.message_id,
+            content=row.text,
+            received_at=row.received_at,
+            interrupted_at=row.interrupted_at,
+            reason=row.interrupted_reason,
+            last_error=row.last_error,
+        )
+
+
+class DiscardInterruptedRunResult(BaseModel):
+    """Wire shape for :meth:`ContextController.discard_interrupted_run`.
+    ``ok`` is ``False`` when the row didn't exist (idempotent — the
+    FE can treat the row as gone regardless)."""
+
+    ok: bool
+    error: str = ""
 
 
 class OutputStylesListView(BaseModel):

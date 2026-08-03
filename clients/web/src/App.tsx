@@ -5,6 +5,8 @@ import {
   assistantItem,
   compactItem,
   correctStatsCtx,
+  findPrecedingUserItem,
+  markAssistantInterrupted,
   markUserRunPersisted,
   restoredItem,
   restoredStatsItem,
@@ -653,6 +655,15 @@ export default function App() {
         // local-only trim. Must be a separate setItems call from
         // the stats fix below so both run in the same render pass.
         setItems((prev) => markUserRunPersisted(prev, runId));
+        // Refresh the sidebar session list. Agno writes the session
+        // row to SQLite on the first user message, so before this
+        // run completed the freshly-created session was invisible
+        // to ``list_sessions``. The auto-name push also triggers a
+        // refresh, but only when naming succeeds — without this
+        // explicit refresh a session whose auto-name failed (or
+        // raced the run) would stay orphaned in the sidebar until
+        // app restart. Cheap RPC, called once per top-level run.
+        void refreshSessions();
         void client
           .rpc<number>("count_context_tokens")
           .then((ctx) => {
@@ -1317,6 +1328,11 @@ export default function App() {
       if (e.key === "Escape" && shouldShowSpinner(runPhaseRef.current) && !hitl) {
         setRunPhase("cancelled");
         client.cancel();
+        // Stamp the trailing assistant bubble as interrupted so the
+        // banner with Retry / Discard / Edit-prompt renders. The
+        // BE has just received the cancel RPC and is writing its
+        // own explicit ``interrupted_at`` record in parallel.
+        setItems((prev) => markAssistantInterrupted(prev, "cancelled"));
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1478,6 +1494,13 @@ export default function App() {
       } catch (e) {
         append(errorItem(String(e)));
         setRunPhase("errored");
+        // Stamp the trailing assistant bubble so the banner's
+        // Retry / Discard / Edit-prompt render. The BE has its own
+        // explicit interrupted record (``reason='errored'``,
+        // ``last_error``) that surfaces via ``GET_INTERRUPTED_RUNS``
+        // on next reload — this stamp is for the live UX in the
+        // current session.
+        setItems((prev) => markAssistantInterrupted(prev, "errored"));
       } finally {
         void refreshStatus(); // keep the ctx counter live after each run
         notifyDone();
@@ -1546,6 +1569,108 @@ export default function App() {
     [append, runUserMessage, truncateAndTrim],
   );
 
+  // ── Banner actions on interrupted assistant bubbles ───────────
+  //
+  // Driven by ``AssistantMessage`` via the three callbacks below.
+  // All three start from the same place: find the user message that
+  // triggered the interrupted run, trim everything from it onward
+  // (FE-local — the BE has the explicit interrupted record but no
+  // Agno session entry, so ``truncate_history`` would 404).
+  //
+  // ``force=true`` on the re-fire tells the BE to supersede any
+  // stale interrupted row for this session before recording the
+  // new pending row — without it, the retry would create a second
+  // pending row that dangles until the new run completes (see
+  // ``protocol/schemas/fe_actions.py:UserMessage.force``).
+
+  const onRetryInterrupted = useCallback(
+    async (assistantItemId: number) => {
+      const userItem = findPrecedingUserItem(items, assistantItemId);
+      if (!userItem || !userItem.runId) return;
+      // Snapshot the view-gen BEFORE the trim so the streamed
+      // events from the new run still route to the live items
+      // list (mirrors the runUserMessage path — see above).
+      const gen = viewGenRef.current;
+      const ok = await truncateAndTrim(userItem);
+      if (!ok) return;
+      // Re-fire with the original prompt + force=true so the BE
+      // discards the stale interrupted record before writing the
+      // new pending row. Without force, a retry on a cancelled run
+      // would leave BOTH the old + new rows stamped interrupted
+      // (the old one never got cleared).
+      try {
+        await client.runMessage(
+          userItem.text,
+          (m) => {
+            if (gen === viewGenRef.current) onStreamEvent(m);
+          },
+          undefined,
+          { force: true },
+        );
+      } catch (e) {
+        append(errorItem(`Couldn't retry: ${e instanceof Error ? e.message : String(e)}`));
+      }
+    },
+    [items, truncateAndTrim, client, append, onStreamEvent],
+  );
+
+  const onDiscardInterrupted = useCallback(
+    async (assistantItemId: number) => {
+      const userItem = findPrecedingUserItem(items, assistantItemId);
+      if (!userItem) return;
+      // Two-step discard: FE-local trim (drops the partial assistant
+      // + any tool/think items in the tail) + BE-side
+      // ``DISCARD_INTERRUPTED_RUN`` RPC so the durable interrupted
+      // record is gone too. Either side failing is non-fatal — the
+      // other cleanup still leaves the UI in a sane state.
+      await truncateAndTrim(userItem);
+      if (userItem.runId && sessionId) {
+        // Look up the interrupted record's message_id via
+        // ``GET_INTERRUPTED_RUNS`` so we can target the right row.
+        // The user prompt's text is also the message we recorded —
+        // the BE matches on text+session, so we can also pass
+        // ``pending_message_text=userItem.text`` as a fallback key
+        // if the message_id round-trip is too chatty for the v1
+        // surface.
+        try {
+          const runs = await client.rpc<Array<{ message_id: string; content: string }>>(
+            "get_interrupted_runs",
+            { session_id: sessionId },
+          );
+          const match = runs?.find((r) => r.content === userItem.text);
+          if (match) {
+            await client.rpc("discard_interrupted_run", {
+              session_id: sessionId,
+              message_id: match.message_id,
+            });
+          }
+        } catch (e) {
+          // Non-fatal — the FE-local trim already removed the
+          // partial from the user's view. The interrupted record
+          // will be cleaned up on next ``detect_interrupted_run``
+          // if the discard RPC failed.
+          console.warn("discard_interrupted_run RPC failed", e);
+        }
+      }
+    },
+    [items, truncateAndTrim, client, sessionId],
+  );
+
+  const onEditPromptFromAssistant = useCallback(
+    async (assistantItemId: number) => {
+      const userItem = findPrecedingUserItem(items, assistantItemId);
+      if (!userItem) return;
+      // Trim first (FE-local), then seed the Composer with the
+      // original prompt text so the user can re-edit it. The
+      // ``n`` counter on the seed makes the Composer's seed-
+      // effect refire even if the user re-uses the same prompt
+      // text twice in a row.
+      await truncateAndTrim(userItem);
+      setComposerSeed({ text: userItem.text, n: Date.now() });
+    },
+    [items, truncateAndTrim, setComposerSeed],
+  );
+
   // Stable per-item callbacks. The `items.map` below passes these to
   // every ChatItemView; if they were inline arrows, React.memo's
   // shallow compare would always miss and every item would re-render
@@ -1556,6 +1681,10 @@ export default function App() {
   const onStopTeam = useCallback(() => {
     setRunPhase("cancelled");
     client.cancel();
+    // Stamp the trailing assistant bubble so the Retry / Discard /
+    // Edit-prompt banner surfaces. See Esc-handler comment for the
+    // BE-side stamp that this parallels.
+    setItems((prev) => markAssistantInterrupted(prev, "cancelled"));
   }, [client, setRunPhase]);
   const onStopAgent = useCallback(
     (runId: string) =>
@@ -1754,15 +1883,34 @@ export default function App() {
             // context; pull a fresh StatusUpdate so the footer
             // doesn't keep showing the prior session's count.
             void refreshStatus();
+            let renewed = "";
             try {
               // /clear renews the runtime's session id — rebind so
               // this view follows the fresh conversation.
-              const renewed = await client.rpc<string>("get_session_id");
+              renewed = await client.rpc<string>("get_session_id");
               client.sessionId = renewed;
               clientState.set(SESSION_KEY, renewed);
               setSessionId(renewed);
             } catch {
               /* ignore */
+            }
+            // Optimistic insert: push the new (un-named) session
+            // into the sidebar immediately so the user can see
+            // "New chat" appear without waiting for the first
+            // message to land. Agno doesn't register the session
+            // row until the first ``run_message`` — without this
+            // optimistic insert, the sidebar would only catch up
+            // when ``run_completed`` triggers ``refreshSessions``,
+            // which means the new chat is invisible for the
+            // duration of the first message round-trip. The
+            // subsequent ``refreshSessions()`` (below) will
+            // overwrite this placeholder with the BE's view
+            // (id, name, updated_at) once the first message lands.
+            if (renewed) {
+              setSessions((prev) => [
+                { session_id: renewed, name: "New chat" },
+                ...prev.filter((s) => s.session_id !== renewed),
+              ]);
             }
             // No info line — an empty item list renders the welcome hero.
             void refreshSessions();
@@ -2382,6 +2530,9 @@ export default function App() {
                     onDispatchVisualizationAction={onDispatchVisualizationAction}
                     onRerunWorkflow={onRerunWorkflow}
                     onCancelWorkflow={onCancelWorkflow}
+                    onRetryInterrupted={onRetryInterrupted}
+                    onDiscardInterrupted={onDiscardInterrupted}
+                    onEditPromptFromAssistant={onEditPromptFromAssistant}
                   />
                 </div>
               );

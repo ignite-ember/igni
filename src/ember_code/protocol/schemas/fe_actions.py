@@ -29,12 +29,21 @@ class UserMessage(Message):
     bubble while the sender skips its own echo. Empty for views that
     predate mirroring — the echo then renders everywhere except
     nowhere, which is harmless for a single view.
+
+    ``force`` (default ``False``) tells the BE to supersede any
+    interrupted or pending rows for the session before starting the
+    run. Used by the FE's "Retry" action on an interrupted-banner:
+    discard the stale interrupted state, then start clean with the
+    same prompt. Backwards compatible — pre-force clients keep the
+    existing behaviour (the old rows linger until natural
+    completion or explicit discard).
     """
 
     type: Literal["user_message"] = "user_message"
     text: str = ""
     file_contents: dict[str, str] = Field(default_factory=dict)  # path → content
     client_id: str = ""
+    force: bool = False
 
 
 class QueueMessage(Message):

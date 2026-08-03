@@ -100,6 +100,22 @@ class MessageDispatcher:
         await self._transport.send(
             msg.UserMessageReceived(text=message.text, client_id=message.client_id)
         )
+        # ``force=true`` is the FE's "Retry" semantic on an
+        # interrupted banner: supersede any pending + interrupted
+        # rows for this session, then start clean. Without this
+        # the retry would create a second pending row that dangles
+        # until the new run completes (and on failure, would leave
+        # BOTH the old and new rows stamped interrupted). Done
+        # before ``run_message`` so the inner ``record_received``
+        # call lands on a clean slate.
+        if message.force:
+            journal = getattr(self._backend, "_runs", None)
+            if journal is not None:
+                discarded = await journal.pending_journal.discard_all_for_session()
+                logger.debug(
+                    "user_message(force=true) discarded %d stale row(s) for session",
+                    discarded,
+                )
         agent_text = self._maybe_wrap_plan_hint(message.text)
         async for proto in self._backend.run_message(agent_text, media=message.file_contents):
             if req_id:

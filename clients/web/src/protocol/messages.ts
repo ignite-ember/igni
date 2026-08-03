@@ -260,12 +260,14 @@ export const fe = {
     id: string,
     clientId = "",
     fileContents: Record<string, string> = {},
+    options: { force?: boolean } = {},
   ) => ({
     type: "user_message",
     id,
     text,
     file_contents: fileContents,
     client_id: clientId,
+    force: options.force ?? false,
   }),
   queueMessage: (text: string, clientId = "") => ({
     type: "queue_message",
