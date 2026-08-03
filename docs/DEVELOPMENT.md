@@ -22,19 +22,17 @@ ember-code/
 │   ├── SECURITY.md
 │   └── DEVELOPMENT.md
 ├── agents/                            # Built-in agent definitions (.md)
+│   ├── architect.md            # plans + designs (always first)
+│   ├── editor.md               # code + git safety
+│   ├── data-architect.codeindex.md
 │   ├── explorer.md
-│   ├── architect.md
-│   ├── planner.md
-│   ├── editor.md
-│   ├── simplifier.md
 │   ├── reviewer.md
+│   ├── simplifier.md
 │   ├── security.md
 │   ├── qa.md
 │   ├── debugger.md
-│   ├── git.md
-│   ├── conversational.md
-│   ├── diagnostician.md
 │   └── docs.md
+│   # plus .codeindex.md variants for the most-used agents
 ├── skills/                            # Built-in skills (SKILL.md)
 │   ├── commit/SKILL.md
 │   ├── resolve-issues/SKILL.md

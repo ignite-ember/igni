@@ -58,17 +58,17 @@ On first run, igni copies the built-in agent `.md` files into `.ember/agents/`:
 ```
 .ember/
 └── agents/
-    ├── explorer.md
     ├── architect.md
-    ├── planner.md
     ├── editor.md
-    ├── simplifier.md
+    ├── data-architect.codeindex.md
+    ├── explorer.md
     ├── reviewer.md
+    ├── simplifier.md
     ├── security.md
     ├── qa.md
     ├── debugger.md
-    ├── git.md
-    └── conversational.md
+    └── docs.md
+    # plus .codeindex.md variants for explorer, architect, etc.
 ```
 
 These are working agents — the system is functional immediately. The rest of the onboarding improves them.
@@ -87,19 +87,18 @@ igni introduces itself and explains the agent system:
 ```
  ◆ igni — ignited and ready.
 
-I've sparked 11 agents in .ember/agents/:
+I've sparked 10 agents in .ember/agents/:
 
-  explorer.md        searches and reads your codebase
-  architect.md       designs component architecture
-  planner.md         designs implementation plans
-  editor.md          creates and modifies files
-  simplifier.md      post-edit code polish
-  reviewer.md        reviews code for quality
-  security.md        vulnerability analysis
-  qa.md              test generation and review
-  debugger.md        bug diagnosis and root cause analysis
-  git.md             handles version control
-  conversational.md  answers questions
+  architect.md        plans and designs (always first)
+  editor.md           creates and modifies files (owns git safety)
+  explorer.md         searches and reads your codebase
+  reviewer.md         reviews code for quality
+  simplifier.md       post-edit code polish
+  security.md         vulnerability analysis
+  qa.md               test generation and review
+  debugger.md         bug diagnosis and root cause analysis
+  data-architect.codeindex.md  Cypher queries over the code graph
+  docs.md             documentation maintenance
 
 These are Markdown files — open them, read them, change them.
 When you ask me something, I assemble a team on the fly.

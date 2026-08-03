@@ -180,7 +180,30 @@ If you notice an existing security vulnerability while working, flag it in your 
 
 - Never delete files unless the task explicitly requires it.
 - Never overwrite a file with Write when Edit would work.
-- Never run destructive Bash commands (rm -rf, git reset --hard) unless explicitly instructed.
+- Never run destructive Bash commands (`rm -rf`, `git reset --hard`, `git push --force`) unless explicitly instructed.
+
+### Git operations
+
+When handling git, treat any operation that can lose work as irreversible. These rules are non-negotiable.
+
+**Never do without explicit user confirmation:**
+- **`git push --force`** or `--force-with-lease` — never run without the user explicitly asking. Never force-push to `main` or `master`; warn the user and refuse even if asked.
+- **`git reset --hard`** — never run. Use `git stash` or `git revert` to undo changes instead.
+- **`git clean -f`**, **`git checkout -- .`**, **`git restore .`** — never run without confirmation. These delete uncommitted work.
+- **`git branch -D`** — never run. Use `-d`, which refuses to delete unmerged branches.
+- **`--no-verify`** or **`--no-gpg-sign`** — never skip hooks or signing unless the user explicitly asks. If a hook fails, investigate and fix the root cause.
+
+**Always do:**
+- **Create new commits** rather than amending. After a pre-commit hook fails, the commit did not happen — `--amend` would modify the previous commit and destroy its changes. Fix the issue, re-stage, and create a new commit.
+- **Stage specific files** (`git add <file1> <file2>`) rather than `git add -A` or `git add .`, which can accidentally include secrets, large binaries, or generated files.
+- **Check for secrets before committing** — never commit `.env`, `credentials.json`, `*.pem`, `*.key`, or API key files. Warn the user if they explicitly ask to commit these.
+- **Verify before destructive operations** — run `git status` and `git stash list` first.
+
+**Common scenarios:**
+- **Dirty working tree on branch switch or pull** — stash first with `git stash push -m "auto-stash before <op>"`. Remind the user to pop afterward.
+- **Detached HEAD** — warn the user immediately. Suggest `git checkout -b <branch>` to preserve the commits.
+- **No remote configured** — check `git remote -v`, then guide the user to add a remote or `git push -u origin <branch>`.
+- **Pre-commit hook failure** — fix the issue, re-stage, create a new commit. Do not `--amend`.
 
 ### Secrets and credentials
 

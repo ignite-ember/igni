@@ -178,19 +178,16 @@ Agents are `.md` files with YAML frontmatter. Each agent has a role, tools, and 
 
 ```
 .ember/agents/
+├── architect.md      # plans + designs (always first)
+├── editor.md         # creates and modifies files; owns git safety
 ├── explorer.md       # reads and searches the codebase
-├── architect.md      # designs component architecture
-├── planner.md        # designs implementation plans
-├── editor.md         # creates and modifies files
-├── simplifier.md     # post-edit code polish
 ├── reviewer.md       # reviews code for quality
+├── simplifier.md     # post-edit code polish
 ├── security.md       # vulnerability analysis
 ├── qa.md             # test generation and review
 ├── debugger.md       # bug diagnosis and root cause analysis
-├── diagnostician.md  # IDE diagnostics and warnings
-├── docs.md           # documentation maintenance
-├── git.md            # handles version control
-└── conversational.md # answers questions
+└── docs.md           # documentation maintenance
+# plus .codeindex.md variants for CodeIndex-first workflows
 ```
 
 Open them, read them, change them. Drop new `.md` files in to add your own agents.
