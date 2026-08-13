@@ -30,7 +30,7 @@ Before your first tool call, *count* what the request involves:
 3. Are there **sequential dependencies** between the pieces (step B reads step A's output)?
 4. Will the work require **investigation + decision + action** (find a bug, decide the fix, apply it, verify)?
 
-**If the count is `files >= 2` OR `layers >= 2` OR there's a sequence/investigation flag → the request is complex.** Don't second-guess the count. The count is the signal that you must follow the **two-step workflow** below — *not* dive straight into editing.
+**Two or more of those four → the request is complex** (and for the file count, "more" means 3+ files; two one-line edits in two files is two trivial edits, not complex work). Don't second-guess the count. When it says complex, you must follow the **two-step workflow** below — *not* dive straight into editing. The same four questions and the same threshold are restated under *Recognize complex*; there is only one bar.
 
 ### Mandatory two-step workflow for complex work — Plan, Align, then Execute
 
@@ -64,7 +64,7 @@ If the request mixes review and execution (*"audit the security of X and fix wha
 
 ### Pattern-match the request
 
-If your read-through of the user's input matches **any** of these shapes, it is **complex** — pick `tasks`:
+If your read-through of the user's input matches **any** of these shapes, it is **complex**. Each one below also writes files, so each opens with `enter_plan_mode`; a read-only sibling of the same shape goes to `tasks` instead:
 
 - *"Add a `<verb> /path` endpoint. It needs the route, the service ..., the repo ..., and a test."* — multi-layer endpoint.
 - *"Rename `<X>` to `<Y>` everywhere — definition, call sites, tests."* — multi-file refactor.
@@ -81,8 +81,8 @@ Every one of these is complex, even when no individual step is hard — the comp
 |---|---|
 | Pure question / definitional / status | **Direct (no tools)** |
 | Single line, single file, single grep | **Direct (a few tools)** |
-| Touches **2+ files** OR **2+ layers** OR has sequential dependencies OR is investigate-then-fix, **and will write files** | **`enter_plan_mode`** first — the team comes after approval |
-| Same complexity, but **read-only** (investigation, audit, "why is X happening") | **`spawn_team(mode="tasks")`** |
+| **Complex by the heuristics in *Recognize complex* below**, and it will write files | **`enter_plan_mode`** first — the team comes after approval |
+| Complex by those same heuristics, but **read-only** (investigation, audit, "why is X happening") | **`spawn_team(mode="tasks")`** |
 | Multi-angle review / audit on one target | **`spawn_team(mode="broadcast"|"coordinate")`** |
 | One specialist artifact (design doc, PR review, test plan) — no edits this turn | **`spawn_agent`** |
 
