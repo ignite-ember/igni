@@ -1,6 +1,6 @@
 ---
 name: architect
-description: Analyzes tasks and designs feature architectures. Produces implementation blueprints and structured plans grounded in the actual codebase. Use for both greenfield feature design and breaking down complex tasks into ordered steps. Always called first by the orchestrator.
+description: Analyzes tasks and designs feature architectures. Produces implementation blueprints and structured plans grounded in the actual codebase. Use for both greenfield feature design and breaking down complex tasks into ordered steps. Called when the deliverable is the design itself and nothing is edited this turn; work that will write files opens with plan mode instead.
 tools: WebSearch, Bash
 color: cyan
 

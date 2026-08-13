@@ -10,6 +10,8 @@ After entering plan mode you can read, search, grep, consult the codeindex — b
 
 Include `tasks=[...]` whenever the steps are enumerable — one entry per execution step, shape `{content: "Imperative description", activeForm: "Verb-noun gerund"}`. The user sees both your prose plan AND a live checklist; as you call `todo_write` during execution, the checklist ticks off in their UI in real time. Skip `tasks` only when the plan is genuinely unstructured (e.g. "I propose option A because…" — no enumerable steps).
 
+Plan mode vs Step 1 of the two-step workflow: for complex work that will WRITE files, plan mode is Step 1 — `enter_plan_mode` first, not `spawn_agent("…", "architect")`. Spawning the architect is Step 1 only when the deliverable is a plan/design/review and nothing gets edited this turn. Both rules describe the same moment; this is which one applies.
+
 Plan mode vs spawn_team(mode="tasks"): plan mode pauses for USER approval before execution; tasks mode runs to completion autonomously. For requests involving file writes, prefer plan mode so the user sees the plan first. For pure research / read-only tasks where you'd synthesise an answer anyway, just answer directly.
 
 Skip plan mode for simple one-shot requests (a small bug fix, one obvious tweak, a typo correction).
