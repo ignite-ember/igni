@@ -72,8 +72,16 @@ FILE_READ_TOOLS: frozenset[str] = frozenset(
         "fetch_url",
         "fetch_json",
         "CodeIndex",
-        "codeindex_query",
-        "codeindex_tree",
+        # codeindex_cypher is read-only by hard contract — the toolkit
+        # rejects any mutating Cypher before it reaches the driver
+        # (cypher_guard.assert_read_only_cypher), so it belongs in the
+        # plan-mode auto-allow set. This used to list `codeindex_query` and
+        # `codeindex_tree` instead: those are internal service methods that
+        # are never registered as agent-facing tools (see
+        # tools/codeindex/tool.py:73-76), so the evaluator could not see
+        # them, while the ONE tool that does reach it was missing — meaning
+        # CodeIndex research in plan mode was not actually auto-allowed.
+        "codeindex_cypher",
     }
 )
 

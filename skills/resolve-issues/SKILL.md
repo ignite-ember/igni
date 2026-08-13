@@ -30,23 +30,27 @@ This skill never calls `gh pr reviews` or the GitLab notes API to **fetch** issu
 
 ## Gather Findings
 
-5. **Query CodeIndex per changed file.** For each path in step 4, call:
+5. **Ask CodeIndex for the findings on those paths.** You do not query the graph
+   yourself — `codeindex_cypher` is the only agent-facing CodeIndex surface and it
+   lives on the **`data-architect`** specialist. Spawn it with a task naming:
 
-   ```
-   codeindex_query(
-       path_prefix=<path>,
-       issues=["moderate", "severe"],
-       sections=["issues"],
-       limit=20,
-   )
-   ```
+   - the changed paths from step 4,
+   - the severities you want — default `moderate` + `severe`, add `minor` only if
+     the user asked to include nits,
+   - that you want the `issues` section per item, with the item id, file path and
+     reported line range,
+   - a per-path cap (20 items is plenty).
 
-   Notes:
-   - `path_prefix` is a `$contains` filter today, not a true prefix — fine for per-file scoping.
-   - Default severity: `moderate` + `severe`. Add `"minor"` if the user asked to include nits.
-   - If a path returns zero items, it may be brand-new and not yet in the index — note it and continue.
+   `data-architect` authors the Cypher against the documented graph schema and
+   returns the findings. Notes:
+   - If a path comes back with nothing, it may be brand-new and not yet indexed —
+     say so and continue rather than treating it as clean.
+   - CodeIndex analysis can lag a commit; step 9 re-confirms each finding against
+     the file before changing anything.
 
-6. **(Optional) Narrow by named issue category.** Add `file_issues=[...]` (e.g. `["null-pointer-dereference"]`) when the user calls one out specifically.
+6. **(Optional) Narrow by named issue category.** If the user called out a specific
+   category (e.g. null-pointer dereference), pass that to `data-architect` as part
+   of the same task so it filters in the query rather than you filtering after.
 
 7. **Deduplicate** by item id — the same item can appear under multiple path prefixes if the user edited nested folders.
 

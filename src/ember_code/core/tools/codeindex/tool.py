@@ -101,7 +101,7 @@ class CodeIndexTools(Toolkit):
         """Run a **read-only** raw Cypher query against the CodeIndex.
 
         This is the only agent-facing path to the indexed data
-        store. Specialist agents (the ``codeindex-architect`` agent,
+        store. Specialist agents (the ``data-architect`` agent,
         primarily) author Cypher against the schema documented at
         ``core/code_index/neo4j_schema.GRAPH_SCHEMA_DESCRIPTION``.
 
@@ -115,17 +115,20 @@ class CodeIndexTools(Toolkit):
            ``DROP``, ``ALTER``, ``BEGIN`` / ``COMMIT`` / ``ROLLBACK``,
            ``SHOW``, ``PROFILE``, ``CALL dbms.*``, ``CALL db.*``,
            etc. See :func:`cypher_guard.assert_read_only_cypher`.
-        3. The Cypher must reference ``project_hash`` so a
-           hand-typed ``MATCH (i:Item)`` can't double-spend
-           the per-project graph state.
-        4. ``$param`` placeholders must name a key on the
+        3. ``$param`` placeholders must name a key on the
            allowlist (``proj``, ``commit_sha``, ``ids``,
            ``limit_n``, ``skip_n``, ``kind``, ``type``,
            ``quality``). The toolkit injects ``proj`` from
            ``CodeIndex.project_id`` and passes the rest
            through verbatim.
 
-        The toolkit runs all four checks BEFORE the query
+        Project isolation is enforced by the PROCESS boundary:
+        each ``(project, commit)`` pair runs in its own Neo4j
+        process (see ``neo4j_schema.py``), so no query-time
+        ``project_hash`` predicate is needed — the driver simply
+        can't reach another project's data.
+
+        The toolkit runs both checks BEFORE the query
         reaches the driver, so a rejection is a
         :class:`CypherGuardError` subclass — no DB round
         trip happens.

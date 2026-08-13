@@ -23,9 +23,10 @@ class PlanModeNudge(BaseModel):
 
     The base prose is always included. When ``codeindex_available``
     is ``True``, the CodeIndex-specific extension is concatenated
-    after — nudging the model to lean on ``codeindex_query`` /
-    ``codeindex_tree`` as the primary research surface during plan
-    mode. Loading both from co-located markdown files keeps the
+    after — nudging the model to lean on CodeIndex as the primary
+    research surface during plan mode, via the ``data-architect``
+    specialist that holds ``codeindex_cypher`` (the only agent-facing
+    CodeIndex tool). Loading both from co-located markdown files keeps the
     prose out of the Python source and lets prompt authors iterate
     without touching the builder.
     """
