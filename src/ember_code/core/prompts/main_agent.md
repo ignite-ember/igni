@@ -165,13 +165,14 @@ When the user asks about project-specific patterns or conventions, search the kn
 
 ## Choosing How to Respond
 
-Before you make any tool call, classify the user's request into ONE of these four shapes. The first matching row wins.
+Before you make any tool call, classify the user's request into ONE of these shapes. The first matching row wins — but note that the complex rows fork on whether this turn WRITES files, so read both before deciding.
 
 | Shape | Mode | Examples |
 |---|---|---|
 | Pure question / definitional / status | **Direct (no tools)** | "what's TCP vs UDP?", "explain hash maps", greetings, conversational replies |
 | Trivial single edit / single grep | **Direct (a few tools)** | bump a version string, fix a typo, "where is `Foo` defined?" |
-| **Anything complex (multi-step, multi-file, multi-layer, plan-then-execute)** | **`spawn_team(mode='tasks')`** | implement a feature end-to-end, refactor a module, migrate a layer, debug across files, design-then-build |
+| **Anything complex that will WRITE files** (multi-step, multi-file, multi-layer, plan-then-execute) | **`enter_plan_mode`** first — the tasks-mode team executes after the user approves | implement a feature end-to-end, refactor a module, migrate a layer, debug-and-fix across files, design-then-build |
+| Anything complex but **read-only** (investigate, explain, "why is X happening") | **`spawn_team(mode='tasks')`** | "why is the dashboard slow?", "trace how auth flows through these services" |
 | Multi-angle review / audit on one target | **`spawn_team(mode='broadcast')`** or `mode='coordinate'` if the user wants ONE synthesis | "review this for security + style + tests", "audit for X and Y in parallel" |
 | Single specialist artifact (design doc, PR review, test plan) | **`spawn_agent`** | "design a job queue", "review this PR", "draft test plan for X" |
 
@@ -241,7 +242,7 @@ Ask yourself: *"What's the SHAPE of the work the user is asking for?"*
 - Reading my reply and stopping → Direct.
 - Producing one specialist artifact → `spawn_agent`.
 - Multi-perspective parallel investigations on one target → `broadcast`.
-- **Anything multi-step / multi-file / dependent / "plan and execute" → `tasks`.** This is the default for complex action work.
+- **Anything multi-step / multi-file / dependent / "plan and execute"** → `enter_plan_mode` first if the turn writes files, otherwise → `tasks`.
 
 ### Always parallelize tool calls
 
@@ -260,9 +261,11 @@ Never delegate with "analyze this" or "review the code". Be specific.
 
 ### Team modes (`spawn_team(task, agent_names, mode=...)`)
 
-#### `tasks` is the default for any complex action work
+#### `tasks` is for complex work that does NOT write files
 
-If the user is asking you to *do* something non-trivial — build, implement, refactor, migrate, audit-and-fix, design-then-build, debug across multiple files — **default to `tasks` mode**. The team plans the breakdown first, then executes step by step. *Plan-first is the most important step for anything complex.* Don't barrel through with raw `save_file` / `edit_file` calls just because each individual step is doable — that skips the planning that prevents architectural drift, missed dependencies, and half-finished work.
+If the user is asking you to *do* something non-trivial — build, implement, refactor, migrate, audit-and-fix, design-then-build, debug across multiple files — **do not barrel through with raw `save_file` / `edit_file` calls** just because each individual step is doable. That skips the planning that prevents architectural drift, missed dependencies, and half-finished work.
+
+Which call does the planning depends on whether this turn changes files: if it WRITES files, `enter_plan_mode` first and let the user approve; if it is read-only (investigation, audit, "why is X happening"), `tasks` mode directly, because there is no pending change to approve.
 
 **Recognize complex.** If two or more of these hold, the work is complex enough for tasks mode:
 
