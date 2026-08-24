@@ -725,12 +725,15 @@ class CypherInput(BaseModel):
 
     - explicitly opt in via ``confirm_raw_cypher=True`` (a defensive
       flag so a misbehaving agent that "happens to" call the tool
-      triggers this guard, not the query);
-    - include ``project_hash`` in the query (so the agent can't
-      double-spend across projects); and
+      triggers this guard, not the query); and
     - reference only parameter names on the typed allowlist
       (so a Cypher placeholder can't be smuggled back in as a
       second-order write).
+
+    Project isolation is a PROCESS boundary, not a query predicate:
+    each ``(project, commit)`` pair runs in its own Neo4j process,
+    so the driver can only see the current project's data. No
+    ``project_hash = $proj`` filter is required in the Cypher.
 
     The hard validator lives at
     :func:`ember_code.core.tools.codeindex.cypher_guard.assert_read_only_cypher`

@@ -9,7 +9,7 @@ agent, primarily) to author ad-hoc Cypher that the typed
     un-typed path).
   * **Read-only** — every Cypher that reaches the driver must
     pass :func:`assert_read_only_cypher` (writes, admin,
-    unknown ``$param`` names, missing ``project_hash``, multi-
+    unknown ``$param`` names, multi-
     statements are all rejected).
   * **Tool surface only** — agents never call Neo4j directly.
 
@@ -37,7 +37,6 @@ import pytest
 from ember_code.core.code_index.index import CodeIndex
 from ember_code.core.tools.codeindex.cypher_guard import (
     CypherGuardError,
-    CypherMissingProjectHash,
     CypherReadOnlyViolation,
     CypherUnknownParam,
     assert_read_only_cypher,
@@ -134,9 +133,12 @@ class TestCypherGuardRejections:
         with pytest.raises(CypherReadOnlyViolation):
             assert_read_only_cypher("MATCH (i:Item {project_hash: $proj}) RETURN i LIMIT 5\nCOMMIT")
 
-    def test_missing_project_hash_rejected(self):
-        with pytest.raises(CypherMissingProjectHash, match="project_hash"):
-            assert_read_only_cypher("MATCH (i:Item) RETURN i LIMIT 5")
+    def test_no_project_hash_predicate_required(self):
+        # Project isolation is a PROCESS boundary (see neo4j_schema.py) —
+        # the driver can only reach the current project's data, so a
+        # `project_hash = $proj` predicate is architecturally redundant
+        # and no longer required by the guardrail.
+        assert_read_only_cypher("MATCH (i:Item) RETURN i LIMIT 5")
 
     def test_multi_statement_rejected(self):
         with pytest.raises(CypherReadOnlyViolation, match="single statement"):
@@ -268,8 +270,13 @@ class TestCodeindexCypherToolGate:
         # And the driver was still never asked for a client.
         assert client_for.await_count == 0
 
-    def test_no_project_hash_with_confirm_is_guardrail_rejected(self):
-        tools, client_for = _make_tools()
+    def test_no_project_hash_is_accepted_process_is_the_boundary(self):
+        # Project isolation is a PROCESS boundary (see neo4j_schema.py):
+        # each (project, commit) pair has its own Neo4j process, so a
+        # missing `project_hash` predicate is architecturally fine —
+        # the driver can only see the current project's data. The
+        # guard used to reject; this test pins the current behavior.
+        tools, client_for = _make_tools(neo4j_rows=[])
         result = asyncio.run(
             tools.codeindex_cypher(
                 cypher="MATCH (i:Item) RETURN i LIMIT 5",
@@ -277,9 +284,9 @@ class TestCodeindexCypherToolGate:
             )
         )
         envelope = json.loads(result)
-        assert envelope["error"] == "cypher_guard"
-        assert "project_hash" in envelope["message"]
-        assert client_for.await_count == 0
+        # No `error` envelope — the query reached the driver seam.
+        assert "error" not in envelope
+        assert client_for.await_count == 1
 
 
 class TestCodeindexCypherToolHappyPath:

@@ -75,6 +75,20 @@ class CypherService:
             "proj": self._index.project_id,
             **input.params,
         }
+        # ``semantic_query`` is text; the vector index needs 384 floats. Embed it
+        # here so the agent can write
+        # ``CALL db.index.vector.queryNodes('chunk_embedding', 10, $query_vector)``
+        # and pass ``semantic_query: "code that decides how much to indent"``.
+        # Without this the embeddings — 93% of the nodes in the graph — are
+        # unreachable: a model cannot author a 384-dim literal, and an evaluation
+        # of 2,255 agent queries used the vector index exactly zero times.
+        semantic_query = scoped_params.pop("semantic_query", None)
+        if semantic_query:
+            try:
+                scoped_params["query_vector"] = self._index.embed_query(str(semantic_query))
+            except Exception as exc:  # noqa: BLE001 - report, do not crash the call
+                logger.warning("embedding semantic_query failed: %s", exc)
+                return _err(f"could not embed semantic_query: {exc}", kind="embed_failed")
         try:
             rows = await client.execute_query(input.cypher, **scoped_params)
         except Exception as exc:

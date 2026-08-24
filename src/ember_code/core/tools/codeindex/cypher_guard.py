@@ -26,18 +26,7 @@ Rules (all must hold for the query to be allowed):
      - explain: EXPLAIN is allowed (read-only); PROFILE is
        forbidden (it executes the query against the actual DB)
 
-2. The query must mention ``project_hash`` scoping (the
-   ``Item`` / ``Chunk`` nodes carry a ``project_hash``
-   property — cross-project queries by accident are real if
-   the agent hand-types ``MATCH (i:Item)`` without a
-   ``project_hash`` predicate). We require ``project_hash``
-   to appear in the Cypher text at least once.
-
-3. The Cypher must not reference relationship ``project_hash``
-   properties in a way that would leak writes — the
-   relationship-shape checks above cover that.
-
-4. Parameter names must be a subset of one of:
+2. Parameter names must be a subset of one of:
 
       - the typed-parameter allowlist below, or
       - ``proj`` (auto-injected by the toolkit).
@@ -96,7 +85,13 @@ _FORBIDDEN_TOKENS: Final[frozenset[str]] = frozenset(
         "DROP",
         "ALTER",
         "RENAME",
-        "CALL",
+        # ``CALL`` is deliberately absent. It used to be here, which made
+        # ``_check_call_tokens`` and ``_ALLOWED_APOC`` dead code — the keyword
+        # check runs first, so every CALL was rejected and the documented
+        # ``apoc.cypher.run`` allowance never worked, nor could the vector index
+        # be reached. The target allowlist in ``_is_safe_call_target`` is the
+        # real gate; a CALL that smuggles a write is still caught by the write
+        # tokens below, which apply to the whole statement including subqueries.
         "BEGIN",
         "COMMIT",
         "ROLLBACK",
@@ -125,12 +120,24 @@ ALLOWED_PARAM_NAMES: Final[frozenset[str]] = frozenset(
         "type",
         "quality",
         "path_prefix",
+        # Semantic search. The agent passes ``semantic_query`` as *text*; the
+        # service embeds it and binds the result as ``query_vector``, because a
+        # model cannot write a 384-dim literal and there was previously no way to
+        # reach the vector index at all — 2,255 evaluation queries used it zero
+        # times, which is what an unreachable capability looks like.
+        "semantic_query",
+        "query_vector",
     }
 )
 
 # A small allowlist of read-only ``apoc.*`` subprocedures that the
 # query planner exposes. Anything else with ``CALL`` is rejected.
 _ALLOWED_APOC: Final[frozenset[str]] = frozenset({"apoc.cypher.run"})
+
+# Read-only procedures beyond apoc. ``db.index.vector.queryNodes`` only reads a
+# vector index, and without it the chunk embeddings — 93% of the nodes written,
+# and the dominant cost of every load — cannot be queried by an agent at all.
+_ALLOWED_PROCEDURES: Final[frozenset[str]] = frozenset({"db.index.vector.querynodes"})
 
 
 class CypherGuardError(ValueError):
@@ -139,10 +146,6 @@ class CypherGuardError(ValueError):
 
 class CypherReadOnlyViolation(CypherGuardError):
     """The query contains a write / admin / forbidden operation."""
-
-
-class CypherMissingProjectHash(CypherGuardError):
-    """The query has no ``project_hash`` scoping predicate."""
 
 
 class CypherUnknownParam(CypherGuardError):
@@ -169,12 +172,18 @@ def _tokenize(cypher: str) -> list[str]:
 def _is_safe_call_target(token_text: str) -> bool:
     """Check a ``CALL`` invocation target.
 
-    The Cypher ``CALL`` form is ``CALL <procedure>(...)``. We
-    allow only names that start with ``apoc.cypher.run`` (no
-    admin, no ``dbms.``, no ``db.``, no procedure-spanning)
-    and reject anything that contains a dot after a non-allowlisted
-    prefix.
+    The Cypher ``CALL`` form is ``CALL <procedure>(...)``. Allowed:
+    ``apoc.cypher.run`` and its subprocedures, plus the read-only vector
+    lookup ``db.index.vector.queryNodes``. Everything else is rejected — no
+    admin, no ``dbms.``, no other ``db.`` procedure.
+
+    The vector lookup is an exception worth naming: it only reads a vector
+    index, and blocking it made the chunk embeddings unreachable from the one
+    tool an agent has.
     """
+    lowered = token_text.lower()
+    if any(lowered.startswith(allow) for allow in _ALLOWED_PROCEDURES):
+        return True
     return any(token_text.startswith(allow) for allow in _ALLOWED_APOC)
 
 
@@ -201,16 +210,26 @@ def _collect_call_args(tokens: list[str]) -> list[tuple[int, str]]:
     return pairs
 
 
+# The procedure name after ``CALL``, dotted, taken from the text rather than the
+# token stream: the tokeniser splits on dots, so a target arrived as ``db`` and
+# an allowlist of dotted names could never match it. That is why the documented
+# ``apoc.cypher.run`` allowance never actually worked either. ``CALL {`` opens a
+# subquery rather than naming a procedure and is skipped — any write inside it is
+# still caught by the forbidden-token check, which scans the whole statement.
+_CALL_TARGET_RE: Final = re.compile(r"\bCALL\s+(?!\{)([A-Za-z_][\w.]*)", re.IGNORECASE)
+
+
 def _check_call_tokens(cypher: str, tokens: list[str]) -> None:
     """Reject ``CALL`` invocations outside the allowlist."""
-    pairs = _collect_call_args(tokens)
-    if not pairs:
+    targets = _CALL_TARGET_RE.findall(cypher)
+    if not targets:
         return
-    for _, call_target in pairs:
+    for call_target in targets:
         if not _is_safe_call_target(call_target):
             raise CypherReadOnlyViolation(
                 f"CALL target {call_target!r} is not on the read-only allowlist. "
-                "Only `apoc.cypher.run` (and subprocedures) are permitted."
+                "Only `apoc.cypher.run` (and subprocedures) and "
+                "`db.index.vector.queryNodes` are permitted."
             )
 
 
@@ -251,26 +270,13 @@ def _check_multi_statement(cypher: str) -> None:
             "Multi-statement Cypher is not allowed; submit a single statement."
         )
     starter = re.split(r"[\s()]+", primary.strip(), maxsplit=1)[0].upper()
-    allowed_starters = {"MATCH", "OPTIONAL", "RETURN", "UNWIND", "WITH", "EXPLAIN", "USE"}
+    # ``CALL`` belongs here: a vector lookup opens with it, and the docstring
+    # above has always claimed it was allowed. Which procedure may be called is
+    # gated by ``_is_safe_call_target``; a write is rejected wherever it appears.
+    allowed_starters = {"MATCH", "OPTIONAL", "RETURN", "UNWIND", "WITH", "EXPLAIN", "USE", "CALL"}
     if starter not in allowed_starters:
         raise CypherReadOnlyViolation(
             f"Query must start with one of {sorted(allowed_starters)}; got {starter!r}."
-        )
-
-
-def _check_project_hash(cypher: str) -> None:
-    """Every raw Cypher query must filter by ``project_hash``.
-
-    The CodeIndex item/chunk nodes carry a ``project_hash``
-    property that ties them to a project root. A query without
-    such a predicate would scan the entire commit-scoped DB and
-    burn the wrong budget / leak cross-project data when the
-    driver is shared.
-    """
-    if "project_hash" not in cypher:
-        raise CypherMissingProjectHash(
-            "Raw Cypher queries must include `project_hash` scoping "
-            "(e.g. `MATCH (i:Item {project_hash: $proj})`)."
         )
 
 
@@ -304,6 +310,12 @@ def assert_read_only_cypher(cypher: str) -> str:
     _check_keywords(cypher, tokens)
     _check_call_tokens(stripped, tokens)
     _check_multi_statement(stripped)
-    _check_project_hash(stripped)
+    # Note: no `project_hash` predicate check. Each (project, commit)
+    # runs in its own Neo4j PROCESS (see `neo4j_schema.py:1-31`), so
+    # cross-project leakage is impossible by construction — the
+    # process boundary is the isolation, not a query-time predicate.
+    # An earlier `_check_project_hash` guard was removed because it
+    # both duplicated the process boundary and made every query
+    # verbose without adding safety.
     _check_param_names(stripped)
     return stripped
