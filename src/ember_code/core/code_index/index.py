@@ -41,6 +41,7 @@ import json
 import logging
 import shutil
 from collections import Counter
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -105,6 +106,19 @@ class CodeIndex:
         # deterministic and offline-safe for tests.
         self._neo4j_client = neo4j_client
         self._neo4j_runtime = runtime
+        if embedder is None:
+            # HashEmbedder is SHA-256 of the text split into 384 coordinates: it
+            # separates *distinct* chunks and carries no meaning, so
+            # ``db.index.vector.queryNodes`` can only match text that is
+            # byte-identical. Defaulting to it silently is how an index ended up
+            # with 1.5M embedded chunks that could not answer a single "find the
+            # code that does X" query. Tests want it; production must not have it
+            # by accident.
+            logger.warning(
+                'CodeIndex built with no embedder — falling back to HashEmbedder. '
+                'Chunk embeddings will carry no meaning and semantic search will '
+                'not work. Pass LiveEmbedder() for real vectors.'
+            )
         self._embedder: Embedder = embedder or HashEmbedder()
         self._lock = asyncio.Lock()
         self._branches = GitBranchReader()
@@ -314,6 +328,18 @@ class CodeIndex:
 
     # -- Indexing --------------------------------------------------------------
 
+    def embed_query(self, text: str) -> list[float]:
+        """Embed one query string for a vector lookup.
+
+        Exposed because the vector index takes 384 floats and an agent has a
+        sentence: the tool layer passes text and binds the result as
+        ``$query_vector``. Uses the same embedder the chunks were written with,
+        which is the only way the comparison means anything — a graph built with
+        ``HashEmbedder`` and queried with a real model would return noise while
+        looking like it worked.
+        """
+        return self._embedder.embed([text])[0]
+
     async def client_for(self, sha: str | None = None) -> Any | None:
         """Public accessor for the per-commit ``Neo4jClient``.
 
@@ -356,7 +382,19 @@ class CodeIndex:
                     driver = self._neo4j_runtime.driver_for(self.project_id, sha)
                     from ember_code.core.code_index.neo4j_client import Neo4jClient
 
-                    self._clients[sha] = Neo4jClient(driver, self.project_id, sha)
+                    client = Neo4jClient(driver, self.project_id, sha)
+                    # Apply the per-commit schema (indexes on Item/Chunk +
+                    # vector index on Chunk.embedding + property indexes) on
+                    # first use of this pair's Neo4j. Idempotent — every
+                    # statement carries IF NOT EXISTS. Without this,
+                    # per-commit processes accumulate data on unindexed
+                    # nodes: property lookups do full scans and
+                    # `db.index.vector.queryNodes('chunk_embedding', …)`
+                    # fails with "no such vector schema index".
+                    # `attach_knowledge_neo4j` does the equivalent for the
+                    # knowledge DB; this closes the same gap for code_index.
+                    await client.apply_schema()
+                    self._clients[sha] = client
             return self._clients[sha]
         return None
 
@@ -390,6 +428,41 @@ class CodeIndex:
         embeddings = self._embedder.embed(chunk_texts) if chunk_texts else []
         chunks = list(zip(chunk_texts, embeddings, strict=True))
         await client.upsert_item(item, chunks)
+        self.manifest.touch(sha)
+
+    async def add_items(self, sha: str, items: Sequence[CodeIndexItem]) -> None:
+        """Insert/replace many items, embedding all their chunks in one call.
+
+        Why bulk: :meth:`add_item` embeds one item's chunks per call, and the
+        applier calls it once per item interleaved with a Neo4j write. Measured on
+        an M-series machine with the model on ``mps``, that pattern runs at
+        1,863 texts/s where a single batched call reaches 4,237 — and the *observed*
+        rate during a real load was 83 chunks/s, roughly 2% of the hardware,
+        because the GPU idles through every database round trip.
+
+        Embedding is the dominant cost of a load (chunks are 93% of the nodes
+        written), so batching across items is the difference between 29 minutes
+        and about a minute of embedding for a repository the size of celery.
+        """
+        if not items:
+            return
+        await self._require_neo4j_backend("add_items")
+        await self.prepare_commit(sha)
+        client = await self._client_for(sha)
+        assert client is not None  # guarded above
+
+        # Chunk everything first, remember each item's slice, then embed once.
+        per_item: list[tuple[CodeIndexItem, int, int]] = []
+        all_texts: list[str] = []
+        for item in items:
+            texts = self._chunk_text(item.content or "")
+            per_item.append((item, len(all_texts), len(all_texts) + len(texts)))
+            all_texts.extend(texts)
+
+        embeddings = self._embedder.embed(all_texts) if all_texts else []
+        for item, start, end in per_item:
+            chunks = list(zip(all_texts[start:end], embeddings[start:end], strict=True))
+            await client.upsert_item(item, chunks)
         self.manifest.touch(sha)
 
     async def remove_item(self, sha: str, item_id: str) -> None:

@@ -64,6 +64,7 @@ from ember_code.backend.schemas_model import ModelSwitchResult
 from ember_code.core.agents import AgentPool
 from ember_code.core.auth.credentials import CloudCredentials
 from ember_code.core.code_index import CodeIndex, CodeIndexSyncManager
+from ember_code.core.code_index.embedder import LiveEmbedder
 from ember_code.core.config.models import ModelRegistry
 from ember_code.core.config.permissions import PermissionGuard
 from ember_code.core.config.settings import Settings
@@ -459,7 +460,16 @@ class Session:
         """Construct :class:`CodeIndex` + :class:`CodeIndexSyncManager`
         eagerly and compute the ``_codeindex_available`` flag.
         """
-        self.code_index = CodeIndex(project=self.project_dir, data_dir=settings.storage.data_dir)
+        # LiveEmbedder rather than the default: the ``chunk_embedding`` vector
+        # index is 384-dim all-MiniLM-L6-v2, and the fallback HashEmbedder makes
+        # every chunk vector a hash of its own text — semantic search then only
+        # matches byte-identical text. The knowledge index next door has always
+        # passed LiveEmbedder; the code index never did.
+        self.code_index = CodeIndex(
+            project=self.project_dir,
+            data_dir=settings.storage.data_dir,
+            embedder=LiveEmbedder(),
+        )
         self.code_index_sync = CodeIndexSyncManager.from_settings(
             settings, project_dir=self.project_dir, code_index=self.code_index
         )
@@ -491,6 +501,7 @@ class Session:
             project=self.project_dir,
             data_dir=self.settings.storage.data_dir,
             runtime=runtime,
+            embedder=LiveEmbedder(),
         )
         new_sync = CodeIndexSyncManager.from_settings(
             self.settings,
@@ -606,7 +617,6 @@ class Session:
         Idempotent: a second call with the same client is a
         no-op. Switching the runtime rebuilds the index.
         """
-        from ember_code.core.code_index.embedder import LiveEmbedder
         from ember_code.core.code_index.neo4j_client import Neo4jKnowledgeClient
 
         # ``runtime`` may be a real ``Neo4jRuntime`` (production) or

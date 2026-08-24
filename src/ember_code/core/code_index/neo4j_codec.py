@@ -112,6 +112,14 @@ class Neo4jRowCodec:
             "token_count": int(item.token_count) if item.token_count is not None else None,
             "line_from": int(item.line_from) if item.line_from is not None else None,
             "line_to": int(item.line_to) if item.line_to is not None else None,
+            "fan_in": int(getattr(item, "fan_in", 0) or 0),
+            "fan_out": int(getattr(item, "fan_out", 0) or 0),
+            "test_refs": int(getattr(item, "test_refs", 0) or 0),
+            "member_count": int(getattr(item, "member_count", 0) or 0),
+            "error_handlers": int(getattr(item, "error_handlers", 0) or 0),
+            "empty_handlers": int(getattr(item, "empty_handlers", 0) or 0),
+            "broad_handlers": int(getattr(item, "broad_handlers", 0) or 0),
+            "swallow_lines": [int(n) for n in (getattr(item, "swallow_lines", None) or [])],
             "needs_refactoring": bool(item.needs_refactoring)
             if item.needs_refactoring is not None
             else False,

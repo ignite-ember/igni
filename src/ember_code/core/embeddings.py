@@ -48,6 +48,9 @@ from pydantic import BaseModel, ConfigDict
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
+# Texts per forward pass; see the note in ``Embedder.encode``.
+ENCODE_BATCH_SIZE = 256
 EMBEDDING_DIMENSIONS = 384
 
 
@@ -206,7 +209,13 @@ class Embedder:
         if not text_list:
             return []
         model = self.get_model()
-        array = model.encode(text_list, show_progress_bar=False, convert_to_numpy=True)
+        # ``batch_size`` matters and the library default is 32. Measured on an
+        # M-series GPU with all-MiniLM-L6-v2: 3,483 texts/s at 32, 4,216 at 256,
+        # 4,237 at 512 — so 256 takes nearly all of the available gain without
+        # holding a larger activation buffer than it earns.
+        array = model.encode(
+            text_list, batch_size=ENCODE_BATCH_SIZE, show_progress_bar=False, convert_to_numpy=True
+        )
         return [list(map(float, row)) for row in array]
 
     async def encode_batch_async(self, texts: Iterable[str]) -> list[list[float]]:

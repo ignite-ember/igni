@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ember_code.core.code_index.embedder import LiveEmbedder
 from ember_code.core.code_index.index import CodeIndex
 from ember_code.core.tools.codeindex.cypher_service import CypherService
 from ember_code.core.tools.codeindex.query_service import QueryService
@@ -56,7 +57,12 @@ class CodeIndexServices:
         ``search`` on the underlying index.
         """
         if self._index is None:
-            self._index = CodeIndex(project=self._project_dir, data_dir=self._data_dir)
+            # LiveEmbedder, not the default: all-MiniLM-L6-v2 at 384 dims is
+            # exactly what the ``chunk_embedding`` vector index expects, and
+            # without it the chunks are hashes and semantic search is dead.
+            self._index = CodeIndex(
+                project=self._project_dir, data_dir=self._data_dir, embedder=LiveEmbedder()
+            )
         return self._index
 
     def query(self) -> QueryService:

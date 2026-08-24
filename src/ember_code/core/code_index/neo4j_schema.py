@@ -118,6 +118,16 @@ COMMIT_SCHEMA_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX item_parent IF NOT EXISTS FOR (i:Item) ON (i.parent_id)",
     "CREATE INDEX item_entity_type IF NOT EXISTS FOR (i:Item) ON (i.entity_type)",
     "CREATE INDEX item_archived IF NOT EXISTS FOR (i:Item) ON (i.archived)",
+    # Counted structural and failure-handling facts. Indexed because they exist
+    # to be *ranked* — "which load-bearing file swallows the most failures" is an
+    # ORDER BY over these — and an unindexed property degrades to a full label
+    # scan that grows with the repository.
+    "CREATE INDEX item_fan_in IF NOT EXISTS FOR (i:Item) ON (i.fan_in)",
+    "CREATE INDEX item_fan_out IF NOT EXISTS FOR (i:Item) ON (i.fan_out)",
+    "CREATE INDEX item_member_count IF NOT EXISTS FOR (i:Item) ON (i.member_count)",
+    "CREATE INDEX item_test_refs IF NOT EXISTS FOR (i:Item) ON (i.test_refs)",
+    "CREATE INDEX item_empty_handlers IF NOT EXISTS FOR (i:Item) ON (i.empty_handlers)",
+    "CREATE INDEX item_broad_handlers IF NOT EXISTS FOR (i:Item) ON (i.broad_handlers)",
     "CREATE INDEX rel_kind IF NOT EXISTS FOR ()-[r:REL]-() ON (r.kind)",
     "CREATE INDEX entry_project IF NOT EXISTS FOR (e:Entry) ON (e.project_hash)",
     "CREATE INDEX entry_kind IF NOT EXISTS FOR (e:Entry) ON (e.kind)",
@@ -174,18 +184,110 @@ commit-scoping properties on items or edges, no
 
 ### :Item
 - ``item_id`` (str, NODE KEY) — stable across commits
-- ``project_hash`` (str) — 16-char SHA-256 prefix of the project
+- ``project_hash`` (str) — 16-char SHA-256 prefix of the project. **Do not
+  filter on it.** It is an opaque hash, not the repository's name, and the
+  per-(project, commit) process already scopes every query — a
+  ``WHERE i.project_hash STARTS WITH 'myrepo'`` matches nothing and returns an
+  empty result that looks like a real answer. Measured: agents wasted queries on
+  exactly this in 3 of 12 evaluation runs.
 - ``name``, ``type``, ``kind``, ``entity_type``, ``parent_id``,
   ``file_extension``, ``repository_id``, ``path``, ``archived``,
-  ``timestamp``, ``token_count``, ``line_from``, ``line_to``,
-  ``needs_refactoring``
+  ``timestamp``, ``token_count``, ``line_from``, ``line_to``
 - ``content`` (str) — full content (for files) or summary (for entities)
-- ``quality``, ``complexity``, ``security``, ``testing``,
-  ``testability``, ``documentation``, ``performance``, ``issues``,
-  ``maintainability``, ``architecture``, ``technical_debt``,
-  ``cohesion``, ``coupling``, ``stability``, ``priority``
-- ``vulnerabilities``, ``frameworks``, ``domain``, ``concerns``,
-  ``layers``, ``patterns``, ``keywords``, ``file_issues`` (lists)
+
+**Which item type carries which property.** ``type`` is ``folder``, ``file`` or
+``entity``, and most analysis properties exist at only one or two of those
+levels. Filtering an entity on a folder-only property returns nothing, which
+reads exactly like "there is nothing wrong here" — measured, agents spent 13% of
+their queries (296 of 2,255) on properties that are always null at the level they
+asked about, ``coupling`` alone 164 times.
+
+Percentages are how many items of that type carry the property, counted over the
+86,332 items (771 folders, 5,093 files, 80,468 entities) indexed so far. The
+counted facts read ``always``: they are emitted unconditionally for every item of
+that type, because they are counted rather than generated and so cannot go
+missing.
+
+**A file is either code or a document, and only code is analysed.** ``kind`` is
+``'code'`` (4,014 files) or ``'docs'`` (1,079 — every ``.md`` and ``.rst`` in the
+corpus). Measured: every analysis property is set on **100%** of code files and
+**0%** of docs files, with no failures in between. So the file column below is
+"100% of code files", and ``quality IS NULL`` on a file means "this is a
+document", not "this file looks clean". Add ``kind = 'code'`` to any query that
+filters or ranks on an analysis property.
+
+Two consequences worth knowing. A docs item's ``content`` is the **raw document
+text**, not a summary, so ``content CONTAINS`` on a docs file matches the real
+document while on a code file it matches a written description of the code. And
+entities under a docs file are its *sections*, not code — a heading, with the
+section body as content.
+
+| property | folder | file (``kind='code'``) | entity |
+| - | - | - | - |
+| ``quality``, ``complexity``, ``security``, ``testability`` | 100% | 100% | **93%** |
+| ``domain`` | 100% | 100% | **93%** |
+| ``documentation``, ``issues`` | — | — | **93%** |
+| ``performance`` | — | 100% | **93%** |
+| ``concerns`` | 98% | — | **80%** |
+| ``architecture``, ``technical_debt``, ``priority``, ``needs_refactoring`` | 100% | 100% | — |
+| ``maintainability`` | — | 100% | — |
+| ``cohesion``, ``coupling``, ``stability``, ``layers`` | 100% | — | — |
+| ``frameworks`` | — | 89% | — |
+| ``file_issues`` | — | 71% | — |
+| ``vulnerabilities`` | — | 10% | — |
+| ``fan_in``, ``fan_out``, ``test_refs`` | — | always | **always** |
+| ``error_handlers``, ``empty_handlers``, ``broad_handlers`` | — | always | **always** |
+| ``member_count`` | — | always 0 | **always** |
+
+So: ``coupling`` and ``cohesion`` are folder-only, ``maintainability`` is
+file-only, and ``technical_debt`` and ``needs_refactoring`` stop at the file. An
+entity-level question about coupling, hotspots or god classes belongs on the
+counted facts — they are numbers, they exist on every file and entity, and they
+are what those properties were approximating.
+
+Two cautions where they *are* set. They are absolute rather than relative to the
+repository, and they cluster hard — measured over the 75,069 analysed entities:
+
+| property | dominant value | share |
+| - | - | - |
+| ``security`` | ``secure`` | 93% |
+| ``complexity`` | ``low`` | 91% |
+| ``testability`` | ``easy`` | 83% |
+| ``issues`` | ``minor`` | 78% |
+| ``documentation`` | ``minimal`` | 72% |
+| ``quality`` | ``good`` | 67% |
+| ``performance`` | ``optimized`` | 58% |
+
+``WHERE complexity = 'low'`` therefore selects 91% of the repository and
+``WHERE security <> 'secure'`` selects 7% of it regardless of how the code
+actually looks. Rank on a counted fact, then use these to explain what came
+back — they are worth reading on a specific item and worth little as a filter.
+
+**The counted facts.** Everything above is a model's judgement. Everything below
+is counted from the parse tree and the reference graph and is stable across runs
+— this is what to rank and filter on.
+
+- **Counted structure** — exact numbers, no model involved, present on files and
+  entities, meant for ``ORDER BY``. All three reference counts are of *distinct
+  items*, not of edges: an entity calling one helper forty times is coupled to
+  one thing.
+  ``fan_in`` (how many distinct items reference this one — the load-bearing
+  ranking), ``fan_out`` (how many distinct items it references — real coupling),
+  ``test_refs`` (how many distinct test files are among the incoming references,
+  so a high ``fan_in`` with ``test_refs`` 0 is "depended on, untested"),
+  ``member_count`` (methods plus fields on a class-like entity; 0 for anything
+  that is not a class, and 0 on every file — the god-class ranking).
+- **Counted failure handling** — exact numbers from the parse tree, not model
+  judgement, so they can be ranked and joined:
+  ``error_handlers`` (how many catch/except/rescue blocks),
+  ``empty_handlers`` (how many do nothing at all),
+  ``broad_handlers`` (how many catch everything — bare ``except``,
+  ``catch (...)``, ``Exception``/``Throwable``),
+  ``swallow_lines`` (list[int], the lines the empty ones start on).
+  Zero for Go and Rust, which have no catch construct — that is a fact about the
+  language, not about the code. Prefer these over searching ``content`` for
+  words like "except": ``content`` is a written summary of what the code does,
+  not the code.
 - ``meta`` (map) — per-item metadata (line ranges, etc.)
 
 ### :Chunk

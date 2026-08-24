@@ -80,6 +80,20 @@ class UpsertItemOp(BaseModel):
     line_from: int | None = None
     line_to: int | None = None
 
+    # Counted failure-handling facts from extraction. Numbers, not prose, so a
+    # query can rank and join on them — an evaluation against ripgrep found the
+    # index wins on facts and loses on summaries.
+    # Counted structural facts — see the schema description for which item
+    # types carry which property, and why these exist as numbers.
+    fan_in: int | None = None
+    fan_out: int | None = None
+    test_refs: int | None = None
+    member_count: int | None = None
+    error_handlers: int | None = None
+    empty_handlers: int | None = None
+    broad_handlers: int | None = None
+    swallow_lines: list[int] = Field(default_factory=list)
+
     # Code vs docs — the only place that distinction lives. Nullable
     # because folder ops legitimately omit it.
     kind: Literal["code", "docs"] | None = None
