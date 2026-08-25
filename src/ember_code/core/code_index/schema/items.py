@@ -114,6 +114,21 @@ class CodeIndexItemCreate(CodeIndexItemBase):
     priority: str | None = None
     needs_refactoring: bool | None = None
 
+    # Counted facts — parse tree and reference graph, no model involved. They
+    # have to be declared here or they are silently dropped between the JSONL op
+    # and the graph: the codec reads them with ``getattr(item, ..., 0)``, so a
+    # missing field writes a plausible-looking 0 rather than failing. That is
+    # exactly what happened — a graph loaded from a changeset that carried them
+    # answered "which classes are too big" with nothing at all.
+    fan_in: int | None = None
+    fan_out: int | None = None
+    test_refs: int | None = None
+    member_count: int | None = None
+    error_handlers: int | None = None
+    empty_handlers: int | None = None
+    broad_handlers: int | None = None
+    swallow_lines: list[int] = Field(default_factory=list)
+
     # Multi-value categories. Stored on chroma as ``\x1f``-bracketed strings.
     vulnerabilities: list[str] = Field(default_factory=list)
     frameworks: list[str] = Field(default_factory=list)

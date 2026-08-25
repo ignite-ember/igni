@@ -183,6 +183,19 @@ class UpsertItemOp(BaseModel):
             stability=self.stability,
             priority=self.priority,
             needs_refactoring=self.needs_refactoring,
+            # Counted facts. Listed here because this mapping is explicit rather
+            # than a ``model_dump()``, so a field added to the op alone is parsed
+            # off the wire and then dropped one line later — which is precisely
+            # what happened, and it surfaced as a graph whose ``fan_in`` was 0 on
+            # every item while the changeset that built it carried real numbers.
+            fan_in=self.fan_in,
+            fan_out=self.fan_out,
+            test_refs=self.test_refs,
+            member_count=self.member_count,
+            error_handlers=self.error_handlers,
+            empty_handlers=self.empty_handlers,
+            broad_handlers=self.broad_handlers,
+            swallow_lines=self.swallow_lines,
             vulnerabilities=self.vulnerabilities,
             frameworks=self.frameworks,
             domain=self.domain,
