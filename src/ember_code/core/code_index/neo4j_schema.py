@@ -347,6 +347,50 @@ confirm a claim about the code against a summary: asking prose "what swallows
 errors" scored 25% where ripgrep scored 57%, because a summary that reads
 "handles failures gracefully" is exactly how a swallowed exception hides.
 
+**Copy these.** Term search is the one most easily forgotten, and the one that
+replaces leaving the index to grep the working tree:
+
+```
+// EXHAUSTIVE: which files contain a dangerous sink at all? Drop score entirely
+// — keeping it defeats DISTINCT, because every chunk scores differently, and you
+// get 25 near-duplicate chunks from four files instead of the files.
+CALL db.index.fulltext.queryNodes('chunk_text', 'pickle OR eval OR exec OR subprocess')
+YIELD node
+WHERE node.chunk_kind = 'code'
+RETURN DISTINCT split(node.path, '::')[0] AS file LIMIT 200
+```
+
+```
+// RANKED: where is the strongest match, and on which line? Score is fine here
+// because you want the top few places, not the set of files.
+CALL db.index.fulltext.queryNodes('chunk_text', 'pickle.loads')
+YIELD node, score
+WHERE node.chunk_kind = 'code'
+RETURN node.path AS path, node.line_from AS line, round(score,2) AS score
+ORDER BY score DESC LIMIT 10
+```
+
+```
+// Does this repository handle X at all? An empty result here means NO — the
+// only search that can tell you that.
+CALL db.index.fulltext.queryNodes('chunk_text', 'websocket')
+YIELD node WHERE node.chunk_kind = 'code' RETURN count(node) AS hits
+```
+
+```
+// Find by description, then confirm the literal, in two steps.
+CALL db.index.vector.queryNodes('chunk_embedding', 25, $query_vector)
+YIELD node, score
+RETURN node.path AS path, node.line_from AS line, round(score,2) AS score
+ORDER BY score DESC LIMIT 10
+```
+
+```
+// Rank on a counted fact, which is the only exact ordering available.
+MATCH (i:Item) WHERE i.type = 'entity' AND i.member_count > 0
+RETURN i.path, i.member_count ORDER BY i.member_count DESC LIMIT 20
+```
+
 ### :Entry (knowledge)
 - ``entry_id`` (str, NODE KEY)
 - ``project_hash`` (str)
