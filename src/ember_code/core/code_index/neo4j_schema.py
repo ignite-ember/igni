@@ -125,6 +125,10 @@ COMMIT_SCHEMA_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX item_fan_in IF NOT EXISTS FOR (i:Item) ON (i.fan_in)",
     "CREATE INDEX item_fan_out IF NOT EXISTS FOR (i:Item) ON (i.fan_out)",
     "CREATE INDEX item_importer_count IF NOT EXISTS FOR (i:Item) ON (i.importer_count)",
+    "CREATE INDEX item_method_count IF NOT EXISTS FOR (i:Item) ON (i.method_count)",
+    "CREATE INDEX item_is_callable IF NOT EXISTS FOR (i:Item) ON (i.is_callable)",
+    "CREATE INDEX item_sink_hits IF NOT EXISTS FOR (i:Item) ON (i.sink_hits)",
+    "CREATE INDEX item_test_importers IF NOT EXISTS FOR (i:Item) ON (i.test_importer_count)",
     "CREATE INDEX item_member_count IF NOT EXISTS FOR (i:Item) ON (i.member_count)",
     "CREATE INDEX item_test_refs IF NOT EXISTS FOR (i:Item) ON (i.test_refs)",
     "CREATE INDEX item_empty_handlers IF NOT EXISTS FOR (i:Item) ON (i.empty_handlers)",
@@ -218,6 +222,16 @@ counted facts read ``always``: they are emitted unconditionally for every item o
 that type, because they are counted rather than generated and so cannot go
 missing.
 
+**Two booleans that matter more than they look.** ``is_callable`` and
+``is_type`` are normalised across languages, and you should filter on them rather
+than on ``entity_type``. The raw node name is not reliable: in TypeScript most
+functions are ``variable_declarator`` (``const f = (x) => {...}``), the same node
+as ``const x = 5``. Measured — 3,507 of one repository's 4,563 entities are that
+node type, and a query filtering ``entity_type`` by function node names found 12%
+of its longest functions where ``WHERE i.is_callable`` finds 88%. The extractor
+decides this from the parse tree, so ``const h = useMemo(() => f, [])`` is
+correctly *not* callable.
+
 **A file is either code or a document, and only code is analysed.** ``kind`` is
 ``'code'`` (4,014 files) or ``'docs'`` (1,079 — every ``.md`` and ``.rst`` in the
 corpus). Measured: every analysis property is set on **100%** of code files and
@@ -248,7 +262,10 @@ section body as content.
 | ``fan_in``, ``fan_out``, ``test_refs`` | — | always | **always** |
 | ``importer_count`` | — | always | — |
 | ``error_handlers``, ``empty_handlers``, ``broad_handlers`` | — | always | **always** |
-| ``member_count`` | — | always 0 | **always** |
+| ``member_count``, ``method_count`` | — | always 0 | **always** |
+| ``is_callable``, ``is_type`` | — | false | **always** |
+| ``sink_hits``, ``sink_kinds`` | — | always | **always** |
+| ``test_importer_count``, ``sink_lines`` | — | always | — |
 
 So: ``coupling`` and ``cohesion`` are folder-only, ``maintainability`` is
 file-only, and ``technical_debt`` and ``needs_refactoring`` stop at the file. An
@@ -296,7 +313,22 @@ is counted from the parse tree and the reference graph and is stable across runs
   ``test_refs`` (how many distinct test files are among the incoming references,
   so a high ``fan_in`` with ``test_refs`` 0 is "depended on, untested"),
   ``member_count`` (methods plus fields on a class-like entity; 0 for anything
-  that is not a class, and 0 on every file — the god-class ranking).
+  that is not a class, and 0 on every file),
+  ``method_count`` (**methods only** — this is the god-class ranking.
+  ``member_count`` counts fields too, and a record with forty fields and two
+  methods is not a god class: ranking on it reached 73.7% of the god-class oracle
+  where the question asks about behaviour),
+  ``test_importer_count`` (test files that *import* this file — "depended upon
+  but untested" is ``importer_count`` high with this at 0. Distinct from
+  ``test_refs``, which counts any reference from a test and reached only 31% of
+  that oracle),
+  ``sink_hits`` / ``sink_kinds`` / ``sink_lines`` (counted dangerous sinks:
+  deserialisation, dynamic evaluation and shell execution, per language and with
+  line numbers. Yes, this duplicates what a grep would find — deliberately. A
+  sink is a literal construct, and an index that cannot answer a literal question
+  hands the work back to the filesystem. Counted, it is one ``ORDER BY``, and it
+  joins against ``fan_in`` to ask which *load-bearing* module reaches a sink,
+  which no grep can do).
 - **Counted failure handling** — exact numbers from the parse tree, not model
   judgement, so they can be ranked and joined:
   ``error_handlers`` (how many catch/except/rescue blocks),
@@ -386,9 +418,39 @@ ORDER BY score DESC LIMIT 10
 ```
 
 ```
-// Rank on a counted fact, which is the only exact ordering available.
-MATCH (i:Item) WHERE i.type = 'entity' AND i.member_count > 0
-RETURN i.path, i.member_count ORDER BY i.member_count DESC LIMIT 20
+// Longest callables. Filter on is_callable, NOT on entity_type - see above.
+MATCH (i:Item)
+WHERE i.type = 'entity' AND i.is_callable AND i.line_to IS NOT NULL
+RETURN i.path AS path, i.line_to - i.line_from AS lines
+ORDER BY lines DESC LIMIT 40
+```
+
+```
+// Types carrying the most behaviour. method_count, not member_count.
+MATCH (i:Item) WHERE i.type = 'entity' AND i.method_count > 0
+RETURN i.path AS path, i.method_count ORDER BY i.method_count DESC LIMIT 30
+```
+
+```
+// Dangerous sinks, ranked, with the kind and the line. No grep needed.
+MATCH (i:Item) WHERE i.sink_hits > 0 AND i.kind = 'code'
+RETURN i.path AS path, i.sink_hits, i.sink_kinds, i.sink_lines
+ORDER BY i.sink_hits DESC LIMIT 40
+```
+
+```
+// Depended upon but untested.
+MATCH (i:Item)
+WHERE i.type = 'file' AND i.importer_count >= 3
+  AND coalesce(i.test_importer_count, 0) = 0
+RETURN i.path AS path, i.importer_count ORDER BY i.importer_count DESC LIMIT 30
+```
+
+```
+// What breaks if this changes: everything importing it, one hop.
+MATCH (dep:Item)-[r:REL {kind: 'imports'}]->(hub:Item)
+WHERE hub.path ENDS WITH 'the/hub.py'
+RETURN DISTINCT dep.path AS path LIMIT 200
 ```
 
 ### :Entry (knowledge)

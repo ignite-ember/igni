@@ -152,6 +152,13 @@ class CodeIndexItemCreate(CodeIndexItemBase):
     # symbols are used everywhere outranks a package merely imported
     # everywhere. This one is the hub measure. Files only.
     importer_count: int | None = None
+    test_importer_count: int | None = None
+    method_count: int | None = None
+    sink_hits: int | None = None
+    is_callable: bool | None = None
+    is_type: bool | None = None
+    sink_kinds: list[str] = Field(default_factory=list)
+    sink_lines: list[int] = Field(default_factory=list)
     member_count: int | None = None
     error_handlers: int | None = None
     empty_handlers: int | None = None

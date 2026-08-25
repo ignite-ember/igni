@@ -89,6 +89,13 @@ class UpsertItemOp(BaseModel):
     fan_out: int | None = None
     test_refs: int | None = None
     importer_count: int | None = None
+    test_importer_count: int | None = None
+    method_count: int | None = None
+    sink_hits: int | None = None
+    is_callable: bool | None = None
+    is_type: bool | None = None
+    sink_kinds: list[str] = Field(default_factory=list)
+    sink_lines: list[int] = Field(default_factory=list)
     source: str | None = None
     member_count: int | None = None
     error_handlers: int | None = None
@@ -194,6 +201,13 @@ class UpsertItemOp(BaseModel):
             fan_out=self.fan_out,
             test_refs=self.test_refs,
             importer_count=self.importer_count,
+            test_importer_count=self.test_importer_count,
+            method_count=self.method_count,
+            sink_hits=self.sink_hits,
+            is_callable=self.is_callable,
+            is_type=self.is_type,
+            sink_kinds=self.sink_kinds,
+            sink_lines=self.sink_lines,
             source=self.source,
             member_count=self.member_count,
             error_handlers=self.error_handlers,
