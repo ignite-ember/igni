@@ -60,7 +60,7 @@ from ember_code.core.code_index.paths import (
     commit_chroma_path,
 )
 from ember_code.core.code_index.project import resolve_project_id
-from ember_code.core.code_index.schema.items import CodeIndexItem, CodeIndexResult
+from ember_code.core.code_index.schema.items import ChunkRow, CodeIndexItem, CodeIndexResult
 from ember_code.core.code_index.schema.stats import HeadStats
 from ember_code.core.code_index.schema.where_filter import ChromaWhereFilter
 
@@ -421,12 +421,16 @@ class CodeIndex:
         client = await self._client_for(sha)
         assert client is not None  # guarded above
 
-        document_text = item.content or ""
         # ``upsert_item`` MERGE-deletes any existing :Chunk for
         # the parent first, so re-upserts are clean.
-        chunk_texts = self._chunk_text(document_text)
+        chunk_texts, spans = self._rows_for(item)
         embeddings = self._embedder.embed(chunk_texts) if chunk_texts else []
-        chunks = list(zip(chunk_texts, embeddings, strict=True))
+        chunks = [
+            ChunkRow(text, embedding, kind, line_from, line_to)
+            for (text, embedding, (kind, line_from, line_to)) in zip(
+                chunk_texts, embeddings, spans, strict=True
+            )
+        ]
         await client.upsert_item(item, chunks)
         self.manifest.touch(sha)
 
@@ -452,16 +456,21 @@ class CodeIndex:
         assert client is not None  # guarded above
 
         # Chunk everything first, remember each item's slice, then embed once.
-        per_item: list[tuple[CodeIndexItem, int, int]] = []
+        per_item: list[tuple[CodeIndexItem, int, int, list]] = []
         all_texts: list[str] = []
         for item in items:
-            texts = self._chunk_text(item.content or "")
-            per_item.append((item, len(all_texts), len(all_texts) + len(texts)))
+            texts, spans = self._rows_for(item)
+            per_item.append((item, len(all_texts), len(all_texts) + len(texts), spans))
             all_texts.extend(texts)
 
         embeddings = self._embedder.embed(all_texts) if all_texts else []
-        for item, start, end in per_item:
-            chunks = list(zip(all_texts[start:end], embeddings[start:end], strict=True))
+        for item, start, end, spans in per_item:
+            chunks = [
+                ChunkRow(text, embedding, kind, line_from, line_to)
+                for (text, embedding, (kind, line_from, line_to)) in zip(
+                    all_texts[start:end], embeddings[start:end], spans, strict=True
+                )
+            ]
             await client.upsert_item(item, chunks)
         self.manifest.touch(sha)
 
@@ -760,6 +769,50 @@ class CodeIndex:
             return []
         chunks = self.chunker.chunk(Document(content=content))
         return [c.content for c in chunks if c.content]
+
+    # Code chunk geometry. Lines rather than characters because the whole point
+    # of a code chunk is that it can say *where* — and a prose chunker reports no
+    # offsets, so a hit could only ever name the file. Overlap so a construct
+    # spanning a boundary is intact in one of the two windows.
+    CODE_CHUNK_LINES = 40
+    CODE_CHUNK_OVERLAP = 10
+
+    def _chunk_source(self, source: str, line_from: int | None) -> list[tuple[str, int, int]]:
+        """Split source into overlapping line windows, each with its own span.
+
+        ``line_from`` is the item's first line in the file, so the returned spans
+        are absolute file lines and a caller can go straight to them. Returns
+        ``(text, line_from, line_to)``.
+        """
+        if not source or not source.strip():
+            return []
+        lines = source.splitlines()
+        base = line_from or 1
+        step = max(self.CODE_CHUNK_LINES - self.CODE_CHUNK_OVERLAP, 1)
+        windows: list[tuple[str, int, int]] = []
+        start = 0
+        while start < len(lines):
+            end = min(start + self.CODE_CHUNK_LINES, len(lines))
+            text = "\n".join(lines[start:end])
+            if text.strip():
+                windows.append((text, base + start, base + end - 1))
+            if end >= len(lines):
+                break
+            start += step
+        return windows
+
+    def _rows_for(self, item: CodeIndexItem) -> tuple[list[str], list[tuple[str, int | None, int | None]]]:
+        """Every text this item contributes, tagged for reassembly after embedding.
+
+        Summary chunks first (they carry no position), then code chunks with
+        their absolute line spans.
+        """
+        summary = self._chunk_text(item.content or "")
+        code = self._chunk_source(getattr(item, "source", None) or "", item.line_from)
+        texts = [*summary, *[text for text, _, _ in code]]
+        spans: list[tuple[str, int | None, int | None]] = [("summary", None, None)] * len(summary)
+        spans.extend(("code", start, end) for _, start, end in code)
+        return texts, spans
 
 
 # Sentinel returned by :meth:`CodeIndex._resolve_chunk_where` when the

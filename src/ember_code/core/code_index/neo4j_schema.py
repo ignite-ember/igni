@@ -129,6 +129,15 @@ COMMIT_SCHEMA_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX item_test_refs IF NOT EXISTS FOR (i:Item) ON (i.test_refs)",
     "CREATE INDEX item_empty_handlers IF NOT EXISTS FOR (i:Item) ON (i.empty_handlers)",
     "CREATE INDEX item_broad_handlers IF NOT EXISTS FOR (i:Item) ON (i.broad_handlers)",
+    # Full-text (Lucene) over chunk text. This is the query type similarity
+    # cannot do: it returns an empty result when the term is absent. Vector
+    # search always returns its k nearest neighbours with confident-looking
+    # scores — measured, "validates a JWT bearer token" scored 0.72 against a SQL
+    # parser that has no auth code at all — so "is this really here?" needs term
+    # matching, and without it the only honest answer was to leave the index and
+    # grep the working tree.
+    "CREATE FULLTEXT INDEX chunk_text IF NOT EXISTS FOR (c:Chunk) ON EACH [c.text]",
+    "CREATE INDEX chunk_kind IF NOT EXISTS FOR (c:Chunk) ON (c.chunk_kind)",
     "CREATE INDEX rel_kind IF NOT EXISTS FOR ()-[r:REL]-() ON (r.kind)",
     "CREATE INDEX entry_project IF NOT EXISTS FOR (e:Entry) ON (e.project_hash)",
     "CREATE INDEX entry_kind IF NOT EXISTS FOR (e:Entry) ON (e.kind)",
@@ -305,8 +314,38 @@ is counted from the parse tree and the reference graph and is stable across runs
 - ``chunk_id`` (str, NODE KEY)
 - ``parent_id`` (str) → :Item
 - ``embedding`` (list[float], 384-dim) — vector-indexed
-- ``text``, ``chunk_index``, ``name``, ``type``, ``kind``,
-  ``path``, ``file_extension``, ``repository_id``
+- ``text`` — full-text indexed (index name ``chunk_text``)
+- ``chunk_kind`` — ``'summary'`` or ``'code'``. **This is the important one.**
+  A summary chunk is a model's prose about the item; a code chunk is the item's
+  actual source. Ask the summary what something *does*, ask the code what it
+  literally *says*.
+- ``line_from``, ``line_to`` — absolute file lines, on code chunks only, so a
+  hit is a place you can open rather than a file you then have to search
+- ``chunk_index``, ``name``, ``type``, ``kind``, ``path``, ``file_extension``,
+  ``repository_id``
+
+**Three ways to search, and they fail differently.**
+
+1. *By meaning* — ``CALL db.index.vector.queryNodes('chunk_embedding', 40,
+   $query_vector)``. Pass ``semantic_query`` and the tool embeds it for you.
+   Finds code you cannot name. **It can never return nothing**: it returns its k
+   nearest neighbours whatever you ask, with scores that look the same either
+   way — measured, "validates a JWT bearer token and checks its expiry" scored
+   0.72 against a SQL parser containing no auth code at all, where real hits in
+   the same graph scored 0.82. So a vector hit is a lead, never a confirmation.
+2. *By term* — ``CALL db.index.fulltext.queryNodes('chunk_text', 'pickle OR
+   eval')``. Lucene syntax. This one **does** return nothing when the term is
+   absent, which makes it the only way to answer "is this really here?" Add
+   ``WHERE c.chunk_kind = 'code'`` and you are searching the source, not a
+   description of it.
+3. *By structure or number* — a plain ``MATCH`` over :Item and :REL with the
+   counted facts. Exact, and the only thing that can rank.
+
+The intended shape of an investigation is 1 or 3 to find candidates, then 2 over
+``chunk_kind = 'code'`` to confirm, reading ``line_from`` to say where. Do not
+confirm a claim about the code against a summary: asking prose "what swallows
+errors" scored 25% where ripgrep scored 57%, because a summary that reads
+"handles failures gracefully" is exactly how a swallowed exception hides.
 
 ### :Entry (knowledge)
 - ``entry_id`` (str, NODE KEY)

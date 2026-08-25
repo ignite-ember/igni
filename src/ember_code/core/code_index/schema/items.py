@@ -11,7 +11,7 @@ The agent-facing tool translates structured args into chroma
 from __future__ import annotations
 
 import hashlib
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
@@ -22,6 +22,30 @@ from ember_code.core.code_index.schema.wire import WeaviateWireCodec
 
 _WEAVIATE_CODEC = WeaviateWireCodec()
 _SYSTEM_CLOCK = SystemClock()
+
+
+class ChunkRow(NamedTuple):
+    """One embedded chunk on its way to the graph.
+
+    A NamedTuple so the two-field ``(text, embedding)`` form that predates code
+    chunks still unpacks and indexes exactly as before; the extra fields carry
+    what a code chunk needs and a summary chunk leaves at its default.
+
+    ``chunk_kind`` is ``"summary"`` (a model's prose about the item) or
+    ``"code"`` (the item's actual source). Both are embedded and both are
+    full-text indexed, because they answer different questions: you search the
+    summary when all you can do is describe the thing, and the source when you
+    need to know whether a literal string is really there.
+
+    ``line_from``/``line_to`` are absolute file lines, set on code chunks only —
+    a summary has no position in the file.
+    """
+
+    text: str
+    embedding: list[float]
+    chunk_kind: str = "summary"
+    line_from: int | None = None
+    line_to: int | None = None
 
 
 class CodeIndexItemBase(BaseModel):
@@ -133,6 +157,14 @@ class CodeIndexItemCreate(CodeIndexItemBase):
     empty_handlers: int | None = None
     broad_handlers: int | None = None
     swallow_lines: list[int] = Field(default_factory=list)
+
+    # The item's own source text, kept beside ``content``'s written summary.
+    # Not a duplicate of it: ``content`` is what a model said the code does and
+    # ``source`` is the code. Measured reason for holding both — asking the
+    # summary "what swallows errors" scored 25% against ripgrep's 57%, because a
+    # summary reading "handles failures" is exactly how a swallowed exception
+    # hides. Absent on docs items, whose ``content`` is already raw text.
+    source: str | None = None
 
     # Multi-value categories. Stored on chroma as ``\x1f``-bracketed strings.
     vulnerabilities: list[str] = Field(default_factory=list)

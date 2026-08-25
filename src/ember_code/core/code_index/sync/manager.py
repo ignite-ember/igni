@@ -289,7 +289,15 @@ class CodeIndexSyncManager:
             pf=pf, target_sha=target_sha, force_snapshot=force_snapshot
         )
 
-        file_refs = self.code_index.file_reference_service()
+        # When a Neo4j runtime is attached, the file_reference_service needs
+        # the commit_sha to route to the right per-commit client. Prime the
+        # runtime for this commit first (spawns the subprocess if needed),
+        # then construct the reference service scoped to it. Legacy Chroma
+        # path ignores the commit_sha arg — same call works for both backends.
+        runtime = self.code_index._neo4j_runtime  # noqa: SLF001 — internal wiring
+        if runtime is not None:
+            await runtime.start_for_commit(self.code_index.project_id, target_sha)
+        file_refs = self.code_index.file_reference_service(commit_sha=target_sha)
         with self._apply_progress.active_scope():
             try:
                 if use_snapshot:

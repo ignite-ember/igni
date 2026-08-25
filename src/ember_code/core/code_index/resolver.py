@@ -29,6 +29,7 @@ from pathlib import Path
 import httpx
 
 from ember_code.core.auth.credentials import CloudCredentials
+from ember_code.core.utils.http_retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -113,22 +114,19 @@ class RepositoryResolver:
 
             endpoint = f"{self.server_url}/v1/codeindex/repository"
             try:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    response = await client.get(
-                        endpoint,
-                        params={"remote_url": url},
-                        headers={"Authorization": f"Bearer {token}"},
-                    )
+                async def _fetch_repository() -> httpx.Response:
+                    async with httpx.AsyncClient(timeout=self.timeout) as client:
+                        resp = await client.get(
+                            endpoint,
+                            params={"remote_url": url},
+                            headers={"Authorization": f"Bearer {token}"},
+                        )
+                        resp.raise_for_status()
+                        return resp
+
+                response, metadata = await retry_with_backoff(_fetch_repository)
             except httpx.HTTPError as exc:
                 logger.info("codeindex resolver: server unreachable (%s)", exc)
-                return None
-
-            if response.status_code != 200:
-                logger.info(
-                    "codeindex resolver: unexpected status %d for %s",
-                    response.status_code,
-                    url,
-                )
                 return None
 
             try:

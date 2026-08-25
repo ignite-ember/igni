@@ -142,6 +142,9 @@ class Neo4jRowCodec:
         text: str,
         embedding: list[float],
         item: CodeIndexItem,
+        chunk_kind: str = "summary",
+        line_from: int | None = None,
+        line_to: int | None = None,
     ) -> dict[str, Any]:
         """Build a chunk node's property dict.
 
@@ -156,6 +159,13 @@ class Neo4jRowCodec:
             "chunk_index": chunk_index,
             "text": text,
             "embedding": embedding,
+            # "summary" (prose about the item) or "code" (its source). Filter on
+            # it: a literal-string question wants code chunks, a described-idea
+            # question wants summary chunks.
+            "chunk_kind": chunk_kind,
+            # Absolute file lines, code chunks only.
+            "line_from": line_from,
+            "line_to": line_to,
             "name": item.name,
             "type": item.type.value if hasattr(item.type, "value") else item.type,
             "kind": item.kind,

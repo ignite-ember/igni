@@ -89,6 +89,7 @@ class UpsertItemOp(BaseModel):
     fan_out: int | None = None
     test_refs: int | None = None
     importer_count: int | None = None
+    source: str | None = None
     member_count: int | None = None
     error_handlers: int | None = None
     empty_handlers: int | None = None
@@ -193,6 +194,7 @@ class UpsertItemOp(BaseModel):
             fan_out=self.fan_out,
             test_refs=self.test_refs,
             importer_count=self.importer_count,
+            source=self.source,
             member_count=self.member_count,
             error_handlers=self.error_handlers,
             empty_handlers=self.empty_handlers,

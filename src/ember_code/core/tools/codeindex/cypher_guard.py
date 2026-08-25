@@ -137,7 +137,12 @@ _ALLOWED_APOC: Final[frozenset[str]] = frozenset({"apoc.cypher.run"})
 # Read-only procedures beyond apoc. ``db.index.vector.queryNodes`` only reads a
 # vector index, and without it the chunk embeddings — 93% of the nodes written,
 # and the dominant cost of every load — cannot be queried by an agent at all.
-_ALLOWED_PROCEDURES: Final[frozenset[str]] = frozenset({"db.index.vector.querynodes"})
+# Two read-only index procedures, and only these. ``queryNodes`` on the vector
+# index finds by meaning; on the full-text index it finds by term — and the
+# second is the one that can return nothing, which similarity never does.
+_ALLOWED_PROCEDURES: Final[frozenset[str]] = frozenset(
+    {"db.index.vector.querynodes", "db.index.fulltext.querynodes"}
+)
 
 
 class CypherGuardError(ValueError):

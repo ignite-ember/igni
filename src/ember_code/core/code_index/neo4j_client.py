@@ -234,7 +234,7 @@ class Neo4jClient:
     async def upsert_item(
         self,
         item: CodeIndexItem,
-        chunks: list[tuple[str, list[float]]],
+        chunks: list,
     ) -> None:
         """Insert or replace an item and its chunk set, attached to this commit.
 
@@ -285,7 +285,11 @@ class Neo4jClient:
             proj=project_id,
         )
         # 3. Create the new chunks.
-        for i, (text, embedding) in enumerate(chunks):
+        for i, row in enumerate(chunks):
+            # Indexed rather than unpacked: a :class:`ChunkRow` carries kind and
+            # line span, while the plain ``(text, embedding)`` tuple that
+            # ``_carryover_from_parent`` and the tests still pass does not.
+            text, embedding = row[0], row[1]
             chunk_id = f"{item.item_id}::{i}"
             chunk_props = {
                 "chunk_id": chunk_id,
@@ -293,6 +297,9 @@ class Neo4jClient:
                 "chunk_index": i,
                 "text": text,
                 "embedding": embedding,
+                "chunk_kind": getattr(row, "chunk_kind", "summary"),
+                "line_from": getattr(row, "line_from", None),
+                "line_to": getattr(row, "line_to", None),
                 "name": props.get("name"),
                 "type": props.get("type"),
                 "kind": props.get("kind"),
