@@ -124,6 +124,7 @@ COMMIT_SCHEMA_STATEMENTS: tuple[str, ...] = (
     # scan that grows with the repository.
     "CREATE INDEX item_fan_in IF NOT EXISTS FOR (i:Item) ON (i.fan_in)",
     "CREATE INDEX item_fan_out IF NOT EXISTS FOR (i:Item) ON (i.fan_out)",
+    "CREATE INDEX item_importer_count IF NOT EXISTS FOR (i:Item) ON (i.importer_count)",
     "CREATE INDEX item_member_count IF NOT EXISTS FOR (i:Item) ON (i.member_count)",
     "CREATE INDEX item_test_refs IF NOT EXISTS FOR (i:Item) ON (i.test_refs)",
     "CREATE INDEX item_empty_handlers IF NOT EXISTS FOR (i:Item) ON (i.empty_handlers)",
@@ -236,6 +237,7 @@ section body as content.
 | ``file_issues`` | — | 71% | — |
 | ``vulnerabilities`` | — | 10% | — |
 | ``fan_in``, ``fan_out``, ``test_refs`` | — | always | **always** |
+| ``importer_count`` | — | always | — |
 | ``error_handlers``, ``empty_handlers``, ``broad_handlers`` | — | always | **always** |
 | ``member_count`` | — | always 0 | **always** |
 
@@ -271,8 +273,17 @@ is counted from the parse tree and the reference graph and is stable across runs
   entities, meant for ``ORDER BY``. All three reference counts are of *distinct
   items*, not of edges: an entity calling one helper forty times is coupled to
   one thing.
-  ``fan_in`` (how many distinct items reference this one — the load-bearing
-  ranking), ``fan_out`` (how many distinct items it references — real coupling),
+  ``fan_in`` (how many distinct items reference this one — use for blast radius:
+  who breaks if this changes, at any granularity),
+  ``importer_count`` (how many distinct *files* import this file — use for
+  "which module does everything lean on". Files only, and deliberately separate
+  from ``fan_in``: ``fan_in`` also counts entity-level references, so a module
+  whose symbols are used everywhere outranks a package that is merely imported
+  everywhere. Measured on pydantic, ``fan_in`` ranks ``_pydantic_core.pyi``
+  first at 1,434 and ``pydantic/__init__.py`` seventh, while by importers
+  ``pydantic/__init__.py`` is first at 201 — for an architecture question the
+  second ranking is the right one),
+  ``fan_out`` (how many distinct items it references — real coupling),
   ``test_refs`` (how many distinct test files are among the incoming references,
   so a high ``fan_in`` with ``test_refs`` 0 is "depended on, untested"),
   ``member_count`` (methods plus fields on a class-like entity; 0 for anything

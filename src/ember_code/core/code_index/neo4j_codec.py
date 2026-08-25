@@ -115,6 +115,7 @@ class Neo4jRowCodec:
             "fan_in": int(getattr(item, "fan_in", 0) or 0),
             "fan_out": int(getattr(item, "fan_out", 0) or 0),
             "test_refs": int(getattr(item, "test_refs", 0) or 0),
+            "importer_count": int(getattr(item, "importer_count", 0) or 0),
             "member_count": int(getattr(item, "member_count", 0) or 0),
             "error_handlers": int(getattr(item, "error_handlers", 0) or 0),
             "empty_handlers": int(getattr(item, "empty_handlers", 0) or 0),

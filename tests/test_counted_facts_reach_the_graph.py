@@ -23,6 +23,7 @@ COUNTED = {
     "fan_in": 7,
     "fan_out": 3,
     "test_refs": 2,
+    "importer_count": 11,
     "member_count": 19,
     "error_handlers": 5,
     "empty_handlers": 4,

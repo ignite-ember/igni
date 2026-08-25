@@ -123,6 +123,11 @@ class CodeIndexItemCreate(CodeIndexItemBase):
     fan_in: int | None = None
     fan_out: int | None = None
     test_refs: int | None = None
+    # Distinct files importing this one. A different question from fan_in:
+    # fan_in mixes entity references with file imports, so a module whose
+    # symbols are used everywhere outranks a package merely imported
+    # everywhere. This one is the hub measure. Files only.
+    importer_count: int | None = None
     member_count: int | None = None
     error_handlers: int | None = None
     empty_handlers: int | None = None
