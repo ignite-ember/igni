@@ -91,6 +91,7 @@ class UpsertItemOp(BaseModel):
     importer_count: int | None = None
     test_importer_count: int | None = None
     method_count: int | None = None
+    subproject: str | None = None
     sink_hits: int | None = None
     is_callable: bool | None = None
     is_type: bool | None = None
@@ -203,6 +204,7 @@ class UpsertItemOp(BaseModel):
             importer_count=self.importer_count,
             test_importer_count=self.test_importer_count,
             method_count=self.method_count,
+            subproject=self.subproject,
             sink_hits=self.sink_hits,
             is_callable=self.is_callable,
             is_type=self.is_type,

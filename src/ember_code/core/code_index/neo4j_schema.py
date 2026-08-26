@@ -126,6 +126,7 @@ COMMIT_SCHEMA_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX item_fan_out IF NOT EXISTS FOR (i:Item) ON (i.fan_out)",
     "CREATE INDEX item_importer_count IF NOT EXISTS FOR (i:Item) ON (i.importer_count)",
     "CREATE INDEX item_method_count IF NOT EXISTS FOR (i:Item) ON (i.method_count)",
+    "CREATE INDEX item_subproject IF NOT EXISTS FOR (i:Item) ON (i.subproject)",
     "CREATE INDEX item_is_callable IF NOT EXISTS FOR (i:Item) ON (i.is_callable)",
     "CREATE INDEX item_sink_hits IF NOT EXISTS FOR (i:Item) ON (i.sink_hits)",
     "CREATE INDEX item_test_importers IF NOT EXISTS FOR (i:Item) ON (i.test_importer_count)",
@@ -232,6 +233,14 @@ of its longest functions where ``WHERE i.is_callable`` finds 88%. The extractor
 decides this from the parse tree, so ``const h = useMemo(() => f, [])`` is
 correctly *not* callable.
 
+**Vendored subprojects.** ``subproject`` names the nested package an item
+belongs to — a directory below the root with its own ``pyproject.toml``,
+``package.json``, ``Cargo.toml`` — and is ``null`` for the main tree. Add
+``WHERE i.subproject IS NULL`` to any architecture question. Measured: pydantic
+vendors ``pydantic-core``, and four of the top five files by ``importer_count``
+were that subproject's, so "the most imported module" answered about a dependency
+rather than about the project.
+
 **A file is either code or a document, and only code is analysed.** ``kind`` is
 ``'code'`` (4,014 files) or ``'docs'`` (1,079 — every ``.md`` and ``.rst`` in the
 corpus). Measured: every analysis property is set on **100%** of code files and
@@ -264,6 +273,7 @@ section body as content.
 | ``error_handlers``, ``empty_handlers``, ``broad_handlers`` | — | always | **always** |
 | ``member_count``, ``method_count`` | — | always 0 | **always** |
 | ``is_callable``, ``is_type`` | — | false | **always** |
+| ``subproject`` | — | when nested | when nested |
 | ``sink_hits``, ``sink_kinds`` | — | always | **always** |
 | ``test_importer_count``, ``sink_lines`` | — | always | — |
 

@@ -118,6 +118,7 @@ class Neo4jRowCodec:
             "importer_count": int(getattr(item, "importer_count", 0) or 0),
             "test_importer_count": int(getattr(item, "test_importer_count", 0) or 0),
             "method_count": int(getattr(item, "method_count", 0) or 0),
+            "subproject": getattr(item, "subproject", None),
             "sink_hits": int(getattr(item, "sink_hits", 0) or 0),
             "is_callable": bool(getattr(item, "is_callable", False)),
             "is_type": bool(getattr(item, "is_type", False)),

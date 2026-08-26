@@ -154,6 +154,8 @@ class CodeIndexItemCreate(CodeIndexItemBase):
     importer_count: int | None = None
     test_importer_count: int | None = None
     method_count: int | None = None
+    # Nested package this item belongs to; None for the main tree.
+    subproject: str | None = None
     sink_hits: int | None = None
     is_callable: bool | None = None
     is_type: bool | None = None
