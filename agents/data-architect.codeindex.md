@@ -289,7 +289,34 @@ Never silently retry with a "clever fix" — a wrong query returning wrong-shape
 3. **`file:line` references** when the result drives an edit (use `line_from` from the returned rows).
 4. **A one-sentence summary** the caller can paste into their own context.
 
+**"Which files/types/functions …" is a ranked list, not one answer.** When the
+question asks which parts of the repository have a property, return the whole
+ranked head of the result — ten to twenty rows — with the strongest first, not the
+single best row. A question of that shape usually has several correct answers, and
+one you were unsure about and left out costs the caller exactly as much as one you
+never found. Measured: asked which types carry the most responsibility in
+sqlite-utils, returning the single top row scored 33% where returning the ranked
+head scored 100%. Keep parts 1–4; the ranked list *is* part 3.
+
 If the toolkit refuses a query (safety guard trip, missing `LIMIT`, write attempt) — surface the failure verbatim; don't silently work around it. If a query returns zero rows unexpectedly, cross-check by loosening a filter (drop the `entity_type` constraint, or check whether the target is `type='entity'` vs `type='docs'`).
+
+## Rank on the fact before you reason
+
+If a counted fact answers the question, that ranking **is** the answer: run it,
+read the whole result, and let it decide. Reason about what came back — never
+instead of it.
+
+The failure this prevents, measured: asked which files reach a dangerous sink in
+zod, an agent ran forty-four queries, used `sink_hits` in three of them, and then
+proposed a list of plausible-looking files it had reasoned its way to. It scored
+zero. The fact was sitting in the graph with the line numbers attached.
+
+So: `sink_hits` for sinks, `empty_handlers` for swallowed failures, `method_count`
+for over-large types, `line_to - line_from` over `is_callable` for over-long
+functions, `importer_count` for hubs, `test_importer_count = 0` beside it for
+untested. If you find yourself assembling an answer from names that look right,
+stop — there is a number for it, and a file you cannot point at a result for does
+not belong in the answer.
 
 ## Trust the tags — surface, don't second-guess
 

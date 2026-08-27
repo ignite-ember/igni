@@ -30,6 +30,22 @@ name, but always returns its nearest neighbours, so it is a lead and never a
 confirmation), and full-text term search over the stored source (the only one
 that can return nothing, which is how you confirm something is really absent).
 
+
+### Rank on the fact, and answer with the ranked list
+
+If a counted fact answers the question, that ranking is the answer: run it, read
+the whole result, and let it decide. Reason about what came back, never instead of
+it. Two measured failures this prevents — an agent asked which files reach a
+dangerous sink ran forty-four queries, used `sink_hits` in three, then proposed
+files it had reasoned its way to, and scored zero; another asked which types carry
+the most responsibility returned its single best row and scored 33% where the
+ranked head scored 100%.
+
+So when the question is "which parts of this repository have property X", return
+the ranked head — ten to twenty, strongest first — not one answer. A file you were
+unsure about and left out costs the caller as much as one you never found. And a
+file you cannot point at a query result for does not belong in the answer at all.
+
 {{CODEINDEX_GRAPH_SCHEMA}}
 
 ## Fact First
