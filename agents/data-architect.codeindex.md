@@ -56,49 +56,15 @@ codeindex_cypher(
 
 Always pass `confirm_raw_cypher=True` literally. Not `"True"`, not `1`, not omitted.
 
-## Graph shape (verified against live production data)
+## The graph
 
-Two node labels are populated per commit; the rest are admin-only.
+Everything below is generated from the live schema, so it cannot drift from what
+the index actually stores. Read the property-level table before you filter on a
+property: most of them exist at only one or two of folder / file / entity, and a
+filter at the wrong level returns nothing, which reads exactly like "there is
+nothing wrong here".
 
-### :Item
-
-Discriminators (all indexed — cheap to filter on):
-- `type` ∈ `{'file', 'folder', 'entity', 'docs'}` — file/folder is the containment tree; `entity` is a class / function / method inside a file; `docs` is a documentation file
-- `entity_type` (only when `type='entity'`) ∈ `{'class_definition', 'function_definition', 'method_definition', 'module'}` — **note the `_definition` suffix**; the bare `class`/`function` names from marketing docs are NOT how the graph is populated
-- `kind` ∈ `{'code', 'docs'}` — hard vs soft artifact
-
-Identity + navigation:
-- `item_id` (uuid, unique, indexed) — hot lookup key
-- `path` (indexed) — repo-relative path for files/folders; for entities `<file>::<entity>` or `<file>::<Class>::<method>`
-- `parent_id` (indexed) — entity → file, file → folder, folder → parent folder. Not a graph edge; walk via a second MATCH
-- `name` — short name (function / class / file basename)
-- `line_from` / `line_to` — source span on the parent file
-- `file_extension`, `token_count`, `timestamp`, `archived`, `repository_id`
-
-Quality dimensions (**12 fields — not the 16 in marketing docs**; `cohesion`, `coupling`, `stability`, `testing` are documented but never populated in real data — do not filter on them):
-
-| field | value set |
-|---|---|
-| `quality` | `excellent, good, fair, poor` |
-| `complexity` | `low, medium, high, very-high` |
-| `security` | `secure, minor-issues, major-issues, critical` |
-| `testability` | `easy, moderate, difficult, unknown` |
-| `documentation` | `excellent, good, minimal, missing` |
-| `performance` | `optimized, acceptable, inefficient, critical` |
-| `issues` | `none, minor, moderate, severe` |
-| `maintainability` | `excellent, good, fair, poor` (file-level) |
-| `architecture` | `excellent, good, fair, poor` (file-level) |
-| `technical_debt` | `none, low, medium, high, critical` (file-level) |
-| `priority` | `critical, high, medium, low, none` (file-level) |
-| `needs_refactoring` | boolean |
-
-Multi-value tag lists (`list[str]`, all present):
-
-`vulnerabilities` (e.g. `["command-injection","path-traversal","auth-bypass"]`), `frameworks` (e.g. `["fastapi"]`), `domain` (LLM-inferred topic tags, e.g. `["greeter_api","python"]`), `concerns`, `layers`, `patterns`, `keywords`, `file_issues`.
-
-Post-generation quality flag (may or may not be present):
-
-`analysis_quality` ∈ `{'ok', 'tags_downgraded', 'tags_upgraded', 'hallucinated', 'contradictory'}`. When absent or `'ok'`, the analysis passed the consistency + grounding validators. Other values mean an auto-correction fired; `pre_correction_tags` (JSON string) has the originals, and `hallucinated_refs` (list) has any fabricated identifier names the file-level narrative referenced. Read but don't hide — return the flag to the caller when it matters.
+{{CODEINDEX_GRAPH_SCHEMA}}
 
 ### Analysis sections live INSIDE `i.content`, not as top-level properties
 
@@ -116,23 +82,15 @@ Section names by `type`:
 - **file**: `purpose_and_functionality, architecture_and_design, code_quality, security, issues_and_technical_debt, testing_and_reliability, dependencies_and_impact, recommendations, entities`
 - **folder**: `module_purpose, organization_and_structure, architectural_assessment, quality_patterns, security_posture, common_issues, testing_and_reliability, module_health_score, recommendations`
 
-**Do NOT write `RETURN i.security_analysis`** — that field doesn't exist. Extract from `content` with the split-idiom below.
-
-### :Chunk
-
-- `chunk_id` (uuid, unique, indexed), `parent_id` → parent `:Item`
-- `text` — the section text this chunk carries
-- `embedding` — 384-dim vector, indexed by the `chunk_embedding` vector index (cosine similarity, HNSW)
-- `chunk_index`, `name`, `path`, `type`, `kind`, `file_extension`, `repository_id`
+**Do NOT write `RETURN i.security_analysis`** — that field doesn't exist. Extract
+from `content` with the split-idiom below. And prefer a counted fact over a
+section whenever one exists: asking the prose "what swallows errors" scored 25%
+where counting the empty handlers scored 93.8%.
 
 ## Edges (only two relationship types)
 
-- `(:Item)-[:HAS_CHUNK]->(:Chunk)` — dense (~one per section per item)
+- `(:Item)-[:HAS_CHUNK]->(:Chunk)` — dense (~one per chunk of content or source)
 - `(:Item)-[:REL {kind, meta_json}]->(:Item)` — typed references; filter on `r.kind`, **not** on a label. Labels like `[:CALLS]` don't exist and match nothing.
-
-`REL.kind` canonical values (paired opposites — walk the direction your question needs):
-
-`calls / called_by`, `imports / imported_by`, `extends / extended_by`, `implements / implemented_by`, `decorates / decorated_by`, `types_as / typed_by`.
 
 ## Scoping (do NOT filter by project_hash)
 

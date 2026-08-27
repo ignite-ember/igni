@@ -113,14 +113,28 @@ class CodeIndexTools(Toolkit):
         2. The Cypher must be read-only — no ``CREATE``, ``MERGE``,
            ``SET``, ``DELETE``, ``DETACH DELETE``, ``REMOVE``,
            ``DROP``, ``ALTER``, ``BEGIN`` / ``COMMIT`` / ``ROLLBACK``,
-           ``SHOW``, ``PROFILE``, ``CALL dbms.*``, ``CALL db.*``,
-           etc. See :func:`cypher_guard.assert_read_only_cypher`.
+           ``SHOW``, ``PROFILE``, ``CALL dbms.*``. See
+           :func:`cypher_guard.assert_read_only_cypher`.
+
+           **Two procedures are allowed**, and both are read-only
+           searches you are expected to use:
+           ``CALL db.index.vector.queryNodes`` (find code by
+           describing what it does) and
+           ``CALL db.index.fulltext.queryNodes`` (find a literal
+           string in the stored source — the only search that
+           returns nothing when the term is absent). This
+           docstring previously said ``CALL db.*`` was refused
+           outright, which is why neither was ever attempted.
         3. ``$param`` placeholders must name a key on the
            allowlist (``proj``, ``commit_sha``, ``ids``,
            ``limit_n``, ``skip_n``, ``kind``, ``type``,
-           ``quality``). The toolkit injects ``proj`` from
+           ``quality``, ``semantic_query``, ``query_vector``).
+           The toolkit injects ``proj`` from
            ``CodeIndex.project_id`` and passes the rest
-           through verbatim.
+           through verbatim. ``semantic_query`` is the ergonomic
+           one: pass a sentence and the service embeds it with the
+           same model the chunks were written with, binding the
+           result as ``$query_vector``.
 
         Project isolation is enforced by the PROCESS boundary:
         each ``(project, commit)`` pair runs in its own Neo4j

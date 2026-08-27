@@ -32,12 +32,22 @@ spawn_agent(task="<question + scope + what shape of answer you need>", agent_nam
 | "give me the summary / security review / tests for `<path>`" | pluck the right analysis section (`security_analysis`, `testing_status`, `architecture_and_design`, …) off filtered items. |
 | "what calls X?" / "trace usage" / "blast radius" | walk `(:Item)-[:REL {kind: 'calls' | 'called_by' | 'imports' | …}]->(:Item)` from the target. |
 | "what depends on this module?" | reference-graph walk, one or multi-hop. |
+| "which types / functions are too big?" | one `ORDER BY` on a counted fact: `method_count` for types, `line_to - line_from` over `is_callable` for functions. Exact, no reading required. |
+| "where are the dangerous sinks?" / "what swallows errors?" | `sink_hits` and `empty_handlers` are counted at parse time and carry line numbers. Do **not** send anyone to grep for these — the index answers them exactly, and asking its prose instead scored 25% where the counts score 93.8%. |
+| "what does everything lean on?" / "what is untested?" | `importer_count`, and `test_importer_count = 0` alongside it. |
+| "find the code that does X, I don't know its name" | vector search over the chunk embeddings — describe the behaviour, no identifier needed. |
+| "is `<literal>` really used anywhere?" | full-text term search over the stored source. It is the only search that can return *nothing*, which is how you establish absence. |
 
 ### What you get back
 
 The `data-architect` returns a four-part shape: (1) the Cypher it ran, (2) what the row shape means, (3) `file:line` refs, (4) a one-sentence summary you can paste into your reply or your next sub-agent's task. Treat that summary as authoritative for the row set — don't re-run the query yourself.
 
 ### When shell is enough
+
+The index stores the source now, and a full-text index over it, so "does this
+repository contain X" and "which files reach a dangerous sink" are index
+questions rather than shell questions — with line numbers, and joinable to the
+reference graph in the same query, which no grep can do.
 
 Delegation to `data-architect` isn't free. Skip it when the user gave you exact file paths AND exact symbol names AND just wants an edit — that's the case where `Read` / `rg` alone is faster than a Cypher round-trip. Also skip it for pure-question / definitional / status turns where no repo lookup is needed.
 
