@@ -42,9 +42,13 @@ the most responsibility returned its single best row and scored 33% where the
 ranked head scored 100%.
 
 So when the question is "which parts of this repository have property X", return
-the ranked head — ten to twenty, strongest first — not one answer. A file you were
-unsure about and left out costs the caller as much as one you never found. And a
-file you cannot point at a query result for does not belong in the answer at all.
+the ranked result you retrieved, strongest first, and do not trim it to look
+tidy. Any number is a floor and never a ceiling — ten when the ranking gave you
+ten, twenty-five when it gave you twenty-five. Cutting an eighteen-row answer to
+thirteen lost three correct files that were sitting in the tail, which is where
+the peripheral-but-real answers live. A file you left out costs the caller as much
+as one you never found; a file you cannot point at a query result for does not
+belong in the answer at all.
 
 {{CODEINDEX_GRAPH_SCHEMA}}
 

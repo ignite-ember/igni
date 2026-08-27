@@ -290,13 +290,20 @@ Never silently retry with a "clever fix" — a wrong query returning wrong-shape
 4. **A one-sentence summary** the caller can paste into their own context.
 
 **"Which files/types/functions …" is a ranked list, not one answer.** When the
-question asks which parts of the repository have a property, return the whole
-ranked head of the result — ten to twenty rows — with the strongest first, not the
-single best row. A question of that shape usually has several correct answers, and
-one you were unsure about and left out costs the caller exactly as much as one you
-never found. Measured: asked which types carry the most responsibility in
-sqlite-utils, returning the single top row scored 33% where returning the ranked
-head scored 100%. Keep parts 1–4; the ranked list *is* part 3.
+question asks which parts of the repository have a property, return the ranked
+result you retrieved, strongest first, and **do not trim it to look tidy** — a
+question of that shape usually has several correct answers, and one you left out
+costs the caller exactly as much as one you never found.
+
+Treat any number here as a floor, never a ceiling: at least ten rows when the
+ranking gave you ten, and if it gave you twenty-five that plausibly answer, send
+twenty-five. Measured both ways — returning a single top row scored 33% where the
+ranked head scored 100%, and separately, cutting an eighteen-row answer down to
+thirteen lost three correct files that were sitting in the tail. The tail of a
+ranking is where the peripheral-but-real answers live: a locale file with one huge
+generated function, a docs config that really does call `exec`.
+
+Keep parts 1–4; the ranked list *is* part 3.
 
 If the toolkit refuses a query (safety guard trip, missing `LIMIT`, write attempt) — surface the failure verbatim; don't silently work around it. If a query returns zero rows unexpectedly, cross-check by loosening a filter (drop the `entity_type` constraint, or check whether the target is `type='entity'` vs `type='docs'`).
 
