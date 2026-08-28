@@ -19,7 +19,10 @@ import pytest
 
 from ember_code.core.code_index.neo4j_schema import COMMIT_SCHEMA_STATEMENTS
 from ember_code.core.code_index.schema.items import ChunkRow
-from ember_code.core.tools.codeindex.cypher_guard import assert_read_only_cypher
+from ember_code.core.tools.codeindex.cypher_guard import (
+    CypherGuardError,
+    assert_read_only_cypher,
+)
 
 
 class TestChunkRow:
@@ -91,9 +94,11 @@ class TestFullTextIsAvailable:
         )
 
     def test_other_procedures_are_still_refused(self):
-        with pytest.raises(Exception):
-            assert_read_only_cypher("CALL db.schema.visualization() YIELD nodes RETURN nodes LIMIT 1")
+        with pytest.raises(CypherGuardError):
+            assert_read_only_cypher(
+                "CALL db.schema.visualization() YIELD nodes RETURN nodes LIMIT 1"
+            )
 
     def test_writes_are_still_refused(self):
-        with pytest.raises(Exception):
+        with pytest.raises(CypherGuardError):
             assert_read_only_cypher("MATCH (i:Item) SET i.name = 'x' RETURN i LIMIT 1")

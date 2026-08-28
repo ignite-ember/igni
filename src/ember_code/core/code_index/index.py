@@ -115,9 +115,9 @@ class CodeIndex:
             # code that does X" query. Tests want it; production must not have it
             # by accident.
             logger.warning(
-                'CodeIndex built with no embedder — falling back to HashEmbedder. '
-                'Chunk embeddings will carry no meaning and semantic search will '
-                'not work. Pass LiveEmbedder() for real vectors.'
+                "CodeIndex built with no embedder — falling back to HashEmbedder. "
+                "Chunk embeddings will carry no meaning and semantic search will "
+                "not work. Pass LiveEmbedder() for real vectors."
             )
         self._embedder: Embedder = embedder or HashEmbedder()
         self._lock = asyncio.Lock()
@@ -801,7 +801,9 @@ class CodeIndex:
             start += step
         return windows
 
-    def _rows_for(self, item: CodeIndexItem) -> tuple[list[str], list[tuple[str, int | None, int | None]]]:
+    def _rows_for(
+        self, item: CodeIndexItem
+    ) -> tuple[list[str], list[tuple[str, int | None, int | None]]]:
         """Every text this item contributes, tagged for reassembly after embedding.
 
         Summary chunks first (they carry no position), then code chunks with
