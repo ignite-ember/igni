@@ -114,6 +114,7 @@ class RepositoryResolver:
 
             endpoint = f"{self.server_url}/v1/codeindex/repository"
             try:
+
                 async def _fetch_repository() -> httpx.Response:
                     async with httpx.AsyncClient(timeout=self.timeout) as client:
                         resp = await client.get(

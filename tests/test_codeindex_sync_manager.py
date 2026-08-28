@@ -51,6 +51,15 @@ def _stub_index():
     # exercise the short-circuit (e.g. ``test_target_already_local…``)
     # override this with their own ``MagicMock``.
     index.has_commit = MagicMock(return_value=False)
+    # ``sync_now`` primes the Neo4j runtime for the target commit before
+    # building the reference service, and it *awaits* that call. On a bare
+    # MagicMock the attribute is truthy and not awaitable, so every routing test
+    # died on ``'MagicMock' object can't be awaited`` — twelve failures that had
+    # nothing to do with what they were testing. AsyncMock rather than ``None``
+    # because the real attribute is awaitable and the priming call is part of the
+    # path under test.
+    index._neo4j_runtime = MagicMock()
+    index._neo4j_runtime.start_for_commit = AsyncMock()
     return index
 
 

@@ -148,29 +148,52 @@ class SessionOrchestrator:
         return self._pool
 
     async def attach_neo4j(self) -> Any | None:
-        """Wire the optional :class:`Neo4jRuntime` into the default
-        session's knowledge index.
+        """Wire the :class:`Neo4jRuntime` into the default session's
+        knowledge + code_index indices.
 
-        No-op when ``EMBER_NEO4J_RUNTIME`` is unset — the env var
-        is the explicit opt-in (constructing + downloading the JDK
-        and the Neo4j distribution is heavy, so we don't do it
-        silently). When set, builds a :class:`Neo4jRuntime` (one
-        per BE — the runtime is refcounted across sessions via
-        the per-(project, commit) subprocess map) and calls
-        :meth:`Session.attach_knowledge_neo4j` to swap the
-        default session's knowledge backend. Returns the runtime
-        for tests + the supervisor; ``None`` when skipped.
+        Neo4j is the DEFAULT storage backend — this call always tries to
+        attach. Set ``EMBER_NEO4J_DISABLED=1`` to opt out (rare — only for
+        headless CI / test scenarios where downloading the JDK + Neo4j
+        distribution and spawning per-commit subprocesses is unwanted).
 
-        Idempotent — a second call is a no-op (the runtime
-        itself is cached on ``self._neo4j_runtime``).
+        Runtime construction downloads the Neo4j distribution + JDK on
+        first use (~200MB, cached at ``~/.ember/neo4j``). Per-(project,
+        commit) subprocesses are refcounted across sessions via the
+        runtime's subprocess map, so the download cost is one-time and
+        the process cost scales only with how many commits are actively
+        open across sessions.
+
+        Graceful degradation: if the runtime fails to construct (missing
+        Java, disk full, distribution download blocked), we log the
+        failure and return ``None`` — the session falls back to the
+        legacy Chroma-backed indices so the BE still boots and the user
+        can still work; ``codeindex_cypher`` will surface
+        ``no_backend`` errors until the runtime succeeds.
+
+        Idempotent — a second call is a no-op (the runtime itself is
+        cached on ``self._neo4j_runtime``).
         """
-        if not os.environ.get("EMBER_NEO4J_RUNTIME"):
+        if os.environ.get("EMBER_NEO4J_DISABLED"):
+            logger.info(
+                "EMBER_NEO4J_DISABLED set — skipping Neo4j runtime attach; "
+                "CodeIndex + knowledge will use legacy Chroma-backed indices."
+            )
             return None
         if self._neo4j_runtime is not None:
             return self._neo4j_runtime
-        from ember_code.backend.neo4j_runtime import Neo4jRuntime
 
-        runtime = Neo4jRuntime(data_dir=self._settings.storage.data_dir)
+        try:
+            from ember_code.backend.neo4j_runtime import Neo4jRuntime
+
+            runtime = Neo4jRuntime(data_dir=self._settings.storage.data_dir)
+        except Exception:  # noqa: BLE001 — degrade so BE boot doesn't die
+            logger.exception(
+                "Neo4j runtime construction failed; falling back to legacy "
+                "Chroma-backed indices. Set EMBER_NEO4J_DISABLED=1 to silence "
+                "this and skip Neo4j entirely."
+            )
+            return None
+
         self._neo4j_runtime = runtime
         # ``self._backend`` is a :class:`BackendServer`; the session
         # is reachable via the bootstrap. Both attach calls are

@@ -26,7 +26,9 @@ neo4j scaffolding.
    on neo4j, with e2e round-trip test).
 8. `f1cf157` — `Session.attach_knowledge_neo4j(runtime)`.
 9. `2e686ee` — `SessionOrchestrator.attach_neo4j()` wires the
-   runtime at BE boot (gated on `EMBER_NEO4J_RUNTIME`).
+   runtime at BE boot. Initially gated on `EMBER_NEO4J_RUNTIME`;
+   later flipped to default-on (see `latest` — the gate is now
+   an opt-out `EMBER_NEO4J_DISABLED` instead).
 10. `b48c40e` — `Session.attach_codeindex_neo4j(runtime)` + the
     orchestrator wires both paths (knowledge + code) in one call.
 11. `7ecd72e` — style: drop blank lines after `TYPE_CHECKING` guard.
@@ -157,9 +159,11 @@ until now.
 - **`embeddings.py` comment cleanup** — the docstring still
   references the deleted `chroma_client_factory.py`; one
   comment-only fix.
-- **Production smoke test** — the BE has not yet been smoke-tested
-  end-to-end with `EMBER_NEO4J_RUNTIME=1` against a live neo4j
-  (the unit + integration tests cover the path, but a real
-  chat loop is the final acceptance test). The
-  `test_per_commit_isolation` tests will run as part of that
-  smoke (they need the runtime env to be set).
+- **Neo4j is now the DEFAULT storage backend.** The former
+  `EMBER_NEO4J_RUNTIME=1` opt-in gate was flipped to a
+  `EMBER_NEO4J_DISABLED=1` opt-out — `attach_neo4j` fires on
+  every BE boot unless explicitly disabled, and construction
+  failures degrade gracefully (log + fall back to legacy Chroma
+  indices) rather than crashing the boot. The unit + integration
+  tests cover both branches; a real chat loop against a live
+  neo4j is the final acceptance test.

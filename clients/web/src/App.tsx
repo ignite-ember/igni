@@ -65,6 +65,7 @@ import { HooksPanel } from "./components/panels/HooksPanel";
 import { KnowledgePanel } from "./components/panels/KnowledgePanel";
 import { Toasts, type Toast } from "./components/Toasts";
 import { UpdatePrompt } from "./components/UpdatePrompt";
+import { RetryBanner } from "./components/RetryBanner";
 import { host } from "./lib/host";
 import { PluginsPanel } from "./components/panels/PluginsPanel";
 import { SkillsPanel } from "./components/panels/SkillsPanel";
@@ -1190,6 +1191,22 @@ export default function App() {
               : "Agent entered plan mode.";
             append(infoItem(text));
           }
+        } else if (m.channel === "http_retry_attempt") {
+          // HTTP request is being retried. Dispatch a window event
+          // so the RetryBanner can listen and display progress.
+          const payload = m.payload as { attempt?: number; delay_seconds?: number; url?: string };
+          window.dispatchEvent(
+            new CustomEvent("ember:http_retry_attempt", {
+              detail: {
+                attempt: payload.attempt,
+                delay_seconds: payload.delay_seconds,
+                url: payload.url,
+              },
+            }),
+          );
+        } else if (m.channel === "http_retry_succeeded") {
+          // HTTP request succeeded after retries. Dismiss the banner.
+          window.dispatchEvent(new Event("ember:http_retry_succeeded"));
         } else if (m.channel === "plan_submitted") {
           // Agent called ``exit_plan_mode(plan, tasks=[...])``.
           // Append a ``plan`` ChatItem so the user sees the
@@ -2892,6 +2909,7 @@ export default function App() {
         />
       )}
       <Toasts items={toasts} onDismiss={dismissToast} />
+      <RetryBanner />
       {showUpdateModal && pendingUpdate && (
         <UpdatePrompt
           info={pendingUpdate}

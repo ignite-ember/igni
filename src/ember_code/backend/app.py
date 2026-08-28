@@ -210,11 +210,15 @@ class BackendApp:
             )
         except Exception:
             logger.exception("neo4j cutover failed; will retry on next boot")
-        # Opt-in: when ``EMBER_NEO4J_RUNTIME`` is set, build the
-        # :class:`Neo4jRuntime` and switch the default session's
-        # knowledge index to it. The first knowledge op will block
-        # while the runtime downloads + spawns the per-process
-        # Neo4j subprocess; subsequent ops hit the live driver.
+        # Neo4j is the DEFAULT storage backend for the CodeIndex +
+        # knowledge indices — this attach always fires. The first index
+        # op will block while the runtime downloads the Neo4j
+        # distribution + JDK (one-time; cached at ``~/.ember/neo4j``)
+        # and spawns the per-(project, commit) subprocess; subsequent
+        # ops hit the live driver. Set ``EMBER_NEO4J_DISABLED=1`` for
+        # rare headless-CI/test cases where Neo4j should be skipped;
+        # the orchestrator will fall back to legacy Chroma-backed
+        # indices in that mode.
         await self._orchestrator.attach_neo4j()
         # Workflow runner (CC ``/workflows`` parity): the BE runs
         # ``.claude/workflows/*.mjs`` scripts in a Node subprocess

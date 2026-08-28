@@ -7,10 +7,12 @@ Three contracts:
      resolves to a toolkit list that includes ``CodeIndexTools``
      (so ``codeindex_cypher`` is registered on it). No other
      Cypher / Neo4j route is exposed.
-  3. The agent body's safety contract — ``confirm_raw_cypher``,
-     ``project_hash`` scoping, the read-only token list — is
-     pinned so a future prompt rewrite can't silently drop
-     the guardrails.
+  3. The agent body's safety contract — ``confirm_raw_cypher``
+     and the read-only token list — is pinned so a future prompt
+     rewrite can't silently drop the guardrails. (Project isolation
+     is a PROCESS boundary, not a query predicate — see
+     ``neo4j_schema.py`` — so no ``project_hash`` predicate is
+     required in the prompt.)
 """
 
 from __future__ import annotations
@@ -68,7 +70,6 @@ class TestDataArchitectParsing:
         for required in (
             "codeindex_cypher",  # ONLY agent-facing CodeIndex tool
             "confirm_raw_cypher=True",
-            "project_hash",
             "Read-only",  # the section heading spelling
             "CodeIndex",  # toolkit name in body
         ):
@@ -183,12 +184,14 @@ class TestDataArchitectToolSurface:
 
         result = asyncio.run(
             tools.codeindex_cypher(
-                cypher="MATCH (i:Item) RETURN i LIMIT 5",  # missing project_hash
+                # Write op — read-only guardrail rejects before the driver seam.
+                # (We used to test missing-project_hash here, but project
+                # isolation is a PROCESS boundary now, not a query predicate.)
+                cypher="CREATE (n:Item) RETURN n",
                 confirm_raw_cypher=True,
             )
         )
         # Hard denial from the guardrail before the driver seam
         # is touched — ``client_for`` was never awaited.
         assert '"cypher_guard"' in result
-        assert "project_hash" in result
         assert mock_index.client_for.await_count == 0

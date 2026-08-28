@@ -80,12 +80,22 @@ class TestOrchestrateTools:
         assert "depth" in result.lower()
 
     @pytest.mark.asyncio
-    async def test_spawn_agent_shows_activity(self):
+    async def test_spawn_agent_omits_activity(self):
+        """Sub-agent tool result is header + Response only.
+
+        Prior versions embedded an ``Activity:`` block enumerating internal
+        tool calls of the spawned agent. That block was context-heavy noise
+        for the orchestrator (which can't act on it) and inflated the
+        parent's token bill on every hop. Activity is now surfaced only via
+        the UI event stream (see ``event_appender``); the tool return keeps
+        strictly to (task, response).
+        """
         result = await OrchestrateTools(pool=_mock_pool(), settings=_settings()).spawn_agent(
             "Fix", "editor"
         )
         assert "[Agent: editor]" in result
-        assert "Activity:" in result
+        assert "Response:" in result
+        assert "Activity:" not in result
 
     @pytest.mark.asyncio
     async def test_spawn_team_single_delegates(self):

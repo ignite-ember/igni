@@ -109,10 +109,11 @@ class TestPlanResearcherFallbackVariant:
 class TestPlanResearcherCodeIndexVariant:
     """``plan_researcher.codeindex.md`` — used when CodeIndex IS
     available. The prompt body tells the agent to use
-    ``codeindex_query`` / ``codeindex_tree`` as the primary search,
-    so the toolkit must include ``CodeIndex``. Read tools stay
-    in the list for ``file_read`` follow-up after CodeIndex finds
-    candidates."""
+    ``codeindex_cypher`` as the primary research seam (the typed
+    ``codeindex_query`` / ``codeindex_tree`` surface was removed
+    from ``CodeIndexTools`` — see ``tests/test_data_architect_agent.py``
+    for the pin), backed by ``grep_files`` / ``glob_files`` /
+    ``Bash`` for shell fallback."""
 
     AGENT_FILE = PROJECT_AGENT_DIR / "plan_researcher.codeindex.md"
 
@@ -121,30 +122,31 @@ class TestPlanResearcherCodeIndexVariant:
 
     def test_declares_codeindex(self):
         # The defining feature of this variant — without ``CodeIndex``
-        # in tools, ``codeindex_query`` / ``codeindex_tree`` resolve
-        # to "tool does not exist" and the agent silently falls
-        # back to nothing.
+        # in tools, ``codeindex_cypher`` resolves to "tool does not
+        # exist" and the agent silently falls back to nothing.
         tools = _declared_tools(self.AGENT_FILE)
         assert "CodeIndex" in tools, (
             f"plan_researcher.codeindex.md MUST declare CodeIndex; declared tools: {sorted(tools)}"
         )
 
-    def test_declares_read_tools_for_follow_up(self):
-        # CodeIndex finds candidate files/symbols; ``Read`` /
-        # ``Grep`` / ``Glob`` / ``LS`` are needed for the
-        # drill-down phase (read the file, find sibling
-        # references, etc).
+    def test_declares_ember_code_shell_tools_for_follow_up(self):
+        # CodeIndex finds candidate files/symbols; the ember-code
+        # shell toolkits (``grep_files`` / ``glob_files``) cover
+        # text search and path-shape queries during drill-down.
+        # ``Read`` / ``Grep`` / ``Glob`` / ``LS`` are Claude-Code
+        # names and do not exist as ember-code tools — the previous
+        # pin was stale.
         tools = _declared_tools(self.AGENT_FILE)
-        for required in ("Read", "Grep", "Glob", "LS"):
+        for required in ("grep_files", "glob_files"):
             assert required in tools, (
                 f"codeindex variant should declare {required} for "
-                f"follow-up reads. Declared: {sorted(tools)}"
+                f"follow-up shell search. Declared: {sorted(tools)}"
             )
 
     def test_declares_bash_as_fallback(self):
         # CodeIndex may not cover uncommitted recent changes —
         # the prompt explicitly names Bash as the fallback for
-        # those. Declare it.
+        # those (also covers file reads via ``cat`` / ``sed -n``).
         tools = _declared_tools(self.AGENT_FILE)
         assert "Bash" in tools
 

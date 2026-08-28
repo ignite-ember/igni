@@ -371,6 +371,12 @@ class WebFetchSpec(ToolSpec):
     toolkit_cls: type[Toolkit] = WebTools
     base_dir_kwarg: str | None = None
 
+    def build(self, context: ToolBuildContext, confirm: bool) -> Toolkit:
+        kwargs = self._build_kwargs(context, confirm)
+        if context.broadcast:
+            kwargs["broadcast"] = context.broadcast
+        return WebTools(**kwargs)
+
 
 class PythonSpec(ToolSpec):
     name: str = "Python"
