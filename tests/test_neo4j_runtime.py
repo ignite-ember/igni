@@ -84,7 +84,13 @@ def test_password_reused_across_runtime_instances(tmp_path: Path) -> None:
 
 def test_config_includes_required_keys(tmp_path: Path) -> None:
     rt = Neo4jRuntime(data_dir=tmp_path)
-    config = rt._build_config(bolt_port=7687, http_port=7474, password="hunter2")
+    config = rt._build_config(
+        bolt_port=7687,
+        http_port=7474,
+        password="hunter2",
+        data_dir=tmp_path / "state/p-c/data",
+        logs_dir=tmp_path / "state/p-c/logs",
+    )
     # Bolt + HTTP listen directives.
     assert "server.bolt.listen_address=:7687" in config
     assert "server.http.listen_address=:7474" in config
@@ -93,6 +99,68 @@ def test_config_includes_required_keys(tmp_path: Path) -> None:
     # HNSW-style heap sizing.
     assert "server.memory.heap.initial_size=512m" in config
     assert "server.memory.heap.max_size=2g" in config
+
+
+def test_config_pins_the_store_to_this_pairs_own_directory(tmp_path: Path) -> None:
+    """The data directory must be absolute and under the 5.x key.
+
+    Neo4j is started with ``--home-dir`` pointing at the shared install and only
+    ``--config-dir`` per pair, so this file is the single channel that decides
+    where the store lands. It used to say ``dbms.directories.data=./data``:
+    the 4.x key, which 5.x ignores without complaint, and a relative value that
+    would have resolved against the shared install even under the right key. The
+    result was one store at ``<install>/data/databases/neo4j`` shared by every
+    project, each load overwriting the last, and no graph ever reusable.
+    """
+    rt = Neo4jRuntime(data_dir=tmp_path)
+    data_dir = tmp_path / "state/proj-abc123/data"
+    logs_dir = tmp_path / "state/proj-abc123/logs"
+    config = rt._build_config(
+        bolt_port=7687,
+        http_port=7474,
+        password="hunter2",
+        data_dir=data_dir,
+        logs_dir=logs_dir,
+    )
+
+    assert f"server.directories.data={data_dir}" in config
+    assert f"server.directories.logs={logs_dir}" in config
+    # The 4.x spelling is silently ignored by 5.x, so it must not be what we
+    # rely on — and a relative path is shared whatever the key.
+    assert "dbms.directories.data" not in config
+    assert "dbms.directories.logs" not in config
+    assert "=./data" not in config
+    assert "=./logs" not in config
+
+
+def test_two_commits_of_one_project_get_separate_stores(tmp_path: Path) -> None:
+    """Different commits must not be handed the same data directory.
+
+    This is the property the shared-store bug actually broke: the paths were
+    already distinct, they simply never reached the server.
+    """
+    rt = Neo4jRuntime(data_dir=tmp_path)
+    first = rt._build_config(
+        bolt_port=7687,
+        http_port=7474,
+        password="x",
+        data_dir=rt._data_path("proj", "aaaaaaa"),
+        logs_dir=rt._logs_path("proj", "aaaaaaa"),
+    )
+    second = rt._build_config(
+        bolt_port=7688,
+        http_port=7475,
+        password="x",
+        data_dir=rt._data_path("proj", "bbbbbbb"),
+        logs_dir=rt._logs_path("proj", "bbbbbbb"),
+    )
+
+    def data_line(config: str) -> str:
+        return next(
+            line for line in config.splitlines() if line.startswith("server.directories.data=")
+        )
+
+    assert data_line(first) != data_line(second)
 
 
 # ── Neo4jDiscovery ────────────────────────────────────────────────────
