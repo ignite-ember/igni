@@ -102,7 +102,19 @@ _DEFAULT_STARTUP_TIMEOUT_SEC = 60.0
 _PROBE_INTERVAL_SEC = 0.25
 
 # Shutdown grace window before SIGKILL.
-_DEFAULT_SHUTDOWN_GRACE_SEC = 10.0
+#
+# Neo4j checkpoints on a clean shutdown and only then. SIGKILL mid-checkpoint
+# leaves the store unusable, so the next session rebuilds the commit from its
+# changeset — which means re-embedding every chunk, and embedding is the whole
+# cost of a load: 16 minutes for celery, 77 for sqlalchemy on an M-series
+# machine. Ten seconds is not enough time for a large store to checkpoint, so the
+# old default silently converted "close the session" into "throw the graph away".
+# Measured: 22 per-commit state directories on this machine, every one of them
+# 16K — config and a password file, no data.
+#
+# Two minutes is generous for the checkpoint and still bounded; a process that
+# has not exited by then is stuck rather than busy.
+_DEFAULT_SHUTDOWN_GRACE_SEC = 120.0
 
 # Discovery file location — lives outside any project so all BEs see it.
 _AUTH_FILE = "neo4j.auth"
@@ -1038,14 +1050,17 @@ class Neo4jRuntime:
         immediately rather than waiting the full timeout.
 
         ``stderr_handle`` (when provided) is the open file object
-        piped to the subprocess's stderr. We hold a reference so it
-        doesn't get GC'd while the process is running (which would
-        close the pipe and detach stderr), and ``finally`` close it
-        after the process exits or we terminate it on timeout.
-        On timeout we ``proc.terminate()`` and ``await proc.wait()``
-        so the orphan Neo4j process is reaped before the exception
-        propagates — otherwise a slow startup leaves a running
-        process that no one owns.
+        piped to the subprocess's stderr. The child dup'd the fd at
+        spawn time, so closing the parent's handle after we're done
+        polling doesn't affect the subprocess's stderr redirection.
+
+        Only on the error paths (crash-during-startup, timeout) do
+        we terminate the process — the success path leaves it alive
+        for the caller. This was a bug: an earlier ``finally``-based
+        cleanup would kill EVERY spawned process (including successful
+        ones) on the way out, so ``start_for_commit`` handed back
+        endpoints pointing at a dead PID and downstream drivers saw
+        "connection refused" immediately.
         """
         deadline = time.monotonic() + self._startup_timeout
         try:
@@ -1064,16 +1079,21 @@ class Neo4jRuntime:
                     )
                 if _is_port_open(self._host, port):
                     logger.info("neo4j bolt port %d is accepting connections", port)
+                    # Success path — close the parent's stderr fd (the child
+                    # keeps its own dup'd copy) but LEAVE THE PROCESS ALIVE.
+                    if stderr_handle is not None:
+                        with contextlib.suppress(Exception):
+                            stderr_handle.close()
                     return
                 await asyncio.sleep(_PROBE_INTERVAL_SEC)
             raise Neo4jBootstrapError(
                 f"neo4j did not become reachable on {self._host}:{port} within {self._startup_timeout}s"
             )
-        finally:
-            # Always close the stderr pipe and reap the process on
-            # the way out — covers the success (return), the
-            # crash-during-startup (raise), and the timeout (raise)
-            # paths so we never leak an orphan.
+        except BaseException:
+            # Error path — reap the orphan Neo4j and close stderr.
+            # `BaseException` catches both Neo4jBootstrapError raised above
+            # and any surprise KeyboardInterrupt / SystemExit that might
+            # otherwise leak a Java process.
             if stderr_handle is not None:
                 with contextlib.suppress(Exception):
                     stderr_handle.close()
@@ -1085,6 +1105,7 @@ class Neo4jRuntime:
                     except asyncio.TimeoutError:
                         with contextlib.suppress(Exception):
                             proc.kill()
+            raise
 
     def _save_runtime(self, state: _ProjectCommitState) -> None:
         """Write per-``(project, commit)`` runtime.json for discovery.
@@ -1159,8 +1180,13 @@ class Neo4jRuntime:
             try:
                 await asyncio.wait_for(proc.wait(), timeout=self._shutdown_grace)
             except asyncio.TimeoutError:
+                # State the consequence, not just the signal. This is the line
+                # that would have explained why every graph on disk was empty.
                 logger.warning(
-                    "neo4j (project=%s commit=%s pid=%d) did not exit within %ds; SIGKILL",
+                    "neo4j (project=%s commit=%s pid=%d) did not exit within %ds; SIGKILL. "
+                    "The checkpoint did not finish, so this commit's store is not reusable "
+                    "and the next session will rebuild it from the changeset, re-embedding "
+                    "every chunk. Raise shutdown_grace_sec if this repeats.",
                     project_hash,
                     commit_sha,
                     pid,
@@ -1222,10 +1248,33 @@ class _ExternalProcessHandle:
     awaiting. The :class:`Neo4jRuntime` shutdown path only needs
     ``.pid`` and ``.send_signal``/``.terminate``; the ``wait`` path
     is gated on a duck-typed check.
+
+    ``returncode`` is exposed so callers doing the standard
+    ``proc.returncode is None`` liveness check (e.g.
+    ``start_for_commit`` when re-attaching to a cached state) work
+    against both real ``asyncio.subprocess.Process`` and this
+    handle. We check the process group via ``os.kill(pid, 0)`` —
+    which raises when the process is gone, letting us return an
+    exit-code marker instead of ``None``.
     """
 
     def __init__(self, pid: int) -> None:
         self.pid = pid
+
+    @property
+    def returncode(self) -> int | None:
+        """``None`` while the process is alive, ``-1`` once it's gone.
+
+        Poll-only: we don't have a wait channel, so a caller that
+        needs to KNOW the true exit code has to use a different path.
+        Everyone using this for liveness (``.returncode is None``)
+        gets the right answer either way.
+        """
+        try:
+            os.kill(self.pid, 0)
+            return None
+        except (ProcessLookupError, PermissionError, OSError):
+            return -1
 
     def send_signal(self, sig: int) -> None:
         """Send a signal to the process group (Neo4j's children)."""
