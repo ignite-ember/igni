@@ -210,12 +210,15 @@ async def test_retry_logs_debug_when_retries_occur():
     # Two independent suppressions, each enough on its own to empty this
     # assertion, both left behind by other tests in the session:
     #
-    #   1. ``logger.disabled`` is True. Something the backend boot imports calls
-    #      ``logging.config.dictConfig`` with the default
-    #      ``disable_existing_loggers``, which sets ``.disabled`` on every logger
-    #      that already exists. ``isEnabledFor`` short-circuits on that flag, so
-    #      no level or handler makes any difference — measured directly:
-    #      ``isEnabledFor(DEBUG)`` was False while ``logging.disable`` was 0.
+    #   1. ``logger.isEnabledFor(DEBUG)`` returns False even with the level set
+    #      to DEBUG on this exact logger object, while ``logging.disable`` reads
+    #      0. Both measured directly. Clearing ``logger.disabled`` restores
+    #      emission, so that flag is the proximate cause — but **what sets it is
+    #      not identified**. It is not ``logging.config.dictConfig``: tracing that
+    #      function through the backend boot shows it is never called, and no
+    #      ``.disabled = True`` assignment exists in this repository. Instrumenting
+    #      ``Logger.__setattr__`` to catch the write makes the failure disappear,
+    #      so treat any explanation as unproven until someone catches it.
     #   2. pytest's capture handler is removed from the root logger, so anything
     #      that does emit is not recorded — root carries four handlers when this
     #      file runs alone and three after ``test_backend_server.py``.
