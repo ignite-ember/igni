@@ -56,21 +56,36 @@ class AgentDefinitionLoader:
         codeindex_available: bool,
         restriction_policy: PluginRestrictionPolicy | None = None,
         group_agents_dir: Path | None = None,
+        group_agents_only: bool = False,
     ) -> None:
         self._settings = settings
         self._project_dir = project_dir
         self._codeindex_available = codeindex_available
         self._policy = restriction_policy
         self._group_agents_dir = group_agents_dir
+        self._group_agents_only = group_agents_only
 
     def load(self) -> LoadReport:
         """Scan the five standard roots and return an aggregated
         :class:`LoadReport`.
 
         Roots are hit in priority order; higher-priority entries
-        upsert lower-priority ones with the same name."""
+        upsert lower-priority ones with the same name.
+
+        When the group declares agents exclusive, its directory is the
+        *only* root scanned. A group that says "these are the agents"
+        means it — a legal team has no use for the coding agents ember
+        ships, and half-suppressing them (dropping the bundled ones but
+        keeping whatever is in ``~/.ember/agents``) would leave the pool
+        looking different on every machine. Ephemeral agents the session
+        generates at runtime are unaffected; they are a settings toggle,
+        not something shipped.
+        """
         settings = self._settings
         project_dir = self._project_dir
+
+        if self._group_agents_only and self._group_agents_dir is not None:
+            return self.load_directory(self._group_agents_dir, AgentPriority.ORG_GROUP)
 
         dirs: list[tuple[Path, AgentPriority]] = [
             (Path.home() / ".ember" / "agents", AgentPriority.USER_EMBER),

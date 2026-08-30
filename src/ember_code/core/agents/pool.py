@@ -222,6 +222,7 @@ class AgentPool(LegacyAgentPoolMixin):
         project_dir: Path | None = None,
         codeindex_available: bool = False,
         group_agents_dir: Path | None = None,
+        group_agents_only: bool = False,
     ) -> LoadReport:
         """Parse all agent ``.md`` files and resolve priorities.
 
@@ -235,6 +236,9 @@ class AgentPool(LegacyAgentPoolMixin):
         by ``Session`` from the policy cache directory — kept off the
         pool defaults so tests and ad-hoc ``AgentPool`` constructions
         keep their prior behavior.
+
+        ``group_agents_only`` is that group declaring its agents the
+        whole list rather than additions to the shipped ones.
         """
         if project_dir is None:
             project_dir = Path.cwd()
@@ -243,12 +247,14 @@ class AgentPool(LegacyAgentPoolMixin):
         self._base_dir = str(project_dir)
         self._codeindex_available_flag = bool(codeindex_available)
         self._group_agents_dir = group_agents_dir
+        self._group_agents_only = bool(group_agents_only)
 
         loader = AgentDefinitionLoader(
             settings=settings,
             project_dir=project_dir,
             codeindex_available=codeindex_available,
             group_agents_dir=group_agents_dir,
+            group_agents_only=group_agents_only,
         )
         report = loader.load()
         self._merge(report)
@@ -520,6 +526,7 @@ class AgentPool(LegacyAgentPoolMixin):
             project_dir=Path(self._base_dir) if self._base_dir else Path.cwd(),
             codeindex_available=codeindex_available,
             group_agents_dir=getattr(self, "_group_agents_dir", None),
+            group_agents_only=getattr(self, "_group_agents_only", False),
         )
 
     def _ensure_builder(self) -> AgentBuilder:

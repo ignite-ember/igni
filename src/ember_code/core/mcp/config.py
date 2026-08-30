@@ -105,6 +105,7 @@ class MCPConfigLoader:
         self,
         project_dir: Path | None = None,
         group_mcps_dir: Path | None = None,
+        group_mcps_only: bool = False,
     ):
         self.project_dir = project_dir or Path.cwd()
         # Optional: directory of per-server MCP overrides materialised by
@@ -112,6 +113,9 @@ class MCPConfigLoader:
         # is read with priority :data:`MCP_PRIORITY_GROUP` so org-pushed
         # servers override the user-home / project-local roots.
         self.group_mcps_dir = group_mcps_dir
+        # The group declaring its servers the whole list rather than
+        # additions to the standard roots.
+        self.group_mcps_only = group_mcps_only
 
     def load(self) -> dict[str, MCPServerConfig]:
         """Load MCP server configurations from all locations.
@@ -120,6 +124,9 @@ class MCPConfigLoader:
         re-assignment: project-local beats user-home), then layers the
         optional group-policy directory on top so ORG-pushed servers
         override everything except managed-policy denials.
+
+        When the group declares MCP servers exclusive, the standard
+        roots are skipped entirely and its list stands alone.
         """
         servers: dict[str, MCPServerConfig] = {}
 
@@ -129,8 +136,9 @@ class MCPConfigLoader:
             self.project_dir / ".ember" / ".mcp.json",
         ]
 
-        for path in paths:
-            self._load_from_file(path, servers)
+        if not (self.group_mcps_only and self.group_mcps_dir is not None):
+            for path in paths:
+                self._load_from_file(path, servers)
 
         if self.group_mcps_dir is not None and self.group_mcps_dir.is_dir():
             for path in sorted(self.group_mcps_dir.glob(f"*{_GROUP_MCP_SUFFIX}")):

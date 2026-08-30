@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import yaml
 from pydantic import BaseModel, model_validator
 
 if TYPE_CHECKING:
@@ -22,6 +24,49 @@ logger = logging.getLogger(__name__)
 # Cache TTL: 5 minutes. Group policies don't change often enough to need
 # sub-minute freshness; a short TTL keeps stale admin pushes from lasting forever.
 _CACHE_TTL_SECONDS = 300
+
+# Kinds a group may declare as *replacing* what ember ships rather than
+# adding to it. ``settings`` is deliberately absent: it is a merge tier
+# whose lowest layer is the built-in defaults, so "replace everything"
+# there would mean a session with no defaults at all. Locking settings
+# down is what managed policy is for.
+REPLACEABLE_KINDS = frozenset({"agents", "mcps", "plugins"})
+
+# Same split :class:`AgentMarkdownFile` uses, so a model written here
+# parses back out of the file the loader reads.
+_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)", re.DOTALL)
+
+
+def _with_model(content: str, model: str | None) -> str:
+    """Return ``content`` with ``model:`` set in its frontmatter.
+
+    An agent's model is already a frontmatter key the loader honours
+    (:attr:`AgentDefinition.model` → :meth:`AgentBuilder._resolve_model`),
+    so the pack's per-agent model needs no new plumbing — it just has to
+    reach the file the loader reads. A legal group can then send contract
+    review to one adapter and case summaries to another.
+
+    Content we cannot parse is returned untouched: it would fail to load
+    as an agent anyway, and the loader reports that with the file name.
+    """
+    if not model:
+        return content
+
+    match = _FRONTMATTER_RE.match(content)
+    if not match:
+        logger.warning("Group agent has no YAML frontmatter; cannot set model %r", model)
+        return content
+    try:
+        frontmatter = yaml.safe_load(match.group(1)) or {}
+    except yaml.YAMLError:
+        logger.warning("Group agent has unreadable frontmatter; cannot set model %r", model)
+        return content
+    if not isinstance(frontmatter, dict):
+        return content
+
+    frontmatter["model"] = model
+    rendered = yaml.safe_dump(frontmatter, sort_keys=False).strip()
+    return f"---\n{rendered}\n---\n\n{match.group(2).strip()}\n"
 
 
 def _try_parse_json(text: str) -> Any:
@@ -56,6 +101,11 @@ class GroupPolicyOverrideEntry(BaseModel):
     content_type: str  # markdown | yaml | json
     enabled: bool = True
 
+    # Agents only: the model (usually a LoRA adapter) this one runs
+    # against. Written into the materialised file's frontmatter, where
+    # the loader already reads it. Null inherits the session default.
+    model: str | None = None
+
     # Plugin install source — same shape as marketplace. All three are
     # optional; if any is set, ``source_url`` must be too (half-filled
     # installs would fail in ``PluginInstaller.install`` anyway).
@@ -89,6 +139,26 @@ class GroupPolicyPack(BaseModel):
     group_name: str
     fetched_at: datetime
     overrides: list[GroupPolicyOverrideEntry] = []
+
+    # What this group's people get when nothing names a model. Routing
+    # is resolved server-side, so this is carried for display and for
+    # the frontmatter fallback rather than acted on here.
+    default_model: str | None = None
+
+    # Kinds where ``overrides`` is the whole list — ember ships none of
+    # its own. A legal team wants its agents and not the coding ones,
+    # and merging is the wrong default for them.
+    exclusive_kinds: list[str] = []
+
+    def replaces(self, kind: str) -> bool:
+        """Whether this group's ``kind`` entries stand alone.
+
+        Unknown or non-replaceable kinds answer False: the server
+        refuses them, but a pack from an older or newer deployment
+        should degrade to the additive behaviour rather than silently
+        emptying a tier.
+        """
+        return kind in REPLACEABLE_KINDS and kind in (self.exclusive_kinds or [])
 
     def to_settings_dict(self) -> dict:
         """Convert to a settings dict for the accumulator.
@@ -266,7 +336,7 @@ class GroupPolicyCache:
         for o in pack.overrides:
             if o.kind == "agents" and o.enabled:
                 path = self.agents_dir / f"{o.entry_name}.md"
-                path.write_text(o.content, encoding="utf-8")
+                path.write_text(_with_model(o.content, o.model), encoding="utf-8")
                 active_names["agents"].add(o.entry_name)
             elif o.kind == "mcps" and o.enabled:
                 # Wrap the per-server content in the MCP ``{mcpServers: {...}}``
@@ -309,6 +379,10 @@ class GroupPolicyCache:
             "group_name": pack.group_name,
             "fetched_at": pack.fetched_at.isoformat() if pack.fetched_at else None,
             "override_count": len(pack.overrides),
+            "default_model": pack.default_model,
+            # The loaders read the cache directory, not the pack, so the
+            # replace instruction has to survive on disk with it.
+            "exclusive_kinds": [k for k in (pack.exclusive_kinds or []) if k in REPLACEABLE_KINDS],
         }
         meta_path = self._cache_dir / "pack_meta.json"
         meta_path.write_text(json.dumps(meta), encoding="utf-8")
@@ -322,6 +396,21 @@ class GroupPolicyCache:
             return json.loads(meta_path.read_text(encoding="utf-8"))
         except Exception:
             return None
+
+    def exclusive_kinds(self) -> set[str]:
+        """Kinds the cached pack replaces outright.
+
+        Read from ``pack_meta.json`` rather than the pack, because the
+        loaders that act on it run from the cache directory long after
+        the fetch. No pack, no meta, or an unreadable one means "replace
+        nothing" — the additive behaviour every session had before, and
+        the safe answer when we cannot tell.
+        """
+        meta = self.read_pack_meta() or {}
+        kinds = meta.get("exclusive_kinds")
+        if not isinstance(kinds, list):
+            return set()
+        return {k for k in kinds if k in REPLACEABLE_KINDS}
 
     def clear(self) -> None:
         """Remove the entire cache directory."""
