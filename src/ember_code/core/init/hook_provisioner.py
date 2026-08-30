@@ -42,7 +42,7 @@ class HookProvisioner(BaseModel):
     #: Write the scripts but leave them unregistered, because the
     #: person's group registers them instead. The scripts still have to
     #: exist — a group's hook declaration points at one by path.
-    register: bool = True
+    register_in_settings: bool = True
 
     def provision(self) -> None:
         """Write every hook script and register each definition.
@@ -69,8 +69,8 @@ class HookProvisioner(BaseModel):
 
         for hook in self.hooks:
             hook.write_script(hooks_dir)
-            if self.register:
+            if self.register_in_settings:
                 hook.register_in(settings)
 
-        if self.register:
+        if self.register_in_settings:
             settings.save(settings_path)

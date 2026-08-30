@@ -372,7 +372,7 @@ class TestWhatIgniShipsStandsDown:
         project = tmp_path / "proj"
         (project / ".ember").mkdir(parents=True)
 
-        HookProvisioner(project_dir=project, register=False).provision()
+        HookProvisioner(project_dir=project, register_in_settings=False).provision()
 
         assert (project / ".ember" / "hooks" / "pre-pr-review.sh").is_file()
         assert not (project / ".ember" / "settings.json").exists()
