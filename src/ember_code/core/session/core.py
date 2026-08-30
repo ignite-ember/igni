@@ -700,6 +700,44 @@ class Session:
             kind=kind,
         )
 
+    def unknown_agent_tools(self) -> dict[str, list[str]]:
+        """Agents naming tools that will not resolve, by agent name.
+
+        Checked once the pools are built, which is the earliest point
+        the answer is trustworthy: custom Python tools register when
+        they are discovered, and asking before that would call somebody's
+        own tool a typo.
+
+        Not fatal — the agent loads and the rest of the session is fine.
+        It simply raises the moment anything calls it, and this is how
+        somebody hears about that at startup rather than mid-task.
+        """
+        return dict(self._unknown_agent_tools)
+
+    def _check_agent_tools(self) -> None:
+        """Fill :meth:`unknown_agent_tools`, and say so in the log."""
+        self._unknown_agent_tools: dict[str, list[str]] = {}
+        try:
+            from ember_code.core.tools.registry import ToolRegistry
+            from ember_code.core.tools.tool_spec import ToolResolutionRequest
+
+            registry = ToolRegistry(base_dir=str(self.project_dir))
+            for defn in self.pool.list_agents():
+                if not defn.tools:
+                    continue
+                result = registry.resolve_typed(ToolResolutionRequest(tool_names=list(defn.tools)))
+                if result.unknown:
+                    self._unknown_agent_tools[defn.name] = list(result.unknown)
+                    logger.warning(
+                        "Agent %r names %s, which igni cannot resolve — it will fail when "
+                        "something calls it. Available: %s",
+                        defn.name,
+                        ", ".join(repr(n) for n in result.unknown),
+                        ", ".join(registry.available_tools),
+                    )
+        except Exception as exc:  # noqa: BLE001 — a diagnostic must not stop a start
+            logger.debug("Could not check agent tools: %s", exc)
+
     def group_conflicts(self) -> list[EntryConflict]:
         """Everything the group changed under a local edit, any kind.
 
@@ -821,6 +859,7 @@ class Session:
                 self.project_dir, settings.orchestration.max_ephemeral_per_session
             )
         self.pool.build_agents()
+        self._check_agent_tools()
 
         self.skill_pool = SkillPool()
         # No group root: the group's skills are synced into

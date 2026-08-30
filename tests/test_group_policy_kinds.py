@@ -232,7 +232,9 @@ class TestTheLoadersFindThem:
         )
         project = tmp_path / "proj"
         (project / ".ember").mkdir(parents=True)
-        GroupAgentSync(project_dir=project, source_dir=cache.dir_for("commands"), kind="commands").run()
+        GroupAgentSync(
+            project_dir=project, source_dir=cache.dir_for("commands"), kind="commands"
+        ).run()
 
         found = MarkdownCommand.discover(project, read_claude=False)
 

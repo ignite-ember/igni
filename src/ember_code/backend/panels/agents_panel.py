@@ -31,6 +31,7 @@ class AgentsPanelController:
     def snapshot(self) -> list[AgentInfo]:
         """Snapshot of every loaded agent for the panel UI."""
         pool = self._session.pool
+        unknown = self._session.unknown_agent_tools()
         results: list[AgentInfo] = []
         for defn in pool.list_agents():
             results.append(
@@ -46,6 +47,7 @@ class AgentsPanelController:
                     system_prompt=defn.system_prompt,
                     source_path=str(defn.source_path) if defn.source_path else "",
                     is_ephemeral=pool.is_ephemeral(defn),
+                    unknown_tools=unknown.get(defn.name, []),
                 )
             )
         return results

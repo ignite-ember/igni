@@ -186,6 +186,9 @@ class AgentInfo(BaseModel):
     system_prompt: str = ""
     source_path: str = ""
     is_ephemeral: bool = False
+    #: Tool names igni cannot resolve. Empty for almost every agent;
+    #: when it is not, this one raises the moment something calls it.
+    unknown_tools: list[str] = Field(default_factory=list)
 
 
 class AgentEntry(BaseModel):
