@@ -4514,6 +4514,74 @@ button {
   flex-shrink: 0;
 }
 
+/* ── Group pill + its "yours or theirs" popover ────────────────── */
+
+.group-pill-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+/* Opens upward: the pill lives in the footer, so there is nothing
+   below it to open into. */
+.group-conflicts {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  width: min(380px, 90vw);
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+}
+
+.group-conflict {
+  padding: 9px 10px;
+  border-radius: 7px;
+}
+
+.group-conflict + .group-conflict {
+  border-top: 1px solid var(--border-soft);
+}
+
+.group-conflict-question {
+  font-size: 12px;
+  color: var(--fg);
+  line-height: 1.45;
+}
+
+.group-conflict-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.group-conflict-actions button {
+  appearance: none;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-surface);
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  font-family: var(--font-ui);
+  cursor: pointer;
+}
+
+.group-conflict-actions button:hover:not(:disabled) {
+  border-color: var(--border);
+  color: var(--fg);
+}
+
+.group-conflict-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* ── CodeIndex pill in the footer ──────────────────────────────── */
 
 .codeindex-pill {

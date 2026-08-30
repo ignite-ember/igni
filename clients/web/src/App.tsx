@@ -44,6 +44,7 @@ import { ChatItemView } from "./components/ChatItems";
 import { ChatSearchBar } from "./components/ChatSearchBar";
 import { Composer, BUILTIN_COMMANDS, type SlashCommand } from "./components/Composer";
 import { CodeIndexIndicator } from "./components/CodeIndexIndicator";
+import { GroupIndicator } from "./components/GroupIndicator";
 import { WatcherIndicator } from "./components/WatcherIndicator";
 import { BackendVersionChip, CtxMeter, SessionChip } from "./components/StatusBits";
 import { FPSCounterOverlay } from "./components/FPSCounter";
@@ -2811,6 +2812,7 @@ export default function App() {
                 client={client}
                 onOpen={() => setPanel({ kind: "watcher" })}
               />
+              <GroupIndicator client={client} />
             </>
           )}
           {pendingUpdate && (
