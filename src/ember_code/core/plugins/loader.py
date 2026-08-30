@@ -96,7 +96,7 @@ class PluginLoader:
 
     # ── Discovery ────────────────────────────────────────────────────
 
-    def load_all(self, project_dir: Path | None = None, group_only: bool = False) -> None:
+    def load_all(self, project_dir: Path | None = None) -> None:
         """Scan all six roots and populate the plugin registry.
 
         Same-name collisions across roots resolve by ``priority``: the
@@ -105,11 +105,6 @@ class PluginLoader:
         honored, so the panel can still show disabled plugins. Managed
         plugins (priorities 6/7) win above project (3/4) and are
         always enabled — see :attr:`PluginDefinition.is_managed`.
-
-        ``group_only`` is the group declaring its plugins the whole
-        list. The user and project roots drop out; the sysadmin-managed
-        roots do not, because they already outrank the group tier and an
-        org group is not the authority that gets to switch off MDM.
         """
         if project_dir is None:
             project_dir = Path.cwd()
@@ -120,8 +115,6 @@ class PluginLoader:
             ("project-claude", project_dir / ".claude" / "plugins", 3),
             ("project-ember", project_dir / ".ember" / "plugins", 4),
         ]
-        if group_only:
-            roots = []
 
         # Group-policy tier — plugins installed from
         # :class:`GroupPolicyOverrideEntry.source_url` by

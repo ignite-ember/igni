@@ -18,7 +18,6 @@ function policy(over: Partial<GroupPolicy> = {}): GroupPolicy {
     fetched_at: "2026-08-30T00:00:00Z",
     override_count: 4,
     default_model: null,
-    exclusive_kinds: [],
     pending_conflicts: [],
     ...over,
   };
@@ -84,11 +83,11 @@ describe("classify", () => {
     ).toBe(true);
   });
 
-  it("puts the model and the replacement in the tooltip", () => {
-    const badge = classify(
-      policy({ default_model: "legal-reviewer", exclusive_kinds: ["agents"] }),
-    );
+  it("puts the entry count and the model in the tooltip", () => {
+    // A group is exactly what its members get, so the count is the
+    // whole story rather than one half of a merge.
+    const badge = classify(policy({ default_model: "legal-reviewer" }));
+    expect(badge.detail).toContain("4 entries");
     expect(badge.detail).toContain("legal-reviewer");
-    expect(badge.detail).toContain("replaces shipped agents");
   });
 });

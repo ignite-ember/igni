@@ -221,7 +221,6 @@ class AgentPool(LegacyAgentPoolMixin):
         settings: Settings,
         project_dir: Path | None = None,
         codeindex_available: bool = False,
-        group_agents_only: bool = False,
     ) -> LoadReport:
         """Parse all agent ``.md`` files and resolve priorities.
 
@@ -229,12 +228,6 @@ class AgentPool(LegacyAgentPoolMixin):
         the :class:`LoadReport` so callers can surface parse
         errors (``report.errors``) to the FE / audit log.
 
-        ``group_agents_only`` is the group declaring its agents the
-        whole list rather than additions to the shipped ones — the
-        loader then reads only ``<project>/.ember/agents``, which is
-        where the group's agents are synced. Kept off the pool defaults
-        so tests and ad-hoc ``AgentPool`` constructions keep their prior
-        behavior.
         """
         if project_dir is None:
             project_dir = Path.cwd()
@@ -242,13 +235,11 @@ class AgentPool(LegacyAgentPoolMixin):
         self._settings = settings
         self._base_dir = str(project_dir)
         self._codeindex_available_flag = bool(codeindex_available)
-        self._group_agents_only = bool(group_agents_only)
 
         loader = AgentDefinitionLoader(
             settings=settings,
             project_dir=project_dir,
             codeindex_available=codeindex_available,
-            group_agents_only=group_agents_only,
         )
         report = loader.load()
         self._merge(report)
@@ -519,7 +510,6 @@ class AgentPool(LegacyAgentPoolMixin):
             settings=self._settings_or_bare(),
             project_dir=Path(self._base_dir) if self._base_dir else Path.cwd(),
             codeindex_available=codeindex_available,
-            group_agents_only=getattr(self, "_group_agents_only", False),
         )
 
     def _ensure_builder(self) -> AgentBuilder:

@@ -13,7 +13,6 @@ export interface GroupPolicy {
   fetched_at: string | null;
   override_count: number;
   default_model: string | null;
-  exclusive_kinds: string[];
   pending_conflicts: GroupAgentConflict[];
 }
 
@@ -60,9 +59,6 @@ export function classify(policy: GroupPolicy | null): GroupBadge {
 
   const parts = [`${policy.override_count} entries`];
   if (policy.default_model) parts.push(policy.default_model);
-  if (policy.exclusive_kinds.length > 0) {
-    parts.push(`replaces shipped ${policy.exclusive_kinds.join(", ")}`);
-  }
   return {
     label: policy.group_name,
     tone: "good",

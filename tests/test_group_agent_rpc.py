@@ -27,13 +27,12 @@ from ember_code.core.config.group_policy import (
 from ember_code.core.init.group_agent_sync import GroupAgentSync
 
 
-def _pack(*, agents: dict[str, str], exclusive: list[str] | None = None) -> GroupPolicyPack:
+def _pack(*, agents: dict[str, str]) -> GroupPolicyPack:
     return GroupPolicyPack(
         group_id="g-1",
         group_name="Legal",
         fetched_at=datetime.now(timezone.utc),
         default_model="legal-reviewer",
-        exclusive_kinds=exclusive or [],
         overrides=[
             GroupPolicyOverrideEntry(
                 kind="agents",
@@ -90,13 +89,12 @@ class TestWhatTheAppIsTold:
 
         assert result.group_name == "Legal"
 
-    def test_it_carries_the_model_and_the_replaced_kinds(self, session):
-        _materialize(session, _pack(agents={"x": "y"}, exclusive=["agents"]))
+    def test_it_carries_the_model(self, session):
+        _materialize(session, _pack(agents={"x": "y"}))
 
         result = PanelsController(session).group_policy()
 
         assert result.default_model == "legal-reviewer"
-        assert result.exclusive_kinds == ["agents"]
 
     def test_no_group_is_not_an_error(self, session):
         result = PanelsController(session).group_policy()

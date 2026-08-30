@@ -218,14 +218,6 @@ class Session:
         self._group_agents_dir = data_dir / "group-policy" / "agents"
         self._group_mcps_dir = data_dir / "group-policy" / "mcps"
 
-        # Kinds the group replaces outright rather than adds to. Read
-        # once here — from the cache the hydrator wrote, not from the
-        # portal — so every loader below asks the same question and gets
-        # the same answer for the life of the session. An empty set is
-        # the additive behaviour, and is also what a missing or
-        # unreadable cache gives us.
-        self._group_exclusive_kinds = self._read_group_exclusive_kinds(data_dir)
-
         # ── First-run initialization (agents, skills, hooks, ember.md) ─
         # The bundled agents stand down when the group ships its own —
         # otherwise this would scaffold back the very agents an admin
@@ -559,11 +551,7 @@ class Session:
         # populate at Result time.
         self.mcp_failures: dict[str, str] = {}
         self.plugin_loader.apply_to_mcp(
-            MCPConfigLoader(
-                self.project_dir,
-                group_mcps_dir=self._group_mcps_dir,
-                group_mcps_only="mcps" in self._group_exclusive_kinds,
-            ),
+            MCPConfigLoader(self.project_dir, group_mcps_dir=self._group_mcps_dir),
             self.mcp_manager.configs,
             disabled=self._disabled_plugins,
         )
@@ -704,9 +692,6 @@ class Session:
         """
         try:
             report = self.group_agent_sync().run()
-            self._group_exclusive_kinds = self._read_group_exclusive_kinds(
-                Path(self.settings.storage.data_dir).expanduser()
-            )
             if not report.changed_anything:
                 return False
             self._init_agent_and_skill_pools(self.settings)
@@ -757,22 +742,6 @@ class Session:
             logger.info("Group agent needs an answer — %s", conflict.question())
         return report
 
-    @staticmethod
-    def _read_group_exclusive_kinds(data_dir: Path) -> set[str]:
-        """Kinds the cached group pack replaces outright.
-
-        Never raises: a session that cannot read its policy cache
-        should start with the agents and servers it has always had,
-        not fail to start.
-        """
-        try:
-            from ember_code.core.config.group_policy import GroupPolicyCache
-
-            return GroupPolicyCache(cache_dir=data_dir / "group-policy").exclusive_kinds()
-        except Exception as exc:  # pragma: no cover — defensive
-            logger.debug("Could not read group policy exclusivity: %s", exc)
-            return set()
-
     def _init_agent_and_skill_pools(self, settings: Settings) -> None:
         """Construct :class:`AgentPool` + :class:`SkillPool` from the
         current plugin set.
@@ -782,7 +751,6 @@ class Session:
             settings,
             self.project_dir,
             codeindex_available=self._codeindex_available,
-            group_agents_only="agents" in self._group_exclusive_kinds,
         )
         self.plugin_loader.apply_to_agents(self.pool, disabled=self._disabled_plugins)
         if settings.orchestration.generate_ephemeral:
@@ -828,10 +796,7 @@ class Session:
         # ── Plugin discovery ────────────────────────────────────────
         self.plugin_state = load_state(settings.storage.data_dir)
         self.plugin_loader = PluginLoader()
-        self.plugin_loader.load_all(
-            self.project_dir,
-            group_only="plugins" in self._group_exclusive_kinds,
-        )
+        self.plugin_loader.load_all(self.project_dir)
         managed_plugins = {p.name for p in self.plugin_loader.list_plugins() if p.is_managed}
         self._disabled_plugins = set(self.plugin_state.disabled) - managed_plugins
 

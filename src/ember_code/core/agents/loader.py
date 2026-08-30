@@ -55,13 +55,11 @@ class AgentDefinitionLoader:
         project_dir: Path,
         codeindex_available: bool,
         restriction_policy: PluginRestrictionPolicy | None = None,
-        group_agents_only: bool = False,
     ) -> None:
         self._settings = settings
         self._project_dir = project_dir
         self._codeindex_available = codeindex_available
         self._policy = restriction_policy
-        self._group_agents_only = group_agents_only
 
     def load(self) -> LoadReport:
         """Scan the five standard roots and return an aggregated
@@ -77,20 +75,13 @@ class AgentDefinitionLoader:
         higher priority as well would make that edit pointless — the
         server version would win every time.
 
-        When the group declares agents exclusive, that synced directory
-        is the only root scanned: no bundled agents from another project
-        root, nothing from ``~/.ember/agents``, nothing cross-tool. A
-        legal team gets its agents and nothing else. Ephemeral agents the
-        session generates at runtime are unaffected — they are a settings
-        toggle, not something shipped.
+        That sync is also what makes a group's list complete: it removes
+        what the group no longer ships, and the bundle stands down while
+        a group supplies agents. So the group's set simply *is* the set,
+        and the roots below are the person's own additions to it.
         """
         settings = self._settings
         project_dir = self._project_dir
-
-        if self._group_agents_only:
-            return self.load_directory(
-                project_dir / ".ember" / "agents", AgentPriority.PROJECT_EMBER
-            )
 
         dirs: list[tuple[Path, AgentPriority]] = [
             (Path.home() / ".ember" / "agents", AgentPriority.USER_EMBER),

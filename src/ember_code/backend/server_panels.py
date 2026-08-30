@@ -149,7 +149,6 @@ class PanelsController:
             fetched_at=meta.get("fetched_at"),
             override_count=meta.get("override_count", 0),
             default_model=meta.get("default_model"),
-            exclusive_kinds=list(meta.get("exclusive_kinds") or []),
             pending_conflicts=conflicts,
         )
 

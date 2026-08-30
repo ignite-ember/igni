@@ -153,8 +153,6 @@ class GroupPolicyPackResult(BaseModel):
     override_count: int = 0
     #: What this group's people get when nothing names a model.
     default_model: str | None = None
-    #: Kinds where the group's entries are the whole list.
-    exclusive_kinds: list[str] = []
     #: Agents waiting on "yours or theirs". Empty is the normal state.
     pending_conflicts: list[GroupAgentConflictView] = []
 

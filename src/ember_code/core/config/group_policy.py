@@ -25,13 +25,6 @@ logger = logging.getLogger(__name__)
 # sub-minute freshness; a short TTL keeps stale admin pushes from lasting forever.
 _CACHE_TTL_SECONDS = 300
 
-# Kinds a group may declare as *replacing* what ember ships rather than
-# adding to it. ``settings`` is deliberately absent: it is a merge tier
-# whose lowest layer is the built-in defaults, so "replace everything"
-# there would mean a session with no defaults at all. Locking settings
-# down is what managed policy is for.
-REPLACEABLE_KINDS = frozenset({"agents", "mcps", "plugins"})
-
 # Same split :class:`AgentMarkdownFile` uses, so a model written here
 # parses back out of the file the loader reads.
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)", re.DOTALL)
@@ -144,21 +137,6 @@ class GroupPolicyPack(BaseModel):
     # is resolved server-side, so this is carried for display and for
     # the frontmatter fallback rather than acted on here.
     default_model: str | None = None
-
-    # Kinds where ``overrides`` is the whole list — ember ships none of
-    # its own. A legal team wants its agents and not the coding ones,
-    # and merging is the wrong default for them.
-    exclusive_kinds: list[str] = []
-
-    def replaces(self, kind: str) -> bool:
-        """Whether this group's ``kind`` entries stand alone.
-
-        Unknown or non-replaceable kinds answer False: the server
-        refuses them, but a pack from an older or newer deployment
-        should degrade to the additive behaviour rather than silently
-        emptying a tier.
-        """
-        return kind in REPLACEABLE_KINDS and kind in (self.exclusive_kinds or [])
 
     def to_settings_dict(self) -> dict:
         """Convert to a settings dict for the accumulator.
@@ -380,9 +358,6 @@ class GroupPolicyCache:
             "fetched_at": pack.fetched_at.isoformat() if pack.fetched_at else None,
             "override_count": len(pack.overrides),
             "default_model": pack.default_model,
-            # The loaders read the cache directory, not the pack, so the
-            # replace instruction has to survive on disk with it.
-            "exclusive_kinds": [k for k in (pack.exclusive_kinds or []) if k in REPLACEABLE_KINDS],
         }
         meta_path = self._cache_dir / "pack_meta.json"
         meta_path.write_text(json.dumps(meta), encoding="utf-8")
@@ -396,21 +371,6 @@ class GroupPolicyCache:
             return json.loads(meta_path.read_text(encoding="utf-8"))
         except Exception:
             return None
-
-    def exclusive_kinds(self) -> set[str]:
-        """Kinds the cached pack replaces outright.
-
-        Read from ``pack_meta.json`` rather than the pack, because the
-        loaders that act on it run from the cache directory long after
-        the fetch. No pack, no meta, or an unreadable one means "replace
-        nothing" — the additive behaviour every session had before, and
-        the safe answer when we cannot tell.
-        """
-        meta = self.read_pack_meta() or {}
-        kinds = meta.get("exclusive_kinds")
-        if not isinstance(kinds, list):
-            return set()
-        return {k for k in kinds if k in REPLACEABLE_KINDS}
 
     def clear(self) -> None:
         """Remove the entire cache directory."""
