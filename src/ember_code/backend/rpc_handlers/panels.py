@@ -27,6 +27,7 @@ from ember_code.backend.schemas_rpc import (
     FileCompletion,
     GroupPolicyPackResult,
     PickDirResult,
+    ResolveGroupAgentResult,
     RunShellResult,
 )
 from ember_code.core.agents import AgentInfo
@@ -126,3 +127,10 @@ class PanelRpcHandler(RpcHandler):
     @rpc(RpcMethod.GET_GROUP_POLICY)
     def get_group_policy(self, args: dict) -> GroupPolicyPackResult:
         return self._ctx.backend.get_group_policy()
+
+    @rpc(RpcMethod.RESOLVE_GROUP_AGENT_CONFLICT)
+    def resolve_group_agent_conflict(self, args: dict) -> ResolveGroupAgentResult:
+        return self._ctx.backend.resolve_group_agent_conflict(
+            entry_name=str(args.get("entry_name", "")),
+            accept_incoming=bool(args.get("accept_incoming", False)),
+        )

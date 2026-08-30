@@ -398,6 +398,12 @@ class InitConfig(BaseModel):
     package_dir: Path = Field(default_factory=_default_package_dir)
     marker_file: str = ".initialized"
     checksums_file: str = ".checksums.json"
+    #: Stand the bundled agents down. Set when the person's group ships
+    #: agents of its own: the group becomes the sync source for
+    #: ``.ember/agents`` and two sources writing the same files would
+    #: fight over the same checksums. The bundle is what somebody with no
+    #: group — offline, not logged in — still gets.
+    skip_bundled_agents: bool = False
     default_permissions: EmberSettingsPermissionsFile = Field(
         default_factory=lambda: _DEFAULT_PROJECT_PERMISSIONS.model_copy(deep=True)
     )

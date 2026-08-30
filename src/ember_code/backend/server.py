@@ -104,7 +104,12 @@ if TYPE_CHECKING:
         SlashCommandEntry,
     )
     from ember_code.backend.schemas_plan import LatestPlanResult
-    from ember_code.backend.schemas_rpc import CloudPlan, GroupPolicyPackResult, LoginResult
+    from ember_code.backend.schemas_rpc import (
+        CloudPlan,
+        GroupPolicyPackResult,
+        LoginResult,
+        ResolveGroupAgentResult,
+    )
     from ember_code.backend.schemas_search import SearchCodeResult
     from ember_code.backend.schemas_visualization import VisualizationActionResult
     from ember_code.backend.server_files import (
@@ -1135,6 +1140,17 @@ class BackendServer:
     def get_group_policy(self) -> GroupPolicyPackResult:
         """See :meth:`PanelsController.group_policy`."""
         return self.panels.group_policy()
+
+    def resolve_group_agent_conflict(
+        self,
+        entry_name: str,
+        accept_incoming: bool,
+    ) -> ResolveGroupAgentResult:
+        """See :meth:`PanelsController.resolve_group_agent_conflict`."""
+        return self.panels.resolve_group_agent_conflict(
+            entry_name=entry_name,
+            accept_incoming=accept_incoming,
+        )
 
     def get_slash_commands(self) -> list[SlashCommandEntry]:
         """See :meth:`PanelsController.slash_commands`."""

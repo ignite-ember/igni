@@ -184,10 +184,12 @@ class ProjectInitializer(BaseModel):
         store = ChecksumStore.load(self.project_dir, self.config)
         warnings: list[str] = []
 
-        # Update agents
+        # Update agents — unless the person's group ships its own, in
+        # which case it is the source for this directory and ours would
+        # scaffold back the very agents an admin removed.
         agents_src = self.config.package_dir / "bundled_agents"
         agents_dst = self.project_dir / ".ember" / "agents"
-        if agents_src.exists():
+        if agents_src.exists() and not self.config.skip_bundled_agents:
             agents_dst.mkdir(parents=True, exist_ok=True)
             for src_file in agents_src.glob("*.md"):
                 key = f"agents/{src_file.name}"

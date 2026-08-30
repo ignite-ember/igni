@@ -37,7 +37,11 @@ from ember_code.backend.schemas_panels import (  # noqa: F401 — public re-expo
     PromoteEphemeralResult,
     SlashCommandEntry,
 )
-from ember_code.backend.schemas_rpc import GroupPolicyPackResult
+from ember_code.backend.schemas_rpc import (
+    GroupAgentConflictView,
+    GroupPolicyPackResult,
+    ResolveGroupAgentResult,
+)
 from ember_code.core.agents import AgentInfo
 from ember_code.core.config.group_policy import GroupPolicyCache
 from ember_code.core.skills import SkillPool
@@ -121,16 +125,57 @@ class PanelsController:
         return self._output_styles.snapshot()
 
     def group_policy(self) -> GroupPolicyPackResult:
-        """Read the cached group policy pack metadata and return a result for the FE RPC."""
-        cache = GroupPolicyCache()
-        meta = cache.read_pack_meta()
+        """The group this person is in, and anything it is waiting on.
+
+        Carries the pending agent conflicts as well as the metadata,
+        because they are the same question from the FE's point of view —
+        "what is my group doing to my setup right now".
+        """
+        conflicts = [
+            GroupAgentConflictView(
+                entry_name=c.entry_name,
+                kind=c.kind,
+                question=c.question(),
+            )
+            for c in self._session.group_agent_sync().pending()
+        ]
+
+        meta = GroupPolicyCache().read_pack_meta()
         if meta is None:
-            return GroupPolicyPackResult()
+            return GroupPolicyPackResult(pending_conflicts=conflicts)
         return GroupPolicyPackResult(
             group_id=meta.get("group_id"),
             group_name=meta.get("group_name"),
             fetched_at=meta.get("fetched_at"),
             override_count=meta.get("override_count", 0),
+            default_model=meta.get("default_model"),
+            exclusive_kinds=list(meta.get("exclusive_kinds") or []),
+            pending_conflicts=conflicts,
+        )
+
+    def resolve_group_agent_conflict(
+        self,
+        entry_name: str,
+        accept_incoming: bool,
+    ) -> ResolveGroupAgentResult:
+        """Answer one "yours or theirs", and apply it to the live pool.
+
+        Rebuilding is what makes the answer mean something in the session
+        the person answered it from — otherwise taking the group's
+        version would do nothing until the next start.
+        """
+        touched = self._session.group_agent_sync().resolve(
+            entry_name,
+            accept_incoming=accept_incoming,
+        )
+        reloaded = False
+        if touched:
+            reloaded = self._session.reload_group_agents()
+        return ResolveGroupAgentResult(
+            resolved=True,
+            entry_name=entry_name,
+            accepted_incoming=accept_incoming,
+            reloaded=reloaded,
         )
 
 

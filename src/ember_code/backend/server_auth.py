@@ -252,6 +252,11 @@ class AuthController:
                 )
                 if refreshed:
                     await _emit("group policy pack refreshed")
+                    # An admin moving somebody between groups should
+                    # change what they have, not tell them to restart.
+                    with contextlib.suppress(Exception):
+                        if self._session.reload_group_agents():
+                            await _emit("group agents reloaded")
                 return bool(refreshed)
             except Exception as exc:
                 # Network blip, schema drift, or PortalClient bug — at

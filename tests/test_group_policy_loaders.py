@@ -159,7 +159,14 @@ def test_mcp_priority_group_constant_matches_agent_priority():
 
 
 # ---------------------------------------------------------------------------
-# AgentDefinitionLoader — group_agents_dir
+# AgentDefinitionLoader — where a group's agents are read from
+#
+# They used to be a root of their own, read straight from the policy
+# cache at ORG_GROUP priority. They are now synced into
+# ``<project>/.ember/agents`` (see GroupAgentSync) so a person can edit
+# one — and loading the server's pristine copy at a higher priority as
+# well would make that edit pointless. So the tests below assert the
+# cache directory is *not* a root, and that the synced location is.
 # ---------------------------------------------------------------------------
 
 
@@ -170,97 +177,68 @@ def _write_agent(path: Path, name: str, body: str) -> Path:
     return md
 
 
-def test_agent_loader_reads_group_agents_dir(tmp_path: Path):
-    """An .md file under group_agents_dir loads with ORG_GROUP priority."""
-    project = tmp_path / "proj"
-    user_dir = tmp_path / "user-agents"
-    user_dir.mkdir()
-    group_dir = tmp_path / "group-agents"
-    group_dir.mkdir()
-
-    _write_agent(
-        user_dir,
-        "shared",
-        "---\nname: shared\ndescription: user version\n---\nUser body.",
-    )
-    _write_agent(
-        group_dir,
-        "shared",
-        "---\nname: shared\ndescription: group version\n---\nGroup body.",
-    )
-
-    # Bare-bones loader — no real Settings needed for this dir-shape test
+def _bare_settings():
     from types import SimpleNamespace
 
-    settings = SimpleNamespace(
-        agents=SimpleNamespace(cross_tool_support=False),
+    return SimpleNamespace(agents=SimpleNamespace(cross_tool_support=False))
+
+
+def test_agent_loader_reads_the_synced_project_dir(tmp_path: Path):
+    """Where GroupAgentSync puts the group's agents."""
+    project = tmp_path / "proj"
+    _write_agent(
+        project / ".ember" / "agents",
+        "contract-review",
+        "---\nname: contract-review\ndescription: the group's own\n---\nBody.",
     )
 
-    loader = AgentDefinitionLoader(
-        settings=settings,
+    report = AgentDefinitionLoader(
+        settings=_bare_settings(),
         project_dir=project,
         codeindex_available=False,
-        group_agents_dir=group_dir,
-    )
-    report = loader.load()
-    assert "shared" in report.entries
-    assert report.entries["shared"].priority == AgentPriority.ORG_GROUP
+    ).load()
+
+    assert report.entries["contract-review"].priority == AgentPriority.PROJECT_EMBER
 
 
-def test_agent_loader_group_wins_over_user(tmp_path: Path):
-    """Group-policy entry beats a same-name user entry on priority."""
-    from types import SimpleNamespace
-
-    settings = SimpleNamespace(
-        agents=SimpleNamespace(cross_tool_support=False),
-    )
-
-    user_dir = tmp_path / "user"
-    user_dir.mkdir()
-    group_dir = tmp_path / "group"
-    group_dir.mkdir()
-
+def test_the_policy_cache_is_not_an_agent_root(tmp_path: Path):
+    """It is the sync source. Reading it here would shadow the copy the
+    person edits, which is the whole point of syncing."""
+    project = tmp_path / "proj"
+    cache = tmp_path / "group-policy" / "agents"
     _write_agent(
-        user_dir,
-        "x",
-        "---\nname: x\ndescription: user\n---\nuser body",
+        cache,
+        "only-in-the-cache",
+        "---\nname: only-in-the-cache\ndescription: d\n---\nBody.",
+    )
+
+    report = AgentDefinitionLoader(
+        settings=_bare_settings(),
+        project_dir=project,
+        codeindex_available=False,
+    ).load()
+
+    assert "only-in-the-cache" not in report.entries
+
+
+def test_a_local_edit_is_what_loads(tmp_path: Path):
+    """The reason for all of the above."""
+    project = tmp_path / "proj"
+    _write_agent(
+        project / ".ember" / "agents",
+        "reviewer",
+        "---\nname: reviewer\ndescription: my edited version\n---\nBody.",
     )
     _write_agent(
-        group_dir,
-        "x",
-        "---\nname: x\ndescription: group\n---\ngroup body",
+        tmp_path / "group-policy" / "agents",
+        "reviewer",
+        "---\nname: reviewer\ndescription: the server version\n---\nBody.",
     )
 
-    loader = AgentDefinitionLoader(
-        settings=settings,
-        project_dir=tmp_path,
+    report = AgentDefinitionLoader(
+        settings=_bare_settings(),
+        project_dir=project,
         codeindex_available=False,
-        group_agents_dir=group_dir,
-    )
-    report = loader.load()
-    entry = report.entries["x"]
-    assert entry.priority == AgentPriority.ORG_GROUP
-    assert "group" in entry.definition.description.lower()
+    ).load()
 
-
-def test_agent_loader_no_group_dir_default(tmp_path: Path):
-    """Back-compat — passing no group_agents_dir keeps prior behavior."""
-    from types import SimpleNamespace
-
-    settings = SimpleNamespace(
-        agents=SimpleNamespace(cross_tool_support=False),
-    )
-
-    # No group_agents_dir passed; the loader scans the same roots it
-    # always did. The user-homed ``~/.ember/agents`` is one of them,
-    # but since we can't write to Path.home() reliably in a test, we
-    # only assert the loader runs without error and the ORG_GROUP
-    # tier is absent.
-    loader = AgentDefinitionLoader(
-        settings=settings,
-        project_dir=tmp_path,
-        codeindex_available=False,
-    )
-    report = loader.load()
-    # No group dir supplied → no ORG_GROUP entries can appear.
-    assert all(e.priority != AgentPriority.ORG_GROUP for e in report.entries.values())
+    assert "edited" in report.entries["reviewer"].definition.description

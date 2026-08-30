@@ -30,12 +30,12 @@ import pytest
 import yaml
 
 from ember_code.core.agents.loader import AgentDefinitionLoader
-from ember_code.core.agents.schemas import AgentPriority
 from ember_code.core.config.group_policy import (
     GroupPolicyCache,
     GroupPolicyOverrideEntry,
     GroupPolicyPack,
 )
+from ember_code.core.init.group_agent_sync import GroupAgentSync
 from ember_code.core.mcp.config import MCPConfigLoader
 from ember_code.core.plugins.loader import PluginLoader
 
@@ -143,14 +143,19 @@ class TestTheModelAnAgentRunsAgainst:
         assert frontmatter["model"] == "legal-reviewer"
 
     def test_it_survives_the_round_trip_through_the_loader(self, tmp_path: Path, bare_settings):
+        """Cache → sync → project → loader → definition. The whole path,
+        because a model that reaches the file and stops there is worth
+        nothing."""
         cache = GroupPolicyCache(cache_dir=tmp_path / "group-policy")
         cache.materialize(_pack(overrides=[_agent_entry("contracts", model="legal-reviewer")]))
+        project = tmp_path / "proj"
+        (project / ".ember").mkdir(parents=True)
+        GroupAgentSync(project_dir=project, source_dir=cache.agents_dir).run()
 
         report = AgentDefinitionLoader(
             settings=bare_settings,
-            project_dir=tmp_path / "proj",
+            project_dir=project,
             codeindex_available=False,
-            group_agents_dir=cache.agents_dir,
             group_agents_only=True,
         ).load()
 
@@ -203,19 +208,21 @@ class TestTheModelAnAgentRunsAgainst:
 
 
 class TestAgentsThatReplace:
-    def test_the_shipped_agents_are_gone(self, tmp_path: Path, bare_settings):
-        """The whole point: a legal team sees none of the coding agents
-        ember scaffolds into the project."""
+    """Exclusivity narrowed the roots to one: the project's synced
+    ``.ember/agents``. Everything else — the user's own
+    ``~/.ember/agents``, ``agents.local``, the cross-tool ``.claude``
+    roots — drops out. It cannot also drop what is *in* that directory,
+    because that is where the group's own agents live now."""
+
+    def test_the_other_roots_are_gone(self, tmp_path: Path, bare_settings):
         project = tmp_path / "proj"
-        _write_agent(project / ".ember" / "agents", "code-reviewer", "shipped by ember")
-        group_dir = tmp_path / "group-agents"
-        _write_agent(group_dir, "contract-review", "the group's own")
+        _write_agent(project / ".ember" / "agents.local", "my-personal", "mine")
+        _write_agent(project / ".ember" / "agents", "contract-review", "the group's own")
 
         report = AgentDefinitionLoader(
             settings=bare_settings,
             project_dir=project,
             codeindex_available=False,
-            group_agents_dir=group_dir,
             group_agents_only=True,
         ).load()
 
@@ -223,49 +230,39 @@ class TestAgentsThatReplace:
 
     def test_the_ordinary_group_still_gets_both(self, tmp_path: Path, bare_settings):
         project = tmp_path / "proj"
-        _write_agent(project / ".ember" / "agents", "code-reviewer", "shipped by ember")
-        group_dir = tmp_path / "group-agents"
-        _write_agent(group_dir, "contract-review", "the group's own")
+        _write_agent(project / ".ember" / "agents.local", "my-personal", "mine")
+        _write_agent(project / ".ember" / "agents", "contract-review", "the group's own")
 
         report = AgentDefinitionLoader(
             settings=bare_settings,
             project_dir=project,
             codeindex_available=False,
-            group_agents_dir=group_dir,
         ).load()
 
-        assert {"code-reviewer", "contract-review"} <= set(report.entries)
+        assert {"my-personal", "contract-review"} <= set(report.entries)
 
-    def test_the_group_entries_keep_their_priority(self, tmp_path: Path, bare_settings):
-        group_dir = tmp_path / "group-agents"
-        _write_agent(group_dir, "contract-review", "the group's own")
-
-        report = AgentDefinitionLoader(
-            settings=bare_settings,
-            project_dir=tmp_path / "proj",
-            codeindex_available=False,
-            group_agents_dir=group_dir,
-            group_agents_only=True,
-        ).load()
-
-        assert report.entries["contract-review"].priority == AgentPriority.ORG_GROUP
-
-    def test_a_group_with_no_directory_is_not_emptied(self, tmp_path: Path, bare_settings):
-        """Exclusivity without a directory to read would leave the pool
-        with nothing at all — a session that cannot do anything is worse
-        than one that ignores the flag."""
+    def test_the_coding_agents_go_when_the_group_drops_them(self, tmp_path: Path, bare_settings):
+        """The end-to-end point. The sync removes what the group no
+        longer ships, so exclusivity is about the other roots — between
+        them a legal team sees no coding agents at all."""
         project = tmp_path / "proj"
-        _write_agent(project / ".ember" / "agents", "code-reviewer", "shipped by ember")
+        (project / ".ember").mkdir(parents=True)
+        source = tmp_path / "group-policy" / "agents"
+        _write_agent(source, "code-reviewer", "shipped by ember")
+        GroupAgentSync(project_dir=project, source_dir=source).run()
+
+        (source / "code-reviewer.md").unlink()
+        _write_agent(source, "contract-review", "the group's own")
+        GroupAgentSync(project_dir=project, source_dir=source).run()
 
         report = AgentDefinitionLoader(
             settings=bare_settings,
             project_dir=project,
             codeindex_available=False,
-            group_agents_dir=None,
             group_agents_only=True,
         ).load()
 
-        assert "code-reviewer" in report.entries
+        assert set(report.entries) == {"contract-review"}
 
 
 class TestServersThatReplace:

@@ -75,6 +75,7 @@ from ember_code.core.hooks.executor import HookExecutor
 from ember_code.core.hooks.loader import HookLoader
 from ember_code.core.hooks.tool_hook import ToolEventHook
 from ember_code.core.init import ProjectInitializer
+from ember_code.core.init.group_agent_sync import GroupAgentSync, GroupSyncReport
 from ember_code.core.learn import create_learning_machine  # noqa: F401 — test-patch target
 from ember_code.core.loop import LoopProgressStore, LoopStore, LoopToolResult
 from ember_code.core.lsp import LspServerManager, load_lsp_config
@@ -205,11 +206,14 @@ class Session:
         self._init_loop_state()
         self._init_per_session_scratch()
 
-        # Group-policy on-disk roots — same paths that
-        # :class:`GroupPolicyCache` writes to, so the cached overrides
-        # land where the loaders will read them. ``expanduser`` mirrors
-        # how :class:`PluginLoader` resolves its default ``data_dir``
-        # (``~/.ember``).
+        # Group-policy on-disk roots — the paths :class:`GroupPolicyCache`
+        # writes to. ``expanduser`` mirrors how :class:`PluginLoader`
+        # resolves its default ``data_dir`` (``~/.ember``).
+        #
+        # MCP servers are read from the cache directly. Agents are not:
+        # they are synced into ``<project>/.ember/agents`` so a person
+        # can edit one, which means this directory is the *source* of
+        # that sync rather than a place the loader reads.
         data_dir = Path(settings.storage.data_dir).expanduser()
         self._group_agents_dir = data_dir / "group-policy" / "agents"
         self._group_mcps_dir = data_dir / "group-policy" / "mcps"
@@ -223,7 +227,14 @@ class Session:
         self._group_exclusive_kinds = self._read_group_exclusive_kinds(data_dir)
 
         # ── First-run initialization (agents, skills, hooks, ember.md) ─
-        ProjectInitializer.initialize(self.project_dir)
+        # The bundled agents stand down when the group ships its own —
+        # otherwise this would scaffold back the very agents an admin
+        # removed, and two sources would fight over one checksum file.
+        ProjectInitializer.initialize(
+            self.project_dir,
+            skip_bundled_agents=self._group_ships_agents(),
+        )
+        self._group_sync = self._sync_group_agents()
 
         # ── Storage (Agno AsyncBaseDb) ────────────────────────────────
         self.db = StorageManager.build_db(settings, project_dir=self.project_dir)
@@ -668,6 +679,84 @@ class Session:
             self.knowledge_mgr.knowledge = index
         logger.info("Knowledge: switched to neo4j backend (project=%s)", project_id)
 
+    def group_agent_sync(self) -> GroupAgentSync:
+        """The merge between the group's agents and this project's copy.
+
+        Constructed per call rather than held: it owns no state beyond
+        two paths, and everything it reads lives on disk, so a stale
+        instance would only be a way to answer a question that has since
+        been answered elsewhere.
+        """
+        return GroupAgentSync(
+            project_dir=self.project_dir,
+            source_dir=self._group_agents_dir,
+        )
+
+    def reload_group_agents(self) -> bool:
+        """Re-sync the group's agents and rebuild the pool if anything moved.
+
+        Called after the policy cache is refreshed — an admin moving
+        somebody from engineering to legal should change what they have,
+        without being told to restart — and after a conflict is answered.
+
+        Returns whether the pool was rebuilt. Never raises: the session
+        that is running matters more than the update that is not.
+        """
+        try:
+            report = self.group_agent_sync().run()
+            self._group_exclusive_kinds = self._read_group_exclusive_kinds(
+                Path(self.settings.storage.data_dir).expanduser()
+            )
+            if not report.changed_anything:
+                return False
+            self._init_agent_and_skill_pools(self.settings)
+            self._rebuild_main_team()
+            logger.info(
+                "Group agents reloaded: %d added, %d updated, %d removed",
+                len(report.copied),
+                len(report.updated),
+                len(report.removed),
+            )
+            return True
+        except Exception as exc:  # noqa: BLE001 — a live session outranks an update
+            logger.warning("Could not reload the group's agents: %s", exc)
+            return False
+
+    def _group_ships_agents(self) -> bool:
+        """Whether the cached pack has any agents at all."""
+        try:
+            return self._group_agents_dir.is_dir() and any(self._group_agents_dir.glob("*.md"))
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.debug("Could not inspect the group agents directory: %s", exc)
+            return False
+
+    def _sync_group_agents(self) -> GroupSyncReport:
+        """Copy the group's agents into the project, keeping local edits.
+
+        Runs before the pools are built so the session sees the result.
+        Never raises: a sync that cannot run should cost the update, not
+        the session.
+        """
+        try:
+            report = GroupAgentSync(
+                project_dir=self.project_dir,
+                source_dir=self._group_agents_dir,
+            ).run()
+        except Exception as exc:  # noqa: BLE001 — a broken sync must not stop a start
+            logger.warning("Could not sync the group's agents: %s", exc)
+            return GroupSyncReport()
+
+        if report.changed_anything:
+            logger.info(
+                "Group agents synced: %d added, %d updated, %d removed",
+                len(report.copied),
+                len(report.updated),
+                len(report.removed),
+            )
+        for conflict in report.conflicts:
+            logger.info("Group agent needs an answer — %s", conflict.question())
+        return report
+
     @staticmethod
     def _read_group_exclusive_kinds(data_dir: Path) -> set[str]:
         """Kinds the cached group pack replaces outright.
@@ -693,7 +782,6 @@ class Session:
             settings,
             self.project_dir,
             codeindex_available=self._codeindex_available,
-            group_agents_dir=self._group_agents_dir,
             group_agents_only="agents" in self._group_exclusive_kinds,
         )
         self.plugin_loader.apply_to_agents(self.pool, disabled=self._disabled_plugins)
