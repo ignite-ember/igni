@@ -387,3 +387,42 @@ class TestWhatIgniShipsStandsDown:
 
         settings = json.loads((project / ".ember" / "settings.json").read_text(encoding="utf-8"))
         assert settings["hooks"]["PreToolUse"]
+
+
+class TestTheManagerGetsTheGroupDirectory:
+    """The bug a loader-level test could not see.
+
+    ``MCPClientManager`` builds its own loader, and that result is what
+    becomes ``configs``. The session used to pass the group directory
+    only to the loader it handed to ``PluginLoader.apply_to_mcp`` —
+    which uses it solely for ``load_plugin_servers``, so the group's own
+    servers were read by nothing. Every unit test passed; a booted
+    session had no group MCP servers.
+    """
+
+    def test_the_manager_loads_the_group_s_servers(self, cache: GroupPolicyCache, tmp_path: Path):
+        from ember_code.core.mcp.client import MCPClientManager
+
+        cache.materialize(
+            _pack(_entry("mcps", "case-law", '{"command": "case-law-mcp"}', content_type="json"))
+        )
+        project = tmp_path / "proj"
+        project.mkdir()
+
+        manager = MCPClientManager(project, group_mcps_dir=cache.dir_for("mcps"))
+
+        assert "case-law" in manager.configs
+        assert manager.configs["case-law"].command == "case-law-mcp"
+
+    def test_without_one_it_reads_only_the_local_roots(self, tmp_path: Path):
+        from ember_code.core.mcp.client import MCPClientManager
+
+        project = tmp_path / "proj"
+        project.mkdir()
+        (project / ".mcp.json").write_text(
+            '{"mcpServers": {"local-thing": {"command": "x"}}}', encoding="utf-8"
+        )
+
+        manager = MCPClientManager(project)
+
+        assert "local-thing" in manager.configs

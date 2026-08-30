@@ -543,7 +543,10 @@ class Session:
         """Construct :class:`MCPClientManager` and merge in
         plugin-bundled MCP configs.
         """
-        self.mcp_manager = MCPClientManager(self.project_dir)
+        self.mcp_manager = MCPClientManager(
+            self.project_dir,
+            group_mcps_dir=self._group_mcps_dir,
+        )
         # Session-scoped ``{server: reason}`` cache. Written by
         # :meth:`record_mcp_result` (called from
         # :class:`~ember_code.core.session.startup.mcp.McpInitPhase`
@@ -555,7 +558,7 @@ class Session:
         # populate at Result time.
         self.mcp_failures: dict[str, str] = {}
         self.plugin_loader.apply_to_mcp(
-            MCPConfigLoader(self.project_dir, group_mcps_dir=self._group_mcps_dir),
+            MCPConfigLoader(self.project_dir),
             self.mcp_manager.configs,
             disabled=self._disabled_plugins,
         )
