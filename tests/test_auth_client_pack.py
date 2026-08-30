@@ -546,3 +546,86 @@ async def test_full_e2e_pack_to_cache(tmp_path, monkeypatch):
     assert "mcpServers" in blob
     assert "github" in blob["mcpServers"]
     assert blob["mcpServers"]["github"]["command"] == "gh-mcp"
+
+
+# ── Revalidation ───────────────────────────────────────────────────────
+#
+# Polling every few minutes is only defensible if the usual answer is
+# cheap. These cover the three things that has to mean on the wire.
+
+
+@pytest.mark.asyncio
+async def test_fetch_group_pack_sends_the_tag_it_was_given(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        captured["if_none_match"] = req.headers.get("If-None-Match")
+        return httpx.Response(200, json=_sample_pack_body())
+
+    portal, patched = _stub_client(handler)
+    monkeypatch.setattr("httpx.AsyncClient", patched)
+
+    await portal.fetch_group_pack(token="t-1", etag='"abc"')
+
+    assert captured["if_none_match"] == '"abc"'
+
+
+@pytest.mark.asyncio
+async def test_fetch_group_pack_sends_no_tag_when_it_holds_none(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        captured["if_none_match"] = req.headers.get("If-None-Match")
+        return httpx.Response(200, json=_sample_pack_body())
+
+    portal, patched = _stub_client(handler)
+    monkeypatch.setattr("httpx.AsyncClient", patched)
+
+    await portal.fetch_group_pack(token="t-1")
+
+    assert captured["if_none_match"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_304_answers_unchanged_not_none(monkeypatch):
+    """``None`` means "I could not tell you" and leaves the cache alone;
+    this means "I checked, you are current". Conflating them would make
+    a failed request look like a confirmation."""
+    from ember_code.core.config.group_policy import PACK_UNCHANGED
+
+    portal, patched = _stub_client(lambda req: httpx.Response(304))
+    monkeypatch.setattr("httpx.AsyncClient", patched)
+
+    assert await portal.fetch_group_pack(token="t-1", etag='"abc"') is PACK_UNCHANGED
+
+
+@pytest.mark.asyncio
+async def test_the_tag_comes_back_on_the_pack(monkeypatch):
+    """So the next poll can send it."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_sample_pack_body(), headers={"ETag": '"xyz"'})
+
+    portal, patched = _stub_client(handler)
+    monkeypatch.setattr("httpx.AsyncClient", patched)
+
+    pack = await portal.fetch_group_pack(token="t-1")
+
+    assert pack.etag == '"xyz"'
+
+
+@pytest.mark.asyncio
+async def test_the_group_model_is_not_dropped(monkeypatch):
+    """It was, silently: a group's model reached igni as None however it
+    was set on the server."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        body = {**_sample_pack_body(), "default_model": "legal-reviewer"}
+        return httpx.Response(200, json=body)
+
+    portal, patched = _stub_client(handler)
+    monkeypatch.setattr("httpx.AsyncClient", patched)
+
+    pack = await portal.fetch_group_pack(token="t-1")
+
+    assert pack.default_model == "legal-reviewer"
