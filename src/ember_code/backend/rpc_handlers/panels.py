@@ -133,4 +133,5 @@ class PanelRpcHandler(RpcHandler):
         return self._ctx.backend.resolve_group_agent_conflict(
             entry_name=str(args.get("entry_name", "")),
             accept_incoming=bool(args.get("accept_incoming", False)),
+            entry_kind=str(args.get("entry_kind", "agents")),
         )

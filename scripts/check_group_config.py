@@ -24,7 +24,7 @@ from pathlib import Path
 from ember_code.core.auth.portal_client import PortalClient  # noqa: E402
 from ember_code.core.config.group_policy import GroupPolicyCache  # noqa: E402
 from ember_code.core.hooks.loader import HookLoader  # noqa: E402
-from ember_code.core.init.group_agent_sync import GroupAgentSync  # noqa: E402
+from ember_code.core.init.group_agent_sync import SYNCED_KINDS, GroupAgentSync  # noqa: E402
 from ember_code.core.output_styles.loader import discover_output_styles  # noqa: E402
 from ember_code.core.skills.loader import SkillPool  # noqa: E402
 from ember_code.core.utils.markdown_commands import MarkdownCommand  # noqa: E402
@@ -71,6 +71,14 @@ async def main() -> int:
 
         print("\nLoading, as a session would")
 
+        # Everything a person can edit is synced into the project, and
+        # that is where the loaders read it.
+        for kind in SYNCED_KINDS:
+            if kind in by_kind and kind != "agents":
+                GroupAgentSync(
+                    project_dir=project, source_dir=cache.dir_for(kind), kind=kind
+                ).run()
+
         if "agents" in by_kind:
             report = GroupAgentSync(project_dir=project, source_dir=cache.agents_dir).run()
             check(
@@ -82,20 +90,16 @@ async def main() -> int:
 
         if "skills" in by_kind:
             pool = SkillPool()
-            pool.load_directory(cache.dir_for("skills"))
+            pool.load_directory(project / ".ember" / "skills")
             loaded = {name for name in by_kind["skills"] if pool.get(name)}
             check(loaded == set(by_kind["skills"]), f"{len(loaded)} skills load")
 
         if "commands" in by_kind:
-            found = MarkdownCommand.discover(
-                project, read_claude=False, group_dir=cache.dir_for("commands")
-            )
+            found = MarkdownCommand.discover(project, read_claude=False)
             check(set(by_kind["commands"]) <= set(found), "commands load")
 
         if "output-styles" in by_kind:
-            styles = discover_output_styles(
-                project, read_claude=False, group_dir=cache.dir_for("output-styles")
-            )
+            styles = discover_output_styles(project, read_claude=False)
             check(set(by_kind["output-styles"]) <= set(styles), "output styles load")
 
         if "hooks" in by_kind:
@@ -119,7 +123,7 @@ async def main() -> int:
             check(wanted <= registered, f"the group's own hooks register ({', '.join(sorted(wanted))})")
 
         if "rules" in by_kind:
-            index = RulesIndex(project, read_claude_md=False, group_rules_dir=cache.dir_for("rules"))
+            index = RulesIndex(project, read_claude_md=False)
             # The seeded rule is scoped to **/*.py, so touching one is
             # what should surface it.
             matched = index.consume_path(project / "app" / "main.py")
@@ -128,7 +132,7 @@ async def main() -> int:
         if "workflows" in by_kind:
             from ember_code.backend.workflow_runner import WorkflowDiscovery
 
-            discovery = WorkflowDiscovery(project_dir=project, group_dir=cache.dir_for("workflows"))
+            discovery = WorkflowDiscovery(project_dir=project)
             names = {p.stem for p in discovery._iter_paths()}
             check(set(by_kind["workflows"]) <= names, "workflows are discovered")
 

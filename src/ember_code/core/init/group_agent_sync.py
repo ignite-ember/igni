@@ -50,32 +50,72 @@ logger = logging.getLogger(__name__)
 #: Where pending conflicts live, next to ``.checksums.json``.
 CONFLICTS_FILE = ".group-agent-conflicts.json"
 
+#: kind → (directory under ``.ember``, filename for one entry). These
+#: are the kinds somebody might reasonably open and change: prompts,
+#: routines, rules. The rest — MCP servers, plugin installs, hook
+#: declarations, Python tools — are configuration the server owns, read
+#: straight from the policy cache, and are not synced here.
+SYNCED_KINDS: dict[str, tuple[str, str]] = {
+    "agents": ("agents", "{name}.md"),
+    "skills": ("skills", "{name}/SKILL.md"),
+    "commands": ("commands", "{name}.md"),
+    "rules": ("rules", "{name}.md"),
+    "output-styles": ("output-styles", "{name}.md"),
+    "workflows": ("workflows", "{name}.mjs"),
+}
 
-class AgentConflict(BaseModel):
-    """One agent the server changed under a local edit.
+
+#: What to call each kind when talking to a person about one.
+KIND_NOUN: dict[str, str] = {
+    "agents": "agent",
+    "skills": "skill",
+    "commands": "command",
+    "rules": "rule",
+    "output-styles": "output style",
+    "workflows": "workflow",
+}
+
+
+class EntryConflict(BaseModel):
+    """One thing the group changed under somebody's local edit.
+
+    ``change`` is what happened on the server — ``changed`` or
+    ``removed``. ``entry_kind`` is what the thing *is*; the two used to
+    share the name ``kind``, which read fine until a skill needed one.
 
     ``incoming_path`` is null for ``removed``: there is no incoming
-    content, the group simply no longer ships this agent.
+    content, the group simply no longer ships it.
     """
 
+    entry_kind: str
     entry_name: str
-    kind: str  # changed | removed
+    change: str  # changed | removed
     incoming_hash: str
     incoming_path: Path | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    @property
+    def id(self) -> str:
+        """Stable identifier — two kinds may hold the same name."""
+        return f"{self.entry_kind}/{self.entry_name}"
+
     def question(self) -> str:
         """What to put in front of the person, in one line."""
-        if self.kind == "removed":
+        noun = KIND_NOUN.get(self.entry_kind, "entry")
+        if self.change == "removed":
             return (
-                f"{self.entry_name}: your group no longer ships this agent, "
-                f"but you have edited your copy. Remove it?"
+                f'Your group no longer ships the {noun} "{self.entry_name}", but you have '
+                f"edited your copy. Remove it, or keep yours?"
             )
         return (
-            f"{self.entry_name}: your group changed this agent and you have "
-            f"edited your copy. Take the group's version?"
+            f'Your group changed the {noun} "{self.entry_name}" and you have edited your '
+            f"copy. Take the group's version, or keep yours?"
         )
+
+
+#: Kept so older imports do not break mid-refactor.
+AgentConflict = EntryConflict
 
 
 class GroupSyncReport(BaseModel):
@@ -85,7 +125,7 @@ class GroupSyncReport(BaseModel):
     updated: list[str] = Field(default_factory=list)
     removed: list[str] = Field(default_factory=list)
     unchanged: list[str] = Field(default_factory=list)
-    conflicts: list[AgentConflict] = Field(default_factory=list)
+    conflicts: list[EntryConflict] = Field(default_factory=list)
 
     @property
     def changed_anything(self) -> bool:
@@ -107,51 +147,77 @@ class GroupAgentSync:
         project_dir: Path,
         source_dir: Path,
         config: InitConfig | None = None,
+        kind: str = "agents",
     ) -> None:
         self._project_dir = project_dir
         self._source_dir = source_dir
         self._config = config or InitConfig()
+        self._kind = kind
+        self._subdir, self._filename = SYNCED_KINDS[kind]
 
     # ── Paths ────────────────────────────────────────────────────
 
     @property
     def dest_dir(self) -> Path:
-        return self._project_dir / ".ember" / "agents"
+        return self._project_dir / ".ember" / self._subdir
 
     @property
     def _conflicts_path(self) -> Path:
         return self._project_dir / ".ember" / CONFLICTS_FILE
 
-    @staticmethod
-    def _key(entry_name: str) -> str:
-        """Checksum key for an agent — shared with the bundled sync, so
-        a handover from bundle to group is a clean update rather than a
-        phantom conflict."""
-        return f"agents/{entry_name}.md"
+    def _key(self, entry_name: str) -> str:
+        """Checksum key for one entry.
+
+        Agents and skills share theirs with the bundled sync, so a
+        handover from what igni ships to what the group ships is a clean
+        update rather than a phantom conflict.
+        """
+        return f"{self._subdir}/{self._filename.format(name=entry_name)}"
 
     # ── Pending conflicts ────────────────────────────────────────
 
-    def pending(self) -> list[AgentConflict]:
-        """Conflicts waiting on an answer. Fail-soft: an unreadable file
-        means none, because the alternative is refusing to start."""
+    def _all_pending(self) -> list[EntryConflict]:
+        """Every unanswered question in the project, of any kind."""
         raw = JsonFile(path=self._conflicts_path).load()
-        out: list[AgentConflict] = []
-        for entry_name, payload in (raw or {}).items():
+        out: list[EntryConflict] = []
+        for record_id, payload in (raw or {}).items():
             try:
-                out.append(AgentConflict(entry_name=entry_name, **payload))
+                out.append(EntryConflict(**payload))
             except Exception:  # noqa: BLE001 — a bad record is not worth a crash
-                logger.debug("Skipping unreadable conflict record for %s", entry_name)
+                logger.debug("Skipping unreadable conflict record for %s", record_id)
         return out
 
-    def _save_pending(self, conflicts: list[AgentConflict]) -> None:
+    def pending(self) -> list[EntryConflict]:
+        """Unanswered questions about this kind."""
+        return [c for c in self._all_pending() if c.entry_kind == self._kind]
+
+    def pending_all(self) -> list[EntryConflict]:
+        """Unanswered questions of every kind, for the person to answer."""
+        return self._all_pending()
+
+    def _save_pending(self, conflicts: list[EntryConflict]) -> None:
+        """One file for every kind, keyed ``<kind>/<name>``.
+
+        Shared rather than one per kind because it is one question list
+        as far as the person is concerned, and because a reader wants
+        all of it at once.
+        """
+        existing = {c.id: c for c in self._all_pending()}
+        mine = {c.id for c in self._all_pending() if c.entry_kind == self._kind}
+        for stale in mine:
+            existing.pop(stale, None)
+        for c in conflicts:
+            existing[c.id] = c
         JsonFile(path=self._conflicts_path).save(
             {
-                c.entry_name: {
-                    "kind": c.kind,
+                c.id: {
+                    "entry_kind": c.entry_kind,
+                    "entry_name": c.entry_name,
+                    "change": c.change,
                     "incoming_hash": c.incoming_hash,
                     "incoming_path": str(c.incoming_path) if c.incoming_path else None,
                 }
-                for c in conflicts
+                for c in existing.values()
             }
         )
 
@@ -169,11 +235,11 @@ class GroupAgentSync:
             return False
 
         store = ChecksumStore.load(self._project_dir, self._config)
-        dest = self.dest_dir / f"{entry_name}.md"
+        dest = self._dest_for(entry_name)
         touched = False
 
         if accept_incoming:
-            if match.kind == "removed":
+            if match.change == "removed":
                 dest.unlink(missing_ok=True)
                 store.entries.pop(self._key(entry_name), None)
             elif match.incoming_path and Path(match.incoming_path).exists():
@@ -191,6 +257,27 @@ class GroupAgentSync:
         self._save_pending([c for c in conflicts if c.entry_name != entry_name])
         return touched
 
+    def _source_for(self, entry_name: str) -> Path:
+        """Where the cache put this entry."""
+        return self._source_dir / self._filename.format(name=entry_name)
+
+    def _dest_for(self, entry_name: str) -> Path:
+        """Where one entry lands. A skill is a directory with SKILL.md
+        inside it; everything else is a file."""
+        return self.dest_dir / self._filename.format(name=entry_name)
+
+    def _entry_names(self) -> list[str]:
+        """What the group ships, read off the cache directory."""
+        if not self._source_dir.is_dir():
+            return []
+        if self._filename.startswith("{name}/"):
+            leaf = self._filename.split("/", 1)[1]
+            return sorted(p.name for p in self._source_dir.iterdir() if (p / leaf).is_file())
+        suffix = self._filename.replace("{name}", "")
+        return sorted(
+            p.name[: -len(suffix)] for p in self._source_dir.iterdir() if p.name.endswith(suffix)
+        )
+
     # ── The sync ─────────────────────────────────────────────────
 
     def run(self) -> GroupSyncReport:
@@ -205,9 +292,9 @@ class GroupAgentSync:
         # it, so an unanswered question survives a restart.
         conflicts = {c.entry_name: c for c in self.pending()}
 
-        incoming = sorted(self._source_dir.glob("*.md"))
-        for src in incoming:
-            entry_name = src.stem
+        names = self._entry_names()
+        for entry_name in names:
+            src = self._source_for(entry_name)
             conflict = self._sync_one(src, entry_name, store, report)
             if conflict is not None:
                 conflicts[entry_name] = conflict
@@ -215,7 +302,7 @@ class GroupAgentSync:
                 conflicts.pop(entry_name, None)
 
         self._prune(
-            keep={src.stem for src in incoming},
+            keep=set(names),
             store=store,
             report=report,
             conflicts=conflicts,
@@ -232,13 +319,14 @@ class GroupAgentSync:
         entry_name: str,
         store: ChecksumStore,
         report: GroupSyncReport,
-    ) -> AgentConflict | None:
+    ) -> EntryConflict | None:
         key = self._key(entry_name)
-        dest = self.dest_dir / f"{entry_name}.md"
+        dest = self._dest_for(entry_name)
         incoming_hash = ChecksumStore.file_hash(src)
         stored_hash = store.entries.get(key)
 
         if not dest.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
             store.entries[key] = incoming_hash
             report.copied.append(entry_name)
@@ -253,7 +341,7 @@ class GroupAgentSync:
                 store.entries[key] = incoming_hash
                 report.unchanged.append(entry_name)
                 return None
-            return self._park(src, entry_name, incoming_hash, kind="changed")
+            return self._park(src, entry_name, incoming_hash, change="changed")
 
         if incoming_hash == stored_hash:
             report.unchanged.append(entry_name)
@@ -266,15 +354,20 @@ class GroupAgentSync:
             report.updated.append(entry_name)
             return None
 
-        return self._park(src, entry_name, incoming_hash, kind="changed")
+        return self._park(src, entry_name, incoming_hash, change="changed")
 
-    def _park(self, src: Path, entry_name: str, incoming_hash: str, *, kind: str) -> AgentConflict:
+    def _park(
+        self, src: Path, entry_name: str, incoming_hash: str, *, change: str
+    ) -> EntryConflict:
         """Put the incoming version beside the local one and ask later."""
-        incoming_path = self.dest_dir / f"{entry_name}.md.incoming"
+        dest = self._dest_for(entry_name)
+        incoming_path = dest.with_name(dest.name + ".incoming")
+        incoming_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, incoming_path)
-        return AgentConflict(
+        return EntryConflict(
+            entry_kind=self._kind,
             entry_name=entry_name,
-            kind=kind,
+            change=change,
             incoming_hash=incoming_hash,
             incoming_path=incoming_path,
         )
@@ -284,35 +377,43 @@ class GroupAgentSync:
         keep: set[str],
         store: ChecksumStore,
         report: GroupSyncReport,
-        conflicts: dict[str, AgentConflict],
+        conflicts: dict[str, EntryConflict],
     ) -> None:
-        """Remove agents the group no longer ships.
+        """Remove what the group no longer ships.
 
-        Only ones we put there and nobody has touched. A group switch has
-        to actually swap the agents — but an edited file is the person's
+        Only entries we put there and nobody has touched. A group switch
+        has to actually swap them — but an edited file is the person's
         work, and deleting it because an admin moved them to another team
         would be indefensible.
         """
+        prefix = f"{self._subdir}/"
+        suffix = self._filename.format(name="")  # e.g. ".md" or "/SKILL.md"
         for key, stored_hash in list(store.entries.items()):
-            if not key.startswith("agents/") or not key.endswith(".md"):
+            if not key.startswith(prefix) or not key.endswith(suffix):
                 continue
-            entry_name = key[len("agents/") : -len(".md")]
-            if entry_name in keep:
+            entry_name = key[len(prefix) : len(key) - len(suffix)]
+            if not entry_name or entry_name in keep:
                 continue
 
-            dest = self.dest_dir / f"{entry_name}.md"
+            dest = self._dest_for(entry_name)
             if not dest.exists():
                 store.entries.pop(key, None)
                 continue
 
             if ChecksumStore.file_hash(dest) == stored_hash:
                 dest.unlink()
+                # A skill is a directory; take it with the file, but
+                # only if nothing else of the person's is in there.
+                parent = dest.parent
+                if parent != self.dest_dir and not any(parent.iterdir()):
+                    parent.rmdir()
                 store.entries.pop(key, None)
                 report.removed.append(entry_name)
                 conflicts.pop(entry_name, None)
             else:
-                conflicts[entry_name] = AgentConflict(
+                conflicts[entry_name] = EntryConflict(
+                    entry_kind=self._kind,
                     entry_name=entry_name,
-                    kind="removed",
+                    change="removed",
                     incoming_hash=stored_hash,
                 )

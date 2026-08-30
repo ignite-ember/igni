@@ -80,7 +80,6 @@ def _style_dirs(
     project_dir: Path,
     plugin_roots: list[tuple[Path, str]] | None,
     read_claude: bool,
-    group_dir: Path | None = None,
 ) -> list[Path]:
     """Roots to scan, in load order (later overrides earlier)."""
     home = Path.home()
@@ -93,8 +92,6 @@ def _style_dirs(
     roots.append(project_dir / ".ember" / "output-styles")
     for plugin_root, _ in plugin_roots or []:
         roots.append(plugin_root / "output-styles")
-    if group_dir is not None:
-        roots.append(group_dir)
     return roots
 
 
@@ -102,7 +99,6 @@ def discover_output_styles(
     project_dir: Path,
     plugin_roots: list[tuple[Path, str]] | None = None,
     read_claude: bool = True,
-    group_dir: Path | None = None,
 ) -> dict[str, OutputStyle]:
     """Walk every configured root and return ``name → style``.
 
@@ -111,7 +107,7 @@ def discover_output_styles(
     as it does for slash commands / skills.
     """
     out: dict[str, OutputStyle] = {}
-    for root in _style_dirs(project_dir, plugin_roots, read_claude, group_dir):
+    for root in _style_dirs(project_dir, plugin_roots, read_claude):
         if not root.is_dir():
             continue
         for path in sorted(root.glob("*.md")):

@@ -110,13 +110,7 @@ class MarkdownCommand(BaseModel):
         return text
 
     @classmethod
-    def discover(
-        cls,
-        project_dir: Path,
-        *,
-        read_claude: bool = True,
-        group_dir: Path | None = None,
-    ) -> dict[str, MarkdownCommand]:
+    def discover(cls, project_dir: Path, *, read_claude: bool = True) -> dict[str, MarkdownCommand]:
         """Walk all configured roots and return ``name → command``.
 
         Later roots override earlier ones on name collisions — project
@@ -124,7 +118,7 @@ class MarkdownCommand(BaseModel):
         tier). The leading-slash isn't part of the key (users invoke
         ``/review`` but the dict is keyed ``review``)."""
         out: dict[str, MarkdownCommand] = {}
-        for root in _commands_dirs(project_dir, read_claude=read_claude, group_dir=group_dir):
+        for root in _commands_dirs(project_dir, read_claude=read_claude):
             if not root.is_dir():
                 continue
             for path in sorted(root.glob("*.md")):
@@ -137,16 +131,12 @@ class MarkdownCommand(BaseModel):
 # ── Discovery ────────────────────────────────────────────────────
 
 
-def _commands_dirs(
-    project_dir: Path,
-    read_claude: bool,
-    group_dir: Path | None = None,
-) -> list[Path]:
+def _commands_dirs(project_dir: Path, read_claude: bool) -> list[Path]:
     """Roots to scan, in load order (later overrides earlier).
 
-    ``group_dir`` is the org's, from the policy cache. It goes last so a
-    command the group ships wins over a same-named local one — the same
-    place the org tier sits for every other kind.
+    No org root: a group's commands are synced into
+    ``<project>/.ember/commands`` so a person can edit one, and reading
+    the server's copy as well would let it outrank the edit.
     """
     home = Path.home()
     roots: list[Path] = []
@@ -156,8 +146,6 @@ def _commands_dirs(
     if read_claude:
         roots.append(project_dir / ".claude" / "commands")
     roots.append(project_dir / ".ember" / "commands")
-    if group_dir is not None:
-        roots.append(group_dir)
     return roots
 
 
@@ -222,13 +210,12 @@ def _load_command_file(path: Path) -> MarkdownCommand | None:
 def discover_markdown_commands(
     project_dir: Path,
     read_claude: bool = True,
-    group_dir: Path | None = None,
 ) -> dict[str, MarkdownCommand]:
     """Thin wrapper around :meth:`MarkdownCommand.discover` retained
     for existing module-level call sites (``backend/server.py``,
     ``backend/command_handler.py``, several tests that patch by
     dotted path). New code should call the classmethod directly."""
-    return MarkdownCommand.discover(project_dir, read_claude=read_claude, group_dir=group_dir)
+    return MarkdownCommand.discover(project_dir, read_claude=read_claude)
 
 
 # ── Token substitution ──────────────────────────────────────────

@@ -151,6 +151,24 @@ class GroupPolicyEntry(BaseModel):
         return self
 
 
+class UnchangedPack:
+    """The server's answer when the pack we hold is still current.
+
+    A distinct type rather than ``None`` because the two mean opposite
+    things to the caller: ``None`` is "I could not tell you", this is "I
+    checked, and you are up to date". Conflating them would make a
+    failed request look like a confirmation.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return "PACK_UNCHANGED"
+
+
+PACK_UNCHANGED = UnchangedPack()
+
+
 class GroupPolicyPack(BaseModel):
     """Everything a group gives its people — fetched from ember-server."""
 
@@ -163,6 +181,10 @@ class GroupPolicyPack(BaseModel):
     # is resolved server-side, so this is carried for display and for
     # the frontmatter fallback rather than acted on here.
     default_model: str | None = None
+
+    #: The server's tag for this pack's content. Sent back on the next
+    #: poll so an unchanged pack costs a 304 and no payload.
+    etag: str | None = None
 
     def to_settings_dict(self) -> dict:
         """Convert to a settings dict for the accumulator.
@@ -381,6 +403,7 @@ class GroupPolicyCache:
             "fetched_at": pack.fetched_at.isoformat() if pack.fetched_at else None,
             "entry_count": len(pack.entries),
             "default_model": pack.default_model,
+            "etag": pack.etag,
         }
         (self._cache_dir / "pack_meta.json").write_text(json.dumps(meta), encoding="utf-8")
 
@@ -493,6 +516,33 @@ class GroupPolicyCache:
         age = (datetime.now(timezone.utc) - fetched_at).total_seconds()
         return age > _CACHE_TTL_SECONDS
 
+    def stored_etag(self) -> str | None:
+        """The tag the server gave us for the pack on disk."""
+        meta = self.read_pack_meta() or {}
+        tag = meta.get("etag")
+        return str(tag) if tag else None
+
+    async def _call_fetch(self, fetch: Any, token: str) -> Any:
+        """Call the fetcher, handing it our tag when it takes one.
+
+        Tests and older callers pass a one-argument coroutine; the real
+        client takes ``(token, etag)``. Trying the richer call first
+        keeps both working without every stub having to grow a
+        parameter it does not use.
+        """
+        try:
+            return await fetch(token, self.stored_etag())
+        except TypeError:
+            return await fetch(token)
+
+    def _touch(self) -> None:
+        """Mark the cached pack as checked just now."""
+        meta = self.read_pack_meta()
+        if not meta:
+            return
+        meta["fetched_at"] = datetime.now(timezone.utc).isoformat()
+        (self._cache_dir / "pack_meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
     async def refresh_if_stale(
         self,
         token: str,
@@ -514,11 +564,17 @@ class GroupPolicyCache:
         if not self._is_stale():
             return False
         try:
-            pack = await fetch(token)
+            pack = await self._call_fetch(fetch, token)
         except Exception as exc:
             # Warning (not debug) so portal outages are visible in the
             # standard log without flipping a flag.
             logger.warning("group-policy fetch failed: %s", exc)
+            return False
+        if isinstance(pack, UnchangedPack):
+            # Nothing to write, but the pack on disk is confirmed
+            # current — so stamp it, or every poll would find it stale
+            # and ask again.
+            self._touch()
             return False
         if pack is None:
             return False

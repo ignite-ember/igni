@@ -59,6 +59,7 @@ from ember_code.core.config.schemas import (
     ContextConfig,
     DisplayConfig,
     EvalsConfig,
+    GroupPolicyConfig,
     GuardrailsConfig,
     HooksConfig,
     KnowledgeConfig,
@@ -100,6 +101,7 @@ class Settings(BaseModel):
     evals: EvalsConfig = Field(default_factory=EvalsConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
+    group_policy: GroupPolicyConfig = Field(default_factory=GroupPolicyConfig)
     code_index: CodeIndexConfig = Field(default_factory=CodeIndexConfig)
     display: DisplayConfig = Field(default_factory=DisplayConfig)
 
@@ -218,6 +220,7 @@ def load_settings(
 __all__ = [
     "AgentsConfig",
     "AuthConfig",
+    "GroupPolicyConfig",
     "CodeIndexConfig",
     "ContextConfig",
     "DisplayConfig",

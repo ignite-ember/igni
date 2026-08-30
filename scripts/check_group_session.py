@@ -111,7 +111,6 @@ async def main() -> int:
         found = MarkdownCommand.discover(
             session.project_dir,
             read_claude=settings.rules.cross_tool_support,
-            group_dir=session.group_dir_for("commands"),
         )
         check(set(by_kind["commands"]) <= set(found), "group slash commands resolve")
 

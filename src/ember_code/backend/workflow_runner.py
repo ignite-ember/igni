@@ -112,13 +112,10 @@ class WorkflowDiscovery:
     single ``workflow_meta`` event). Cached by mtime per file.
     """
 
-    def __init__(self, *, project_dir: Path, group_dir: Path | None = None):
+    def __init__(self, *, project_dir: Path):
         self._project_dir = Path(project_dir)
         self._team_dir = self._project_dir / DEFAULT_WORKFLOW_DIR_TEAM
         self._user_dir = self._project_dir / DEFAULT_WORKFLOW_DIR_USER
-        # The org's, from the group policy cache. Listed last so a
-        # workflow the group ships wins the name.
-        self._group_dir = Path(group_dir) if group_dir else None
         self._cache: dict[Path, tuple[float, WorkflowMetaEnvelope]] = {}
 
     @property
@@ -137,8 +134,8 @@ class WorkflowDiscovery:
         the shadow pass (later entries overwrite earlier ones).
         """
         out: list[Path] = []
-        for directory in (self._team_dir, self._user_dir, self._group_dir):
-            if directory is not None and directory.is_dir():
+        for directory in (self._team_dir, self._user_dir):
+            if directory.is_dir():
                 out.extend(sorted(directory.glob("*.mjs")))
         return out
 
@@ -272,11 +269,10 @@ class WorkflowRunner:
         *,
         project_dir: Path,
         push: PushNotificationBridge,
-        group_dir: Path | None = None,
     ):
         self._project_dir = Path(project_dir)
         self._push = push
-        self._discovery = WorkflowDiscovery(project_dir=self._project_dir, group_dir=group_dir)
+        self._discovery = WorkflowDiscovery(project_dir=self._project_dir)
         self._runs: dict[str, _RunState] = {}
 
     @property

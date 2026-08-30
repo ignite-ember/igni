@@ -139,7 +139,7 @@ class TestWhenSomebodyEditedIt:
         report = _sync(project, source).run()
 
         assert [c.entry_name for c in report.conflicts] == ["reviewer"]
-        assert report.conflicts[0].kind == "changed"
+        assert report.conflicts[0].change == "changed"
 
     def test_the_incoming_version_is_parked_where_it_can_be_read(self, project: Path, source: Path):
         """Answering "which one" is easier next to the file than in the
@@ -174,7 +174,7 @@ class TestWhenSomebodyEditedIt:
         report = _sync(project, source).run()
 
         assert _local(project, "reviewer").exists()
-        assert [c.kind for c in report.conflicts] == ["removed"]
+        assert [c.change for c in report.conflicts] == ["removed"]
 
     def test_a_file_we_never_put_there_is_not_adopted(self, project: Path, source: Path):
         """Somebody's own reviewer.md predating the group is theirs."""
@@ -301,3 +301,116 @@ class TestTheHandoverFromTheBundle:
 
         entries = json.loads((project / ".ember" / ".checksums.json").read_text(encoding="utf-8"))
         assert "agents/reviewer.md" in entries
+
+
+class TestEveryEditableKind:
+    """The promise is not "your agents survive". It is that anything you
+    opened and changed survives, and that you are asked rather than
+    overwritten. A skill you tuned is as much your work as an agent.
+    """
+
+    CASES = [
+        ("agents", "reviewer", "reviewer.md"),
+        ("skills", "deploy", "deploy/SKILL.md"),
+        ("commands", "ship", "ship.md"),
+        ("rules", "style", "style.md"),
+        ("output-styles", "terse", "terse.md"),
+        ("workflows", "review", "review.mjs"),
+    ]
+
+    @staticmethod
+    def _write_source(source_root: Path, kind: str, rel: str, body: str) -> None:
+        path = source_root / kind / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+
+    def _sync(self, project: Path, source_root: Path, kind: str) -> GroupAgentSync:
+        return GroupAgentSync(
+            project_dir=project,
+            source_dir=source_root / kind,
+            config=InitConfig(),
+            kind=kind,
+        )
+
+    @pytest.mark.parametrize("kind,name,rel", CASES)
+    def test_it_arrives(self, project: Path, tmp_path: Path, kind: str, name: str, rel: str):
+        source = tmp_path / "cache"
+        self._write_source(source, kind, rel, "the group's version")
+
+        report = self._sync(project, source, kind).run()
+
+        assert report.copied == [name]
+
+    @pytest.mark.parametrize("kind,name,rel", CASES)
+    def test_an_edit_is_not_overwritten(self, project: Path, tmp_path: Path, kind, name, rel):
+        source = tmp_path / "cache"
+        self._write_source(source, kind, rel, "the group's version")
+        sync = self._sync(project, source, kind)
+        sync.run()
+
+        local = project / ".ember" / kind / rel
+        local.write_text("MY VERSION", encoding="utf-8")
+        self._write_source(source, kind, rel, "the group's newer version")
+        report = self._sync(project, source, kind).run()
+
+        assert local.read_text(encoding="utf-8") == "MY VERSION"
+        assert [c.entry_name for c in report.conflicts] == [name]
+
+    @pytest.mark.parametrize("kind,name,rel", CASES)
+    def test_the_question_names_the_thing(self, project: Path, tmp_path: Path, kind, name, rel):
+        """ "Your group changed the skill \"deploy\"" — not "the agent"."""
+        source = tmp_path / "cache"
+        self._write_source(source, kind, rel, "v1")
+        self._sync(project, source, kind).run()
+        (project / ".ember" / kind / rel).write_text("MINE", encoding="utf-8")
+        self._write_source(source, kind, rel, "v2")
+
+        conflict = self._sync(project, source, kind).run().conflicts[0]
+
+        assert conflict.entry_kind == kind
+        assert name in conflict.question()
+        assert "keep yours" in conflict.question()
+
+    @pytest.mark.parametrize("kind,name,rel", CASES)
+    def test_taking_the_group_version_replaces_it(
+        self, project: Path, tmp_path: Path, kind, name, rel
+    ):
+        source = tmp_path / "cache"
+        self._write_source(source, kind, rel, "v1")
+        self._sync(project, source, kind).run()
+        (project / ".ember" / kind / rel).write_text("MINE", encoding="utf-8")
+        self._write_source(source, kind, rel, "v2")
+        self._sync(project, source, kind).run()
+
+        self._sync(project, source, kind).resolve(name, accept_incoming=True)
+
+        assert (project / ".ember" / kind / rel).read_text(encoding="utf-8") == "v2"
+
+    def test_questions_of_different_kinds_share_one_list(self, project: Path, tmp_path: Path):
+        """A person answering them wants the lot, not one list per kind
+        — and two kinds may hold the same name."""
+        source = tmp_path / "cache"
+        for kind, _name, rel in (self.CASES[0], self.CASES[1]):
+            self._write_source(source, kind, rel, "v1")
+            self._sync(project, source, kind).run()
+            (project / ".ember" / kind / rel).write_text("MINE", encoding="utf-8")
+            self._write_source(source, kind, rel, "v2")
+            self._sync(project, source, kind).run()
+
+        everything = self._sync(project, source, "agents").pending_all()
+
+        assert {c.entry_kind for c in everything} == {"agents", "skills"}
+
+    def test_answering_one_leaves_the_others(self, project: Path, tmp_path: Path):
+        source = tmp_path / "cache"
+        for kind, _name, rel in (self.CASES[0], self.CASES[1]):
+            self._write_source(source, kind, rel, "v1")
+            self._sync(project, source, kind).run()
+            (project / ".ember" / kind / rel).write_text("MINE", encoding="utf-8")
+            self._write_source(source, kind, rel, "v2")
+            self._sync(project, source, kind).run()
+
+        self._sync(project, source, "agents").resolve("reviewer", accept_incoming=True)
+
+        left = self._sync(project, source, "agents").pending_all()
+        assert [c.id for c in left] == ["skills/deploy"]

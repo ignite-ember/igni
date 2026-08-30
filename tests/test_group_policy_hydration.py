@@ -73,7 +73,8 @@ async def test_hydrate_fetches_and_materializes(tmp_path: Path):
     refreshed = await ctrl._hydrate_group_policy(token="t-1")
 
     assert refreshed is True
-    ctrl._portal.fetch_group_pack.assert_awaited_once_with("t-1")
+    # Called with the tag we hold, so an unchanged pack costs a 304.
+    ctrl._portal.fetch_group_pack.assert_awaited_once_with("t-1", None)
     # Cache directory should now have the materialized agent file.
     agent_file = tmp_path / "group-policy" / "agents" / "reviewer.md"
     assert agent_file.exists()

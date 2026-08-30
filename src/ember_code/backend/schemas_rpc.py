@@ -129,16 +129,19 @@ class CloudPlan(BaseModel):
 
 
 class GroupAgentConflictView(BaseModel):
-    """One agent the group changed under a local edit.
+    """One thing the group changed under a local edit.
 
-    Carries the question rather than making the FE compose it: whether
-    "the group changed this" or "the group no longer ships this" is the
-    right sentence depends on ``kind``, and that is the backend's to
-    know.
+    Carries the question rather than making the FE compose it: the right
+    sentence depends on what the thing is and what happened to it, and
+    that is the backend's to know.
     """
 
     entry_name: str
-    kind: str  # changed | removed
+    #: What it is — agents, skills, commands, rules, output-styles,
+    #: workflows. Two kinds may hold the same name.
+    entry_kind: str = "agents"
+    #: What happened on the server: changed | removed.
+    kind: str
     question: str
 
 
@@ -166,6 +169,7 @@ class ResolveGroupAgentResult(BaseModel):
 
     resolved: bool
     entry_name: str
+    entry_kind: str = "agents"
     accepted_incoming: bool
     #: True when the agent pool was rebuilt as a result.
     reloaded: bool = False

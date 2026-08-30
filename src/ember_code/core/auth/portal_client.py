@@ -43,8 +43,10 @@ from ember_code.core.auth.schemas import (
     ValidateResult,
 )
 from ember_code.core.config.group_policy import (
+    PACK_UNCHANGED,
     GroupPolicyEntry,
     GroupPolicyPack,
+    UnchangedPack,
 )
 
 logger = logging.getLogger(__name__)
@@ -205,19 +207,37 @@ class PortalClient:
         except Exception:
             return None
 
-    async def fetch_group_pack(self, token: str) -> GroupPolicyPack | None:
-        """Fetch /v1/portal/me/group/pack and return a GroupPolicyPack or None.
+    async def fetch_group_pack(
+        self,
+        token: str,
+        etag: str | None = None,
+    ) -> GroupPolicyPack | None | UnchangedPack:
+        """Fetch the group pack, or learn that it has not changed.
 
-        Returns None when the user has no group or on any network/parse error.
+        Three answers, and the caller has to tell them apart:
+
+        * a :class:`GroupPolicyPack` — here is the group's configuration
+        * ``None`` — no group, or the request failed; keep what you have
+        * :data:`PACK_UNCHANGED` — the server says your copy is current
+
+        Passing ``etag`` is what makes the third possible. Sessions poll
+        this every few minutes, and the answer is nearly always the
+        third; without it every poll would ship a full set of agent
+        prompts to say nothing had happened.
         """
         url = f"{self._api_url.rstrip('/')}/v1/portal/me/group/pack"
+        headers = {"Authorization": f"Bearer {token}"}
+        if etag:
+            headers["If-None-Match"] = etag
         try:
             async with httpx.AsyncClient(timeout=self._http_timeout) as client:
-                resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+                resp = await client.get(url, headers=headers)
         except Exception as exc:
             logger.debug("fetch_group_pack network error: %s", exc)
             return None
 
+        if resp.status_code == 304:
+            return PACK_UNCHANGED
         if resp.status_code == 404:
             return None
         if resp.status_code == 204:
@@ -238,7 +258,11 @@ class PortalClient:
                 group_id=payload.get("group_id", ""),
                 group_name=payload.get("group_name", ""),
                 fetched_at=payload.get("fetched_at"),
+                # Dropped silently until now: the group's model reached
+                # the CLI as None however it was set on the server.
+                default_model=payload.get("default_model"),
                 entries=entries,
+                etag=resp.headers.get("etag"),
             )
         except Exception as exc:
             logger.debug("fetch_group_pack schema error: %s", exc)

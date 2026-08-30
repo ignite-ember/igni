@@ -101,15 +101,12 @@ class RulesIndex:
         self,
         project_dir: Path,
         read_claude_md: bool = True,
-        group_rules_dir: Path | None = None,
     ) -> None:
         try:
             self.project_dir = project_dir.resolve()
         except OSError:
             self.project_dir = project_dir
         self._read_claude_md = read_claude_md
-        #: The org's path-scoped rules, from the group policy cache.
-        self._group_rules_dir = group_rules_dir
         self._filenames = _rules_filenames(read_claude_md)
         # ``{dir -> list of rules files in load order}``. Multiple
         # files per dir support the override pattern: a subdir that
@@ -191,8 +188,6 @@ class RulesIndex:
         candidates = [self.project_dir / ".ember" / "rules"]
         if self._read_claude_md:
             candidates.append(self.project_dir / ".claude" / "rules")
-        if self._group_rules_dir is not None:
-            candidates.append(self._group_rules_dir)
         for rules_dir in candidates:
             if not rules_dir.is_dir():
                 continue

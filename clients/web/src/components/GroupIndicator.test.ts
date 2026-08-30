@@ -43,7 +43,7 @@ describe("classify", () => {
     const badge = classify(
       policy({
         pending_conflicts: [
-          { entry_name: "reviewer", kind: "changed", question: "reviewer: take theirs?" },
+          { entry_name: "reviewer", entry_kind: "agents", kind: "changed", question: "reviewer: take theirs?" },
         ],
       }),
     );
@@ -55,7 +55,7 @@ describe("classify", () => {
     const badge = classify(
       policy({
         pending_conflicts: [
-          { entry_name: "reviewer", kind: "changed", question: "reviewer: take theirs?" },
+          { entry_name: "reviewer", entry_kind: "agents", kind: "changed", question: "reviewer: take theirs?" },
         ],
       }),
     );
@@ -66,8 +66,8 @@ describe("classify", () => {
     const badge = classify(
       policy({
         pending_conflicts: [
-          { entry_name: "a", kind: "changed", question: "a?" },
-          { entry_name: "b", kind: "removed", question: "b?" },
+          { entry_name: "a", entry_kind: "agents", kind: "changed", question: "a?" },
+          { entry_name: "b", entry_kind: "agents", kind: "removed", question: "b?" },
         ],
       }),
     );
@@ -78,7 +78,7 @@ describe("classify", () => {
   it("is only clickable when there is something to click", () => {
     expect(classify(policy()).actionable).toBe(false);
     expect(
-      classify(policy({ pending_conflicts: [{ entry_name: "a", kind: "changed", question: "a?" }] }))
+      classify(policy({ pending_conflicts: [{ entry_name: "a", entry_kind: "agents", kind: "changed", question: "a?" }] }))
         .actionable,
     ).toBe(true);
   });

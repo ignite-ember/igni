@@ -56,11 +56,19 @@ def session(tmp_path: Path, monkeypatch):
     # cache, which points at the real home directory.
     monkeypatch.setattr(GroupPolicyCache, "__init__", _pinned_cache_init(cache_dir))
 
+    def _sync(kind: str = "agents") -> GroupAgentSync:
+        return GroupAgentSync(
+            project_dir=project,
+            source_dir=cache_dir / kind,
+            kind=kind,
+        )
+
     stub = MagicMock()
     stub.project_dir = project
-    stub.group_agent_sync.side_effect = lambda: GroupAgentSync(
-        project_dir=project,
-        source_dir=cache_dir / "agents",
+    stub.group_agent_sync.side_effect = _sync
+    stub.group_conflicts.side_effect = lambda: _sync().pending_all()
+    stub.resolve_group_conflict.side_effect = lambda kind, name, accept: _sync(kind).resolve(
+        name, accept_incoming=accept
     )
     stub.reload_group_agents.return_value = True
     stub._cache_dir = cache_dir

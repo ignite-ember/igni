@@ -4553,6 +4553,15 @@ button {
   line-height: 1.45;
 }
 
+/* The consequence of each answer, under the question. Nobody should
+ * have to guess whether "Take the group's" discards their work. */
+.group-conflict-note {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  line-height: 1.4;
+}
+
 .group-conflict-actions {
   display: flex;
   gap: 6px;

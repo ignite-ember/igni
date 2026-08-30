@@ -134,10 +134,11 @@ class PanelsController:
         conflicts = [
             GroupAgentConflictView(
                 entry_name=c.entry_name,
-                kind=c.kind,
+                entry_kind=c.entry_kind,
+                kind=c.change,
                 question=c.question(),
             )
-            for c in self._session.group_agent_sync().pending()
+            for c in self._session.group_conflicts()
         ]
 
         meta = GroupPolicyCache().read_pack_meta()
@@ -156,6 +157,7 @@ class PanelsController:
         self,
         entry_name: str,
         accept_incoming: bool,
+        entry_kind: str = "agents",
     ) -> ResolveGroupAgentResult:
         """Answer one "yours or theirs", and apply it to the live pool.
 
@@ -163,9 +165,10 @@ class PanelsController:
         the person answered it from — otherwise taking the group's
         version would do nothing until the next start.
         """
-        touched = self._session.group_agent_sync().resolve(
+        touched = self._session.resolve_group_conflict(
+            entry_kind,
             entry_name,
-            accept_incoming=accept_incoming,
+            accept=accept_incoming,
         )
         reloaded = False
         if touched:
@@ -173,6 +176,7 @@ class PanelsController:
         return ResolveGroupAgentResult(
             resolved=True,
             entry_name=entry_name,
+            entry_kind=entry_kind,
             accepted_incoming=accept_incoming,
             reloaded=reloaded,
         )

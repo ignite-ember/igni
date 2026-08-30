@@ -1145,11 +1145,13 @@ class BackendServer:
         self,
         entry_name: str,
         accept_incoming: bool,
+        entry_kind: str = "agents",
     ) -> ResolveGroupAgentResult:
         """See :meth:`PanelsController.resolve_group_agent_conflict`."""
         return self.panels.resolve_group_agent_conflict(
             entry_name=entry_name,
             accept_incoming=accept_incoming,
+            entry_kind=entry_kind,
         )
 
     def get_slash_commands(self) -> list[SlashCommandEntry]:

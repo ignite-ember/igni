@@ -3,6 +3,9 @@ import type { EmberClient } from "../protocol/client";
 
 export interface GroupAgentConflict {
   entry_name: string;
+  /** What it is: agents, skills, commands, rules, output-styles, workflows. */
+  entry_kind: string;
+  /** What happened on the server: changed | removed. */
   kind: string;
   question: string;
 }
@@ -52,7 +55,7 @@ export function classify(policy: GroupPolicy | null): GroupBadge {
       detail:
         pending === 1
           ? policy.pending_conflicts[0].question
-          : `${pending} agents changed in ${policy.group_name} where you have local edits`,
+          : `${pending} things ${policy.group_name} ships changed where you have local edits`,
       actionable: true,
     };
   }
@@ -95,11 +98,13 @@ export function GroupIndicator({ client }: { client: EmberClient }) {
     return () => clearInterval(interval);
   }, [refresh]);
 
-  const resolve = async (entryName: string, acceptIncoming: boolean) => {
-    setBusy(entryName);
+  const resolve = async (conflict: GroupAgentConflict, acceptIncoming: boolean) => {
+    const id = `${conflict.entry_kind}/${conflict.entry_name}`;
+    setBusy(id);
     try {
       await client.rpc("resolve_group_agent_conflict", {
-        entry_name: entryName,
+        entry_name: conflict.entry_name,
+        entry_kind: conflict.entry_kind,
         accept_incoming: acceptIncoming,
       });
       await refresh();
@@ -125,25 +130,27 @@ export function GroupIndicator({ client }: { client: EmberClient }) {
 
       {open && conflicts.length > 0 && (
         <div className="group-conflicts" role="dialog" aria-label="Agent changes to review">
-          {conflicts.map((conflict) => (
-            <div className="group-conflict" key={conflict.entry_name}>
-              <div className="group-conflict-question">{conflict.question}</div>
-              <div className="group-conflict-actions">
-                <button
-                  disabled={busy === conflict.entry_name}
-                  onClick={() => void resolve(conflict.entry_name, true)}
-                >
-                  {conflict.kind === "removed" ? "Remove it" : "Take the group's"}
-                </button>
-                <button
-                  disabled={busy === conflict.entry_name}
-                  onClick={() => void resolve(conflict.entry_name, false)}
-                >
-                  Keep mine
-                </button>
+          {conflicts.map((conflict) => {
+            const id = `${conflict.entry_kind}/${conflict.entry_name}`;
+            return (
+              <div className="group-conflict" key={id}>
+                <div className="group-conflict-question">{conflict.question}</div>
+                <div className="group-conflict-note">
+                  {conflict.kind === "removed"
+                    ? "Keeping yours leaves it in place, and your group will not ship it again."
+                    : "Taking theirs replaces your copy — your edits to this one are lost."}
+                </div>
+                <div className="group-conflict-actions">
+                  <button disabled={busy === id} onClick={() => void resolve(conflict, true)}>
+                    {conflict.kind === "removed" ? "Remove it" : "Take the group's"}
+                  </button>
+                  <button disabled={busy === id} onClick={() => void resolve(conflict, false)}>
+                    Keep mine
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

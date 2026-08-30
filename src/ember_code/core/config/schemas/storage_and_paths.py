@@ -20,6 +20,23 @@ class AuthConfig(BaseModel):
     credentials_file: str = "~/.ember/credentials.json"
 
 
+class GroupPolicyConfig(BaseModel):
+    """How often to ask the server what this person's group holds.
+
+    Until now the answer arrived once, at backend start: an admin who
+    moved somebody between groups at nine o'clock reached a session
+    opened at eight only when it was restarted.
+
+    The poll is cheap — the server answers 304 with no body when
+    nothing has changed — so the interval trades latency against very
+    little. Five minutes matches the cache TTL, so there is one number
+    rather than two. Zero turns polling off, for a deployment that would
+    rather its machines only check at startup.
+    """
+
+    poll_seconds: int = 300
+
+
 class CodeIndexConfig(BaseModel):
     """Tunables for the local code-index sync.
 

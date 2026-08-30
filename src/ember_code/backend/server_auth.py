@@ -133,6 +133,9 @@ class AuthController:
             existing_token = self._settings.auth.access_token
         except Exception:
             existing_token = None
+        #: The periodic re-check, if one is running.
+        self._poll_task: asyncio.Task | None = None
+
         if existing_token:
             try:
                 loop = asyncio.get_running_loop()
@@ -140,6 +143,56 @@ class AuthController:
                 loop = None
             if loop is not None:
                 loop.create_task(self._hydrate_group_policy(existing_token))
+                self.start_group_policy_polling()
+
+    def start_group_policy_polling(self) -> None:
+        """Re-check the group on a timer, if the deployment wants one.
+
+        A session used to learn its group once, at start: an admin who
+        moved somebody at nine reached a session opened at eight only
+        when it was restarted. Now it asks again every
+        ``settings.group_policy.poll_seconds``, and the ask is cheap —
+        the server answers 304 with no body when nothing has changed,
+        so the usual cost of a poll is a round trip and a hash
+        comparison.
+
+        Zero turns it off, for a deployment that would rather its
+        machines only check at startup.
+        """
+        interval = getattr(self._settings.group_policy, "poll_seconds", 0)
+        if interval <= 0 or self._poll_task is not None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._poll_task = loop.create_task(self._poll_group_policy(interval))
+
+    def stop_group_policy_polling(self) -> None:
+        """Cancel the timer. Idempotent; safe on a loop that has gone."""
+        if self._poll_task is not None:
+            self._poll_task.cancel()
+            self._poll_task = None
+
+    async def _poll_group_policy(self, interval: int) -> None:
+        """Ask again, forever, until cancelled.
+
+        Every failure mode here is a reason to keep going rather than
+        stop: a server restart, a laptop asleep, a token that expired
+        and will be replaced by the next login. A polling loop that
+        dies on the first error is worse than none, because nothing
+        says it stopped.
+        """
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                token = self._settings.auth.access_token
+                if token:
+                    await self._hydrate_group_policy(token)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — the loop outlives its errors
+                logger.debug("group-policy poll failed: %s", exc)
 
     async def login(self, on_status: StatusCallback = None) -> LoginResult:
         """Run the browser-callback login flow.

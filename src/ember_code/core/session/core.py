@@ -75,7 +75,12 @@ from ember_code.core.hooks.executor import HookExecutor
 from ember_code.core.hooks.loader import HookLoader
 from ember_code.core.hooks.tool_hook import ToolEventHook
 from ember_code.core.init import ProjectInitializer
-from ember_code.core.init.group_agent_sync import GroupAgentSync, GroupSyncReport
+from ember_code.core.init.group_agent_sync import (
+    SYNCED_KINDS,
+    EntryConflict,
+    GroupAgentSync,
+    GroupSyncReport,
+)
 from ember_code.core.learn import create_learning_machine  # noqa: F401 — test-patch target
 from ember_code.core.loop import LoopProgressStore, LoopStore, LoopToolResult
 from ember_code.core.lsp import LspServerManager, load_lsp_config
@@ -228,7 +233,7 @@ class Session:
             skip_bundled_agents=self._group_ships("agents"),
             skip_builtin_hook_registration=self._group_ships("hooks"),
         )
-        self._group_sync = self._sync_group_agents()
+        self._group_sync = self._sync_group_entries()
 
         # ── Storage (Agno AsyncBaseDb) ────────────────────────────────
         self.db = StorageManager.build_db(settings, project_dir=self.project_dir)
@@ -455,12 +460,10 @@ class Session:
             self.project_dir,
             settings.context.project_file,
             read_claude_md=settings.rules.cross_tool_support,
-            group_rules_dir=self.group_dir_for("rules"),
         )
         self.rules_index = RulesIndex(
             self.project_dir,
             read_claude_md=settings.rules.cross_tool_support,
-            group_rules_dir=self.group_dir_for("rules"),
         )
 
     def _init_loop_state(self) -> None:
@@ -683,8 +686,8 @@ class Session:
         """
         return self._group_policy_dir / kind
 
-    def group_agent_sync(self) -> GroupAgentSync:
-        """The merge between the group's agents and this project's copy.
+    def group_agent_sync(self, kind: str = "agents") -> GroupAgentSync:
+        """The merge between what the group ships and this project's copy.
 
         Constructed per call rather than held: it owns no state beyond
         two paths, and everything it reads lives on disk, so a stale
@@ -693,34 +696,59 @@ class Session:
         """
         return GroupAgentSync(
             project_dir=self.project_dir,
-            source_dir=self._group_agents_dir,
+            source_dir=self.group_dir_for(kind),
+            kind=kind,
         )
 
+    def group_conflicts(self) -> list[EntryConflict]:
+        """Everything the group changed under a local edit, any kind.
+
+        One list, because it is one question as far as the person is
+        concerned: something you edited has moved on the server, and
+        somebody has to say which version wins.
+        """
+        return self.group_agent_sync().pending_all()
+
+    def resolve_group_conflict(self, entry_kind: str, entry_name: str, *, accept: bool) -> bool:
+        """Answer one. Returns whether anything on disk moved."""
+        return self.group_agent_sync(entry_kind).resolve(entry_name, accept_incoming=accept)
+
     def reload_group_agents(self) -> bool:
-        """Re-sync the group's agents and rebuild the pool if anything moved.
+        """Re-sync everything the group ships and rebuild if it moved.
 
         Called after the policy cache is refreshed — an admin moving
-        somebody from engineering to legal should change what they have,
+        somebody from engineering to legal should change what they have
         without being told to restart — and after a conflict is answered.
 
-        Returns whether the pool was rebuilt. Never raises: the session
+        Every synced kind goes through the same merge, so a person's
+        edits are kept and asked about rather than overwritten, whether
+        the thing they edited was an agent or a skill.
+
+        Returns whether the pools were rebuilt. Never raises: the session
         that is running matters more than the update that is not.
         """
         try:
-            report = self.group_agent_sync().run()
-            if not report.changed_anything:
+            moved = False
+            for kind in SYNCED_KINDS:
+                report = self.group_agent_sync(kind).run()
+                if report.changed_anything:
+                    moved = True
+                    logger.info(
+                        "Group %s reloaded: %d added, %d updated, %d removed",
+                        kind,
+                        len(report.copied),
+                        len(report.updated),
+                        len(report.removed),
+                    )
+                for conflict in report.conflicts:
+                    logger.info("Group %s needs an answer — %s", kind, conflict.question())
+            if not moved:
                 return False
             self._init_agent_and_skill_pools(self.settings)
             self._rebuild_main_team()
-            logger.info(
-                "Group agents reloaded: %d added, %d updated, %d removed",
-                len(report.copied),
-                len(report.updated),
-                len(report.removed),
-            )
             return True
         except Exception as exc:  # noqa: BLE001 — a live session outranks an update
-            logger.warning("Could not reload the group's agents: %s", exc)
+            logger.warning("Could not reload what the group ships: %s", exc)
             return False
 
     def _group_ships(self, kind: str) -> bool:
@@ -738,32 +766,44 @@ class Session:
             logger.debug("Could not inspect the group %s directory: %s", kind, exc)
             return False
 
-    def _sync_group_agents(self) -> GroupSyncReport:
-        """Copy the group's agents into the project, keeping local edits.
+    def _sync_group_entries(self) -> GroupSyncReport:
+        """Copy what the group ships into the project, keeping local edits.
 
         Runs before the pools are built so the session sees the result.
+        Every kind somebody might reasonably open and change goes through
+        the same merge — an edited skill is kept and asked about, exactly
+        as an edited agent is.
+
         Never raises: a sync that cannot run should cost the update, not
         the session.
         """
-        try:
-            report = GroupAgentSync(
-                project_dir=self.project_dir,
-                source_dir=self._group_agents_dir,
-            ).run()
-        except Exception as exc:  # noqa: BLE001 — a broken sync must not stop a start
-            logger.warning("Could not sync the group's agents: %s", exc)
-            return GroupSyncReport()
+        combined = GroupSyncReport()
+        for kind in SYNCED_KINDS:
+            try:
+                report = GroupAgentSync(
+                    project_dir=self.project_dir,
+                    source_dir=self.group_dir_for(kind),
+                    kind=kind,
+                ).run()
+            except Exception as exc:  # noqa: BLE001 — a broken sync must not stop a start
+                logger.warning("Could not sync the group's %s: %s", kind, exc)
+                continue
 
-        if report.changed_anything:
-            logger.info(
-                "Group agents synced: %d added, %d updated, %d removed",
-                len(report.copied),
-                len(report.updated),
-                len(report.removed),
-            )
-        for conflict in report.conflicts:
-            logger.info("Group agent needs an answer — %s", conflict.question())
-        return report
+            combined.copied.extend(report.copied)
+            combined.updated.extend(report.updated)
+            combined.removed.extend(report.removed)
+            combined.conflicts.extend(report.conflicts)
+            if report.changed_anything:
+                logger.info(
+                    "Group %s synced: %d added, %d updated, %d removed",
+                    kind,
+                    len(report.copied),
+                    len(report.updated),
+                    len(report.removed),
+                )
+            for conflict in report.conflicts:
+                logger.info("Group %s needs an answer — %s", kind, conflict.question())
+        return combined
 
     def _init_agent_and_skill_pools(self, settings: Settings) -> None:
         """Construct :class:`AgentPool` + :class:`SkillPool` from the
@@ -783,11 +823,10 @@ class Session:
         self.pool.build_agents()
 
         self.skill_pool = SkillPool()
-        self.skill_pool.load_all(
-            self.project_dir,
-            settings.skills.cross_tool_support,
-            group_dir=self.group_dir_for("skills"),
-        )
+        # No group root: the group's skills are synced into
+        # ``.ember/skills`` where a person can edit them, and reading the
+        # server's copy as well would let it outrank the edit.
+        self.skill_pool.load_all(self.project_dir, settings.skills.cross_tool_support)
         self.plugin_loader.apply_to_skills(self.skill_pool, disabled=self._disabled_plugins)
 
     def _init_lsp_and_monitors(self) -> None:
@@ -837,7 +876,6 @@ class Session:
             self.project_dir,
             plugin_roots=plugin_style_roots,
             read_claude=settings.rules.cross_tool_support,
-            group_dir=self.group_dir_for("output-styles"),
         )
         if "default" in self.output_styles:
             self._active_output_style = "default"

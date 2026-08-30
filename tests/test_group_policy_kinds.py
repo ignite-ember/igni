@@ -221,20 +221,25 @@ class TestTheLoadersFindThem:
         assert pool.get("deploy") is not None
 
     def test_a_command_loads(self, cache: GroupPolicyCache, tmp_path: Path):
+        """Through the project, where the sync puts it — the loader does
+        not read the cache, so that a person's edit is not outranked by
+        the server's copy."""
+        from ember_code.core.init.group_agent_sync import GroupAgentSync
         from ember_code.core.utils.markdown_commands import MarkdownCommand
 
         cache.materialize(
             _pack(_entry("commands", "ship", "---\ndescription: Ship it\n---\nDo the thing."))
         )
-        found = MarkdownCommand.discover(
-            tmp_path / "proj",
-            read_claude=False,
-            group_dir=cache.dir_for("commands"),
-        )
+        project = tmp_path / "proj"
+        (project / ".ember").mkdir(parents=True)
+        GroupAgentSync(project_dir=project, source_dir=cache.dir_for("commands"), kind="commands").run()
+
+        found = MarkdownCommand.discover(project, read_claude=False)
 
         assert "ship" in found
 
     def test_an_output_style_loads(self, cache: GroupPolicyCache, tmp_path: Path):
+        from ember_code.core.init.group_agent_sync import GroupAgentSync
         from ember_code.core.output_styles.loader import discover_output_styles
 
         cache.materialize(
@@ -244,11 +249,13 @@ class TestTheLoadersFindThem:
                 )
             )
         )
-        styles = discover_output_styles(
-            tmp_path / "proj",
-            read_claude=False,
-            group_dir=cache.dir_for("output-styles"),
-        )
+        project = tmp_path / "proj"
+        (project / ".ember").mkdir(parents=True)
+        GroupAgentSync(
+            project_dir=project, source_dir=cache.dir_for("output-styles"), kind="output-styles"
+        ).run()
+
+        styles = discover_output_styles(project, read_claude=False)
 
         assert "terse" in styles
 
@@ -265,10 +272,14 @@ class TestTheLoadersFindThem:
                 )
             )
         )
-        discovery = WorkflowDiscovery(
-            project_dir=tmp_path / "proj",
-            group_dir=cache.dir_for("workflows"),
-        )
+        from ember_code.core.init.group_agent_sync import GroupAgentSync
+
+        project = tmp_path / "proj"
+        (project / ".ember").mkdir(parents=True)
+        GroupAgentSync(
+            project_dir=project, source_dir=cache.dir_for("workflows"), kind="workflows"
+        ).run()
+        discovery = WorkflowDiscovery(project_dir=project)
 
         assert [p.stem for p in discovery._iter_paths()] == ["review"]
 
@@ -316,13 +327,12 @@ class TestTheLoadersFindThem:
         cache.materialize(
             _pack(_entry("rules", "python", "---\npaths: ['**/*.py']\n---\nUse type hints."))
         )
+        from ember_code.core.init.group_agent_sync import GroupAgentSync
+
         project = tmp_path / "proj"
-        project.mkdir()
-        index = RulesIndex(
-            project,
-            read_claude_md=False,
-            group_rules_dir=cache.dir_for("rules"),
-        )
+        (project / ".ember").mkdir(parents=True)
+        GroupAgentSync(project_dir=project, source_dir=cache.dir_for("rules"), kind="rules").run()
+        index = RulesIndex(project, read_claude_md=False)
 
         assert index.consume_path(project / "app" / "main.py")
 
@@ -426,3 +436,98 @@ class TestTheManagerGetsTheGroupDirectory:
         manager = MCPClientManager(project)
 
         assert "local-thing" in manager.configs
+
+
+class TestBeingMovedToAnotherGroup:
+    """An admin reassigns somebody. Everything the old group gave them
+    has to go, across every kind — not just the agents. A machine left
+    holding the engineering skills after a move to legal is the failure
+    this whole arrangement exists to prevent.
+    """
+
+    @staticmethod
+    def _group(prefix: str) -> GroupPolicyPack:
+        return _pack(
+            _entry("agents", f"{prefix}-agent", f"---\nname: {prefix}-agent\n---\nBody."),
+            _entry("skills", f"{prefix}-skill", f"---\nname: {prefix}-skill\n---\nSteps."),
+            _entry("commands", f"{prefix}-command", "---\ndescription: d\n---\nGo."),
+            _entry("rules", f"{prefix}-rule", "---\npaths: ['**/*.py']\n---\nRule."),
+            _entry(
+                "workflows",
+                f"{prefix}-workflow",
+                "export const meta = { name: 'w' }\n",
+                content_type="javascript",
+            ),
+            _entry("mcps", f"{prefix}-mcp", '{"command": "x"}', content_type="json"),
+            _entry("tools", f"{prefix}-tool", "X = 1\n", content_type="python"),
+        )
+
+    def test_nothing_from_the_old_group_survives(self, cache: GroupPolicyCache):
+        cache.materialize(self._group("eng"))
+        cache.materialize(self._group("legal"))
+
+        for kind in ("agents", "skills", "commands", "rules", "workflows", "mcps", "tools"):
+            names = {p.stem.replace(".md", "") for p in cache.dir_for(kind).iterdir()}
+            assert not any(n.startswith("eng-") for n in names), (
+                f"{kind} kept the old group's entry"
+            )
+            assert any(n.startswith("legal-") for n in names), f"{kind} did not get the new group's"
+
+    def test_the_hooks_file_is_replaced_not_appended(self, cache: GroupPolicyCache):
+        """They share one file, so a move has to rewrite it rather than
+        merge into what the last group left."""
+        cache.materialize(
+            _pack(
+                _entry(
+                    "hooks",
+                    "eng-hook",
+                    json.dumps({"event": "PreToolUse", "type": "command", "command": "eng.sh"}),
+                    content_type="json",
+                )
+            )
+        )
+        cache.materialize(
+            _pack(
+                _entry(
+                    "hooks",
+                    "legal-hook",
+                    json.dumps({"event": "PreToolUse", "type": "command", "command": "legal.sh"}),
+                    content_type="json",
+                )
+            )
+        )
+
+        blob = json.loads((cache.dir_for("hooks") / "settings.json").read_text(encoding="utf-8"))
+        commands = {h["command"] for h in blob["hooks"]["PreToolUse"]}
+        assert commands == {"legal.sh"}
+
+    def test_the_project_loses_the_old_group_s_agents(
+        self, cache: GroupPolicyCache, tmp_path: Path
+    ):
+        from ember_code.core.init.group_agent_sync import GroupAgentSync
+
+        project = tmp_path / "proj"
+        (project / ".ember").mkdir(parents=True)
+
+        cache.materialize(self._group("eng"))
+        GroupAgentSync(project_dir=project, source_dir=cache.agents_dir).run()
+        cache.materialize(self._group("legal"))
+        report = GroupAgentSync(project_dir=project, source_dir=cache.agents_dir).run()
+
+        assert report.removed == ["eng-agent"]
+        present = {p.stem for p in (project / ".ember" / "agents").glob("*.md")}
+        assert present == {"legal-agent"}
+
+    def test_a_new_group_means_a_new_tag(self, cache: GroupPolicyCache):
+        """The client only refetches when the tag changes, so a move
+        that kept the tag would never be noticed."""
+        eng = self._group("eng")
+        eng.etag = '"eng"'
+        cache.materialize(eng)
+        assert cache.stored_etag() == '"eng"'
+
+        legal = self._group("legal")
+        legal.etag = '"legal"'
+        cache.materialize(legal)
+
+        assert cache.stored_etag() == '"legal"'
