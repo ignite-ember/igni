@@ -63,10 +63,10 @@ def _with_model(content: str, model: str | None) -> str:
 
 
 def _try_parse_json(text: str) -> Any:
-    """Parse an override's content as JSON if possible, else pass through.
+    """Parse an entry's content as JSON if possible, else pass through.
 
     The BE serialises ``mcps`` entries as raw MCP server JSON (matching
-    :class:`MCPServerConfig` fields), but some legacy overrides store
+    :class:`MCPServerConfig` fields), but some legacy entries store
     JSON-as-string already wrapped in ``{...}``. Both shapes should be
     accepted at load time.
     """
@@ -76,8 +76,8 @@ def _try_parse_json(text: str) -> Any:
         return text
 
 
-class GroupPolicyOverrideEntry(BaseModel):
-    """One override entry from a group pack.
+class GroupPolicyEntry(BaseModel):
+    """One entry from a group pack.
 
     ``source_url`` / ``source_ref`` / ``source_subdir`` are an optional
     trio that mirrors :class:`MarketplacePluginEntry.resolved_source`.
@@ -107,7 +107,7 @@ class GroupPolicyOverrideEntry(BaseModel):
     source_subdir: str | None = None
 
     @model_validator(mode="after")
-    def _source_fields_are_complete(self) -> GroupPolicyOverrideEntry:
+    def _source_fields_are_complete(self) -> GroupPolicyEntry:
         """Reject half-filled plugin source specs.
 
         The ``git-subdir`` flow needs the parent URL; ``ref`` and
@@ -126,12 +126,12 @@ class GroupPolicyOverrideEntry(BaseModel):
 
 
 class GroupPolicyPack(BaseModel):
-    """The full pack of overrides for a group — fetched from ember-server."""
+    """Everything a group gives its people — fetched from ember-server."""
 
     group_id: str
     group_name: str
     fetched_at: datetime
-    overrides: list[GroupPolicyOverrideEntry] = []
+    entries: list[GroupPolicyEntry] = []
 
     # What this group's people get when nothing names a model. Routing
     # is resolved server-side, so this is carried for display and for
@@ -141,12 +141,12 @@ class GroupPolicyPack(BaseModel):
     def to_settings_dict(self) -> dict:
         """Convert to a settings dict for the accumulator.
 
-        Only the 'settings' kind overrides are merged as config;
+        Only the 'settings' kind entries are merged as config;
         'agents', 'mcps', and 'plugins' are materialized to disk by
         GroupPolicyCache and picked up by their respective loaders.
         """
         result: dict = {}
-        for o in self.overrides:
+        for o in self.entries:
             if o.kind == "settings" and o.enabled:
                 try:
                     parsed = json.loads(o.content) if o.content_type == "json" else {}
@@ -156,14 +156,14 @@ class GroupPolicyPack(BaseModel):
                     pass
         return result
 
-    def agent_overrides(self) -> list[GroupPolicyOverrideEntry]:
-        return [o for o in self.overrides if o.kind == "agents" and o.enabled]
+    def agent_entries(self) -> list[GroupPolicyEntry]:
+        return [o for o in self.entries if o.kind == "agents" and o.enabled]
 
-    def mcp_overrides(self) -> list[GroupPolicyOverrideEntry]:
-        return [o for o in self.overrides if o.kind == "mcps" and o.enabled]
+    def mcp_entries(self) -> list[GroupPolicyEntry]:
+        return [o for o in self.entries if o.kind == "mcps" and o.enabled]
 
     def plugin_disabled_names(self) -> list[str]:
-        return [o.entry_name for o in self.overrides if o.kind == "plugins" and not o.enabled]
+        return [o.entry_name for o in self.entries if o.kind == "plugins" and not o.enabled]
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -177,7 +177,7 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 class GroupPolicyCache:
-    """Materializes a group pack's file-type overrides to disk.
+    """Materializes a group pack's file-type entries to disk.
 
     Agents (markdown) → ~/.ember/group-policy/agents/<name>.md
     MCPs (json)       → ~/.ember/group-policy/mcps/<name>.json
@@ -186,7 +186,7 @@ class GroupPolicyCache:
     installed via :class:`PluginInstaller` into the new ``group-policy``
     root (``<data_dir>/group-policy/plugins/``, priority 4.5 between
     project-ember and managed-ember). An entry without ``source_url``
-    falls back to writing its YAML to the legacy path so old override
+    falls back to writing its YAML to the legacy path so old entry
     shapes keep working until they're migrated.
 
     The cache is invalidated whenever the pack's content hash changes.
@@ -227,8 +227,8 @@ class GroupPolicyCache:
     def _content_hash(self, content: str) -> str:
         return hashlib.md5(content.encode()).hexdigest()[:12]
 
-    def _materialize_plugin(self, o: GroupPolicyOverrideEntry) -> None:
-        """Install or skip-write a single plugin override.
+    def _materialize_plugin(self, o: GroupPolicyEntry) -> None:
+        """Install or skip-write a single plugin entry.
 
         If ``o.source_url`` is set, defer to :class:`PluginInstaller`,
         which clones to ``<data_dir>/group-policy/plugins/<name>``.
@@ -237,7 +237,7 @@ class GroupPolicyCache:
         one bad plugin must not abort the rest of the pack.
 
         If ``source_url`` is empty, fall back to writing the entry's
-        YAML to the legacy path. This keeps the old override shape
+        YAML to the legacy path. This keeps the old entry shape
         working until admins migrate to source-url form.
         """
         if not o.source_url:
@@ -250,7 +250,7 @@ class GroupPolicyCache:
             # probably meant to ship a plugin source but the wiring
             # is incomplete. Log loud; don't fail the session.
             logger.warning(
-                "Group policy plugin override %r has source_url but no installer "
+                "Group policy plugin entry %r has source_url but no installer "
                 "is configured; skipping install. Pass PluginInstaller(data_dir=...) "
                 "when constructing GroupPolicyCache to enable remote sources.",
                 o.entry_name,
@@ -298,7 +298,7 @@ class GroupPolicyCache:
             )
 
     def materialize(self, pack: GroupPolicyPack) -> None:
-        """Write each file-type override to disk, removing stale entries.
+        """Write each file-type entry to disk, removing stale ones.
         Plugin entries with ``source_url`` are installed via the
         ``PluginInstaller`` (git clone). Plugin entries without a
         source fall back to writing their YAML to the legacy path.
@@ -311,7 +311,7 @@ class GroupPolicyCache:
             "plugins": set(),
         }
 
-        for o in pack.overrides:
+        for o in pack.entries:
             if o.kind == "agents" and o.enabled:
                 path = self.agents_dir / f"{o.entry_name}.md"
                 path.write_text(_with_model(o.content, o.model), encoding="utf-8")
@@ -356,7 +356,7 @@ class GroupPolicyCache:
             "group_id": pack.group_id,
             "group_name": pack.group_name,
             "fetched_at": pack.fetched_at.isoformat() if pack.fetched_at else None,
-            "override_count": len(pack.overrides),
+            "entry_count": len(pack.entries),
             "default_model": pack.default_model,
         }
         meta_path = self._cache_dir / "pack_meta.json"
@@ -450,7 +450,7 @@ async def refresh(
     canonical root, so callers can hand in just one argument.
 
     ``installer`` is forwarded to :class:`GroupPolicyCache` so plugin
-    overrides with ``source_url`` get git-installed instead of being
+    entries with ``source_url`` get git-installed instead of being
     skipped. Optional — when omitted, source-URL plugin entries write a
     warning and fall through (same behavior the cache had before).
     """

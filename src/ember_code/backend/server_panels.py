@@ -147,7 +147,7 @@ class PanelsController:
             group_id=meta.get("group_id"),
             group_name=meta.get("group_name"),
             fetched_at=meta.get("fetched_at"),
-            override_count=meta.get("override_count", 0),
+            entry_count=meta.get("entry_count", 0),
             default_model=meta.get("default_model"),
             pending_conflicts=conflicts,
         )

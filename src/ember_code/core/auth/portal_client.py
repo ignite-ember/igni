@@ -43,7 +43,7 @@ from ember_code.core.auth.schemas import (
     ValidateResult,
 )
 from ember_code.core.config.group_policy import (
-    GroupPolicyOverrideEntry,
+    GroupPolicyEntry,
     GroupPolicyPack,
 )
 
@@ -233,12 +233,12 @@ class PortalClient:
             return None
 
         try:
-            overrides = [GroupPolicyOverrideEntry(**o) for o in payload.get("overrides", [])]
+            entries = [GroupPolicyEntry(**o) for o in payload.get("entries", [])]
             return GroupPolicyPack(
                 group_id=payload.get("group_id", ""),
                 group_name=payload.get("group_name", ""),
                 fetched_at=payload.get("fetched_at"),
-                overrides=overrides,
+                entries=entries,
             )
         except Exception as exc:
             logger.debug("fetch_group_pack schema error: %s", exc)

@@ -25,7 +25,7 @@ from ember_code.core.agents.loader import AgentDefinitionLoader
 from ember_code.core.agents.schemas import AgentPriority
 from ember_code.core.config.group_policy import (
     GroupPolicyCache,
-    GroupPolicyOverrideEntry,
+    GroupPolicyEntry,
     GroupPolicyPack,
 )
 from ember_code.core.mcp.config import MCP_PRIORITY_GROUP, MCPConfigLoader
@@ -42,8 +42,8 @@ def test_materialize_wraps_mcps_in_envelope(tmp_path: Path):
         group_id="g-1",
         group_name="Engineering",
         fetched_at=datetime.now(timezone.utc),
-        overrides=[
-            GroupPolicyOverrideEntry(
+        entries=[
+            GroupPolicyEntry(
                 kind="mcps",
                 entry_name="github",
                 content=('{"command": "gh-mcp", "args": ["serve"], "env": {}}'),
@@ -72,8 +72,8 @@ def test_materialize_strips_disabled_mcp(tmp_path: Path):
         group_id="g-1",
         group_name="Engineering",
         fetched_at=datetime.now(timezone.utc),
-        overrides=[
-            GroupPolicyOverrideEntry(
+        entries=[
+            GroupPolicyEntry(
                 kind="mcps",
                 entry_name="off",
                 content='{"command": "off"}',

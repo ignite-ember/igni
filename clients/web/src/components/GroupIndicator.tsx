@@ -11,7 +11,7 @@ export interface GroupPolicy {
   group_id: string | null;
   group_name: string | null;
   fetched_at: string | null;
-  override_count: number;
+  entry_count: number;
   default_model: string | null;
   pending_conflicts: GroupAgentConflict[];
 }
@@ -57,7 +57,7 @@ export function classify(policy: GroupPolicy | null): GroupBadge {
     };
   }
 
-  const parts = [`${policy.override_count} entries`];
+  const parts = [`${policy.entry_count} entries`];
   if (policy.default_model) parts.push(policy.default_model);
   return {
     label: policy.group_name,

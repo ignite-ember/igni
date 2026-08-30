@@ -12,7 +12,7 @@ collisions):
     7. <managed>/.ember/plugins/                 (sysadmin, ember-native)
 
 The new tier 5 (``group-policy-ember``) holds plugins installed
-from URL/ref/subdir specified in :class:`GroupPolicyOverrideEntry`
+from URL/ref/subdir specified in :class:`GroupPolicyEntry`
 via :class:`PluginInstaller`. It sits between project-local
 installs (3/4) and the OS-managed tiers (6/7) so org-shared
 plugins override personal + project-local copies, but MDM/
@@ -117,7 +117,7 @@ class PluginLoader:
         ]
 
         # Group-policy tier — plugins installed from
-        # :class:`GroupPolicyOverrideEntry.source_url` by
+        # :class:`GroupPolicyEntry.source_url` by
         # :class:`PluginInstaller`. Priority 5 sits above project
         # installs (3/4) so org-shared plugins beat local dev
         # overrides, and below the sysadmin-managed tiers (6/7)

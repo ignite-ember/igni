@@ -21,7 +21,7 @@ import pytest
 from ember_code.backend.server_panels import PanelsController
 from ember_code.core.config.group_policy import (
     GroupPolicyCache,
-    GroupPolicyOverrideEntry,
+    GroupPolicyEntry,
     GroupPolicyPack,
 )
 from ember_code.core.init.group_agent_sync import GroupAgentSync
@@ -33,8 +33,8 @@ def _pack(*, agents: dict[str, str]) -> GroupPolicyPack:
         group_name="Legal",
         fetched_at=datetime.now(timezone.utc),
         default_model="legal-reviewer",
-        overrides=[
-            GroupPolicyOverrideEntry(
+        entries=[
+            GroupPolicyEntry(
                 kind="agents",
                 entry_name=name,
                 content=f"---\nname: {name}\ndescription: d\n---\n{body}\n",

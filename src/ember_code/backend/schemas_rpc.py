@@ -144,13 +144,13 @@ class GroupAgentConflictView(BaseModel):
 
 class GroupPolicyPackResult(BaseModel):
     """Wire shape for the ``get_group_policy`` RPC — the active
-    org-group override pack for the current user. Nullable because
+    group's pack for the current user. Nullable because
     a user may belong to no group."""
 
     group_id: str | None = None
     group_name: str | None = None
     fetched_at: str | None = None
-    override_count: int = 0
+    entry_count: int = 0
     #: What this group's people get when nothing names a model.
     default_model: str | None = None
     #: Agents waiting on "yours or theirs". Empty is the normal state.

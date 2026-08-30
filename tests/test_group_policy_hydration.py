@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from ember_code.backend.server_auth import AuthController
-from ember_code.core.config.group_policy import GroupPolicyOverrideEntry, GroupPolicyPack
+from ember_code.core.config.group_policy import GroupPolicyEntry, GroupPolicyPack
 
 
 def _make_controller(tmp_path: Path) -> AuthController:
@@ -52,8 +52,8 @@ def _sample_pack() -> GroupPolicyPack:
         group_id="g-1",
         group_name="Engineering",
         fetched_at=datetime.now(timezone.utc),
-        overrides=[
-            GroupPolicyOverrideEntry(
+        entries=[
+            GroupPolicyEntry(
                 kind="agents",
                 entry_name="reviewer",
                 content="---\nname: reviewer\n---\nReview body.",
@@ -136,8 +136,8 @@ async def test_hydrate_passes_plugin_installer_to_cache(tmp_path: Path):
         group_id="g-1",
         group_name="Engineering",
         fetched_at=datetime.now(timezone.utc),
-        overrides=[
-            GroupPolicyOverrideEntry(
+        entries=[
+            GroupPolicyEntry(
                 kind="plugins",
                 entry_name="git-plugin",
                 content="name: git-plugin\n",

@@ -51,7 +51,7 @@ def _sample_pack_body() -> dict:
         "group_id": "g-1",
         "group_name": "Engineering",
         "fetched_at": "2026-07-28T10:00:00+00:00",
-        "overrides": [
+        "entries": [
             {
                 "kind": "agents",
                 "entry_name": "code-reviewer",
@@ -107,9 +107,9 @@ async def test_fetch_group_pack_happy_path(monkeypatch):
     assert pack.group_name == "Engineering"
     assert isinstance(pack.fetched_at, datetime)
     assert pack.fetched_at.tzinfo is not None
-    assert len(pack.overrides) == 2
-    assert pack.overrides[0].entry_name == "code-reviewer"
-    assert pack.overrides[1].kind == "mcps"
+    assert len(pack.entries) == 2
+    assert pack.entries[0].entry_name == "code-reviewer"
+    assert pack.entries[1].kind == "mcps"
 
     # Wire contract
     assert captured["method"] == "GET"
@@ -191,18 +191,18 @@ async def test_fetch_group_pack_invalid_json_returns_none(monkeypatch):
 async def test_fetch_group_pack_wire_format_is_canonical(monkeypatch):
     """Lock the wire format on both sides.
 
-    The FE's :class:`GroupPolicyOverrideEntry` and the BE's
+    The FE's :class:`GroupPolicyEntry` and the BE's
     :class:`OrgGroupPackOverrideEntry` must emit/accept the same
     key set. If either side adds/removes a field silently the FE
-    installer will silently lose plugin-source overrides — this
+    installer will silently lose plugin-source entries — this
     test fails loud so the contract has to be re-agreed.
     """
     captured: dict[str, object] = {}
 
     def handler(req: httpx.Request) -> httpx.Response:
         body = _sample_pack_body()
-        captured["keys"] = sorted(body["overrides"][0].keys())
-        captured["overrides_count"] = len(body["overrides"])
+        captured["keys"] = sorted(body["entries"][0].keys())
+        captured["entry_count"] = len(body["entries"])
         return httpx.Response(200, json=body)
 
     portal, patched = _stub_client(handler)
@@ -222,7 +222,7 @@ async def test_fetch_group_pack_wire_format_is_canonical(monkeypatch):
         "source_subdir",
         "source_url",
     ]
-    assert captured["overrides_count"] == 2
+    assert captured["entry_count"] == 2
 
 
 @pytest.mark.asyncio
@@ -234,14 +234,14 @@ async def test_fetch_group_pack_sends_plugin_source_through_end_to_end(monkeypat
     the FE's Pydantic schema actually accepts it (rather than
     silently dropping the plugin-source trio).
     """
-    captured_overrides: list[dict] = []
+    captured_entries: list[dict] = []
 
     def handler(req: httpx.Request) -> httpx.Response:
         body = {
             "group_id": "g-1",
             "group_name": "Engineering",
             "fetched_at": "2026-07-28T10:00:00+00:00",
-            "overrides": [
+            "entries": [
                 {
                     "kind": "plugins",
                     "entry_name": "git-plugin",
@@ -254,7 +254,7 @@ async def test_fetch_group_pack_sends_plugin_source_through_end_to_end(monkeypat
                 },
             ],
         }
-        captured_overrides.extend(body["overrides"])
+        captured_entries.extend(body["entries"])
         return httpx.Response(200, json=body)
 
     portal, patched = _stub_client(handler)
@@ -262,11 +262,11 @@ async def test_fetch_group_pack_sends_plugin_source_through_end_to_end(monkeypat
 
     pack = await portal.fetch_group_pack(token="t-src")
     assert pack is not None
-    entry = pack.overrides[0]
+    entry = pack.entries[0]
     assert entry.source_url == "https://github.com/example/git-plugin"
     assert entry.source_ref == "main"
     assert entry.source_subdir is None
-    assert captured_overrides[0]["source_url"] == "https://github.com/example/git-plugin"
+    assert captured_entries[0]["source_url"] == "https://github.com/example/git-plugin"
 
 
 @pytest.mark.asyncio
@@ -284,7 +284,7 @@ async def test_fetch_group_pack_handles_mixed_kinds_realistic_shape(monkeypatch)
         "group_id": "g-1",
         "group_name": "Engineering",
         "fetched_at": "2026-07-28T10:00:00+00:00",
-        "overrides": [
+        "entries": [
             {  # agent — no plugin-source trio expected
                 "kind": "agents",
                 "entry_name": "code-reviewer",
@@ -347,9 +347,9 @@ async def test_fetch_group_pack_handles_mixed_kinds_realistic_shape(monkeypatch)
     pack = await portal.fetch_group_pack(token="t-mix")
 
     assert pack is not None
-    assert len(pack.overrides) == 5
+    assert len(pack.entries) == 5
 
-    by_name = {o.entry_name: o for o in pack.overrides}
+    by_name = {o.entry_name: o for o in pack.entries}
     assert by_name["code-reviewer"].kind == "agents"
     assert by_name["github"].kind == "mcps"
     assert by_name["git-plugin"].kind == "plugins"
@@ -361,7 +361,7 @@ async def test_fetch_group_pack_handles_mixed_kinds_realistic_shape(monkeypatch)
 
     # Models validate cleanly only when the BE sends the canonical key
     # set — if the FE schema drops one of these, this assertion fails.
-    for o in pack.overrides:
+    for o in pack.entries:
         assert o.entry_name
         assert o.kind in {"agents", "mcps", "plugins", "settings"}
         assert o.content
@@ -387,7 +387,7 @@ async def test_fetch_group_pack_rejects_unexpected_field(monkeypatch):
                 "group_id": "g-1",
                 "group_name": "Engineering",
                 "fetched_at": "2026-07-28T10:00:00+00:00",
-                "overrides": [
+                "entries": [
                     {
                         "kind": "agents",
                         "entry_name": "x",
@@ -413,8 +413,8 @@ async def test_fetch_group_pack_rejects_unexpected_field(monkeypatch):
     # If you see this fail, the FE schema learned to tolerate an
     # unknown field that should have been a contract-breaking change.
     assert pack is not None
-    assert pack.overrides[0].entry_name == "x"
-    extra = getattr(pack.overrides[0], "experimental_field", None)
+    assert pack.entries[0].entry_name == "x"
+    extra = getattr(pack.entries[0], "experimental_field", None)
     assert extra is None, (
         "FE accepted an unknown field — drop this assertion only "
         "AFTER coordinating with the BE on the new contract"
@@ -531,7 +531,7 @@ async def test_full_e2e_pack_to_cache(tmp_path, monkeypatch):
     meta = cache.read_pack_meta()
     assert meta is not None
     assert meta["group_id"] == "g-1"
-    assert meta["override_count"] == 2
+    assert meta["entry_count"] == 2
 
     # Agent file is on disk exactly as the loader would consume it.
     agent_path = cache.agents_dir / "code-reviewer.md"

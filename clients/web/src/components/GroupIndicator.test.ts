@@ -16,7 +16,7 @@ function policy(over: Partial<GroupPolicy> = {}): GroupPolicy {
     group_id: "g-1",
     group_name: "Legal",
     fetched_at: "2026-08-30T00:00:00Z",
-    override_count: 4,
+    entry_count: 4,
     default_model: null,
     pending_conflicts: [],
     ...over,
