@@ -231,6 +231,7 @@ class BackendApp:
         self._backend.workflow_runner = WorkflowRunner(
             project_dir=self._project_dir,
             push=self._push_bridge,
+            group_dir=Path(settings.storage.data_dir).expanduser() / "group-policy" / "workflows",
         )
         self._supervisor.start_evictor()
         self._supervisor.mark_running()

@@ -38,6 +38,9 @@ class SkillPriority:
     PROJECT_CLAUDE = 3
     PROJECT_LOCAL = 4
     PROJECT_EMBER = 5
+    #: The org's, from the group policy cache. Above the project's, so
+    #: a skill the group ships is the one that runs.
+    ORG_GROUP = 6
 
 
 class SkillEntry(BaseModel):
@@ -99,7 +102,12 @@ class SkillPool:
             except Exception as e:
                 print(f"Warning: Failed to load skill from {skill_file}: {e}", file=sys.stderr)
 
-    def load_all(self, project_dir: Path | None = None, cross_tool_support: bool = False):
+    def load_all(
+        self,
+        project_dir: Path | None = None,
+        cross_tool_support: bool = False,
+        group_dir: Path | None = None,
+    ):
         """Load skills from all directories. See module docstring for the
         full resolution table — each source has an explicit integer
         priority so ties never depend on call order here.
@@ -133,6 +141,10 @@ class SkillPool:
                 Path.home() / ".claude" / "skills",
                 priority=SkillPriority.USER_CLAUDE,
             )
+
+        # The org's, above everything local.
+        if group_dir is not None:
+            self.load_directory(group_dir, priority=SkillPriority.ORG_GROUP)
 
     def get(self, name: str) -> SkillDefinition | None:
         """Get a skill by name."""

@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -24,6 +25,31 @@ logger = logging.getLogger(__name__)
 # Cache TTL: 5 minutes. Group policies don't change often enough to need
 # sub-minute freshness; a short TTL keeps stale admin pushes from lasting forever.
 _CACHE_TTL_SECONDS = 300
+
+#: kind → (directory under the cache, filename for one entry). The
+#: directories are the ones each loader is told to scan; the filenames
+#: are the conventions those loaders already expect — a skill is a
+#: directory with SKILL.md in it, a workflow is an ES module.
+_PLAIN_KINDS: dict[str, tuple[str, str]] = {
+    "agents": ("agents", "{name}.md"),
+    "skills": ("skills", "{name}/SKILL.md"),
+    "commands": ("commands", "{name}.md"),
+    "workflows": ("workflows", "{name}.mjs"),
+    "rules": ("rules", "{name}.md"),
+    "output-styles": ("output-styles", "{name}.md"),
+    "tools": ("tools", "{name}.py"),
+}
+
+#: What a stale file of each kind looks like, for pruning.
+_SUFFIX: dict[str, str] = {
+    "agents": ".md",
+    "commands": ".md",
+    "workflows": ".mjs",
+    "rules": ".md",
+    "output-styles": ".md",
+    "tools": ".py",
+    "mcps": ".json",
+}
 
 # Same split :class:`AgentMarkdownFile` uses, so a model written here
 # parses back out of the file the loader reads.
@@ -206,23 +232,30 @@ class GroupPolicyCache:
         self._installer = installer
         self._data_dir = data_dir or (Path.home() / ".ember")
 
-    @property
-    def agents_dir(self) -> Path:
-        d = self._cache_dir / "agents"
+    def dir_for(self, kind: str) -> Path:
+        """The directory this kind's entries live in, created on demand."""
+        name = _PLAIN_KINDS[kind][0] if kind in _PLAIN_KINDS else kind
+        d = self._cache_dir / name
         d.mkdir(parents=True, exist_ok=True)
         return d
+
+    def path_for(self, kind: str, entry_name: str) -> Path:
+        """Where one entry of this kind is written."""
+        _, filename = _PLAIN_KINDS[kind]
+        return self.dir_for(kind) / filename.format(name=entry_name)
+
+    # Named accessors for the kinds other modules reach for directly.
+    @property
+    def agents_dir(self) -> Path:
+        return self.dir_for("agents")
 
     @property
     def mcps_dir(self) -> Path:
-        d = self._cache_dir / "mcps"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        return self.dir_for("mcps")
 
     @property
     def plugins_dir(self) -> Path:
-        d = self._cache_dir / "plugins"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        return self.dir_for("plugins")
 
     def _content_hash(self, content: str) -> str:
         return hashlib.md5(content.encode()).hexdigest()[:12]
@@ -298,60 +331,50 @@ class GroupPolicyCache:
             )
 
     def materialize(self, pack: GroupPolicyPack) -> None:
-        """Write each file-type entry to disk, removing stale ones.
-        Plugin entries with ``source_url`` are installed via the
-        ``PluginInstaller`` (git clone). Plugin entries without a
-        source fall back to writing their YAML to the legacy path.
+        """Write every file-shaped entry to disk, removing stale ones.
+
+        One directory per kind, each of which a loader is told to scan —
+        the same arrangement MCP servers have always had. Plugin entries
+        with a ``source_url`` are installed by :class:`PluginInstaller`
+        instead of written, and settings are merged as config rather
+        than materialised at all.
 
         Also writes ``pack_meta.json`` for the RPC handler to read back.
         """
-        active_names: dict[str, set[str]] = {
-            "agents": set(),
-            "mcps": set(),
-            "plugins": set(),
-        }
+        # Every kind that owns files gets a set, including the two the
+        # loop below writes through their own branch. Missing one is a
+        # KeyError the moment a group ships that kind.
+        active: dict[str, set[str]] = {kind: set() for kind in _PLAIN_KINDS}
+        active["mcps"] = set()
+        active["plugins"] = set()
+        hooks: dict[str, list] = {}
 
         for o in pack.entries:
-            if o.kind == "agents" and o.enabled:
-                path = self.agents_dir / f"{o.entry_name}.md"
-                path.write_text(_with_model(o.content, o.model), encoding="utf-8")
-                active_names["agents"].add(o.entry_name)
-            elif o.kind == "mcps" and o.enabled:
-                # Wrap the per-server content in the MCP ``{mcpServers: {...}}``
-                # envelope that :class:`MCPConfigLoader` expects. The BE sends
-                # ``content`` as a single server definition (matching
-                # :class:`MCPServerConfig`'s fields); the loader reads N-server
-                # files, so we put the one server under its ``entry_name``.
-                path = self.mcps_dir / f"{o.entry_name}.json"
+            if not o.enabled:
+                continue
+            if o.kind in _PLAIN_KINDS:
+                self._write_plain(o)
+                active[o.kind].add(o.entry_name)
+            elif o.kind == "mcps":
+                # Wrap the per-server content in the ``{mcpServers: {...}}``
+                # envelope :class:`MCPConfigLoader` expects. The server
+                # sends one server definition per entry; the loader reads
+                # N-server files, so it goes under its entry name.
+                path = self.dir_for("mcps") / f"{o.entry_name}.json"
                 path.write_text(
                     json.dumps({"mcpServers": {o.entry_name: _try_parse_json(o.content)}}),
                     encoding="utf-8",
                 )
-                active_names["mcps"].add(o.entry_name)
-            elif o.kind == "plugins" and o.enabled:
+                active["mcps"].add(o.entry_name)
+            elif o.kind == "hooks":
+                self._collect_hook(o, hooks)
+            elif o.kind == "plugins":
                 self._materialize_plugin(o)
-                active_names["plugins"].add(o.entry_name)
+                active["plugins"].add(o.entry_name)
 
-        # Remove entries no longer in the pack. Plugins with a
-        # source_url leave their installed directory in place — a
-        # re-add via the same source skips the install (idempotent).
-        # YAML-only fallback entries are removed because their
-        # legacy loader is a no-op anyway.
-        for kind, dir_path, suffix in [
-            ("agents", self.agents_dir, ".md"),
-            ("mcps", self.mcps_dir, ".json"),
-            ("plugins", self.plugins_dir, ".yaml"),
-        ]:
-            if not dir_path.is_dir():
-                continue
-            for file in dir_path.iterdir():
-                if file.suffix == suffix and file.stem not in active_names[kind]:
-                    try:
-                        file.unlink()
-                    except Exception as exc:
-                        logger.debug("Failed to remove stale group policy file %s: %s", file, exc)
+        self._write_hooks(hooks)
+        self._prune(active)
 
-        # Write pack metadata for the RPC handler
         meta = {
             "group_id": pack.group_id,
             "group_name": pack.group_name,
@@ -359,8 +382,85 @@ class GroupPolicyCache:
             "entry_count": len(pack.entries),
             "default_model": pack.default_model,
         }
-        meta_path = self._cache_dir / "pack_meta.json"
-        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+        (self._cache_dir / "pack_meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    def _write_plain(self, o: GroupPolicyEntry) -> None:
+        """One entry, one file, at the path its loader looks in."""
+        path = self.path_for(o.kind, o.entry_name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        content = _with_model(o.content, o.model) if o.kind == "agents" else o.content
+        path.write_text(content, encoding="utf-8")
+
+    def _collect_hook(self, o: GroupPolicyEntry, hooks: dict[str, list]) -> None:
+        """Fold one hook entry into the shared ``hooks.json`` shape.
+
+        Hooks are the one kind that is not a file per entry: they are
+        declarations keyed by event, and ember-code reads them from a
+        settings-shaped file. An entry carries either a bare declaration
+        or a whole ``{"hooks": {...}}`` block; both end up merged into
+        one file the loader is pointed at.
+        """
+        try:
+            parsed = json.loads(o.content)
+        except (TypeError, ValueError):
+            logger.warning("Group hook %r is not valid JSON; skipping", o.entry_name)
+            return
+
+        block = parsed.get("hooks") if isinstance(parsed, dict) else None
+        if isinstance(block, dict):
+            for event, declarations in block.items():
+                hooks.setdefault(event, []).extend(
+                    declarations if isinstance(declarations, list) else [declarations]
+                )
+            return
+
+        # A bare declaration has to say which event it is for.
+        if isinstance(parsed, dict) and parsed.get("event"):
+            event = str(parsed.pop("event"))
+            hooks.setdefault(event, []).append(parsed)
+            return
+
+        logger.warning(
+            "Group hook %r names no event and carries no hooks block; skipping",
+            o.entry_name,
+        )
+
+    def _write_hooks(self, hooks: dict[str, list]) -> None:
+        """Write (or remove) the merged hooks file."""
+        path = self.dir_for("hooks") / "settings.json"
+        if hooks:
+            path.write_text(json.dumps({"hooks": hooks}, indent=2), encoding="utf-8")
+        else:
+            path.unlink(missing_ok=True)
+
+    def _prune(self, active: dict[str, set[str]]) -> None:
+        """Remove what the group no longer ships.
+
+        Plugins installed from a source keep their directory: a re-add
+        from the same URL skips the install, and deleting a clone to
+        reinstall it moments later is a poor trade.
+        """
+        for kind, names in active.items():
+            directory = self.dir_for(kind)
+            if not directory.is_dir():
+                continue
+            for path in sorted(directory.iterdir()):
+                stem = path.name[: -len(_SUFFIX[kind])] if kind in _SUFFIX else path.name
+                if kind == "skills":
+                    stale = path.is_dir() and path.name not in names
+                elif kind == "plugins":
+                    stale = path.suffix == ".yaml" and path.stem not in names
+                else:
+                    stale = path.suffix == _SUFFIX.get(kind, "") and stem not in names
+                if not stale:
+                    continue
+                try:
+                    if path.is_dir():
+                        shutil.rmtree(path)
+                    else:
+                        path.unlink()
+                except Exception as exc:  # noqa: BLE001 — a leftover file is not fatal
+                    logger.debug("Could not remove stale group policy path %s: %s", path, exc)
 
     def read_pack_meta(self) -> dict | None:
         """Read the pack metadata written by materialize(). Returns None if no pack is cached."""

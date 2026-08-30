@@ -193,13 +193,16 @@ def load_project_rules_dirs(
     project_dir: Path,
     working_dir: Path | None = None,
     read_claude_md: bool = True,
+    group_rules_dir: Path | None = None,
 ) -> str:
     """Load project shared rules dirs — thin wrapper around :meth:`RulesContextLoader.load_project_dirs`."""
-    return _make_loader(
+    loader = _make_loader(
         project_dir,
         working_dir=working_dir,
         read_claude_md=read_claude_md,
-    ).load_project_dirs()
+    )
+    loader.group_rules_dir = group_rules_dir
+    return loader.load_project_dirs()
 
 
 def load_subdirectory_rules(
@@ -226,6 +229,7 @@ def load_project_context(
     project_file: str = "ember.md",
     working_dir: Path | None = None,
     read_claude_md: bool = True,
+    group_rules_dir: Path | None = None,
 ) -> str:
     """Load and merge all applicable rules into a single context string.
 
@@ -236,12 +240,10 @@ def load_project_context(
     the loader picks up ``ember.md`` / ``CLAUDE.md`` by convention.
     """
     del project_file  # kept for API compatibility
-    return (
-        _make_loader(
-            project_dir,
-            working_dir=working_dir,
-            read_claude_md=read_claude_md,
-        )
-        .load_all()
-        .render()
+    loader = _make_loader(
+        project_dir,
+        working_dir=working_dir,
+        read_claude_md=read_claude_md,
     )
+    loader.group_rules_dir = group_rules_dir
+    return loader.load_all().render()

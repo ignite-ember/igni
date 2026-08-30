@@ -63,6 +63,7 @@ def load_project_rules_dirs(
     project_dir: Path,
     working_dir: Path | None = None,
     read_claude_md: bool = True,
+    group_dir: Path | None = None,
 ) -> str:
     """Load committed shared rules from project-level rules directories.
 
@@ -82,6 +83,13 @@ def load_project_rules_dirs(
     Helpers injected — see module docstring.
     """
     sections: list[str] = []
+    # The org's rules first: they are the standing instructions
+    # everybody in the group works under, and a project's own come
+    # after them.
+    if group_dir is not None:
+        org = read_rules_dir_files(group_dir, working_dir=working_dir, project_dir=project_dir)
+        if org:
+            sections.append(org)
     ember_dir = read_rules_dir_files(
         project_dir / ".ember" / "rules",
         working_dir=working_dir,

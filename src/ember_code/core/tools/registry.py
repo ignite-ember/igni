@@ -247,6 +247,7 @@ class ToolRegistry:
         project_dir: Path | None = None,
         *,
         plugin_tool_dirs: list[tuple[str, Path]] | None = None,
+        group_tools_dir: Path | None = None,
     ) -> list[Toolkit]:
         """Discover custom tools from ``.ember/tools/`` and return as
         toolkit list.
@@ -261,6 +262,7 @@ class ToolRegistry:
         return _load_custom_tools(
             project_dir or self.base_dir,
             plugin_tool_dirs=plugin_tool_dirs,
+            group_tools_dir=group_tools_dir,
         )
 
     @property

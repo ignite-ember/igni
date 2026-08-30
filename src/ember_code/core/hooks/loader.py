@@ -47,9 +47,18 @@ class _SettingsPathDiscovery:
     since they're spec'd second.
     """
 
-    def __init__(self, project_dir: Path, *, cross_tool_support: bool):
+    def __init__(
+        self,
+        project_dir: Path,
+        *,
+        cross_tool_support: bool,
+        group_dir: Path | None = None,
+    ):
         self._project_dir = project_dir
         self._cross_tool_support = cross_tool_support
+        #: The org's hooks, written as a settings-shaped file by the
+        #: policy cache. Last, so the group's declarations layer on top.
+        self._group_dir = group_dir
 
     def discover(self) -> list[Path]:
         """Return the ordered list of settings-file paths to try.
@@ -76,6 +85,8 @@ class _SettingsPathDiscovery:
                     self._project_dir / ".claude" / "settings.local.json",
                 ]
             )
+        if self._group_dir is not None:
+            paths.append(self._group_dir / "settings.json")
         return paths
 
 
@@ -135,11 +146,18 @@ class HookLoader:
     :class:`HookLoadResult`.
     """
 
-    def __init__(self, project_dir: Path | None = None, cross_tool_support: bool = False):
+    def __init__(
+        self,
+        project_dir: Path | None = None,
+        cross_tool_support: bool = False,
+        group_dir: Path | None = None,
+    ):
         self.project_dir = project_dir or Path.cwd()
         self.cross_tool_support = cross_tool_support
         self._discovery = _SettingsPathDiscovery(
-            self.project_dir, cross_tool_support=cross_tool_support
+            self.project_dir,
+            cross_tool_support=cross_tool_support,
+            group_dir=group_dir,
         )
         self._reader = _SettingsFileReader()
 

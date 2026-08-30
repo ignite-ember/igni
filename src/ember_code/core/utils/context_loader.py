@@ -202,6 +202,10 @@ class RulesContextLoader:
     project_dir: Path
     working_dir: Path | None = None
     read_claude_md: bool = True
+    #: The org's rules directory, from the group policy cache. Its
+    #: rules read before the project's — they are what everybody in the
+    #: group works under.
+    group_rules_dir: Path | None = None
     readers: RulesReaders = field(default_factory=RulesReaders)
     platform_dir_fn: PlatformDirFn = field(default=_platform_managed_rules_dir)
 
@@ -282,6 +286,7 @@ class RulesContextLoader:
             project_dir=self.project_dir,
             working_dir=self.working_dir,
             read_claude_md=self.read_claude_md,
+            group_dir=self.group_rules_dir,
         )
 
     def load_subdirectory(self) -> list[SubdirectoryRules]:

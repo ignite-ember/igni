@@ -59,6 +59,7 @@ class SlashCommandsCatalog:
             md_commands = discover_markdown_commands(
                 self._session.project_dir,
                 read_claude=read_claude,
+                group_dir=self._session.group_dir_for("commands"),
             )
         except Exception as exc:
             logger.debug("slash_commands: markdown discovery failed: %s", exc)

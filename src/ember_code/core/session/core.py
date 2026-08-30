@@ -215,8 +215,9 @@ class Session:
         # can edit one, which means this directory is the *source* of
         # that sync rather than a place the loader reads.
         data_dir = Path(settings.storage.data_dir).expanduser()
-        self._group_agents_dir = data_dir / "group-policy" / "agents"
-        self._group_mcps_dir = data_dir / "group-policy" / "mcps"
+        self._group_policy_dir = data_dir / "group-policy"
+        self._group_agents_dir = self._group_policy_dir / "agents"
+        self._group_mcps_dir = self._group_policy_dir / "mcps"
 
         # ── First-run initialization (agents, skills, hooks, ember.md) ─
         # The bundled agents stand down when the group ships its own —
@@ -453,10 +454,12 @@ class Session:
             self.project_dir,
             settings.context.project_file,
             read_claude_md=settings.rules.cross_tool_support,
+            group_rules_dir=self.group_dir_for("rules"),
         )
         self.rules_index = RulesIndex(
             self.project_dir,
             read_claude_md=settings.rules.cross_tool_support,
+            group_rules_dir=self.group_dir_for("rules"),
         )
 
     def _init_loop_state(self) -> None:
@@ -667,6 +670,15 @@ class Session:
             self.knowledge_mgr.knowledge = index
         logger.info("Knowledge: switched to neo4j backend (project=%s)", project_id)
 
+    def group_dir_for(self, kind: str) -> Path:
+        """Where the policy cache puts this kind's entries.
+
+        Every loader that has an org tier is handed one of these, so the
+        answer to "where does the group's stuff live" is in one place
+        rather than eight.
+        """
+        return self._group_policy_dir / kind
+
     def group_agent_sync(self) -> GroupAgentSync:
         """The merge between the group's agents and this project's copy.
 
@@ -760,7 +772,11 @@ class Session:
         self.pool.build_agents()
 
         self.skill_pool = SkillPool()
-        self.skill_pool.load_all(self.project_dir, settings.skills.cross_tool_support)
+        self.skill_pool.load_all(
+            self.project_dir,
+            settings.skills.cross_tool_support,
+            group_dir=self.group_dir_for("skills"),
+        )
         self.plugin_loader.apply_to_skills(self.skill_pool, disabled=self._disabled_plugins)
 
     def _init_lsp_and_monitors(self) -> None:
@@ -810,6 +826,7 @@ class Session:
             self.project_dir,
             plugin_roots=plugin_style_roots,
             read_claude=settings.rules.cross_tool_support,
+            group_dir=self.group_dir_for("output-styles"),
         )
         if "default" in self.output_styles:
             self._active_output_style = "default"
@@ -818,7 +835,9 @@ class Session:
 
         # ── Hooks ────────────────────────────────────────────────────
         self._hook_loader = HookLoader(
-            self.project_dir, cross_tool_support=settings.hooks.cross_tool_support
+            self.project_dir,
+            cross_tool_support=settings.hooks.cross_tool_support,
+            group_dir=self.group_dir_for("hooks"),
         )
         load_result = self._hook_loader.load()
         self._hook_registry = load_result.registry

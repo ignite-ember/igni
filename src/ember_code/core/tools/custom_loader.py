@@ -123,6 +123,7 @@ class CustomToolLoader:
         project_dir: Path | None = None,
         *,
         plugin_tool_dirs: list[tuple[str, Path]] | None = None,
+        group_tools_dir: Path | None = None,
     ) -> DiscoveryResult:
         """Discover custom tools from ``.ember/tools/`` directories.
 
@@ -152,6 +153,10 @@ class CustomToolLoader:
             ToolSource(name_prefix="custom", tools_dir=Path.home() / ".ember" / "tools"),
             ToolSource(name_prefix="custom", tools_dir=project_dir / ".ember" / "tools"),
         ]
+        # The org's, from the group policy cache. Last of the non-plugin
+        # sources, so a tool the group ships wins its name.
+        if group_tools_dir is not None:
+            sources.append(ToolSource(name_prefix="custom", tools_dir=group_tools_dir))
         for plugin_name, tools_dir in plugin_tool_dirs or []:
             sources.append(
                 ToolSource(
@@ -305,6 +310,7 @@ def load_custom_tools(
     project_dir: Path | None = None,
     *,
     plugin_tool_dirs: list[tuple[str, Path]] | None = None,
+    group_tools_dir: Path | None = None,
 ) -> list[Toolkit]:
     """Back-compat shim — returns a plain ``list[Toolkit]``.
 
@@ -324,7 +330,11 @@ def load_custom_tools(
     shape (loaded / skipped / failed).
     """
     loader = CustomToolLoader()
-    result = loader.discover(project_dir, plugin_tool_dirs=plugin_tool_dirs)
+    result = loader.discover(
+        project_dir,
+        plugin_tool_dirs=plugin_tool_dirs,
+        group_tools_dir=group_tools_dir,
+    )
     # Explicit ``list(...)`` guards the caller contract: if a
     # future refactor changes :attr:`DiscoveryResult.toolkits` to
     # a non-list sequence, the shim still hands back a plain

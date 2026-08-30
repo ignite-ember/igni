@@ -20,7 +20,7 @@ error" or vice versa.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -177,7 +177,7 @@ class TestCrossToolSupport:
             handler = _make_handler(tmp_path)
             handler._session.settings.rules.cross_tool_support = True
             await handler._handle_markdown_command("/foo", "")
-        ctx.first_mock.assert_called_once_with(tmp_path, read_claude=True)
+        ctx.first_mock.assert_called_once_with(tmp_path, read_claude=True, group_dir=ANY)
 
     @pytest.mark.asyncio
     async def test_skips_claude_when_cross_tool_support_off(self, tmp_path):
@@ -185,7 +185,7 @@ class TestCrossToolSupport:
             handler = _make_handler(tmp_path)
             handler._session.settings.rules.cross_tool_support = False
             await handler._handle_markdown_command("/foo", "")
-        ctx.first_mock.assert_called_once_with(tmp_path, read_claude=False)
+        ctx.first_mock.assert_called_once_with(tmp_path, read_claude=False, group_dir=ANY)
 
 
 def _mock_md(return_value="rendered prompt body", *, side_effect=None):
