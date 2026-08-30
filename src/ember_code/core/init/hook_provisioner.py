@@ -39,6 +39,10 @@ class HookProvisioner(BaseModel):
 
     project_dir: Path
     hooks: tuple[BuiltInHookSpec, ...] = Field(default_factory=lambda: BUILT_IN_HOOKS)
+    #: Write the scripts but leave them unregistered, because the
+    #: person's group registers them instead. The scripts still have to
+    #: exist — a group's hook declaration points at one by path.
+    register: bool = True
 
     def provision(self) -> None:
         """Write every hook script and register each definition.
@@ -50,8 +54,9 @@ class HookProvisioner(BaseModel):
            (fail-soft — a corrupt file becomes an empty instance).
         3. For each spec, call
            :meth:`BuiltInHookSpec.write_script` (always overwrites —
-           hooks are code, not config) and
-           :meth:`BuiltInHookSpec.register_in` (idempotent).
+           hooks are code, not config) and, unless the person's group
+           registers them instead, :meth:`BuiltInHookSpec.register_in`
+           (idempotent).
         4. Save the settings file back — user-added top-level keys
            survive via :attr:`SettingsFile.model_config`'s
            ``extra="allow"``.
@@ -64,6 +69,8 @@ class HookProvisioner(BaseModel):
 
         for hook in self.hooks:
             hook.write_script(hooks_dir)
-            hook.register_in(settings)
+            if self.register:
+                hook.register_in(settings)
 
-        settings.save(settings_path)
+        if self.register:
+            settings.save(settings_path)

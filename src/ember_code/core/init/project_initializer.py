@@ -119,7 +119,10 @@ class ProjectInitializer(BaseModel):
         # Sync built-in agents/skills — checksum-based so user edits
         # are preserved.
         warnings = self._update_built_in_files()
-        HookProvisioner(project_dir=self.project_dir).provision()
+        HookProvisioner(
+            project_dir=self.project_dir,
+            register=not self.config.skip_builtin_hook_registration,
+        ).provision()
 
         for msg in warnings:
             logger.info(msg)

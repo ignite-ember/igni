@@ -225,7 +225,8 @@ class Session:
         # removed, and two sources would fight over one checksum file.
         ProjectInitializer.initialize(
             self.project_dir,
-            skip_bundled_agents=self._group_ships_agents(),
+            skip_bundled_agents=self._group_ships("agents"),
+            skip_builtin_hook_registration=self._group_ships("hooks"),
         )
         self._group_sync = self._sync_group_agents()
 
@@ -719,12 +720,19 @@ class Session:
             logger.warning("Could not reload the group's agents: %s", exc)
             return False
 
-    def _group_ships_agents(self) -> bool:
-        """Whether the cached pack has any agents at all."""
+    def _group_ships(self, kind: str) -> bool:
+        """Whether the cached pack carries anything of this kind.
+
+        Asked before the bundled equivalents are scaffolded: when the
+        group ships agents, ember-code's own must not be written beside
+        them, and when it ships hooks, the built-in ones must not be
+        registered twice.
+        """
         try:
-            return self._group_agents_dir.is_dir() and any(self._group_agents_dir.glob("*.md"))
+            directory = self.group_dir_for(kind)
+            return directory.is_dir() and any(directory.iterdir())
         except Exception as exc:  # pragma: no cover — defensive
-            logger.debug("Could not inspect the group agents directory: %s", exc)
+            logger.debug("Could not inspect the group %s directory: %s", kind, exc)
             return False
 
     def _sync_group_agents(self) -> GroupSyncReport:

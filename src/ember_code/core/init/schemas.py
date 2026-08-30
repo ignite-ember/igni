@@ -398,6 +398,11 @@ class InitConfig(BaseModel):
     package_dir: Path = Field(default_factory=_default_package_dir)
     marker_file: str = ".initialized"
     checksums_file: str = ".checksums.json"
+    #: Stand the built-in hook registrations down. The scripts are
+    #: still written — a group's hook declaration points at one by path
+    #: — but the group's settings file is what registers them, so
+    #: registering here too would fire each hook twice.
+    skip_builtin_hook_registration: bool = False
     #: Stand the bundled agents down. Set when the person's group ships
     #: agents of its own: the group becomes the sync source for
     #: ``.ember/agents`` and two sources writing the same files would

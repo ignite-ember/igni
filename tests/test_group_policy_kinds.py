@@ -357,3 +357,33 @@ def test_the_session_knows_where_each_kind_lives(tmp_path: Path):
 
     assert session.group_dir_for("skills") == tmp_path / "group-policy" / "skills"
     assert session.group_dir_for("workflows") == tmp_path / "group-policy" / "workflows"
+
+
+class TestWhatIgniShipsStandsDown:
+    """When a group ships a kind, igni's own copy must not arrive
+    beside it — otherwise the admin's version and the built-in one both
+    apply, and a hook fires twice."""
+
+    def test_the_provisioner_can_write_scripts_without_registering(self, tmp_path: Path):
+        """The scripts still have to exist: a group's hook declaration
+        points at one by path."""
+        from ember_code.core.init.hook_provisioner import HookProvisioner
+
+        project = tmp_path / "proj"
+        (project / ".ember").mkdir(parents=True)
+
+        HookProvisioner(project_dir=project, register=False).provision()
+
+        assert (project / ".ember" / "hooks" / "pre-pr-review.sh").is_file()
+        assert not (project / ".ember" / "settings.json").exists()
+
+    def test_it_registers_them_by_default(self, tmp_path: Path):
+        from ember_code.core.init.hook_provisioner import HookProvisioner
+
+        project = tmp_path / "proj"
+        (project / ".ember").mkdir(parents=True)
+
+        HookProvisioner(project_dir=project).provision()
+
+        settings = json.loads((project / ".ember" / "settings.json").read_text(encoding="utf-8"))
+        assert settings["hooks"]["PreToolUse"]
