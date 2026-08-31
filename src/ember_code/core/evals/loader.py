@@ -183,10 +183,10 @@ def load_all_suites(project_dir: Path) -> list[EvalSuite]:
     Looks in two locations:
       - ``<project_dir>/evals/`` — committed, for built-in agent
         datasets shipped with the repo (e.g. ember-code's own evals).
-      - ``<project_dir>/.ember/evals/`` — local user-authored evals
+      - ``<project_dir>/.igni/evals/`` — local user-authored evals
         (gitignored), for custom agents in the user's project.
 
-    Both are merged. Same-named files in ``.ember/evals/`` win on
+    Both are merged. Same-named files in ``.igni/evals/`` win on
     conflict — the user's local copy overrides the shipped one.
     """
     suites: list[EvalSuite] = []

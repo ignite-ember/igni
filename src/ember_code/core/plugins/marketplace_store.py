@@ -6,7 +6,7 @@ A marketplace = a git repo whose ``.claude-plugin/marketplace.json``
 register marketplaces by URL, cache their catalogs locally, and
 resolve ``@<marketplace>/<plugin>`` install refs against the cache.
 
-The registry file at ``~/.ember/marketplaces.json`` lives alongside
+The registry file at ``~/.igni/marketplaces.json`` lives alongside
 ``plugins.json``. Each entry stores the marketplace's URL, the
 parsed catalog from its last fetch, and the timestamp — surfaced
 in the plugins panel so users can tell if their catalog is stale.
@@ -189,7 +189,7 @@ class MarketplaceRegistryStore:
 
     def path(self) -> Path:
         """Absolute path to the on-disk registry file. Expanded
-        each call so ``~/.ember`` follows the user's actual HOME
+        each call so ``~/.igni`` follows the user's actual HOME
         at read time (matters for tests + Windows profile switches)."""
         return Path(str(self._data_dir)).expanduser() / "marketplaces.json"
 

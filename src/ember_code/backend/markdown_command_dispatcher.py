@@ -64,7 +64,7 @@ class DiscoverMarkdownCommands(Protocol):
 
 class MarkdownCommandDispatcher:
     """Match a slash-command name against markdown-authored commands
-    under ``.ember/commands/`` (and ``.claude/commands/`` when
+    under ``.igni/commands/`` (and ``.claude/commands/`` when
     cross-tool support is on) and render the body to a prompt.
 
     :meth:`try_render` returns ``None`` to signal "not a markdown

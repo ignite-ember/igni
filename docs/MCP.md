@@ -32,16 +32,16 @@ Configurations are loaded in order -- later files override earlier ones.
 
 | Scope | Location | Shared? |
 |---|---|---|
-| **User** | `~/.ember/.mcp.json` | No, all projects |
+| **User** | `~/.igni/.mcp.json` | No, all projects |
 | **Project** | `.mcp.json` (project root) | Yes, via git |
-| **Local** | `.ember/.mcp.json` | No (gitignored) |
+| **Local** | `.igni/.mcp.json` | No (gitignored) |
 
 ## Per-Agent MCP Filtering
 
 Control which MCP servers are available to which agents using the `mcp_servers` field in the agent's `.md` file. This keeps all agent configuration in one place.
 
 ```markdown
-# .ember/agents/database.md
+# .igni/agents/database.md
 ---
 name: database
 description: Database operations and migrations
@@ -51,7 +51,7 @@ mcp_servers: [postgres]
 ```
 
 ```markdown
-# .ember/agents/editor.md
+# .igni/agents/editor.md
 ---
 name: editor
 description: Creates and modifies code files
@@ -93,7 +93,7 @@ MCP Servers  2 connected / 3 total
 ## Best Practices
 
 - **Commit `.mcp.json`** to version control so the team shares the same integrations
-- **Use `.ember/.mcp.json`** for machine-specific servers (it is gitignored)
+- **Use `.igni/.mcp.json`** for machine-specific servers (it is gitignored)
 - **Restrict MCP servers per agent** using the `mcp_servers` frontmatter field -- don't give every agent access to every server
 - **Prefer stdio** for local tools -- it requires no network configuration and is fully supported today
 

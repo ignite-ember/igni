@@ -212,7 +212,7 @@ class KnowledgeIndexEntry(BaseModel):
     :meth:`KnowledgeIndex.list_entries`.
 
     Distinct from :class:`KnowledgeEntry` (that one describes the
-    ``.ember/knowledge.yaml`` on-disk row and carries ``added_at``).
+    ``.igni/knowledge.yaml`` on-disk row and carries ``added_at``).
     This model carries the full metadata dict the panel needs to
     render Browse/Detail views.
     """
@@ -409,7 +409,7 @@ class IngestedContent(BaseModel):
 
 
 class KnowledgeEntry(BaseModel):
-    """A single entry in ``.ember/knowledge.yaml``.
+    """A single entry in ``.igni/knowledge.yaml``.
 
     ``id`` is a 16-hex prefix of ``sha256(content)`` — stable across
     round-trips so diffing YAML ↔ Chroma is a set-diff on ids. The
@@ -441,7 +441,7 @@ class KnowledgeEntry(BaseModel):
 
 
 class KnowledgeYamlFile(BaseModel):
-    """On-disk YAML shape for ``.ember/knowledge.yaml``.
+    """On-disk YAML shape for ``.igni/knowledge.yaml``.
 
     Absorbs the file I/O that used to be inlined in
     :class:`KnowledgeSyncer.load_file` / ``save_file`` — the syncer

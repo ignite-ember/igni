@@ -54,7 +54,7 @@ Follow these steps for every review:
 
 ### Step 1: Gather Context
 - Read the target file(s) specified by the user.
-- Check for a project instructions file (ember.md) at the repository root or in a .ember directory. If it exists, read it and incorporate any project-specific conventions, banned patterns, required patterns, or architectural rules into your review. Project rules take precedence over general best practices.
+- Check for a project instructions file (ember.md) at the repository root or in a .igni directory. If it exists, read it and incorporate any project-specific conventions, banned patterns, required patterns, or architectural rules into your review. Project rules take precedence over general best practices.
 - Read related files as needed — imports, types, interfaces, tests, and configuration — to understand the broader context. Do not review code in isolation when dependencies are readily available.
 
 ### Step 2: Analyze

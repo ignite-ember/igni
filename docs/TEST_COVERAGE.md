@@ -92,7 +92,7 @@
 |---|---|---:|---|---|
 | `mcp/client.py` | `test_mcp_client.py` | 13 | List servers, connect (missing/unsupported/sse-no-url/stdio-success/cached/no-tools/import-error), disconnect_all, disconnect skips SSE | Reconnection, timeout handling |
 | `mcp/server.py` | `test_mcp_server.py` | 4 | Create without MCP, create with mock, settings storage | Request/response handling |
-| `mcp/config.py` | `test_mcp_config.py` | 10 | `MCPServerConfig` defaults/stdio/sse, `MCPConfigLoader` empty/project/.ember/override/invalid/missing-key/multiple | — |
+| `mcp/config.py` | `test_mcp_config.py` | 10 | `MCPServerConfig` defaults/stdio/sse, `MCPConfigLoader` empty/project/.igni/override/invalid/missing-key/multiple | — |
 | `mcp/transport.py` | `test_mcp_transport.py` | 5 | Stores command/args, defaults, stdin/stdout none, stop without start | — |
 | `mcp/tools.py` | — | 0 | — | MCP tool registration and dispatch |
 | `mcp/ide_detect.py` | — | 0 | — | General IDE detection utilities |

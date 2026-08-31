@@ -11,6 +11,7 @@ from ember_code.core.config.settings import (
     SettingsLoader,
     load_settings,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 # The pre-refactor module exposed ``_deep_merge`` / ``_load_yaml`` as
 # free-function shims. They have been promoted to staticmethods on
@@ -135,7 +136,7 @@ class TestSettings:
 
 class TestLoadSettings:
     def test_load_with_project_config(self, tmp_path):
-        ember_dir = tmp_path / ".ember"
+        ember_dir = tmp_path / CONFIG_DIR
         ember_dir.mkdir()
         config = ember_dir / "config.yaml"
         config.write_text("models:\n  default: custom-from-project\n")
@@ -151,7 +152,7 @@ class TestLoadSettings:
         assert s.models.default == "cli-model"
 
     def test_cli_overrides_beat_project(self, tmp_path):
-        ember_dir = tmp_path / ".ember"
+        ember_dir = tmp_path / CONFIG_DIR
         ember_dir.mkdir()
         config = ember_dir / "config.yaml"
         config.write_text("models:\n  default: project-model\n")
@@ -163,7 +164,7 @@ class TestLoadSettings:
         assert s.models.default == "cli-model"
 
     def test_local_config_beats_project(self, tmp_path):
-        ember_dir = tmp_path / ".ember"
+        ember_dir = tmp_path / CONFIG_DIR
         ember_dir.mkdir()
         (ember_dir / "config.yaml").write_text("models:\n  default: project\n")
         (ember_dir / "config.local.yaml").write_text("models:\n  default: local\n")
@@ -174,23 +175,23 @@ class TestLoadSettings:
     def test_user_global_config_loaded(self, tmp_path):
         # The user tier is the lowest-priority FILE source — sits
         # under built-in defaults, gets overridden by everything
-        # above it. Hit it in isolation: only ``~/.ember/config.yaml``
+        # above it. Hit it in isolation: only ``~/.igni/config.yaml``
         # exists, no project files, no CLI.
         # ``conftest._isolate_user_settings`` already redirects
         # ``Path.home()`` to a per-test tmp dir, so writing
-        # ``Path.home() / .ember / config.yaml`` writes inside the
+        # ``Path.home() / .igni / config.yaml`` writes inside the
         # fake home without touching the developer's real config.
-        user_ember = Path.home() / ".ember"
+        user_ember = Path.home() / CONFIG_DIR
         user_ember.mkdir(parents=True)
         (user_ember / "config.yaml").write_text("models:\n  default: user-global-model\n")
         s = load_settings(project_dir=tmp_path)
         assert s.models.default == "user-global-model"
 
     def test_project_beats_user_global(self, tmp_path):
-        user_ember = Path.home() / ".ember"
+        user_ember = Path.home() / CONFIG_DIR
         user_ember.mkdir(parents=True)
         (user_ember / "config.yaml").write_text("models:\n  default: user-global\n")
-        project_ember = tmp_path / ".ember"
+        project_ember = tmp_path / CONFIG_DIR
         project_ember.mkdir()
         (project_ember / "config.yaml").write_text("models:\n  default: project-model\n")
         s = load_settings(project_dir=tmp_path)
@@ -213,11 +214,11 @@ class TestFiveTierPrecedence:
         so each test can verify which one wins for that value.
         Returns once all tiers are present."""
         # Tier 5: user global
-        user_ember = Path.home() / ".ember"
+        user_ember = Path.home() / CONFIG_DIR
         user_ember.mkdir(parents=True, exist_ok=True)
         (user_ember / "config.yaml").write_text(f"models:\n  default: user-{tier_label}\n")
         # Tiers 4 + 3: project + project.local
-        project_ember = tmp_path / ".ember"
+        project_ember = tmp_path / CONFIG_DIR
         project_ember.mkdir(parents=True, exist_ok=True)
         (project_ember / "config.yaml").write_text(f"models:\n  default: project-{tier_label}\n")
         (project_ember / "config.local.yaml").write_text(
@@ -258,10 +259,10 @@ class TestFiveTierPrecedence:
         assert s.models.default == "local-x"
 
     def test_project_wins_when_only_user_and_project(self, tmp_path) -> None:
-        user_ember = Path.home() / ".ember"
+        user_ember = Path.home() / CONFIG_DIR
         user_ember.mkdir(parents=True, exist_ok=True)
         (user_ember / "config.yaml").write_text("models:\n  default: user-only\n")
-        project_ember = tmp_path / ".ember"
+        project_ember = tmp_path / CONFIG_DIR
         project_ember.mkdir(parents=True, exist_ok=True)
         (project_ember / "config.yaml").write_text("models:\n  default: project-only\n")
         s = load_settings(project_dir=tmp_path)
@@ -314,7 +315,7 @@ class TestManagedSettings:
         assert s.models.default == "org-pinned"
 
     def test_managed_overrides_project(self, tmp_path, monkeypatch):
-        ember_dir = tmp_path / ".ember"
+        ember_dir = tmp_path / CONFIG_DIR
         ember_dir.mkdir()
         (ember_dir / "config.yaml").write_text("models:\n  default: project-model\n")
         managed = tmp_path / "managed.yaml"
@@ -419,7 +420,7 @@ class TestSettingsJsonLifted:
 
     def test_user_settings_json_deny_reaches_evaluator(self, tmp_path, monkeypatch) -> None:
         user_home = tmp_path / "home"
-        ember_dir = user_home / ".ember"
+        ember_dir = user_home / CONFIG_DIR
         ember_dir.mkdir(parents=True)
         (ember_dir / "settings.json").write_text('{"permissions": {"deny": ["Bash(rm -rf /)"]}}')
         monkeypatch.setattr("pathlib.Path.home", lambda: user_home)
@@ -429,11 +430,11 @@ class TestSettingsJsonLifted:
 
     def test_project_settings_json_overrides_user(self, tmp_path, monkeypatch) -> None:
         user_home = tmp_path / "home"
-        (user_home / ".ember").mkdir(parents=True)
-        (user_home / ".ember" / "settings.json").write_text(
+        (user_home / CONFIG_DIR).mkdir(parents=True)
+        (user_home / CONFIG_DIR / "settings.json").write_text(
             '{"permissions": {"deny": ["Bash(user-rule)"]}}'
         )
-        project_ember = tmp_path / "proj" / ".ember"
+        project_ember = tmp_path / "proj" / CONFIG_DIR
         project_ember.mkdir(parents=True)
         (project_ember / "settings.json").write_text(
             '{"permissions": {"deny": ["Bash(project-rule)"]}}'
@@ -447,7 +448,7 @@ class TestSettingsJsonLifted:
 
     def test_missing_settings_json_is_silent(self, tmp_path, monkeypatch) -> None:
         user_home = tmp_path / "home"
-        (user_home / ".ember").mkdir(parents=True)
+        (user_home / CONFIG_DIR).mkdir(parents=True)
         monkeypatch.setattr("pathlib.Path.home", lambda: user_home)
 
         s = load_settings(project_dir=tmp_path)
@@ -457,7 +458,7 @@ class TestSettingsJsonLifted:
         # Best-effort: a hand-edited file with a syntax error
         # must NOT take down the BE on startup. Skip + defaults.
         user_home = tmp_path / "home"
-        ember_dir = user_home / ".ember"
+        ember_dir = user_home / CONFIG_DIR
         ember_dir.mkdir(parents=True)
         (ember_dir / "settings.json").write_text("{not valid json")
         monkeypatch.setattr("pathlib.Path.home", lambda: user_home)
@@ -472,7 +473,7 @@ class TestSettingsJsonLifted:
         # there'd be two competing sources of truth. Confirm we
         # skip it entirely.
         user_home = tmp_path / "home"
-        ember_dir = user_home / ".ember"
+        ember_dir = user_home / CONFIG_DIR
         ember_dir.mkdir(parents=True)
         (ember_dir / "settings.json").write_text(
             """{"hooks": {"PreToolUse": [{"type": "command", "command": "x"}]},

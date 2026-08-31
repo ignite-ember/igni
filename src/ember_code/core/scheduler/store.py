@@ -1,6 +1,6 @@
 """Per-project SQLite-backed store for scheduled tasks (async via SQLAlchemy).
 
-Tasks live in ``~/.ember/projects/<project_hash>/state.db`` so each project
+Tasks live in ``~/.igni/projects/<project_hash>/state.db`` so each project
 has its own scheduler queue — switching projects doesn't surface another
 project's pending ``/loop`` jobs.
 """

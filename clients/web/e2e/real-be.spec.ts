@@ -65,10 +65,10 @@ const test = base.extend<Fixtures>({
     // never reaches the ready line. Best-effort: a missing source
     // file (e.g. CI without local config) leaves the BE in its
     // pre-fix state — same failure, just earlier in the stack.
-    const localConfig = path.join(REPO_ROOT, ".ember", "config.local.yaml");
+    const localConfig = path.join(REPO_ROOT, ".igni", "config.local.yaml");
     try {
-      await fs.mkdir(path.join(projectDir, ".ember"), { recursive: true });
-      await fs.copyFile(localConfig, path.join(projectDir, ".ember", "config.local.yaml"));
+      await fs.mkdir(path.join(projectDir, ".igni"), { recursive: true });
+      await fs.copyFile(localConfig, path.join(projectDir, ".igni", "config.local.yaml"));
     } catch (err) {
       console.warn(`realBe fixture: could not copy ${localConfig}: ${err}`);
     }

@@ -218,7 +218,7 @@ def _build_main_agent(model, project_dir: Path):
 
     Heavier — needs the full Session because OrchestrateTools depends on a
     populated AgentPool to dispatch to specialists. We point Session at a
-    temp project_dir so we don't touch the real .ember/ workspace.
+    temp project_dir so we don't touch the real .igni/ workspace.
     """
     from ember_code.core.config.settings import load_settings
     from ember_code.core.session.core import Session
@@ -595,7 +595,7 @@ async def main():
     def _build_session_for(project_dir: Path):
         """Build a fresh Session rooted at ``project_dir``.
 
-        Writes a permissive ``.ember/settings.local.json`` under
+        Writes a permissive ``.igni/settings.local.json`` under
         ``project_dir`` so the agent can use Bash/Edit/Write without
         HITL confirmation (evals are headless), wires the test model,
         disables Agno's exception retries, and starts an auto-approve
@@ -608,7 +608,7 @@ async def main():
 
         import json as _json
 
-        ember_dir = project_dir / ".ember"
+        ember_dir = project_dir / ".igni"
         ember_dir.mkdir(parents=True, exist_ok=True)
         (ember_dir / "settings.local.json").write_text(
             _json.dumps(

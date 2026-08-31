@@ -51,11 +51,11 @@ class AgentPriority(IntEnum):
     Claude sources by +1::
 
         10  ephemeral agents created at runtime
-         5  <project>/.ember/agents/          (project, native)
-         4  <project>/.ember/agents.local/    (project personal)
+         5  <project>/.igni/agents/          (project, native)
+         4  <project>/.igni/agents.local/    (project personal)
          3  <project>/.claude/agents/         (project, cross-tool)
          2  <group policy cache>/agents/      (the org's group)
-         1  ~/.ember/agents/                  (user, native)
+         1  ~/.igni/agents/                  (user, native)
          0  ~/.claude/agents/                 (user, cross-tool)
 
     The org's row is above the user's globals and below everything the
@@ -140,7 +140,7 @@ class AgentDefinition(BaseModel):
         Used by the plugin loader so each plugin's agents land
         under their own namespace and can't collide with same-
         named agents from other plugins or the user's own
-        ``.ember/agents/``.
+        ``.igni/agents/``.
         """
         return self.model_copy(update={"name": f"{prefix}:{self.name}"})
 

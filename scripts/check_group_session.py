@@ -40,8 +40,8 @@ async def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="igni-session-"))
     home = tmp / "home"
     project = tmp / "project"
-    (home / ".ember").mkdir(parents=True)
-    (project / ".ember").mkdir(parents=True)
+    (home / ".igni").mkdir(parents=True)
+    (project / ".igni").mkdir(parents=True)
 
     # A throwaway HOME so this cannot read or write the real one.
     os.environ["HOME"] = str(home)
@@ -61,7 +61,7 @@ async def main() -> int:
         by_kind.setdefault(e.kind, []).append(e.entry_name)
     print(f"  group {pack.group_name!r}: " + ", ".join(f"{k}×{len(v)}" for k, v in sorted(by_kind.items())))
 
-    cache = GroupPolicyCache(cache_dir=home / ".ember" / "group-policy")
+    cache = GroupPolicyCache(cache_dir=home / ".igni" / "group-policy")
     cache.materialize(pack)
 
     print("\nBooting a Session")
@@ -69,7 +69,7 @@ async def main() -> int:
     from ember_code.core.session.core import Session
 
     settings = load_settings(project_dir=project)
-    settings.storage.data_dir = str(home / ".ember")
+    settings.storage.data_dir = str(home / ".igni")
     session = Session(settings, project_dir=project)
     print(f"  built, session {session.identity.session_id}")
 
@@ -117,7 +117,7 @@ async def main() -> int:
     print("\nWhat the session decided about igni's own copies")
     check(session._group_ships("agents") == ("agents" in by_kind), "knows whether the group ships agents")
     check(session._group_ships("hooks") == ("hooks" in by_kind), "knows whether the group ships hooks")
-    scaffolded = {p.stem for p in (project / ".ember" / "agents").glob("*.md")}
+    scaffolded = {p.stem for p in (project / ".igni" / "agents").glob("*.md")}
     if "agents" in by_kind:
         check(
             scaffolded == set(by_kind["agents"]),

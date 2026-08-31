@@ -249,13 +249,13 @@ class ToolRegistry:
         plugin_tool_dirs: list[tuple[str, Path]] | None = None,
         group_tools_dir: Path | None = None,
     ) -> list[Toolkit]:
-        """Discover custom tools from ``.ember/tools/`` and return as
+        """Discover custom tools from ``.igni/tools/`` and return as
         toolkit list.
 
         Scans directories in priority order:
 
-        1. ``~/.ember/tools/`` (global user tools)
-        2. ``<project>/.ember/tools/`` (project tools)
+        1. ``~/.igni/tools/`` (global user tools)
+        2. ``<project>/.igni/tools/`` (project tools)
         3. Plugin tools (``plugin_tool_dirs``, namespaced
            ``custom_<plugin>_<file>``)
         """

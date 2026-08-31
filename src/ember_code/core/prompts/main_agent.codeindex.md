@@ -257,18 +257,18 @@ Use TODO.md files to track progress across sessions. They persist across commits
 
 **Two levels:**
 
-- **Root `.ember/TODO.md`** — high-level goals and milestones. Auto-loaded into your context at session start. Tracks *what*, not *how*.
-- **Subdirectory `.ember/TODO.md`** (e.g. `src/auth/.ember/TODO.md`) — detailed steps for that specific area. Not auto-loaded; read it when you start working in that directory.
+- **Root `.igni/TODO.md`** — high-level goals and milestones. Auto-loaded into your context at session start. Tracks *what*, not *how*.
+- **Subdirectory `.igni/TODO.md`** (e.g. `src/auth/.igni/TODO.md`) — detailed steps for that specific area. Not auto-loaded; read it when you start working in that directory.
 
 The root TODO is the map. Subdirectory TODOs are the turn-by-turn directions.
 
-**When to use:** the task spans multiple files or steps; work too large for a single session; the user explicitly asks for a plan; resuming work from a previous session (always check `.ember/TODO.md` first).
+**When to use:** the task spans multiple files or steps; work too large for a single session; the user explicitly asks for a plan; resuming work from a previous session (always check `.igni/TODO.md` first).
 
 **When NOT to use:** simple one-shot tasks; tasks that complete in under 5 tool calls; don't duplicate Agno's task mode (Agno tasks for the current run; TODO.md for cross-session persistence).
 
 **Proactive management:**
 
-- *On session start:* read `.ember/TODO.md` if it exists; acknowledge open items relevant to the user's request.
+- *On session start:* read `.igni/TODO.md` if it exists; acknowledge open items relevant to the user's request.
 - *During work:* check off items immediately; add new items you discover; add notes for decisions and blockers; update the "Last updated" date.
 - *On completion:* mark items done, clean up subdirectory TODOs when all items complete. Don't delete — the user may want to review.
 

@@ -25,15 +25,15 @@
 | **MCP client** | MCP client fully wired (consume external servers via `/mcp`). |
 | **Output styles** | `default` / `explanatory` / `learning` markdown-defined styles; `/output-style` slash command hot-patches the live team. |
 | **Plan mode** | Read-only sandbox plus user approval workflow; both `/plan` slash command and `enter_plan_mode(reason)` agent tool; agent cannot exit on its own (security invariant). |
-| **Knowledge base** | Local Neo4j (BE-spawned, per-commit DB) + EmberEmbedder (384d) with `/knowledge add/search/sync-knowledge`. Per-project `.ember/knowledge.yaml` file for git-shareable knowledge sharing. |
-| **Auto-memory** | Per-project `~/.ember/projects/<slug>/memory/MEMORY.md` (200 lines / 25KB cap), with cross-tool fallback to `~/.claude/.../memory/MEMORY.md` — Claude Code users don't need to migrate their memory bank. |
+| **Knowledge base** | Local Neo4j (BE-spawned, per-commit DB) + EmberEmbedder (384d) with `/knowledge add/search/sync-knowledge`. Per-project `.igni/knowledge.yaml` file for git-shareable knowledge sharing. |
+| **Auto-memory** | Per-project `~/.igni/projects/<slug>/memory/MEMORY.md` (200 lines / 25KB cap), with cross-tool fallback to `~/.claude/.../memory/MEMORY.md` — Claude Code users don't need to migrate their memory bank. |
 | **Scheduling, looping, forking** | `/schedule` (cron + one-shot), `/loop` (recurring), `/fork [name]` (clone history under new id). Claude Code now ships `/loop` and `/fork` and a `CronCreate`/`CronList`/`CronDelete` cron toolkit — igni's differentiator is the **explicit user-facing `/schedule` slash command + a `scheduler_tasks` SQLite table** that surfaces scheduled work as a first-class UI concept, rather than relying on the model picking up the agent-loop Tools. |
 | **In-session chat search** | SQLite-backed `search_chat` RPC + UI bar (BE 23 cases, FE 24 cases — snippet windowing, case-insensitive, scroll formatting). |
 | **Guardrails** | PII detection, prompt injection detection, OpenAI moderation API (configurable, off by default). |
 | **Audit logging + managed policy** | `AuditLogger` with `jq`-compatible JSON lines, ISO-8601 timestamps, OSError-swallowing kill-switch. Enterprise: 5 settings tiers (managed > CLI > local > project > user), 4 plugin scopes (managed beats project), platform-managed CLAUDE.md/ember.md. |
 | **Plugin primitives** | LSP server primitive (33 tests), monitor primitive with bounded exponential backoff (26 tests), plugin agent security envelope (force_isolation=worktree, no hooks/mcpServers for plugin agents). Only explicit gap: plugin theme primitive. |
 | **Cross-tool compatibility** | Reads `CLAUDE.md`, `.claude/agents/*.md`, `.claude/skills/`, `.mcp.json` out of the box when `cross_tool_support` is enabled — explicit positioning for Claude Code refugees. |
-| **Org-level Groups (zero-install departmental rollout)** | Org admins curate per-department override packs — agents (markdown), MCPs (JSON), plugins (git-source or YAML), settings (deep-merged). The end-user CLI fetches the pack at login and materializes it to `~/.ember/group-policy/` at priority 4.5. No per-machine deployment needed; admins push, users receive on next fetch. See [Groups](#org-level-groups-and-overrides) for the full story. |
+| **Org-level Groups (zero-install departmental rollout)** | Org admins curate per-department override packs — agents (markdown), MCPs (JSON), plugins (git-source or YAML), settings (deep-merged). The end-user CLI fetches the pack at login and materializes it to `~/.igni/group-policy/` at priority 4.5. No per-machine deployment needed; admins push, users receive on next fetch. See [Groups](#org-level-groups-and-overrides) for the full story. |
 
 Source: `README.md:1-251`, `QUICKSTART.md:1-483`, `CLAUDE_CODE_PARITY.md:13-66` (parity tally table), `docs/ARCHITECTURE.md:1-120`, `docs/CODEINDEX.md`, `docs/NEO4J_MIGRATION_DONE.md`, `pyproject.toml:38-67`. (Internal module is still `ember_code` and project-context file is still `ember.md` — preserved per the v0.7.0 rebrand for back-compat with existing installs.)
 
@@ -91,7 +91,7 @@ igni's reach is not limited to software engineers. **Any knowledge worker with a
 | **Finance / Legal** | Knowledge-only mode (no shell, no file edit), contracts knowledge base, document-review MCPs. | One pack, audit-friendly by default. |
 | **Engineering leadership** | Aggregated view: read-only blast radius, no shell, dashboards of agent activity from `AuditLogger`. | One pack, observability without action rights. |
 
-The rollout mechanic — packs published from the portal, fetched at `igni /login` or surface activation, materialized to `~/.ember/group-policy/` at priority 4.5 — is identical for every row above. **No per-machine deployment, no per-user setup script, no per-role config handholding.** The org-level Groups feature means igni is not "a developer tool that admins tolerate"; it is **an IT-deliverable tool that admins can roll out to any department with a manifest edit**.
+The rollout mechanic — packs published from the portal, fetched at `igni /login` or surface activation, materialized to `~/.igni/group-policy/` at priority 4.5 — is identical for every row above. **No per-machine deployment, no per-user setup script, no per-role config handholding.** The org-level Groups feature means igni is not "a developer tool that admins tolerate"; it is **an IT-deliverable tool that admins can roll out to any department with a manifest edit**.
 
 ### Two deployment shapes
 
@@ -137,8 +137,8 @@ This is the headline story for **admins who want a curated AI experience deliver
 - **Group as a unit of curation.** `ember-server`'s portal exposes group CRUD (`endpoints/portal/groups.py:33+` — `POST /groups`, `GET /groups`, `PATCH /groups/<id>`, plus `OrgGroupMemberList`, `OrgGroupOverrideList`, `OrgGroupPack`). An org admin creates a group ("Frontend Platform", "Security", "Data Platform"), assigns members, then attaches override entries to the group.
 - **Override kinds.** Each group's pack carries four kinds of overrides — `agents` (markdown), `mcps` (JSON), `plugins` (git-source URL or YAML), `settings` (JSON or YAML, deep-merged into the config). Each entry can be `enabled: True` (push in) or `enabled: False` (block). Schema: `core/config/group_policy.py:27-69` (`GroupPolicyOverrideEntry`) and `core/config/group_policy.py:72-119` (`GroupPolicyPack`).
 - **Client materialization.** At startup, the CLI fetches the pack for the authenticated user's groups and materializes each entry:
-  - Agents → `~/.ember/group-policy/agents/<name>.md` (picked up by the agent loader at priority 4.5)
-  - MCPs → `~/.ember/group-policy/mcps/<name>.json`
+  - Agents → `~/.igni/group-policy/agents/<name>.md` (picked up by the agent loader at priority 4.5)
+  - MCPs → `~/.igni/group-policy/mcps/<name>.json`
   - Plugins → installed via `PluginInstaller` into `<data_dir>/group-policy/plugins/` (priority 4.5 — between project-ember and managed-ember), so the plugin loader sees them naturally
   - Settings → deep-merged into the existing settings tier stack via `core/config/merge_plan.py:250` (`GroupPolicyTier`)
 - **Zero install at the workstation.** The end user's machine only needs `brew install ignite-ember` (or the desktop app). When they `igni /login`, the appropriate group packs are pulled automatically — they get the curated agent set, MCP servers, plugin roster, and merged config without anyone running a setup script. A backend/security team can flip the group's overrides today; every member of the group sees the change on next fetch (5-min TTL on the cache, `group_policy.py:22-24`).
@@ -174,7 +174,7 @@ The portal exposes a Stripe-backed per-seat subscription across three tiers — 
 
 Beyond the org-wide CodeIndex pool (`code_index_repos_per_seat × seats`), extra repos are billed at `CODE_INDEX_OVERAGE_RATE = $15/repo/mo` (`billing.py:99`), so there's no arbitrage between bundled and standalone CodeIndex.
 
-**Hosted model roster.** The default hosted model on `/login` is **MiniMax-M2.7** (per `README.md:46` and the model classifier in `pyproject.toml`). **GLM and Kimi are planned to be added to the subscription soon.** BYO-model (`api_key_env`, `api_key_cmd`, or direct key in `.ember/config.yaml` per `README.md:62-74`) remains supported today for teams that want Anthropic, OpenAI, or self-hosted inference.
+**Hosted model roster.** The default hosted model on `/login` is **MiniMax-M2.7** (per `README.md:46` and the model classifier in `pyproject.toml`). **GLM and Kimi are planned to be added to the subscription soon.** BYO-model (`api_key_env`, `api_key_cmd`, or direct key in `.igni/config.yaml` per `README.md:62-74`) remains supported today for teams that want Anthropic, OpenAI, or self-hosted inference.
 
 ---
 
@@ -223,7 +223,7 @@ GitHub/GitLab repo
 
 ### Self-host vs. hosted
 
-The CLI points at `api.ignite-ember.sh` by default. A self-hosted `ember-server` switches the CLI's `api_url` in `.ember/config.yaml`.
+The CLI points at `api.ignite-ember.sh` by default. A self-hosted `ember-server` switches the CLI's `api_url` in `.igni/config.yaml`.
 
 ---
 
@@ -246,7 +246,7 @@ The CLI points at `api.ignite-ember.sh` by default. A self-hosted `ember-server`
 | **Hook `permissionDecision` envelope** | yes | yes (post-2026-06-25) | ✅ parity |
 | **Bypass-resistant scoped deny** | yes | yes (`Bash(rm *)` survives bypass) | ✅ parity |
 | **Managed policy tier** | `/Library/.../CLAUDE.md` | `/Library/Application Support/Ember/...` | ✅ parity |
-| **Auto-memory MEMORY.md** | `~/.claude/.../MEMORY.md` | `~/.ember/.../MEMORY.md` + CC fallback | ✅ parity |
+| **Auto-memory MEMORY.md** | `~/.claude/.../MEMORY.md` | `~/.igni/.../MEMORY.md` + CC fallback | ✅ parity |
 | **Cross-tool rules** | n/a (single namespace) | `.claude/*` reads when `cross_tool_support` on | igni broader |
 | **Plugin LSP primitive** | yes | yes (33 tests) | ✅ parity |
 | **Plugin monitor primitive** | yes (experimental) | yes (26 tests, supervisor + backoff) | ✅ parity |

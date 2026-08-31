@@ -157,7 +157,7 @@ class SessionOrchestrator:
         distribution and spawning per-commit subprocesses is unwanted).
 
         Runtime construction downloads the Neo4j distribution + JDK on
-        first use (~200MB, cached at ``~/.ember/neo4j``). Per-(project,
+        first use (~200MB, cached at ``~/.igni/neo4j``). Per-(project,
         commit) subprocesses are refcounted across sessions via the
         runtime's subprocess map, so the download cost is one-time and
         the process cost scales only with how many commits are actively

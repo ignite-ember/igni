@@ -58,7 +58,7 @@ async def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         home = Path(tmp) / "home"
         project = Path(tmp) / "project"
-        (project / ".ember").mkdir(parents=True)
+        (project / ".igni").mkdir(parents=True)
         cache = GroupPolicyCache(cache_dir=home / "group-policy")
 
         print("\nMaterialising")
@@ -85,12 +85,12 @@ async def main() -> int:
                 len(report.copied) == len(by_kind["agents"]),
                 f"{len(report.copied)} agents synced into the project",
             )
-            landed = {p.stem for p in (project / ".ember" / "agents").glob("*.md")}
+            landed = {p.stem for p in (project / ".igni" / "agents").glob("*.md")}
             check(landed == set(by_kind["agents"]), "every agent landed under its own name")
 
         if "skills" in by_kind:
             pool = SkillPool()
-            pool.load_directory(project / ".ember" / "skills")
+            pool.load_directory(project / ".igni" / "skills")
             loaded = {name for name in by_kind["skills"] if pool.get(name)}
             check(loaded == set(by_kind["skills"]), f"{len(loaded)} skills load")
 

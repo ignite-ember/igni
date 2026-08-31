@@ -24,12 +24,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 PluginRoot = Literal[
     "user-claude",  # ~/.claude/plugins/
-    "user-ember",  # ~/.ember/plugins/
+    "user-ember",  # ~/.igni/plugins/
     "project-claude",  # <project>/.claude/plugins/
-    "project-ember",  # <project>/.ember/plugins/
+    "project-ember",  # <project>/.igni/plugins/
     "group-policy-ember",  # <data_dir>/group-policy/plugins/
     "managed-claude",  # sysadmin <managed>/.claude/plugins/
-    "managed-ember",  # sysadmin <managed>/.ember/plugins/
+    "managed-ember",  # sysadmin <managed>/.igni/plugins/
 ]
 
 
@@ -292,7 +292,7 @@ class MarketplaceEntry(BaseModel):
 
 
 class MarketplaceRegistry(BaseModel):
-    """The shape of ``~/.ember/marketplaces.json``.
+    """The shape of ``~/.igni/marketplaces.json``.
 
     Stored as a single object with a ``marketplaces`` list — gives
     room to add registry-wide fields later (e.g. policy settings)

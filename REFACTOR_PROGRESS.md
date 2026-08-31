@@ -5892,7 +5892,7 @@ class.
 
 **Changes:**
 - Created `core/mcp/tool_state.py` — new `MCPToolStateStore`
-  class owning file I/O for `.ember/mcp-tool-state.json`.
+  class owning file I/O for `.igni/mcp-tool-state.json`.
   `path()` / `load()` / `save()`. Handles the "no
   project_dir → no-op" case cleanly (matches manager's prior
   behaviour).
@@ -7222,7 +7222,7 @@ pattern.
   builtin-shadowing dance).
 - New `BuiltInHookSpec(BaseModel)` — one built-in hook shipped by
   the package. Frozen; the `content` string body is written to
-  `.ember/hooks/<filename>` and the `definition` is registered in
+  `.igni/hooks/<filename>` and the `definition` is registered in
   settings.json under `event`.
 - `BUILT_IN_HOOKS` migrated `list[dict[str, Any]]` →
   `tuple[BuiltInHookSpec, ...]`. Tuple because it's a module-level
@@ -7237,7 +7237,7 @@ pattern.
   3. `HookDefinition.model_dump(by_alias=True)` restores wire name `type`.
   4. `background` defaults to False.
   5. `background=True` round-trips.
-  6. E2E: `.ember/settings.json` written by `initialize_project`
+  6. E2E: `.igni/settings.json` written by `initialize_project`
      has `type` (wire name), not `kind` (Python name).
 
 **Results:**

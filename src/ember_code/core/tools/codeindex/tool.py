@@ -46,7 +46,7 @@ class CodeIndexTools(Toolkit):
     Args:
         project_dir: project root used to derive the on-disk path.
             Defaults to ``cwd``.
-        data_dir: ember root, defaults to ``~/.ember``.
+        data_dir: ember root, defaults to ``~/.igni``.
         index: pre-built :class:`CodeIndex` (used by tests / advanced
             callers). When provided, ``project_dir`` and ``data_dir``
             are ignored.

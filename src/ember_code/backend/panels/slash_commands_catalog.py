@@ -52,7 +52,7 @@ class SlashCommandsCatalog:
         ]
 
     def _markdown_entries(self) -> list[MarkdownSlashCommand]:
-        """Markdown-authored commands under ``.ember/commands/`` /
+        """Markdown-authored commands under ``.igni/commands/`` /
         ``.claude/commands/`` (CC parity)."""
         try:
             read_claude = self._session.settings.rules.cross_tool_support

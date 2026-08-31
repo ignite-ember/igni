@@ -10,6 +10,8 @@ from __future__ import annotations
 from agno.learn.config import LearningMode, UserMemoryConfig
 from pydantic import BaseModel
 
+from ember_code.core.paths import CONFIG_DIR
+
 
 class MemoryConfig(BaseModel):
     add_memories_to_context: bool = True
@@ -21,7 +23,7 @@ class KnowledgeConfig(BaseModel):
     max_results: int = 10
     # ── Git-shared knowledge ──────────────────────────────────────
     share: bool = True  # enable git-synced knowledge sharing
-    share_file: str = ".ember/knowledge.yaml"  # path relative to project root
+    share_file: str = f"{CONFIG_DIR}/knowledge.yaml"  # relative to project root
     auto_sync: bool = True  # auto-sync on session start/end
 
 

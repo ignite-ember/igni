@@ -64,7 +64,7 @@
 - [x] "Always allow" — saves exact rule, no future prompts for same
 - [x] "Allow similar" — saves pattern rule
 - [x] "Deny" — blocks the call, agent informed
-- [x] Permission rules persist to `~/.ember/permissions.yaml`
+- [x] Permission rules persist to `~/.igni/permissions.yaml`
 - [ ] `--accept-edits` — auto-approves file edits, still asks for shell
 - [ ] `--auto-approve` — skips all prompts
 - [ ] `--read-only` — blocks all writes and shell execution
@@ -80,7 +80,7 @@
 
 ### Session persistence (don't lose work)
 - [x] New session gets auto-generated ID
-- [x] Session persists to SQLite (`~/.ember/sessions.db`)
+- [x] Session persists to SQLite (`~/.igni/sessions.db`)
 - [x] `--continue` — resumes last session with full history
 - [x] `/clear` — generates new session ID, fresh context
 - [x] `/rename <name>` — renames session
@@ -96,12 +96,12 @@
 
 ### Configuration loading (wrong config = wrong behavior everywhere)
 - [x] Built-in defaults apply when no config files exist
-- [x] `~/.ember/config.yaml` — user-global overrides work (model override verified)
-- [x] `.ember/config.yaml` — project overrides work (knowledge, guardrails verified)
-- [x] `.ember/config.local.yaml` — local overrides (gitignored) (file doesn't exist to test)
+- [x] `~/.igni/config.yaml` — user-global overrides work (model override verified)
+- [x] `.igni/config.yaml` — project overrides work (knowledge, guardrails verified)
+- [x] `.igni/config.local.yaml` — local overrides (gitignored) (file doesn't exist to test)
 - [x] CLI flags — highest priority, override all config files (--model, --verbose, --read-only exist)
 - [x] `ember.md` at project root — loaded as system context (646 chars loaded)
-- [x] `~/.ember/rules.md` — user-global rules loaded (file doesn't exist to test)
+- [x] `~/.igni/rules.md` — user-global rules loaded (file doesn't exist to test)
 
 ---
 
@@ -109,8 +109,8 @@
 
 ### Agent system (the core architecture)
 - [x] Built-in agents loaded from package (10 base agents: architect, data-architect, debugger, docs, editor, explorer, qa, reviewer, security, simplifier — plus 6 `.codeindex.md` variants)
-- [x] `.ember/agents/*.md` — project agents loaded (dir doesn't exist, handled correctly)
-- [x] `~/.ember/agents/*.md` — user-global agents loaded (empty, handled correctly)
+- [x] `.igni/agents/*.md` — project agents loaded (dir doesn't exist, handled correctly)
+- [x] `~/.igni/agents/*.md` — user-global agents loaded (empty, handled correctly)
 - [x] `.claude/agents/*.md` — loaded if `cross_tool_support: true` (defaults true, empty dir handled)
 - [x] Agent with model override — uses specified model (format supported, none currently use it)
 - [x] Agent with custom tools list — only gets declared tools (all agents have tools)
@@ -137,9 +137,9 @@
 
 ### MCP integration (extensibility)
 - [x] `.mcp.json` at project root — servers loaded (filesystem + memory servers connected)
-- [x] `.ember/.mcp.json` — overrides project config (code verified, later file wins)
-- [x] `~/.ember/.mcp.json` — user-global servers (code verified, loaded first)
-- [x] Later file overrides earlier (scope precedence) (home → project → .ember, last wins)
+- [x] `.igni/.mcp.json` — overrides project config (code verified, later file wins)
+- [x] `~/.igni/.mcp.json` — user-global servers (code verified, loaded first)
+- [x] Later file overrides earlier (scope precedence) (home → project → .igni, last wins)
 - [x] MCP servers connect on first message (`ensure_mcp`) (both servers connected, tools listed)
 - [ ] Connection failure — error printed, session continues (not fatal)
 - [ ] MCP server with no tools — disconnected with warning
@@ -242,7 +242,7 @@
 - [x] `/login` flow — browser opens, polling, token saved
 - [x] `/logout` — clears credentials (or "Not logged in")
 - [x] `/whoami` — shows email/expiry (or "Not logged in" / "Expired")
-- [x] Token stored at `~/.ember/credentials.json` with 0600 perms
+- [x] Token stored at `~/.igni/credentials.json` with 0600 perms
 - [x] Cloud model auto-injected when authenticated
 - [x] Status bar shows cloud indicator
 
@@ -330,7 +330,7 @@
 - [ ] `--worktree` — worktree created
 - [ ] `--add-dir <path>` — directory added
 - [ ] `--add-dir` with two directories — both included in context
-- [ ] `--debug` — debug log created at `~/.ember/debug.log`
+- [ ] `--debug` — debug log created at `~/.igni/debug.log`
 - [ ] `--version` — version shown
 
 ---
@@ -359,15 +359,15 @@
 - [ ] Tip bar visible
 
 ### First-run onboarding
-- [x] Fresh project — creates `.ember/`, copies agents/skills/hooks, `ember.md`
-- [x] Delete project `.ember/` folder, re-run — re-initializes project (agents, skills, hooks copied)
-- [x] Home `~/.ember/.initialized` and project `.ember/.initialized` tracked independently
+- [x] Fresh project — creates `.igni/`, copies agents/skills/hooks, `ember.md`
+- [x] Delete project `.igni/` folder, re-run — re-initializes project (agents, skills, hooks copied)
+- [x] Home `~/.igni/.initialized` and project `.igni/.initialized` tracked independently
 - [x] Second run (both markers exist) — no re-initialization
 - [x] Built-in agents in `/agents`
 - [x] Built-in skills in `/skills`
 
 ### Audit & logging
-- [x] Audit log at `~/.ember/audit.log`
+- [x] Audit log at `~/.igni/audit.log`
 - [x] Entries: session ID, agent, tool, status
 - [ ] `--debug` creates debug log
 - [ ] Blocked operations logged

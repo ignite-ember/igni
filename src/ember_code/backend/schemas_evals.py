@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict
 
 from ember_code.backend.command_result import CommandResult
 from ember_code.core.evals.reporter import EvalReport
+from ember_code.core.paths import CONFIG_DIR
 
 if TYPE_CHECKING:
     pass
@@ -33,7 +34,7 @@ class EvalRunView(BaseModel):
 
     def to_command_result(self) -> CommandResult:
         if not self.results:
-            return CommandResult.info("No eval suites found. Add YAML files to .ember/evals/")
+            return CommandResult.info(f"No eval suites found. Add YAML files to {CONFIG_DIR}/evals/")
         return CommandResult.markdown(EvalReport(self.results).render())
 
 

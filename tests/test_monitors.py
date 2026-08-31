@@ -27,6 +27,7 @@ from ember_code.core.monitors.config import (
     _parse_monitors_dict,
     load_monitor_config,
 )
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.tools.monitors import MonitorTools
 
 # ── Config parsing ────────────────────────────────────────────
@@ -114,7 +115,7 @@ class TestLoadMonitorConfig:
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
         self._write(
-            home / ".ember" / "monitors.json",
+            home / CONFIG_DIR / "monitors.json",
             {"monitors": {"shared": {"command": "user-cmd"}}},
         )
         self._write(

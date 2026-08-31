@@ -1,9 +1,9 @@
-"""Custom tool loader — discovers @tool-decorated functions from .ember/tools/.
+"""Custom tool loader — discovers @tool-decorated functions from .igni/tools/.
 
 Security model
 --------------
 This module executes arbitrary Python code found in the user's
-``~/.ember/tools/*.py`` and ``<project>/.ember/tools/*.py`` files
+``~/.igni/tools/*.py`` and ``<project>/.igni/tools/*.py`` files
 via ``importlib.util.spec_from_file_location`` + ``exec_module``.
 There is intentionally NO sandboxing: the tool files come from
 directories the user themselves put code in, on the machine they
@@ -96,7 +96,7 @@ class CustomToolLoader:
 
     See the module docstring for the security model — this class
     executes arbitrary Python from the user's
-    ``.ember/tools/`` dirs without sandboxing. The trust boundary
+    ``.igni/tools/`` dirs without sandboxing. The trust boundary
     is the file-system permissions on those directories, not this
     loader.
 
@@ -126,15 +126,15 @@ class CustomToolLoader:
         plugin_tool_dirs: list[tuple[str, Path]] | None = None,
         group_tools_dir: Path | None = None,
     ) -> DiscoveryResult:
-        """Discover custom tools from ``.ember/tools/`` directories.
+        """Discover custom tools from ``.igni/tools/`` directories.
 
         Scans directories in priority order (higher priority wins
         on conflicts — priority is enforced by the *caller* over
         the returned toolkits; this loader emits them in the same
         priority order):
 
-        1. ``~/.ember/tools/`` (global user tools)
-        2. ``<project>/.ember/tools/`` (project tools)
+        1. ``~/.igni/tools/`` (global user tools)
+        2. ``<project>/.igni/tools/`` (project tools)
         3. Plugin-contributed tool dirs (namespaced
            ``custom_<plugin>_<file>``)
 
@@ -225,7 +225,7 @@ class CustomToolLoader:
                 )
             )
             # Preserve the pre-refactor log lines verbatim — user
-            # debugging habits (``grep 'custom tool' ~/.ember/logs``)
+            # debugging habits (``grep 'custom tool' ~/.igni/logs``)
             # depend on the exact message shape. The plugin variant
             # is emitted when the source's name_prefix carries a
             # plugin namespace.

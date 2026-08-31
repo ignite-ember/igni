@@ -1,4 +1,4 @@
-"""Persistence coordinator for the model registry in ``~/.ember/config.yaml``.
+"""Persistence coordinator for the model registry in ``~/.igni/config.yaml``.
 
 Rehomed from :mod:`ember_code.core.auth.credentials` — the previous
 ``save_model_credentials`` free function mutated YAML for a model
@@ -36,7 +36,7 @@ class ModelRegistryStore:
 
     Args:
         config_path: optional override; defaults to
-            ``~/.ember/config.yaml``.
+            ``~/.igni/config.yaml``.
     """
 
     def __init__(self, config_path: Path | None = None) -> None:

@@ -135,7 +135,7 @@ class ModelRegistryEntry(BaseModel):
             return f"No API key for {self.model_id!r}: tried " + ", and ".join(tried) + "."
         return (
             f"No API key for {self.model_id!r}, and nothing was configured to find one. "
-            "Add `api_key` for it in ~/.ember/config.yaml — or `api_key_env` / "
+            "Add `api_key` for it in {DEFAULT_DATA_DIR}/config.yaml — or `api_key_env` / "
             "`api_key_cmd` in the project's config, which name a secret rather "
             "than containing one and are safe to commit."
         )

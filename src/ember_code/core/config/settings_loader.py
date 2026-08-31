@@ -11,10 +11,10 @@ Precedence (highest first — later merges win):
 
     1. Managed policy (sysadmin-controlled, OS-specific path)
     2. CLI flags
-    3. .ember/config.local.yaml (project, gitignored)
-    4. .ember/config.yaml (project, committed)
-    5. ~/.ember/settings.json (permissions fragment)
-    6. ~/.ember/config.yaml (user global)
+    3. .igni/config.local.yaml (project, gitignored)
+    4. .igni/config.yaml (project, committed)
+    5. ~/.igni/settings.json (permissions fragment)
+    6. ~/.igni/config.yaml (user global)
     7. Built-in defaults (from ``Settings.default_dict()``)
 
 Managed sits ABOVE CLI on purpose — the whole point is that a user

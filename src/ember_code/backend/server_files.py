@@ -120,7 +120,7 @@ class FilesController:
         """Read a small text file for FE preview.
 
         Sandboxed: the resolved path must live under the current
-        project dir OR under ``~/.ember``.
+        project dir OR under ``~/.igni``.
         """
         try:
             requested = Path(path).expanduser()
@@ -144,7 +144,7 @@ class FilesController:
                 contents="",
                 size=0,
                 error=(
-                    "Refused: path is outside the project and ~/.ember. "
+                    f"Refused: path is outside the project and {DEFAULT_DATA_DIR}. "
                     "Open it in your editor instead."
                 ),
             )

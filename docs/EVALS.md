@@ -72,7 +72,7 @@ Agent modified (.md file)
 Evals live alongside agents. Each eval is a YAML file defining test cases that map to Agno's eval types.
 
 ```
-.ember/
+.igni/
 ├── agents/
 │   ├── explorer.md
 │   ├── editor.md
@@ -87,7 +87,7 @@ Evals live alongside agents. Each eval is a YAML file defining test cases that m
 │       └── sample_pr.diff
 ```
 
-Built-in agents ship with built-in evals in `<install>/evals/`. Project evals in `.ember/evals/` extend or override them.
+Built-in agents ship with built-in evals in `<install>/evals/`. Project evals in `.igni/evals/` extend or override them.
 
 ---
 
@@ -96,7 +96,7 @@ Built-in agents ship with built-in evals in `<install>/evals/`. Project evals in
 Each YAML file defines test cases that igni translates into Agno eval calls:
 
 ```yaml
-# .ember/evals/editor.yaml
+# .igni/evals/editor.yaml
 
 agent: editor                        # agent under test (by name from pool)
 description: Validates the editor agent handles file operations correctly
@@ -299,7 +299,7 @@ Verify agents use CodeIndex when they should (semantic questions should use Code
 The Orchestrator's team assembly logic is separately testable. These verify the right agents are picked, the right mode is chosen, and teams aren't over-staffed.
 
 ```yaml
-# .ember/evals/orchestrator.yaml
+# .igni/evals/orchestrator.yaml
 
 agent: orchestrator
 description: Validates team assembly decisions
@@ -495,7 +495,7 @@ Eval results are persisted using Agno's `SqliteDb` backend, enabling score track
 from agno.db.sqlite import SqliteDb
 
 # All evals share a persistent database
-eval_db = SqliteDb(id="ember_evals", db_file="~/.ember/evals.db")
+eval_db = SqliteDb(id="ember_evals", db_file="~/.igni/evals.db")
 
 AccuracyEval(
     db=eval_db,          # results are stored automatically
@@ -588,7 +588,7 @@ When a score drops from the previous run or below the baseline:
 ## Configuration
 
 ```yaml
-# .ember/config.yaml
+# .igni/config.yaml
 
 evals:
   judge_model: MiniMax-M2.7           # model for AccuracyEval judge
@@ -597,7 +597,7 @@ evals:
   timeout_per_case: 30                 # seconds per test case
   max_tool_calls: 20                   # safety limit per case
   parallel: 3                          # concurrent eval cases
-  db: ~/.ember/evals.db           # Agno SqliteDb for result persistence
+  db: ~/.igni/evals.db           # Agno SqliteDb for result persistence
   fail_on_regression: false            # set to true in CI
 ```
 

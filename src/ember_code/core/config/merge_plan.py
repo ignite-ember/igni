@@ -14,11 +14,11 @@ their ``apply`` runs last):
 
     1. Managed policy (sysadmin-controlled, OS-specific path)
     2. CLI flags
-    3. .ember/config.local.yaml + settings.local.json (project)
-    4. .ember/config.yaml + settings.json (project)
-    5. ~/.ember/settings.local.json (permissions fragment)
-    6. ~/.ember/settings.json (permissions fragment)
-    7. ~/.ember/config.yaml (user global)
+    3. .igni/config.local.yaml + settings.local.json (project)
+    4. .igni/config.yaml + settings.json (project)
+    5. ~/.igni/settings.local.json (permissions fragment)
+    6. ~/.igni/settings.json (permissions fragment)
+    7. ~/.igni/config.yaml (user global)
     8. Built-in defaults (from ``Settings.default_dict()`` — seeded
        into the accumulator BEFORE the plan runs)
 
@@ -37,7 +37,7 @@ from ember_code.core.config.accumulator import SettingsAccumulator
 from ember_code.core.config.cloud_model_migrator import CloudModelMigrator
 from ember_code.core.config.config_io import YamlSource
 from ember_code.core.config.managed_policy import ManagedPolicySource
-from ember_code.core.paths import CONFIG_DIR
+from ember_code.core.paths import home_config_dir, project_config_dir
 
 if TYPE_CHECKING:
     from ember_code.core.config.group_policy import GroupPolicyPack
@@ -229,10 +229,16 @@ class SettingsMergePlan:
         assertions reference this method's output. If a future
         refactor needs to reorder tiers, this is the seam.
         """
-        user_ember = Path.home() / CONFIG_DIR
+        # Through the helpers, not ``/ CONFIG_DIR`` — they fall back to
+        # the pre-rename directory while that is the one on disk. Built
+        # by hand here, this tier list was the one reader that could not
+        # see an unmigrated install, and it fails silently: no config
+        # found is indistinguishable from no config set, so a session
+        # would come up on the built-in defaults without saying so.
+        user_ember = home_config_dir()
         if project_dir is None:
             project_dir = Path.cwd()
-        project_ember = project_dir / CONFIG_DIR
+        project_ember = project_config_dir(project_dir)
 
         tiers: list[Tier] = [
             # User global (lowest priority above built-in defaults)

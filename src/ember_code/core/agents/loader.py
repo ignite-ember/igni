@@ -77,7 +77,7 @@ class AgentDefinitionLoader:
         repository can override one agent by name without being given a
         copy of the whole set.
 
-        They used to be copied into ``<project>/.ember/agents`` instead,
+        They used to be copied into ``<project>/.igni/agents`` instead,
         which is what made "the local one wins" true — there was only
         one file. Reading the cache directly gets the same outcome from
         ordering, and leaves nothing of the server's in the repository.

@@ -1,4 +1,4 @@
-"""Tests for custom tool loader — .ember/tools/ discovery."""
+"""Tests for custom tool loader — .igni/tools/ discovery."""
 
 import textwrap
 from pathlib import Path
@@ -6,13 +6,14 @@ from pathlib import Path
 import pytest
 from agno.tools import tool
 
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.tools.custom_loader import CustomToolkit, load_custom_tools
 
 
 @pytest.fixture
 def tools_dir(tmp_path: Path) -> Path:
-    """Create a .ember/tools/ directory inside a temp project."""
-    d = tmp_path / ".ember" / "tools"
+    """Create a .igni/tools/ directory inside a temp project."""
+    d = tmp_path / CONFIG_DIR / "tools"
     d.mkdir(parents=True)
     return d
 
@@ -25,12 +26,12 @@ def _write_tool_file(tools_dir: Path, filename: str, content: str) -> Path:
 
 class TestLoadCustomTools:
     def test_empty_dir(self, tmp_path: Path):
-        """No .ember/tools/ directory — returns empty list."""
+        """No .igni/tools/ directory — returns empty list."""
         toolkits = load_custom_tools(tmp_path)
         assert toolkits == []
 
     def test_empty_tools_dir(self, tools_dir: Path, tmp_path: Path):
-        """Empty .ember/tools/ — returns empty list."""
+        """Empty .igni/tools/ — returns empty list."""
         toolkits = load_custom_tools(tmp_path)
         assert toolkits == []
 

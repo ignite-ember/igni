@@ -7,12 +7,12 @@ igni is configured through a layered system of config files, environment variabl
 (Highest priority first)
 
 1. **CLI flags** — `--model`, `--no-web`, etc.
-2. **Project local config** — `.ember/config.local.yaml` (gitignored, personal overrides)
-3. **Project config** — `.ember/config.yaml` (committed to repo, shared with team)
-4. **User config** — `~/.ember/config.yaml` (global, generated on first run)
+2. **Project local config** — `.igni/config.local.yaml` (gitignored, personal overrides)
+3. **Project config** — `.igni/config.yaml` (committed to repo, shared with team)
+4. **User config** — `~/.igni/config.yaml` (global, generated on first run)
 5. **Defaults** — built-in sensible defaults
 
-Each level deep-merges over the previous. The `~/.ember/config.yaml` file is automatically generated from defaults on first run via `yaml.dump(DEFAULT_CONFIG)` — a single source of truth.
+Each level deep-merges over the previous. The `~/.igni/config.yaml` file is automatically generated from defaults on first run via `yaml.dump(DEFAULT_CONFIG)` — a single source of truth.
 
 ## Models & Authentication
 
@@ -63,7 +63,7 @@ Sign up at **https://ignite-ember.sh**. All built-in models route through the Em
 ignite-ember /login         # opens browser for device-flow login
 ```
 
-**Device-flow login:** Running `/login` opens your browser to the Ember portal. After you authenticate, the CLI automatically receives your access token and model credentials. Platform credentials are saved to `~/.ember/credentials.json` (token, email, expiry). Model credentials (API key, URL) are saved to `~/.ember/config.yaml`.
+**Device-flow login:** Running `/login` opens your browser to the Ember portal. After you authenticate, the CLI automatically receives your access token and model credentials. Platform credentials are saved to `~/.igni/credentials.json` (token, email, expiry). Model credentials (API key, URL) are saved to `~/.igni/config.yaml`.
 
 No manual model configuration needed — the built-in registry handles everything.
 
@@ -80,7 +80,7 @@ Failure modes are all soft: missing token, network error, timeout (3 s), and non
 Add entries to `models.registry` in your config. These override built-in entries with the same name, or add entirely new models.
 
 ```yaml
-# .ember/config.yaml
+# .igni/config.yaml
 models:
   registry:
     # Ember Cloud model — uses login credentials
@@ -159,7 +159,7 @@ The key difference: Claude Code only supports Anthropic models through different
 ## Config File Format
 
 ```yaml
-# .ember/config.yaml
+# .igni/config.yaml
 
 # Model configuration
 #
@@ -252,12 +252,12 @@ storage:
   # Agno supports 15+ storage backends. SQLite is the default for zero-config local use.
   # Use a remote backend (postgres, mongodb, etc.) to sync sessions across devices.
   backend: "sqlite"
-  session_db: "~/.ember/sessions.db"   # SQLite path (when backend=sqlite)
-  memory_db: "~/.ember/memory.db"      # SQLite path (when backend=sqlite)
+  session_db: "~/.igni/sessions.db"   # SQLite path (when backend=sqlite)
+  memory_db: "~/.igni/memory.db"      # SQLite path (when backend=sqlite)
   # Remote backend example (uncomment to sync across devices):
   # backend: "postgres"
   # db_url: "postgresql://user:pass@host:5432/ember_code"
-  audit_log: "~/.ember/audit.log"      # Tool execution log
+  audit_log: "~/.igni/audit.log"      # Tool execution log
   max_history_runs: 10000              # Effectively unlimited (auto-compact handles context)
 
 # Context compression
@@ -328,9 +328,9 @@ scheduler:
 agents:
   cross_tool_support: true         # also scans .claude/agents/, .codex/, etc.
   # Ember dirs (always scanned):
-  #   .ember/agents/              (project, committed)
-  #   .ember/agents.local/        (project, gitignored)
-  #   ~/.ember/agents/            (user global)
+  #   .igni/agents/              (project, committed)
+  #   .igni/agents.local/        (project, gitignored)
+  #   ~/.igni/agents/            (user global)
   # Cross-tool dirs (when cross_tool_support: true):
   #   .claude/agents/             (Claude Code project)
   #   ~/.claude/agents/           (Claude Code user global)
@@ -341,9 +341,9 @@ skills:
   cross_tool_support: true         # also scans .claude/skills/
   auto_trigger: true               # Allow Orchestrator to auto-trigger skills
   # Ember dirs (always scanned):
-  #   .ember/skills/              (project, committed)
-  #   .ember/skills.local/        (project, gitignored)
-  #   ~/.ember/skills/            (user global)
+  #   .igni/skills/              (project, committed)
+  #   .igni/skills.local/        (project, gitignored)
+  #   ~/.igni/skills/            (user global)
   # Cross-tool dirs (when cross_tool_support: true):
   #   .claude/skills/             (Claude Code project)
   #   ~/.claude/skills/           (Claude Code user global)
@@ -379,11 +379,11 @@ embeddings:
 knowledge:
   enabled: true                    # Enable ChromaDB knowledge base
   collection_name: "ember_knowledge"  # ChromaDB collection name
-  chroma_db_path: "~/.ember/chromadb" # Path to ChromaDB storage
+  chroma_db_path: "~/.igni/chromadb" # Path to ChromaDB storage
   max_results: 10                  # Max search results returned
   embedder: "local"                # Embedder registry name (or provider:model_id)
   share: true                      # Sync knowledge to a git-friendly YAML file
-  share_file: ".ember/knowledge.yaml"  # Knowledge file path (relative to project)
+  share_file: ".igni/knowledge.yaml"  # Knowledge file path (relative to project)
   auto_sync: true                  # Auto-sync on session start/end
 
 # Learning
@@ -466,7 +466,7 @@ igni loads project instructions from multiple levels, merging them top-down. Thi
 
 (Most general → most specific)
 
-1. **User-level** — `~/.ember/rules.md` (global rules for all projects)
+1. **User-level** — `~/.igni/rules.md` (global rules for all projects)
 2. **Project root** — `ember.md` at the project root
 3. **Subdirectory** — `ember.md` in any parent directory between the current working file and the project root
 
@@ -477,7 +477,7 @@ At each level, rules are merged additively. Subdirectory rules add specificity w
 When `rules.cross_tool_support` is `true`, igni also reads `CLAUDE.md` files at every level (root and subdirectories), in addition to `ember.md`. If both files exist in the same directory, their contents are merged.
 
 ```yaml
-# .ember/config.yaml
+# .igni/config.yaml
 rules:
   cross_tool_support: true   # read CLAUDE.md files alongside ember.md
 ```
@@ -494,11 +494,11 @@ my-project/
 │       ├── ember.md          # subdirectory rules for src/auth/
 │       └── middleware/
 │           └── handler.py    # ← working file
-└── ~/.ember/rules.md         # user-level global rules
+└── ~/.igni/rules.md         # user-level global rules
 ```
 
 When editing `handler.py`, the merged context includes:
-1. `~/.ember/rules.md` (user rules)
+1. `~/.igni/rules.md` (user rules)
 2. `my-project/ember.md` + `CLAUDE.md` (project root)
 3. `src/ember.md` (subdirectory)
 4. `src/auth/ember.md` (subdirectory, most specific)
@@ -541,14 +541,14 @@ igni uses a two-level TODO system for persistent progress tracking across sessio
 
 ### Two Levels
 
-- **Root `.ember/TODO.md`** — high-level goals and milestones. Automatically loaded into agent context at session start. Tracks *what* needs to happen, not *how*.
-- **Subdirectory `.ember/TODO.md`** (e.g., `src/auth/.ember/TODO.md`) — detailed implementation steps for that specific area. Not auto-loaded; agents read them when working in that directory.
+- **Root `.igni/TODO.md`** — high-level goals and milestones. Automatically loaded into agent context at session start. Tracks *what* needs to happen, not *how*.
+- **Subdirectory `.igni/TODO.md`** (e.g., `src/auth/.igni/TODO.md`) — detailed implementation steps for that specific area. Not auto-loaded; agents read them when working in that directory.
 
 The root TODO is the map. Subdirectory TODOs are the turn-by-turn directions.
 
 ### Example
 
-**Root** (`.ember/TODO.md`):
+**Root** (`.igni/TODO.md`):
 ```markdown
 # TODO — Add authentication module
 
@@ -560,7 +560,7 @@ The root TODO is the map. Subdirectory TODOs are the turn-by-turn directions.
 - [ ] API documentation
 ```
 
-**Subdirectory** (`src/auth/.ember/TODO.md`):
+**Subdirectory** (`src/auth/.igni/TODO.md`):
 ```markdown
 # TODO — Auth endpoints
 
@@ -578,11 +578,11 @@ Using PyJWT with RS256. Refresh tokens stored in Redis with 7-day TTL.
 
 ### TODO.md vs Agno Task Mode
 
-| | `.ember/TODO.md` | Agno task mode (`spawn_team` with `mode="tasks"`) |
+| | `.igni/TODO.md` | Agno task mode (`spawn_team` with `mode="tasks"`) |
 |---|---|---|
 | **Lifetime** | Persistent — survives across sessions, commits, context resets | Ephemeral — exists only for the current team run |
 | **Scope** | Big-picture progress across days/weeks | Task decomposition within a single run |
-| **Visibility** | Human-readable file in `.ember/`, can be committed | In-memory, visible only during execution |
+| **Visibility** | Human-readable file in `.igni/`, can be committed | In-memory, visible only during execution |
 | **Who updates it** | Agents check off items as they work | Agno manages task state automatically |
 | **Use case** | "Implement auth module" (multi-session) | "Write 3 test files in parallel" (one run) |
 
@@ -608,10 +608,10 @@ ignite-ember --auto-approve
 
 ## Custom Agents
 
-Drop Python files in `.ember/agents/` to add project-specific agents:
+Drop Python files in `.igni/agents/` to add project-specific agents:
 
 ```markdown
-# .ember/agents/deploy.md
+# .igni/agents/deploy.md
 ---
 name: deploy
 description: Handles deployment to staging and production environments
@@ -633,10 +633,10 @@ Custom agents are auto-discovered and added to the agent pool. If no `model` is 
 
 ## Custom Tools
 
-Drop Python files in `.ember/tools/` to add project-specific tools:
+Drop Python files in `.igni/tools/` to add project-specific tools:
 
 ```python
-# .ember/tools/docker_helpers.py
+# .igni/tools/docker_helpers.py
 from agno.tools import tool
 
 @tool(description="Build and run the Docker dev environment")

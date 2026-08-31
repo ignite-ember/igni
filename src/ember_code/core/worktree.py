@@ -2,7 +2,7 @@
 
 Two collaborating classes live here:
 
-* :class:`WorktreeRoot` — owns the shared ``~/.ember/worktrees``
+* :class:`WorktreeRoot` — owns the shared ``~/.igni/worktrees``
   root directory and hosts multi-worktree operations
   (:meth:`prune_stale`). Instances are cheap; construct one per
   subsystem or share the module-level default. Tests inject a
@@ -140,10 +140,10 @@ class StalePruneResult(BaseModel):
 
 
 class WorktreeRoot:
-    """Owns the shared ``~/.ember/worktrees`` directory.
+    """Owns the shared ``~/.igni/worktrees`` directory.
 
     Instances are cheap; the default constructor uses
-    ``~/.ember/worktrees`` but tests inject a ``tmpdir`` via
+    ``~/.igni/worktrees`` but tests inject a ``tmpdir`` via
     ``WorktreeRoot(root=tmpdir)``. Multi-worktree operations
     (:meth:`prune_stale`) live here because they span every
     worktree under the root, not just one manager's.
@@ -201,7 +201,7 @@ class WorktreeManager:
     """Create, inspect, and clean up a single git worktree.
 
     Worktrees are created under ``WorktreeRoot.root`` (default
-    ``~/.ember/worktrees``) so they don't clutter the project
+    ``~/.igni/worktrees``) so they don't clutter the project
     directory.
 
     Construction is thin: the constructor validates the git repo

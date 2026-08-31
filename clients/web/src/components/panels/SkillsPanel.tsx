@@ -31,7 +31,7 @@ export function SkillsPanel({
       {skills === null && <div className="msg-info">Loading…</div>}
       {skills?.length === 0 && (
         <div className="msg-info">
-          No skills installed. Add some via Plugins or .ember/skills/.
+          No skills installed. Add some via Plugins or .igni/skills/.
         </div>
       )}
       {skills?.map((s) => (

@@ -14,12 +14,12 @@ from ember_code.core.paths import DEFAULT_DATA_DIR
 
 class StorageConfig(BaseModel):
     data_dir: str = DEFAULT_DATA_DIR
-    audit_log: str = "~/.ember/audit.log"
+    audit_log: str = f"{DEFAULT_DATA_DIR}/audit.log"
     max_history_runs: int = 10000
 
 
 class AuthConfig(BaseModel):
-    credentials_file: str = "~/.ember/credentials.json"
+    credentials_file: str = f"{DEFAULT_DATA_DIR}/credentials.json"
 
 
 class GroupPolicyConfig(BaseModel):

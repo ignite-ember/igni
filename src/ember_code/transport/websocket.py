@@ -74,7 +74,7 @@ _BROADCAST_SEND_TIMEOUT = 2.0
 # a *dedicated* file handler to this module's logger the first time
 # it's imported, gated on ``EMBER_CHUNK_TRACE=1`` so non-debug runs
 # don't pay the cost. The handler writes to
-# ``~/.ember/chunk_trace.log`` (overridable via EMBER_CHUNK_TRACE_LOG)
+# ``~/.igni/chunk_trace.log`` (overridable via EMBER_CHUNK_TRACE_LOG)
 # and bypasses root propagation entirely — the file is the only sink.
 if os.environ.get("EMBER_CHUNK_TRACE") == "1" and not any(
     getattr(h, "_ember_chunk_trace", False) for h in logger.handlers

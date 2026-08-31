@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 DEFAULT_CHANGESETS = Path("~/ai_coding/codeindex-changesets").expanduser()
 DEFAULT_SUBSTRATES = Path("~/ai_coding/igni__fine-tuning/finetune/substrates").expanduser()
-DEFAULT_DATA_DIR = Path("~/.ember").expanduser()
+DEFAULT_DATA_DIR = Path("~/.igni").expanduser()
 
 
 @dataclass(frozen=True)

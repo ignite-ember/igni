@@ -13,7 +13,7 @@ re-embedding — we're moving already-computed vectors.
 Usage::
 
     # Default: rebuild both code_index (per-commit) and knowledge.
-    python scripts/reindex_hnsw.py /path/to/target/project [--data-dir ~/.ember]
+    python scripts/reindex_hnsw.py /path/to/target/project [--data-dir ~/.igni]
 
     # Limit to one scope.
     python scripts/reindex_hnsw.py /path/to/target/project --scope code_index
@@ -223,7 +223,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("project_dir", help="The project whose index to rebuild")
     parser.add_argument(
-        "--data-dir", default="~/.ember", help="Ember data dir (default: ~/.ember)"
+        "--data-dir", default="~/.igni", help="Ember data dir (default: ~/.igni)"
     )
     parser.add_argument(
         "--keep-backup",

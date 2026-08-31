@@ -54,9 +54,9 @@ Hooks are defined in settings files, with the same format as Claude Code:
 
 | Location | Scope | Shared? |
 |---|---|---|
-| `~/.ember/settings.json` | All projects | No (personal) |
-| `.ember/settings.json` | This project | Yes (commit to repo) |
-| `.ember/settings.local.json` | This project | No (gitignored) |
+| `~/.igni/settings.json` | All projects | No (personal) |
+| `.igni/settings.json` | This project | Yes (commit to repo) |
+| `.igni/settings.local.json` | This project | No (gitignored) |
 
 ### Format
 
@@ -66,7 +66,7 @@ Hooks are defined in settings files, with the same format as Claude Code:
     "PreToolUse": [
       {
         "type": "command",
-        "command": ".ember/hooks/validate.sh",
+        "command": ".igni/hooks/validate.sh",
         "matcher": "run_shell_command|save_file|edit_file",
         "timeout": 10000
       }
@@ -74,20 +74,20 @@ Hooks are defined in settings files, with the same format as Claude Code:
     "PostToolUse": [
       {
         "type": "command",
-        "command": ".ember/hooks/format.sh",
+        "command": ".igni/hooks/format.sh",
         "matcher": "save_file|edit_file|edit_file_replace_all|create_file"
       }
     ],
     "SessionStart": [
       {
         "type": "command",
-        "command": ".ember/hooks/setup-env.sh"
+        "command": ".igni/hooks/setup-env.sh"
       }
     ],
     "Stop": [
       {
         "type": "command",
-        "command": ".ember/hooks/check-tests.sh"
+        "command": ".igni/hooks/check-tests.sh"
       }
     ]
   }
@@ -100,7 +100,7 @@ Hooks are defined in settings files, with the same format as Claude Code:
 ```json
 {
   "type": "command",
-  "command": ".ember/hooks/format.sh",
+  "command": ".igni/hooks/format.sh",
   "matcher": "save_file|edit_file|edit_file_replace_all|create_file",
   "timeout": 10000
 }
@@ -258,7 +258,7 @@ Run Prettier/Black/Ruff after every file write:
 
 ```bash
 #!/bin/bash
-# .ember/hooks/format.sh
+# .igni/hooks/format.sh
 # Hook: PostToolUse, matcher: save_file|edit_file
 
 input=$(cat)
@@ -289,7 +289,7 @@ echo '{"continue": true}'
     "PostToolUse": [
       {
         "type": "command",
-        "command": ".ember/hooks/format.sh",
+        "command": ".igni/hooks/format.sh",
         "matcher": "save_file|edit_file"
       }
     ]
@@ -303,7 +303,7 @@ Prevent destructive operations:
 
 ```bash
 #!/bin/bash
-# .ember/hooks/validate-bash.sh
+# .igni/hooks/validate-bash.sh
 # Hook: PreToolUse, matcher: run_shell_command
 
 input=$(cat)
@@ -324,7 +324,7 @@ Don't let the agent stop without running tests:
 
 ```bash
 #!/bin/bash
-# .ember/hooks/check-tests.sh
+# .igni/hooks/check-tests.sh
 # Hook: Stop
 
 input=$(cat)
@@ -349,7 +349,7 @@ Set up project-specific environment:
 
 ```bash
 #!/bin/bash
-# .ember/hooks/setup-env.sh
+# .igni/hooks/setup-env.sh
 # Hook: SessionStart
 
 # Detect project type and set context
@@ -373,7 +373,7 @@ EOF
 
 ```bash
 #!/bin/bash
-# .ember/hooks/protect-paths.sh
+# .igni/hooks/protect-paths.sh
 # Hook: PreToolUse, matcher: save_file|edit_file
 
 input=$(cat)
@@ -425,7 +425,7 @@ echo '{"continue": true}'
 ## Directory Structure
 
 ```
-.ember/
+.igni/
 ├── settings.json              # Hook definitions
 ├── hooks/
 │   ├── format.sh              # Auto-format after writes
@@ -446,7 +446,7 @@ igni hooks use the **same format** as Claude Code:
 - Same matcher regex patterns
 - Same settings file structure
 
-If you have existing Claude Code hooks in `.claude/settings.json`, copy them to `.ember/settings.json` — they work as-is.
+If you have existing Claude Code hooks in `.claude/settings.json`, copy them to `.igni/settings.json` — they work as-is.
 
 The one addition: igni hooks also fire for **sub-team events** (`SubagentStart`, `SubagentStop`) since igni has multi-agent teams. Claude Code has similar events for its subagents.
 

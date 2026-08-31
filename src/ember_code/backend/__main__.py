@@ -116,7 +116,7 @@ def main(
     # Canonicalise the project dir so two clients pointing at the
     # "same" folder via slightly different paths (``/tmp`` vs
     # ``/private/tmp`` on macOS, symlink resolution, trailing slash)
-    # both land on the same ``.ember/state.db`` and see identical
+    # both land on the same ``.igni/state.db`` and see identical
     # session lists. ``strict=False`` lets us keep going if the
     # directory doesn't yet exist — startup will create it.
     resolved_project = Path(project_dir).resolve(strict=False)

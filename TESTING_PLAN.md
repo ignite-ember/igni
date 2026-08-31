@@ -8,7 +8,7 @@ For each row: **automated coverage** + **manual verification steps** to confirm 
 
 **Status:** 178/178 automated tests passing + live walkthrough through the Tauri app on 2026-06-29 confirmed hook firing across `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`. One real bug surfaced and was documented: hook matchers regex-match the **internal Agno function name** (`run_shell_command`, `save_file`, etc.) — not the friendly catalog name (`Bash`, `Write`). All docs (HOOKS.md, TOOLS.md, portal/HOOKS.md, portal/TOOLS.md) and built-in hook configs were updated to use the internal names. See [[memory:project_overview]] for the matcher-translation table.
 
-**1. Hook event catalog (18 of 30)** — `tests/test_hook_events_new.py`, `test_hooks.py`. **Manual:** drop a `PreToolUse` hook in `~/.ember/settings.json` that exits 2; run a tool; verify it blocks. Repeat for `PostToolUse`, `SessionStart`, `UserPromptSubmit`, `Stop`, `Notification`, `SubagentStop`, `PreCompact`, `PermissionRequest`, `PermissionDenied`.
+**1. Hook event catalog (18 of 30)** — `tests/test_hook_events_new.py`, `test_hooks.py`. **Manual:** drop a `PreToolUse` hook in `~/.igni/settings.json` that exits 2; run a tool; verify it blocks. Repeat for `PostToolUse`, `SessionStart`, `UserPromptSubmit`, `Stop`, `Notification`, `SubagentStop`, `PreCompact`, `PermissionRequest`, `PermissionDenied`.
 
 **2. Hook handler types (4 of 5)** — `tests/test_hook_handler_types.py`. **Manual:** configure each handler type (`command`, `http`, `prompt`, `mcp_tool`) in settings; trigger each; verify the right side-effect (shell exec / HTTP POST / system message / MCP tool call).
 
@@ -46,7 +46,7 @@ Plus `test_permission_eval.py::test_scoped_deny_survives_bypass_permissions` + `
 
 **Status:** Full 5-tier precedence pinned by automated tests + the existing per-tier coverage. Two live touchpoints (writing `/Library/Application Support/Ember/managed-settings.yaml` with sudo, and verifying a managed `CLAUDE.md` shows up in agent instructions on session start) are covered by `TestFiveTierPrecedence` + `TestManagedPolicyInContextOutput` respectively — no manual sudo step required for the automated pass.
 
-**10. Settings precedence (5 tiers)** — `tests/test_settings.py::TestFiveTierPrecedence` (4 tests, pins managed > CLI > project.local > project > user > defaults in one stack), `TestLoadSettings::{test_user_global_config_loaded, test_project_beats_user_global}`, plus the existing per-tier tests. Also exercises the `settings.json` reader added in commit `ad58a0a` so user-tier `~/.ember/settings.json` actually reaches `PermissionEvaluator`.
+**10. Settings precedence (5 tiers)** — `tests/test_settings.py::TestFiveTierPrecedence` (4 tests, pins managed > CLI > project.local > project > user > defaults in one stack), `TestLoadSettings::{test_user_global_config_loaded, test_project_beats_user_global}`, plus the existing per-tier tests. Also exercises the `settings.json` reader added in commit `ad58a0a` so user-tier `~/.igni/settings.json` actually reaches `PermissionEvaluator`.
 
 **11. Managed-policy CLAUDE.md** — `tests/test_context.py::TestManagedPolicyInContextOutput::test_managed_section_appears_first` asserts the `# Managed Policy` section appears BEFORE any project rules in `load_project_context` output. `TestLoadManagedRules` (6 tests) covers the file-system layer: ember.md/CLAUDE.md reads, @-import scoping to the managed dir (security), unknown-platform fallback, CLAUDE.md disable flag.
 
@@ -54,7 +54,7 @@ Plus `test_permission_eval.py::test_scoped_deny_survives_bypass_permissions` + `
 
 ## Rules / context (rows 12–18) ✅ VERIFIED
 
-**Status:** Already pinned by 127 automated tests across `test_context.py`, `test_rules_index.py`, and `test_hooks_cross_tool.py`. The interesting integration points — managed-policy ordering in agent instructions, path-scoped activation, @-import depth cap + code-span skipping, dual `.ember/` + `.claude/` rules namespace, MEMORY.md ordering in the context block — all have direct assertions.
+**Status:** Already pinned by 127 automated tests across `test_context.py`, `test_rules_index.py`, and `test_hooks_cross_tool.py`. The interesting integration points — managed-policy ordering in agent instructions, path-scoped activation, @-import depth cap + code-span skipping, dual `.igni/` + `.claude/` rules namespace, MEMORY.md ordering in the context block — all have direct assertions.
 
 **12. CLAUDE.md root + subdir hierarchy** — `test_rules_index.py::{test_subdirectory_rules_found, test_multiple_levels_returned_shallowest_first, test_claude_md_picked_up_when_enabled, test_both_ember_and_claude_md_load_in_same_dir, test_each_file_returned_at_most_once}` + `test_context.py::TestLoadSubdirectoryRules::{test_collects_subdirectory_rules, test_collects_claude_md_from_subdirectories}`. Walks ember.md + CLAUDE.md from root and every nested subdir, asserts shallowest-first ordering and per-file dedup.
 
@@ -66,7 +66,7 @@ Plus `test_permission_eval.py::test_scoped_deny_survives_bypass_permissions` + `
 
 **16. Path-scoped rules** — `test_rules_index.py::{test_path_scoped_rule_fires_on_matching_touch, test_path_scoped_rule_misses_when_glob_does_not_match, test_path_scoped_rule_dedup_across_calls, test_path_scoped_unconditional_rule_skipped_here, test_path_scoped_claude_rules_dir, test_path_scoped_rule_at_import_resolves, test_path_scoped_absolute_path_glob, test_path_scoped_rule_body_skips_code_region_imports}`. Eight tests on `paths:` frontmatter — fires on glob match, skipped otherwise, glob honours absolute paths, @-imports inside scoped bodies still resolve, code regions inside the body skip @-imports the same way as regular rules.
 
-**17. Cross-tool rules reading** — `test_context.py::TestLoadUserRules::{test_reads_claude_rules_when_enabled, test_skips_claude_rules_when_disabled}` for user-tier `~/.claude/rules/`; `test_rules_index.py::{test_path_scoped_claude_rules_dir, test_path_scoped_claude_rules_skipped_when_cross_tool_disabled, test_dual_namespace_independent_rules_both_fire}` for the project tier `<proj>/.claude/rules/` + dual-namespace coexistence with `<proj>/.ember/rules/`. Plus `test_hooks_cross_tool.py` (the test plan's mis-citation — that file covers HOOK cross-tool, not rules; the rule cases live in test_context/test_rules_index as above).
+**17. Cross-tool rules reading** — `test_context.py::TestLoadUserRules::{test_reads_claude_rules_when_enabled, test_skips_claude_rules_when_disabled}` for user-tier `~/.claude/rules/`; `test_rules_index.py::{test_path_scoped_claude_rules_dir, test_path_scoped_claude_rules_skipped_when_cross_tool_disabled, test_dual_namespace_independent_rules_both_fire}` for the project tier `<proj>/.claude/rules/` + dual-namespace coexistence with `<proj>/.igni/rules/`. Plus `test_hooks_cross_tool.py` (the test plan's mis-citation — that file covers HOOK cross-tool, not rules; the rule cases live in test_context/test_rules_index as above).
 
 **18. Auto-memory MEMORY.md index** — `test_context.py::TestLoadMemoryIndex` (8 tests, line/byte caps + UTF-8 boundary + Claude fallback + ember-wins-over-claude) + `TestMemoryIndexInContextOutput::test_memory_section_after_managed_before_user` (pins the section ordering: Managed Policy → Memory Index → User Rules), `TestProjectMemorySlug` (slug derivation from project path), `TestEnsureMemoryDir` (creation + idempotence + OSError-swallow), `TestMemoryWritebackInstructions` (frontmatter shape + memory-dir path + all four memory types named in the writeback instructions).
 
@@ -76,7 +76,7 @@ Plus `test_permission_eval.py::test_scoped_deny_survives_bypass_permissions` + `
 
 **Status:** Pinned by 131 automated tests across 7 files + a contract test in `clients/web/src/components/Composer.test.ts` that the FE autocomplete menu lists every BE handler.
 
-**19. Markdown-authored commands** — `tests/test_markdown_commands.py` (29 tests: frontmatter parsing, discovery in `.ember/commands/` + `.claude/commands/` across project + user tiers, project-overrides-user collisions, ember-beats-claude at same tier) + `tests/test_handle_markdown_command.py` (12 tests: dispatch integration, `$ARGUMENTS` rendering, exception fall-through, cross-tool toggle).
+**19. Markdown-authored commands** — `tests/test_markdown_commands.py` (29 tests: frontmatter parsing, discovery in `.igni/commands/` + `.claude/commands/` across project + user tiers, project-overrides-user collisions, ember-beats-claude at same tier) + `tests/test_handle_markdown_command.py` (12 tests: dispatch integration, `$ARGUMENTS` rendering, exception fall-through, cross-tool toggle).
 
 **20. `slash_commands` RPC** — `tests/test_slash_commands_rpc.py` (12 tests). Asserts the RPC returns built-ins + markdown commands + user-invocable skills in one response, honours the cross-tool toggle for `.claude/` markdown commands, excludes non-user-invocable skills.
 
@@ -108,7 +108,7 @@ Plus `test_permission_eval.py::test_scoped_deny_survives_bypass_permissions` + `
 
 **30. Sub-agent worktree isolation** — `tests/test_orchestrate_worktree.py` (18 tests). Worktree creation, edits land in the worktree (not main), cleanup on agent completion, worktree-already-removed-mid-run handling.
 
-**Bonus coverage:** `test_notebook.py` (17, NotebookEdit), `test_schedule_tools.py` (4, Schedule), `test_custom_tools.py` (12, `.ember/tools/` discovery), `test_codeindex_tools.py` (32, CodeIndex query + tree).
+**Bonus coverage:** `test_notebook.py` (17, NotebookEdit), `test_schedule_tools.py` (4, Schedule), `test_custom_tools.py` (12, `.igni/tools/` discovery), `test_codeindex_tools.py` (32, CodeIndex query + tree).
 
 ---
 
@@ -126,7 +126,7 @@ Plus `test_permission_eval.py::test_scoped_deny_survives_bypass_permissions` + `
 
 **35. Plugin install scopes (4)** — `tests/test_plugin_managed_scope.py` (14 tests). User / project / project.local / managed tiers; managed-tier plugins refuse disable.
 
-**36. Plugin discovery namespaces** — `tests/test_plugins_loader.py`. Walks `~/.ember/plugins/`, `~/.claude/plugins/`, `<proj>/.ember/plugins/`, `<proj>/.claude/plugins/`; honours `cross_tool_support` for the `.claude/` sides.
+**36. Plugin discovery namespaces** — `tests/test_plugins_loader.py`. Walks `~/.igni/plugins/`, `~/.claude/plugins/`, `<proj>/.igni/plugins/`, `<proj>/.claude/plugins/`; honours `cross_tool_support` for the `.claude/` sides.
 
 **37. Plugin agent restrictions** — `tests/test_plugin_agent_restrictions.py` (13 tests). Plugin agents that try to declare `mcpServers:` get a WARN log + the field stripped — plugins can't auto-attach MCP servers without user opt-in.
 

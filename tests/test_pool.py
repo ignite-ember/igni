@@ -21,6 +21,7 @@ from ember_code.core.agents import (
     AgentPool,
     AgentPriority,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 
 def parse_agent_file(path):
@@ -245,29 +246,29 @@ class TestAgentResolutionOrder:
 
     def test_user_ember_beats_user_claude(self, tmp_path, monkeypatch, settings):
         home, project = self._build_layout(tmp_path)
-        self._write_agent(home / ".ember" / "agents", "shared", "ember-user")
+        self._write_agent(home / CONFIG_DIR / "agents", "shared", "ember-user")
         self._write_agent(home / ".claude" / "agents", "shared", "claude-user")
         pool = self._load(monkeypatch, home, project, settings)
         assert pool.get_definition("shared").description == "ember-user"
 
     def test_project_local_beats_project_claude(self, tmp_path, monkeypatch, settings):
         home, project = self._build_layout(tmp_path)
-        self._write_agent(project / ".ember" / "agents.local", "shared", "ember-local")
+        self._write_agent(project / CONFIG_DIR / "agents.local", "shared", "ember-local")
         self._write_agent(project / ".claude" / "agents", "shared", "claude-project")
         pool = self._load(monkeypatch, home, project, settings)
         assert pool.get_definition("shared").description == "ember-local"
 
     def test_project_ember_beats_project_claude(self, tmp_path, monkeypatch, settings):
         home, project = self._build_layout(tmp_path)
-        self._write_agent(project / ".ember" / "agents", "shared", "ember-project")
+        self._write_agent(project / CONFIG_DIR / "agents", "shared", "ember-project")
         self._write_agent(project / ".claude" / "agents", "shared", "claude-project")
         pool = self._load(monkeypatch, home, project, settings)
         assert pool.get_definition("shared").description == "ember-project"
 
     def test_project_beats_user(self, tmp_path, monkeypatch, settings):
         home, project = self._build_layout(tmp_path)
-        self._write_agent(home / ".ember" / "agents", "shared", "ember-user")
-        self._write_agent(project / ".ember" / "agents", "shared", "ember-project")
+        self._write_agent(home / CONFIG_DIR / "agents", "shared", "ember-user")
+        self._write_agent(project / CONFIG_DIR / "agents", "shared", "ember-project")
         pool = self._load(monkeypatch, home, project, settings)
         assert pool.get_definition("shared").description == "ember-project"
 
@@ -275,7 +276,7 @@ class TestAgentResolutionOrder:
         """Cross-scope: a project's Claude agents override the user's
         global Ember agents."""
         home, project = self._build_layout(tmp_path)
-        self._write_agent(home / ".ember" / "agents", "shared", "ember-user")
+        self._write_agent(home / CONFIG_DIR / "agents", "shared", "ember-user")
         self._write_agent(project / ".claude" / "agents", "shared", "claude-project")
         pool = self._load(monkeypatch, home, project, settings)
         assert pool.get_definition("shared").description == "claude-project"
@@ -283,10 +284,10 @@ class TestAgentResolutionOrder:
     def test_full_chain_yields_project_ember(self, tmp_path, monkeypatch, settings):
         home, project = self._build_layout(tmp_path)
         self._write_agent(home / ".claude" / "agents", "shared", "claude-user")
-        self._write_agent(home / ".ember" / "agents", "shared", "ember-user")
+        self._write_agent(home / CONFIG_DIR / "agents", "shared", "ember-user")
         self._write_agent(project / ".claude" / "agents", "shared", "claude-project")
-        self._write_agent(project / ".ember" / "agents.local", "shared", "ember-local")
-        self._write_agent(project / ".ember" / "agents", "shared", "ember-project")
+        self._write_agent(project / CONFIG_DIR / "agents.local", "shared", "ember-local")
+        self._write_agent(project / CONFIG_DIR / "agents", "shared", "ember-project")
         pool = self._load(monkeypatch, home, project, settings)
         assert pool.get_definition("shared").description == "ember-project"
 

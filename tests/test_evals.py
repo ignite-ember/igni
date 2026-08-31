@@ -19,6 +19,7 @@ from ember_code.core.evals.runner import (
     SuiteRunner,
     ToolTraceEntry,
 )
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.session.commands import InteractiveCommandDispatcher
 
 
@@ -109,7 +110,7 @@ class TestLoadEvalFile:
 
 class TestLoadEvalSuites:
     def test_discovers_yaml_files(self, tmp_path):
-        evals_dir = tmp_path / ".ember" / "evals"
+        evals_dir = tmp_path / CONFIG_DIR / "evals"
         evals_dir.mkdir(parents=True)
         (evals_dir / "a.yaml").write_text("agent: a\ncases:\n  - name: t\n    input: x\n")
         (evals_dir / "b.yaml").write_text("agent: b\ncases:\n  - name: t\n    input: x\n")

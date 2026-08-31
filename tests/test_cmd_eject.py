@@ -4,7 +4,7 @@ Group entries are read from the policy cache and anything the project
 declares under the same name outranks them. Overriding one therefore
 means having a file, and before this the only ways to get one were to
 write it from scratch or to go rummaging in
-``~/.ember/group-policy``.
+``~/.igni/group-policy``.
 
 The thing worth testing is not that a file gets copied — it is the
 edges, because every one of them is a way to leave somebody with a
@@ -22,12 +22,13 @@ from types import SimpleNamespace
 import pytest
 
 from ember_code.backend.cmd_eject import EJECTABLE, EjectCommand
+from ember_code.core.paths import CONFIG_DIR
 
 
 def _session(tmp_path: Path, group: dict[str, dict[str, str]] | None = None):
     """A session whose group ships ``{kind: {name: content}}``."""
     project = tmp_path / "proj"
-    (project / ".ember").mkdir(parents=True)
+    (project / CONFIG_DIR).mkdir(parents=True)
     cache = tmp_path / "group-policy"
 
     for kind, entries in (group or {}).items():
@@ -55,7 +56,7 @@ class TestTheHappyPath:
         session = _session(tmp_path, {"agents": {"reviewer": "---\nname: reviewer\n---\nTheirs."}})
         result = await EjectCommand(session).run("agents reviewer")
 
-        target = session.project_dir / ".ember" / "agents" / "reviewer.md"
+        target = session.project_dir / CONFIG_DIR / "agents" / "reviewer.md"
         assert target.read_text() == "---\nname: reviewer\n---\nTheirs."
         assert not result.is_error()
 
@@ -85,14 +86,14 @@ class TestTheHappyPath:
         session = _session(tmp_path, {"skills": {"deploy": "---\nname: deploy\n---\nSteps."}})
         await EjectCommand(session).run("skills deploy")
 
-        assert (session.project_dir / ".ember" / "skills" / "deploy" / "SKILL.md").is_file()
+        assert (session.project_dir / CONFIG_DIR / "skills" / "deploy" / "SKILL.md").is_file()
 
     @pytest.mark.asyncio
     async def test_a_workflow_keeps_its_extension(self, tmp_path: Path):
         session = _session(tmp_path, {"workflows": {"review": "export const meta = {}\n"}})
         await EjectCommand(session).run("workflows review")
 
-        assert (session.project_dir / ".ember" / "workflows" / "review.mjs").is_file()
+        assert (session.project_dir / CONFIG_DIR / "workflows" / "review.mjs").is_file()
 
 
 class TestWhatItRefuses:
@@ -101,7 +102,7 @@ class TestWhatItRefuses:
         """The one that would actually hurt: overwriting an override
         somebody has already written and edited."""
         session = _session(tmp_path, {"agents": {"reviewer": "theirs"}})
-        mine = session.project_dir / ".ember" / "agents" / "reviewer.md"
+        mine = session.project_dir / CONFIG_DIR / "agents" / "reviewer.md"
         mine.parent.mkdir(parents=True, exist_ok=True)
         mine.write_text("mine, carefully edited")
 
@@ -172,7 +173,7 @@ class TestItTakesEffectNow:
 
         result = await EjectCommand(session).run("agents reviewer")
 
-        assert (session.project_dir / ".ember" / "agents" / "reviewer.md").is_file()
+        assert (session.project_dir / CONFIG_DIR / "agents" / "reviewer.md").is_file()
         assert not result.is_error()
         assert "Restart" in result.content
 

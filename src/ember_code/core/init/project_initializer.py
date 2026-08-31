@@ -24,6 +24,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from ember_code.core.config.secret_scan import scan_project_config
+from ember_code.core.dir_migration import migrate_project
 from ember_code.core.init.checksum_store import ChecksumStore
 from ember_code.core.init.home_migrator import HomeConfigMigrator
 from ember_code.core.init.hook_provisioner import HookProvisioner
@@ -43,13 +44,13 @@ logger = logging.getLogger(__name__)
 
 
 class ProjectInitializer(BaseModel):
-    """Initialise + update a project's ``.ember`` directory.
+    """Initialise + update a project's ``.igni`` directory.
 
     Two responsibilities:
 
     1. **First-run init** — copies built-in agents/skills/hooks
-       into ``.ember/`` and creates a starter ``ember.md``. A marker
-       file (``.ember/.initialized``) ensures this only runs once.
+       into ``.igni/`` and creates a starter ``ember.md``. A marker
+       file (``.igni/.initialized``) ensures this only runs once.
     2. **Update on every start** — compares package files against
        local copies using SHA-256 checksums. Untouched files are
        overwritten; user-modified files trigger a warning + a
@@ -92,6 +93,12 @@ class ProjectInitializer(BaseModel):
         :mod:`ember_code.core.init` collapses this to ``.first_run``
         for backward compat with ``session/core.py``.
         """
+        # Before the mkdir below, which would otherwise create an empty
+        # ``.igni`` beside the project's existing ``.igni`` — and the
+        # migration refuses to merge two directories, so that empty one
+        # would block the rename permanently.
+        migrate_project(self.project_dir)
+
         self.home_ember.mkdir(parents=True, exist_ok=True)
         (self.project_dir / CONFIG_DIR).mkdir(parents=True, exist_ok=True)
 
@@ -151,19 +158,19 @@ class ProjectInitializer(BaseModel):
             path.write_text(EMBER_MD_TEMPLATE)
 
     def _write_project_config(self) -> None:
-        """Write a starter ``.ember/config.yaml`` with commented-out options."""
+        """Write a starter ``.igni/config.yaml`` with commented-out options."""
         path = self.project_dir / CONFIG_DIR / "config.yaml"
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(PROJECT_CONFIG_TEMPLATE)
 
     def _write_project_settings(self) -> None:
-        """Write a starter ``.ember/settings.local.json`` with default
+        """Write a starter ``.igni/settings.local.json`` with default
         permissions.
 
         Gives users a template they can customise for their project.
         The file is gitignored so each user can have their own
-        overrides. Team defaults can go in ``.ember/settings.json``
+        overrides. Team defaults can go in ``.igni/settings.json``
         (committed).
 
         Only writes the ``permissions`` block if the file doesn't

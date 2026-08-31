@@ -1,4 +1,4 @@
-"""Plugin installer — clone / update / remove against ``~/.ember/plugins``.
+"""Plugin installer — clone / update / remove against ``~/.igni/plugins``.
 
 Wraps :class:`GitClient` + persisted :class:`PluginsState`. Plugin
 identity comes from the manifest's ``name`` field (not the URL slug)
@@ -35,7 +35,7 @@ class PluginError(RuntimeError):
 
 
 class PluginInstaller:
-    """Manages ``~/.ember/plugins/`` and the pin map in plugins.json."""
+    """Manages ``~/.igni/plugins/`` and the pin map in plugins.json."""
 
     def __init__(
         self,
@@ -69,7 +69,7 @@ class PluginInstaller:
         ref: str | None = None,
         subdir: str | None = None,
     ) -> PluginManifest:
-        """Install a plugin from *url* into ``~/.ember/plugins/<name>/``.
+        """Install a plugin from *url* into ``~/.igni/plugins/<name>/``.
 
         ``ref`` may be a branch, tag, or SHA. Branches and tags are
         passed directly to ``git clone --branch``; SHAs are checked

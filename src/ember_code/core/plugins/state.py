@@ -1,4 +1,4 @@
-"""Persisted plugin state at ``~/.ember/plugins.json``.
+"""Persisted plugin state at ``~/.igni/plugins.json``.
 
 Tracks which plugins are user-disabled and which git SHA each plugin
 was pinned to at install time. Read on every session start; written
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class PluginsState(BaseModel):
-    """The shape of ``~/.ember/plugins.json``.
+    """The shape of ``~/.igni/plugins.json``.
 
     ``disabled`` is a flat list of plugin names that should not be
     activated even though they're present on disk. ``pins`` maps each

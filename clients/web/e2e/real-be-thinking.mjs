@@ -66,7 +66,7 @@ function log(...a) {
 
 async function bootBE() {
   const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "ember-think-"));
-  await fs.mkdir(path.join(projectDir, ".ember"), { recursive: true });
+  await fs.mkdir(path.join(projectDir, ".igni"), { recursive: true });
   // Force a working MiniMax-M2.7 registry entry (key from
   // EMBER_E2E_MINIMAX_KEY) as the default. M2.7 is the project's real
   // model and emits inline-<think> reasoning — exactly the path under
@@ -83,7 +83,7 @@ async function bootBE() {
       vision: false
 `;
   await fs.writeFile(
-    path.join(projectDir, ".ember", "config.local.yaml"),
+    path.join(projectDir, ".igni", "config.local.yaml"),
     cfgBody,
   );
 

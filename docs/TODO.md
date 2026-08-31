@@ -54,7 +54,7 @@ if it gets fragile.
 ## Reshape where configuration lives
 
 See **[CONFIG_LAYOUT_PLAN.md](CONFIG_LAYOUT_PLAN.md)** — four decisions
-that turn out to be one change: rename `.ember` to `.igni`, stop the
+that turn out to be one change: rename `.igni` to `.igni`, stop the
 server's pack landing in the project, let a project file of the same
 name win, and move everything sensitive to `~/.igni`.
 

@@ -234,6 +234,40 @@ directory rename costs almost nothing next to a full reindex.
 migration must not follow symlinks blindly and end up renaming a target
 twice.
 
+### What it turned out to be — done
+
+Three departures from the plan above, all found by doing it.
+
+**A fallback, not a legacy sibling.** Step 2 proposed reading `.ember`
+as a sibling the way `.claude` is read. That is wrong for this: a
+sibling means *both* are scanned and merged, and these two are the same
+directory under two names — merging them would double every entry.
+`home_config_dir` and `project_config_dir` instead return **one**
+answer, preferring the new name. So the rename became tidiness rather
+than a step anything depends on, which is also what makes it safe to
+refuse in every ambiguous case.
+
+**The project side needed the fallback more than home did.** Settings
+load before a `Session` exists, and the project migration runs inside
+`ProjectInitializer` during Session construction — so on the first run
+after an upgrade there is no `.igni` to read yet. Without the fallback
+the session came up on the built-in defaults: wrong model, wrong
+guardrails, no warning, because a tier whose file is absent looks
+exactly like a tier with nothing set.
+
+**One reader bypassed the helpers.** `SettingsMergePlan.default` built
+its tier paths as `Path.home() / CONFIG_DIR` by hand, so neither
+fallback reached the settings loader — the single most consequential
+place for it. Centralising the *name* (step 1) did not centralise the
+*resolution*; a constant is only as good as the helpers around it being
+the only way in. Pinned now by tests that fail if the hand-built form
+comes back.
+
+A fourth, procedural: the guard test against hardcoded literals spelled
+`".ember"` in its own regex, so flipping the constant made it pass
+vacuously. It now builds its patterns from the constants and checks both
+names.
+
 ---
 
 ## Ordering
@@ -254,9 +288,10 @@ Dependencies run roughly:
 5. **Split `config.yaml`** (§2). The riskiest, and easier once the
    project directory holds nothing the server put there.
 6. **Flip to `.igni` + home migration** (§3 steps 2–3). Last, so the
-   rename lands on a layout that is already correct.
+   rename lands on a layout that is already correct. **Done** — see
+   "What it turned out to be" above.
 7. **Un-ignore `<project>/.igni`** — the payoff, and only safe once 2
-   and 5 are done.
+   and 5 are done. Still to do.
 
 ## Verification
 

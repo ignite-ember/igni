@@ -13,7 +13,7 @@ from __future__ import annotations
 
 PRE_PR_REVIEW_HOOK = """\
 #!/bin/bash
-# .ember/hooks/pre-pr-review.sh
+# .igni/hooks/pre-pr-review.sh
 # Hook: PreToolUse (matcher: Bash)
 #
 # Early warning before push/PR: detects TODOs, debug statements, and
@@ -54,11 +54,11 @@ exit 0
 
 POST_COMMIT_TODO_HOOK = """\
 #!/bin/bash
-# .ember/hooks/post-commit-todo.sh
+# .igni/hooks/post-commit-todo.sh
 # Hook: PostToolUse (matcher: Bash, background: true)
 #
 # After a git commit, feeds the commit context to the AI so it can
-# intelligently update .ember/TODO.md — crossing out completed items
+# intelligently update .igni/TODO.md — crossing out completed items
 # and adding new ones based on what the commit actually did.
 
 payload=$(cat)
@@ -71,7 +71,7 @@ case "$cmd" in
 esac
 
 # Only if TODO.md exists
-if [[ ! -f ".ember/TODO.md" ]]; then
+if [[ ! -f ".igni/TODO.md" ]]; then
   echo '{"continue": true}'
   exit 0
 fi
@@ -82,7 +82,7 @@ files_changed=$(git diff HEAD~1..HEAD --stat 2>/dev/null | head -30)
 diff_preview=$(git diff HEAD~1..HEAD 2>/dev/null | head -200)
 
 # Build the system message
-msg="A git commit was just made. Review it and update .ember/TODO.md:\\n"
+msg="A git commit was just made. Review it and update .igni/TODO.md:\\n"
 msg+="- Mark completed items as done (change '- [ ]' to '- [x]')\\n"
 msg+="- Add new items if the commit introduced incomplete work\\n"
 msg+="- Remove items that are no longer relevant\\n\\n"
@@ -132,8 +132,8 @@ EMBER_MD_TEMPLATE = """\
 
 CONFIG_YAML_HEADER = """\
 # igni — user configuration
-# This file lives at ~/.ember/config.yaml and is never committed to git.
-# Project-level overrides go in .ember/config.yaml inside your repo.
+# This file lives at ~/.igni/config.yaml and is never committed to git.
+# Project-level overrides go in .igni/config.yaml inside your repo.
 # See https://docs.ignite-ember.sh/configuration for details.
 
 """
@@ -141,7 +141,7 @@ CONFIG_YAML_HEADER = """\
 PROJECT_CONFIG_TEMPLATE = """\
 # igni — project configuration
 # This file can be committed to git. Team members share these settings.
-# User-level overrides go in ~/.ember/config.yaml.
+# User-level overrides go in ~/.igni/config.yaml.
 # See https://docs.ignite-ember.sh/configuration for details.
 
 # models:

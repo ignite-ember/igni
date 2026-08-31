@@ -23,7 +23,7 @@ igni inverts this: an **Orchestrator** analyzes every task, picks agents from a 
 |---|---|---|
 | **Agent format** | `.md` files with YAML frontmatter | Same `.md` format (cross-compatible) |
 | **Built-in agents** | ~3 (main, sub-agent, plan mode) | 10 base agents (architect, data-architect, editor, explorer, reviewer, qa, security, debugger, simplifier, docs) + 6 `.codeindex.md` variants + visualizer |
-| **Custom agents** | `.claude/agents/*.md` | `.ember/agents/*.md` + `.ember/agents.local/` (gitignored) |
+| **Custom agents** | `.claude/agents/*.md` | `.igni/agents/*.md` + `.igni/agents.local/` (gitignored) |
 | **Agent discovery** | Static directory scan | Multi-directory scan with priority (ephemeral → local → project → global → built-in) |
 | **Sub-agent depth** | 1 level | Unlimited (configurable via `orchestration.max_nesting_depth`) |
 | **Ephemeral agents** | No | Yes — Orchestrator auto-generates session-scoped agents when no existing agent fits |
@@ -72,7 +72,7 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 | **Protected paths** | `"deny": ["Read(.env)"]` | `safety.protected_paths: [".env", "*.pem", "*.key"]` |
 | **Blocked commands** | Implicit | Explicit `safety.blocked_commands` list |
 | **Approval modes** | Yes/No per invocation | once / always / similar-pattern / deny |
-| **Audit trail** | No | Yes (`~/.ember/audit.log`) |
+| **Audit trail** | No | Yes (`~/.igni/audit.log`) |
 
 ---
 
@@ -114,11 +114,11 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 | Aspect | Claude Code | igni |
 |---|---|---|
 | **Project instructions** | `CLAUDE.md` (root + subdirectories) | `ember.md` (root + subdirectories) + optionally `CLAUDE.md` |
-| **User-level rules** | `~/.claude/CLAUDE.md` | `~/.ember/rules.md` |
+| **User-level rules** | `~/.claude/CLAUDE.md` | `~/.igni/rules.md` |
 | **Hierarchy** | User → Root → Subdirectory (automatic) | User → Root → Subdirectory (automatic) |
 | **Subdirectory rules** | Walk from working file up to root | Same walk-up approach |
 | **Cross-tool compat** | N/A | Reads `CLAUDE.md` files by default (cross-tool support on) |
-| **Config file** | `~/.claude/settings.json` (JSON) | `~/.ember/config.yaml` (YAML) with 5-layer merge |
+| **Config file** | `~/.claude/settings.json` (JSON) | `~/.igni/config.yaml` (YAML) with 5-layer merge |
 | **Config hierarchy** | User → Project → Local | Defaults → User → Project → Project Local → CLI flags |
 
 ---
@@ -128,7 +128,7 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 | Aspect | Claude Code | igni |
 |---|---|---|
 | **Memory model** | File-based (`MEMORY.md` index + `.md` files) | DB-backed (Agno Memory, SQLite default) |
-| **Session storage** | JSONL transcripts | SQLite (`~/.ember/sessions.db`) |
+| **Session storage** | JSONL transcripts | SQLite (`~/.igni/sessions.db`) |
 | **Cross-device sync** | No (local files only) | Yes — set `storage.backend: postgres` |
 | **Memory types** | user, feedback, project, reference (manually categorized) | User memory + session context + entity memory (Agno LearningMachine) |
 | **Learning** | No | Yes — Agno builds user profiles, entity memory across sessions |
@@ -174,7 +174,7 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 | **PII detection** | No | Yes (Agno pre-hook, opt-in) |
 | **Prompt injection** | Flags suspicious tool results | Yes (Agno pre-hook, opt-in) |
 | **Content moderation** | No | Yes (OpenAI moderation API, opt-in) |
-| **Audit logging** | No | Yes (`~/.ember/audit.log`) |
+| **Audit logging** | No | Yes (`~/.igni/audit.log`) |
 | **Protected paths** | Via deny rules | Dedicated `safety.protected_paths` list |
 | **Blocked commands** | Implicit | Explicit `safety.blocked_commands` list |
 | **HITL** | Implicit (permission prompts) | Explicit — agents can pause for confirmation or user input via HITLHandler |

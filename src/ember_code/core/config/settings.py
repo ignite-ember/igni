@@ -197,9 +197,9 @@ def load_settings(
 
     1. Managed policy (sysadmin-controlled, OS-specific path)
     2. CLI flags
-    3. .ember/config.local.yaml (project, gitignored)
-    4. .ember/config.yaml (project, committed)
-    5. ~/.ember/config.yaml (user global)
+    3. .igni/config.local.yaml (project, gitignored)
+    4. .igni/config.yaml (project, committed)
+    5. ~/.igni/config.yaml (user global)
     6. Built-in defaults (from ``Settings``' Pydantic Field defaults)
 
     Managed sits ABOVE CLI on purpose — the whole point is that a

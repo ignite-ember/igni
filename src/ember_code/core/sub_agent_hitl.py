@@ -30,6 +30,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ember_code.core.paths import DEFAULT_DATA_DIR
+
 if TYPE_CHECKING:
     from agno.run.base import RunRequirement
 
@@ -86,7 +88,7 @@ class SubAgentHITLCoordinator:
         )
         # Direct trace — see backend/server.py for why we bypass logging.
         try:
-            with open(Path(os.path.expanduser("~/.ember/hitl_trace.log")), "a") as trace_f:
+            with open(Path(os.path.expanduser(f"{DEFAULT_DATA_DIR}/hitl_trace.log")), "a") as trace_f:
                 trace_f.write(
                     f"{time.strftime('%H:%M:%S')} pid={os.getpid()} "
                     f"coord.push_requirement: coord_id={id(self)} run_id={run_id} path={agent_path}\n"

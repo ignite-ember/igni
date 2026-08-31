@@ -168,7 +168,7 @@ class ToolPermissions:
         return any(r.tool_name == tool_name for r in self._rules)
 
     def save_rule(self, rule: str, level: PermissionLevel) -> None:
-        """Persist a permission rule to ``.ember/settings.local.json``
+        """Persist a permission rule to ``.igni/settings.local.json``
         (project-local, falls back to home-local).
 
         Delegates disk I/O to :class:`SettingsFileWriter` and then

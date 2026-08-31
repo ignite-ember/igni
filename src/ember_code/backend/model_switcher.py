@@ -50,7 +50,7 @@ class ModelSwitcher:
         Two layers of persistence so the choice survives both an
         app restart AND a session resume:
 
-        * **User-level default** — written to ``~/.ember/config.yaml``
+        * **User-level default** — written to ``~/.igni/config.yaml``
           via :class:`UserConfigStore` so any new session opened
           next launch uses this model. Best-effort: a save failure
           is logged but doesn't fail the switch (the in-memory

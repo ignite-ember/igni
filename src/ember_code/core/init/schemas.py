@@ -7,14 +7,14 @@ structured payloads, Rule 5 — no module-level mutable state).
 
 Wire shapes:
 
-* :class:`SettingsFile` — the fields of ``.ember/settings.json`` /
-  ``.ember/settings.local.json`` this package touches (``hooks`` +
+* :class:`SettingsFile` — the fields of ``.igni/settings.json`` /
+  ``.igni/settings.local.json`` this package touches (``hooks`` +
   ``permissions``). ``extra="allow"`` preserves user-added top-level
   keys (``mcpServers``, ``env``, …) across a load-then-save cycle
   so this package's writes never nuke keys owned by other subsystems.
 * :class:`HomeConfig` / :class:`HomeModelSection` /
   :class:`HomeModelRegistryEntry` — the fields of
-  ``~/.ember/config.yaml`` the home-config migrator inspects. Also
+  ``~/.igni/config.yaml`` the home-config migrator inspects. Also
   ``extra="allow"`` so unknown user overrides round-trip untouched.
 * :class:`BuiltInHookSpec` — one built-in hook shipped by the package
   (script content + settings.json registration). Grew ``write_script``
@@ -44,12 +44,13 @@ from ember_code.core.config.tool_permissions.schemas import (
 from ember_code.core.hooks.schemas import HookDefinition
 from ember_code.core.init.json_file import JsonFile
 from ember_code.core.init_templates import CONFIG_YAML_HEADER
+from ember_code.core.paths import CONFIG_DIR
 
-# ── SettingsFile — typed view over .ember/settings*.json ──────────
+# ── SettingsFile — typed view over .igni/settings*.json ──────────
 
 
 class SettingsFile(BaseModel):
-    """Typed model of ``.ember/settings.json`` / ``settings.local.json``.
+    """Typed model of ``.igni/settings.json`` / ``settings.local.json``.
 
     Only the two keys this package writes (``hooks`` +
     ``permissions``) are declared explicitly; ``extra="allow"``
@@ -121,7 +122,7 @@ class BuiltInHookSpec(BaseModel):
     """One built-in hook shipped by the package.
 
     ``content`` is the script body — written to
-    ``.ember/hooks/<filename>`` and marked executable by
+    ``.igni/hooks/<filename>`` and marked executable by
     :meth:`write_script`. ``definition`` is registered in
     ``settings.json`` under the ``event`` key by :meth:`register_in`.
 
@@ -156,11 +157,11 @@ class BuiltInHookSpec(BaseModel):
         settings_file.register_hook(self.event, self.definition)
 
 
-# ── HomeConfig — typed view over ~/.ember/config.yaml ─────────────
+# ── HomeConfig — typed view over ~/.igni/config.yaml ─────────────
 
 
 class HomeModelRegistryEntry(BaseModel):
-    """One entry in ``~/.ember/config.yaml`` under
+    """One entry in ``~/.igni/config.yaml`` under
     ``models.registry.<name>``.
 
     Only the two fields the migrator inspects (``url`` + ``api_key``)
@@ -186,7 +187,7 @@ class HomeModelRegistryEntry(BaseModel):
 
 
 class HomeModelSection(BaseModel):
-    """The ``models:`` block inside ``~/.ember/config.yaml``.
+    """The ``models:`` block inside ``~/.igni/config.yaml``.
 
     ``extra="allow"`` covers user-added keys under ``models:`` that
     aren't ``default`` / ``registry`` (future config knobs).
@@ -199,7 +200,7 @@ class HomeModelSection(BaseModel):
 
 
 class HomeConfig(BaseModel):
-    """Typed model of ``~/.ember/config.yaml``.
+    """Typed model of ``~/.igni/config.yaml``.
 
     Only ``models:`` is declared — the migrator doesn't touch any
     other top-level key. ``extra="allow"`` guarantees a user's own
@@ -216,7 +217,7 @@ class HomeConfig(BaseModel):
         """Load from a YAML file at ``path``.
 
         Returns ``None`` for the "unreadable / unparseable" case — a
-        hand-corrupted ``~/.ember/config.yaml`` must not crash
+        hand-corrupted ``~/.igni/config.yaml`` must not crash
         session startup. Bare :class:`Exception` catch is intentional
         here (user file, fail soft — see :class:`MigrationResult`).
         Missing file also returns ``None``.
@@ -333,7 +334,7 @@ class SyncOutcome(BaseModel):
             return None
         return (
             f"Built-in {self.key} was updated but you have local modifications. "
-            f"New version saved as .ember/{self.key}.new — diff and merge at "
+            f"New version saved as {CONFIG_DIR}/{self.key}.new — diff and merge at "
             f"your convenience."
         )
 
@@ -408,7 +409,7 @@ class InitConfig(BaseModel):
     group_ships_hook_scripts: bool = False
     #: Stand the bundled agents down. Set when the person's group ships
     #: agents of its own: the group becomes the sync source for
-    #: ``.ember/agents`` and two sources writing the same files would
+    #: ``.igni/agents`` and two sources writing the same files would
     #: fight over the same checksums. The bundle is what somebody with no
     #: group — offline, not logged in — still gets.
     skip_bundled_agents: bool = False

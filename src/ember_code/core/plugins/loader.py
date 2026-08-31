@@ -4,12 +4,12 @@ Scans seven roots in priority order (higher priority wins same-name
 collisions):
 
     1. ~/.claude/plugins/                       (Claude user-global)
-    2. ~/.ember/plugins/                        (ember user-global)
+    2. ~/.igni/plugins/                        (ember user-global)
     3. <project>/.claude/plugins/               (Claude project-local)
-    4. <project>/.ember/plugins/                (ember project-local)
+    4. <project>/.igni/plugins/                (ember project-local)
     5. <data_dir>/group-policy/plugins/          (org Group Policy)
     6. <managed>/.claude/plugins/                (sysadmin, cross-tool)
-    7. <managed>/.ember/plugins/                 (sysadmin, ember-native)
+    7. <managed>/.igni/plugins/                 (sysadmin, ember-native)
 
 The new tier 5 (``group-policy-ember``) holds plugins installed
 from URL/ref/subdir specified in :class:`GroupPolicyEntry`

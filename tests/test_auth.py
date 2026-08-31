@@ -12,6 +12,7 @@ from ember_code.core.auth.credentials import (
     CredentialsStore,
 )
 from ember_code.core.auth.schemas import JwtClaims
+from ember_code.core.paths import CONFIG_DIR, DEFAULT_DATA_DIR
 
 
 def _make_jwt(payload: dict) -> str:
@@ -25,14 +26,14 @@ def _make_jwt(payload: dict) -> str:
 class TestCredentialsStorePath:
     def test_default_path(self):
         store = CredentialsStore()
-        assert store.path == Path.home() / ".ember" / "credentials.json"
+        assert store.path == Path.home() / CONFIG_DIR / "credentials.json"
 
     def test_custom_path(self, tmp_path):
         store = CredentialsStore(str(tmp_path / "creds.json"))
         assert store.path == tmp_path / "creds.json"
 
     def test_expands_tilde(self):
-        store = CredentialsStore("~/.ember/credentials.json")
+        store = CredentialsStore(f"{DEFAULT_DATA_DIR}/credentials.json")
         assert str(Path.home()) in str(store.path)
 
 

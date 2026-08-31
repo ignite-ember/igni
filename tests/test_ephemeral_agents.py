@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ember_code.core.agents import AgentPool
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.tools.orchestrate import OrchestrateTools
 
 
@@ -14,13 +15,13 @@ class TestEphemeralInit:
     def test_creates_agents_tmp_dir(self, tmp_path, settings):
         pool = AgentPool()
         pool.init_ephemeral(tmp_path)
-        assert (tmp_path / ".ember" / "agents.tmp").is_dir()
+        assert (tmp_path / CONFIG_DIR / "agents.tmp").is_dir()
 
     def test_idempotent(self, tmp_path, settings):
         pool = AgentPool()
         pool.init_ephemeral(tmp_path)
         pool.init_ephemeral(tmp_path)  # no error
-        assert (tmp_path / ".ember" / "agents.tmp").is_dir()
+        assert (tmp_path / CONFIG_DIR / "agents.tmp").is_dir()
 
 
 class TestRegisterEphemeral:
@@ -42,7 +43,7 @@ class TestRegisterEphemeral:
             description="A helper agent",
             system_prompt="You help with things.",
         )
-        md_path = tmp_path / ".ember" / "agents.tmp" / "helper.md"
+        md_path = tmp_path / CONFIG_DIR / "agents.tmp" / "helper.md"
         assert md_path.exists()
         content = md_path.read_text()
         assert "name: helper" in content
@@ -68,7 +69,7 @@ class TestRegisterEphemeral:
             system_prompt="Search.",
             tools=["Read", "Grep", "Glob"],
         )
-        md_path = tmp_path / ".ember" / "agents.tmp" / "searcher.md"
+        md_path = tmp_path / CONFIG_DIR / "agents.tmp" / "searcher.md"
         content = md_path.read_text()
         assert "Read, Grep, Glob" in content
 
@@ -81,7 +82,7 @@ class TestRegisterEphemeral:
             system_prompt="Be smart.",
             model="gpt-4o",
         )
-        md_path = tmp_path / ".ember" / "agents.tmp" / "smart.md"
+        md_path = tmp_path / CONFIG_DIR / "agents.tmp" / "smart.md"
         content = md_path.read_text()
         assert "model: gpt-4o" in content
 
@@ -152,9 +153,9 @@ class TestPromoteEphemeral:
         pool.register_ephemeral(name="promo", description="d", system_prompt="p")
         dest = pool.promote_ephemeral("promo", tmp_path)
 
-        assert dest == tmp_path / ".ember" / "agents" / "promo.md"
+        assert dest == tmp_path / CONFIG_DIR / "agents" / "promo.md"
         assert dest.exists()
-        assert not (tmp_path / ".ember" / "agents.tmp" / "promo.md").exists()
+        assert not (tmp_path / CONFIG_DIR / "agents.tmp" / "promo.md").exists()
 
     @patch("ember_code.core.agents.builder.AgentBuilder.build")
     def test_promote_decrements_count(self, mock_build, tmp_path, settings):
@@ -208,7 +209,7 @@ class TestDiscardEphemeral:
         pool.init_ephemeral(tmp_path)
 
         pool.register_ephemeral(name="temp", description="d", system_prompt="p")
-        md_path = tmp_path / ".ember" / "agents.tmp" / "temp.md"
+        md_path = tmp_path / CONFIG_DIR / "agents.tmp" / "temp.md"
         assert md_path.exists()
         assert "temp" in pool.agent_names
 
@@ -279,8 +280,8 @@ class TestCleanupEphemeral:
         removed = pool.cleanup_ephemeral()
         assert removed == 2
         assert pool._ephemeral_count == 0
-        assert not (tmp_path / ".ember" / "agents.tmp" / "e1.md").exists()
-        assert not (tmp_path / ".ember" / "agents.tmp" / "e2.md").exists()
+        assert not (tmp_path / CONFIG_DIR / "agents.tmp" / "e1.md").exists()
+        assert not (tmp_path / CONFIG_DIR / "agents.tmp" / "e2.md").exists()
         assert "e1" not in pool.agent_names
         assert "e2" not in pool.agent_names
 

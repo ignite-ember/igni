@@ -53,11 +53,11 @@ class McpInitPhase(SessionStartupPhase):
     async def ensure(self) -> McpInitResult:
         """Connect user-configured MCP servers and rebuild agents.
 
-        Reads from .mcp.json / .ember/.mcp.json. No auto-detection —
+        Reads from .mcp.json / .igni/.mcp.json. No auto-detection —
         only servers the user explicitly configured are connected.
         Runs once on first message. INFO-level log lines bracket
         each connect so the timeline is reconstructable from
-        ``~/.ember/debug.log`` when diagnosing a "MCP says connected
+        ``~/.igni/debug.log`` when diagnosing a "MCP says connected
         but the agent doesn't see the tools" race.
 
         Returns a :class:`McpInitResult` describing the outcome so

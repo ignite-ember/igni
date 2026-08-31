@@ -13,7 +13,7 @@ into the per-case ``work_dir`` but before any case runs. We:
    freshly-minted HEAD. The quality / category data doesn't depend
    on the SHA, so this is safe.
 4. ``apply_delta`` the rewritten JSONL — populates chroma + the
-   reference SQLite under ``~/.ember/projects/<derived>/``. The
+   reference SQLite under ``~/.igni/projects/<derived>/``. The
    agent's Session, when it starts in ``work_dir``, will derive the
    same project_id and find the populated index.
 
@@ -74,7 +74,7 @@ async def setup(work_dir: Path, project_dir: Path) -> None:
     _rewrite_commit_sha(snapshot_path, rewritten_jsonl, head_sha)
 
     # 3. Apply the changeset to chroma + SQLite. Uses the same
-    #    ``~/.ember`` data_dir the agent's Session will read from.
+    #    ``~/.igni`` data_dir the agent's Session will read from.
     from ember_code.core.code_index.index import CodeIndex
 
     index = CodeIndex(project=work_dir)

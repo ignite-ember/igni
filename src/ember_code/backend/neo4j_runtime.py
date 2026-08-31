@@ -2,14 +2,14 @@
 
 Owns the Neo4j server subprocess for the lifetime of the BE process.
 Multiple BEs (one per open project window) share the same sidecar
-via a refcount published to ``~/.ember/neo4j.runtime.json``.
+via a refcount published to ``~/.igni/neo4j.runtime.json``.
 
 Module contents:
 
 * :class:`Neo4jEndpoints` — value type carrying the running
   sidecar's bolt + HTTP URIs, PID, and auth credentials.
 * :class:`Neo4jBootstrap` — ensures the Neo4j distribution is
-  installed under ``~/.ember/neo4j/<version>/``. Downloads the
+  installed under ``~/.igni/neo4j/<version>/``. Downloads the
   tarball on first launch (httpx + tarfile extract) and writes a
   ``.installed-<version>`` marker so subsequent launches skip the
   download. Probes ``./bin/neo4j --version`` to verify the

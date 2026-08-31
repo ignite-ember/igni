@@ -77,7 +77,7 @@ async def test_knowledge_index_add_search_count_round_trip(knowledge_index):
     entries = {
         "auth": "Passwords must be hashed with bcrypt; never store plaintext.",
         "deploy": "Deploy via the GitHub Actions workflow; never push to main.",
-        "config": "Configuration is loaded from .ember/config.local.yaml on startup.",
+        "config": "Configuration is loaded from .igni/config.local.yaml on startup.",
     }
     for eid, content in entries.items():
         result = await idx.add_document(
@@ -119,7 +119,7 @@ async def test_knowledge_index_add_search_count_round_trip(knowledge_index):
         for name, content in (
             ("auth", "Passwords must be hashed with bcrypt; never store plaintext."),
             ("deploy", "Deploy via the GitHub Actions workflow; never push to main."),
-            ("config", "Configuration is loaded from .ember/config.local.yaml on startup."),
+            ("config", "Configuration is loaded from .igni/config.local.yaml on startup."),
         )
         if name == "deploy"
     )

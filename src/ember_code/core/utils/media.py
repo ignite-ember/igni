@@ -15,7 +15,7 @@ Two modes, both active. Which one runs depends on the model's
    :meth:`MediaResolver.attach_local_paths` for the entry point.
 
 A text-only model (e.g. MiniMax-M2.7) takes path 1 only; the bytes
-stay on disk in ``.ember/attachments/<session_id>/``.
+stay on disk in ``.igni/attachments/<session_id>/``.
 """
 
 from __future__ import annotations

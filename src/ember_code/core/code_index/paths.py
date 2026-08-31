@@ -2,7 +2,7 @@
 
 Single source of truth for where state lives on disk:
 
-    ~/.ember/
+    ~/.igni/
       ember.db                          # GLOBAL: agno memory + learning
       projects/<project_hash>/
         state.db                        # PROJECT: scheduler, sessions
@@ -14,7 +14,7 @@ Single source of truth for where state lives on disk:
         state/<project_id>/.migrated    # the cutover's per-project marker
 
 The data root is configurable (``settings.storage.data_dir``); defaults
-to ``~/.ember``.
+to ``~/.igni``.
 
 ## The chroma paths are legacy
 
@@ -75,7 +75,7 @@ def manifest_path(project: str | Path, *, data_dir: str | Path = DEFAULT_DATA_DI
 
 # ── Neo4j sidecar layout ──────────────────────────────────────────
 #
-#     ~/.ember/
+#     ~/.igni/
 #       neo4j/                            # shared: distribution + per-commit state
 #         state/<project_hash>-<sha>/     # PER-COMMIT: data, auth, runtime.json
 #

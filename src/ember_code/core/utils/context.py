@@ -8,15 +8,15 @@ Loads rules from several sources, all merged into the session prompt:
    first so the model sees org-pinned guidance ahead of everything
    else.
 0.5. **Memory index** — the agent's per-project ``MEMORY.md`` from
-   ``~/.ember/projects/<slug>/memory/`` (or ``~/.claude/projects/
+   ``~/.igni/projects/<slug>/memory/`` (or ``~/.claude/projects/
    <slug>/memory/`` as a cross-tool fallback), capped at 200 lines
    / 25 KB.
-1. **User-level** — ``~/.ember/rules.md`` (legacy),
-   ``~/.ember/rules/*.md`` (dir form), plus ``~/.claude/rules/*.md``
+1. **User-level** — ``~/.igni/rules.md`` (legacy),
+   ``~/.igni/rules/*.md`` (dir form), plus ``~/.claude/rules/*.md``
    when cross-tool support is enabled.
 2. **Project root** — ``ember.md`` / ``CLAUDE.md`` and their
    ``.local.md`` override siblings.
-3. **Project shared rules dirs** — ``<project>/.ember/rules/*.md``
+3. **Project shared rules dirs** — ``<project>/.igni/rules/*.md``
    and (when cross-tool) ``<project>/.claude/rules/*.md``.
 4. **Subdirectory** — ``ember.md`` / ``CLAUDE.md`` in any parent of
    the working file, walking up to the project root.

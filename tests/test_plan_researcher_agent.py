@@ -28,9 +28,9 @@ import yaml
 # Agent definitions live in ``src/ember_code/bundled_agents/`` —
 # that's the shipped location (pip package includes them, git
 # tracks them). The runtime copies them into a user's
-# ``<project>/.ember/agents/`` on first launch via
+# ``<project>/.igni/agents/`` on first launch via
 # ``core.init.sync_bundled_content``. Tests read from the source
-# so they don't depend on the gitignored ``.ember/`` staging dir.
+# so they don't depend on the gitignored ``.igni/`` staging dir.
 PROJECT_AGENT_DIR = Path(__file__).resolve().parent.parent / "src" / "ember_code" / "bundled_agents"
 
 

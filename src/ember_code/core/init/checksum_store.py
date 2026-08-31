@@ -4,7 +4,7 @@ Owns everything the old flat ``core/init_checksums.py`` module used
 to expose as four free functions:
 
 * SHA-256 hashing of a package file (leaf primitive).
-* Load / save of the ``.ember/.checksums.json`` map.
+* Load / save of the ``.igni/.checksums.json`` map.
 * The three-way merge that decides whether a per-file update is a
   clean copy, a legacy record, a byte-stable no-op, an untouched
   overwrite, or a diverged ``.new`` sidecar.
@@ -42,7 +42,7 @@ from ember_code.core.paths import CONFIG_DIR
 
 
 class ChecksumStore(BaseModel):
-    """The ``.ember/.checksums.json`` map for one project.
+    """The ``.igni/.checksums.json`` map for one project.
 
     Owns the state (the ``entries`` dict), the persistence path
     (derived from ``project_dir`` + ``config.checksums_file``), and
@@ -70,7 +70,7 @@ class ChecksumStore(BaseModel):
 
     @classmethod
     def load(cls, project_dir: Path, config: InitConfig) -> ChecksumStore:
-        """Read ``.ember/<config.checksums_file>`` and return a
+        """Read ``.igni/<config.checksums_file>`` and return a
         populated store.
 
         Missing / unparseable file → empty ``entries`` (the underlying
@@ -89,7 +89,7 @@ class ChecksumStore(BaseModel):
         """Compose the checksums-file path into a :class:`JsonFile` once.
 
         Both :meth:`load` and :meth:`save` derive the same path from
-        ``project_dir + .ember + config.checksums_file`` — routing
+        ``project_dir + .igni + config.checksums_file`` — routing
         through this helper keeps the path build in one place.
         """
         return JsonFile(
@@ -98,7 +98,7 @@ class ChecksumStore(BaseModel):
 
     def save(self) -> None:
         """Write ``entries`` back to
-        ``.ember/<config.checksums_file>``.
+        ``.igni/<config.checksums_file>``.
         """
         self._json_file().save(self.entries)
 

@@ -119,7 +119,7 @@ class AuthController:
         # One :class:`CredentialsStore` per controller so the login
         # write + the :class:`CloudCredentials` read below share a
         # single path source (previously two independent free-function
-        # calls both defaulted to ``~/.ember/credentials.json``).
+        # calls both defaulted to ``~/.igni/credentials.json``).
         self._store = CredentialsStore(self._settings.auth.credentials_file)
         # Serializes concurrent :meth:`_hydrate_group_policy` calls so a
         # cold-start hook and a fresh login can't race on the same

@@ -13,7 +13,7 @@ Rule 2 (no inline imports) holds.
 1. **Project root** — ``ember.md`` / ``CLAUDE.md`` at the project
    root, via :func:`load_project_rules`.
 2. **Project shared rules dirs** — committed shared rules at
-   ``<project>/.ember/rules/*.md`` and (when ``read_claude_md``)
+   ``<project>/.igni/rules/*.md`` and (when ``read_claude_md``)
    ``<project>/.claude/rules/*.md``, via
    :func:`load_project_rules_dirs`. Symmetric to the user-level
    directory form, but versioned with the repo so the whole team
@@ -68,9 +68,9 @@ def load_project_rules_dirs(
 ) -> str:
     """Load committed shared rules from project-level rules directories.
 
-    Symmetric to the user-level pattern (``~/.ember/rules/`` /
+    Symmetric to the user-level pattern (``~/.igni/rules/`` /
     ``~/.claude/rules/``), but for a single project: a repo can
-    commit shared rules at ``<project>/.ember/rules/*.md`` and
+    commit shared rules at ``<project>/.igni/rules/*.md`` and
     ``<project>/.claude/rules/*.md``. Each file may carry YAML
     frontmatter with a ``paths:`` glob list — files whose paths
     don't match the session's working directory are skipped, same

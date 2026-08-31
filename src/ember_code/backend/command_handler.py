@@ -6,7 +6,7 @@ in three tiers:
 * :class:`BuiltinCommandRegistry` — the ``/name → shim`` table plus
   ``/name → description`` catalog and dispatch method.
 * :class:`MarkdownCommandDispatcher` — tier-2 fallback for
-  markdown-authored ``.ember/commands/*.md`` files.
+  markdown-authored ``.igni/commands/*.md`` files.
 * :class:`SkillCommandDispatcher` — tier-3 fallback for
   user-invocable skills.
 

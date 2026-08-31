@@ -41,9 +41,25 @@ let backendVersionInfo:
   | undefined;
 let panel: vscode.WebviewPanel | undefined;
 
-// ``<project>/.ember/backend.lock`` — see the Python side at
+// ``<project>/.igni/backend.lock`` — see the Python side at
 // ``src/ember_code/backend/lockfile.py`` for the write half and the
 // shape spec.
+//
+// The directory was called ``.ember`` before the rename, and it is
+// checked second. Not for tidiness: a missing lock means "spawn", so a
+// backend started before the upgrade still holds ``.ember/backend.lock``
+// and a client that only looked at the new name would start a *second*
+// one on a different port.
+const CONFIG_DIR = ".igni";
+const LEGACY_CONFIG_DIR = ".ember";
+
+function lockfilePath(projectDir: string): string {
+  const current = path.join(projectDir, CONFIG_DIR, "backend.lock");
+  if (fs.existsSync(current)) return current;
+  const legacy = path.join(projectDir, LEGACY_CONFIG_DIR, "backend.lock");
+  if (fs.existsSync(legacy)) return legacy;
+  return current;
+}
 interface LockfilePayload {
   pid: number;
   port: number;
@@ -94,7 +110,7 @@ async function discoverExistingBackend(
   projectDir: string,
   expectedWireVersion: string,
 ): Promise<DiscoverResult> {
-  const lockPath = path.join(projectDir, ".ember", "backend.lock");
+  const lockPath = lockfilePath(projectDir);
   let raw: string;
   try {
     raw = await fs.promises.readFile(lockPath, "utf-8");

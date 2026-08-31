@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class HookProvisioner(BaseModel):
-    """Provision built-in hooks into a project's ``.ember`` directory.
+    """Provision built-in hooks into a project's ``.igni`` directory.
 
     Constructor takes the project directory and an optional
     iterable of :class:`BuiltInHookSpec` (defaults to
@@ -61,8 +61,8 @@ class HookProvisioner(BaseModel):
 
         Steps:
 
-        1. Ensure ``.ember/hooks/`` exists.
-        2. Load ``.ember/settings.json`` via :meth:`SettingsFile.load`
+        1. Ensure ``.igni/hooks/`` exists.
+        2. Load ``.igni/settings.json`` via :meth:`SettingsFile.load`
            (fail-soft — a corrupt file becomes an empty instance).
         3. For each spec, call
            :meth:`BuiltInHookSpec.write_script` (always overwrites —

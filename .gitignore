@@ -215,6 +215,9 @@ marimo/_lsp/
 __marimo__/
 
 # igni local data (user-specific, not shared)
+.igni/
+# The pre-rename name. Kept so a directory on a machine where the
+# migration has not run yet still does not get committed.
 .ember/
 
 # Eval run artifacts — timestamped JSON dumps from scripts/run_evals_smoke.py

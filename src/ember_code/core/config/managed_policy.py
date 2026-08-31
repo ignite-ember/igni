@@ -11,7 +11,7 @@ Owns two responsibilities that used to sprawl across the loader:
   — previously a classmethod on ``SettingsLoader``.
 
 Naming caveat: the ``settings.json`` fragment technically lives at
-``~/.ember/settings.json`` (user-tier), not at the managed-tier
+``~/.igni/settings.json`` (user-tier), not at the managed-tier
 location. Both are grouped here because they share the same
 "external file → limited key lift → merged into the settings
 accumulator" shape. The alternative — a second ``JsonFragmentSource``

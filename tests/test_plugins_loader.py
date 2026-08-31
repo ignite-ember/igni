@@ -19,6 +19,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.plugins.loader import PluginLoader
 from ember_code.core.plugins.models import PluginManifest
 from ember_code.core.plugins.state import (
@@ -128,7 +129,7 @@ def test_manifest_preserves_unknown_fields() -> None:
 def test_discovers_plugin_with_manifest(tmp_path: Path) -> None:
     """Minimum viable plugin: a directory under one of the roots with
     a parseable ``.claude-plugin/plugin.json`` is registered."""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin(user_ember, "alpha")
 
     loader = PluginLoader()
@@ -144,7 +145,7 @@ def test_skips_directories_without_manifest(tmp_path: Path) -> None:
     """A folder under a plugin root that lacks
     ``.claude-plugin/plugin.json`` is ignored silently — leaves room
     for stray content, notes, gitkeeps, etc."""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     user_ember.mkdir(parents=True)
     (user_ember / "not-a-plugin").mkdir()
     (user_ember / "not-a-plugin" / "readme.md").write_text("just a note")
@@ -158,7 +159,7 @@ def test_skips_directories_without_manifest(tmp_path: Path) -> None:
 def test_warns_and_skips_malformed_manifest(tmp_path: Path) -> None:
     """A plugin with a malformed manifest is skipped (with a log warning,
     not a crash). One bad plugin shouldn't take down the whole load."""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     plugin_dir = user_ember / "broken"
     (plugin_dir / ".claude-plugin").mkdir(parents=True)
     (plugin_dir / ".claude-plugin" / "plugin.json").write_text("not-json-at-all", encoding="utf-8")
@@ -178,7 +179,7 @@ def test_project_ember_wins_over_user_claude(tmp_path: Path) -> None:
     beats user-claude (priority 1). This is the highest-vs-lowest
     pairing; intermediate priorities exercised in other tests."""
     user_claude = tmp_path / "home" / ".claude" / "plugins"
-    project_ember = tmp_path / "proj" / ".ember" / "plugins"
+    project_ember = tmp_path / "proj" / CONFIG_DIR / "plugins"
 
     _write_plugin(user_claude, "shared", description="from user-claude")
     _write_plugin(project_ember, "shared", description="from project-ember")
@@ -195,9 +196,9 @@ def test_project_ember_wins_over_user_claude(tmp_path: Path) -> None:
 
 def test_project_claude_beats_user_ember(tmp_path: Path) -> None:
     """Project always beats user, even when the project version sits
-    in ``.claude/`` and the user version sits in ``.ember/``. The
+    in ``.claude/`` and the user version sits in ``.igni/``. The
     project's voice wins regardless of which tool flavor it speaks."""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     project_claude = tmp_path / "proj" / ".claude" / "plugins"
 
     _write_plugin(user_ember, "shared", description="from user-ember")
@@ -217,7 +218,7 @@ def test_user_ember_beats_user_claude(tmp_path: Path) -> None:
     project tier's preference — if you bothered to install/maintain
     a plugin via ember, you want that copy used."""
     user_claude = tmp_path / "home" / ".claude" / "plugins"
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
 
     _write_plugin(user_claude, "shared", description="from user-claude")
     _write_plugin(user_ember, "shared", description="from user-ember")
@@ -237,7 +238,7 @@ def test_user_ember_beats_user_claude(tmp_path: Path) -> None:
 def test_inventory_flags_set_for_bundled_subdirs(tmp_path: Path) -> None:
     """The ``has_*`` flags drive the panel's per-plugin counts and let
     apply steps skip plugins that bundle nothing in a given category."""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin(
         user_ember,
         "kitchen-sink",
@@ -272,9 +273,9 @@ def test_apply_to_skills_namespaces_loaded_skills(tmp_path: Path) -> None:
     """A plugin named ``foo`` whose ``skills/demo/SKILL.md`` ships
     ``name: demo`` lands in the SkillPool as ``foo:demo``. The
     original ``demo`` is unused — the prefix is the new identity, so
-    a user-level ``demo`` skill in ``.ember/skills/`` and this
+    a user-level ``demo`` skill in ``.igni/skills/`` and this
     plugin's ``demo`` can both exist."""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin(user_ember, "foo", with_skills=True)
 
     loader = PluginLoader()
@@ -293,7 +294,7 @@ def test_apply_to_skills_honors_disabled(tmp_path: Path) -> None:
     """A disabled plugin's skills never make it into the SkillPool —
     even though the plugin itself is still discovered (so the panel
     can show it as disabled)."""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin(user_ember, "off", with_skills=True)
     _write_plugin(user_ember, "on", with_skills=True)
 
@@ -358,7 +359,7 @@ def test_load_all_defaults_to_cwd(tmp_path: Path) -> None:
     """``project_dir=None`` falls back to ``Path.cwd()``. The CLI
     sometimes invokes the loader without an explicit project dir
     (e.g. during ``ember plugins list`` outside a project)."""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin(user_ember, "from-cwd")
 
     loader = PluginLoader()

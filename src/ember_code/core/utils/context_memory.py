@@ -105,7 +105,7 @@ def _project_memory_slug(project_dir: Path) -> str:
 
 def _ember_project_memory_dir(project_dir: Path) -> Path:
     """Ember-native per-project memory dir
-    (``~/.ember/projects/<slug>/memory/``)."""
+    (``~/.igni/projects/<slug>/memory/``)."""
     return Path.home() / CONFIG_DIR / "projects" / _project_memory_slug(project_dir) / "memory"
 
 

@@ -350,7 +350,7 @@ class HitlController:
             )
             return PersistChoiceResult(ok=False, reason="missing tool metadata on requirement")
         # Prefer the catalog-name for the persisted rule so it's
-        # readable in ``.ember/settings.local.json`` regardless of
+        # readable in ``.igni/settings.local.json`` regardless of
         # whether the requirement arrived tagged with the Agno
         # function name or the friendly catalog name already.
         resolver = ToolNameResolver()

@@ -34,6 +34,7 @@ import yaml
 
 from ember_code.core.config.model_entry import ModelRegistryEntry
 from ember_code.core.config.secret_scan import scan_project_config
+from ember_code.core.paths import CONFIG_DIR
 
 
 def _write(path: Path, payload: dict) -> None:
@@ -50,11 +51,11 @@ class TestTheMergeTheSplitRestsOn:
         monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
 
         _write(
-            home / ".ember" / "config.yaml",
+            home / CONFIG_DIR / "config.yaml",
             {"models": {"registry": {"m3": {"api_key": "sk-from-home"}}}},
         )
         _write(
-            project / ".ember" / "config.yaml",
+            project / CONFIG_DIR / "config.yaml",
             {
                 "models": {
                     "registry": {
@@ -89,14 +90,14 @@ class TestTheMergeTheSplitRestsOn:
         monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
 
         _write(
-            home / ".ember" / "config.yaml",
+            home / CONFIG_DIR / "config.yaml",
             {"models": {"registry": {"m3": {"api_key": "k", "context_window": 1000}}}},
         )
         # ``model_id`` is required, and it lives in the project half —
         # which is the right way round: it is part of the definition, not
         # the credential. The home half can be key-only because of it.
         _write(
-            project / ".ember" / "config.yaml",
+            project / CONFIG_DIR / "config.yaml",
             {"models": {"registry": {"m3": {"model_id": "m", "context_window": 204800}}}},
         )
 
@@ -153,7 +154,7 @@ class TestAMissingKeySaysSo:
 class TestTheSecretScan:
     def test_it_finds_a_literal_key_in_the_shared_config(self, tmp_path: Path):
         _write(
-            tmp_path / ".ember" / "config.yaml",
+            tmp_path / CONFIG_DIR / "config.yaml",
             {"models": {"registry": {"m3": {"api_key": "sk-oops", "model_id": "m"}}}},
         )
         warnings = scan_project_config(tmp_path)
@@ -166,7 +167,7 @@ class TestTheSecretScan:
 
     def test_it_says_nothing_about_a_definition_with_no_key(self, tmp_path: Path):
         _write(
-            tmp_path / ".ember" / "config.yaml",
+            tmp_path / CONFIG_DIR / "config.yaml",
             {"models": {"registry": {"m3": {"model_id": "m", "api_key_env": "K"}}}},
         )
         assert scan_project_config(tmp_path) == []
@@ -174,7 +175,7 @@ class TestTheSecretScan:
     def test_api_key_env_is_not_a_secret(self, tmp_path: Path):
         """It names one. That is the whole point of recommending it."""
         _write(
-            tmp_path / ".ember" / "config.yaml",
+            tmp_path / CONFIG_DIR / "config.yaml",
             {"models": {"registry": {"m": {"api_key_env": "MY_KEY", "api_key_cmd": "get-key"}}}},
         )
         assert scan_project_config(tmp_path) == []
@@ -182,7 +183,7 @@ class TestTheSecretScan:
     def test_the_cloud_sentinel_is_not_a_secret(self, tmp_path: Path):
         """``cloud_token`` is an instruction to go and find one."""
         _write(
-            tmp_path / ".ember" / "config.yaml",
+            tmp_path / CONFIG_DIR / "config.yaml",
             {"models": {"registry": {"m": {"api_key": "cloud_token"}}}},
         )
         assert scan_project_config(tmp_path) == []
@@ -191,7 +192,7 @@ class TestTheSecretScan:
         """``config.local.yaml`` is a person's own and gitignored, so a
         key there is a choice rather than a mistake."""
         _write(
-            tmp_path / ".ember" / "config.local.yaml",
+            tmp_path / CONFIG_DIR / "config.local.yaml",
             {"models": {"registry": {"m": {"api_key": "sk-mine"}}}},
         )
         assert scan_project_config(tmp_path) == []
@@ -202,21 +203,21 @@ class TestTheSecretScan:
     def test_unparseable_config_is_not_an_error(self, tmp_path: Path):
         """A broken config fails loudly elsewhere; this must not be the
         thing that stops a session starting."""
-        path = tmp_path / ".ember" / "config.yaml"
+        path = tmp_path / CONFIG_DIR / "config.yaml"
         path.parent.mkdir(parents=True)
         path.write_text("models: [this is not: valid: yaml", encoding="utf-8")
         assert scan_project_config(tmp_path) == []
 
     @pytest.mark.parametrize("payload", [None, [], "a string", {"models": None}, {"models": {"registry": []}}])
     def test_shapes_that_are_not_a_registry(self, tmp_path: Path, payload):
-        path = tmp_path / ".ember" / "config.yaml"
+        path = tmp_path / CONFIG_DIR / "config.yaml"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(yaml.safe_dump(payload), encoding="utf-8")
         assert scan_project_config(tmp_path) == []
 
     def test_it_names_every_offender(self, tmp_path: Path):
         _write(
-            tmp_path / ".ember" / "config.yaml",
+            tmp_path / CONFIG_DIR / "config.yaml",
             {
                 "models": {
                     "registry": {
@@ -234,7 +235,7 @@ class TestTheSecretScan:
     def test_the_key_itself_is_never_in_the_warning(self, tmp_path: Path):
         """A warning that quotes the secret puts it in the logs."""
         _write(
-            tmp_path / ".ember" / "config.yaml",
+            tmp_path / CONFIG_DIR / "config.yaml",
             {"models": {"registry": {"m": {"api_key": "sk-do-not-log-me"}}}},
         )
         assert "sk-do-not-log-me" not in scan_project_config(tmp_path)[0]

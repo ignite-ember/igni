@@ -79,7 +79,7 @@ Nothing is hardcoded. The Orchestrator is a reasoning-enabled meta-agent that re
 
 This means the system adapts to new agents automatically. Drop a `database.md` into the agents folder — the Orchestrator can start including it in teams immediately, without any code changes.
 
-When no existing agent fits a task, the Orchestrator can **generate an ephemeral agent** on the fly — writing a new `.md` file to `.ember/agents.ephemeral/` with a task-specific system prompt and tools. Ephemeral agents are session-scoped and auto-cleaned, but can be promoted to permanent agents by the user.
+When no existing agent fits a task, the Orchestrator can **generate an ephemeral agent** on the fly — writing a new `.md` file to `.igni/agents.ephemeral/` with a task-specific system prompt and tools. Ephemeral agents are session-scoped and auto-cleaned, but can be promoted to permanent agents by the user.
 
 ### 2. Agents as Data, Not Code
 
@@ -125,7 +125,7 @@ Agno's built-in memory system replaces file-based memory:
 - **User memory** — preferences, role, expertise level (persists across sessions)
 - **Session storage** — conversation history, tool outputs (per-session, DB-backed)
 - **Session state** — current task progress, open files, working context
-- **Progress tracking** — `.ember/TODO.md` auto-loaded into context for cross-session task continuity
+- **Progress tracking** — `.igni/TODO.md` auto-loaded into context for cross-session task continuity
 
 ## Request Lifecycle
 
@@ -191,17 +191,17 @@ For complex tasks, the orchestration overhead (one extra LLM call) is negligible
 ```
 Startup
     │
-    ├── Copy built-in agents → .ember/agents/   (first run, checksum-merged on update)
-    ├── Copy built-in skills → .ember/skills/   (first run, checksum-merged on update)
+    ├── Copy built-in agents → .igni/agents/   (first run, checksum-merged on update)
+    ├── Copy built-in skills → .igni/skills/   (first run, checksum-merged on update)
     │
-    ├── Scan ~/.ember/agents/              (global)
-    ├── Scan ~/.ember/skills/              (global)
+    ├── Scan ~/.igni/agents/              (global)
+    ├── Scan ~/.igni/skills/              (global)
     │
-    ├── Scan .ember/agents.local/          (project, gitignored)
-    ├── Scan .ember/agents/                (project)
-    ├── Scan .ember/skills.local/          (project, gitignored)
-    ├── Scan .ember/skills/                (project)
-    └── Scan .ember/agents.tmp/            (session-scoped, auto-cleaned)
+    ├── Scan .igni/agents.local/          (project, gitignored)
+    ├── Scan .igni/agents/                (project)
+    ├── Scan .igni/skills.local/          (project, gitignored)
+    ├── Scan .igni/skills/                (project)
+    └── Scan .igni/agents.tmp/            (session-scoped, auto-cleaned)
            │
            │  With cross_tool_support: true, also scans:
            │  ├── ~/.claude/agents/        (Claude Code global)
@@ -229,13 +229,13 @@ By default, igni loads agents and skills from both its own directories and Claud
 
 Each igni session:
 
-1. **First run?** — if `.ember/agents/` doesn't exist, run the [onboarding flow](ONBOARDING.md): create default agents, ask about the user's work, fetch project context from CodeIndex, propose tailored agents
+1. **First run?** — if `.igni/agents/` doesn't exist, run the [onboarding flow](ONBOARDING.md): create default agents, ask about the user's work, fetch project context from CodeIndex, propose tailored agents
 2. **Loads** — agent pool (from Ember/Claude/Codex directories), user memory, project context (`ember.md`), MCP servers, session history
 3. **Runs** — interactive loop: user message → Orchestrator → team/agent → response
 3. **Persists** — updated memory, session state to SQLite
 4. **Cleans up** — MCP connections, temp files, background processes
 
-By default, sessions are stored locally in `~/.ember/sessions.db` using Agno's `SqliteDb` backend. User memory lives in `~/.ember/memory.db`.
+By default, sessions are stored locally in `~/.igni/sessions.db` using Agno's `SqliteDb` backend. User memory lives in `~/.igni/memory.db`.
 
 **Cross-device sync:** Claude Code stores sessions locally only — they don't sync across devices. igni defaults to the same (SQLite, local), but Agno's storage layer supports 15+ backends. Configure `storage.backend: "postgres"` (or MongoDB, Redis, DynamoDB, etc.) to sync sessions and memory across devices. See [Configuration](CONFIGURATION.md) for details.
 
@@ -421,7 +421,7 @@ igni follows a defense-in-depth approach:
 2. **Command blocking** — dangerous shell commands blocked, others require confirmation
 3. **File guards** — sensitive paths (`.env`, credentials) protected from writes
 4. **Confirmation prompts** — destructive/irreversible actions require explicit approval
-5. **Audit log** — all tool executions logged to `~/.ember/audit.log`
+5. **Audit log** — all tool executions logged to `~/.igni/audit.log`
 6. **Agent isolation** — agents only get the tools declared in their definition
 7. **Guardrails** — PII detection, prompt injection detection, and content moderation as pre-hooks
 

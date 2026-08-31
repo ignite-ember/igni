@@ -271,7 +271,7 @@ class SuiteRunner:
 
     def _resolve_fixtures_root(self) -> Path:
         """Look in ``evals/fixtures/`` first (committed datasets shipped
-        with the repo), fall back to ``.ember/evals/`` for user-authored
+        with the repo), fall back to ``.igni/evals/`` for user-authored
         fixtures.
         """
         builtin = self._project_dir / "evals" / "fixtures"

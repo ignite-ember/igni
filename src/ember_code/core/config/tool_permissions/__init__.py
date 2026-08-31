@@ -20,10 +20,10 @@ Module layout:
 
 Reads from (highest priority last):
 
-1. ``~/.ember/settings.json`` (user global defaults)
-2. ``~/.ember/settings.local.json`` (user local overrides, runtime saves)
-3. ``.ember/settings.json`` (project overrides, committed)
-4. ``.ember/settings.local.json`` (project local overrides)
+1. ``~/.igni/settings.json`` (user global defaults)
+2. ``~/.igni/settings.local.json`` (user local overrides, runtime saves)
+3. ``.igni/settings.json`` (project overrides, committed)
+4. ``.igni/settings.local.json`` (project local overrides)
 
 Format::
 

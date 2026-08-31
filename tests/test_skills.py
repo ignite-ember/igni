@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.skills.loader import SkillPool, SkillPriority
 from ember_code.core.skills.parser import SkillDefinition, SkillParser
 
@@ -213,22 +214,22 @@ class TestSkillResolutionOrder:
 
     def test_user_ember_beats_user_claude_at_same_scope(self, tmp_path, monkeypatch):
         home, project = self._build_layout(tmp_path)
-        self._write_skill(home / ".ember" / "skills", "shared", "ember-user")
+        self._write_skill(home / CONFIG_DIR / "skills", "shared", "ember-user")
         self._write_skill(home / ".claude" / "skills", "shared", "claude-user")
         pool = self._load(monkeypatch, home, project)
         assert pool.get("shared").description == "ember-user"
 
     def test_project_ember_beats_project_claude_at_same_scope(self, tmp_path, monkeypatch):
         home, project = self._build_layout(tmp_path)
-        self._write_skill(project / ".ember" / "skills", "shared", "ember-project")
+        self._write_skill(project / CONFIG_DIR / "skills", "shared", "ember-project")
         self._write_skill(project / ".claude" / "skills", "shared", "claude-project")
         pool = self._load(monkeypatch, home, project)
         assert pool.get("shared").description == "ember-project"
 
     def test_project_beats_user_across_scopes(self, tmp_path, monkeypatch):
         home, project = self._build_layout(tmp_path)
-        self._write_skill(home / ".ember" / "skills", "shared", "ember-user")
-        self._write_skill(project / ".ember" / "skills", "shared", "ember-project")
+        self._write_skill(home / CONFIG_DIR / "skills", "shared", "ember-user")
+        self._write_skill(project / CONFIG_DIR / "skills", "shared", "ember-project")
         pool = self._load(monkeypatch, home, project)
         assert pool.get("shared").description == "ember-project"
 
@@ -237,7 +238,7 @@ class TestSkillResolutionOrder:
         global Ember preferences. This is the deliberate semantic of
         the explicit priority scheme."""
         home, project = self._build_layout(tmp_path)
-        self._write_skill(home / ".ember" / "skills", "shared", "ember-user")
+        self._write_skill(home / CONFIG_DIR / "skills", "shared", "ember-user")
         self._write_skill(project / ".claude" / "skills", "shared", "claude-project")
         pool = self._load(monkeypatch, home, project)
         assert pool.get("shared").description == "claude-project"
@@ -251,7 +252,7 @@ class TestSkillResolutionOrder:
 
     def test_local_beats_project_claude(self, tmp_path, monkeypatch):
         home, project = self._build_layout(tmp_path)
-        self._write_skill(project / ".ember" / "skills.local", "shared", "ember-local")
+        self._write_skill(project / CONFIG_DIR / "skills.local", "shared", "ember-local")
         self._write_skill(project / ".claude" / "skills", "shared", "claude-project")
         pool = self._load(monkeypatch, home, project)
         assert pool.get("shared").description == "ember-local"
@@ -260,10 +261,10 @@ class TestSkillResolutionOrder:
         """All six sources define ``shared``; the project-Ember one wins."""
         home, project = self._build_layout(tmp_path)
         self._write_skill(home / ".claude" / "skills", "shared", "claude-user")
-        self._write_skill(home / ".ember" / "skills", "shared", "ember-user")
+        self._write_skill(home / CONFIG_DIR / "skills", "shared", "ember-user")
         self._write_skill(project / ".claude" / "skills", "shared", "claude-project")
-        self._write_skill(project / ".ember" / "skills.local", "shared", "ember-local")
-        self._write_skill(project / ".ember" / "skills", "shared", "ember-project")
+        self._write_skill(project / CONFIG_DIR / "skills.local", "shared", "ember-local")
+        self._write_skill(project / CONFIG_DIR / "skills", "shared", "ember-project")
         pool = self._load(monkeypatch, home, project)
         assert pool.get("shared").description == "ember-project"
 

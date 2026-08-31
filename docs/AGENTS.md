@@ -126,7 +126,7 @@ igni uses the **same tool names as Claude Code**. Agent files are fully cross-co
 | `Orchestrate` | `OrchestrateTools()` | Spawn sub-teams (included by default; set `can_orchestrate: false` to disable) |
 | `MCP:<server>` | `MCPTools(...)` | Tools from a named MCP server |
 
-Drop a Claude Code agent file into `.ember/agents/` — it works immediately. All agents can orchestrate (spawn sub-teams) by default. Optionally add Ember extensions like `tags`, `reasoning`, or `can_orchestrate: false` to restrict an agent.
+Drop a Claude Code agent file into `.igni/agents/` — it works immediately. All agents can orchestrate (spawn sub-teams) by default. Optionally add Ember extensions like `tags`, `reasoning`, or `can_orchestrate: false` to restrict an agent.
 
 ---
 
@@ -136,12 +136,12 @@ By default, the agent pool loads from **igni directories only**:
 
 | Scope | Location | Format |
 |---|---|---|
-| Project | `.ember/agents/` (committed) | `.md` with YAML frontmatter |
-| Project | `.ember/agents.local/` (gitignored) | `.md` with YAML frontmatter |
-| Global | `~/.ember/agents/` | `.md` with YAML frontmatter |
-| Ephemeral | `.ember/agents.tmp/` (session-scoped) | `.md` with YAML frontmatter |
+| Project | `.igni/agents/` (committed) | `.md` with YAML frontmatter |
+| Project | `.igni/agents.local/` (gitignored) | `.md` with YAML frontmatter |
+| Global | `~/.igni/agents/` | `.md` with YAML frontmatter |
+| Ephemeral | `.igni/agents.tmp/` (session-scoped) | `.md` with YAML frontmatter |
 
-> **Built-in agents** are copied from the package into `.ember/agents/` on first project init (checksum-merged on subsequent runs). They appear as project-level agents.
+> **Built-in agents** are copied from the package into `.igni/agents/` on first project init (checksum-merged on subsequent runs). They appear as project-level agents.
 
 **Merging rule:** All agents are combined into one pool. The only conflict is when two agents share the same `name` — in that case, **project-level always wins over global**. Agents with different names never conflict — they all coexist in the pool.
 
@@ -437,7 +437,7 @@ Only spawn sub-teams when genuinely needed. For simple tasks, just do the work y
 
 Sometimes no agent in the pool fits the task. Instead of forcing a generic agent, the Orchestrator can **generate a new agent definition on the fly** — tailored to the specific task, with the right tools, model, and system prompt.
 
-These are **ephemeral agents** — they exist only for the duration of the task (or session). They live in a `.ember/agents.ephemeral/` directory that is:
+These are **ephemeral agents** — they exist only for the duration of the task (or session). They live in a `.igni/agents.ephemeral/` directory that is:
 - **Gitignored** — not committed to the repo
 - **Session-scoped** — cleaned up when the session ends (or kept if the user promotes them)
 - **Visible** — the user can see and inspect them like any other `.md` file
@@ -452,7 +452,7 @@ Orchestrator analyzes task
                             ▼
                     ┌──────────────────────────┐
                     │ Write to                 │
-                    │ .ember/                  │
+                    │ .igni/                  │
                     │   agents.ephemeral/      │
                     │     terraform-migrator.md│
                     └──────────────────────────┘
@@ -488,7 +488,7 @@ class EphemeralAgent(BaseModel):
 ```
 
 When the Orchestrator decides to generate an ephemeral agent, it:
-1. Writes the `.md` file to `.ember/agents.ephemeral/`
+1. Writes the `.md` file to `.igni/agents.ephemeral/`
 2. Loads it into the pool
 3. Includes it in the team for the current task
 
@@ -538,7 +538,7 @@ If an ephemeral agent turns out to be useful, the user can promote it to a perma
 /agents promote terraform-migrator
 ```
 
-This moves it from `.ember/agents.ephemeral/` to `.ember/agents/` — now it's a permanent part of the pool and available in future sessions.
+This moves it from `.igni/agents.ephemeral/` to `.igni/agents/` — now it's a permanent part of the pool and available in future sessions.
 
 ```
 /agents list               # shows all agents, marks ephemeral ones
@@ -550,7 +550,7 @@ This moves it from `.ember/agents.ephemeral/` to `.ember/agents/` — now it's a
 ### Configuration
 
 ```yaml
-# .ember/config.yaml
+# .igni/config.yaml
 orchestration:
   generate_ephemeral: true     # Allow Orchestrator to generate agents on-the-fly
   max_ephemeral_per_session: 5 # Limit per session
@@ -658,7 +658,7 @@ Result: A multi-level execution where the Editor autonomously sought help when i
 
 ### Example 6: Custom agent in the mix
 
-User has added `database.md` to `.ember/agents/` with `tags: [database, sql, migration]`.
+User has added `database.md` to `.igni/agents/` with `tags: [database, sql, migration]`.
 
 **User:** "Create a migration to add a `last_login` column to the users table"
 
@@ -821,7 +821,7 @@ Skills are reusable prompted workflows — task recipes invoked via `/skill-name
 /explain src/auth/           — deep-dive explanation using CodeIndex
 ```
 
-Skills use the same `SKILL.md` format as Claude Code — drop Claude Code skills into `.ember/skills/` and they work immediately.
+Skills use the same `SKILL.md` format as Claude Code — drop Claude Code skills into `.igni/skills/` and they work immediately.
 
 ---
 
@@ -835,8 +835,8 @@ Skills use the same `SKILL.md` format as Claude Code — drop Claude Code skills
 | Team composition | Static (manually spawn sub-agents) | Dynamic (Orchestrator assembles per-task) |
 | Team interaction | Single agent loop, one-level sub-agents | Agno team modes (route, coordinate, broadcast, tasks) |
 | Nesting depth | 1 level (sub-agents can't spawn sub-agents) | **Unlimited** — agents spawn sub-teams recursively |
-| Adding agents | Drop `.md` in `.claude/agents/` | Drop `.md` in `.ember/agents/` |
-| Adding skills | Drop `SKILL.md` in `.claude/skills/name/` | Drop `SKILL.md` in `.ember/skills/name/` |
+| Adding agents | Drop `.md` in `.claude/agents/` | Drop `.md` in `.igni/agents/` |
+| Adding skills | Drop `SKILL.md` in `.claude/skills/name/` | Drop `SKILL.md` in `.igni/skills/name/` |
 | Agent selection | User or parent agent decides | Orchestrator decides automatically |
 | Skill execution | Runs inline or forked subagent | Runs inline or Orchestrator assembles a team |
 | Migration path | — | Drop Claude Code agents + skills into igni, they just work |

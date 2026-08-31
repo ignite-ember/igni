@@ -7,6 +7,7 @@ import pytest
 from dotenv import load_dotenv
 
 from ember_code.core.config.settings import load_settings
+from ember_code.core.paths import CONFIG_DIR
 
 # Load environment variables from .env at the repo root before any test
 # runs. This lets developers keep credentials for live tests
@@ -48,8 +49,8 @@ def pytest_collection_modifyitems(config, items):
 def _isolate_user_settings(tmp_path_factory, monkeypatch):
     """Globally redirect ``Path.home()``, ``Path.cwd()``, and the
     ``HOME`` env var to temp directories so ``load_settings()``
-    can't read the developer's real ``~/.ember/settings.json`` or
-    the project's ``.ember/settings.local.json``. Both files
+    can't read the developer's real ``~/.igni/settings.json`` or
+    the project's ``.igni/settings.local.json``. Both files
     contain real permission rules (deny/ask/allow) the developer
     set on their machine (e.g. ``Bash(echo *PERM_TEST_BLOCKED*)``
     from the row-9 walkthrough, ``ask: [Edit]`` from an /accept
@@ -99,8 +100,8 @@ def settings():
 
 @pytest.fixture
 def project_dir(tmp_path):
-    """Temporary project directory with .ember/ structure."""
-    ember_dir = tmp_path / ".ember"
+    """Temporary project directory with .igni/ structure."""
+    ember_dir = tmp_path / CONFIG_DIR
     ember_dir.mkdir()
     (ember_dir / "agents").mkdir()
     (ember_dir / "skills").mkdir()

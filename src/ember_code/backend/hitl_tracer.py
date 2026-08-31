@@ -14,7 +14,7 @@ Why a class:
 
 * Tests can inject ``HITLTracer(path=tmp_path / 'trace.log',
   enabled=False)`` (or ``enabled=True`` and read the file) instead
-  of touching ``~/.ember``.
+  of touching ``~/.igni``.
 * :class:`HITLStreamMultiplexer` gets it via constructor injection
   so no reach-back into a module-level global.
 """
@@ -26,11 +26,13 @@ import os
 import time
 from pathlib import Path
 
+from ember_code.core.paths import DEFAULT_DATA_DIR
+
 logger = logging.getLogger(__name__)
 
 # Path resolution happens at import time — no I/O until ``.trace()``
 # fires (which calls ``mkdir(parents=True, exist_ok=True)``).
-_DEFAULT_PATH = Path(os.path.expanduser("~/.ember/hitl_trace.log"))
+_DEFAULT_PATH = Path(os.path.expanduser(f"{DEFAULT_DATA_DIR}/hitl_trace.log"))
 
 
 class HITLTracer:
@@ -39,7 +41,7 @@ class HITLTracer:
     def __init__(self, path: Path | None = None, enabled: bool = True) -> None:
         """Construct a tracer.
 
-        ``path`` defaults to ``~/.ember/hitl_trace.log`` when not
+        ``path`` defaults to ``~/.igni/hitl_trace.log`` when not
         specified. ``enabled=False`` turns :meth:`trace` into a
         no-op — used by tests that don't want a real file to be
         touched but keep the injection shape consistent.

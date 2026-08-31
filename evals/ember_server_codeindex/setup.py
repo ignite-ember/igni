@@ -66,7 +66,7 @@ async def setup(work_dir: Path, project_dir: Path) -> None:
     # Rewrite the JSONL's commit_sha to match HEAD. The pipeline run
     # was supposed to use HEAD already, but be defensive — the agent's
     # tool gate checks ``has_commit(HEAD)``, not ``has_commit(<jsonl_sha>)``.
-    rewritten = work_dir / ".ember-server-eval.jsonl"
+    rewritten = work_dir / ".igni-server-eval.jsonl"
     _rewrite_commit_sha(snapshot_path, rewritten, head_sha)
 
     from ember_code.core.code_index.index import CodeIndex

@@ -26,6 +26,7 @@ from ember_code.core.config.group_policy import (
     GroupPolicyEntry,
     GroupPolicyPack,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 
 def _pack(*, entries=(), default_model=None) -> GroupPolicyPack:
@@ -79,14 +80,14 @@ class TestTheModelAnAgentRunsAgainst:
         that reaches the file and stops there is worth nothing.
 
         There used to be a sync between the cache and the loader: the
-        agent was copied into ``<project>/.ember/agents`` and read from
+        agent was copied into ``<project>/.igni/agents`` and read from
         there. The loader reads the cache directly now, so the path is
         one hop shorter and the model has one fewer place to be lost.
         """
         cache = GroupPolicyCache(cache_dir=tmp_path / "group-policy")
         cache.materialize(_pack(entries=[_agent_entry("contracts", model="legal-reviewer")]))
         project = tmp_path / "proj"
-        (project / ".ember").mkdir(parents=True)
+        (project / CONFIG_DIR).mkdir(parents=True)
 
         report = AgentDefinitionLoader(
             settings=bare_settings,
@@ -111,7 +112,7 @@ class TestTheModelAnAgentRunsAgainst:
         cache = GroupPolicyCache(cache_dir=tmp_path / "group-policy")
         cache.materialize(_pack(entries=[_agent_entry("contracts", model="legal-reviewer")]))
         project = tmp_path / "proj"
-        agents = project / ".ember" / "agents"
+        agents = project / CONFIG_DIR / "agents"
         agents.mkdir(parents=True)
         (agents / "contracts.md").write_text(
             "---\nname: contracts\ndescription: mine\n---\nBody.",

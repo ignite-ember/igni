@@ -139,7 +139,7 @@ class MemoryTier:
 
 
 class UserTier:
-    """User-level global rules (``~/.ember/rules.md`` / ``~/.ember/rules/`` / ``~/.claude/rules/``)."""
+    """User-level global rules (``~/.igni/rules.md`` / ``~/.igni/rules/`` / ``~/.claude/rules/``)."""
 
     heading = "User Rules"
 
@@ -157,7 +157,7 @@ class ProjectRootTier:
 
 
 class ProjectDirsTier:
-    """Committed shared rules at ``<project>/.ember/rules/`` and ``<project>/.claude/rules/``."""
+    """Committed shared rules at ``<project>/.igni/rules/`` and ``<project>/.claude/rules/``."""
 
     heading = "Project Shared Rules"
 
@@ -276,7 +276,7 @@ class RulesContextLoader:
         )
 
     def load_project_dirs(self) -> str:
-        """Committed shared rules at ``<project>/.ember/rules/`` + ``<project>/.claude/rules/``."""
+        """Committed shared rules at ``<project>/.igni/rules/`` + ``<project>/.claude/rules/``."""
         return load_project_rules_dirs(
             self.readers.read_rules_dir_files,
             project_dir=self.project_dir,

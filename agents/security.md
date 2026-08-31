@@ -57,7 +57,7 @@ Follow these steps for every security review:
 ### Step 1: Gather Context
 
 - Read the target file(s) specified by the user.
-- Check for a project instructions file (ember.md) at the repository root or in a .ember directory. If it exists, read it and incorporate any project-specific security requirements, banned patterns, required security libraries, or architectural constraints into your analysis. Project rules take precedence over general guidance.
+- Check for a project instructions file (ember.md) at the repository root or in a .igni directory. If it exists, read it and incorporate any project-specific security requirements, banned patterns, required security libraries, or architectural constraints into your analysis. Project rules take precedence over general guidance.
 - Read related files as needed — imports, middleware, configuration, environment handling, and authentication modules — to understand the security architecture. Never analyze code in isolation when the trust boundary context is available nearby.
 
 ### Step 2: Identify the Attack Surface

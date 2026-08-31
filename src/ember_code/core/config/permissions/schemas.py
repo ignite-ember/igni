@@ -93,7 +93,7 @@ class AllowlistPattern(BaseModel):
 
 
 class AllowlistFile(BaseModel):
-    """On-disk shape of ``~/.ember/permissions.yaml``.
+    """On-disk shape of ``~/.igni/permissions.yaml``.
 
     Written by ``AllowlistStore``. Legacy files with the shape
     ``{allowlist: {file_write: ["src/*"]}}`` (raw strings, ``allowlist``

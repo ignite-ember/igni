@@ -71,10 +71,10 @@ RUNTIME_PATH = Path(__file__).parent / "workflow_runtime.mjs"
 #    — the CC convention. Workflows that ship with the project and
 #    are version-controlled alongside the code.
 #
-# 2. **Per-user layer** (uncommitted): ``<project>/.ember/workflows`` —
+# 2. **Per-user layer** (uncommitted): ``<project>/.igni/workflows`` —
 #    personal overrides or additions that don't belong in the repo.
-#    Same convention as ``.ember/skills/`` / ``.ember/agents/`` /
-#    ``.ember/hooks/`` already in use.
+#    Same convention as ``.igni/skills/`` / ``.igni/agents/`` /
+#    ``.igni/hooks/`` already in use.
 #
 # On name collisions, the per-user layer wins (typical override
 # semantics: your local copy is the source of truth for you).
@@ -101,7 +101,7 @@ class WorkflowDiscovery:
     1. **Team layer** — ``<project>/.claude/workflows``. The CC
        convention; workflows that ship with the project and are
        version-controlled.
-    2. **Per-user layer** — ``<project>/.ember/workflows``. The
+    2. **Per-user layer** — ``<project>/.igni/workflows``. The
        Ember override directory; personal additions or
        replacements that don't belong in the repo.
 
@@ -113,7 +113,7 @@ class WorkflowDiscovery:
 
     On name collisions later layers win (you can override a team
     workflow by placing a file with the same stem in
-    ``.ember/workflows/``, and either project layer overrides the
+    ``.igni/workflows/``, and either project layer overrides the
     org's). Discovery spawns the
     runtime once per file with ``--discovery`` (evaluates the
     file in a fresh :class:`vm.Script` context and emits a

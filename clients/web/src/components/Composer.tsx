@@ -174,7 +174,7 @@ export function Composer({
   }, [text, draftKey, clientState]);
   /** Files uploaded from the OS (picker / drag / paste). Each one
    *  is shipped to the BE, which writes it to
-   *  ``<project>/.ember/attachments/<session>/<name>`` and returns
+   *  ``<project>/.igni/attachments/<session>/<name>`` and returns
    *  the path; on submit we prepend ``@<path>`` so the existing
    *  @-mention pipeline resolves it (no inline content). */
   const [attachments, setAttachments] = useState<

@@ -4,11 +4,11 @@ Resolution order (highest priority wins on name collision; integers are
 explicit so the outcome doesn't depend on load order). Within the same
 scope, native Ember sources beat cross-tool Claude sources by +1:
 
-    6  <project>/.ember/skills/          (project, native)
-    5  <project>/.ember/skills.local/    (project personal, gitignored)
+    6  <project>/.igni/skills/          (project, native)
+    5  <project>/.igni/skills.local/    (project personal, gitignored)
     4  <project>/.claude/skills/         (project, cross-tool)
     3  <group policy cache>/skills/      (the org's group)
-    2  ~/.ember/skills/                  (user, native)
+    2  ~/.igni/skills/                  (user, native)
     1  ~/.claude/skills/                 (user, cross-tool)
     0  core/bundled_skills/              (built-in defaults)
 
@@ -91,7 +91,7 @@ class SkillPool:
         ``<namespace>:<name>``. Used by the plugin loader so each
         plugin's skills land under their own namespace and can't
         collide with same-named skills from other plugins or from the
-        user's own ``.ember/skills/``.
+        user's own ``.igni/skills/``.
         """
         if not path.exists():
             return

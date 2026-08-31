@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ember_code.core.hooks.loader import HookLoader
+from ember_code.core.paths import CONFIG_DIR
 
 
 class TestHooksCrossToolSupport:
@@ -87,7 +88,7 @@ class TestHooksCrossToolSupport:
         fake_home.mkdir()
 
         # Ember hook
-        ember_dir = tmp_path / ".ember"
+        ember_dir = tmp_path / CONFIG_DIR
         self._make_settings_file(
             ember_dir / "settings.json",
             {"PreToolUse": [{"type": "command", "command": "echo ember"}]},
@@ -112,7 +113,7 @@ class TestHooksCrossToolSupport:
         fake_home = tmp_path / "home"
         fake_home.mkdir()
 
-        ember_dir = tmp_path / ".ember"
+        ember_dir = tmp_path / CONFIG_DIR
         self._make_settings_file(
             ember_dir / "settings.json",
             {"PreToolUse": [{"type": "command", "command": "echo ember"}]},

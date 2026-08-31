@@ -17,6 +17,7 @@ from ember_code.core.config.tool_permissions import (
     ToolInvocationArgs,
     ToolPermissions,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 
 class TestParseRule:
@@ -145,7 +146,7 @@ class TestToolPermissions:
         assert not perms.needs_confirmation("Read")
 
     def test_loads_settings_file(self, tmp_path):
-        settings_dir = tmp_path / ".ember"
+        settings_dir = tmp_path / CONFIG_DIR
         settings_dir.mkdir()
         settings = {"permissions": {"allow": ["Bash"], "deny": ["Read"]}}
         (settings_dir / "settings.json").write_text(json.dumps(settings))
@@ -155,7 +156,7 @@ class TestToolPermissions:
         assert perms.get_level("Read") == "deny"
 
     def test_arg_specific_rule(self, tmp_path):
-        settings_dir = tmp_path / ".ember"
+        settings_dir = tmp_path / CONFIG_DIR
         settings_dir.mkdir()
         settings = {"permissions": {"allow": ["Bash(git status)"]}}
         (settings_dir / "settings.json").write_text(json.dumps(settings))
@@ -167,7 +168,7 @@ class TestToolPermissions:
         assert perms.check("Bash", tool_args={"args": ["rm", "-rf"]}) == "ask"
 
     def test_has_arg_rules(self, tmp_path):
-        settings_dir = tmp_path / ".ember"
+        settings_dir = tmp_path / CONFIG_DIR
         settings_dir.mkdir()
         settings = {"permissions": {"allow": ["Bash(git:*)"]}}
         (settings_dir / "settings.json").write_text(json.dumps(settings))
@@ -177,14 +178,14 @@ class TestToolPermissions:
         assert not perms.has_arg_rules("Read")
 
     def test_save_rule(self, tmp_path):
-        # Ensure ~/.ember exists for save
+        # Ensure ~/.igni exists for save
         home_ember = tmp_path / "home_ember"
         home_ember.mkdir()
 
         perms = ToolPermissions(project_dir=tmp_path)
         # ``SettingsFileWriter`` reads ``Path.home()`` when no
         # ``project_dir`` is set; the store passes project_dir, so
-        # writes always go to the project's ``.ember/settings.local.json``.
+        # writes always go to the project's ``.igni/settings.local.json``.
         # The patch below keeps parity with the original test that
         # covered the home-fallback branch — the writer must not
         # accidentally hit the real home directory during CI.
@@ -194,7 +195,7 @@ class TestToolPermissions:
         ):
             perms.save_rule("Bash(git push)", "allow")
 
-        settings_path = tmp_path / ".ember" / "settings.local.json"
+        settings_path = tmp_path / CONFIG_DIR / "settings.local.json"
         assert settings_path.exists()
         data = json.loads(settings_path.read_text())
         assert "Bash(git push)" in data["permissions"]["allow"]

@@ -241,8 +241,8 @@ def _deep_merge(base: dict, override: dict) -> dict:
 class GroupPolicyCache:
     """Materializes a group pack's file-type entries to disk.
 
-    Agents (markdown) → ~/.ember/group-policy/agents/<name>.md
-    MCPs (json)       → ~/.ember/group-policy/mcps/<name>.json
+    Agents (markdown) → ~/.igni/group-policy/agents/<name>.md
+    MCPs (json)       → ~/.igni/group-policy/mcps/<name>.json
 
     Plugins are special-cased: an entry with ``source_url`` is
     installed via :class:`PluginInstaller` into the new ``group-policy``

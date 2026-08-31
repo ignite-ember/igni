@@ -43,7 +43,7 @@ class _SettingsPathDiscovery:
     local, mirroring the pre-refactor loader.
 
     ``cross_tool_support=True`` splices ``.claude`` siblings in
-    after the ``.ember`` bucket so a user with hooks in both
+    after the ``.igni`` bucket so a user with hooks in both
     ecosystems gets both loaded — the Ember hooks still win last
     since they're spec'd second.
     """
@@ -167,16 +167,16 @@ class HookLoader:
 
         Settings locations (merged, later wins):
 
-        1. ``~/.ember/settings.json`` (user global defaults)
-        2. ``~/.ember/settings.local.json`` (user local overrides)
-        3. ``<project>/.ember/settings.json`` (project overrides,
+        1. ``~/.igni/settings.json`` (user global defaults)
+        2. ``~/.igni/settings.local.json`` (user local overrides)
+        3. ``<project>/.igni/settings.json`` (project overrides,
            committed)
-        4. ``<project>/.ember/settings.local.json`` (project local
+        4. ``<project>/.igni/settings.local.json`` (project local
            overrides, gitignored)
 
         With ``cross_tool_support=True`` the ``.claude`` siblings
         of each of the above are also consulted (before the
-        matching ``.ember`` entry in the ordering — see
+        matching ``.igni`` entry in the ordering — see
         :class:`_SettingsPathDiscovery`).
 
         Returns a :class:`HookLoadResult` bundling the populated

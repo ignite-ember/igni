@@ -139,12 +139,12 @@ class BackendSupervisor:
     # ── Discovery lockfile ───────────────────────────────────────
 
     def write_discovery_lockfile(self, ws_port: int) -> None:
-        """Publish the bound WS port at ``<project>/.ember/backend.lock``
+        """Publish the bound WS port at ``<project>/.igni/backend.lock``
         so a second client opening the same project can discover this
         BE and connect to it instead of spawning a duplicate.
 
         Silent no-op on write errors (permissions, missing
-        ``.ember`` dir): discovery is a nice-to-have; a duplicate BE
+        ``.igni`` dir): discovery is a nice-to-have; a duplicate BE
         is a real cost but the FE can survive it.
         """
         version = self._resolve_wire_version()

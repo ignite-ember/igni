@@ -239,7 +239,7 @@ class RpcMethod(StrEnum):
     KNOWLEDGE_GET = "knowledge_get"
     KNOWLEDGE_REMOVE = "knowledge_remove"
 
-    # ── File access (sandboxed to project/.ember) ────────────────
+    # ── File access (sandboxed to project/.igni) ────────────────
     READ_FILE = "read_file"
     TRUNCATE_HISTORY = "truncate_history"
     SEARCH_CODE = "search_code"

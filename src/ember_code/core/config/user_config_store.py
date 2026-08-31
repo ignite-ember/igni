@@ -1,4 +1,4 @@
-"""``UserConfigStore`` — read/write ``~/.ember/config.yaml``.
+"""``UserConfigStore`` — read/write ``~/.igni/config.yaml``.
 
 Absorbs the ``save_default_model`` free function and
 ``Settings.persist_default_model`` classmethod. Both used to live

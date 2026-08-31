@@ -12,6 +12,7 @@ from ember_code.core.config.settings import (
     PermissionsConfig,
     Settings,
 )
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.utils.tips import CONTEXTUAL_TIPS, GENERAL_TIPS, get_tip, random_tip
 from ember_code.core.utils.update_checker import (
     UpdateCache,
@@ -68,8 +69,8 @@ class TestTips:
     def test_get_tip_all_features_enabled(self, tmp_path):
         """When everything is configured, falls back to general tips."""
         (tmp_path / "ember.md").write_text("# test")
-        (tmp_path / ".ember" / "agents").mkdir(parents=True)
-        (tmp_path / ".ember" / "agents" / "custom.md").write_text("---\nname: custom\n---")
+        (tmp_path / CONFIG_DIR / "agents").mkdir(parents=True)
+        (tmp_path / CONFIG_DIR / "agents" / "custom.md").write_text("---\nname: custom\n---")
         settings = Settings(
             knowledge=KnowledgeConfig(enabled=True, share=True),
             guardrails=GuardrailsConfig(pii_detection=True, prompt_injection=True, moderation=True),

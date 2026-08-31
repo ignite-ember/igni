@@ -10,7 +10,7 @@ igni supports **Claude-Code-compatible plugins**. A plugin is a directory bundli
 /plugins disable some-plugin     # turn it off without uninstalling
 ```
 
-The first command clones the repo into `~/.ember/plugins/some-plugin/` and pins the SHA. On next session start, the plugin's bundled contents activate automatically.
+The first command clones the repo into `~/.igni/plugins/some-plugin/` and pins the SHA. On next session start, the plugin's bundled contents activate automatically.
 
 ## How plugins are discovered
 
@@ -19,9 +19,9 @@ igni scans four roots in priority order (later wins same-name collisions):
 | Priority | Path | Use case |
 |---:|---|---|
 | 1 | `~/.claude/plugins/` | Pick up whatever Claude Code installed |
-| 2 | `~/.ember/plugins/` | Ember-managed user-global plugins (where `/plugin install` lands) |
+| 2 | `~/.igni/plugins/` | Ember-managed user-global plugins (where `/plugin install` lands) |
 | 3 | `<project>/.claude/plugins/` | Project-local Claude plugins |
-| 4 | `<project>/.ember/plugins/` | Project-local Ember plugins (committed alongside the repo) |
+| 4 | `<project>/.igni/plugins/` | Project-local Ember plugins (committed alongside the repo) |
 
 A "plugin" = any directory under one of these roots that contains `.claude-plugin/plugin.json`. Anything else is ignored silently — leaves room for `README.md`, gitkeeps, scratch notes, etc.
 
@@ -64,7 +64,7 @@ Unknown fields are preserved (`extra="allow"`) — Claude Code's manifest evolut
 Skills and agents from a plugin land in their respective pools under `<plugin>:<original-name>`. So a plugin named `git-extras` shipping `skills/rebase-clean/SKILL.md` is invoked as `/git-extras:rebase-clean`. This guarantees:
 
 - Two plugins can ship the same skill name without colliding.
-- Your `~/.ember/skills/` or `~/.ember/agents/` always wins over a plugin's same-named entry.
+- Your `~/.igni/skills/` or `~/.igni/agents/` always wins over a plugin's same-named entry.
 
 MCP servers get the same treatment (`<plugin>:<server>`). Custom-tool toolkits are named `custom_<plugin>_<file>`.
 
@@ -82,7 +82,7 @@ Plugin hooks are **prepended** to each event's hook list — project hooks (from
 /plugin install https://github.com/foo/some-plugin.git --ref a1b2c3d    # pin a SHA
 ```
 
-The installer clones to a temp directory, validates the manifest, then atomically moves to `~/.ember/plugins/<name>/`. A failed install leaves no trace.
+The installer clones to a temp directory, validates the manifest, then atomically moves to `~/.igni/plugins/<name>/`. A failed install leaves no trace.
 
 ### Via marketplace
 
@@ -104,7 +104,7 @@ igni reads Claude Code's `marketplace.json` schema, so any catalog built for Cla
 /plugin remove some-plugin                # rm -rf + clear pin
 ```
 
-`/plugin update` records the new SHA in `~/.ember/plugins.json`. `/plugin remove` deletes the plugin directory and drops the pin + disabled-list entry.
+`/plugin update` records the new SHA in `~/.igni/plugins.json`. `/plugin remove` deletes the plugin directory and drops the pin + disabled-list entry.
 
 ## The plugins panel
 
@@ -135,7 +135,7 @@ igni reads Claude Code's `marketplace.json` schema, so any catalog built for Cla
 
 Toggling a plugin **doesn't uninstall** it — it just skips the plugin's contents at session start. Use this when you want to A/B a plugin's effect on the agent without losing the install pin.
 
-State lives at `~/.ember/plugins.json`:
+State lives at `~/.igni/plugins.json`:
 
 ```json
 {
@@ -159,7 +159,7 @@ Changes take effect **on next session start**. Hot-reload across all five extens
 /plugin marketplace refresh [<name>]          # re-fetch one or all catalogs
 ```
 
-Marketplaces are stored at `~/.ember/marketplaces.json` with their cached catalogs. On every session start, all registered catalogs are refreshed in the background (10s per marketplace timeout, log-and-swallow failures) so `@<marketplace>/<plugin>` install refs are always against current data without slowing startup.
+Marketplaces are stored at `~/.igni/marketplaces.json` with their cached catalogs. On every session start, all registered catalogs are refreshed in the background (10s per marketplace timeout, log-and-swallow failures) so `@<marketplace>/<plugin>` install refs are always against current data without slowing startup.
 
 No marketplaces are bootstrapped by default — register the ones you want via `/plugin marketplace add`.
 
@@ -182,13 +182,13 @@ with:
 Add `skills/`, `agents/`, `hooks/hooks.json`, `.mcp.json`, `tools/<file>.py` as you build out the bundle. To test locally without publishing:
 
 ```text
-mkdir -p ~/.ember/plugins/my-plugin/.claude-plugin
+mkdir -p ~/.igni/plugins/my-plugin/.claude-plugin
 # … drop your files in …
 # restart your ember session
 /plugins  # should list `my-plugin`
 ```
 
-Or commit the directory under `<project>/.ember/plugins/my-plugin/` to ship it alongside the repo.
+Or commit the directory under `<project>/.igni/plugins/my-plugin/` to ship it alongside the repo.
 
 ### Cross-tool compatibility
 
@@ -198,7 +198,7 @@ Plugins built for Claude Code work in igni with no changes — same manifest, sa
 
 - **LSP servers**, **background monitors**, plugin `bin/` executables on PATH, and plugin-bundled `settings.json` defaults are recognized by Claude Code but **not loaded** by igni yet. The rest of the plugin still works.
 - **Hot reload** isn't supported. Enable/disable, install, update, remove all require a session restart to apply.
-- **Per-project disable** isn't supported — `~/.ember/plugins.json` is user-global.
+- **Per-project disable** isn't supported — `~/.igni/plugins.json` is user-global.
 - **Private marketplace auth** relies on your ambient git credentials (SSH key, gh CLI, etc.). No token storage in v1.
 
 ## Reference
@@ -206,5 +206,5 @@ Plugins built for Claude Code work in igni with no changes — same manifest, sa
 - Plugin loader: [`core/plugins/loader.py`](../src/ember_code/core/plugins/loader.py)
 - Installer (git operations): [`core/plugins/installer.py`](../src/ember_code/core/plugins/installer.py)
 - Marketplace registry: [`core/plugins/marketplaces.py`](../src/ember_code/core/plugins/marketplaces.py)
-- State files: `~/.ember/plugins.json`, `~/.ember/marketplaces.json`
+- State files: `~/.igni/plugins.json`, `~/.igni/marketplaces.json`
 - TUI panel: [`frontend/tui/widgets/_plugins_panel.py`](../src/ember_code/frontend/tui/widgets/_plugins_panel.py)

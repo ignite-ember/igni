@@ -6,7 +6,7 @@ the agent sees when it queries it.
 ## On-disk layout
 
 ```
-~/.ember/projects/<project_id>/
+~/.igni/projects/<project_id>/
 ├── code_index/
 │   ├── manifest.json
 │   ├── <sha_a>.chroma/   # one chroma directory per indexed commit

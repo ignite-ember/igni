@@ -20,6 +20,7 @@ from ember_code.core.init_templates import (
     POST_COMMIT_TODO_HOOK,
     PRE_PR_REVIEW_HOOK,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 BUILT_IN_HOOKS: tuple[BuiltInHookSpec, ...] = (
     BuiltInHookSpec(
@@ -28,7 +29,7 @@ BUILT_IN_HOOKS: tuple[BuiltInHookSpec, ...] = (
         event="PreToolUse",
         definition=HookDefinition(
             type="command",
-            command=".ember/hooks/pre-pr-review.sh",
+            command=f"{CONFIG_DIR}/hooks/pre-pr-review.sh",
             matcher="Bash",
             timeout=15000,
         ),
@@ -39,7 +40,7 @@ BUILT_IN_HOOKS: tuple[BuiltInHookSpec, ...] = (
         event="PostToolUse",
         definition=HookDefinition(
             type="command",
-            command=".ember/hooks/post-commit-todo.sh",
+            command=f"{CONFIG_DIR}/hooks/post-commit-todo.sh",
             matcher="Bash",
             timeout=15000,
             background=True,

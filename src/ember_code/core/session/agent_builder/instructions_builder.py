@@ -61,13 +61,13 @@ class InstructionsBuilder:
             out.append(f"Project instructions:\n{self._project_instructions}")
 
     def append_todo(self, out: list[str]) -> None:
-        """Append ``.ember/TODO.md`` if present (root only)."""
+        """Append ``.igni/TODO.md`` if present (root only)."""
         todo_path = self._project_dir / CONFIG_DIR / "TODO.md"
         if not todo_path.is_file():
             return
         content = todo_path.read_text().strip()
         if content:
-            out.append(f"Active TODO (.ember/TODO.md):\n{content}")
+            out.append(f"Active TODO ({CONFIG_DIR}/TODO.md):\n{content}")
 
     def append_workspace_context(self, out: list[str]) -> None:
         """Append the multi-workspace context blocks.

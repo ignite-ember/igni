@@ -16,7 +16,7 @@ Skills use the **same format as Claude Code** — `SKILL.md` files with YAML fro
 Each skill lives in a named directory containing a `SKILL.md` file:
 
 ```
-.ember/skills/
+.igni/skills/
 ├── deploy/
 │   └── SKILL.md
 ├── resolve-issues/
@@ -116,9 +116,9 @@ By default, skills are loaded from **igni directories only**:
 
 | Location | Scope | Shared? |
 |---|---|---|
-| `.ember/skills/` | Project | Yes (commit to repo) |
-| `.ember/skills.local/` | Project | No (gitignored) |
-| `~/.ember/skills/` | User (all projects) | No |
+| `.igni/skills/` | Project | Yes (commit to repo) |
+| `.igni/skills.local/` | Project | No (gitignored) |
+| `~/.igni/skills/` | User (all projects) | No |
 | `<install>/skills/` | Built-in | Shipped with igni |
 
 Name conflicts: project-level wins over user-level, which wins over built-in.
@@ -166,7 +166,7 @@ This means skills can fire without the user explicitly typing `/deploy` — the 
 **Auto-trigger requires `auto_trigger: true`** (the default) in config:
 
 ```yaml
-# .ember/config.yaml
+# .igni/config.yaml
 skills:
   auto_trigger: true    # default — Orchestrator can auto-trigger skills
 ```
@@ -293,7 +293,7 @@ igni ships with built-in skills in `<install>/skills/`:
 | `/update-docs` | Update documentation to reflect code changes |
 | `/evals run` | Run agent evaluations |
 
-Override any built-in skill by creating a skill with the same name in `.ember/skills/`.
+Override any built-in skill by creating a skill with the same name in `.igni/skills/`.
 
 ---
 
@@ -422,7 +422,7 @@ igni skills use the **same format** as Claude Code:
 - Same `SKILL.md` file in named directory
 - Same frontmatter fields (`name`, `description`, `context`, `agent`, `allowed-tools`, etc.)
 - Same string substitutions (`$ARGUMENTS`, `$1`, `${CLAUDE_SKILL_DIR}` mapped to `${EMBER_SKILL_DIR}`)
-- Same directory scoping (`.claude/skills/` is scanned alongside `.ember/skills/`)
+- Same directory scoping (`.claude/skills/` is scanned alongside `.igni/skills/`)
 
 Claude Code skills work in igni out of the box. The key difference: in igni, skills can leverage CodeIndex for semantic understanding and the Orchestrator distributes skill instructions across a coordinated team — not just a single agent loop.
 
@@ -433,7 +433,7 @@ Claude Code skills work in igni out of the box. The key difference: in igni, ski
 ### Minimal
 
 ```
-.ember/skills/my-skill/SKILL.md
+.igni/skills/my-skill/SKILL.md
 ```
 
 ```markdown
@@ -486,7 +486,7 @@ Use `${EMBER_SKILL_DIR}/templates/endpoint.py` as a starting template.
 ## Configuration
 
 ```yaml
-# .ember/config.yaml
+# .igni/config.yaml
 
 skills:
   cross_tool_support: true         # also scans .claude/skills/ (set false to disable)

@@ -1,5 +1,5 @@
-"""User-level global rules — ``~/.ember/rules.md`` legacy file +
-``~/.ember/rules/*.md`` directory form + ``~/.claude/rules/*.md``
+"""User-level global rules — ``~/.igni/rules.md`` legacy file +
+``~/.igni/rules/*.md`` directory form + ``~/.claude/rules/*.md``
 cross-tool form.
 
 Extracted from :mod:`ember_code.core.utils.context` per
@@ -12,9 +12,9 @@ module stays a leaf in the import graph and CODE_STANDARDS Rule 2
 
 ## Sources loaded (in order)
 
-1. ``~/.ember/rules.md`` — legacy single-file form. Kept for users
+1. ``~/.igni/rules.md`` — legacy single-file form. Kept for users
    who set that up before the directory form was added.
-2. ``~/.ember/rules/*.md`` — ember-native directory form. One file
+2. ``~/.igni/rules/*.md`` — ember-native directory form. One file
    per topic (e.g. ``coding.md``, ``testing.md``). Files with a
    ``paths:`` frontmatter contribute only when the session's
    ``working_dir`` matches one of the globs.
@@ -52,8 +52,8 @@ def load_user_rules(
 
     Sources, concatenated in order:
 
-    1. ``~/.ember/rules.md`` (legacy single-file form)
-    2. ``~/.ember/rules/*.md`` (directory form)
+    1. ``~/.igni/rules.md`` (legacy single-file form)
+    2. ``~/.igni/rules/*.md`` (directory form)
     3. ``~/.claude/rules/*.md`` (cross-tool, when ``read_claude_rules``)
 
     Files with ``paths:`` frontmatter contribute only when

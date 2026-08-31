@@ -4,7 +4,7 @@ A group's entries are read from the policy cache, and anything the
 project declares under the same name outranks them. That is the whole
 override mechanism, and it has one rough edge: to change one line of the
 org's ``reviewer`` agent you have to write a whole file from scratch, or
-go digging in ``~/.ember/group-policy`` for something to copy.
+go digging in ``~/.igni/group-policy`` for something to copy.
 
 This is that copy, made deliberately. It writes the group's version into
 the project where the loaders already look, and from then on yours is

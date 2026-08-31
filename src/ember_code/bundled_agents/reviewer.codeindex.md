@@ -68,7 +68,7 @@ This is your first action. The orchestrator (or `data-architect`) may have hande
 ### Step 2: Gather Context
 
 - Read the actual code using `run_shell_command "cat <path>"` or `sed -n '<a>,<b>p' <path>`.
-- Check for a project instructions file (`ember.md`) at the repository root or in a `.ember` directory. If it exists, read it and incorporate any project-specific conventions, banned patterns, required patterns, or architectural rules into your review. Project rules take precedence over general best practices.
+- Check for a project instructions file (`ember.md`) at the repository root or in a `.igni` directory. If it exists, read it and incorporate any project-specific conventions, banned patterns, required patterns, or architectural rules into your review. Project rules take precedence over general best practices.
 - Read related files as needed — imports, types, interfaces, tests, and configuration. Use `grep_files` for finding pattern usage across neighbors.
 
 ### Step 3: Analyze

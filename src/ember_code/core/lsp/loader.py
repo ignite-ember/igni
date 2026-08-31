@@ -17,13 +17,13 @@ Wire format:
     }
 
 Project / user files live at ``<project>/.lsp.json`` and
-``~/.ember/lsp.json`` respectively. Plugin-bundled files live at
+``~/.igni/lsp.json`` respectively. Plugin-bundled files live at
 ``<plugin>/.lsp.json`` and are registered with the plugin name as
 a namespace prefix (e.g. ``pyright`` from plugin ``mypy-tools``
 becomes ``mypy-tools:pyright``) — same convention as MCP.
 
 Precedence (lower → higher, last write wins on name collision):
-1. ``~/.ember/lsp.json`` (user)
+1. ``~/.igni/lsp.json`` (user)
 2. ``<project>/.lsp.json`` (project)
 3. Plugin-bundled ``.lsp.json`` (in plugin priority order)
 
@@ -94,7 +94,7 @@ class LspConfigLoader:
     # ── Tier loaders ─────────────────────────────────────────────
 
     def _load_user_tier(self, result: LspConfigLoadResult) -> None:
-        """Load ``~/.ember/lsp.json`` if present."""
+        """Load ``~/.igni/lsp.json`` if present."""
         user_path = Path.home() / self._USER_CONFIG_RELATIVE
         if user_path.is_file():
             self._load_file(result, user_path, namespace="")

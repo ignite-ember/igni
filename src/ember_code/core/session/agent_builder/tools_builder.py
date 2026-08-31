@@ -211,7 +211,7 @@ class ToolsBuilder:
         return extras
 
     def custom(self) -> list[Any]:
-        """Custom toolkits from ``.ember/tools/``, plugins, and the group."""
+        """Custom toolkits from ``.igni/tools/``, plugins, and the group."""
         registry = self._build_registry()
         plugin_tool_dirs = self._plugin_loader.collect_tool_dirs(
             disabled=self._disabled_plugins,

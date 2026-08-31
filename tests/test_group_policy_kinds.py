@@ -26,6 +26,7 @@ from ember_code.core.config.group_policy import (
     GroupPolicyEntry,
     GroupPolicyPack,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 
 def _pack(*entries: GroupPolicyEntry) -> GroupPolicyPack:
@@ -233,7 +234,7 @@ class TestTheLoadersFindThem:
             _pack(_entry("commands", "ship", "---\ndescription: Ship it\n---\nDo the thing."))
         )
         project = tmp_path / "proj"
-        (project / ".ember").mkdir(parents=True)
+        (project / CONFIG_DIR).mkdir(parents=True)
 
         found = MarkdownCommand.discover(
             project, read_claude=False, group_dir=cache.dir_for("commands")
@@ -252,7 +253,7 @@ class TestTheLoadersFindThem:
             )
         )
         project = tmp_path / "proj"
-        (project / ".ember").mkdir(parents=True)
+        (project / CONFIG_DIR).mkdir(parents=True)
 
         styles = discover_output_styles(
             project, read_claude=False, group_dir=cache.dir_for("output-styles")
@@ -274,7 +275,7 @@ class TestTheLoadersFindThem:
             )
         )
         project = tmp_path / "proj"
-        (project / ".ember").mkdir(parents=True)
+        (project / CONFIG_DIR).mkdir(parents=True)
         discovery = WorkflowDiscovery(
             project_dir=project, group_dir=cache.dir_for("workflows")
         )
@@ -326,7 +327,7 @@ class TestTheLoadersFindThem:
             _pack(_entry("rules", "python", "---\npaths: ['**/*.py']\n---\nUse type hints."))
         )
         project = tmp_path / "proj"
-        (project / ".ember").mkdir(parents=True)
+        (project / CONFIG_DIR).mkdir(parents=True)
         index = RulesIndex(
             project, read_claude_md=False, group_rules_dir=cache.dir_for("rules")
         )
@@ -377,22 +378,22 @@ class TestWhatIgniShipsStandsDown:
         from ember_code.core.init.hook_provisioner import HookProvisioner
 
         project = tmp_path / "proj"
-        (project / ".ember").mkdir(parents=True)
+        (project / CONFIG_DIR).mkdir(parents=True)
 
         HookProvisioner(project_dir=project, register_in_settings=False).provision()
 
-        assert (project / ".ember" / "hooks" / "pre-pr-review.sh").is_file()
-        assert not (project / ".ember" / "settings.json").exists()
+        assert (project / CONFIG_DIR / "hooks" / "pre-pr-review.sh").is_file()
+        assert not (project / CONFIG_DIR / "settings.json").exists()
 
     def test_it_registers_them_by_default(self, tmp_path: Path):
         from ember_code.core.init.hook_provisioner import HookProvisioner
 
         project = tmp_path / "proj"
-        (project / ".ember").mkdir(parents=True)
+        (project / CONFIG_DIR).mkdir(parents=True)
 
         HookProvisioner(project_dir=project).provision()
 
-        settings = json.loads((project / ".ember" / "settings.json").read_text(encoding="utf-8"))
+        settings = json.loads((project / CONFIG_DIR / "settings.json").read_text(encoding="utf-8"))
         assert settings["hooks"]["PreToolUse"]
 
 
@@ -520,7 +521,7 @@ class TestBeingMovedToAnotherGroup:
         from ember_code.core.agents.loader import AgentDefinitionLoader
 
         project = tmp_path / "proj"
-        (project / ".ember").mkdir(parents=True)
+        (project / CONFIG_DIR).mkdir(parents=True)
         settings = SimpleNamespace(agents=SimpleNamespace(cross_tool_support=False))
 
         cache.materialize(self._group("eng"))
@@ -560,7 +561,7 @@ class TestScriptsAndTheHooksThatRunThem:
     """igni ships nothing, so a hook has to arrive with its script.
 
     A hook's ``command`` runs through ``bash -c``. Before scripts were a
-    kind, a group could ship a hook naming ``.ember/hooks/x.sh`` and not
+    kind, a group could ship a hook naming ``.igni/hooks/x.sh`` and not
     ship ``x.sh`` — and a missing command exits 127, which the hook
     runner treats as "did not block". The hook then did nothing on every
     matching tool call, silently, for everyone in the group.

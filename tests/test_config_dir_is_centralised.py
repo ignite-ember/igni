@@ -26,16 +26,29 @@ import pytest
 from ember_code.core.paths import (
     CONFIG_DIR,
     DEFAULT_DATA_DIR,
+    LEGACY_CONFIG_DIR,
     home_config_dir,
     project_config_dir,
 )
 
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "ember_code"
 
-#: The two spellings that mean "the configuration directory" and that a
+#: The spellings that mean "the configuration directory" and that a
 #: constant should have replaced.
-_BARE = re.compile(r'(?<![\w.])"\.ember"(?![\w])')
-_HOME = re.compile(r'"~/\.ember"')
+#:
+#: Built from the constants rather than written out, so this survives the
+#: next rename — a guard against hardcoding that hardcodes the name it is
+#: guarding goes quietly vacuous the moment the value changes, which is
+#: exactly what happened to it during the move to ``.igni``.
+#:
+#: Both names are checked. The new one is the live sin; the old one still
+#: matters because a literal ``".ember"`` left in code is now not just
+#: uncentralised but *wrong*, and reads as a path nothing writes to.
+_NAMES = (CONFIG_DIR, LEGACY_CONFIG_DIR)
+_BARE = re.compile(
+    r"(?<![\w.])\"(?:" + "|".join(re.escape(n) for n in _NAMES) + r")\"(?![\w])"
+)
+_HOME = re.compile(r"\"~/(?:" + "|".join(re.escape(n) for n in _NAMES) + r")\"")
 
 #: Where the name is allowed to appear as a literal.
 _ALLOWED = {
@@ -91,7 +104,7 @@ class TestNothingSpellsItOutInCode:
             if rel in _ALLOWED:
                 continue
             for literal in _string_literals(path):
-                if literal == ".ember" or literal == "~/.ember":
+                if literal in _NAMES or literal in {f"~/{n}" for n in _NAMES}:
                     offenders.append(rel)
                     break
         assert not offenders, (
@@ -132,8 +145,13 @@ class TestTheConstantsBehave:
     def test_the_two_constants_agree(self):
         assert f"~/{CONFIG_DIR}" == DEFAULT_DATA_DIR
 
-    def test_the_helpers_use_the_constant(self, tmp_path: pathlib.Path):
+    def test_the_helpers_use_the_constant(self, tmp_path: pathlib.Path, monkeypatch):
         assert project_config_dir(tmp_path).name == CONFIG_DIR
+        # Against a fresh home, because ``home_config_dir`` deliberately
+        # returns the *legacy* name when only that exists — and the
+        # developer running this very likely has one, which made this
+        # assertion depend on whose machine it ran on.
+        monkeypatch.setattr(pathlib.Path, "home", staticmethod(lambda: tmp_path))
         assert home_config_dir().name == CONFIG_DIR
 
     def test_project_config_dir_does_not_expand(self, tmp_path: pathlib.Path):

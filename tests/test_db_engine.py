@@ -3,7 +3,7 @@
 The module's invariants are subtle:
 
   * Engines + sessionmakers are cached by NORMALISED path. Two
-    callers passing ``~/.ember/state.db`` and the equivalent
+    callers passing ``~/.igni/state.db`` and the equivalent
     absolute path must get the SAME engine (otherwise SQLite
     locking gets confused with two engines on the same file).
   * Paths are auto-created. First call to ``get_engine`` for a
@@ -29,6 +29,7 @@ from ember_code.core.db.engine import (
     get_sessionmaker,
     sync_url,
 )
+from ember_code.core.paths import DEFAULT_DATA_DIR
 
 
 @pytest.fixture(autouse=True)
@@ -44,10 +45,10 @@ def _clear_engine_cache():
 class TestNormalizePath:
     def test_expands_tilde(self):
         # ``~`` must expand to the home dir. Without this, the
-        # engine cache would treat ``~/.ember/x.db`` and the
+        # engine cache would treat ``~/.igni/x.db`` and the
         # expanded form as different paths → two engines on
         # the same file.
-        normalized = _normalize_path("~/.ember/state.db")
+        normalized = _normalize_path(f"{DEFAULT_DATA_DIR}/state.db")
         # Result must not contain ``~``.
         assert "~" not in normalized
         # And must be an absolute path.

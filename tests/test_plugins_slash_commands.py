@@ -23,6 +23,7 @@ from unittest.mock import MagicMock, patch
 from ember_code.backend.command_handler import (
     CommandHandler,
 )
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.plugins.loader import PluginLoader
 from ember_code.core.plugins.state import PluginsState, load_state
 from ember_code.core.session.core import PluginReloadCounts
@@ -57,7 +58,7 @@ def _make_handler(
     *tmp_path*. Real PluginLoader and state file — only the wider
     Session is a MagicMock since slash commands only touch a slice
     of it."""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     for name in plugins or []:
         _write_plugin(user_ember, name)
 

@@ -10,6 +10,7 @@ from ember_code.core.hooks.events import HookEvent
 from ember_code.core.hooks.executor import HookExecutor
 from ember_code.core.hooks.loader import HookLoader
 from ember_code.core.hooks.schemas import HookDefinition, HookResult
+from ember_code.core.paths import CONFIG_DIR
 
 
 class TestHookEvent:
@@ -57,7 +58,7 @@ class TestHookLoader:
     def test_load_from_project_settings(self, tmp_path):
         fake_home = tmp_path / "home"
         fake_home.mkdir()
-        ember_dir = tmp_path / ".ember"
+        ember_dir = tmp_path / CONFIG_DIR
         ember_dir.mkdir()
         settings = ember_dir / "settings.json"
         settings.write_text(
@@ -83,7 +84,7 @@ class TestHookLoader:
     def test_load_multiple_events(self, tmp_path):
         fake_home = tmp_path / "home"
         fake_home.mkdir()
-        ember_dir = tmp_path / ".ember"
+        ember_dir = tmp_path / CONFIG_DIR
         ember_dir.mkdir()
         settings = ember_dir / "settings.json"
         settings.write_text(
@@ -122,7 +123,7 @@ class TestHookLoader:
     def test_ignores_invalid_json(self, tmp_path):
         fake_home = tmp_path / "home"
         fake_home.mkdir()
-        ember_dir = tmp_path / ".ember"
+        ember_dir = tmp_path / CONFIG_DIR
         ember_dir.mkdir()
         (ember_dir / "settings.json").write_text("not json {{{")
 
@@ -136,7 +137,7 @@ class TestHookLoader:
     def test_ignores_non_list_hooks(self, tmp_path):
         fake_home = tmp_path / "home"
         fake_home.mkdir()
-        ember_dir = tmp_path / ".ember"
+        ember_dir = tmp_path / CONFIG_DIR
         ember_dir.mkdir()
         (ember_dir / "settings.json").write_text(
             json.dumps({"hooks": {"PreToolUse": "not a list"}})

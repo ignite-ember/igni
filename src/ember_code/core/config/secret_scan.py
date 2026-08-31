@@ -9,7 +9,7 @@ The existing signal for "do not share this" is the ``.local.`` filename
 suffix, and it works only because the whole config directory is
 gitignored. The moment the directory is committed, one wrong ignore line
 publishes a provider key — so the boundary moves from a filename to a
-*directory*: ``~/.ember`` holds credentials, the project holds what a
+*directory*: ``~/.igni`` holds credentials, the project holds what a
 team shares, and there is no path from the first into a repository.
 
 Nothing new is needed to express that. The config tiers already

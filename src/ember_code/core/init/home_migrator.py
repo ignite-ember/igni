@@ -1,4 +1,4 @@
-"""Home-config migration + bootstrap for ``~/.ember/config.yaml``.
+"""Home-config migration + bootstrap for ``~/.igni/config.yaml``.
 
 Two responsibilities encapsulated on :class:`HomeConfigMigrator`:
 
@@ -26,14 +26,15 @@ from pydantic import BaseModel, ConfigDict
 
 from ember_code.core.init.schemas import HomeConfig, MigrationResult
 from ember_code.core.init_templates import _HOME_CONFIG_BOOTSTRAP, CONFIG_YAML_HEADER
+from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = logging.getLogger(__name__)
 
 
 class HomeConfigMigrator(BaseModel):
-    """Bootstrap + migrate ``~/.ember/config.yaml``.
+    """Bootstrap + migrate ``~/.igni/config.yaml``.
 
-    Instance state is the home-``.ember`` directory. All disk IO is
+    Instance state is the home-``.igni`` directory. All disk IO is
     scoped to ``self.home_ember / 'config.yaml'``.
     """
 
@@ -104,7 +105,7 @@ class HomeConfigMigrator(BaseModel):
         try:
             home_config.dump(self.config_path)
             logger.info(
-                "Migrated ~/.ember/config.yaml: removed legacy bundled cloud entries %s.",
+                f"Migrated {DEFAULT_DATA_DIR}/config.yaml: removed legacy bundled cloud entries %s.",
                 removed,
             )
             return MigrationResult(ok=True, removed=removed)
@@ -112,7 +113,7 @@ class HomeConfigMigrator(BaseModel):
             logger.warning(
                 "Failed to write migrated home config — bundled cloud "
                 "entries may still shadow the live catalogue. Edit "
-                "~/.ember/config.yaml manually if so.",
+                f"{DEFAULT_DATA_DIR}/config.yaml manually if so.",
                 exc_info=True,
             )
             return MigrationResult(ok=False, removed=removed, reason="write-failed")

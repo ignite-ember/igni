@@ -8,7 +8,7 @@ no more global mutable state pretending to be constants.
 
 Preserves the important behavior the original comment called out:
 * propagates to root so ``--debug`` runs land LLM entries in
-  ``~/.ember/debug.log`` alongside diagnostics (cross-referencing
+  ``~/.igni/debug.log`` alongside diagnostics (cross-referencing
   the FE timeline with BE lifecycle traces relies on this).
 * attaches the same handler to the ``httpx`` and ``httpcore``
   loggers so hung-connection lifecycle events land in the same file.
@@ -25,7 +25,7 @@ from ember_code.core.paths import DEFAULT_DATA_DIR
 
 
 class LlmCallLogger:
-    """Owns the ``~/.ember/llm_calls.log`` handler and the httpx /
+    """Owns the ``~/.igni/llm_calls.log`` handler and the httpx /
     httpcore log-propagation setup.
 
     Instantiated inside :class:`ModelRegistry.__init__`; injected
@@ -68,7 +68,7 @@ class LlmCallLogger:
         self._logger.addHandler(handler)
         self._logger.setLevel(logging.INFO)
         # Propagate to root so --debug runs also land LLM entries in
-        # ~/.ember/debug.log — see the module docstring for why.
+        # ~/.igni/debug.log — see the module docstring for why.
         self._logger.propagate = True
 
         # Attach the same handler to httpx/httpcore to capture

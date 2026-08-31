@@ -56,6 +56,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ember_code.backend.command_result import CommandResult
 from ember_code.core.output_styles import OutputStyle
+from ember_code.core.paths import CONFIG_DIR
 
 if TYPE_CHECKING:
     from ember_code.core.session.pending_messages import (
@@ -172,7 +173,7 @@ class OutputStylesListView(BaseModel):
 
     Empty-styles branch renders the "no output styles configured"
     info card (with a one-liner nudge to drop a markdown file
-    into ``.ember/output-styles/``). The populated branch renders
+    into ``.igni/output-styles/``). The populated branch renders
     a sorted bullet list, marking the active style with
     ``(active)`` and falling back to ``_(no description)_`` when
     a style leaves its ``description`` blank.
@@ -194,7 +195,7 @@ class OutputStylesListView(BaseModel):
         if not self.styles:
             return CommandResult.info(
                 "No output styles configured. Drop a markdown file at "
-                "`.ember/output-styles/<name>.md` (frontmatter: `name`, "
+                f"`{CONFIG_DIR}/output-styles/<name>.md` (frontmatter: `name`, "
                 "`description`; body is the system-prompt extension)."
             )
         lines = ["**Output styles**", ""]

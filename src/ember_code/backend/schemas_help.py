@@ -24,6 +24,7 @@ from pydantic import BaseModel, model_validator
 
 from ember_code.backend.command_result import CommandResult
 from ember_code.backend.keyboard_shortcuts_help import KeyboardShortcutsHelp
+from ember_code.core.paths import CONFIG_DIR, DEFAULT_DATA_DIR
 
 
 class HelpTopic(BaseModel):
@@ -157,13 +158,13 @@ class HelpTopicCatalog(BaseModel):
                         "built for Claude Code work in Ember unchanged.\n\n"
                         "**Discovery roots (highest priority last):**\n"
                         "- `~/.claude/plugins/` (Claude user-global)\n"
-                        "- `~/.ember/plugins/` (ember user-global — where `/plugin install` lands)\n"
+                        f"- `{DEFAULT_DATA_DIR}/plugins/` (ember user-global — where `/plugin install` lands)\n"
                         "- `<project>/.claude/plugins/`\n"
-                        "- `<project>/.ember/plugins/`\n\n"
+                        f"- `<project>/{CONFIG_DIR}/plugins/`\n\n"
                         "**Daily commands:**\n"
                         "- `/plugins` — open the TUI panel (browse, toggle, install)\n"
                         "- `/plugins enable <name>` / `/plugins disable <name>` — toggle without opening the panel\n"
-                        "- `/plugin install <git-url>` — install from a git URL into `~/.ember/plugins/`\n"
+                        f"- `/plugin install <git-url>` — install from a git URL into `{DEFAULT_DATA_DIR}/plugins/`\n"
                         "- `/plugin install @<marketplace>/<plugin>` — install via marketplace\n"
                         "- `/plugin install <url> --ref <branch|tag|sha>` — pin at install time\n"
                         "- `/plugin update <name>` — fetch + reset to origin's HEAD\n"
@@ -188,8 +189,8 @@ class HelpTopicCatalog(BaseModel):
                         "- `/agents ephemeral` — list dynamically created agents\n"
                         "- `/agents promote <name>` — save ephemeral agent permanently\n"
                         "- `/agents discard <name>` — delete an ephemeral agent\n\n"
-                        "**Create agents:** add `.md` files to `.ember/agents/`\n"
-                        "**Customize:** edit any agent in `.ember/agents/` to change its behavior"
+                        f"**Create agents:** add `.md` files to `{CONFIG_DIR}/agents/`\n"
+                        f"**Customize:** edit any agent in `{CONFIG_DIR}/agents/` to change its behavior"
                     ),
                 ),
                 HelpTopic(
@@ -281,10 +282,10 @@ class HelpTopicCatalog(BaseModel):
                         "- `UserPromptSubmit`, `SessionStart`, `SessionEnd`\n"
                         "- `Stop`, `SubagentStart`, `SubagentStop`, `Notification`\n\n"
                         "**Defined in** (four-root cascade, last wins):\n"
-                        "- `~/.ember/settings.json` (global)\n"
-                        "- `~/.ember/settings.local.json` (global, gitignored)\n"
-                        "- `.ember/settings.json` (project, committed)\n"
-                        "- `.ember/settings.local.json` (project, gitignored)\n\n"
+                        f"- `{DEFAULT_DATA_DIR}/settings.json` (global)\n"
+                        f"- `{DEFAULT_DATA_DIR}/settings.local.json` (global, gitignored)\n"
+                        f"- `{CONFIG_DIR}/settings.json` (project, committed)\n"
+                        f"- `{CONFIG_DIR}/settings.local.json` (project, gitignored)\n\n"
                         "Plugins also contribute hooks via `<plugin>/hooks/hooks.json`; "
                         "plugin hooks are prepended per event so project hooks get "
                         "the final word.\n\n"

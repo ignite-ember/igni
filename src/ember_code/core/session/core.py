@@ -208,10 +208,10 @@ class Session:
 
         # Group-policy on-disk roots — the paths :class:`GroupPolicyCache`
         # writes to. ``expanduser`` mirrors how :class:`PluginLoader`
-        # resolves its default ``data_dir`` (``~/.ember``).
+        # resolves its default ``data_dir`` (``~/.igni``).
         #
         # MCP servers are read from the cache directly. Agents are not:
-        # they are synced into ``<project>/.ember/agents`` so a person
+        # they are synced into ``<project>/.igni/agents`` so a person
         # can edit one, which means this directory is the *source* of
         # that sync rather than a place the loader reads.
         data_dir = Path(settings.storage.data_dir).expanduser()

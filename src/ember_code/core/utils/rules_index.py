@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class _ScopedRule:
-    """A path-scoped rules file from ``<project>/.ember/rules/`` or
+    """A path-scoped rules file from ``<project>/.igni/rules/`` or
     ``<project>/.claude/rules/``.
 
     ``globs`` is the ``paths:`` list from the file's YAML
@@ -53,7 +53,7 @@ class _ScopedRule:
 # Directories we never walk into when looking for rules files —
 # either they're vendored / generated content (no human-authored
 # instructions live there), or they're tool-config directories that
-# follow their own conventions (``.ember`` / ``.claude`` host
+# follow their own conventions (``.igni`` / ``.claude`` host
 # agents/skills/hooks, not freeform rules markdown).
 _EXCLUDED_DIR_NAMES = frozenset(
     {
@@ -127,7 +127,7 @@ class RulesIndex:
         # variant appearing AFTER so its directives take precedence
         # in the agent's read order.
         self._index: dict[Path, list[Path]] = {}
-        # Path-scoped rules from ``<project>/.ember/rules/*.md`` and
+        # Path-scoped rules from ``<project>/.igni/rules/*.md`` and
         # ``<project>/.claude/rules/*.md`` whose YAML frontmatter
         # has a ``paths:`` glob list. Loaded lazily by
         # ``consume_path`` only when the agent touches a file whose
@@ -181,7 +181,7 @@ class RulesIndex:
                         if matched:
                             self._index[entry.resolve()] = matched
         # Scan the project-level rules dirs explicitly. They live
-        # inside ``.ember`` / ``.claude`` which the main walk above
+        # inside ``.igni`` / ``.claude`` which the main walk above
         # excludes (those are plugin-config dirs).
         self._build_scoped_rules()
         logger.debug(
@@ -245,7 +245,7 @@ class RulesIndex:
         Paths outside ``project_dir`` produce an empty list.
         """
         # Both pools (subdir ``ember.md``-style + path-scoped
-        # ``.ember/rules/*.md``) are checked; bail only when both
+        # ``.igni/rules/*.md``) are checked; bail only when both
         # are empty.
         if not self._index and not self._scoped_rules:
             return []

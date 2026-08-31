@@ -2,7 +2,7 @@
 
 When a client (VSCode extension, JB plugin, Tauri shell) wants a
 backend for a project, it should first check
-``<project>/.ember/backend.lock``:
+``<project>/.igni/backend.lock``:
 
 - If the lockfile exists AND the recorded PID is alive AND the
   recorded port answers a TCP connect AND the wire version matches,
@@ -16,7 +16,7 @@ backend for a project, it should first check
   WebSocket port is bound (see ``BackendSupervisor.write_discovery_lockfile``).
 
 The lockfile is JSON so it's trivial to inspect and debug from a
-shell (``cat .ember/backend.lock | jq``). Atomic write via
+shell (``cat .igni/backend.lock | jq``). Atomic write via
 ``os.replace`` — the file is either the previous BE's or the new
 BE's, never a half-written blend.
 

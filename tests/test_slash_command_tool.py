@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from ember_code.backend import command_handler as cmd_mod
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.tools.slash import SlashCommandTool
 
 
@@ -135,7 +136,7 @@ class TestMarkdownCommandDispatch:
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
         _write(
-            tmp_path / ".ember" / "commands" / "ask.md",
+            tmp_path / CONFIG_DIR / "commands" / "ask.md",
             "Q: $ARGUMENTS — proceed?",
         )
 

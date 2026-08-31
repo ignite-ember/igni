@@ -1,4 +1,4 @@
-"""Ephemeral agent store — the ``.ember/agents.tmp`` lifecycle.
+"""Ephemeral agent store — the ``.igni/agents.tmp`` lifecycle.
 
 Owns:
 
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 class EphemeralAgentStore:
     """Manages agents created mid-session via ``/agents create``.
 
-    Ephemerals live in ``<project>/.ember/agents.tmp/`` as
+    Ephemerals live in ``<project>/.igni/agents.tmp/`` as
     ``.md`` files and get :attr:`AgentPriority.EPHEMERAL` — the
     highest priority — so they win against any base entry.
     """

@@ -220,7 +220,7 @@ class TestSettingsTierDenySurvivesBypass:
     settings loader calls) honours the same invariant.
 
     The original bug shape: a user adds ``Bash(rm *)`` to
-    ``~/.ember/settings.json``, types ``/bypass``, and rm goes
+    ``~/.igni/settings.json``, types ``/bypass``, and rm goes
     through anyway because the deny was loaded into a different
     code path that didn't compose with the mode pipeline.
     """

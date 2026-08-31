@@ -13,6 +13,7 @@ import pytest
 
 from ember_code.core.hooks.executor import HookExecutor
 from ember_code.core.hooks.schemas import HookDefinition
+from ember_code.core.paths import CONFIG_DIR
 
 # ── prompt handler ───────────────────────────────────────────────
 
@@ -170,7 +171,7 @@ def test_loader_parses_prompt_fields(tmp_path: Any, monkeypatch: Any) -> None:
 
     fake_home = tmp_path / "home"
     fake_home.mkdir()
-    (fake_home / ".ember").mkdir()
+    (fake_home / CONFIG_DIR).mkdir()
     settings = {
         "hooks": {
             "PreToolUse": [
@@ -184,7 +185,7 @@ def test_loader_parses_prompt_fields(tmp_path: Any, monkeypatch: Any) -> None:
             ]
         }
     }
-    (fake_home / ".ember" / "settings.json").write_text(json.dumps(settings))
+    (fake_home / CONFIG_DIR / "settings.json").write_text(json.dumps(settings))
 
     with monkeypatch.context() as m:
         m.setattr(Path, "home", lambda: fake_home)

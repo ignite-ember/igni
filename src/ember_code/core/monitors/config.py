@@ -14,7 +14,7 @@ project, user tiers). Structured identically to the LSP config:
     }
 
 Precedence (lower → higher, last write wins on collision):
-1. ``~/.ember/monitors.json`` (user)
+1. ``~/.igni/monitors.json`` (user)
 2. ``<project>/.monitors.json`` (project)
 3. Plugin-bundled ``.monitors.json`` (namespaced ``<plugin>:<name>``)
 """

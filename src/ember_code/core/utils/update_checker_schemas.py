@@ -127,7 +127,7 @@ class UpdateCacheEntry(BaseModel):
     """Typed on-disk cache entry for the update check.
 
     Replaces the raw ``dict[str, Any]`` that used to be written to
-    ``~/.ember/.update-check``. ``extra='ignore'`` lets older cache
+    ``~/.igni/.update-check``. ``extra='ignore'`` lets older cache
     files with legacy fields validate cleanly, and every field has
     a default so a forward-compat schema evolution can't silently
     void the user's cache.

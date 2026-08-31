@@ -12,8 +12,8 @@ commands that inspect / mutate the session's context surface:
   conversation vs. floor, so users can see why `/compact`
   doesn't drop the meter to zero.
 
-Output-style body files live at ``.ember/output-styles/<name>.md``
-(project) or ``~/.ember/output-styles/<name>.md`` (user), plus
+Output-style body files live at ``.igni/output-styles/<name>.md``
+(project) or ``~/.igni/output-styles/<name>.md`` (user), plus
 the ``.claude/`` equivalents when cross-tool reads are enabled.
 
 Architecture: the three verbs are methods on a single

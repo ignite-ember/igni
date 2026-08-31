@@ -416,7 +416,7 @@ def run_tests(test_path: str = "") -> str:
     return result.stdout + result.stderr
 ```
 
-Place custom tools in `~/.ember/tools/` or `.ember/tools/` for project-level tools. They're automatically discovered and available to agents.
+Place custom tools in `~/.igni/tools/` or `.igni/tools/` for project-level tools. They're automatically discovered and available to agents.
 
 ---
 
@@ -434,7 +434,7 @@ my-plugin/
 └── tools/<name>.py               # → CustomToolkit, named custom_<plugin>_<name>
 ```
 
-Discovery roots: `~/.claude/plugins/`, `~/.ember/plugins/`, `<project>/.claude/plugins/`, `<project>/.ember/plugins/`. Install via `/plugin install <git-url>` or `/plugin install @<marketplace>/<plugin>`. The `/plugins` slash command opens the Textual panel for browsing, toggling, updating, and installing from registered marketplaces.
+Discovery roots: `~/.claude/plugins/`, `~/.igni/plugins/`, `<project>/.claude/plugins/`, `<project>/.igni/plugins/`. Install via `/plugin install <git-url>` or `/plugin install @<marketplace>/<plugin>`. The `/plugins` slash command opens the Textual panel for browsing, toggling, updating, and installing from registered marketplaces.
 
 See [Plugins](PLUGINS.md) for the full guide.
 
@@ -463,4 +463,4 @@ orchestrator the user chats with) does NOT register Read/Grep/Glob — see the
 | `WebFetch` | yes | - | - | - | - | yes | - | - | - | - | - |
 | `Orchestrate` | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | - |
 
-Since agents are `.md` files, you can change any agent's tools by editing its definition or overriding it in `.ember/agents/`.
+Since agents are `.md` files, you can change any agent's tools by editing its definition or overriding it in `.igni/agents/`.

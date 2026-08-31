@@ -15,6 +15,7 @@ import pytest
 
 from ember_code.backend.__main__ import _build_rpc_table
 from ember_code.backend.server import BackendServer
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.skills.parser import SkillDefinition
 from ember_code.protocol.rpc import RpcMethod
 
@@ -79,7 +80,7 @@ class TestGetSlashCommands:
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
         _write(
-            tmp_path / ".ember" / "commands" / "review.md",
+            tmp_path / CONFIG_DIR / "commands" / "review.md",
             "---\ndescription: Review the diff\nargument-hint: <path>\n---\nBody\n",
         )
         backend = _make_backend(tmp_path)
@@ -96,7 +97,7 @@ class TestGetSlashCommands:
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
         _write(home / ".claude" / "commands" / "claude_only.md", "Body\n")
-        _write(tmp_path / ".ember" / "commands" / "ember_only.md", "Body\n")
+        _write(tmp_path / CONFIG_DIR / "commands" / "ember_only.md", "Body\n")
 
         backend = _make_backend(tmp_path, cross_tool=False)
         out = backend.get_slash_commands()
@@ -137,7 +138,7 @@ class TestGetSlashCommands:
         home = tmp_path / "home"
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
-        _write(tmp_path / ".ember" / "commands" / "mdone.md", "Body\n")
+        _write(tmp_path / CONFIG_DIR / "commands" / "mdone.md", "Body\n")
         skills = [SkillDefinition(name="skillone", description="s", user_invocable=True)]
         backend = _make_backend(tmp_path, skills=skills)
         out = backend.get_slash_commands()
@@ -150,7 +151,7 @@ class TestGetSlashCommands:
         per-source branching."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
         (tmp_path / "home").mkdir()
-        _write(tmp_path / ".ember" / "commands" / "x.md", "Body\n")
+        _write(tmp_path / CONFIG_DIR / "commands" / "x.md", "Body\n")
         skills = [SkillDefinition(name="y", description="d", user_invocable=True)]
         backend = _make_backend(tmp_path, skills=skills)
         out = backend.get_slash_commands()
@@ -177,7 +178,7 @@ class TestGetSlashCommands:
         home = tmp_path / "home"
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
-        _write(tmp_path / ".ember" / "commands" / "mdone.md", "Body\n")
+        _write(tmp_path / CONFIG_DIR / "commands" / "mdone.md", "Body\n")
 
         session = MagicMock()
         session.project_dir = tmp_path

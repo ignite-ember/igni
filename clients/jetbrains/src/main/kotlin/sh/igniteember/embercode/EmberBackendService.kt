@@ -12,9 +12,15 @@ import java.io.InputStreamReader
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+
+/** The per-project config directory, and the name it had before the
+ *  rename to igni. Kept in sync with ``ember_code.core.paths``. */
+private const val CONFIG_DIR = ".igni"
+private const val LEGACY_CONFIG_DIR = ".ember"
 
 /**
  * Project-level service owning the Ember backend process.
@@ -230,13 +236,29 @@ class EmberBackendService(private val project: Project) : Disposable {
         object Spawn : DiscoveryResult()
     }
 
-    /** Read ``<project>/.ember/backend.lock`` and classify. Mirrors
+    /** Locate the lockfile, preferring the current directory name.
+     *
+     *  ``.ember`` was the name before the rename and is checked second.
+     *  Not for tidiness: a missing lock means "spawn", so a backend
+     *  started before the upgrade still holds ``.ember/backend.lock``
+     *  and a client that only looked at the new name would start a
+     *  *second* one on a different port.
+     */
+    private fun lockfilePath(projectDir: String): Path {
+        val current = Paths.get(projectDir, CONFIG_DIR, "backend.lock")
+        if (Files.exists(current)) return current
+        val legacy = Paths.get(projectDir, LEGACY_CONFIG_DIR, "backend.lock")
+        if (Files.exists(legacy)) return legacy
+        return current
+    }
+
+    /** Read ``<project>/.igni/backend.lock`` and classify. Mirrors
      *  the Python side at ``src/ember_code/backend/lockfile.py``. */
     private fun discoverExistingBackend(
         projectDir: String,
         expectedWireVersion: String,
     ): DiscoveryResult {
-        val lockPath = Paths.get(projectDir, ".ember", "backend.lock")
+        val lockPath = lockfilePath(projectDir)
         if (!Files.exists(lockPath)) return DiscoveryResult.Spawn
 
         val raw = try {

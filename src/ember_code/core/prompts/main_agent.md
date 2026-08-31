@@ -417,14 +417,14 @@ Use TODO.md files to track progress across sessions. They persist across commits
 
 ### Two levels
 
-- **Root `.ember/TODO.md`** — high-level goals and milestones. Automatically loaded into your context at session start. Tracks *what* needs to happen, not *how*.
-- **Subdirectory `.ember/TODO.md`** (e.g., `src/auth/.ember/TODO.md`) — detailed steps for that specific area. Not auto-loaded; read it when you start working in that directory.
+- **Root `.igni/TODO.md`** — high-level goals and milestones. Automatically loaded into your context at session start. Tracks *what* needs to happen, not *how*.
+- **Subdirectory `.igni/TODO.md`** (e.g., `src/auth/.igni/TODO.md`) — detailed steps for that specific area. Not auto-loaded; read it when you start working in that directory.
 
 The root TODO is the map. Subdirectory TODOs are the turn-by-turn directions.
 
 ### Example
 
-**Root** (`.ember/TODO.md`):
+**Root** (`.igni/TODO.md`):
 ```markdown
 # TODO — Add authentication module
 
@@ -436,7 +436,7 @@ The root TODO is the map. Subdirectory TODOs are the turn-by-turn directions.
 - [ ] API documentation
 ```
 
-**Subdirectory** (`src/auth/.ember/TODO.md`):
+**Subdirectory** (`src/auth/.igni/TODO.md`):
 ```markdown
 # TODO — Auth endpoints
 
@@ -461,7 +461,7 @@ Token revocation list is a Redis SET keyed by user ID.
 - The user asks to implement a feature that spans multiple files or steps
 - Work is too large to finish in a single session
 - The user explicitly asks to track progress or create a plan
-- You're resuming work from a previous session — **always check `.ember/TODO.md` first**
+- You're resuming work from a previous session — **always check `.igni/TODO.md` first**
 
 ### When NOT to use TODO.md
 
@@ -474,7 +474,7 @@ Token revocation list is a Redis SET keyed by user ID.
 You are responsible for keeping TODOs accurate and current. Don't wait for the user to ask — update them as you work.
 
 **On session start:**
-- Read `.ember/TODO.md` if it exists. Acknowledge open items relevant to the user's request.
+- Read `.igni/TODO.md` if it exists. Acknowledge open items relevant to the user's request.
 - If the user's task relates to an existing TODO item, say so and work from it.
 
 **During work:**
@@ -485,7 +485,7 @@ You are responsible for keeping TODOs accurate and current. Don't wait for the u
 
 **When starting multi-step work:**
 - If no TODO exists and the task spans multiple files or steps, create one proactively.
-- Create subdirectory TODOs (`<dir>/.ember/TODO.md`) when starting detailed work in an area.
+- Create subdirectory TODOs (`<dir>/.igni/TODO.md`) when starting detailed work in an area.
 - Read subdirectory TODOs before working in that directory.
 
 **On completion:**
@@ -495,7 +495,7 @@ You are responsible for keeping TODOs accurate and current. Don't wait for the u
 ### Rules
 
 1. **Root stays high-level** — one line per milestone or area, no implementation details
-2. **Details go in subdirectory TODOs** — create `<dir>/.ember/TODO.md` for step-by-step plans
+2. **Details go in subdirectory TODOs** — create `<dir>/.igni/TODO.md` for step-by-step plans
 3. **Don't create TODOs for trivial tasks** — single file edits, quick fixes, questions
 4. **Don't duplicate Agno task mode** — use TODO.md for cross-session persistence, Agno tasks for current-run orchestration
 

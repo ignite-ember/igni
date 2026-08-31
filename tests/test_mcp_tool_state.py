@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ember_code.core.mcp.tool_state import MCPToolStateStore
+from ember_code.core.paths import CONFIG_DIR
 
 
 class TestPath:
@@ -21,7 +22,7 @@ class TestPath:
 
     def test_resolves_relative_to_ember_subdir(self, tmp_path: Path):
         store = MCPToolStateStore(tmp_path)
-        assert store.path() == tmp_path / ".ember" / "mcp-tool-state.json"
+        assert store.path() == tmp_path / CONFIG_DIR / "mcp-tool-state.json"
 
 
 class TestLoad:
@@ -33,14 +34,14 @@ class TestLoad:
         assert MCPToolStateStore(None).load() == {}
 
     def test_malformed_json_returns_empty(self, tmp_path: Path):
-        (tmp_path / ".ember").mkdir()
-        (tmp_path / ".ember" / "mcp-tool-state.json").write_text("{not json")
+        (tmp_path / CONFIG_DIR).mkdir()
+        (tmp_path / CONFIG_DIR / "mcp-tool-state.json").write_text("{not json")
         store = MCPToolStateStore(tmp_path)
         assert store.load() == {}
 
     def test_valid_state_returns_sets(self, tmp_path: Path):
-        (tmp_path / ".ember").mkdir()
-        (tmp_path / ".ember" / "mcp-tool-state.json").write_text(
+        (tmp_path / CONFIG_DIR).mkdir()
+        (tmp_path / CONFIG_DIR / "mcp-tool-state.json").write_text(
             '{"disabled": {"srv1": ["tool_a", "tool_b"], "srv2": ["tool_c"]}}'
         )
         store = MCPToolStateStore(tmp_path)
@@ -48,8 +49,8 @@ class TestLoad:
         assert state == {"srv1": {"tool_a", "tool_b"}, "srv2": {"tool_c"}}
 
     def test_missing_disabled_key_returns_empty(self, tmp_path: Path):
-        (tmp_path / ".ember").mkdir()
-        (tmp_path / ".ember" / "mcp-tool-state.json").write_text('{"other": "data"}')
+        (tmp_path / CONFIG_DIR).mkdir()
+        (tmp_path / CONFIG_DIR / "mcp-tool-state.json").write_text('{"other": "data"}')
         store = MCPToolStateStore(tmp_path)
         assert store.load() == {}
 
@@ -61,7 +62,7 @@ class TestSave:
     def test_writes_file(self, tmp_path: Path):
         store = MCPToolStateStore(tmp_path)
         store.save({"srv": {"tool_a", "tool_b"}})
-        p = tmp_path / ".ember" / "mcp-tool-state.json"
+        p = tmp_path / CONFIG_DIR / "mcp-tool-state.json"
         assert p.exists()
 
     def test_round_trip_preserves_state(self, tmp_path: Path):
@@ -78,14 +79,14 @@ class TestSave:
 
         store = MCPToolStateStore(tmp_path)
         store.save({"srv1": {"tool"}, "srv2": set()})
-        payload = json.loads((tmp_path / ".ember" / "mcp-tool-state.json").read_text())
+        payload = json.loads((tmp_path / CONFIG_DIR / "mcp-tool-state.json").read_text())
         assert payload["disabled"] == {"srv1": ["tool"]}
 
     def test_creates_ember_subdir(self, tmp_path: Path):
         store = MCPToolStateStore(tmp_path)
-        assert not (tmp_path / ".ember").exists()
+        assert not (tmp_path / CONFIG_DIR).exists()
         store.save({"srv": {"tool"}})
-        assert (tmp_path / ".ember").is_dir()
+        assert (tmp_path / CONFIG_DIR).is_dir()
 
     def test_overwrites_existing(self, tmp_path: Path):
         store = MCPToolStateStore(tmp_path)

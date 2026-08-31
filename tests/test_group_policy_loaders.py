@@ -30,6 +30,7 @@ from ember_code.core.config.group_policy import (
     GroupPolicyPack,
 )
 from ember_code.core.mcp.config import MCPConfigLoader
+from ember_code.core.paths import CONFIG_DIR
 
 # ---------------------------------------------------------------------------
 # Cache → MCP file format
@@ -186,7 +187,7 @@ def test_the_project_overrides_a_group_mcp_server(tmp_path: Path):
     in ``load`` and there is no number to compare.
     """
     project = tmp_path / "proj"
-    (project / ".ember").mkdir(parents=True)
+    (project / CONFIG_DIR).mkdir(parents=True)
     (project / ".mcp.json").write_text(
         json.dumps({"mcpServers": {"gateway": {"command": "project-binary"}}})
     )
@@ -205,7 +206,7 @@ def test_the_project_overrides_a_group_mcp_server(tmp_path: Path):
 def test_a_group_mcp_server_still_loads_when_the_project_is_silent(tmp_path: Path):
     """Overriding by name must not mean the group is ignored."""
     project = tmp_path / "proj"
-    (project / ".ember").mkdir(parents=True)
+    (project / CONFIG_DIR).mkdir(parents=True)
     group_dir = tmp_path / "group" / "mcps"
     group_dir.mkdir(parents=True)
     (group_dir / "gateway.json").write_text(
@@ -220,13 +221,13 @@ def test_a_group_mcp_server_still_loads_when_the_project_is_silent(tmp_path: Pat
 def test_a_group_mcp_server_beats_the_user_home_config(tmp_path: Path, monkeypatch):
     """Still above the user's own, as with every other kind."""
     home = tmp_path / "home"
-    (home / ".ember").mkdir(parents=True)
+    (home / CONFIG_DIR).mkdir(parents=True)
     monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
-    (home / ".ember" / ".mcp.json").write_text(
+    (home / CONFIG_DIR / ".mcp.json").write_text(
         json.dumps({"mcpServers": {"gateway": {"command": "my-own-binary"}}})
     )
     project = tmp_path / "proj"
-    (project / ".ember").mkdir(parents=True)
+    (project / CONFIG_DIR).mkdir(parents=True)
     group_dir = tmp_path / "group" / "mcps"
     group_dir.mkdir(parents=True)
     (group_dir / "gateway.json").write_text(
@@ -246,7 +247,7 @@ def test_a_group_mcp_server_beats_the_user_home_config(tmp_path: Path, monkeypat
 # out of the ordering rather than out of there being only one file.
 #
 # It was the other way round for a while: the group's agents were copied
-# into ``<project>/.ember/agents`` by a sync so a person could edit one,
+# into ``<project>/.igni/agents`` by a sync so a person could edit one,
 # and reading the cache as well would have shadowed that edit. Reading
 # the cache directly gets the same outcome, leaves the repository holding
 # only what the repository declares, and removed the sync along with the
@@ -271,7 +272,7 @@ def test_agent_loader_reads_the_project_dir(tmp_path: Path):
     """A project's own agents load at the project tier."""
     project = tmp_path / "proj"
     _write_agent(
-        project / ".ember" / "agents",
+        project / CONFIG_DIR / "agents",
         "contract-review",
         "---\nname: contract-review\ndescription: the group's own\n---\nBody.",
     )
@@ -335,7 +336,7 @@ def test_the_project_wins_a_name_collision(tmp_path: Path):
     project = tmp_path / "proj"
     cache = tmp_path / "group-policy" / "agents"
     _write_agent(
-        project / ".ember" / "agents",
+        project / CONFIG_DIR / "agents",
         "reviewer",
         "---\nname: reviewer\ndescription: the project version\n---\nBody.",
     )
@@ -364,7 +365,7 @@ def test_the_group_beats_the_user_globals(tmp_path: Path, monkeypatch):
     project = tmp_path / "proj"
     cache = tmp_path / "group-policy" / "agents"
     _write_agent(
-        home / ".ember" / "agents",
+        home / CONFIG_DIR / "agents",
         "reviewer",
         "---\nname: reviewer\ndescription: my personal one\n---\nBody.",
     )

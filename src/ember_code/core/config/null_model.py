@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from agno.models.openai.like import OpenAILike
 
+from ember_code.core.paths import DEFAULT_DATA_DIR
+
 
 class NoModelConfigured(OpenAILike):
     """Stand-in model returned when no real model resolves.
@@ -38,7 +40,7 @@ class NoModelConfigured(OpenAILike):
     ERROR_MESSAGE = (
         "No model configured. Run `/login` to discover hosted models from "
         "Ember Cloud, or add a model to `models.registry` in "
-        "~/.ember/config.yaml."
+        f"{DEFAULT_DATA_DIR}/config.yaml."
     )
 
     def __init__(self):

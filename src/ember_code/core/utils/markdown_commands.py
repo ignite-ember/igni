@@ -1,8 +1,8 @@
 """Markdown-authored slash commands — Claude Code parity.
 
 A user can drop ``.md`` files into ``<project>/.claude/commands/``,
-``<project>/.ember/commands/``, ``~/.claude/commands/``, or
-``~/.ember/commands/`` to define new slash commands without writing
+``<project>/.igni/commands/``, ``~/.claude/commands/``, or
+``~/.igni/commands/`` to define new slash commands without writing
 Python. The file's basename becomes the command name (so
 ``commands/review.md`` invokes as ``/review``); the body is the
 template that gets sent to the agent after substitution.
@@ -35,9 +35,9 @@ returned ``MarkdownCommand``:
 Precedence (lower → higher, last write wins on name collisions):
 
 1. ``~/.claude/commands/`` (cross-tool user)
-2. ``~/.ember/commands/`` (ember user)
+2. ``~/.igni/commands/`` (ember user)
 3. ``<project>/.claude/commands/`` (cross-tool project)
-4. ``<project>/.ember/commands/`` (ember project)
+4. ``<project>/.igni/commands/`` (ember project)
 
 The ``read_claude`` toggle (settings.rules.cross_tool_support)
 mirrors the rest of the cross-tool plumbing — flip it off and the

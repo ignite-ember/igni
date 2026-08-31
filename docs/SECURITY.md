@@ -68,7 +68,7 @@ When a tool call requires approval (`ask` level), the user sees the full command
 | Allow similar | Yes | Adds a pattern (e.g., `npm *`, `pytest *`) to the allowlist |
 | Deny | No | Blocks this call, agent can try alternatives |
 
-Permanent rules are saved to `~/.ember/permissions.yaml`:
+Permanent rules are saved to `~/.igni/permissions.yaml`:
 
 ```yaml
 # Auto-generated from approval prompts — edit to adjust
@@ -117,7 +117,7 @@ Protected paths are enforced at the tool layer — even if an agent tries to wri
 Add project-specific protected paths:
 
 ```yaml
-# .ember/config.yaml
+# .igni/config.yaml
 safety:
   protected_paths:
     - ".env"
@@ -192,7 +192,7 @@ Every tool execution is logged:
 
 ```yaml
 storage:
-  audit_log: "~/.ember/audit.log"
+  audit_log: "~/.igni/audit.log"
 ```
 
 **Log format:**
@@ -232,7 +232,7 @@ Hooks extend the security model — they can add custom validation:
     "PreToolUse": [
       {
         "type": "command",
-        "command": ".ember/hooks/security-check.sh",
+        "command": ".igni/hooks/security-check.sh",
         "matcher": "Write|Edit|Bash"
       }
     ]
@@ -348,7 +348,7 @@ For teams that can't send code to the cloud, self-hosted CodeIndex is planned fo
 | Permission tiers | allow / ask / deny per tool | Same, plus category-based presets |
 | Protected paths | Via deny rules | Dedicated protected_paths list |
 | Command blocking | macOS sandbox (Seatbelt) | Blocked patterns, confirmation prompts |
-| Audit logging | Not built-in | Built-in to `~/.ember/audit.log` |
+| Audit logging | Not built-in | Built-in to `~/.igni/audit.log` |
 | Agent isolation | Tools per agent definition | Same — tools declared in `.md` |
 | Depth limits | Sub-agents capped at 1 level | Configurable: depth, agent count, timeout |
 | Managed settings | Enterprise policy files | Same — managed-settings.json |
@@ -368,11 +368,11 @@ For teams that can't send code to the cloud, self-hosted CodeIndex is planned fo
 - [ ] Add project-specific protected paths for credentials, configs, state files
 - [ ] Enable `require_confirmation` for destructive operations
 - [ ] Review MCP servers before approving — understand what tools they provide
-- [ ] Check audit log periodically: `~/.ember/audit.log`
+- [ ] Check audit log periodically: `~/.igni/audit.log`
 
 ### For Teams
 
-- [ ] Commit `.ember/config.yaml` with team-agreed permission levels
+- [ ] Commit `.igni/config.yaml` with team-agreed permission levels
 - [ ] Add protected paths for production configs, secrets, infrastructure state
 - [ ] Set up hooks for additional validation (security scanning, test enforcement)
 - [ ] Use agent evals to verify agents don't escalate permissions after changes

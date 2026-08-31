@@ -14,6 +14,7 @@ import pytest
 from pydantic import ValidationError
 
 from ember_code.backend.command_handler import CommandHandler
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.utils.markdown_commands import (
     MarkdownCommand,
     _parse_frontmatter,
@@ -63,11 +64,11 @@ class TestParseFrontmatter:
 class TestDiscoverMarkdownCommands:
     def test_finds_project_ember_command(self, tmp_path, monkeypatch):
         """Most basic case: a single command at
-        ``<project>/.ember/commands/review.md``."""
+        ``<project>/.igni/commands/review.md``."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
         (tmp_path / "home").mkdir()
         _write(
-            tmp_path / ".ember" / "commands" / "review.md",
+            tmp_path / CONFIG_DIR / "commands" / "review.md",
             "---\ndescription: Review the diff\n---\nReview changes.\n",
         )
         cmds = discover_markdown_commands(tmp_path)
@@ -76,12 +77,12 @@ class TestDiscoverMarkdownCommands:
         assert "Review changes." in cmds["review"].body
 
     def test_finds_user_global_command(self, tmp_path, monkeypatch):
-        """A command at ``~/.ember/commands/`` is available in any
+        """A command at ``~/.igni/commands/`` is available in any
         project — covers the global-tier discovery path."""
         home = tmp_path / "home"
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
-        _write(home / ".ember" / "commands" / "global.md", "Globally available.\n")
+        _write(home / CONFIG_DIR / "commands" / "global.md", "Globally available.\n")
         cmds = discover_markdown_commands(tmp_path)
         assert "global" in cmds
 
@@ -91,8 +92,8 @@ class TestDiscoverMarkdownCommands:
         home = tmp_path / "home"
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
-        _write(home / ".ember" / "commands" / "review.md", "GLOBAL\n")
-        _write(tmp_path / ".ember" / "commands" / "review.md", "PROJECT\n")
+        _write(home / CONFIG_DIR / "commands" / "review.md", "GLOBAL\n")
+        _write(tmp_path / CONFIG_DIR / "commands" / "review.md", "PROJECT\n")
         cmds = discover_markdown_commands(tmp_path)
         assert "PROJECT" in cmds["review"].body
         assert "GLOBAL" not in cmds["review"].body
@@ -104,7 +105,7 @@ class TestDiscoverMarkdownCommands:
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
         _write(tmp_path / ".claude" / "commands" / "review.md", "FROM-CLAUDE\n")
-        _write(tmp_path / ".ember" / "commands" / "review.md", "FROM-EMBER\n")
+        _write(tmp_path / CONFIG_DIR / "commands" / "review.md", "FROM-EMBER\n")
         cmds = discover_markdown_commands(tmp_path)
         assert "FROM-EMBER" in cmds["review"].body
 
@@ -117,7 +118,7 @@ class TestDiscoverMarkdownCommands:
         monkeypatch.setattr(Path, "home", lambda: home)
         _write(home / ".claude" / "commands" / "claude.md", "Should-not-load")
         _write(tmp_path / ".claude" / "commands" / "proj.md", "Should-not-load")
-        _write(tmp_path / ".ember" / "commands" / "ember.md", "Loads")
+        _write(tmp_path / CONFIG_DIR / "commands" / "ember.md", "Loads")
         cmds = discover_markdown_commands(tmp_path, read_claude=False)
         assert "claude" not in cmds
         assert "proj" not in cmds
@@ -129,7 +130,7 @@ class TestDiscoverMarkdownCommands:
         home = tmp_path / "home"
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
-        _write(tmp_path / ".ember" / "commands" / ".backup.md", "Should not load")
+        _write(tmp_path / CONFIG_DIR / "commands" / ".backup.md", "Should not load")
         cmds = discover_markdown_commands(tmp_path)
         assert cmds == {}
 
@@ -138,7 +139,7 @@ class TestDiscoverMarkdownCommands:
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
         _write(
-            tmp_path / ".ember" / "commands" / "rev.md",
+            tmp_path / CONFIG_DIR / "commands" / "rev.md",
             "---\nallowed-tools: Bash, Read,Write \n---\nBody\n",
         )
         cmds = discover_markdown_commands(tmp_path)
@@ -149,7 +150,7 @@ class TestDiscoverMarkdownCommands:
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
         _write(
-            tmp_path / ".ember" / "commands" / "rev.md",
+            tmp_path / CONFIG_DIR / "commands" / "rev.md",
             "---\nallowed-tools:\n  - Bash\n  - Read\n---\nBody\n",
         )
         cmds = discover_markdown_commands(tmp_path)
@@ -160,7 +161,7 @@ class TestDiscoverMarkdownCommands:
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
         _write(
-            tmp_path / ".ember" / "commands" / "rev.md",
+            tmp_path / CONFIG_DIR / "commands" / "rev.md",
             "---\nargument-hint: <path>\nmodel: opus\n---\nBody\n",
         )
         cmds = discover_markdown_commands(tmp_path)
@@ -187,7 +188,7 @@ class TestMarkdownCommandClassmethodDiscover:
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
         _write(
-            tmp_path / ".ember" / "commands" / "hello.md",
+            tmp_path / CONFIG_DIR / "commands" / "hello.md",
             "---\ndescription: greeting\n---\nHi.\n",
         )
         cmds = MarkdownCommand.discover(tmp_path)
@@ -198,8 +199,8 @@ class TestMarkdownCommandClassmethodDiscover:
         home = tmp_path / "home"
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
-        _write(tmp_path / ".ember" / "commands" / "a.md", "A body.\n")
-        _write(tmp_path / ".ember" / "commands" / "b.md", "B body.\n")
+        _write(tmp_path / CONFIG_DIR / "commands" / "a.md", "A body.\n")
+        _write(tmp_path / CONFIG_DIR / "commands" / "b.md", "B body.\n")
         via_class = MarkdownCommand.discover(tmp_path)
         via_func = discover_markdown_commands(tmp_path)
         # Both entry points must produce identical maps — the module
@@ -340,7 +341,7 @@ class TestRenderFiles:
         project.mkdir()
         outside = tmp_path / "outside.txt"
         outside.write_text("OUTSIDE-SECRET")
-        cmd_file = project / ".ember" / "commands" / "leak.md"
+        cmd_file = project / CONFIG_DIR / "commands" / "leak.md"
         cmd_file.parent.mkdir(parents=True)
         cmd_file.write_text(f"Leak: @{outside.resolve()}")
         cmd = MarkdownCommand(name="leak", path=cmd_file, body=cmd_file.read_text())
@@ -350,12 +351,12 @@ class TestRenderFiles:
 
     @pytest.mark.asyncio
     async def test_user_command_can_reference_anywhere(self, tmp_path):
-        """A user-tier command (living in ``~/.ember/commands``)
+        """A user-tier command (living in ``~/.igni/commands``)
         is explicitly authored by the user and CAN reference any
         path — they wrote it themselves. Only PROJECT commands are
         scoped."""
         home = tmp_path / "home"
-        user_cmd_dir = home / ".ember" / "commands"
+        user_cmd_dir = home / CONFIG_DIR / "commands"
         user_cmd_dir.mkdir(parents=True)
         project = tmp_path / "project"
         project.mkdir()
@@ -380,7 +381,7 @@ class TestCommandHandlerDispatch:
         (tmp_path / "home").mkdir()
 
         _write(
-            tmp_path / ".ember" / "commands" / "review.md",
+            tmp_path / CONFIG_DIR / "commands" / "review.md",
             "---\ndescription: Review\n---\nReview args: $ARGUMENTS\n",
         )
 
@@ -412,7 +413,7 @@ class TestCommandHandlerDispatch:
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
         (tmp_path / "home").mkdir()
         _write(
-            tmp_path / ".ember" / "commands" / "help.md",
+            tmp_path / CONFIG_DIR / "commands" / "help.md",
             "HIJACK\n",
         )
 

@@ -415,14 +415,14 @@ def _agent_instructions(agent_mock) -> list[str]:
 class TestRulesReachAgent:
     """End-to-end: rules loaded from disk must land in the Agent's
     ``instructions=`` argument. Without these tests the new loader paths
-    (~/.ember/rules/, ~/.claude/rules/) would happily run while never
+    (~/.igni/rules/, ~/.claude/rules/) would happily run while never
     actually influencing the AI — exactly the dead-code risk worth
     guarding against.
     """
 
     def _isolate_user_rules(self, monkeypatch, tmp_path, *, claude_dir=None):
         """Redirect user-rule lookups into ``tmp_path`` so the test host's
-        real ``~/.ember/`` and ``~/.claude/`` never leak in."""
+        real ``~/.igni/`` and ``~/.claude/`` never leak in."""
         monkeypatch.setattr(ctx_mod, "USER_RULES_PATH", tmp_path / "_no_legacy.md")
         monkeypatch.setattr(ctx_mod, "USER_RULES_DIR", tmp_path / "_no_user_dir")
         monkeypatch.setattr(
@@ -479,7 +479,7 @@ class TestRulesReachAgent:
             _stop_patches(patches)
 
     def test_user_rules_directory_reaches_agent_instructions(self, tmp_path, monkeypatch):
-        """``~/.ember/rules/*.md`` (the new directory source) must reach the agent."""
+        """``~/.igni/rules/*.md`` (the new directory source) must reach the agent."""
         user_dir = tmp_path / "ember-rules"
         user_dir.mkdir()
         (user_dir / "commit-style.md").write_text("SENTINEL_USER_DIR_RULE_111")

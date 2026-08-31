@@ -18,9 +18,9 @@ _USER_GLOBAL_MCP = str(Path.home() / CONFIG_DIR / ".mcp.json")
 class MCPApprovalManager:
     """Manages first-use approval for project-scoped MCP servers.
 
-    Approved servers are persisted to ``~/.ember/mcp-approved.json`` so the
+    Approved servers are persisted to ``~/.igni/mcp-approved.json`` so the
     prompt only appears once per (server_name, config_path) pair.  Servers
-    defined in the user-global config (``~/.ember/.mcp.json``) are trusted
+    defined in the user-global config (``~/.igni/.mcp.json``) are trusted
     automatically and never prompt.
     """
 

@@ -34,6 +34,7 @@ from unittest.mock import MagicMock
 
 from ember_code.backend.server import BackendServer
 from ember_code.core.config.permission_eval import PermissionDecision, PermissionEvaluator
+from ember_code.core.paths import CONFIG_DIR
 
 
 def _make_server(project_dir: Path, with_evaluator: bool = False) -> BackendServer:
@@ -72,7 +73,7 @@ def _requirement_for(tool_name: str, tool_args: dict) -> MagicMock:
 def _load_saved_rules(project_dir: Path) -> dict[str, list[str]]:
     """Return the ``permissions`` block from settings.local.json,
     or an empty dict if the file wasn't written."""
-    path = project_dir / ".ember" / "settings.local.json"
+    path = project_dir / CONFIG_DIR / "settings.local.json"
     if not path.exists():
         return {}
     return json.loads(path.read_text()).get("permissions", {})

@@ -47,7 +47,7 @@ class KnowledgeIndex:
 
     Args:
         project: project directory (used to derive the on-disk path).
-        data_dir: ember root, defaults to ``~/.ember``.
+        data_dir: ember root, defaults to ``~/.igni``.
         chunker: how to split inline content for ``add(...)``. Default
             ``NewlinePreservingChunker(chunk_size=550, overlap=75)`` —
             sized so chunks stay under the 256-token window of our

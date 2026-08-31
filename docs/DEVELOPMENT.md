@@ -61,7 +61,7 @@ ember-code/
 │       ├── auth/
 │       │   ├── __init__.py
 │       │   ├── client.py              # Device-flow authentication (browser login + polling)
-│       │   └── credentials.py         # Credential storage (~/.ember/credentials.json + config)
+│       │   └── credentials.py         # Credential storage (~/.igni/credentials.json + config)
 │       ├── pool.py                    # AgentPool: load/parse .md agent definitions
 │       ├── learn.py                   # LearningMachine integration
 │       ├── init.py                    # Project initialization (copy agents, skills, hooks)
@@ -256,9 +256,9 @@ class AgentPool:
     def _load_all(self, config: Settings):
         # Load in priority order (highest last, so they overwrite)
         dirs = [
-            (Path.home() / ".ember" / "agents", 0),        # user global
-            (Path(".ember/agents.local"), 1),               # project local
-            (Path(".ember/agents"), 2),                     # project shared
+            (Path.home() / ".igni" / "agents", 0),        # user global
+            (Path(".igni/agents.local"), 1),               # project local
+            (Path(".igni/agents"), 2),                     # project shared
         ]
 ```
 
@@ -356,7 +356,7 @@ Built-in commands available in interactive mode:
 | `/loop <prompt>` | Re-fire the same prompt as the next user turn until cap, `/loop stop`, or any non-`/loop` input (default cap 30, hard cap 200). Forms: `/loop` (status), `/loop <N> <prompt>` (explicit cap), `/loop stop` (cancel) |
 | `/plugins` | Open the Textual plugins panel (browse, toggle enable/disable, update/remove, browse marketplaces, install). See [Plugins](PLUGINS.md). |
 | `/plugins enable <name>` / `/plugins disable <name>` | Toggle a plugin without opening the panel — takes effect on next session start. |
-| `/plugin install <git-url\|@marketplace/plugin>` | Install a Claude-Code-compatible plugin into `~/.ember/plugins/`. Optional `--ref <branch\|tag\|sha>`. |
+| `/plugin install <git-url\|@marketplace/plugin>` | Install a Claude-Code-compatible plugin into `~/.igni/plugins/`. Optional `--ref <branch\|tag\|sha>`. |
 | `/plugin update <name>` / `/plugin remove <name>` | Update (fetch + reset to origin's HEAD or `--ref`) or uninstall. |
 | `/plugin marketplace add\|list\|remove\|refresh` | Manage registered marketplaces — Claude-Code-compatible catalogs at the root of any git repo. |
 | `/compact` | Manually compact session history (otherwise triggers at 80% of the context window) |

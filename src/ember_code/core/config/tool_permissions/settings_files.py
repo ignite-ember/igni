@@ -1,7 +1,7 @@
 """Settings file I/O for tool permissions.
 
-Owns the read/write side of ``.ember/settings.json`` &
-``.ember/settings.local.json`` — split out of the monolithic
+Owns the read/write side of ``.igni/settings.json`` &
+``.igni/settings.local.json`` — split out of the monolithic
 ``tool_permissions.py`` so the store class no longer mixes disk I/O
 with rule evaluation.
 
@@ -12,7 +12,7 @@ Two collaborators, one shared wire model:
   returning a :class:`LoadResult` per file (Pattern 3 typed
   failure).
 * :class:`SettingsFileWriter` — writes back a persisted rule to
-  ``.ember/settings.local.json`` (project-local, falls back to home
+  ``.igni/settings.local.json`` (project-local, falls back to home
   when no project dir is set).
 
 Both use :class:`EmberSettingsPermissionsFile` (from
@@ -45,10 +45,10 @@ class SettingsFileLoader:
     The four-path priority order (highest priority applied last)
     matches the historical behaviour:
 
-    1. ``~/.ember/settings.json``            — user global defaults
-    2. ``~/.ember/settings.local.json``      — user local overrides
-    3. ``<project>/.ember/settings.json``    — project committed
-    4. ``<project>/.ember/settings.local.json`` — project local
+    1. ``~/.igni/settings.json``            — user global defaults
+    2. ``~/.igni/settings.local.json``      — user local overrides
+    3. ``<project>/.igni/settings.json``    — project committed
+    4. ``<project>/.igni/settings.local.json`` — project local
 
     Errors (missing file, bad JSON, wrong shape) yield a
     :class:`LoadResult` with ``ok=False`` — the caller decides

@@ -3,7 +3,7 @@
 Calls ``GET https://pypi.org/pypi/{package}/json`` and inspects
 the ``info.version`` field of the response. The check runs
 asynchronously at session start and never blocks the user.
-Results are cached in ``~/.ember/.update-check`` (a JSON blob
+Results are cached in ``~/.igni/.update-check`` (a JSON blob
 matching :class:`UpdateCacheEntry`) to avoid hitting the network
 on every session; the TTL is configurable via
 ``update_check_ttl`` in settings.

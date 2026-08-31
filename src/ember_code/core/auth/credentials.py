@@ -1,7 +1,7 @@
 """Token persistence — save, load, validate, and clear stored credentials.
 
 Single-concern module: everything here is about the on-disk auth
-credential file (``~/.ember/credentials.json`` by default).
+credential file (``~/.igni/credentials.json`` by default).
 
 * :class:`Credentials` — Pydantic model of the stored token +
   identity + expiry metadata. Behaviour on the type: the
@@ -34,10 +34,11 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from ember_code.core.auth.schemas import JwtClaims, LoadCredentialsResult
+from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CREDENTIALS_PATH = "~/.ember/credentials.json"
+DEFAULT_CREDENTIALS_PATH = f"{DEFAULT_DATA_DIR}/credentials.json"
 
 # JWT default lifetime: 30 days (matches server-issued tokens)
 DEFAULT_TOKEN_TTL = 30 * 24 * 3600
@@ -118,7 +119,7 @@ class CredentialsStore:
 
     Args:
         path: optional override; defaults to
-            ``~/.ember/credentials.json``. ``None`` or an empty
+            ``~/.igni/credentials.json``. ``None`` or an empty
             string routes to the default.
     """
 
@@ -194,7 +195,7 @@ class CloudCredentials:
 
     Args:
         path: optional override; defaults to
-            ``~/.ember/credentials.json``. Preserved as a
+            ``~/.igni/credentials.json``. Preserved as a
             positional/keyword for back-compat with the many
             existing call sites (``sync_manager``, ``resolver``,
             ``session.core``, ``session.cloud_catalog``,
