@@ -61,7 +61,6 @@ dependencies = [
     "arxiv~=4.0.0",
     "wikipedia~=1.4.0",
     "dateparser~=1.4.0",
-    "chromadb~=1.5.9",
     "sentence-transformers~=5.5.1",
     "websockets~=16.0",
     "neo4j~=5.27.0",

@@ -1,16 +1,22 @@
 """In-process embedder backed by ``sentence-transformers``.
 
 Loads ``sentence-transformers/all-MiniLM-L6-v2`` once per process and
-exposes both async helpers (for our own code paths) and a chromadb-
-compatible :class:`EmbeddingFunction` adapter (for collections that
-auto-embed on add/query). 384-dim cosine-friendly outputs.
+exposes async helpers for our own code paths. 384-dim cosine-friendly
+outputs.
 
-Why a custom wrapper instead of chromadb's built-in
-``SentenceTransformerEmbeddingFunction``: HuggingFace's first-time
-download chatter goes to stdout, which corrupts the BE process's
-``READY`` protocol on the parent pipe. We suppress stdout around the
-load step, then keep the model object as a per-model-name singleton
-owned by :class:`Embedder`.
+Why a custom wrapper rather than the one that shipped with chroma:
+HuggingFace's first-time download chatter goes to stdout, which
+corrupts the BE process's ``READY`` protocol on the parent pipe. We
+suppress stdout around the load step, then keep the model object as a
+per-model-name singleton owned by :class:`Embedder`. That reason still
+holds — the chatter is HuggingFace's, not chroma's.
+
+:class:`EmbeddingFunction` is an adapter for chroma's auto-embedding
+interface and **nothing consumes it any more**: vectors live in the
+Neo4j sidecar, ``chromadb`` is not imported anywhere and is no longer a
+dependency. It is left in place rather than deleted because the shape is
+a reasonable one for any store that wants to embed on write, but a
+reader should know it is currently unused outside its own tests.
 
 Design note: the model + its cache lookup + its lazy load are grouped
 onto :class:`Embedder` (an OOP-audit fix collapsing the previous

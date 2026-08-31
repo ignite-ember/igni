@@ -20,7 +20,7 @@ from ember_code.core.code_index.cutover import (
 )
 from ember_code.core.code_index.paths import (
     code_index_dir,
-    knowledge_chroma_path,
+    legacy_knowledge_index_path,
     manifest_path,
 )
 from ember_code.core.code_index.project import resolve_project_id
@@ -46,7 +46,7 @@ def project_tree(tmp_path: Path) -> tuple[Path, Path]:
     chroma = base / "deadbeef.chroma"
     chroma.mkdir(parents=True)
     (chroma / "chroma.sqlite3").write_text("fake")
-    knowledge = knowledge_chroma_path(project, data_dir=data_dir)
+    knowledge = legacy_knowledge_index_path(project, data_dir=data_dir)
     knowledge.mkdir()
     (knowledge / "chroma.sqlite3").write_text("fake")
     manifest_path(project, data_dir=data_dir).write_text("{}")
@@ -84,12 +84,12 @@ def test_rmtree_chroma_dirs_ignores_non_chroma_dirs(project_tree) -> None:
 def test_rmtree_knowledge_chroma_removes_dir(project_tree) -> None:
     project, data_dir = project_tree
     _rmtree_knowledge_chroma(project, data_dir)
-    assert not knowledge_chroma_path(project, data_dir=data_dir).exists()
+    assert not legacy_knowledge_index_path(project, data_dir=data_dir).exists()
 
 
 def test_rmtree_knowledge_chroma_skips_when_missing(project_tree) -> None:
     project, data_dir = project_tree
-    shutil.rmtree(knowledge_chroma_path(project, data_dir=data_dir))
+    shutil.rmtree(legacy_knowledge_index_path(project, data_dir=data_dir))
     # No raise.
     _rmtree_knowledge_chroma(project, data_dir)
 
@@ -117,7 +117,7 @@ def test_full_cutover_sweep_cleans_every_legacy_artifact(project_tree) -> None:
     _drop_manifest_json(project, data_dir)
     base = code_index_dir(project, data_dir=data_dir)
     assert not (base / "deadbeef.chroma").exists()
-    assert not knowledge_chroma_path(project, data_dir=data_dir).exists()
+    assert not legacy_knowledge_index_path(project, data_dir=data_dir).exists()
     assert not manifest_path(project, data_dir=data_dir).exists()
 
 

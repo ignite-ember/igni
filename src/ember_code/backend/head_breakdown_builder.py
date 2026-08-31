@@ -42,7 +42,7 @@ from ember_code.backend.schemas_codeindex_rpc import (
     CommitBreakdown,
     LangCount,
 )
-from ember_code.core.code_index.paths import commit_chroma_path
+from ember_code.core.code_index.paths import legacy_commit_index_path
 
 if TYPE_CHECKING:
     from ember_code.core.code_index.index import CodeIndex
@@ -177,12 +177,20 @@ class BranchIndexInventory:
         entries: list[BranchIndexEntry] = []
         total = 0
         for sha, info in state.commits.items():
-            chroma_dir = commit_chroma_path(
+            # FIXME: measures a directory Neo4j does not write.
+            #
+            # Vectors moved to the Neo4j sidecar and the cutover deletes
+            # these per-commit directories, so on any project that has
+            # been migrated this reads 0 and the panel reports every
+            # commit's index as empty. It is not wrong on a project the
+            # cutover has not reached yet — which is why it went
+            # unnoticed — but the number needs to come from the runtime.
+            legacy_dir = legacy_commit_index_path(
                 self._code_index.project,
                 sha,
                 data_dir=self._code_index.data_dir,
             )
-            size = self._dir_size(chroma_dir)
+            size = self._dir_size(legacy_dir)
             total += size
             entries.append(
                 BranchIndexEntry(

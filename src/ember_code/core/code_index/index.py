@@ -57,7 +57,7 @@ from ember_code.core.code_index.git_branches import GitBranchReader
 from ember_code.core.code_index.manifest import Manifest
 from ember_code.core.code_index.paths import (
     code_index_dir,
-    commit_chroma_path,
+    legacy_commit_index_path,
 )
 from ember_code.core.code_index.project import resolve_project_id
 from ember_code.core.code_index.schema.items import ChunkRow, CodeIndexItem, CodeIndexResult
@@ -201,7 +201,7 @@ class CodeIndex:
         if self._neo4j_runtime is not None:
             await self._neo4j_runtime.start_for_commit(self.project_id, sha)
         self.manifest.upsert_commit(sha)
-        return commit_chroma_path(self.project, sha, data_dir=self.data_dir)
+        return legacy_commit_index_path(self.project, sha, data_dir=self.data_dir)
 
     async def apply_delta(self, jsonl_path: str | Path):
         """Apply a producer-emitted JSONL changeset to this project.
