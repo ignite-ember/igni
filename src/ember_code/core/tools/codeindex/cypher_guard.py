@@ -86,12 +86,15 @@ _FORBIDDEN_TOKENS: Final[frozenset[str]] = frozenset(
         "ALTER",
         "RENAME",
         # ``CALL`` is deliberately absent. It used to be here, which made
-        # ``_check_call_tokens`` and ``_ALLOWED_APOC`` dead code — the keyword
-        # check runs first, so every CALL was rejected and the documented
-        # ``apoc.cypher.run`` allowance never worked, nor could the vector index
-        # be reached. The target allowlist in ``_is_safe_call_target`` is the
-        # real gate; a CALL that smuggles a write is still caught by the write
-        # tokens below, which apply to the whole statement including subqueries.
+        # ``_check_call_tokens`` dead code — the keyword check runs first, so
+        # every CALL was rejected and the vector index could not be reached.
+        # The target allowlist in ``_is_safe_call_target`` is the real gate.
+        #
+        # A CALL that smuggles a write *in a subquery* is caught by the write
+        # tokens below, which apply to the whole statement. A write inside a
+        # string the procedure then executes is NOT — string literals are
+        # stripped before this scan. That is why ``_ALLOWED_APOC`` is empty:
+        # any procedure that runs its argument defeats the token scan.
         "BEGIN",
         "COMMIT",
         "ROLLBACK",
@@ -130,9 +133,27 @@ ALLOWED_PARAM_NAMES: Final[frozenset[str]] = frozenset(
     }
 )
 
-# A small allowlist of read-only ``apoc.*`` subprocedures that the
-# query planner exposes. Anything else with ``CALL`` is rejected.
-_ALLOWED_APOC: Final[frozenset[str]] = frozenset({"apoc.cypher.run"})
+# Empty on purpose, and kept as a named constant so the reason survives.
+#
+# ``apoc.cypher.run`` was the sole entry, and it is a write primitive
+# wearing a read-only costume: it *executes* its first argument, and that
+# argument is a string literal — which the token scanner strips before
+# looking for forbidden keywords, exactly so that
+# ``WHERE n.name = 'CREATE'`` is not rejected. The two rules compose into
+# a bypass:
+#
+#     CALL apoc.cypher.run('CREATE (n:X) RETURN n', {})
+#
+# That passed the guard. The comment beside ``_FORBIDDEN_TOKENS`` claimed
+# "a CALL that smuggles a write is still caught by the write tokens
+# below" — true for a subquery, false for a string the procedure goes on
+# to run.
+#
+# Nothing referenced it: no query in the service, no prompt, no test, no
+# doc. So this is a removal rather than a trade-off — the capability had
+# no consumer and the hole was the whole of its effect. Adding any
+# procedure here again means auditing whether it can execute a string.
+_ALLOWED_APOC: Final[frozenset[str]] = frozenset()
 
 # Read-only procedures beyond apoc. ``db.index.vector.queryNodes`` only reads a
 # vector index, and without it the chunk embeddings — 93% of the nodes written,
@@ -177,10 +198,10 @@ def _tokenize(cypher: str) -> list[str]:
 def _is_safe_call_target(token_text: str) -> bool:
     """Check a ``CALL`` invocation target.
 
-    The Cypher ``CALL`` form is ``CALL <procedure>(...)``. Allowed:
-    ``apoc.cypher.run`` and its subprocedures, plus the read-only vector
-    lookup ``db.index.vector.queryNodes``. Everything else is rejected — no
-    admin, no ``dbms.``, no other ``db.`` procedure.
+    The Cypher ``CALL`` form is ``CALL <procedure>(...)``. Allowed: the
+    read-only index lookups in ``_ALLOWED_PROCEDURES``. Everything else is
+    rejected — no admin, no ``dbms.``, no other ``db.`` procedure, and no
+    ``apoc.`` (see ``_ALLOWED_APOC`` for why that one is empty).
 
     The vector lookup is an exception worth naming: it only reads a vector
     index, and blocking it made the chunk embeddings unreachable from the one

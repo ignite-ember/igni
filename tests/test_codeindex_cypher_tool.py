@@ -537,3 +537,67 @@ class TestCypherServiceTypedBoundary:
         assert captured["input"].cypher == cypher
         assert captured["input"].limit == 10
         assert captured["input"].commit is None
+
+
+class TestTheStringLiteralBypass:
+    """A write smuggled inside a string the procedure then executes.
+
+    Found during the production check by probing the guard rather than
+    reading it. Two individually-reasonable rules composed into a hole:
+
+    * string literals are stripped before the forbidden-token scan, so
+      that ``WHERE n.name = 'CREATE'`` is not rejected;
+    * ``apoc.cypher.run`` was on the CALL allowlist, and it *executes*
+      its first argument.
+
+    So this passed the read-only guard on a tool the model drives::
+
+        CALL apoc.cypher.run('CREATE (n:X) RETURN n', {})
+
+    The comment beside ``_FORBIDDEN_TOKENS`` asserted the opposite — "a
+    CALL that smuggles a write is still caught by the write tokens below"
+    — which holds for a subquery and not for a string.
+
+    Fixed by emptying ``_ALLOWED_APOC``: nothing referenced it, so the
+    capability had no consumer and the hole was the whole of its effect.
+    """
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "CALL apoc.cypher.run('CREATE (n:X) RETURN n', {})",
+            "CALL apoc.cypher.run('create (n:X) return n', {})",
+            "CALL apoc.cypher.run('MATCH (n) DETACH DELETE n', {})",
+            'CALL apoc.cypher.run("MERGE (n:X) SET n.p = 1", {})',
+            "CALL apoc.cypher.runMany('CREATE (n:X)', {})",
+            "CALL apoc.cypher.doIt('CREATE (n:X)', {})",
+        ],
+    )
+    def test_no_apoc_procedure_is_reachable(self, query: str):
+        with pytest.raises(CypherGuardError):
+            assert_read_only_cypher(query)
+
+    def test_the_allowlist_is_empty_and_stays_that_way(self):
+        """A named constant so the reasoning survives, and asserted so
+        re-adding an entry is a deliberate act with a test to change.
+        Any procedure that runs its argument defeats the token scan."""
+        from ember_code.core.tools.codeindex.cypher_guard import _ALLOWED_APOC
+
+        assert frozenset() == _ALLOWED_APOC
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            # The reads that must survive the removal — the vector index
+            # holds 93% of the nodes, and without it the chunk embeddings
+            # are unreachable from the only tool an agent has.
+            "CALL db.index.vector.queryNodes('chunk_embedding', 5, $query_vector) YIELD node RETURN node",
+            "CALL db.index.fulltext.queryNodes('item_name', 'foo') YIELD node RETURN node",
+            "MATCH (n:Item) WHERE n.proj = $proj RETURN n LIMIT $limit_n",
+            # And the reason string literals are stripped in the first
+            # place: a keyword inside one is data, not a statement.
+            "MATCH (n) WHERE n.name = 'CREATE' RETURN n",
+        ],
+    )
+    def test_legitimate_reads_are_untouched(self, query: str):
+        assert_read_only_cypher(query)
