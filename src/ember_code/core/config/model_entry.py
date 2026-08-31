@@ -112,6 +112,34 @@ class ModelRegistryEntry(BaseModel):
             return cloud_token
         return None
 
+    def why_no_api_key(self) -> str:
+        """One sentence naming what was tried and what to do.
+
+        Exists because the alternative is a provider's own
+        authentication error on the first call, phrased in their terms
+        and arriving nowhere near the cause. This is the sentence that
+        gets logged instead — and it matters more now that a project's
+        config can name a provider whose key is meant to live in the
+        home directory, so a teammate who has not set theirs up hits
+        this rather than a missing model.
+        """
+        tried: list[str] = []
+        if self.api_key_env:
+            tried.append(f"the environment variable {self.api_key_env!r} (unset or empty)")
+        if self.api_key_cmd:
+            tried.append(f"the command {self.api_key_cmd!r} (failed or returned nothing)")
+        if self.matches_cloud_gateway():
+            tried.append("the igni cloud token (not signed in)")
+
+        if tried:
+            return f"No API key for {self.model_id!r}: tried " + ", and ".join(tried) + "."
+        return (
+            f"No API key for {self.model_id!r}, and nothing was configured to find one. "
+            "Add `api_key` for it in ~/.ember/config.yaml — or `api_key_env` / "
+            "`api_key_cmd` in the project's config, which name a secret rather "
+            "than containing one and are safe to commit."
+        )
+
     def _api_key_from_env(self) -> str | None:
         if not self.api_key_env:
             return None

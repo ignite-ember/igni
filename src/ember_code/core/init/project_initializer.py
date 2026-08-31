@@ -23,6 +23,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ember_code.core.config.secret_scan import scan_project_config
 from ember_code.core.init.checksum_store import ChecksumStore
 from ember_code.core.init.home_migrator import HomeConfigMigrator
 from ember_code.core.init.hook_provisioner import HookProvisioner
@@ -120,6 +121,12 @@ class ProjectInitializer(BaseModel):
         # Sync built-in agents/skills — checksum-based so user edits
         # are preserved.
         warnings = self._update_built_in_files()
+        # A credential in the project's shareable config. Reported here
+        # because this is the one place that already surfaces warnings to
+        # whoever started the session, and the person who has to move a
+        # key is often not them — so it needs to be visible rather than
+        # only logged at debug.
+        warnings.extend(scan_project_config(self.project_dir))
         HookProvisioner(
             project_dir=self.project_dir,
             register_in_settings=not self.config.skip_builtin_hook_registration,
