@@ -232,6 +232,7 @@ class Session:
             self.project_dir,
             skip_bundled_agents=self._group_ships("agents"),
             skip_builtin_hook_registration=self._group_ships("hooks"),
+            group_ships_hook_scripts=self._group_ships("scripts"),
         )
         self._group_sync = self._sync_group_entries()
 

@@ -12,9 +12,17 @@ Given a project directory, the resolver:
 
 3. Caches the response so subsequent calls are free.
 
-Every degraded path (no git, no remote, no auth, server down, access
-denied) returns ``None`` rather than raising — the sync manager treats
-``None`` as "skip silently".
+Most degraded paths (no git, no remote, no auth, server down) return
+``None`` rather than raising — the sync manager treats ``None`` as "skip
+silently", which is right when there is nothing the user could do.
+
+**Access denial is not one of them.** A 403 means the server answered,
+and its answer is usually actionable: under SSO nobody has a provider
+identity linked at sign-in, so "connect your GitHub account" is where
+most people start. Swallowing that into ``None`` reported it as
+"server unreachable" — untrue, and it hid the one instruction that
+would have fixed it. Denials come back as ``ACCESS_DENIED`` carrying
+the server's reason and message.
 """
 
 from __future__ import annotations
@@ -35,10 +43,17 @@ logger = logging.getLogger(__name__)
 
 
 class DiscoveryStatus(StrEnum):
-    """Mirror of the server's DiscoveryStatus."""
+    """The server's discovery outcomes, plus one this client derives.
+
+    ``REGISTERED`` and ``INSTALL_REQUIRED`` mirror the server's enum and
+    arrive in a 200 body. ``ACCESS_DENIED`` has no server-side twin: a
+    refusal is a 403, not a 200, and this is where that lands so callers
+    have a single thing to branch on rather than two.
+    """
 
     REGISTERED = "registered"
     INSTALL_REQUIRED = "install_required"
+    ACCESS_DENIED = "access_denied"
 
 
 @dataclass(frozen=True)
@@ -48,10 +63,18 @@ class ResolvedRepository:
     status: DiscoveryStatus
     repository_id: str | None = None  # set when status == REGISTERED
     install_url: str | None = None  # set when status == INSTALL_REQUIRED
+    # Both set when status == ACCESS_DENIED. ``reason`` is the server's
+    # enum value, for branching; ``message`` is the sentence to show.
+    denial_reason: str | None = None
+    denial_message: str | None = None
 
     @property
     def needs_install(self) -> bool:
         return self.status == DiscoveryStatus.INSTALL_REQUIRED
+
+    @property
+    def access_denied(self) -> bool:
+        return self.status == DiscoveryStatus.ACCESS_DENIED
 
 
 class RepositoryResolver:
@@ -126,6 +149,16 @@ class RepositoryResolver:
                         return resp
 
                 response, metadata = await retry_with_backoff(_fetch_repository)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 403:
+                    logger.info("codeindex resolver: server refused (%s)", exc)
+                    return None
+                # Deliberately not cached. The commonest denial is "you
+                # have not linked a provider identity", which the user
+                # fixes in a browser without restarting igni — a cached
+                # verdict would keep reporting a problem they just
+                # solved.
+                return self._denial(exc.response)
             except httpx.HTTPError as exc:
                 logger.info("codeindex resolver: server unreachable (%s)", exc)
                 return None
@@ -143,3 +176,31 @@ class RepositoryResolver:
 
             self._cached = resolved
             return self._cached
+
+    @staticmethod
+    def _denial(response: httpx.Response) -> ResolvedRepository:
+        """Read a 403 body into an ``ACCESS_DENIED`` result.
+
+        Falls back to a generic sentence rather than to ``None``: an
+        older server, or a proxy that rewrote the body, still leaves the
+        user better off knowing they were refused than being told the
+        server was unreachable.
+        """
+        reason: str | None = None
+        message: str | None = None
+        try:
+            detail = response.json().get("detail")
+        except ValueError:
+            detail = None
+        if isinstance(detail, dict):
+            reason = detail.get("reason")
+            message = detail.get("message")
+        elif isinstance(detail, str):
+            message = detail
+
+        logger.info("codeindex resolver: access denied (%s)", reason or "unspecified")
+        return ResolvedRepository(
+            status=DiscoveryStatus.ACCESS_DENIED,
+            denial_reason=reason,
+            denial_message=message or "You do not have access to this repository.",
+        )

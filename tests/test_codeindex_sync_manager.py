@@ -94,6 +94,11 @@ _NEEDS_INSTALL = ResolvedRepository(
     status=DiscoveryStatus.INSTALL_REQUIRED,
     install_url="https://github.com/apps/ember-codeindex/installations/new?state=...",
 )
+_ACCESS_DENIED = ResolvedRepository(
+    status=DiscoveryStatus.ACCESS_DENIED,
+    denial_reason="no_linked_logins",
+    denial_message="Connect one at https://portal/dashboard, then try again.",
+)
 
 
 class TestSyncResult:
@@ -142,6 +147,27 @@ class TestSyncSkipPaths:
         assert result.skipped and "unavailable" in result.reason
 
     @pytest.mark.asyncio
+    async def test_access_denial_reports_the_servers_instruction(self, tmp_path):
+        """A denial must not be laundered into "unavailable".
+
+        The two mean opposite things to the user: unavailable is "retry
+        later", denied is "do this specific thing and it will work". The
+        server took the trouble to say which; the manager has to pass it
+        through.
+        """
+        mgr = _make_mgr(
+            project_dir=tmp_path,
+            code_index=_stub_index(),
+            resolver=_stub_resolver(_ACCESS_DENIED),
+            credentials=_stub_credentials(),
+        )
+        result = await mgr.sync_now(sha="abc")
+
+        assert result.skipped
+        assert result.reason == _ACCESS_DENIED.denial_message
+        assert "unavailable" not in result.reason
+
+    @pytest.mark.asyncio
     async def test_skips_when_no_cloud_token(self, tmp_path):
         mgr = _make_mgr(
             project_dir=tmp_path,
@@ -150,7 +176,7 @@ class TestSyncSkipPaths:
             credentials=_stub_credentials(token=None),
         )
         result = await mgr.sync_now(sha="abc")
-        assert result.skipped and "not authenticated" in result.reason
+        assert result.skipped and "not signed in" in result.reason
 
     @pytest.mark.asyncio
     async def test_install_required_surfaces_install_url(self, tmp_path):

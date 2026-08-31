@@ -53,8 +53,14 @@ CONFLICTS_FILE = ".group-agent-conflicts.json"
 #: kind → (directory under ``.ember``, filename for one entry). These
 #: are the kinds somebody might reasonably open and change: prompts,
 #: routines, rules. The rest — MCP servers, plugin installs, hook
-#: declarations, Python tools — are configuration the server owns, read
-#: straight from the policy cache, and are not synced here.
+#: declarations, Python tools, shell scripts — are configuration the
+#: server owns, read straight from the policy cache, and are not synced
+#: here.
+#:
+#: ``scripts`` is deliberately absent. A hook reaches one through
+#: ``{group_scripts}``, which resolves into the policy cache; copying
+#: them into ``.ember/`` would leave the hook pointing at the cache
+#: while somebody edited the copy.
 SYNCED_KINDS: dict[str, tuple[str, str]] = {
     "agents": ("agents", "{name}.md"),
     "skills": ("skills", "{name}/SKILL.md"),

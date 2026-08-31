@@ -38,7 +38,18 @@ _PLAIN_KINDS: dict[str, tuple[str, str]] = {
     "rules": ("rules", "{name}.md"),
     "output-styles": ("output-styles", "{name}.md"),
     "tools": ("tools", "{name}.py"),
+    "scripts": ("scripts", "{name}.sh"),
 }
+
+#: Written with the executable bit set. A hook command runs through
+#: ``bash -c``; a script arriving mode 0644 fails with 127, which the
+#: hook runner treats as non-blocking — a silent no-op on every matching
+#: tool call rather than an error anyone sees.
+_EXECUTABLE_KINDS: frozenset[str] = frozenset({"scripts"})
+
+#: What a group's hook writes to reach a script the same group ships.
+#: Expanded here, because only this side knows where the pack landed.
+GROUP_SCRIPTS_PLACEHOLDER = "{group_scripts}"
 
 #: What a stale file of each kind looks like, for pruning.
 _SUFFIX: dict[str, str] = {
@@ -49,6 +60,7 @@ _SUFFIX: dict[str, str] = {
     "output-styles": ".md",
     "tools": ".py",
     "mcps": ".json",
+    "scripts": ".sh",
 }
 
 # Same split :class:`AgentMarkdownFile` uses, so a model written here
@@ -413,6 +425,25 @@ class GroupPolicyCache:
         path.parent.mkdir(parents=True, exist_ok=True)
         content = _with_model(o.content, o.model) if o.kind == "agents" else o.content
         path.write_text(content, encoding="utf-8")
+        if o.kind in _EXECUTABLE_KINDS:
+            # 0o700 rather than 0o755: nothing else on the machine needs
+            # to run it, and this is code that arrived over the network.
+            path.chmod(0o700)
+
+    @property
+    def scripts_dir(self) -> Path:
+        """Where a hook's ``{group_scripts}`` resolves to."""
+        return self.dir_for("scripts")
+
+    def _expand_scripts_placeholder(self, command: str) -> str:
+        """Point a hook command at the scripts this pack materialised.
+
+        Only this side knows the directory, and it is per-machine, so the
+        server stores a placeholder and the substitution happens here.
+        Left untouched when absent, so a command naming an absolute path
+        or something baked into the image still works.
+        """
+        return command.replace(GROUP_SCRIPTS_PLACEHOLDER, str(self.scripts_dir))
 
     def _collect_hook(self, o: GroupPolicyEntry, hooks: dict[str, list]) -> None:
         """Fold one hook entry into the shared ``hooks.json`` shape.
@@ -452,6 +483,15 @@ class GroupPolicyCache:
         """Write (or remove) the merged hooks file."""
         path = self.dir_for("hooks") / "settings.json"
         if hooks:
+            # Expanded here rather than at each parse site: a hook can
+            # arrive as a bare declaration or nested inside a ``hooks``
+            # block, and doing it once on the merged result covers both.
+            for declarations in hooks.values():
+                for declaration in declarations:
+                    if isinstance(declaration, dict) and isinstance(declaration.get("command"), str):
+                        declaration["command"] = self._expand_scripts_placeholder(
+                            declaration["command"]
+                        )
             path.write_text(json.dumps({"hooks": hooks}, indent=2), encoding="utf-8")
         else:
             path.unlink(missing_ok=True)

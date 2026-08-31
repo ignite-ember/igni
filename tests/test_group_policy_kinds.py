@@ -533,3 +533,94 @@ class TestBeingMovedToAnotherGroup:
         cache.materialize(legal)
 
         assert cache.stored_etag() == '"legal"'
+
+
+class TestScriptsAndTheHooksThatRunThem:
+    """igni ships nothing, so a hook has to arrive with its script.
+
+    A hook's ``command`` runs through ``bash -c``. Before scripts were a
+    kind, a group could ship a hook naming ``.ember/hooks/x.sh`` and not
+    ship ``x.sh`` — and a missing command exits 127, which the hook
+    runner treats as "did not block". The hook then did nothing on every
+    matching tool call, silently, for everyone in the group.
+    """
+
+    def test_a_script_lands_as_a_dot_sh_file(self, cache: GroupPolicyCache):
+        cache.materialize(
+            _pack(_entry("scripts", "pre-pr-review", "#!/bin/bash\necho hi\n", content_type="shell"))
+        )
+        assert (cache.scripts_dir / "pre-pr-review.sh").read_text().startswith("#!/bin/bash")
+
+    def test_a_script_is_executable(self, cache: GroupPolicyCache):
+        """Mode 0644 reproduces the exact silent failure this removes."""
+        cache.materialize(_pack(_entry("scripts", "s", "#!/bin/bash\n", content_type="shell")))
+        mode = (cache.scripts_dir / "s.sh").stat().st_mode & 0o777
+        assert mode & 0o100, f"not owner-executable: {oct(mode)}"
+
+    def test_a_script_is_not_world_readable(self, cache: GroupPolicyCache):
+        """It is code that arrived over the network; nothing else on the
+        machine needs to run it."""
+        cache.materialize(_pack(_entry("scripts", "s", "#!/bin/bash\n", content_type="shell")))
+        mode = (cache.scripts_dir / "s.sh").stat().st_mode & 0o777
+        assert mode & 0o007 == 0, f"world bits set: {oct(mode)}"
+
+    def test_the_placeholder_becomes_the_real_directory(self, cache: GroupPolicyCache):
+        hook = json.dumps(
+            {
+                "event": "PreToolUse",
+                "type": "command",
+                "command": '"{group_scripts}/pre-pr-review.sh"',
+                "matcher": "Bash",
+            }
+        )
+        cache.materialize(
+            _pack(
+                _entry("scripts", "pre-pr-review", "#!/bin/bash\n", content_type="shell"),
+                _entry("hooks", "pre-pr-review", hook, content_type="json"),
+            )
+        )
+        settings = json.loads((cache.dir_for("hooks") / "settings.json").read_text())
+        command = settings["hooks"]["PreToolUse"][0]["command"]
+
+        assert "{group_scripts}" not in command
+        assert str(cache.scripts_dir) in command
+        # And the thing it now names is really there, and runnable.
+        target = cache.scripts_dir / "pre-pr-review.sh"
+        assert target.exists()
+        assert command.strip('"') == str(target)
+
+    def test_a_command_without_the_placeholder_is_untouched(self, cache: GroupPolicyCache):
+        """A hook may deliberately call something baked into the image."""
+        hook = json.dumps(
+            {"event": "PreToolUse", "type": "command", "command": "/opt/acme/check --staged"}
+        )
+        cache.materialize(_pack(_entry("hooks", "h", hook, content_type="json")))
+        settings = json.loads((cache.dir_for("hooks") / "settings.json").read_text())
+        assert settings["hooks"]["PreToolUse"][0]["command"] == "/opt/acme/check --staged"
+
+    def test_expansion_reaches_a_nested_hooks_block(self, cache: GroupPolicyCache):
+        """The other shape a hook entry can arrive in — expansion happens
+        on the merged result so both are covered by one pass."""
+        hook = json.dumps(
+            {
+                "hooks": {
+                    "Stop": [{"type": "command", "command": "{group_scripts}/done.sh"}],
+                }
+            }
+        )
+        cache.materialize(
+            _pack(
+                _entry("scripts", "done", "#!/bin/bash\n", content_type="shell"),
+                _entry("hooks", "h", hook, content_type="json"),
+            )
+        )
+        settings = json.loads((cache.dir_for("hooks") / "settings.json").read_text())
+        assert str(cache.scripts_dir) in settings["hooks"]["Stop"][0]["command"]
+
+    def test_a_removed_script_is_pruned(self, cache: GroupPolicyCache):
+        cache.materialize(_pack(_entry("scripts", "gone", "#!/bin/bash\n", content_type="shell")))
+        assert (cache.scripts_dir / "gone.sh").exists()
+
+        cache.materialize(_pack(_entry("scripts", "stays", "#!/bin/bash\n", content_type="shell")))
+        assert not (cache.scripts_dir / "gone.sh").exists()
+        assert (cache.scripts_dir / "stays.sh").exists()

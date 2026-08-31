@@ -96,11 +96,24 @@ class SyncResult(BaseModel):
 
     @classmethod
     def resolver_unavailable(cls) -> SyncResult:
-        """Resolver ran but returned ``None`` — offline / no auth / no access."""
+        """Resolver ran but returned ``None`` — offline, or no auth."""
         return cls(
             skipped=True,
-            reason="codeindex unavailable (offline, no access, or no auth)",
+            reason="codeindex unavailable (offline or not authenticated)",
         )
+
+    @classmethod
+    def access_denied(cls, message: str) -> SyncResult:
+        """The server answered, and the answer was no.
+
+        Distinct from :meth:`resolver_unavailable` because the two ask
+        different things of the user: that one is "wait, or check your
+        connection", this one is a specific instruction the server
+        supplied — most often "link your GitHub account". Reporting a
+        denial as unavailability tells people to retry something that
+        will never start working on its own.
+        """
+        return cls(skipped=True, reason=message)
 
     @classmethod
     def needs_install(cls, commit_sha: str, install_url: str | None) -> SyncResult:
@@ -123,7 +136,7 @@ class SyncResult(BaseModel):
     @classmethod
     def not_authenticated(cls) -> SyncResult:
         """No access token in credentials store."""
-        return cls(skipped=True, reason="not authenticated with Ember Cloud")
+        return cls(skipped=True, reason="not signed in to igni")
 
     @classmethod
     def preflight_failed(cls, commit_sha: str, message: str) -> SyncResult:

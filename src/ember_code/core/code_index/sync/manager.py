@@ -258,6 +258,11 @@ class CodeIndexSyncManager:
         if resolved is None:
             return SyncResult.resolver_unavailable()
 
+        if resolved.access_denied:
+            return SyncResult.access_denied(
+                resolved.denial_message or "You do not have access to this repository."
+            )
+
         if resolved.needs_install:
             return SyncResult.needs_install(target_sha, resolved.install_url)
 

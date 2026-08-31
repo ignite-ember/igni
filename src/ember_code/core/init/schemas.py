@@ -403,6 +403,9 @@ class InitConfig(BaseModel):
     #: — but the group's settings file is what registers them, so
     #: registering here too would fire each hook twice.
     skip_builtin_hook_registration: bool = False
+    #: The group ships ``scripts`` entries, so igni writes no hook
+    #: scripts locally at all — see ``HookProvisioner.skip_entirely``.
+    group_ships_hook_scripts: bool = False
     #: Stand the bundled agents down. Set when the person's group ships
     #: agents of its own: the group becomes the sync source for
     #: ``.ember/agents`` and two sources writing the same files would

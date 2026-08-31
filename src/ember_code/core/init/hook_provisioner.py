@@ -40,9 +40,20 @@ class HookProvisioner(BaseModel):
     project_dir: Path
     hooks: tuple[BuiltInHookSpec, ...] = Field(default_factory=lambda: BUILT_IN_HOOKS)
     #: Write the scripts but leave them unregistered, because the
-    #: person's group registers them instead. The scripts still have to
-    #: exist — a group's hook declaration points at one by path.
+    #: person's group registers them instead.
     register_in_settings: bool = True
+
+    #: Write nothing at all.
+    #:
+    #: Set when the group ships ``scripts`` entries of its own. igni is
+    #: meant to ship nothing: everything a session runs arrives from the
+    #: server. While a group could only send hook *declarations*, the
+    #: scripts had to be written locally for the declaration's path to
+    #: resolve — so this ran even when the group was in charge. Now a
+    #: group sends the script alongside the hook and reaches it through
+    #: ``{group_scripts}``, and writing local copies would leave two
+    #: versions of the same script with only one of them maintained.
+    skip_entirely: bool = False
 
     def provision(self) -> None:
         """Write every hook script and register each definition.
@@ -57,10 +68,17 @@ class HookProvisioner(BaseModel):
            hooks are code, not config) and, unless the person's group
            registers them instead, :meth:`BuiltInHookSpec.register_in`
            (idempotent).
+
+        Does nothing at all when :attr:`skip_entirely` is set, which is
+        the case once a group ships the scripts itself.
         4. Save the settings file back — user-added top-level keys
            survive via :attr:`SettingsFile.model_config`'s
            ``extra="allow"``.
         """
+        if self.skip_entirely:
+            logger.debug("Group ships its own hook scripts; provisioning nothing locally")
+            return
+
         hooks_dir = self.project_dir / ".ember" / "hooks"
         hooks_dir.mkdir(parents=True, exist_ok=True)
 

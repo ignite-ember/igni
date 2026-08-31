@@ -122,6 +122,7 @@ class ProjectInitializer(BaseModel):
         HookProvisioner(
             project_dir=self.project_dir,
             register_in_settings=not self.config.skip_builtin_hook_registration,
+            skip_entirely=self.config.group_ships_hook_scripts,
         ).provision()
 
         for msg in warnings:
