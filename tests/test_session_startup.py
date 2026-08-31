@@ -26,9 +26,17 @@ from ember_code.core.session.schemas import McpInitResult
 from ember_code.core.session.startup import SessionStartupCoordinator
 
 
-def _bare_session():
+def _bare_session(*, codeindex_enabled: bool = True):
     """Session-shaped stub carrying only what the startup phases read."""
     session = SimpleNamespace()
+    # The CodeIndex warmup reads ``settings.code_index.enabled`` before
+    # scheduling anything — an admin can turn the index off for a group,
+    # and the whole sequence below (cloud resolve, changeset sync, HEAD
+    # watcher) is then work for an index the session does not have.
+    from ember_code.core.config.settings import Settings
+
+    session.settings = Settings()
+    object.__setattr__(session.settings.code_index, "enabled", codeindex_enabled)
     session.knowledge = SimpleNamespace()
     session.knowledge.start = AsyncMock()
     session.code_index = SimpleNamespace()
@@ -120,6 +128,17 @@ class TestStartCodeindexBackground:
         await asyncio.sleep(0)  # bootstrap has multiple awaits
         s.code_index.sweep_stale_dirs.assert_called_once()
         s.code_index_sync.sync_now.assert_called_once()
+
+    def test_disabled_schedules_nothing(self):
+        """``code_index.enabled: false`` means the warmup does not run at
+        all — no cloud resolve, no changeset sync, no HEAD watcher left
+        behind for the life of the session."""
+        s = _bare_session(codeindex_enabled=False)
+        SessionStartupCoordinator(s).start_codeindex_background()
+
+        s.code_index.sweep_stale_dirs.assert_not_called()
+        s.code_index_sync.sync_now.assert_not_called()
+        s.code_index_sync.start_watcher.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_sweep_failure_does_not_stop_sync(self):

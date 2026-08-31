@@ -31,7 +31,18 @@ class CodeIndexWarmupPhase(SessionStartupPhase):
     """
 
     def start_background(self) -> None:
-        """Kick the CodeIndex bootstrap sequence in the background."""
+        """Kick the CodeIndex bootstrap sequence in the background.
+
+        Does nothing when ``code_index.enabled`` is off, and that is the
+        step that actually saves the work: the sequence below reaches
+        the cloud resolver, pulls changesets in the initial sync, and
+        leaves a HEAD watcher running for the life of the session. None
+        of it is free, and all of it is for an index the session has
+        been told not to have.
+        """
+        if not self._session.settings.code_index.enabled:
+            logger.info("CodeIndex warmup: skipped (disabled in settings)")
+            return
         self._schedule_on_loop(self._bootstrap)
 
     async def _bootstrap(self) -> None:

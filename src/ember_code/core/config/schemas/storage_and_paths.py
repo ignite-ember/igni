@@ -47,4 +47,25 @@ class CodeIndexConfig(BaseModel):
     configure either.
     """
 
+    #: Whether this session has a code index at all.
+    #:
+    #: Off means the ``CodeIndex`` tool is never offered, the plain
+    #: ``main_agent`` prompt is used instead of the CodeIndex-first
+    #: variant, and the Neo4j sidecar is not attached — so no
+    #: distribution download, no server process, no refcount. That last
+    #: part is the point: the index is backed by Neo4j, and somebody who
+    #: is not reading code should not pay for a graph database.
+    #:
+    #: Server-settable. A group's ``settings`` entry is deep-merged into
+    #: config above both CLI flags and project files, so an admin can
+    #: turn this off for a group and nobody can turn it back on locally::
+    #:
+    #:     {"code_index": {"enabled": false}}
+    #:
+    #: **This alone does not remove Neo4j.** ``knowledge.enabled`` is
+    #: backed by the same sidecar, and the sidecar is only skipped when
+    #: neither feature wants it. A deployment that wants no graph
+    #: database at all turns off both.
+    enabled: bool = True
+
     fetch_timeout: float = 60.0

@@ -151,34 +151,48 @@ class SessionOrchestrator:
         """Wire the :class:`Neo4jRuntime` into the default session's
         knowledge + code_index indices.
 
-        Neo4j is the DEFAULT storage backend — this call always tries to
-        attach. Set ``EMBER_NEO4J_DISABLED=1`` to opt out (rare — only for
-        headless CI / test scenarios where downloading the JDK + Neo4j
-        distribution and spawning per-commit subprocesses is unwanted).
+        Neo4j backs two features, and this is skipped only when neither
+        wants it: ``code_index.enabled`` and ``knowledge.enabled``. Both
+        are server-settable through a group's ``settings`` entry, which
+        merges above CLI flags and project files — so an admin can spare
+        a group who never read code the cost of a graph database, and
+        nobody can opt back in locally.
 
-        Runtime construction downloads the Neo4j distribution + JDK on
-        first use (~200MB, cached at ``~/.igni/neo4j``). Per-(project,
-        commit) subprocesses are refcounted across sessions via the
-        runtime's subprocess map, so the download cost is one-time and
-        the process cost scales only with how many commits are actively
-        open across sessions.
+        Skipping matters because attaching is not cheap. Runtime
+        construction downloads the Neo4j distribution + JDK on first use
+        (~200MB, cached at ``~/.igni/neo4j``) and spawns a server
+        process, refcounted across sessions via
+        ``~/.igni/neo4j.runtime.json``. Turning the features off but
+        still attaching would pay all of that for nothing.
+
+        ``EMBER_NEO4J_DISABLED=1`` remains as a local escape hatch for
+        headless CI, where the settings plumbing is beside the point.
 
         Graceful degradation: if the runtime fails to construct (missing
-        Java, disk full, distribution download blocked), we log the
-        failure and return ``None`` — the session falls back to the
-        legacy Chroma-backed indices so the BE still boots and the user
-        can still work; ``codeindex_cypher`` will surface
-        ``no_backend`` errors until the runtime succeeds.
+        Java, disk full, download blocked), the failure is logged and
+        this returns ``None``. The BE still boots and the user can still
+        work — but with no index, not with a fallback: the Chroma-backed
+        path was removed when the index moved to Neo4j, so
+        ``codeindex_cypher`` surfaces ``no_backend`` and knowledge is
+        ``None`` until the runtime succeeds.
 
         Idempotent — a second call is a no-op (the runtime itself is
         cached on ``self._neo4j_runtime``).
         """
         if os.environ.get("EMBER_NEO4J_DISABLED"):
+            logger.info("EMBER_NEO4J_DISABLED set — skipping the Neo4j runtime attach.")
+            return None
+
+        wants_codeindex = self._settings.code_index.enabled
+        wants_knowledge = self._settings.knowledge.enabled
+        if not wants_codeindex and not wants_knowledge:
             logger.info(
-                "EMBER_NEO4J_DISABLED set — skipping Neo4j runtime attach; "
-                "CodeIndex + knowledge will use legacy Chroma-backed indices."
+                "CodeIndex and knowledge are both disabled in settings — skipping the "
+                "Neo4j runtime entirely: no distribution download, no server process, "
+                "no refcount."
             )
             return None
+
         if self._neo4j_runtime is not None:
             return self._neo4j_runtime
 
@@ -188,22 +202,28 @@ class SessionOrchestrator:
             runtime = Neo4jRuntime(data_dir=self._settings.storage.data_dir)
         except Exception:  # noqa: BLE001 — degrade so BE boot doesn't die
             logger.exception(
-                "Neo4j runtime construction failed; falling back to legacy "
-                "Chroma-backed indices. Set EMBER_NEO4J_DISABLED=1 to silence "
-                "this and skip Neo4j entirely."
+                "Neo4j runtime construction failed; CodeIndex and knowledge will be "
+                "unavailable this session. Set EMBER_NEO4J_DISABLED=1 to skip Neo4j "
+                "entirely and silence this."
             )
             return None
 
         self._neo4j_runtime = runtime
-        # ``self._backend`` is a :class:`BackendServer`; the session
-        # is reachable via the bootstrap. Both attach calls are
-        # safe when the field is missing or the session was built
-        # with the relevant feature disabled.
+        # ``self._backend`` is a :class:`BackendServer`; the session is
+        # reachable via the bootstrap.
+        #
+        # Each side is gated on its own setting, so one feature wanting
+        # Neo4j does not drag the other in. The attribute check is not
+        # enough for code_index: ``knowledge`` is None when disabled, but
+        # a disabled code_index deliberately keeps its objects — the
+        # switch lives in the availability flag — so testing the
+        # attribute would wire a Neo4j-backed index for a feature an
+        # admin turned off.
         session = getattr(self._backend, "_session", None)
         if session is not None:
-            if getattr(session, "knowledge", None) is not None:
+            if wants_knowledge and getattr(session, "knowledge", None) is not None:
                 await session.attach_knowledge_neo4j(runtime)
-            if getattr(session, "code_index", None) is not None:
+            if wants_codeindex and getattr(session, "code_index", None) is not None:
                 await session.attach_codeindex_neo4j(runtime)
         return runtime
 

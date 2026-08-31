@@ -487,6 +487,20 @@ class Session:
         self.code_index_sync = CodeIndexSyncManager.from_settings(
             settings, project_dir=self.project_dir, code_index=self.code_index
         )
+
+        if not settings.code_index.enabled:
+            # The objects stay — they are cheap, hold no connection, and
+            # a hundred call sites read them without a None guard. What
+            # changes is the flag, and it is the only thing that needs
+            # to: ``_main_tool_names`` gates the CodeIndex tool on it,
+            # ``PromptBuilder`` picks the plain prompt over the
+            # CodeIndex-first one, and the agent pool loads the
+            # non-CodeIndex variant of every definition. Nothing else
+            # has to learn about the switch.
+            self._codeindex_available = False
+            logger.info("CodeIndex: disabled in settings")
+            return
+
         _head_sha = self.code_index_sync.current_sha()
         self._codeindex_available = bool(_head_sha and self.code_index.has_commit(_head_sha))
 
