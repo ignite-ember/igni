@@ -802,6 +802,26 @@ class Session:
             logger.warning("Could not reload what the group ships: %s", exc)
             return False
 
+    def group_root(self, kind: str) -> Path | None:
+        """The pack's directory for this kind, or None if it ships none.
+
+        Public because the loaders that need it are not all inside the
+        session: the markdown-command dispatcher asks for its own.
+
+        ``None`` rather than a missing path so a loader is never handed a
+        directory that does not exist — every one of them would silently
+        skip it, which works but hides the difference between "the group
+        ships nothing" and "we passed the wrong path".
+        """
+        try:
+            directory = self.group_dir_for(kind)
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.debug("Could not resolve the group %s directory: %s", kind, exc)
+            return None
+        if not directory.is_dir() or not any(directory.iterdir()):
+            return None
+        return directory
+
     def _group_ships(self, kind: str) -> bool:
         """Whether the cached pack carries anything of this kind.
 
@@ -865,6 +885,7 @@ class Session:
             settings,
             self.project_dir,
             codeindex_available=self._codeindex_available,
+            group_dir=self.group_root("agents"),
         )
         self.plugin_loader.apply_to_agents(self.pool, disabled=self._disabled_plugins)
         if settings.orchestration.generate_ephemeral:
@@ -875,10 +896,11 @@ class Session:
         self._check_agent_tools()
 
         self.skill_pool = SkillPool()
-        # No group root: the group's skills are synced into
-        # ``.ember/skills`` where a person can edit them, and reading the
-        # server's copy as well would let it outrank the edit.
-        self.skill_pool.load_all(self.project_dir, settings.skills.cross_tool_support)
+        self.skill_pool.load_all(
+            self.project_dir,
+            settings.skills.cross_tool_support,
+            group_dir=self.group_root("skills"),
+        )
         self.plugin_loader.apply_to_skills(self.skill_pool, disabled=self._disabled_plugins)
 
     def _init_lsp_and_monitors(self) -> None:
@@ -928,6 +950,7 @@ class Session:
             self.project_dir,
             plugin_roots=plugin_style_roots,
             read_claude=settings.rules.cross_tool_support,
+            group_dir=self.group_root("output-styles"),
         )
         if "default" in self.output_styles:
             self._active_output_style = "default"

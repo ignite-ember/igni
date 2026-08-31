@@ -30,6 +30,7 @@ from ember_code.backend.schemas_rpc import BackendReadyLine
 from ember_code.backend.server import BackendServer
 from ember_code.backend.session_orchestrator import SessionOrchestrator
 from ember_code.backend.supervisor import BackendSupervisor
+from ember_code.core.config.group_policy import GroupPolicyCache
 from ember_code.core.config.settings import load_settings
 
 logger = logging.getLogger(__name__)
@@ -228,9 +229,19 @@ class BackendApp:
         # it via ``backend.workflow_runner``.
         from ember_code.backend.workflow_runner import WorkflowRunner
 
+        # The group's workflows come from the policy cache, not from the
+        # project. Computed here from settings rather than read off the
+        # session: the runner is built outside the session's ownership,
+        # and reaching into it for a path would be a private-attribute
+        # reach-in for no gain.
+        group_workflows = GroupPolicyCache(
+            data_dir=Path(settings.storage.data_dir).expanduser()
+        ).dir_for("workflows")
+
         self._backend.workflow_runner = WorkflowRunner(
             project_dir=self._project_dir,
             push=self._push_bridge,
+            group_dir=group_workflows if group_workflows.is_dir() else None,
         )
         self._supervisor.start_evictor()
         self._supervisor.mark_running()

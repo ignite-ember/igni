@@ -283,10 +283,11 @@ class WorkflowRunner:
         *,
         project_dir: Path,
         push: PushNotificationBridge,
+        group_dir: Path | None = None,
     ):
         self._project_dir = Path(project_dir)
         self._push = push
-        self._discovery = WorkflowDiscovery(project_dir=self._project_dir)
+        self._discovery = WorkflowDiscovery(project_dir=self._project_dir, group_dir=group_dir)
         self._runs: dict[str, _RunState] = {}
 
     @property
