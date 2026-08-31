@@ -21,20 +21,6 @@ class MCPTransport(str, Enum):
     sse = "sse"
 
 
-# Org-pushed MCP servers override the user-home and project-local roots.
-#
-# This used to be described as mirroring ``AgentPriority.ORG_GROUP``, and
-# the two have deliberately diverged: agents, skills, commands and the
-# rest now rank the *project* above the group, so a repository can
-# override one by name. MCP servers stay group-first because they are
-# closer to policy than preference — a server declaration names an
-# endpoint and a command line, so letting a project shadow one would let
-# it point an org-approved tool somewhere else.
-#
-# Not a number to keep in step with anything; it only has to stay above
-# the project and user tiers here.
-MCP_PRIORITY_GROUP = 5
-
 # Stored file extension for per-server group policy MCP configs.
 _GROUP_MCP_SUFFIX = ".json"
 
@@ -52,8 +38,10 @@ class MCPServerConfig(BaseModel):
     """Filesystem path of the .mcp.json file that defined this server."""
     source: str = "user"
     """Loader tier — ``"user"``, ``"project"``, ``"group-policy"``, or ``"plugin"``.
-    Group-policy servers (org Group Policy) beat everything except managed-policy
-    denials; see :data:`MCP_PRIORITY_GROUP`."""
+
+    Group-policy servers sit above the user's home config and below
+    anything the project declares, matching every other kind a group
+    ships. Managed policy still outranks all of them."""
 
 
 class MCPPolicy(BaseModel):
@@ -119,33 +107,38 @@ class MCPConfigLoader:
     ):
         self.project_dir = project_dir or Path.cwd()
         # Optional: directory of per-server MCP overrides materialised by
-        # :class:`GroupPolicyCache`. When set, each ``<name>.json`` file
-        # is read with priority :data:`MCP_PRIORITY_GROUP` so org-pushed
-        # servers override the user-home / project-local roots.
+        # :class:`GroupPolicyCache`. Read before the project's roots, so
+        # a server the project declares under the same name wins — see
+        # :meth:`load`.
         self.group_mcps_dir = group_mcps_dir
 
     def load(self) -> dict[str, MCPServerConfig]:
         """Load MCP server configurations from all locations.
 
-        Scans the three standard roots first (later writes win by
-        re-assignment: project-local beats user-home), then layers the
-        optional group-policy directory on top so ORG-pushed servers
-        override everything except managed-policy denials.
+        Later writes win by re-assignment, and the order is: the user's
+        home config, then the group's, then the project's. So a server
+        the project declares under the same name overrides the group's,
+        which overrides the user's — the same ranking agents, skills,
+        commands, output styles and workflows use.
+
+        The group's used to be layered last and win outright. It was
+        moved for consistency: an org sets the baseline and a repository
+        can override one server by name. Managed policy is unaffected
+        and still outranks everything here.
         """
         servers: dict[str, MCPServerConfig] = {}
 
-        paths = [
-            Path.home() / CONFIG_DIR / ".mcp.json",
-            self.project_dir / ".mcp.json",
-            self.project_dir / CONFIG_DIR / ".mcp.json",
-        ]
-
-        for path in paths:
-            self._load_from_file(path, servers)
+        self._load_from_file(Path.home() / CONFIG_DIR / ".mcp.json", servers)
 
         if self.group_mcps_dir is not None and self.group_mcps_dir.is_dir():
             for path in sorted(self.group_mcps_dir.glob(f"*{_GROUP_MCP_SUFFIX}")):
                 self._load_from_file(path, servers, source="group-policy")
+
+        for path in (
+            self.project_dir / ".mcp.json",
+            self.project_dir / CONFIG_DIR / ".mcp.json",
+        ):
+            self._load_from_file(path, servers)
 
         return servers
 

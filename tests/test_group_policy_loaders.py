@@ -109,8 +109,14 @@ def test_mcp_config_loader_scans_group_dir(tmp_path: Path):
     assert servers["github"].source == "group-policy"
 
 
-def test_mcp_config_loader_group_dir_overrides_project(tmp_path: Path):
-    """Group-policy server wins over a same-named project-local one."""
+def test_mcp_config_loader_project_overrides_group_dir(tmp_path: Path):
+    """A same-named project server wins over the group's.
+
+    This asserted the opposite until the group tier was moved below the
+    project's, for consistency with agents, skills, commands, output
+    styles and workflows: an org sets the baseline and a repository can
+    override one server by name.
+    """
     project = tmp_path / "proj"
     project.mkdir()
     (project / ".mcp.json").write_text(
@@ -128,9 +134,9 @@ def test_mcp_config_loader_group_dir_overrides_project(tmp_path: Path):
     loader = MCPConfigLoader(project_dir=project, group_mcps_dir=group)
     servers = loader.load()
 
-    # The later group scan overwrites project because ``load()``
-    # re-assigns in dictionary order.
-    assert servers["github"].command == "group-version"
+    # ``load()`` re-assigns in scan order, and the project's roots are
+    # scanned after the group's.
+    assert servers["github"].command == "project-version"
 
 
 def test_mcp_config_loader_without_group_dir_unchanged(tmp_path: Path):
@@ -171,14 +177,13 @@ def test_the_project_now_outranks_the_group_for_agents():
     assert AgentPriority.ORG_GROUP > AgentPriority.USER_EMBER
 
 
-def test_mcp_still_lets_the_group_win(tmp_path: Path):
-    """MCP servers are the one kind that did not flip, asserted by
-    behaviour rather than by comparing two now-independent scales.
+def test_the_project_overrides_a_group_mcp_server(tmp_path: Path):
+    """MCP servers rank like everything else a group ships.
 
-    A server declaration names an endpoint and a command line, so
-    letting a project shadow one would let it point an org-approved tool
-    somewhere else. That is policy rather than preference, so the group
-    still lands last and wins.
+    The group's used to be layered last and win outright; a repository
+    can now override one by name. Asserted by behaviour rather than by a
+    priority constant, because the ordering here is re-assignment order
+    in ``load`` and there is no number to compare.
     """
     project = tmp_path / "proj"
     (project / ".ember").mkdir(parents=True)
@@ -194,8 +199,42 @@ def test_mcp_still_lets_the_group_win(tmp_path: Path):
     )
 
     servers = MCPConfigLoader(project_dir=project, group_mcps_dir=group_dir).load()
+    assert servers["gateway"].command == "project-binary"
+
+
+def test_a_group_mcp_server_still_loads_when_the_project_is_silent(tmp_path: Path):
+    """Overriding by name must not mean the group is ignored."""
+    project = tmp_path / "proj"
+    (project / ".ember").mkdir(parents=True)
+    group_dir = tmp_path / "group" / "mcps"
+    group_dir.mkdir(parents=True)
+    (group_dir / "gateway.json").write_text(
+        json.dumps({"mcpServers": {"gateway": {"command": "org-approved-binary"}}})
+    )
+
+    servers = MCPConfigLoader(project_dir=project, group_mcps_dir=group_dir).load()
     assert servers["gateway"].command == "org-approved-binary"
     assert servers["gateway"].source == "group-policy"
+
+
+def test_a_group_mcp_server_beats_the_user_home_config(tmp_path: Path, monkeypatch):
+    """Still above the user's own, as with every other kind."""
+    home = tmp_path / "home"
+    (home / ".ember").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+    (home / ".ember" / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"gateway": {"command": "my-own-binary"}}})
+    )
+    project = tmp_path / "proj"
+    (project / ".ember").mkdir(parents=True)
+    group_dir = tmp_path / "group" / "mcps"
+    group_dir.mkdir(parents=True)
+    (group_dir / "gateway.json").write_text(
+        json.dumps({"mcpServers": {"gateway": {"command": "org-approved-binary"}}})
+    )
+
+    servers = MCPConfigLoader(project_dir=project, group_mcps_dir=group_dir).load()
+    assert servers["gateway"].command == "org-approved-binary"
 
 
 # ---------------------------------------------------------------------------
