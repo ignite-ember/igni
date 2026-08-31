@@ -31,6 +31,7 @@ from ember_code.backend.cmd_auth import cmd_login, cmd_logout, cmd_whoami
 from ember_code.backend.cmd_codeindex import cmd_codeindex
 from ember_code.backend.cmd_config import cmd_config
 from ember_code.backend.cmd_context import cmd_compact, cmd_ctx, cmd_output_style
+from ember_code.backend.cmd_eject import cmd_eject
 from ember_code.backend.cmd_evals import cmd_evals
 from ember_code.backend.cmd_help import cmd_help
 from ember_code.backend.cmd_hooks import cmd_hooks
@@ -140,6 +141,11 @@ class BuiltinCommandRegistry:
             BuiltinCommand("/agents", "List and manage agents", cmd_agents),
             BuiltinCommand("/skills", "List installed skills", cmd_skills),
             BuiltinCommand("/hooks", "List installed hooks", cmd_hooks),
+            BuiltinCommand(
+                "/eject",
+                "Copy something your group ships into this project, so yours wins",
+                cmd_eject,
+            ),
             BuiltinCommand("/clear", "Clear the current conversation", _clear_wrapper),
             BuiltinCommand("/sessions", "List past sessions", _sessions_wrapper),
             BuiltinCommand("/rename", "Rename the current session", cmd_rename),
