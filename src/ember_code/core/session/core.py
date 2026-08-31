@@ -53,6 +53,7 @@ import getpass
 import logging
 import threading
 import uuid
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -751,6 +752,17 @@ class Session:
     def resolve_group_conflict(self, entry_kind: str, entry_name: str, *, accept: bool) -> bool:
         """Answer one. Returns whether anything on disk moved."""
         return self.group_agent_sync(entry_kind).resolve(entry_name, accept_incoming=accept)
+
+    #: Fired when a new dialogue begins — set by the backend, which is
+    #: the only layer that can reach the portal. ``/clear`` rotates the
+    #: session id in-process, so it never passes through the
+    #: session-start RPC and would otherwise keep whatever pack the
+    #: previous conversation had.
+    #:
+    #: A callable rather than a portal client on ``Session``: this class
+    #: has no business knowing how to talk to the server, and one
+    #: injected coroutine keeps it that way.
+    on_new_dialogue: Callable[[], Awaitable[Any]] | None = None
 
     def reload_group_agents(self) -> bool:
         """Re-sync everything the group ships and rebuild if it moved.

@@ -34,6 +34,7 @@ table keeps importing them by name.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from typing import TYPE_CHECKING
@@ -125,6 +126,20 @@ class SessionCommand:
 
     # ── Private helpers ──────────────────────────────────────────
 
+    async def _revalidate_group(self) -> None:
+        """Ask the server whether the group changed, if anyone wired it.
+
+        ``/clear`` starts a new conversation without going through the
+        session-start RPC, so without this it would keep whatever pack
+        the previous one had. Inside the fire-and-forget task, so the
+        command returns immediately either way.
+        """
+        hook = getattr(self._session, "on_new_dialogue", None)
+        if hook is None:
+            return
+        with contextlib.suppress(Exception):
+            await hook()
+
     async def _sync_then_refresh(self) -> None:
         """Post-``/clear`` fire-and-forget side effect.
 
@@ -133,6 +148,9 @@ class SessionCommand:
         ``session`` collapses to ``self._session`` — mirrors
         :meth:`CodeIndexCommand._refresh_availability_safely`.
         """
+        # Group first: an agent the admin just changed should be the one
+        # the rebuilt system prompt describes.
+        await self._revalidate_group()
         await self._session.code_index_sync.sync_now()
         refresh = self._session.refresh_codeindex_availability()
         if not refresh.ok:

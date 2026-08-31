@@ -228,3 +228,122 @@ class TestAnUnchangedPack:
 
     def test_no_tag_yet_is_not_an_error(self, tmp_path: Path):
         assert GroupPolicyCache(cache_dir=tmp_path / "gp").stored_etag() is None
+
+
+class TestANewDialogueAsksAgain:
+    """The age check is right for CLI invocations and wrong for a session.
+
+    ``_is_stale`` returns False for five minutes after a fetch, and
+    hydration returned early on that — so starting a new dialogue inside
+    the window silently used a pack up to five minutes old. Session start
+    is exactly when somebody should pick up an admin's change, and it is
+    rare enough to afford a round trip.
+
+    The reason this is affordable at all is the ETag: an unchanged pack
+    comes back as a 304 with no body, so forcing costs a conditional
+    request rather than a download.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_fresh_cache_is_still_asked_about(self, tmp_path: Path):
+        cache = GroupPolicyCache(cache_dir=tmp_path / "group-policy")
+        cache.materialize(_pack(["reviewer"], etag='W/"1"'))
+        assert not cache._is_stale(), "precondition: the cache is fresh"
+
+        fetch = AsyncMock(return_value=PACK_UNCHANGED)
+        assert await cache.refresh_if_stale("t", fetch, force=True) is False
+        fetch.assert_awaited_once(), "forcing must actually ask"
+
+    @pytest.mark.asyncio
+    async def test_without_force_a_fresh_cache_is_not_asked_about(self, tmp_path: Path):
+        """The poller keeps the old behaviour — this is what keeps it quiet."""
+        cache = GroupPolicyCache(cache_dir=tmp_path / "group-policy")
+        cache.materialize(_pack(["reviewer"], etag='W/"1"'))
+
+        fetch = AsyncMock(return_value=PACK_UNCHANGED)
+        assert await cache.refresh_if_stale("t", fetch) is False
+        fetch.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_forcing_still_sends_the_etag(self, tmp_path: Path):
+        """Otherwise every session start would download the whole pack."""
+        cache = GroupPolicyCache(cache_dir=tmp_path / "group-policy")
+        cache.materialize(_pack(["reviewer"], etag='W/"abc"'))
+
+        # ``_call_fetch`` hands the tag over positionally — it tries the
+        # two-argument form first and falls back for older stubs.
+        seen: list[object] = []
+
+        async def fetch(token, etag=None):
+            seen.append(etag)
+            return PACK_UNCHANGED
+
+        await cache.refresh_if_stale("t", fetch, force=True)
+        assert seen == ['W/"abc"'], seen
+
+    @pytest.mark.asyncio
+    async def test_a_changed_pack_is_picked_up(self, tmp_path: Path):
+        cache = GroupPolicyCache(cache_dir=tmp_path / "group-policy")
+        cache.materialize(_pack(["reviewer"], etag='W/"1"'))
+
+        fetch = AsyncMock(return_value=_pack(["reviewer", "migrator"], etag='W/"2"'))
+        assert await cache.refresh_if_stale("t", fetch, force=True) is True
+        assert (cache.agents_dir / "migrator.md").exists()
+
+
+class TestRevalidationCannotStopASessionStarting:
+    """The failure that matters is not "it did not check".
+
+    It is "it checked, the portal was slow, and the session never came
+    up". The on-disk cache exists so sessions work offline; blocking
+    startup on the network would undo that.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_hanging_server_does_not_hang_the_caller(self, tmp_path: Path, monkeypatch):
+        import ember_code.backend.server_auth as sa
+
+        ctrl = _controller(tmp_path)
+        monkeypatch.setattr(sa, "_NEW_DIALOGUE_REVALIDATE_TIMEOUT", 0.05)
+
+        async def never_returns(*_a, **_k):
+            await asyncio.sleep(30)
+
+        ctrl._hydrate_group_policy = never_returns  # type: ignore[method-assign]
+
+        result = await asyncio.wait_for(ctrl.revalidate_for_new_dialogue(), timeout=2)
+        assert result is False, "a timeout is not a refresh"
+
+    @pytest.mark.asyncio
+    async def test_a_raising_server_does_not_propagate(self, tmp_path: Path):
+        ctrl = _controller(tmp_path)
+
+        async def boom(*_a, **_k):
+            raise RuntimeError("portal is down")
+
+        ctrl._hydrate_group_policy = boom  # type: ignore[method-assign]
+        assert await ctrl.revalidate_for_new_dialogue() is False
+
+    @pytest.mark.asyncio
+    async def test_no_token_means_no_request(self, tmp_path: Path):
+        ctrl = _controller(tmp_path)
+        ctrl._settings.auth.access_token = ""
+        called = AsyncMock()
+        ctrl._hydrate_group_policy = called  # type: ignore[method-assign]
+
+        assert await ctrl.revalidate_for_new_dialogue() is False
+        called.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_it_forces(self, tmp_path: Path):
+        """The whole point — a fresh cache must not short-circuit it."""
+        ctrl = _controller(tmp_path)
+        seen: dict[str, object] = {}
+
+        async def record(token, **kwargs):
+            seen.update(kwargs)
+            return True
+
+        ctrl._hydrate_group_policy = record  # type: ignore[method-assign]
+        assert await ctrl.revalidate_for_new_dialogue() is True
+        assert seen.get("force") is True

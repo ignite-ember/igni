@@ -28,6 +28,7 @@ continue to intercept without changes.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -167,6 +168,10 @@ class BackendServer:
             additional_dirs=additional_dirs,
         )
         self._session = bootstrap.session
+        # A new dialogue should pick up an admin's change. Injected as a
+        # lambda so touching it here does not force the lazy
+        # AuthController into existence at construction.
+        self._session.on_new_dialogue = lambda: self.auth.revalidate_for_new_dialogue()
         self._settings = bootstrap.settings
         self._session_prefs = bootstrap.session_prefs
         self._hitl_store = bootstrap.hitl_store
@@ -1249,7 +1254,17 @@ class BackendServer:
     # ── Hooks fire ────────────────────────────────────────────────
 
     async def fire_session_start_hook(self) -> None:
-        """Forward to :meth:`Session.fire_session_start_hook`."""
+        """Revalidate the group pack, then forward to the session.
+
+        A new dialogue is where an admin's change should take effect. The
+        pack's age check keeps the background poller quiet, which is
+        right for repeated CLI invocations and wrong here — so this asks
+        regardless, bounded so a slow portal cannot stop a session
+        starting. Before the hook rather than after, so the hook and the
+        first turn see the same configuration.
+        """
+        with contextlib.suppress(Exception):
+            await self.auth.revalidate_for_new_dialogue()
         await self._session.fire_session_start_hook()
 
     # ── Display toggle ────────────────────────────────────────────

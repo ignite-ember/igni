@@ -587,12 +587,22 @@ class GroupPolicyCache:
         self,
         token: str,
         fetch: Any,
+        *,
+        force: bool = False,
     ) -> bool:
         """Refresh the on-disk pack if the cached one is missing or stale.
 
         ``fetch`` is an awaitable callable ``(token) -> GroupPolicyPack | None``
         — passed in (rather than constructing PortalClient here) so the auth
         package can stay above the cache in the import graph.
+
+        ``force`` skips the age check and asks anyway. It does **not**
+        skip the ETag: an unchanged pack still comes back as
+        :class:`UnchangedPack`, so forcing costs a conditional request
+        rather than a download. Used at the start of a session, where a
+        developer should pick up an admin's change immediately and the
+        event is rare enough to afford the round trip — as distinct from
+        a CLI invocation, which the age check exists to keep quiet.
 
         Returns True only when the cache was actually updated. Returns
         False when the cache was fresh, fetch raised, fetch returned
@@ -601,7 +611,7 @@ class GroupPolicyCache:
         """
         if not token:
             return False
-        if not self._is_stale():
+        if not force and not self._is_stale():
             return False
         try:
             pack = await self._call_fetch(fetch, token)
@@ -633,6 +643,7 @@ async def refresh(
     cache_dir: Path | None = None,
     data_dir: Path | None = None,
     installer: Any = None,
+    force: bool = False,
 ) -> bool:
     """One-shot cache refresh — used by AuthController on cold start + login.
 
@@ -649,8 +660,11 @@ async def refresh(
     entries with ``source_url`` get git-installed instead of being
     skipped. Optional — when omitted, source-URL plugin entries write a
     warning and fall through (same behavior the cache had before).
+
+    ``force`` asks the server regardless of how fresh the cache is —
+    see :meth:`GroupPolicyCache.refresh_if_stale`.
     """
     if cache_dir is None and data_dir is not None:
         cache_dir = Path(data_dir).expanduser() / "group-policy"
     cache = GroupPolicyCache(cache_dir=cache_dir, data_dir=data_dir, installer=installer)
-    return await cache.refresh_if_stale(token, fetch)
+    return await cache.refresh_if_stale(token, fetch, force=force)
