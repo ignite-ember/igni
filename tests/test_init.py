@@ -285,7 +285,8 @@ class TestHookProvisioning:
         assert "hooks" in settings
         assert "PreToolUse" in settings["hooks"]
         assert any(
-            h["command"] == f"{CONFIG_DIR}/hooks/pre-pr-review.sh" for h in settings["hooks"]["PreToolUse"]
+            h["command"] == f"{CONFIG_DIR}/hooks/pre-pr-review.sh"
+            for h in settings["hooks"]["PreToolUse"]
         )
 
     def test_preserves_existing_settings(self, tmp_path):

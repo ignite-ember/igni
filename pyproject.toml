@@ -100,6 +100,26 @@ igni = "ember_code.__main__:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/ember_code"]
 
+# The sdist otherwise includes everything git does not ignore, which
+# makes a release build depend on how tidy the working tree happens to
+# be. A stray virtualenv is the concrete failure: its `bin/python` is an
+# absolute symlink, and tarfile refuses it, so `python -m build` dies
+# rather than shipping something wrong.
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "/.venv*",
+  "/.git",
+  "/clients",
+  "/evals",
+  "/scripts",
+  "/docs",
+  "/.github",
+  "/.pytest_cache",
+  "/.mypy_cache",
+  "/.ruff_cache",
+  "**/__pycache__",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

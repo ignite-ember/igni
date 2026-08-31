@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ember_code.core.hooks.schemas import HookLoadResult
-from ember_code.core.paths import CONFIG_DIR, DEFAULT_DATA_DIR
+from ember_code.core.paths import CONFIG_DIR, DEFAULT_DATA_DIR, managed_policy_dir
 from ember_code.core.plugins.models import (
     PluginDefinition,
     PluginManifest,
@@ -71,18 +71,8 @@ def _platform_managed_plugins_root() -> Path | None:
     in one place. Returns ``None`` on platforms with no defined
     managed location.
     """
-    import sys
 
-    if sys.platform == "darwin":
-        return Path("/Library/Application Support/Ember")
-    if sys.platform.startswith("linux"):
-        return Path("/etc/ember")
-    if sys.platform == "win32":
-        import os
-
-        program_data = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
-        return Path(program_data) / "Ember"
-    return None
+    return managed_policy_dir()
 
 
 class PluginLoader:

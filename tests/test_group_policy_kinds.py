@@ -276,9 +276,7 @@ class TestTheLoadersFindThem:
         )
         project = tmp_path / "proj"
         (project / CONFIG_DIR).mkdir(parents=True)
-        discovery = WorkflowDiscovery(
-            project_dir=project, group_dir=cache.dir_for("workflows")
-        )
+        discovery = WorkflowDiscovery(project_dir=project, group_dir=cache.dir_for("workflows"))
 
         assert [p.stem for p in discovery._iter_paths()] == ["review"]
 
@@ -328,9 +326,7 @@ class TestTheLoadersFindThem:
         )
         project = tmp_path / "proj"
         (project / CONFIG_DIR).mkdir(parents=True)
-        index = RulesIndex(
-            project, read_claude_md=False, group_rules_dir=cache.dir_for("rules")
-        )
+        index = RulesIndex(project, read_claude_md=False, group_rules_dir=cache.dir_for("rules"))
 
         assert index.consume_path(project / "app" / "main.py")
 
@@ -506,9 +502,7 @@ class TestBeingMovedToAnotherGroup:
         commands = {h["command"] for h in blob["hooks"]["PreToolUse"]}
         assert commands == {"legal.sh"}
 
-    def test_moving_group_changes_which_agents_load(
-        self, cache: GroupPolicyCache, tmp_path: Path
-    ):
+    def test_moving_group_changes_which_agents_load(self, cache: GroupPolicyCache, tmp_path: Path):
         """An admin moving somebody from engineering to legal should
         change what they have.
 
@@ -569,7 +563,9 @@ class TestScriptsAndTheHooksThatRunThem:
 
     def test_a_script_lands_as_a_dot_sh_file(self, cache: GroupPolicyCache):
         cache.materialize(
-            _pack(_entry("scripts", "pre-pr-review", "#!/bin/bash\necho hi\n", content_type="shell"))
+            _pack(
+                _entry("scripts", "pre-pr-review", "#!/bin/bash\necho hi\n", content_type="shell")
+            )
         )
         assert (cache.scripts_dir / "pre-pr-review.sh").read_text().startswith("#!/bin/bash")
 

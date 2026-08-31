@@ -3,13 +3,12 @@
 import fnmatch
 import json
 import logging
-import platform
 from enum import Enum
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from ember_code.core.paths import CONFIG_DIR
+from ember_code.core.paths import CONFIG_DIR, managed_policy_dir
 
 logger = logging.getLogger(__name__)
 
@@ -74,16 +73,14 @@ class MCPPolicy(BaseModel):
         """Load MCP policy from managed settings (admin-controlled).
 
         Checks platform-specific managed settings paths:
-        - macOS: /Library/Application Support/EmberCode/managed-settings.json
-        - Linux: /etc/ignite-ember/managed-settings.json
+        The same directory every other managed tier reads — see
+        :func:`ember_code.core.paths.managed_policy_dir`. It used to be a
+        different one per platform, and no Windows path at all.
         """
-        system = platform.system()
-        if system == "Darwin":
-            path = Path("/Library/Application Support/EmberCode/managed-settings.json")
-        elif system == "Linux":
-            path = Path("/etc/ignite-ember/managed-settings.json")
-        else:
+        root = managed_policy_dir()
+        if root is None:
             return cls()
+        path = root / "managed-settings.json"
 
         if not path.exists():
             return cls()

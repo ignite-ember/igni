@@ -55,7 +55,9 @@ def state_db_path(project: str | Path, *, data_dir: str | Path = DEFAULT_DATA_DI
     return project_dir(project, data_dir=data_dir) / "state.db"
 
 
-def legacy_knowledge_index_path(project: str | Path, *, data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
+def legacy_knowledge_index_path(
+    project: str | Path, *, data_dir: str | Path = DEFAULT_DATA_DIR
+) -> Path:
     return project_dir(project, data_dir=data_dir) / "knowledge.chroma"
 
 
@@ -114,7 +116,9 @@ def neo4j_auth_file(
     return neo4j_runtime_dir(project, commit_sha, data_dir=data_dir) / "auth.txt"
 
 
-def neo4j_migrated_marker_path(project: str | Path, *, data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
+def neo4j_migrated_marker_path(
+    project: str | Path, *, data_dir: str | Path = DEFAULT_DATA_DIR
+) -> Path:
     """Sentinel marking that the chroma+sqlite→Neo4j cutover ran.
 
     Lives in the per-project ``code_index/`` dir (not the shared

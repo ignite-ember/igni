@@ -122,9 +122,7 @@ class LearningOffTip(ContextualTip):
 
 class NoCustomAgentsTip(ContextualTip):
     id: str = "no_custom_agents"
-    message: str = (
-        f"Drop a .md file in {CONFIG_DIR}/agents/ to create a project-specific agent — no code needed."
-    )
+    message: str = f"Drop a .md file in {CONFIG_DIR}/agents/ to create a project-specific agent — no code needed."
 
     def matches(self, ctx: TipContext) -> bool:
         agent_dir = ctx.project_dir / CONFIG_DIR / "agents"

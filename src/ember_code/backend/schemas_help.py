@@ -155,7 +155,7 @@ class HelpTopicCatalog(BaseModel):
                         "Claude-Code-compatible plugin support. A plugin is a "
                         "directory bundling skills, agents, hooks, MCP servers, "
                         "and/or custom tools that activate together. Plugins "
-                        "built for Claude Code work in Ember unchanged.\n\n"
+                        "built for Claude Code work in igni unchanged.\n\n"
                         "**Discovery roots (highest priority last):**\n"
                         "- `~/.claude/plugins/` (Claude user-global)\n"
                         f"- `{DEFAULT_DATA_DIR}/plugins/` (ember user-global — where `/plugin install` lands)\n"
@@ -211,7 +211,7 @@ class HelpTopicCatalog(BaseModel):
                     name="codeindex",
                     markdown=(
                         "## CodeIndex\n\n"
-                        "Semantic code intelligence over your repo. The Ember GitHub App "
+                        "Semantic code intelligence over your repo. The igni GitHub App "
                         "indexes every commit on the server and ships per-commit changesets "
                         "to your machine, where they're applied to a local Chroma index. "
                         "Search runs entirely locally — your code summaries never leave "
@@ -239,7 +239,7 @@ class HelpTopicCatalog(BaseModel):
                         "## Memory & Learning\n\n"
                         "igni learns your preferences automatically from conversations.\n\n"
                         "**Commands:**\n"
-                        "- `/memory` — show what Ember has learned about you\n"
+                        "- `/memory` — show what igni has learned about you\n"
                         "- `/memory optimize` — consolidate memories\n\n"
                         "**What gets learned:**\n"
                         "- Your name and how you prefer to be addressed\n"

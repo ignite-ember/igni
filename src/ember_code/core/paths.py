@@ -22,18 +22,20 @@ parameterised.
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 
 #: The directory igni keeps configuration in, under a project root and
 #: under the user's home.
-CONFIG_DIR = '.igni'
+CONFIG_DIR = ".igni"
 
 #: What it was called before the product settled on its name. Still read
 #: when the new one is absent, so an install that has not been migrated
 #: finds its credentials rather than looking brand new — see
 #: :func:`home_config_dir` and
 #: :mod:`ember_code.core.dir_migration`.
-LEGACY_CONFIG_DIR = '.ember'
+LEGACY_CONFIG_DIR = ".ember"
 
 #: The home directory's spelling, unexpanded — ``data_dir`` defaults to
 #: this in 37 signatures, which is why it is named rather than repeated.
@@ -44,12 +46,46 @@ LEGACY_CONFIG_DIR = '.ember'
 #: default for helper signatures, and a module constant that inspected
 #: the filesystem at import time would answer differently depending on
 #: when it was imported. The migration runs before anything reads it.
-DEFAULT_DATA_DIR = f'~/{CONFIG_DIR}'
+DEFAULT_DATA_DIR = f"~/{CONFIG_DIR}"
 
 #: The sibling read for cross-tool compatibility. Named alongside
 #: ``CONFIG_DIR`` because the two are always considered together: every
 #: loader that scans one scans the other when cross-tool support is on.
-CLAUDE_CONFIG_DIR = '.claude'
+CLAUDE_CONFIG_DIR = ".claude"
+
+
+def managed_policy_dir() -> Path | None:
+    """Where a sysadmin or MDM drops org-wide policy, or None off-platform.
+
+    One function because four modules used to answer this separately and
+    two of them disagreed — on *every* platform:
+
+    ==========  ===============================  ==============================
+    platform    managed_policy / plugins / rules  mcp
+    ==========  ===============================  ==============================
+    macOS       ``…/Application Support/Ember``   ``…/Application Support/EmberCode``
+    Linux       ``/etc/ember``                    ``/etc/ignite-ember``
+    Windows     ``%PROGRAMDATA%/Ember``           unsupported
+    ==========  ===============================  ==============================
+
+    So an admin deploying managed settings had to populate two directory
+    trees to cover both, MCP policy could not be deployed on Windows at
+    all, and nothing said so. Managed policy is the tier a user is not
+    allowed to override, which makes "it silently was not read" the worst
+    possible failure for it.
+
+    Returns None on unknown platforms; every caller treats that as "no
+    managed tier", which is the safe reading — absent policy, not empty
+    policy.
+    """
+    if sys.platform == "darwin":
+        return Path("/Library/Application Support/igni")
+    if sys.platform.startswith("linux"):
+        return Path("/etc/igni")
+    if sys.platform == "win32":
+        program_data = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
+        return Path(program_data) / "igni"
+    return None
 
 
 def project_config_dir(project_dir: Path | str) -> Path:

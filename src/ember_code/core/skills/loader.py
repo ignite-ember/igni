@@ -153,7 +153,9 @@ class SkillPool:
         )
 
         # Project-level Ember (highest).
-        self.load_directory(project_dir / CONFIG_DIR / "skills", priority=SkillPriority.PROJECT_EMBER)
+        self.load_directory(
+            project_dir / CONFIG_DIR / "skills", priority=SkillPriority.PROJECT_EMBER
+        )
 
         # Cross-tool Claude Code directories — explicitly slotted *below*
         # their same-scope Ember equivalents.

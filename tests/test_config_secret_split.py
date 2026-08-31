@@ -145,9 +145,7 @@ class TestAMissingKeySaysSo:
         """The diagnostic exists for the failure; it should not be
         consulted on the happy path."""
         monkeypatch.setenv("SOME_KEY", "sk-real")
-        entry = ModelRegistryEntry(
-            model_id="m", provider="openai_like", api_key_env="SOME_KEY"
-        )
+        entry = ModelRegistryEntry(model_id="m", provider="openai_like", api_key_env="SOME_KEY")
         assert entry.resolve_api_key() == "sk-real"
 
 
@@ -208,7 +206,9 @@ class TestTheSecretScan:
         path.write_text("models: [this is not: valid: yaml", encoding="utf-8")
         assert scan_project_config(tmp_path) == []
 
-    @pytest.mark.parametrize("payload", [None, [], "a string", {"models": None}, {"models": {"registry": []}}])
+    @pytest.mark.parametrize(
+        "payload", [None, [], "a string", {"models": None}, {"models": {"registry": []}}]
+    )
     def test_shapes_that_are_not_a_registry(self, tmp_path: Path, payload):
         path = tmp_path / CONFIG_DIR / "config.yaml"
         path.parent.mkdir(parents=True, exist_ok=True)

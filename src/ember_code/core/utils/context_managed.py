@@ -12,10 +12,13 @@ file next door.
 
 ## Platform-specific directories
 
-- macOS: ``/Library/Application Support/Ember/``
-- Linux: ``/etc/ember/``
-- Windows: ``%PROGRAMDATA%/Ember/`` (defaults to ``C:\\ProgramData/Ember``)
+- macOS: ``/Library/Application Support/igni/``
+- Linux: ``/etc/igni/``
+- Windows: ``%PROGRAMDATA%/igni/`` (defaults to ``C:\\ProgramData/igni``)
 - Anything else: no managed tier.
+
+Resolved by :func:`ember_code.core.paths.managed_policy_dir`, which is
+the single answer for every managed tier.
 
 ## Security note
 
@@ -27,10 +30,10 @@ managed directory itself — a managed policy can't reach into
 
 from __future__ import annotations
 
-import os
-import sys
 from collections.abc import Callable
 from pathlib import Path
+
+from ember_code.core.paths import managed_policy_dir
 
 
 def _platform_managed_rules_dir() -> Path | None:
@@ -43,13 +46,7 @@ def _platform_managed_rules_dir() -> Path | None:
     Returns ``None`` on unknown platforms; the loader treats that
     as "no managed instructions tier."
     """
-    if sys.platform == "darwin":
-        return Path("/Library/Application Support/Ember")
-    if sys.platform.startswith("linux"):
-        return Path("/etc/ember")
-    if sys.platform == "win32":
-        program_data = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
-        return Path(program_data) / "Ember"
+    return managed_policy_dir()
     return None
 
 

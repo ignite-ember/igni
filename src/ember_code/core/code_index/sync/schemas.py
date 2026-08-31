@@ -216,7 +216,7 @@ class SyncResult(BaseModel):
         if pf.status == PreflightStatus.REPO_NOT_FOUND:
             return cls(
                 skipped=True,
-                reason="repository is not indexed by Ember",
+                reason="repository is not indexed by igni",
                 **common,
             )
         if pf.status == PreflightStatus.CHANGESET_NOT_FOUND:

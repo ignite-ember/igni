@@ -56,7 +56,9 @@ class TestTheOrdinaryCase:
         (legacy / "group-policy" / "agents" / "reviewer.md").write_text("body")
 
         assert migrate_directory(tmp_path).moved
-        assert (tmp_path / CONFIG_DIR / "group-policy" / "agents" / "reviewer.md").read_text() == "body"
+        assert (
+            tmp_path / CONFIG_DIR / "group-policy" / "agents" / "reviewer.md"
+        ).read_text() == "body"
 
     def test_nothing_to_do_is_not_a_failure(self, tmp_path: Path):
         outcome = migrate_directory(tmp_path)
@@ -196,9 +198,7 @@ class TestTheSettingsLoaderSeesAnUnmigratedInstall:
         self._config(tmp_path / CONFIG_DIR, "new")
         assert load_settings(project_dir=tmp_path).models.default == "new"
 
-    def test_a_home_config_under_the_old_name_is_still_read(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_a_home_config_under_the_old_name_is_still_read(self, tmp_path: Path, monkeypatch):
         home, project = tmp_path / "home", tmp_path / "proj"
         project.mkdir()
         monkeypatch.setattr(Path, "home", staticmethod(lambda: home))

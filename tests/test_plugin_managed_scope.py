@@ -57,20 +57,20 @@ class TestPlatformManagedPluginsRoot:
         monkeypatch.setattr("sys.platform", "darwin")
         path = _platform_managed_plugins_root()
         assert path is not None
-        assert str(path) == "/Library/Application Support/Ember"
+        assert str(path) == "/Library/Application Support/igni"
 
     def test_linux(self, monkeypatch):
         monkeypatch.setattr("sys.platform", "linux")
         path = _platform_managed_plugins_root()
         assert path is not None
-        assert str(path) == "/etc/ember"
+        assert str(path) == "/etc/igni"
 
     def test_win32(self, monkeypatch):
         monkeypatch.setenv("PROGRAMDATA", r"C:\TestProgramData")
         monkeypatch.setattr("sys.platform", "win32")
         path = _platform_managed_plugins_root()
         assert path is not None
-        assert "Ember" in str(path)
+        assert "igni" in str(path)
 
     def test_unknown(self, monkeypatch):
         monkeypatch.setattr("sys.platform", "freebsd")

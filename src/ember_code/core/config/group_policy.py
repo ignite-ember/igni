@@ -490,7 +490,9 @@ class GroupPolicyCache:
             # block, and doing it once on the merged result covers both.
             for declarations in hooks.values():
                 for declaration in declarations:
-                    if isinstance(declaration, dict) and isinstance(declaration.get("command"), str):
+                    if isinstance(declaration, dict) and isinstance(
+                        declaration.get("command"), str
+                    ):
                         declaration["command"] = self._expand_scripts_placeholder(
                             declaration["command"]
                         )

@@ -45,9 +45,7 @@ SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "ember_code"
 #: matters because a literal ``".ember"`` left in code is now not just
 #: uncentralised but *wrong*, and reads as a path nothing writes to.
 _NAMES = (CONFIG_DIR, LEGACY_CONFIG_DIR)
-_BARE = re.compile(
-    r"(?<![\w.])\"(?:" + "|".join(re.escape(n) for n in _NAMES) + r")\"(?![\w])"
-)
+_BARE = re.compile(r"(?<![\w.])\"(?:" + "|".join(re.escape(n) for n in _NAMES) + r")\"(?![\w])")
 _HOME = re.compile(r"\"~/(?:" + "|".join(re.escape(n) for n in _NAMES) + r")\"")
 
 #: Where the name is allowed to appear as a literal.
@@ -118,8 +116,7 @@ class TestNothingSpellsItOutInCode:
         offenders = [
             path.relative_to(SRC).as_posix()
             for path in _python_files()
-            if path.relative_to(SRC).as_posix() not in _ALLOWED
-            and pattern.search(path.read_text())
+            if path.relative_to(SRC).as_posix() not in _ALLOWED and pattern.search(path.read_text())
         ]
         # Prose can match, so this only reports files where the literal
         # is not inside a comment.
@@ -164,9 +161,7 @@ class TestTheConstantsBehave:
         source = (SRC / "core" / "paths.py").read_text()
         tree = ast.parse(source)
         imported = [
-            node.module or ""
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom)
+            node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
         ] + [
             alias.name
             for node in ast.walk(tree)

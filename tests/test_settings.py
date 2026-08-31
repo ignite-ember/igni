@@ -278,20 +278,21 @@ class TestPlatformManagedSettingsPath:
         monkeypatch.setattr("sys.platform", "darwin")
         p = _REAL_PLATFORM_PATH()
         assert p is not None
-        assert str(p) == "/Library/Application Support/Ember/managed-settings.yaml"
+        assert str(p) == "/Library/Application Support/igni/managed-settings.yaml"
 
     def test_linux_path(self, monkeypatch):
         monkeypatch.setattr("sys.platform", "linux")
         p = _REAL_PLATFORM_PATH()
         assert p is not None
-        assert str(p) == "/etc/ember/managed-settings.yaml"
+        assert str(p) == "/etc/igni/managed-settings.yaml"
 
     def test_win32_uses_programdata(self, monkeypatch):
         monkeypatch.setenv("PROGRAMDATA", r"C:\TestProgramData")
         monkeypatch.setattr("sys.platform", "win32")
         p = _REAL_PLATFORM_PATH()
         assert p is not None
-        assert "Ember" in str(p)
+        assert "igni" in str(p)
+        assert str(p).startswith(r"C:\TestProgramData")
         assert "managed-settings.yaml" in str(p)
 
     def test_unknown_platform_returns_none(self, monkeypatch):

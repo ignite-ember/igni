@@ -98,9 +98,7 @@ class TestTheModelAnAgentRunsAgainst:
 
         assert report.entries["contracts"].definition.model == "legal-reviewer"
 
-    def test_a_project_override_replaces_the_group_model_too(
-        self, tmp_path: Path, bare_settings
-    ):
+    def test_a_project_override_replaces_the_group_model_too(self, tmp_path: Path, bare_settings):
         """A project's own copy of the agent brings its own model, or
         none — it does not inherit the group entry's.
 

@@ -85,9 +85,7 @@ class EjectCommand:
 
         source_dir = self._session.group_root(kind)
         if source_dir is None:
-            return CommandResult.error(
-                f"Your group ships no {kind}. Nothing to eject."
-            )
+            return CommandResult.error(f"Your group ships no {kind}. Nothing to eject.")
 
         subdir, filename = EJECTABLE[kind]
         relative = filename.format(name=name)

@@ -4,7 +4,7 @@ Loads rules from several sources, all merged into the session prompt:
 
 0. **Managed policy** — sysadmin-enforced ``ember.md`` / ``CLAUDE.md``
    in a platform-specific write-protected directory (e.g.
-   ``/Library/Application Support/Ember/`` on darwin). Prepended
+   ``/Library/Application Support/igni/`` on darwin). Prepended
    first so the model sees org-pinned guidance ahead of everything
    else.
 0.5. **Memory index** — the agent's per-project ``MEMORY.md`` from

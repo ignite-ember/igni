@@ -147,6 +147,10 @@ celerybeat.pid
 .env
 .envrc
 .venv
+# Any suffixed variant too (.venv-py312 and friends) — an unignored
+# virtualenv ends up inside the sdist, where its absolute symlinks make
+# `python -m build` fail outright.
+.venv*
 env/
 venv/
 ENV/

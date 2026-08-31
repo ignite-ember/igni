@@ -25,6 +25,8 @@ Consumers:
 
 from pydantic import BaseModel, ConfigDict
 
+from ember_code import __version__
+
 
 class HttpFetcherConfig(BaseModel):
     """Frozen configuration for :class:`HttpFetcher`.
@@ -52,7 +54,11 @@ class HttpFetcherConfig(BaseModel):
 
     timeout: float = 30
     follow_redirects: bool = True
-    user_agent: str = "EmberCode/0.1.0"
+    # Read from the package rather than written out: this goes to every
+    # site igni fetches, and the literal said "EmberCode/0.1.0" while the
+    # package was 1.0.3 — a version string that only moves when somebody
+    # remembers is worse than none.
+    user_agent: str = f"igni/{__version__}"
     max_html_chars: int = 10_000
     max_json_chars: int = 20_000
 

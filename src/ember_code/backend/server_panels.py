@@ -140,4 +140,3 @@ class PanelsController:
             entry_count=meta.get("entry_count", 0),
             default_model=meta.get("default_model"),
         )
-

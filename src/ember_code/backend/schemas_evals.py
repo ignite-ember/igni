@@ -34,7 +34,9 @@ class EvalRunView(BaseModel):
 
     def to_command_result(self) -> CommandResult:
         if not self.results:
-            return CommandResult.info(f"No eval suites found. Add YAML files to {CONFIG_DIR}/evals/")
+            return CommandResult.info(
+                f"No eval suites found. Add YAML files to {CONFIG_DIR}/evals/"
+            )
         return CommandResult.markdown(EvalReport(self.results).render())
 
 

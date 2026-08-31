@@ -39,7 +39,7 @@ class NoModelConfigured(OpenAILike):
 
     ERROR_MESSAGE = (
         "No model configured. Run `/login` to discover hosted models from "
-        "Ember Cloud, or add a model to `models.registry` in "
+        "igni Cloud, or add a model to `models.registry` in "
         f"{DEFAULT_DATA_DIR}/config.yaml."
     )
 
