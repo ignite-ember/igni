@@ -246,10 +246,11 @@ def test_a_group_mcp_server_beats_the_user_home_config(tmp_path: Path, monkeypat
 # out of the ordering rather than out of there being only one file.
 #
 # It was the other way round for a while: the group's agents were copied
-# into ``<project>/.ember/agents`` by GroupAgentSync so a person could
-# edit one, and reading the cache as well would have shadowed that edit.
-# Reading the cache directly gets the same outcome and leaves the
-# repository holding only what the repository declares.
+# into ``<project>/.ember/agents`` by a sync so a person could edit one,
+# and reading the cache as well would have shadowed that edit. Reading
+# the cache directly gets the same outcome, leaves the repository holding
+# only what the repository declares, and removed the sync along with the
+# checksums and conflict prompts it needed.
 # ---------------------------------------------------------------------------
 
 

@@ -128,23 +128,6 @@ class CloudPlan(BaseModel):
         return cls(tier=info.tier, org_name=info.org_display_name)
 
 
-class GroupAgentConflictView(BaseModel):
-    """One thing the group changed under a local edit.
-
-    Carries the question rather than making the FE compose it: the right
-    sentence depends on what the thing is and what happened to it, and
-    that is the backend's to know.
-    """
-
-    entry_name: str
-    #: What it is — agents, skills, commands, rules, output-styles,
-    #: workflows. Two kinds may hold the same name.
-    entry_kind: str = "agents"
-    #: What happened on the server: changed | removed.
-    kind: str
-    question: str
-
-
 class GroupPolicyPackResult(BaseModel):
     """Wire shape for the ``get_group_policy`` RPC — the active
     group's pack for the current user. Nullable because
@@ -156,23 +139,6 @@ class GroupPolicyPackResult(BaseModel):
     entry_count: int = 0
     #: What this group's people get when nothing names a model.
     default_model: str | None = None
-    #: Agents waiting on "yours or theirs". Empty is the normal state.
-    pending_conflicts: list[GroupAgentConflictView] = []
-
-
-class ResolveGroupAgentResult(BaseModel):
-    """Wire shape for ``resolve_group_agent_conflict``.
-
-    ``resolved`` is False when the conflict was already answered — two
-    windows open on the same project, or a stale FE list.
-    """
-
-    resolved: bool
-    entry_name: str
-    entry_kind: str = "agents"
-    accepted_incoming: bool
-    #: True when the agent pool was rebuilt as a result.
-    reloaded: bool = False
 
 
 class FileCompletion(BaseModel):

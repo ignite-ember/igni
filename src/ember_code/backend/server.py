@@ -109,7 +109,6 @@ if TYPE_CHECKING:
         CloudPlan,
         GroupPolicyPackResult,
         LoginResult,
-        ResolveGroupAgentResult,
     )
     from ember_code.backend.schemas_search import SearchCodeResult
     from ember_code.backend.schemas_visualization import VisualizationActionResult
@@ -1145,19 +1144,6 @@ class BackendServer:
     def get_group_policy(self) -> GroupPolicyPackResult:
         """See :meth:`PanelsController.group_policy`."""
         return self.panels.group_policy()
-
-    def resolve_group_agent_conflict(
-        self,
-        entry_name: str,
-        accept_incoming: bool,
-        entry_kind: str = "agents",
-    ) -> ResolveGroupAgentResult:
-        """See :meth:`PanelsController.resolve_group_agent_conflict`."""
-        return self.panels.resolve_group_agent_conflict(
-            entry_name=entry_name,
-            accept_incoming=accept_incoming,
-            entry_kind=entry_kind,
-        )
 
     def get_slash_commands(self) -> list[SlashCommandEntry]:
         """See :meth:`PanelsController.slash_commands`."""

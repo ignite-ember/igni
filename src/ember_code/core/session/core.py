@@ -76,12 +76,6 @@ from ember_code.core.hooks.executor import HookExecutor
 from ember_code.core.hooks.loader import HookLoader
 from ember_code.core.hooks.tool_hook import ToolEventHook
 from ember_code.core.init import ProjectInitializer
-from ember_code.core.init.group_agent_sync import (
-    SYNCED_KINDS,
-    EntryConflict,
-    GroupAgentSync,
-    GroupSyncReport,
-)
 from ember_code.core.learn import create_learning_machine  # noqa: F401 — test-patch target
 from ember_code.core.loop import LoopProgressStore, LoopStore, LoopToolResult
 from ember_code.core.lsp import LspServerManager, load_lsp_config
@@ -235,7 +229,6 @@ class Session:
             skip_builtin_hook_registration=self._group_ships("hooks"),
             group_ships_hook_scripts=self._group_ships("scripts"),
         )
-        self._group_sync = self._sync_group_entries()
 
         # ── Storage (Agno AsyncBaseDb) ────────────────────────────────
         self.db = StorageManager.build_db(settings, project_dir=self.project_dir)
@@ -466,6 +459,7 @@ class Session:
         self.rules_index = RulesIndex(
             self.project_dir,
             read_claude_md=settings.rules.cross_tool_support,
+            group_rules_dir=self.group_root("rules"),
         )
 
     def _init_loop_state(self) -> None:
@@ -688,20 +682,6 @@ class Session:
         """
         return self._group_policy_dir / kind
 
-    def group_agent_sync(self, kind: str = "agents") -> GroupAgentSync:
-        """The merge between what the group ships and this project's copy.
-
-        Constructed per call rather than held: it owns no state beyond
-        two paths, and everything it reads lives on disk, so a stale
-        instance would only be a way to answer a question that has since
-        been answered elsewhere.
-        """
-        return GroupAgentSync(
-            project_dir=self.project_dir,
-            source_dir=self.group_dir_for(kind),
-            kind=kind,
-        )
-
     def unknown_agent_tools(self) -> dict[str, list[str]]:
         """Agents naming tools that will not resolve, by agent name.
 
@@ -740,19 +720,6 @@ class Session:
         except Exception as exc:  # noqa: BLE001 — a diagnostic must not stop a start
             logger.debug("Could not check agent tools: %s", exc)
 
-    def group_conflicts(self) -> list[EntryConflict]:
-        """Everything the group changed under a local edit, any kind.
-
-        One list, because it is one question as far as the person is
-        concerned: something you edited has moved on the server, and
-        somebody has to say which version wins.
-        """
-        return self.group_agent_sync().pending_all()
-
-    def resolve_group_conflict(self, entry_kind: str, entry_name: str, *, accept: bool) -> bool:
-        """Answer one. Returns whether anything on disk moved."""
-        return self.group_agent_sync(entry_kind).resolve(entry_name, accept_incoming=accept)
-
     #: Fired when a new dialogue begins — set by the backend, which is
     #: the only layer that can reach the portal. ``/clear`` rotates the
     #: session id in-process, so it never passes through the
@@ -765,36 +732,24 @@ class Session:
     on_new_dialogue: Callable[[], Awaitable[Any]] | None = None
 
     def reload_group_agents(self) -> bool:
-        """Re-sync everything the group ships and rebuild if it moved.
+        """Rebuild the pools so a refreshed pack takes effect.
 
         Called after the policy cache is refreshed — an admin moving
         somebody from engineering to legal should change what they have
-        without being told to restart — and after a conflict is answered.
+        without being told to restart.
 
-        Every synced kind goes through the same merge, so a person's
-        edits are kept and asked about rather than overwritten, whether
-        the thing they edited was an agent or a skill.
+        There is nothing to merge any more. The loaders read the pack
+        straight from the cache, so refreshing it is the whole update;
+        this only has to rebuild what was constructed from the old
+        contents. It used to copy every synced kind into the project and
+        reconcile local edits, which is why it could report what moved
+        and ask questions — the cache being authoritative removed both
+        the copying and the questions.
 
         Returns whether the pools were rebuilt. Never raises: the session
         that is running matters more than the update that is not.
         """
         try:
-            moved = False
-            for kind in SYNCED_KINDS:
-                report = self.group_agent_sync(kind).run()
-                if report.changed_anything:
-                    moved = True
-                    logger.info(
-                        "Group %s reloaded: %d added, %d updated, %d removed",
-                        kind,
-                        len(report.copied),
-                        len(report.updated),
-                        len(report.removed),
-                    )
-                for conflict in report.conflicts:
-                    logger.info("Group %s needs an answer — %s", kind, conflict.question())
-            if not moved:
-                return False
             self._init_agent_and_skill_pools(self.settings)
             self._rebuild_main_team()
             return True
@@ -805,13 +760,13 @@ class Session:
     def group_root(self, kind: str) -> Path | None:
         """The pack's directory for this kind, or None if it ships none.
 
-        Public because the loaders that need it are not all inside the
-        session: the markdown-command dispatcher asks for its own.
+        ``None`` rather than a path that may not exist: every loader
+        would silently skip a missing directory, which works but hides
+        the difference between "the group ships nothing" and "we passed
+        the wrong path".
 
-        ``None`` rather than a missing path so a loader is never handed a
-        directory that does not exist — every one of them would silently
-        skip it, which works but hides the difference between "the group
-        ships nothing" and "we passed the wrong path".
+        Public because the loaders needing it are not all inside the
+        session — the markdown-command dispatcher asks for its own.
         """
         try:
             directory = self.group_dir_for(kind)
@@ -836,45 +791,6 @@ class Session:
         except Exception as exc:  # pragma: no cover — defensive
             logger.debug("Could not inspect the group %s directory: %s", kind, exc)
             return False
-
-    def _sync_group_entries(self) -> GroupSyncReport:
-        """Copy what the group ships into the project, keeping local edits.
-
-        Runs before the pools are built so the session sees the result.
-        Every kind somebody might reasonably open and change goes through
-        the same merge — an edited skill is kept and asked about, exactly
-        as an edited agent is.
-
-        Never raises: a sync that cannot run should cost the update, not
-        the session.
-        """
-        combined = GroupSyncReport()
-        for kind in SYNCED_KINDS:
-            try:
-                report = GroupAgentSync(
-                    project_dir=self.project_dir,
-                    source_dir=self.group_dir_for(kind),
-                    kind=kind,
-                ).run()
-            except Exception as exc:  # noqa: BLE001 — a broken sync must not stop a start
-                logger.warning("Could not sync the group's %s: %s", kind, exc)
-                continue
-
-            combined.copied.extend(report.copied)
-            combined.updated.extend(report.updated)
-            combined.removed.extend(report.removed)
-            combined.conflicts.extend(report.conflicts)
-            if report.changed_anything:
-                logger.info(
-                    "Group %s synced: %d added, %d updated, %d removed",
-                    kind,
-                    len(report.copied),
-                    len(report.updated),
-                    len(report.removed),
-                )
-            for conflict in report.conflicts:
-                logger.info("Group %s needs an answer — %s", kind, conflict.question())
-        return combined
 
     def _init_agent_and_skill_pools(self, settings: Settings) -> None:
         """Construct :class:`AgentPool` + :class:`SkillPool` from the
@@ -1007,8 +923,15 @@ class Session:
         # survives a ``reload_hooks``.
         self._tool_hook_factory = ToolEventHookFactory(
             settings=settings,
+            # The fallback is only reached when this runs before
+            # ``rules_index`` exists; it needs the group's rules too, or
+            # a session taking that branch would silently lose them.
             rules_index=getattr(self, "rules_index", None)
-            or RulesIndex(self.project_dir, read_claude_md=settings.rules.cross_tool_support),
+            or RulesIndex(
+                self.project_dir,
+                read_claude_md=settings.rules.cross_tool_support,
+                group_rules_dir=self.group_root("rules"),
+            ),
             project_dir=self.project_dir,
             hook_executor_ref=lambda: self.hook_executor,
             session_id_ref=lambda: self.session_id,

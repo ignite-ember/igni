@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -221,10 +222,11 @@ class TestTheLoadersFindThem:
         assert pool.get("deploy") is not None
 
     def test_a_command_loads(self, cache: GroupPolicyCache, tmp_path: Path):
-        """Through the project, where the sync puts it — the loader does
-        not read the cache, so that a person's edit is not outranked by
-        the server's copy."""
-        from ember_code.core.init.group_agent_sync import GroupAgentSync
+        """Straight from the cache. It used to be copied into the project
+        first, so that a person's edit was not outranked by the server's
+        copy; the cache root is ranked below the project's instead, which
+        gets the same outcome without putting the server's file in the
+        repository."""
         from ember_code.core.utils.markdown_commands import MarkdownCommand
 
         cache.materialize(
@@ -232,16 +234,14 @@ class TestTheLoadersFindThem:
         )
         project = tmp_path / "proj"
         (project / ".ember").mkdir(parents=True)
-        GroupAgentSync(
-            project_dir=project, source_dir=cache.dir_for("commands"), kind="commands"
-        ).run()
 
-        found = MarkdownCommand.discover(project, read_claude=False)
+        found = MarkdownCommand.discover(
+            project, read_claude=False, group_dir=cache.dir_for("commands")
+        )
 
         assert "ship" in found
 
     def test_an_output_style_loads(self, cache: GroupPolicyCache, tmp_path: Path):
-        from ember_code.core.init.group_agent_sync import GroupAgentSync
         from ember_code.core.output_styles.loader import discover_output_styles
 
         cache.materialize(
@@ -253,11 +253,10 @@ class TestTheLoadersFindThem:
         )
         project = tmp_path / "proj"
         (project / ".ember").mkdir(parents=True)
-        GroupAgentSync(
-            project_dir=project, source_dir=cache.dir_for("output-styles"), kind="output-styles"
-        ).run()
 
-        styles = discover_output_styles(project, read_claude=False)
+        styles = discover_output_styles(
+            project, read_claude=False, group_dir=cache.dir_for("output-styles")
+        )
 
         assert "terse" in styles
 
@@ -274,14 +273,11 @@ class TestTheLoadersFindThem:
                 )
             )
         )
-        from ember_code.core.init.group_agent_sync import GroupAgentSync
-
         project = tmp_path / "proj"
         (project / ".ember").mkdir(parents=True)
-        GroupAgentSync(
-            project_dir=project, source_dir=cache.dir_for("workflows"), kind="workflows"
-        ).run()
-        discovery = WorkflowDiscovery(project_dir=project)
+        discovery = WorkflowDiscovery(
+            project_dir=project, group_dir=cache.dir_for("workflows")
+        )
 
         assert [p.stem for p in discovery._iter_paths()] == ["review"]
 
@@ -329,12 +325,11 @@ class TestTheLoadersFindThem:
         cache.materialize(
             _pack(_entry("rules", "python", "---\npaths: ['**/*.py']\n---\nUse type hints."))
         )
-        from ember_code.core.init.group_agent_sync import GroupAgentSync
-
         project = tmp_path / "proj"
         (project / ".ember").mkdir(parents=True)
-        GroupAgentSync(project_dir=project, source_dir=cache.dir_for("rules"), kind="rules").run()
-        index = RulesIndex(project, read_claude_md=False)
+        index = RulesIndex(
+            project, read_claude_md=False, group_rules_dir=cache.dir_for("rules")
+        )
 
         assert index.consume_path(project / "app" / "main.py")
 
@@ -450,7 +445,14 @@ class TestBeingMovedToAnotherGroup:
     @staticmethod
     def _group(prefix: str) -> GroupPolicyPack:
         return _pack(
-            _entry("agents", f"{prefix}-agent", f"---\nname: {prefix}-agent\n---\nBody."),
+            # ``description`` matters: the agent loader skips a
+            # definition without one. The fixture predates any test that
+            # actually loaded these — the sync only copied files.
+            _entry(
+                "agents",
+                f"{prefix}-agent",
+                f"---\nname: {prefix}-agent\ndescription: the {prefix} one\n---\nBody.",
+            ),
             _entry("skills", f"{prefix}-skill", f"---\nname: {prefix}-skill\n---\nSteps."),
             _entry("commands", f"{prefix}-command", "---\ndescription: d\n---\nGo."),
             _entry("rules", f"{prefix}-rule", "---\npaths: ['**/*.py']\n---\nRule."),
@@ -503,22 +505,41 @@ class TestBeingMovedToAnotherGroup:
         commands = {h["command"] for h in blob["hooks"]["PreToolUse"]}
         assert commands == {"legal.sh"}
 
-    def test_the_project_loses_the_old_group_s_agents(
+    def test_moving_group_changes_which_agents_load(
         self, cache: GroupPolicyCache, tmp_path: Path
     ):
-        from ember_code.core.init.group_agent_sync import GroupAgentSync
+        """An admin moving somebody from engineering to legal should
+        change what they have.
+
+        This used to assert the *project* lost the old group's agents,
+        because they were copied in and pruned out again. Nothing is
+        copied now: the cache is pruned and the loader simply stops
+        finding them, which is the same outcome with one fewer place for
+        a stale file to survive.
+        """
+        from ember_code.core.agents.loader import AgentDefinitionLoader
 
         project = tmp_path / "proj"
         (project / ".ember").mkdir(parents=True)
+        settings = SimpleNamespace(agents=SimpleNamespace(cross_tool_support=False))
 
         cache.materialize(self._group("eng"))
-        GroupAgentSync(project_dir=project, source_dir=cache.agents_dir).run()
-        cache.materialize(self._group("legal"))
-        report = GroupAgentSync(project_dir=project, source_dir=cache.agents_dir).run()
+        first = AgentDefinitionLoader(
+            settings=settings,
+            project_dir=project,
+            codeindex_available=False,
+            group_dir=cache.agents_dir,
+        ).load()
+        assert set(first.entries) == {"eng-agent"}
 
-        assert report.removed == ["eng-agent"]
-        present = {p.stem for p in (project / ".ember" / "agents").glob("*.md")}
-        assert present == {"legal-agent"}
+        cache.materialize(self._group("legal"))
+        second = AgentDefinitionLoader(
+            settings=settings,
+            project_dir=project,
+            codeindex_available=False,
+            group_dir=cache.agents_dir,
+        ).load()
+        assert set(second.entries) == {"legal-agent"}
 
     def test_a_new_group_means_a_new_tag(self, cache: GroupPolicyCache):
         """The client only refetches when the tag changes, so a move

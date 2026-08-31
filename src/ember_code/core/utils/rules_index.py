@@ -102,12 +102,23 @@ class RulesIndex:
         self,
         project_dir: Path,
         read_claude_md: bool = True,
+        group_rules_dir: Path | None = None,
     ) -> None:
         try:
             self.project_dir = project_dir.resolve()
         except OSError:
             self.project_dir = project_dir
         self._read_claude_md = read_claude_md
+        # The org's, from the group policy cache.
+        #
+        # Scanned **alongside** the project's rather than instead of
+        # them, because a rule is scoped to paths rather than named:
+        # two rules matching ``**/*.py`` from different sources are two
+        # things to say about Python files, not two candidates for one
+        # slot. Every other kind a group ships resolves by name and lets
+        # the project win; forcing rules into that shape would silently
+        # drop one of them.
+        self._group_rules_dir = group_rules_dir
         self._filenames = _rules_filenames(read_claude_md)
         # ``{dir -> list of rules files in load order}``. Multiple
         # files per dir support the override pattern: a subdir that
@@ -181,12 +192,18 @@ class RulesIndex:
         )
 
     def _build_scoped_rules(self) -> None:
-        """Scan ``<project>/.ember/rules/`` and (when enabled)
-        ``<project>/.claude/rules/`` for files carrying a ``paths:``
-        frontmatter, and register them in ``self._scoped_rules``.
+        """Scan the project's rules, the group's when one was given, and
+        (when enabled) ``<project>/.claude/rules/`` for files carrying a
+        ``paths:`` frontmatter, and register them in
+        ``self._scoped_rules``.
+
+        All of them, additively: a rule that matches is a rule that
+        applies, wherever it came from.
         Unscoped files are ignored here — they're picked up by the
         eager ``load_project_rules_dirs`` loader instead."""
         candidates = [self.project_dir / CONFIG_DIR / "rules"]
+        if self._group_rules_dir is not None:
+            candidates.append(self._group_rules_dir)
         if self._read_claude_md:
             candidates.append(self.project_dir / ".claude" / "rules")
         for rules_dir in candidates:

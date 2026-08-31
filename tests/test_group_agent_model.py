@@ -26,7 +26,6 @@ from ember_code.core.config.group_policy import (
     GroupPolicyEntry,
     GroupPolicyPack,
 )
-from ember_code.core.init.group_agent_sync import GroupAgentSync
 
 
 def _pack(*, entries=(), default_model=None) -> GroupPolicyPack:
@@ -76,22 +75,57 @@ class TestTheModelAnAgentRunsAgainst:
         assert frontmatter["model"] == "legal-reviewer"
 
     def test_it_survives_the_round_trip_through_the_loader(self, tmp_path: Path, bare_settings):
-        """Cache → sync → project → loader → definition. The whole path,
-        because a model that reaches the file and stops there is worth
-        nothing."""
+        """Cache → loader → definition. The whole path, because a model
+        that reaches the file and stops there is worth nothing.
+
+        There used to be a sync between the cache and the loader: the
+        agent was copied into ``<project>/.ember/agents`` and read from
+        there. The loader reads the cache directly now, so the path is
+        one hop shorter and the model has one fewer place to be lost.
+        """
         cache = GroupPolicyCache(cache_dir=tmp_path / "group-policy")
         cache.materialize(_pack(entries=[_agent_entry("contracts", model="legal-reviewer")]))
         project = tmp_path / "proj"
         (project / ".ember").mkdir(parents=True)
-        GroupAgentSync(project_dir=project, source_dir=cache.agents_dir).run()
 
         report = AgentDefinitionLoader(
             settings=bare_settings,
             project_dir=project,
             codeindex_available=False,
+            group_dir=cache.agents_dir,
         ).load()
 
         assert report.entries["contracts"].definition.model == "legal-reviewer"
+
+    def test_a_project_override_replaces_the_group_model_too(
+        self, tmp_path: Path, bare_settings
+    ):
+        """A project's own copy of the agent brings its own model, or
+        none — it does not inherit the group entry's.
+
+        Worth pinning: the model is carried in frontmatter, so somebody
+        overriding an agent and omitting ``model`` gets the deployment
+        default rather than the group's choice. That is the right answer,
+        but it is not the obvious one.
+        """
+        cache = GroupPolicyCache(cache_dir=tmp_path / "group-policy")
+        cache.materialize(_pack(entries=[_agent_entry("contracts", model="legal-reviewer")]))
+        project = tmp_path / "proj"
+        agents = project / ".ember" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "contracts.md").write_text(
+            "---\nname: contracts\ndescription: mine\n---\nBody.",
+            encoding="utf-8",
+        )
+
+        report = AgentDefinitionLoader(
+            settings=bare_settings,
+            project_dir=project,
+            codeindex_available=False,
+            group_dir=cache.agents_dir,
+        ).load()
+
+        assert report.entries["contracts"].definition.model is None
 
     def test_an_agent_naming_none_keeps_its_content_verbatim(self, tmp_path: Path):
         """Absent means "inherit", so there is nothing to write."""
