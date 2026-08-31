@@ -37,6 +37,7 @@ from ember_code.core.code_index.schema.manifest import (
     ManifestWire,
     SystemClock,
 )
+from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ class ManifestStore:
         self,
         *,
         project: str | Path,
-        data_dir: str | Path = "~/.ember",
+        data_dir: str | Path = DEFAULT_DATA_DIR,
         clock: Clock | None = None,
     ):
         self.project = project

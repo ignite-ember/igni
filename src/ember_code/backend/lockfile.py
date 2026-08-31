@@ -51,6 +51,7 @@ from ember_code.backend.schemas_lockfile import (
     VersionMismatch,
     WriteLockfileResult,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ class Lockfile:
         # does before passing project_dir to the BE — the lockfile
         # lives next to ``state.db`` inside the resolved project,
         # not at whatever path the caller happened to pass in.
-        self._dir = Path(project_dir).resolve() / ".ember"
+        self._dir = Path(project_dir).resolve() / CONFIG_DIR
         self._path = self._dir / LOCKFILE_NAME
 
     @property

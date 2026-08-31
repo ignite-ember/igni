@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ember_code.core.init.hooks_catalog import BUILT_IN_HOOKS
 from ember_code.core.init.schemas import BuiltInHookSpec, SettingsFile
+from ember_code.core.paths import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -79,10 +80,10 @@ class HookProvisioner(BaseModel):
             logger.debug("Group ships its own hook scripts; provisioning nothing locally")
             return
 
-        hooks_dir = self.project_dir / ".ember" / "hooks"
+        hooks_dir = self.project_dir / CONFIG_DIR / "hooks"
         hooks_dir.mkdir(parents=True, exist_ok=True)
 
-        settings_path = self.project_dir / ".ember" / "settings.json"
+        settings_path = self.project_dir / CONFIG_DIR / "settings.json"
         settings = SettingsFile.load(settings_path)
 
         for hook in self.hooks:

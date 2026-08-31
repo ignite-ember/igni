@@ -35,6 +35,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+from ember_code.core.paths import CONFIG_DIR
+
 
 def load_project_rules(
     read_rules_dir: Callable[..., str],
@@ -83,7 +85,7 @@ def load_project_rules_dirs(
     """
     sections: list[str] = []
     ember_dir = read_rules_dir_files(
-        project_dir / ".ember" / "rules",
+        project_dir / CONFIG_DIR / "rules",
         working_dir=working_dir,
         project_dir=project_dir,
     )

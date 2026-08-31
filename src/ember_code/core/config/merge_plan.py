@@ -37,6 +37,7 @@ from ember_code.core.config.accumulator import SettingsAccumulator
 from ember_code.core.config.cloud_model_migrator import CloudModelMigrator
 from ember_code.core.config.config_io import YamlSource
 from ember_code.core.config.managed_policy import ManagedPolicySource
+from ember_code.core.paths import CONFIG_DIR
 
 if TYPE_CHECKING:
     from ember_code.core.config.group_policy import GroupPolicyPack
@@ -228,10 +229,10 @@ class SettingsMergePlan:
         assertions reference this method's output. If a future
         refactor needs to reorder tiers, this is the seam.
         """
-        user_ember = Path.home() / ".ember"
+        user_ember = Path.home() / CONFIG_DIR
         if project_dir is None:
             project_dir = Path.cwd()
-        project_ember = project_dir / ".ember"
+        project_ember = project_dir / CONFIG_DIR
 
         tiers: list[Tier] = [
             # User global (lowest priority above built-in defaults)

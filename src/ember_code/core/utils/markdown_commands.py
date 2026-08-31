@@ -57,6 +57,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+from ember_code.core.paths import CONFIG_DIR
+
 logger = logging.getLogger(__name__)
 
 
@@ -142,10 +144,10 @@ def _commands_dirs(project_dir: Path, read_claude: bool) -> list[Path]:
     roots: list[Path] = []
     if read_claude:
         roots.append(home / ".claude" / "commands")
-    roots.append(home / ".ember" / "commands")
+    roots.append(home / CONFIG_DIR / "commands")
     if read_claude:
         roots.append(project_dir / ".claude" / "commands")
-    roots.append(project_dir / ".ember" / "commands")
+    roots.append(project_dir / CONFIG_DIR / "commands")
     return roots
 
 

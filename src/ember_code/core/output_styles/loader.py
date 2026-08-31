@@ -18,6 +18,8 @@ from typing import Any
 
 import yaml
 
+from ember_code.core.paths import CONFIG_DIR
+
 logger = logging.getLogger(__name__)
 
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?(.*)", re.DOTALL)
@@ -86,10 +88,10 @@ def _style_dirs(
     roots: list[Path] = []
     if read_claude:
         roots.append(home / ".claude" / "output-styles")
-    roots.append(home / ".ember" / "output-styles")
+    roots.append(home / CONFIG_DIR / "output-styles")
     if read_claude:
         roots.append(project_dir / ".claude" / "output-styles")
-    roots.append(project_dir / ".ember" / "output-styles")
+    roots.append(project_dir / CONFIG_DIR / "output-styles")
     for plugin_root, _ in plugin_roots or []:
         roots.append(plugin_root / "output-styles")
     return roots

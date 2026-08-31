@@ -21,6 +21,7 @@ import os
 from pathlib import Path
 
 from ember_code.core.config.caller_inspector import CallerContextInspector
+from ember_code.core.paths import DEFAULT_DATA_DIR
 
 
 class LlmCallLogger:
@@ -42,7 +43,7 @@ class LlmCallLogger:
         self._log_dir = (
             Path(os.path.expanduser(str(log_dir)))
             if log_dir
-            else Path(os.path.expanduser("~/.ember"))
+            else Path(os.path.expanduser(DEFAULT_DATA_DIR))
         )
         self._logger = logging.getLogger("ember_code.llm_calls")
         self._caller_inspector = caller_inspector or CallerContextInspector()

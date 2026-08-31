@@ -34,6 +34,7 @@ from ember_code.core.config.tool_permissions.schemas import (
     LoadResult,
     PermissionLevel,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +62,12 @@ class SettingsFileLoader:
         """The ordered list of settings files this loader consults —
         exposed so tests can assert against the exact search order
         without duplicating the constants."""
-        home_ember = Path.home() / ".ember"
+        home_ember = Path.home() / CONFIG_DIR
         return [
             home_ember / "settings.json",
             home_ember / "settings.local.json",
-            self._project_dir / ".ember" / "settings.json",
-            self._project_dir / ".ember" / "settings.local.json",
+            self._project_dir / CONFIG_DIR / "settings.json",
+            self._project_dir / CONFIG_DIR / "settings.local.json",
         ]
 
     def load_all(self) -> list[LoadResult]:
@@ -148,8 +149,8 @@ class SettingsFileWriter:
         assert against in tests.
         """
         if self._project_dir:
-            return self._project_dir / ".ember" / "settings.local.json"
-        return Path.home() / ".ember" / "settings.local.json"
+            return self._project_dir / CONFIG_DIR / "settings.local.json"
+        return Path.home() / CONFIG_DIR / "settings.local.json"
 
     def save_rule(self, rule: str, level: PermissionLevel) -> Path:
         """Persist ``rule`` under the ``permissions.<level>`` list of

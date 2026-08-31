@@ -29,10 +29,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+from ember_code.core.paths import CONFIG_DIR
+
 # Path constants — public so tests + downstream can monkeypatch them
 # in a hermetic sandbox (see ``test_context.py::_isolate_user_rules``).
-USER_RULES_PATH = Path.home() / ".ember" / "rules.md"
-USER_RULES_DIR = Path.home() / ".ember" / "rules"
+USER_RULES_PATH = Path.home() / CONFIG_DIR / "rules.md"
+USER_RULES_DIR = Path.home() / CONFIG_DIR / "rules"
 CLAUDE_USER_RULES_DIR = Path.home() / ".claude" / "rules"
 
 

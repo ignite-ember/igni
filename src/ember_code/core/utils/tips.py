@@ -20,6 +20,7 @@ from typing import ClassVar
 from pydantic import BaseModel, ConfigDict
 
 from ember_code.core.config.settings import Settings
+from ember_code.core.paths import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +127,7 @@ class NoCustomAgentsTip(ContextualTip):
     )
 
     def matches(self, ctx: TipContext) -> bool:
-        agent_dir = ctx.project_dir / ".ember" / "agents"
+        agent_dir = ctx.project_dir / CONFIG_DIR / "agents"
         if not agent_dir.exists():
             return True
         return len(list(agent_dir.glob("*.md"))) == 0

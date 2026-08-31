@@ -54,6 +54,7 @@ import logging
 import sys
 from pathlib import Path
 
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.utils.context_memory_prompt import MemoryWritebackPrompt
 
 logger = logging.getLogger(__name__)
@@ -105,7 +106,7 @@ def _project_memory_slug(project_dir: Path) -> str:
 def _ember_project_memory_dir(project_dir: Path) -> Path:
     """Ember-native per-project memory dir
     (``~/.ember/projects/<slug>/memory/``)."""
-    return Path.home() / ".ember" / "projects" / _project_memory_slug(project_dir) / "memory"
+    return Path.home() / CONFIG_DIR / "projects" / _project_memory_slug(project_dir) / "memory"
 
 
 def _claude_project_memory_dir(project_dir: Path) -> Path:

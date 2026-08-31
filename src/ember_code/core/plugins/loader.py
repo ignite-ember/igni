@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ember_code.core.hooks.schemas import HookLoadResult
+from ember_code.core.paths import CONFIG_DIR, DEFAULT_DATA_DIR
 from ember_code.core.plugins.models import (
     PluginDefinition,
     PluginManifest,
@@ -87,7 +88,7 @@ def _platform_managed_plugins_root() -> Path | None:
 class PluginLoader:
     """Discovers plugins and applies their bundled extensions."""
 
-    def __init__(self, data_dir: str | Path = "~/.ember") -> None:
+    def __init__(self, data_dir: str | Path = DEFAULT_DATA_DIR) -> None:
         self._plugins: dict[str, PluginDefinition] = {}
         # Used to compute the org-installed ``group-policy`` root.
         # ``Path.home()`` is still the default for the user-tier
@@ -111,9 +112,9 @@ class PluginLoader:
 
         roots: list[tuple[str, Path, int]] = [
             ("user-claude", Path.home() / ".claude" / "plugins", 1),
-            ("user-ember", Path.home() / ".ember" / "plugins", 2),
+            ("user-ember", Path.home() / CONFIG_DIR / "plugins", 2),
             ("project-claude", project_dir / ".claude" / "plugins", 3),
-            ("project-ember", project_dir / ".ember" / "plugins", 4),
+            ("project-ember", project_dir / CONFIG_DIR / "plugins", 4),
         ]
 
         # Group-policy tier — plugins installed from
@@ -141,7 +142,7 @@ class PluginLoader:
         managed_root = _platform_managed_plugins_root()
         if managed_root is not None:
             roots.append(("managed-claude", managed_root / ".claude" / "plugins", 6))
-            roots.append(("managed-ember", managed_root / ".ember" / "plugins", 7))
+            roots.append(("managed-ember", managed_root / CONFIG_DIR / "plugins", 7))
 
         for root_kind, root_path, priority in roots:
             self._load_root(root_kind, root_path, priority)

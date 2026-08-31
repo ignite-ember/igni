@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 
 from websockets.asyncio.server import serve
 
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.protocol.messages import Message, Welcome
 from ember_code.protocol.registry import MessageRegistry
 from ember_code.transport._ws_client import MirroredClient, SendResult
@@ -79,7 +80,7 @@ if os.environ.get("EMBER_CHUNK_TRACE") == "1" and not any(
     getattr(h, "_ember_chunk_trace", False) for h in logger.handlers
 ):
     _trace_path = Path(
-        os.environ.get("EMBER_CHUNK_TRACE_LOG") or (Path.home() / ".ember" / "chunk_trace.log")
+        os.environ.get("EMBER_CHUNK_TRACE_LOG") or (Path.home() / CONFIG_DIR / "chunk_trace.log")
     )
     _trace_path.parent.mkdir(parents=True, exist_ok=True)
 

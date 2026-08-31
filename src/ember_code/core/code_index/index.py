@@ -63,6 +63,7 @@ from ember_code.core.code_index.project import resolve_project_id
 from ember_code.core.code_index.schema.items import ChunkRow, CodeIndexItem, CodeIndexResult
 from ember_code.core.code_index.schema.stats import HeadStats
 from ember_code.core.code_index.schema.where_filter import ChromaWhereFilter
+from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ class CodeIndex:
         self,
         *,
         project: str | Path,
-        data_dir: str | Path = "~/.ember",
+        data_dir: str | Path = DEFAULT_DATA_DIR,
         chunker: ChunkingStrategy | None = None,
         neo4j_client: Any | None = None,
         runtime: Any | None = None,

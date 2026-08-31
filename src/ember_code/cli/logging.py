@@ -16,11 +16,13 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from ember_code.core.paths import CONFIG_DIR
+
 
 class DebugLogging:
     """Bootstrap for the ``ember --debug`` file-log surface."""
 
-    DEFAULT_PATH = Path.home() / ".ember" / "debug.log"
+    DEFAULT_PATH = Path.home() / CONFIG_DIR / "debug.log"
     _FORMAT = "%(asctime)s %(name)s %(levelname)s %(message)s"
     _MAX_BYTES = 10_000_000
     _BACKUPS = 2

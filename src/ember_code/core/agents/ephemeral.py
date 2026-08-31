@@ -24,6 +24,7 @@ from ember_code.core.agents.schemas import (
     AgentEntry,
     AgentPriority,
 )
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
@@ -48,7 +49,7 @@ class EphemeralAgentStore:
         pool: AgentPool,
         max_ephemeral: int = 5,
     ) -> None:
-        self._dir: Path = project_dir / ".ember" / "agents.tmp"
+        self._dir: Path = project_dir / CONFIG_DIR / "agents.tmp"
         self._pool = pool
         self._max = max_ephemeral
 
@@ -146,7 +147,7 @@ class EphemeralAgentStore:
         if not defn.source_path or self._dir not in defn.source_path.parents:
             raise ValueError(f"Agent '{name}' is not an ephemeral agent.")
 
-        dest_dir = project_dir / ".ember" / "agents"
+        dest_dir = project_dir / CONFIG_DIR / "agents"
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest_path = dest_dir / defn.source_path.name
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.utils.context import (
     ProjectMemoryBank,
     load_project_context,
@@ -61,7 +62,7 @@ class InstructionsBuilder:
 
     def append_todo(self, out: list[str]) -> None:
         """Append ``.ember/TODO.md`` if present (root only)."""
-        todo_path = self._project_dir / ".ember" / "TODO.md"
+        todo_path = self._project_dir / CONFIG_DIR / "TODO.md"
         if not todo_path.is_file():
             return
         content = todo_path.read_text().strip()

@@ -21,6 +21,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.skills.parser import SkillDefinition, SkillParser
 
 
@@ -115,15 +116,15 @@ class SkillPool:
         self.load_directory(builtin_dir, priority=SkillPriority.BUNDLED)
 
         # User-level Ember (beats user-level Claude by +1).
-        self.load_directory(Path.home() / ".ember" / "skills", priority=SkillPriority.USER_EMBER)
+        self.load_directory(Path.home() / CONFIG_DIR / "skills", priority=SkillPriority.USER_EMBER)
 
         # Project-level personal overrides (gitignored).
         self.load_directory(
-            project_dir / ".ember" / "skills.local", priority=SkillPriority.PROJECT_LOCAL
+            project_dir / CONFIG_DIR / "skills.local", priority=SkillPriority.PROJECT_LOCAL
         )
 
         # Project-level Ember (highest).
-        self.load_directory(project_dir / ".ember" / "skills", priority=SkillPriority.PROJECT_EMBER)
+        self.load_directory(project_dir / CONFIG_DIR / "skills", priority=SkillPriority.PROJECT_EMBER)
 
         # Cross-tool Claude Code directories — explicitly slotted *below*
         # their same-scope Ember equivalents.

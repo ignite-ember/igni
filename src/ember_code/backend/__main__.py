@@ -47,6 +47,7 @@ from ember_code.backend.schemas_rpc import (
     UpdateAvailable,
     WriteClientStateResult,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 __all__ = [
     "AttachSessionResult",
@@ -101,7 +102,7 @@ def main(
     if socket_path is None and ws_port is None:
         raise click.UsageError("at least one of --socket or --ws-port is required")
     if debug:
-        log_path = Path.home() / ".ember" / "debug.log"
+        log_path = Path.home() / CONFIG_DIR / "debug.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         logging.basicConfig(
             filename=str(log_path),

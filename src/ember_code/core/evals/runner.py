@@ -46,6 +46,7 @@ from ember_code.core.evals.schemas import (
 )
 from ember_code.core.evals.tool_names import DEFAULT_CATALOG, ToolNameCatalog
 from ember_code.core.evals.workspace import EvalWorkspace
+from ember_code.core.paths import CONFIG_DIR
 
 if TYPE_CHECKING:
     from ember_code.core.agents import AgentPool
@@ -274,7 +275,7 @@ class SuiteRunner:
         fixtures.
         """
         builtin = self._project_dir / "evals" / "fixtures"
-        user = self._project_dir / ".ember" / "evals"
+        user = self._project_dir / CONFIG_DIR / "evals"
         return builtin if builtin.is_dir() else user
 
     def _lookup_judge_model(self) -> Any | None:

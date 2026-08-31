@@ -16,6 +16,7 @@ import logging
 import shutil
 from pathlib import Path
 
+from ember_code.core.paths import DEFAULT_DATA_DIR
 from ember_code.core.plugins.git import GitClient, GitError
 from ember_code.core.plugins.models import PluginManifest
 from ember_code.core.plugins.state import load_state, save_state
@@ -39,7 +40,7 @@ class PluginInstaller:
     def __init__(
         self,
         *,
-        data_dir: str | Path = "~/.ember",
+        data_dir: str | Path = DEFAULT_DATA_DIR,
         git_client: GitClient | None = None,
     ) -> None:
         self._data_dir = Path(str(data_dir)).expanduser()

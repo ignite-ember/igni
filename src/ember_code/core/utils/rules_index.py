@@ -22,6 +22,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.utils.context_frontmatter import parse_frontmatter
 from ember_code.core.utils.context_imports import resolve_imports
 
@@ -73,7 +74,7 @@ _EXCLUDED_DIR_NAMES = frozenset(
         ".cache",
         ".idea",
         ".vscode",
-        ".ember",
+        CONFIG_DIR,
         ".claude",
     }
 )
@@ -185,7 +186,7 @@ class RulesIndex:
         frontmatter, and register them in ``self._scoped_rules``.
         Unscoped files are ignored here — they're picked up by the
         eager ``load_project_rules_dirs`` loader instead."""
-        candidates = [self.project_dir / ".ember" / "rules"]
+        candidates = [self.project_dir / CONFIG_DIR / "rules"]
         if self._read_claude_md:
             candidates.append(self.project_dir / ".claude" / "rules")
         for rules_dir in candidates:

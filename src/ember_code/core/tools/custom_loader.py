@@ -41,6 +41,7 @@ from agno.tools import Toolkit
 # the ``isinstance`` sniff below, not just in annotations.
 from agno.tools.function import Function
 
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.tools.custom_loader_schemas import (
     DiscoveryResult,
     FailedFile,
@@ -150,8 +151,8 @@ class CustomToolLoader:
         # this order — an accidental reshuffle would silently
         # rewire which tool wins on name conflicts.
         sources: list[ToolSource] = [
-            ToolSource(name_prefix="custom", tools_dir=Path.home() / ".ember" / "tools"),
-            ToolSource(name_prefix="custom", tools_dir=project_dir / ".ember" / "tools"),
+            ToolSource(name_prefix="custom", tools_dir=Path.home() / CONFIG_DIR / "tools"),
+            ToolSource(name_prefix="custom", tools_dir=project_dir / CONFIG_DIR / "tools"),
         ]
         # The org's, from the group policy cache. Last of the non-plugin
         # sources, so a tool the group ships wins its name.

@@ -45,6 +45,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ember_code.core.paths import DEFAULT_DATA_DIR
 from ember_code.core.plugins.git import GitClient
 from ember_code.core.plugins.marketplace_store import (
     DEFAULT_MARKETPLACES,
@@ -101,18 +102,18 @@ class _MarketplaceModuleAdapter:
         """
         return MarketplaceRegistryStore(data_dir=data_dir, git_client=git_client)
 
-    def registry_path(self, data_dir: str | Path = "~/.ember") -> Path:
+    def registry_path(self, data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
         """See :meth:`MarketplaceRegistryStore.path`."""
         return self._store(data_dir).path()
 
-    def load_registry(self, data_dir: str | Path = "~/.ember") -> MarketplaceRegistry:
+    def load_registry(self, data_dir: str | Path = DEFAULT_DATA_DIR) -> MarketplaceRegistry:
         """See :meth:`MarketplaceRegistryStore.load`."""
         return self._store(data_dir).load()
 
     def save_registry(
         self,
         registry: MarketplaceRegistry,
-        data_dir: str | Path = "~/.ember",
+        data_dir: str | Path = DEFAULT_DATA_DIR,
     ) -> None:
         """See :meth:`MarketplaceRegistryStore.save`."""
         self._store(data_dir).save(registry)
@@ -132,19 +133,19 @@ class _MarketplaceModuleAdapter:
                 clone step failed. The message carries the
                 underlying reason verbatim.
         """
-        return self._store("~/.ember", git_client).fetch_catalog(url).unwrap()
+        return self._store(DEFAULT_DATA_DIR, git_client).fetch_catalog(url).unwrap()
 
     def add_marketplace(
         self,
         url: str,
         *,
-        data_dir: str | Path = "~/.ember",
+        data_dir: str | Path = DEFAULT_DATA_DIR,
         git_client: GitClient | None = None,
     ) -> MarketplaceEntry:
         """See :meth:`MarketplaceRegistryStore.add`."""
         return self._store(data_dir, git_client).add(url)
 
-    def remove_marketplace(self, name: str, *, data_dir: str | Path = "~/.ember") -> bool:
+    def remove_marketplace(self, name: str, *, data_dir: str | Path = DEFAULT_DATA_DIR) -> bool:
         """See :meth:`MarketplaceRegistryStore.remove`."""
         return self._store(data_dir).remove(name)
 
@@ -152,14 +153,14 @@ class _MarketplaceModuleAdapter:
         self,
         name: str,
         *,
-        data_dir: str | Path = "~/.ember",
+        data_dir: str | Path = DEFAULT_DATA_DIR,
         git_client: GitClient | None = None,
     ) -> MarketplaceEntry | None:
         """See :meth:`MarketplaceRegistryStore.refresh`."""
         return self._store(data_dir, git_client).refresh(name)
 
     def resolve_install_ref(
-        self, ref: str, *, data_dir: str | Path = "~/.ember"
+        self, ref: str, *, data_dir: str | Path = DEFAULT_DATA_DIR
     ) -> tuple[ResolvedSource, MarketplacePluginEntry] | None:
         """See :meth:`MarketplaceRegistryStore.resolve_install_ref`."""
         return self._store(data_dir).resolve_install_ref(ref)

@@ -23,10 +23,11 @@ from pathlib import Path
 import yaml
 
 from ember_code.core.config.model_entry import ModelRegistryEntry
+from ember_code.core.paths import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG_PATH = Path.home() / ".ember" / "config.yaml"
+DEFAULT_CONFIG_PATH = Path.home() / CONFIG_DIR / "config.yaml"
 
 
 class ModelRegistryStore:

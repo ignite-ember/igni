@@ -44,6 +44,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ember_code.core.init.checksum_store import ChecksumStore
 from ember_code.core.init.json_file import JsonFile
 from ember_code.core.init.schemas import InitConfig
+from ember_code.core.paths import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -165,11 +166,11 @@ class GroupAgentSync:
 
     @property
     def dest_dir(self) -> Path:
-        return self._project_dir / ".ember" / self._subdir
+        return self._project_dir / CONFIG_DIR / self._subdir
 
     @property
     def _conflicts_path(self) -> Path:
-        return self._project_dir / ".ember" / CONFLICTS_FILE
+        return self._project_dir / CONFIG_DIR / CONFLICTS_FILE
 
     def _key(self, entry_name: str) -> str:
         """Checksum key for one entry.

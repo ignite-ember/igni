@@ -36,6 +36,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ember_code.core.paths import CONFIG_DIR
+
 logger = logging.getLogger(__name__)
 
 
@@ -148,7 +150,7 @@ class WorktreeRoot:
     """
 
     def __init__(self, root: Path | None = None) -> None:
-        self.root = root if root is not None else (Path.home() / ".ember" / "worktrees")
+        self.root = root if root is not None else (Path.home() / CONFIG_DIR / "worktrees")
 
     def ensure_exists(self) -> None:
         """Create the root directory tree if missing (idempotent)."""

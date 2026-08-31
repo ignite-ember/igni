@@ -36,6 +36,7 @@ from ember_code.core.init_templates import (
     EMBER_MD_TEMPLATE,
     PROJECT_CONFIG_TEMPLATE,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,7 @@ class ProjectInitializer(BaseModel):
 
     project_dir: Path
     config: InitConfig = Field(default_factory=InitConfig)
-    home_ember: Path = Field(default_factory=lambda: Path.home() / ".ember")
+    home_ember: Path = Field(default_factory=lambda: Path.home() / CONFIG_DIR)
 
     # ── Public entry point ────────────────────────────────────────
 
@@ -91,10 +92,10 @@ class ProjectInitializer(BaseModel):
         for backward compat with ``session/core.py``.
         """
         self.home_ember.mkdir(parents=True, exist_ok=True)
-        (self.project_dir / ".ember").mkdir(parents=True, exist_ok=True)
+        (self.project_dir / CONFIG_DIR).mkdir(parents=True, exist_ok=True)
 
         home_marker = self.home_ember / self.config.marker_file
-        project_marker = self.project_dir / ".ember" / self.config.marker_file
+        project_marker = self.project_dir / CONFIG_DIR / self.config.marker_file
 
         migrator = HomeConfigMigrator(home_ember=self.home_ember)
 
@@ -144,7 +145,7 @@ class ProjectInitializer(BaseModel):
 
     def _write_project_config(self) -> None:
         """Write a starter ``.ember/config.yaml`` with commented-out options."""
-        path = self.project_dir / ".ember" / "config.yaml"
+        path = self.project_dir / CONFIG_DIR / "config.yaml"
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(PROJECT_CONFIG_TEMPLATE)
@@ -162,7 +163,7 @@ class ProjectInitializer(BaseModel):
         already declare one — respects a user who has pre-seeded
         their own permissions.
         """
-        path = self.project_dir / ".ember" / "settings.local.json"
+        path = self.project_dir / CONFIG_DIR / "settings.local.json"
 
         # Peek at the raw JSON first — we only touch the file if
         # ``permissions`` is absent, matching the pre-refactor
@@ -192,7 +193,7 @@ class ProjectInitializer(BaseModel):
         # which case it is the source for this directory and ours would
         # scaffold back the very agents an admin removed.
         agents_src = self.config.package_dir / "bundled_agents"
-        agents_dst = self.project_dir / ".ember" / "agents"
+        agents_dst = self.project_dir / CONFIG_DIR / "agents"
         if agents_src.exists() and not self.config.skip_bundled_agents:
             agents_dst.mkdir(parents=True, exist_ok=True)
             for src_file in agents_src.glob("*.md"):
@@ -204,7 +205,7 @@ class ProjectInitializer(BaseModel):
 
         # Update skills
         skills_src = self.config.package_dir / "bundled_skills"
-        skills_dst = self.project_dir / ".ember" / "skills"
+        skills_dst = self.project_dir / CONFIG_DIR / "skills"
         if skills_src.exists():
             for skill_dir in skills_src.iterdir():
                 if not skill_dir.is_dir():

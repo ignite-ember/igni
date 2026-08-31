@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from ember_code.core.paths import DEFAULT_DATA_DIR
+
 
 class StorageConfig(BaseModel):
-    data_dir: str = "~/.ember"
+    data_dir: str = DEFAULT_DATA_DIR
     audit_log: str = "~/.ember/audit.log"
     max_history_runs: int = 10000
 

@@ -37,6 +37,7 @@ from ember_code.core.code_index.paths import state_db_path
 from ember_code.core.config.settings import Settings
 from ember_code.core.db.base import Base
 from ember_code.core.db.database import Database
+from ember_code.core.paths import DEFAULT_DATA_DIR
 from ember_code.core.tools.process_store_schemas import (
     BackgroundProcessRow,
     ListResult,
@@ -141,7 +142,7 @@ class BackgroundProcessStore:
         try:
             data_dir = Settings().storage.data_dir
         except (ImportError, FileNotFoundError, ValidationError):
-            data_dir = "~/.ember"
+            data_dir = DEFAULT_DATA_DIR
         return state_db_path(project, data_dir=data_dir)
 
     async def upsert(self, row: BackgroundProcessRow) -> UpsertResult:

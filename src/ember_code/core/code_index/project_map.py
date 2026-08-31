@@ -24,6 +24,7 @@ from functools import cached_property
 from pathlib import Path
 
 from ember_code.core.code_index.paths import code_index_dir
+from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ class ProjectMap:
         project: str | Path,
         commit_sha: str,
         *,
-        data_dir: str | Path = "~/.ember",
+        data_dir: str | Path = DEFAULT_DATA_DIR,
     ) -> None:
         self._project = project
         self._commit_sha = commit_sha

@@ -32,6 +32,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from ember_code.core.paths import DEFAULT_DATA_DIR
 from ember_code.core.plugins.git import GitClient
 from ember_code.core.plugins.models import (
     InstallRef,
@@ -177,7 +178,7 @@ class MarketplaceRegistryStore:
 
     def __init__(
         self,
-        data_dir: str | Path = "~/.ember",
+        data_dir: str | Path = DEFAULT_DATA_DIR,
         *,
         git_client: GitClient | None = None,
     ) -> None:

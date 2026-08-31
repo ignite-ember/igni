@@ -30,6 +30,7 @@ from ember_code.core.hooks.schemas import (
     HookLoadWarning,
     MergeStrategy,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 
 class _SettingsPathDiscovery:
@@ -68,12 +69,12 @@ class _SettingsPathDiscovery:
         path list stable across runs (useful for logging /
         debugging).
         """
-        home_ember = Path.home() / ".ember"
+        home_ember = Path.home() / CONFIG_DIR
         paths: list[Path] = [
             home_ember / "settings.json",
             home_ember / "settings.local.json",
-            self._project_dir / ".ember" / "settings.json",
-            self._project_dir / ".ember" / "settings.local.json",
+            self._project_dir / CONFIG_DIR / "settings.json",
+            self._project_dir / CONFIG_DIR / "settings.local.json",
         ]
         if self._cross_tool_support:
             home_claude = Path.home() / ".claude"

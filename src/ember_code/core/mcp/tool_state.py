@@ -13,6 +13,8 @@ import json
 import logging
 from pathlib import Path
 
+from ember_code.core.paths import CONFIG_DIR
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,7 +34,7 @@ class MCPToolStateStore:
     def path(self) -> Path | None:
         if self._project_dir is None:
             return None
-        return self._project_dir / ".ember" / "mcp-tool-state.json"
+        return self._project_dir / CONFIG_DIR / "mcp-tool-state.json"
 
     def load(self) -> dict[str, set[str]]:
         """Return ``{server: set[tool_name]}`` from disk. Empty when

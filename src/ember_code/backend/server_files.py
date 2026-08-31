@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
+from ember_code.core.paths import CONFIG_DIR, DEFAULT_DATA_DIR
+
 if TYPE_CHECKING:
     from ember_code.core.session import Session
 
@@ -133,7 +135,7 @@ class FilesController:
             return ReadFileResult(path=path, contents="", size=0, error=f"bad path: {exc}")
 
         project_root = Path(self._session.project_dir).resolve()
-        ember_root = Path(expanduser("~/.ember")).resolve()
+        ember_root = Path(expanduser(DEFAULT_DATA_DIR)).resolve()
         if not (
             self._within_root(requested, project_root) or self._within_root(requested, ember_root)
         ):
@@ -181,7 +183,7 @@ class FilesController:
         """Persist a FE-uploaded file to a per-session attachments
         dir."""
         safe = _SAFE_NAME_RE.sub("_", filename) or "file"
-        dest_dir = self._session.project_dir / ".ember" / "attachments" / self._session.session_id
+        dest_dir = self._session.project_dir / CONFIG_DIR / "attachments" / self._session.session_id
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / safe
         if dest.exists():

@@ -47,6 +47,7 @@ from ember_code.core.lsp.schemas import (
     LspConfigLoadResult,
     LspServerConfig,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,7 @@ class LspConfigLoader:
     surface them to the panel.
     """
 
-    _USER_CONFIG_RELATIVE = Path(".ember") / "lsp.json"
+    _USER_CONFIG_RELATIVE = Path(CONFIG_DIR) / "lsp.json"
     _PROJECT_CONFIG_NAME = ".lsp.json"
     _PLUGIN_CONFIG_NAME = ".lsp.json"
 

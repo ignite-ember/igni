@@ -16,6 +16,7 @@ from sqlalchemy import delete, select
 from ember_code.core.code_index.paths import state_db_path
 from ember_code.core.config.settings import Settings
 from ember_code.core.db.database import Database
+from ember_code.core.paths import DEFAULT_DATA_DIR
 from ember_code.core.scheduler.db_models import ScheduledTaskModel
 from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
 
@@ -31,7 +32,7 @@ def _resolve_db_path(
     try:
         data_dir = Settings().storage.data_dir
     except Exception:
-        data_dir = "~/.ember"
+        data_dir = DEFAULT_DATA_DIR
     return state_db_path(project, data_dir=data_dir)
 
 

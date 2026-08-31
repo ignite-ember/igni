@@ -30,6 +30,7 @@ from ember_code.core.agents.schemas import (
     LoadError,
     LoadReport,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 if TYPE_CHECKING:
     from ember_code.core.config.settings import Settings
@@ -84,9 +85,9 @@ class AgentDefinitionLoader:
         project_dir = self._project_dir
 
         dirs: list[tuple[Path, AgentPriority]] = [
-            (Path.home() / ".ember" / "agents", AgentPriority.USER_EMBER),
-            (project_dir / ".ember" / "agents.local", AgentPriority.PROJECT_LOCAL),
-            (project_dir / ".ember" / "agents", AgentPriority.PROJECT_EMBER),
+            (Path.home() / CONFIG_DIR / "agents", AgentPriority.USER_EMBER),
+            (project_dir / CONFIG_DIR / "agents.local", AgentPriority.PROJECT_LOCAL),
+            (project_dir / CONFIG_DIR / "agents", AgentPriority.PROJECT_EMBER),
         ]
 
         if settings.agents.cross_tool_support:

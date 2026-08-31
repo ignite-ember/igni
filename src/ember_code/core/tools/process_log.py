@@ -57,6 +57,8 @@ import os
 import tempfile
 from pathlib import Path
 
+from ember_code.core.paths import CONFIG_DIR
+
 logger = logging.getLogger(__name__)
 
 
@@ -100,7 +102,7 @@ class ProcessLogStore:
         if self._project_dir is None:
             root = Path(tempfile.gettempdir()) / "ember-process-logs"
         else:
-            root = Path(str(self._project_dir)) / ".ember" / "process_logs"
+            root = Path(str(self._project_dir)) / CONFIG_DIR / "process_logs"
         return root / f"{int(pid)}.log"
 
     def open(self, pid: int) -> io.TextIOBase | None:

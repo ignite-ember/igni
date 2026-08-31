@@ -54,6 +54,7 @@ from ember_code.backend.schemas_workflows import (
     WorkflowMeta,
     WorkflowMetaEnvelope,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 if TYPE_CHECKING:
     from ember_code.backend.push_bridge import PushNotificationBridge
@@ -78,7 +79,7 @@ RUNTIME_PATH = Path(__file__).parent / "workflow_runtime.mjs"
 # On name collisions, the per-user layer wins (typical override
 # semantics: your local copy is the source of truth for you).
 DEFAULT_WORKFLOW_DIR_TEAM = Path(".claude") / "workflows"
-DEFAULT_WORKFLOW_DIR_USER = Path(".ember") / "workflows"
+DEFAULT_WORKFLOW_DIR_USER = Path(CONFIG_DIR) / "workflows"
 
 # Per-agent timeout. 10 minutes matches ClaudeCode's default for
 # one-shot agent calls. Workflow callers can override per call via

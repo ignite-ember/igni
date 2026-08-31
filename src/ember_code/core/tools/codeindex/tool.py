@@ -26,6 +26,7 @@ from typing import Any
 from agno.tools import Toolkit
 
 from ember_code.core.code_index.index import CodeIndex
+from ember_code.core.paths import DEFAULT_DATA_DIR
 from ember_code.core.tools.codeindex.cypher_guard import (
     CypherGuardError,
     assert_read_only_cypher,
@@ -55,7 +56,7 @@ class CodeIndexTools(Toolkit):
         self,
         *,
         project_dir: str | Path | None = None,
-        data_dir: str | Path = "~/.ember",
+        data_dir: str | Path = DEFAULT_DATA_DIR,
         index: CodeIndex | None = None,
         **kwargs: Any,
     ):

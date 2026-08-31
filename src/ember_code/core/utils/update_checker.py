@@ -41,6 +41,7 @@ from pydantic import ValidationError
 
 from ember_code import __version__
 from ember_code.core.config.settings import Settings, load_settings
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.utils.update_checker_schemas import (
     PackageMetadata,
     PyPIInfoResponse,
@@ -66,7 +67,7 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-CACHE_FILE = Path.home() / ".ember" / ".update-check"
+CACHE_FILE = Path.home() / CONFIG_DIR / ".update-check"
 
 
 # ── Cache value object ────────────────────────────────────────────

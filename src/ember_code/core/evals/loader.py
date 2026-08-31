@@ -23,6 +23,7 @@ from ember_code.core.evals.schemas import (
     FixtureSpec,
     ToolArgAssertion,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +192,7 @@ def load_all_suites(project_dir: Path) -> list[EvalSuite]:
     suites: list[EvalSuite] = []
     seen_files: set[str] = set()
 
-    for evals_dir in (project_dir / ".ember" / "evals", project_dir / "evals"):
+    for evals_dir in (project_dir / CONFIG_DIR / "evals", project_dir / "evals"):
         if not evals_dir.is_dir():
             continue
         for path in sorted(evals_dir.glob("*.yaml")):

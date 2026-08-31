@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from pydantic import BaseModel, model_validator
 
+from ember_code.core.paths import CONFIG_DIR
+
 if TYPE_CHECKING:
     from ember_code.core.plugins.installer import PluginError, PluginInstaller
 else:
@@ -258,13 +260,13 @@ class GroupPolicyCache:
         installer: PluginInstaller | None = None,
         data_dir: Path | None = None,
     ) -> None:
-        self._cache_dir = cache_dir or (Path.home() / ".ember" / "group-policy")
+        self._cache_dir = cache_dir or (Path.home() / CONFIG_DIR / "group-policy")
         # Optional deps for the install path. Tests pass a stub
         # installer; production wires ``PluginInstaller(data_dir=...)``
         # from the same data_dir so install + cache land under the
         # same root and the plugins loader can find them.
         self._installer = installer
-        self._data_dir = data_dir or (Path.home() / ".ember")
+        self._data_dir = data_dir or (Path.home() / CONFIG_DIR)
 
     def dir_for(self, kind: str) -> Path:
         """The directory this kind's entries live in, created on demand."""

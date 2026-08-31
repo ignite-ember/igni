@@ -7,10 +7,12 @@ from pathlib import Path
 from rich.console import Console
 from rich.prompt import Confirm
 
+from ember_code.core.paths import CONFIG_DIR
+
 logger = logging.getLogger(__name__)
 
 # User-global config path — servers from here are auto-approved.
-_USER_GLOBAL_MCP = str(Path.home() / ".ember" / ".mcp.json")
+_USER_GLOBAL_MCP = str(Path.home() / CONFIG_DIR / ".mcp.json")
 
 
 class MCPApprovalManager:
@@ -23,7 +25,7 @@ class MCPApprovalManager:
     """
 
     def __init__(self, approval_path: Path | None = None) -> None:
-        self._path = approval_path or (Path.home() / ".ember" / "mcp-approved.json")
+        self._path = approval_path or (Path.home() / CONFIG_DIR / "mcp-approved.json")
         self._approved: dict[str, list[str]] = self._load()
 
     # ------------------------------------------------------------------

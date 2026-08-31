@@ -37,6 +37,7 @@ from ember_code.core.knowledge.models import (
     KnowledgeIndexEntry,
     KnowledgeSearchResult,
 )
+from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,7 @@ class KnowledgeIndex:
         self,
         *,
         project: str | Path,
-        data_dir: str | Path = "~/.ember",
+        data_dir: str | Path = DEFAULT_DATA_DIR,
         chunker: ChunkingStrategy | None = None,
         neo4j_client: Any,
         embedder: Any | None = None,

@@ -38,6 +38,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ember_code.core.init.json_file import JsonFile
 from ember_code.core.init.schemas import InitConfig, SyncOutcome
+from ember_code.core.paths import CONFIG_DIR
 
 
 class ChecksumStore(BaseModel):
@@ -78,7 +79,7 @@ class ChecksumStore(BaseModel):
         :meth:`save` can round-trip the same filename without an
         extra caller-side argument.
         """
-        path = project_dir / ".ember" / config.checksums_file
+        path = project_dir / CONFIG_DIR / config.checksums_file
         raw = JsonFile(path=path).load()
         return cls(project_dir=project_dir, config=config, entries=dict(raw))
 
@@ -92,7 +93,7 @@ class ChecksumStore(BaseModel):
         through this helper keeps the path build in one place.
         """
         return JsonFile(
-            path=self.project_dir / ".ember" / self.config.checksums_file,
+            path=self.project_dir / CONFIG_DIR / self.config.checksums_file,
         )
 
     def save(self) -> None:

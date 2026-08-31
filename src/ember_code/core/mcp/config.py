@@ -9,6 +9,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from ember_code.core.paths import CONFIG_DIR
+
 logger = logging.getLogger(__name__)
 
 
@@ -124,9 +126,9 @@ class MCPConfigLoader:
         servers: dict[str, MCPServerConfig] = {}
 
         paths = [
-            Path.home() / ".ember" / ".mcp.json",
+            Path.home() / CONFIG_DIR / ".mcp.json",
             self.project_dir / ".mcp.json",
-            self.project_dir / ".ember" / ".mcp.json",
+            self.project_dir / CONFIG_DIR / ".mcp.json",
         ]
 
         for path in paths:
