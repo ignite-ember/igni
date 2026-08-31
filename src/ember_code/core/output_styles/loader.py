@@ -82,13 +82,22 @@ def _style_dirs(
     project_dir: Path,
     plugin_roots: list[tuple[Path, str]] | None,
     read_claude: bool,
+    group_dir: Path | None = None,
 ) -> list[Path]:
-    """Roots to scan, in load order (later overrides earlier)."""
+    """Roots to scan, in load order (later overrides earlier).
+
+    The org's root goes above the user's globals and below the
+    project's, so a style the project declares under the same name is
+    the one that applies. Read from the policy cache rather than copied
+    into the project — the ordering is what makes the local one win.
+    """
     home = Path.home()
     roots: list[Path] = []
     if read_claude:
         roots.append(home / ".claude" / "output-styles")
     roots.append(home / CONFIG_DIR / "output-styles")
+    if group_dir is not None:
+        roots.append(group_dir)
     if read_claude:
         roots.append(project_dir / ".claude" / "output-styles")
     roots.append(project_dir / CONFIG_DIR / "output-styles")
@@ -101,6 +110,7 @@ def discover_output_styles(
     project_dir: Path,
     plugin_roots: list[tuple[Path, str]] | None = None,
     read_claude: bool = True,
+    group_dir: Path | None = None,
 ) -> dict[str, OutputStyle]:
     """Walk every configured root and return ``name → style``.
 
@@ -109,7 +119,7 @@ def discover_output_styles(
     as it does for slash commands / skills.
     """
     out: dict[str, OutputStyle] = {}
-    for root in _style_dirs(project_dir, plugin_roots, read_claude):
+    for root in _style_dirs(project_dir, plugin_roots, read_claude, group_dir):
         if not root.is_dir():
             continue
         for path in sorted(root.glob("*.md")):

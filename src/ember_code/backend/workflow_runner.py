@@ -105,18 +105,26 @@ class WorkflowDiscovery:
        Ember override directory; personal additions or
        replacements that don't belong in the repo.
 
-    On name collisions the per-user layer wins (you can
-    override a team workflow by placing a file with the same
-    stem in ``.ember/workflows/``). Discovery spawns the
+    3. **Org layer** — the group policy cache, when the person's
+       group ships workflows. Read from there rather than copied into
+       the project, and scanned *first* so both project layers shadow
+       it: a repository that declares its own version of a workflow
+       gets that version.
+
+    On name collisions later layers win (you can override a team
+    workflow by placing a file with the same stem in
+    ``.ember/workflows/``, and either project layer overrides the
+    org's). Discovery spawns the
     runtime once per file with ``--discovery`` (evaluates the
     file in a fresh :class:`vm.Script` context and emits a
     single ``workflow_meta`` event). Cached by mtime per file.
     """
 
-    def __init__(self, *, project_dir: Path):
+    def __init__(self, *, project_dir: Path, group_dir: Path | None = None):
         self._project_dir = Path(project_dir)
         self._team_dir = self._project_dir / DEFAULT_WORKFLOW_DIR_TEAM
         self._user_dir = self._project_dir / DEFAULT_WORKFLOW_DIR_USER
+        self._group_dir = Path(group_dir) if group_dir is not None else None
         self._cache: dict[Path, tuple[float, WorkflowMetaEnvelope]] = {}
 
     @property
@@ -130,12 +138,17 @@ class WorkflowDiscovery:
         return self._team_dir
 
     def _iter_paths(self) -> list[Path]:
-        """All ``*.mjs`` files across both layers, with the
-        per-user layer listed LAST so it wins name collisions in
-        the shadow pass (later entries overwrite earlier ones).
+        """All ``*.mjs`` files across every layer, ordered so later
+        entries win name collisions in the shadow pass.
+
+        The org's layer is listed FIRST, so both project layers shadow
+        it. The per-user layer stays LAST and still beats everything.
         """
         out: list[Path] = []
-        for directory in (self._team_dir, self._user_dir):
+        layers = [self._team_dir, self._user_dir]
+        if self._group_dir is not None:
+            layers.insert(0, self._group_dir)
+        for directory in layers:
             if directory.is_dir():
                 out.extend(sorted(directory.glob("*.mjs")))
         return out

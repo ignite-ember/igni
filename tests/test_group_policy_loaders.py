@@ -18,6 +18,7 @@ Three surfaces covered:
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,7 +29,7 @@ from ember_code.core.config.group_policy import (
     GroupPolicyEntry,
     GroupPolicyPack,
 )
-from ember_code.core.mcp.config import MCP_PRIORITY_GROUP, MCPConfigLoader
+from ember_code.core.mcp.config import MCPConfigLoader
 
 # ---------------------------------------------------------------------------
 # Cache → MCP file format
@@ -153,20 +154,63 @@ def test_mcp_config_loader_without_group_dir_unchanged(tmp_path: Path):
     assert "extra" not in servers
 
 
-def test_mcp_priority_group_constant_matches_agent_priority():
-    """The MCP group tier (5) matches AgentPriority.ORG_GROUP (5)."""
-    assert AgentPriority.ORG_GROUP.value == MCP_PRIORITY_GROUP
+def test_the_project_now_outranks_the_group_for_agents():
+    """The change this half of the work is for.
+
+    ``ORG_GROUP`` used to be the highest tier, on the reasoning that a
+    group's agent is the one that runs. The project outranks it now, so
+    a repository can override one agent by name — which is only
+    meaningful because the group's copy is read from the policy cache
+    rather than written into the project.
+    """
+    assert AgentPriority.ORG_GROUP < AgentPriority.PROJECT_EMBER
+    assert AgentPriority.ORG_GROUP < AgentPriority.PROJECT_LOCAL
+    assert AgentPriority.ORG_GROUP < AgentPriority.PROJECT_CLAUDE
+    # Still above the user's own globals: a group is a deliberate
+    # decision by an organisation, a stray file in ``~`` is not.
+    assert AgentPriority.ORG_GROUP > AgentPriority.USER_EMBER
+
+
+def test_mcp_still_lets_the_group_win(tmp_path: Path):
+    """MCP servers are the one kind that did not flip, asserted by
+    behaviour rather than by comparing two now-independent scales.
+
+    A server declaration names an endpoint and a command line, so
+    letting a project shadow one would let it point an org-approved tool
+    somewhere else. That is policy rather than preference, so the group
+    still lands last and wins.
+    """
+    project = tmp_path / "proj"
+    (project / ".ember").mkdir(parents=True)
+    (project / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"gateway": {"command": "project-binary"}}})
+    )
+    group_dir = tmp_path / "group" / "mcps"
+    group_dir.mkdir(parents=True)
+    # Same shape as a project ``.mcp.json`` — the loader reads the
+    # ``mcpServers`` wrapper regardless of which tier the file came from.
+    (group_dir / "gateway.json").write_text(
+        json.dumps({"mcpServers": {"gateway": {"command": "org-approved-binary"}}})
+    )
+
+    servers = MCPConfigLoader(project_dir=project, group_mcps_dir=group_dir).load()
+    assert servers["gateway"].command == "org-approved-binary"
+    assert servers["gateway"].source == "group-policy"
 
 
 # ---------------------------------------------------------------------------
 # AgentDefinitionLoader — where a group's agents are read from
 #
-# They used to be a root of their own, read straight from the policy
-# cache at ORG_GROUP priority. They are now synced into
-# ``<project>/.ember/agents`` (see GroupAgentSync) so a person can edit
-# one — and loading the server's pristine copy at a higher priority as
-# well would make that edit pointless. So the tests below assert the
-# cache directory is *not* a root, and that the synced location is.
+# The policy cache is a root of its own again, ranked above the user's
+# globals and below anything the project declares. Nothing of the
+# server's is written into the project, so "the local one wins" comes
+# out of the ordering rather than out of there being only one file.
+#
+# It was the other way round for a while: the group's agents were copied
+# into ``<project>/.ember/agents`` by GroupAgentSync so a person could
+# edit one, and reading the cache as well would have shadowed that edit.
+# Reading the cache directly gets the same outcome and leaves the
+# repository holding only what the repository declares.
 # ---------------------------------------------------------------------------
 
 
@@ -183,8 +227,8 @@ def _bare_settings():
     return SimpleNamespace(agents=SimpleNamespace(cross_tool_support=False))
 
 
-def test_agent_loader_reads_the_synced_project_dir(tmp_path: Path):
-    """Where GroupAgentSync puts the group's agents."""
+def test_agent_loader_reads_the_project_dir(tmp_path: Path):
+    """A project's own agents load at the project tier."""
     project = tmp_path / "proj"
     _write_agent(
         project / ".ember" / "agents",
@@ -201,9 +245,12 @@ def test_agent_loader_reads_the_synced_project_dir(tmp_path: Path):
     assert report.entries["contract-review"].priority == AgentPriority.PROJECT_EMBER
 
 
-def test_the_policy_cache_is_not_an_agent_root(tmp_path: Path):
-    """It is the sync source. Reading it here would shadow the copy the
-    person edits, which is the whole point of syncing."""
+def test_the_policy_cache_is_an_agent_root(tmp_path: Path):
+    """An agent only the group ships still loads.
+
+    Nothing copies it into the project any more, so if the cache were
+    not a root the group would simply have no agents.
+    """
     project = tmp_path / "proj"
     cache = tmp_path / "group-policy" / "agents"
     _write_agent(
@@ -216,24 +263,19 @@ def test_the_policy_cache_is_not_an_agent_root(tmp_path: Path):
         settings=_bare_settings(),
         project_dir=project,
         codeindex_available=False,
+        group_dir=cache,
     ).load()
 
-    assert "only-in-the-cache" not in report.entries
+    assert "only-in-the-cache" in report.entries
+    assert report.entries["only-in-the-cache"].priority == AgentPriority.ORG_GROUP
 
 
-def test_a_local_edit_is_what_loads(tmp_path: Path):
-    """The reason for all of the above."""
+def test_the_cache_is_not_read_unless_it_is_passed(tmp_path: Path):
+    """No implicit path — the session decides where the pack lives, and
+    a loader that guessed would read a directory nobody asked for."""
     project = tmp_path / "proj"
-    _write_agent(
-        project / ".ember" / "agents",
-        "reviewer",
-        "---\nname: reviewer\ndescription: my edited version\n---\nBody.",
-    )
-    _write_agent(
-        tmp_path / "group-policy" / "agents",
-        "reviewer",
-        "---\nname: reviewer\ndescription: the server version\n---\nBody.",
-    )
+    cache = tmp_path / "group-policy" / "agents"
+    _write_agent(cache, "unasked", "---\nname: unasked\ndescription: d\n---\nBody.")
 
     report = AgentDefinitionLoader(
         settings=_bare_settings(),
@@ -241,4 +283,62 @@ def test_a_local_edit_is_what_loads(tmp_path: Path):
         codeindex_available=False,
     ).load()
 
-    assert "edited" in report.entries["reviewer"].definition.description
+    assert "unasked" not in report.entries
+
+
+def test_the_project_wins_a_name_collision(tmp_path: Path):
+    """The reason for all of the above.
+
+    Both roots are read, so the outcome is decided by priority rather
+    than by one of them being absent.
+    """
+    project = tmp_path / "proj"
+    cache = tmp_path / "group-policy" / "agents"
+    _write_agent(
+        project / ".ember" / "agents",
+        "reviewer",
+        "---\nname: reviewer\ndescription: the project version\n---\nBody.",
+    )
+    _write_agent(
+        cache,
+        "reviewer",
+        "---\nname: reviewer\ndescription: the group version\n---\nBody.",
+    )
+
+    report = AgentDefinitionLoader(
+        settings=_bare_settings(),
+        project_dir=project,
+        codeindex_available=False,
+        group_dir=cache,
+    ).load()
+
+    assert "project version" in report.entries["reviewer"].definition.description
+    assert report.entries["reviewer"].priority == AgentPriority.PROJECT_EMBER
+
+
+def test_the_group_beats_the_user_globals(tmp_path: Path, monkeypatch):
+    """A group is a deliberate decision by an organisation; a file left
+    in ``~`` is not."""
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+    project = tmp_path / "proj"
+    cache = tmp_path / "group-policy" / "agents"
+    _write_agent(
+        home / ".ember" / "agents",
+        "reviewer",
+        "---\nname: reviewer\ndescription: my personal one\n---\nBody.",
+    )
+    _write_agent(
+        cache,
+        "reviewer",
+        "---\nname: reviewer\ndescription: the group version\n---\nBody.",
+    )
+
+    report = AgentDefinitionLoader(
+        settings=_bare_settings(),
+        project_dir=project,
+        codeindex_available=False,
+        group_dir=cache,
+    ).load()
+
+    assert "group version" in report.entries["reviewer"].definition.description

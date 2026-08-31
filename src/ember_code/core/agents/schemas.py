@@ -51,19 +51,25 @@ class AgentPriority(IntEnum):
     Claude sources by +1::
 
         10  ephemeral agents created at runtime
-         4  <project>/.ember/agents/          (project, native)
-         3  <project>/.ember/agents.local/    (project personal)
-         2  <project>/.claude/agents/         (project, cross-tool)
+         5  <project>/.ember/agents/          (project, native)
+         4  <project>/.ember/agents.local/    (project personal)
+         3  <project>/.claude/agents/         (project, cross-tool)
+         2  <group policy cache>/agents/      (the org's group)
          1  ~/.ember/agents/                  (user, native)
          0  ~/.claude/agents/                 (user, cross-tool)
+
+    The org's row is above the user's globals and below everything the
+    project declares. It used to sit at the top; the project now
+    outranks it, so a repository that ships its own version of an agent
+    gets that version.
     """
 
     USER_CLAUDE = 0
     USER_EMBER = 1
-    PROJECT_CLAUDE = 2
-    PROJECT_LOCAL = 3
-    PROJECT_EMBER = 4
-    ORG_GROUP = 5
+    ORG_GROUP = 2
+    PROJECT_CLAUDE = 3
+    PROJECT_LOCAL = 4
+    PROJECT_EMBER = 5
     EPHEMERAL = 10
 
 

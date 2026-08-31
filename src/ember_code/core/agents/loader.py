@@ -56,11 +56,13 @@ class AgentDefinitionLoader:
         project_dir: Path,
         codeindex_available: bool,
         restriction_policy: PluginRestrictionPolicy | None = None,
+        group_dir: Path | None = None,
     ) -> None:
         self._settings = settings
         self._project_dir = project_dir
         self._codeindex_available = codeindex_available
         self._policy = restriction_policy
+        self._group_dir = group_dir
 
     def load(self) -> LoadReport:
         """Scan the five standard roots and return an aggregated
@@ -69,23 +71,26 @@ class AgentDefinitionLoader:
         Roots are hit in priority order; higher-priority entries
         upsert lower-priority ones with the same name.
 
-        A group's agents are not a root of their own: they are synced
-        into ``<project>/.ember/agents`` by
-        :class:`~ember_code.core.init.group_agent_sync.GroupAgentSync`
-        so a person can edit one. Loading the server's pristine copy at a
-        higher priority as well would make that edit pointless — the
-        server version would win every time.
+        A group's agents are a root of their own, read straight from the
+        policy cache and ranked above the user's globals but below
+        anything the project declares. So an org sets the baseline and a
+        repository can override one agent by name without being given a
+        copy of the whole set.
 
-        That sync is also what makes a group's list complete: it removes
-        what the group no longer ships, and the bundle stands down while
-        a group supplies agents. So the group's set simply *is* the set,
-        and the roots below are the person's own additions to it.
+        They used to be copied into ``<project>/.ember/agents`` instead,
+        which is what made "the local one wins" true — there was only
+        one file. Reading the cache directly gets the same outcome from
+        ordering, and leaves nothing of the server's in the repository.
         """
         settings = self._settings
         project_dir = self._project_dir
 
         dirs: list[tuple[Path, AgentPriority]] = [
             (Path.home() / CONFIG_DIR / "agents", AgentPriority.USER_EMBER),
+        ]
+        if self._group_dir is not None:
+            dirs.append((self._group_dir, AgentPriority.ORG_GROUP))
+        dirs += [
             (project_dir / CONFIG_DIR / "agents.local", AgentPriority.PROJECT_LOCAL),
             (project_dir / CONFIG_DIR / "agents", AgentPriority.PROJECT_EMBER),
         ]

@@ -112,15 +112,25 @@ class MarkdownCommand(BaseModel):
         return text
 
     @classmethod
-    def discover(cls, project_dir: Path, *, read_claude: bool = True) -> dict[str, MarkdownCommand]:
+    def discover(
+        cls,
+        project_dir: Path,
+        *,
+        read_claude: bool = True,
+        group_dir: Path | None = None,
+    ) -> dict[str, MarkdownCommand]:
         """Walk all configured roots and return ``name → command``.
 
         Later roots override earlier ones on name collisions — project
         commands beat user-global, ember beats claude (within the same
         tier). The leading-slash isn't part of the key (users invoke
-        ``/review`` but the dict is keyed ``review``)."""
+        ``/review`` but the dict is keyed ``review``).
+
+        ``group_dir`` is the org's, read straight from the policy cache
+        and placed *below* the project's, so a command the project
+        declares under the same name is the one that runs."""
         out: dict[str, MarkdownCommand] = {}
-        for root in _commands_dirs(project_dir, read_claude=read_claude):
+        for root in _commands_dirs(project_dir, read_claude=read_claude, group_dir=group_dir):
             if not root.is_dir():
                 continue
             for path in sorted(root.glob("*.md")):
@@ -133,18 +143,30 @@ class MarkdownCommand(BaseModel):
 # ── Discovery ────────────────────────────────────────────────────
 
 
-def _commands_dirs(project_dir: Path, read_claude: bool) -> list[Path]:
+def _commands_dirs(
+    project_dir: Path,
+    read_claude: bool,
+    group_dir: Path | None = None,
+) -> list[Path]:
     """Roots to scan, in load order (later overrides earlier).
 
-    No org root: a group's commands are synced into
-    ``<project>/.ember/commands`` so a person can edit one, and reading
-    the server's copy as well would let it outrank the edit.
+    The org's root sits above the user's globals and below the
+    project's. Above the globals because a group is a deliberate
+    decision by an organisation and a stray file in ``~`` is not; below
+    the project's because a repository knows things about itself that a
+    group-wide command cannot.
+
+    That ordering is the whole mechanism for "the local one wins": the
+    group's commands are read from the policy cache rather than copied
+    into the project, so a same-named project file simply lands later.
     """
     home = Path.home()
     roots: list[Path] = []
     if read_claude:
         roots.append(home / ".claude" / "commands")
     roots.append(home / CONFIG_DIR / "commands")
+    if group_dir is not None:
+        roots.append(group_dir)
     if read_claude:
         roots.append(project_dir / ".claude" / "commands")
     roots.append(project_dir / CONFIG_DIR / "commands")
@@ -212,12 +234,13 @@ def _load_command_file(path: Path) -> MarkdownCommand | None:
 def discover_markdown_commands(
     project_dir: Path,
     read_claude: bool = True,
+    group_dir: Path | None = None,
 ) -> dict[str, MarkdownCommand]:
     """Thin wrapper around :meth:`MarkdownCommand.discover` retained
     for existing module-level call sites (``backend/server.py``,
     ``backend/command_handler.py``, several tests that patch by
     dotted path). New code should call the classmethod directly."""
-    return MarkdownCommand.discover(project_dir, read_claude=read_claude)
+    return MarkdownCommand.discover(project_dir, read_claude=read_claude, group_dir=group_dir)
 
 
 # ── Token substitution ──────────────────────────────────────────

@@ -221,6 +221,7 @@ class AgentPool(LegacyAgentPoolMixin):
         settings: Settings,
         project_dir: Path | None = None,
         codeindex_available: bool = False,
+        group_dir: Path | None = None,
     ) -> LoadReport:
         """Parse all agent ``.md`` files and resolve priorities.
 
@@ -240,6 +241,7 @@ class AgentPool(LegacyAgentPoolMixin):
             settings=settings,
             project_dir=project_dir,
             codeindex_available=codeindex_available,
+            group_dir=group_dir,
         )
         report = loader.load()
         self._merge(report)

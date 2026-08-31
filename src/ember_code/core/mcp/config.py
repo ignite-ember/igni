@@ -21,9 +21,18 @@ class MCPTransport(str, Enum):
     sse = "sse"
 
 
-# Mirror the agent-side ORG_GROUP tier (5) so org-pushed MCP servers
-# override the user-home / project-local roots, matching what
-# AgentPriority.ORG_GROUP does for agents.
+# Org-pushed MCP servers override the user-home and project-local roots.
+#
+# This used to be described as mirroring ``AgentPriority.ORG_GROUP``, and
+# the two have deliberately diverged: agents, skills, commands and the
+# rest now rank the *project* above the group, so a repository can
+# override one by name. MCP servers stay group-first because they are
+# closer to policy than preference — a server declaration names an
+# endpoint and a command line, so letting a project shadow one would let
+# it point an org-approved tool somewhere else.
+#
+# Not a number to keep in step with anything; it only has to stay above
+# the project and user tiers here.
 MCP_PRIORITY_GROUP = 5
 
 # Stored file extension for per-server group policy MCP configs.
