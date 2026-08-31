@@ -117,12 +117,18 @@ async def main() -> int:
     print("\nWhat the session decided about igni's own copies")
     check(session._group_ships("agents") == ("agents" in by_kind), "knows whether the group ships agents")
     check(session._group_ships("hooks") == ("hooks" in by_kind), "knows whether the group ships hooks")
+    # Inverted deliberately. This used to assert the project directory
+    # HELD the group's agents, because a sync copied them there. That
+    # sync is gone: the group's entries are read from
+    # ``~/.igni/group-policy/agents`` and nothing of the server's is
+    # written into a repository. So the check worth making is the
+    # opposite one — that none of the group's agents landed in the
+    # project, which is what would silently reintroduce two sources of
+    # truth for the same content.
     scaffolded = {p.stem for p in (project / ".igni" / "agents").glob("*.md")}
     if "agents" in by_kind:
-        check(
-            scaffolded == set(by_kind["agents"]),
-            "the project holds the group's agents and no bundled ones",
-        )
+        leaked = scaffolded & set(by_kind["agents"])
+        check(not leaked, f"the group's agents stay out of the project ({sorted(leaked)} leaked)")
 
     failed = [w for ok, w in results if not ok]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
