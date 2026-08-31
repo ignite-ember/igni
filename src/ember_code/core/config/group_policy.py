@@ -238,6 +238,48 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+class UnsafeEntryName(ValueError):
+    """An entry name that would not stay inside the cache directory."""
+
+
+def safe_entry_name(entry_name: str) -> str:
+    """*entry_name* if it is a plain filename, else raise.
+
+    The server sends these names and the cache turns them into paths:
+    ``dir_for(kind) / f"{entry_name}.json"``. ``Path`` happily accepts a
+    separator, so an entry named ``../../../../../../tmp/x`` wrote
+    ``/tmp/x.json`` — outside the cache, on every machine that synced the
+    pack. For ``scripts`` the file is written mode 0700, which makes it
+    an executable dropped anywhere the user can write.
+
+    Checked here rather than only on the server because this is the side
+    that must not be talked into it: a client can be pointed at a server
+    somebody else runs, and "the server validates it" is not a property
+    this process can verify. The server validates it too.
+
+    Rejects rather than sanitises. A name that has to be rewritten to be
+    safe is not the name the admin thinks they published, and silently
+    writing ``....tmp.x`` would leave both sides believing something
+    different about what shipped.
+    """
+    name = (entry_name or "").strip()
+    if not name:
+        raise UnsafeEntryName("entry name is empty")
+    if name in {".", ".."}:
+        raise UnsafeEntryName(f"entry name {entry_name!r} is a directory reference")
+    if "/" in name or "\\" in name:
+        raise UnsafeEntryName(f"entry name {entry_name!r} contains a path separator")
+    if "\x00" in name:
+        raise UnsafeEntryName(f"entry name {entry_name!r} contains a NUL byte")
+    if name.startswith("~"):
+        raise UnsafeEntryName(f"entry name {entry_name!r} starts with a home reference")
+    # ``Path('C:x')`` is drive-relative on Windows, and a bare drive
+    # letter is not a filename anywhere.
+    if len(name) >= 2 and name[1] == ":":
+        raise UnsafeEntryName(f"entry name {entry_name!r} looks like a drive path")
+    return name
+
+
 class GroupPolicyCache:
     """Materializes a group pack's file-type entries to disk.
 
@@ -276,9 +318,27 @@ class GroupPolicyCache:
         return d
 
     def path_for(self, kind: str, entry_name: str) -> Path:
-        """Where one entry of this kind is written."""
+        """Where one entry of this kind is written.
+
+        Raises :class:`UnsafeEntryName` for a name that would leave the
+        cache directory — see that function for why the client checks
+        this itself rather than trusting the server.
+        """
         _, filename = _PLAIN_KINDS[kind]
-        return self.dir_for(kind) / filename.format(name=entry_name)
+        safe = safe_entry_name(entry_name)
+        path = self.dir_for(kind) / filename.format(name=safe)
+
+        # Belt to the braces above, and it does real work: ``filename``
+        # is a template from ``_PLAIN_KINDS``, and ``skills`` is already
+        # ``{name}/SKILL.md`` — a legitimate separator the template owns
+        # rather than the name. So the property is "under the kind's
+        # directory", not "directly in it"; asserting the latter broke
+        # every skill, which is how this comment came to be accurate.
+        root = self.dir_for(kind).resolve()
+        resolved = path.resolve()
+        if root != resolved and root not in resolved.parents:
+            raise UnsafeEntryName(f"entry name {entry_name!r} would write outside {root}")
+        return path
 
     # Named accessors for the kinds other modules reach for directly.
     @property
@@ -310,7 +370,7 @@ class GroupPolicyCache:
         working until admins migrate to source-url form.
         """
         if not o.source_url:
-            path = self.plugins_dir / f"{o.entry_name}.yaml"
+            path = self.plugins_dir / f"{safe_entry_name(o.entry_name)}.yaml"
             path.write_text(o.content, encoding="utf-8")
             return
 
@@ -388,6 +448,27 @@ class GroupPolicyCache:
         for o in pack.entries:
             if not o.enabled:
                 continue
+
+            # One unsafe name must not cost the group its whole policy.
+            #
+            # ``safe_entry_name`` raises, and every write below goes
+            # through it — so without this the first bad entry aborts the
+            # materialise and the session comes up with no agents, no
+            # hooks and no MCP servers. Skipping the entry keeps the other
+            # N working, and the warning names it so an admin can fix the
+            # one thing that is wrong.
+            try:
+                safe_entry_name(o.entry_name)
+            except UnsafeEntryName as exc:
+                logger.warning(
+                    "Group policy entry skipped: %s. A %s entry cannot be written "
+                    "under that name, so it has been ignored; the rest of the pack "
+                    "was applied.",
+                    exc,
+                    o.kind,
+                )
+                continue
+
             if o.kind in _PLAIN_KINDS:
                 self._write_plain(o)
                 active[o.kind].add(o.entry_name)
@@ -396,7 +477,7 @@ class GroupPolicyCache:
                 # envelope :class:`MCPConfigLoader` expects. The server
                 # sends one server definition per entry; the loader reads
                 # N-server files, so it goes under its entry name.
-                path = self.dir_for("mcps") / f"{o.entry_name}.json"
+                path = self.dir_for("mcps") / f"{safe_entry_name(o.entry_name)}.json"
                 path.write_text(
                     json.dumps({"mcpServers": {o.entry_name: _try_parse_json(o.content)}}),
                     encoding="utf-8",
