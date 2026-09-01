@@ -53,4 +53,12 @@ class DebugLogging:
         logging.root.setLevel(logging.DEBUG)
         logging.getLogger("ember_code").setLevel(logging.DEBUG)
 
+        # ``ember_code.llm_calls`` and the transport loggers deliberately do not
+        # propagate — they write request/response bodies, and letting those reach
+        # root put them on stderr (see ``LlmCallLogger._attach_transport_loggers``).
+        # A --debug run still wants them in one place, so hand them the handler
+        # directly instead of reopening the propagation path.
+        for name in ("ember_code.llm_calls", "httpx", "httpcore"):
+            logging.getLogger(name).addHandler(handler)
+
         return log_path

@@ -130,6 +130,10 @@ class ToolsBuilder:
                 cloud_token=self._cloud_token,
                 cloud_server_url=self._cloud_server_url,
                 broadcast=self._broadcast,
+                # Late-bound on purpose: ``attach_codeindex_neo4j`` replaces
+                # ``session.code_index`` after this registry is built, and the
+                # toolkit must see the replacement.
+                code_index_provider=lambda: getattr(self._session, "code_index", None),
             )
         return self._registry
 

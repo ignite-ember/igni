@@ -32,6 +32,15 @@ from __future__ import annotations
 
 import asyncio
 
+# Aliased: importing the ``ember_code.cli.logging`` submodule binds it as an
+# attribute of this package, which would shadow a plain ``logging`` global here.
+import logging as stdlib_logging
+import os
+import sys
+import threading as stdlib_threading
+import traceback
+from typing import Any
+
 import click
 
 from ember_code import __version__
@@ -42,6 +51,8 @@ from ember_code.cli.invocation import (
 from ember_code.cli.options import CliOptions
 from ember_code.core import session as _session_module
 from ember_code.core.paths import DEFAULT_DATA_DIR
+
+logger = stdlib_logging.getLogger(__name__)
 
 
 @click.group(invoke_without_command=True)
@@ -118,33 +129,116 @@ def cli(ctx: click.Context, **_params: object) -> None:
     invocation.cleanup_worktree()
 
 
+#: How long the drain below waits for leftover tasks before giving up on them.
+_DRAIN_TIMEOUT_SECONDS = 5.0
+
+
+async def _run_then_drain(coro: Any) -> None:
+    """Await ``coro``, then cancel and drain whatever it left behind.
+
+    Draining here, inside the loop, is what keeps the leftovers away from
+    ``asyncio.run``'s own close path — which is unbounded in two places:
+    ``_cancel_all_tasks`` gathers the leftovers with no timeout, and
+    ``shutdown_default_executor`` joins the executor's threads with a 300s
+    default and then leaves a *non-daemon* ``_do_shutdown`` thread behind
+    when that expires. Nothing bounds the interpreter's join of that thread,
+    which is the "sat there forever" half.
+
+    There is plenty to leave behind: a shell command slower than
+    ``run_shell_command``'s 7s default is auto-backgrounded and never killed
+    in this mode, and ``background: true`` hooks are fire-and-forget tasks.
+    """
+    try:
+        await coro
+    finally:
+        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        if pending:
+            for task in pending:
+                task.cancel()
+            # Bounded on purpose: a task that ignores cancellation must not be
+            # able to hold the process open. Anything still running is dropped
+            # by the exit below.
+            await asyncio.wait(pending, timeout=_DRAIN_TIMEOUT_SECONDS)
+
+
+def _run_session(invocation: CliInvocation, coro: Any) -> None:
+    """Run one non-interactive session and then actually exit.
+
+    Measured before this existed: sessions whose every model call had
+    finished in seconds sat until a 240s external timeout — and without one,
+    indefinitely. The work was done; the process simply could not get out of
+    interpreter shutdown (see :func:`_run_then_drain`).
+
+    This mode has no teardown of its own — the 5-step ``ShutdownPipeline``
+    that closes shells, MCP, LSP and monitors is reached only from
+    ``backend/server.py``. Until a session-owned ``aclose()`` exists, the
+    honest thing for a CLI whose work is provably finished is to flush and
+    go, rather than block on joining threads nobody will ever stop.
+    """
+    code = 0
+    try:
+        asyncio.run(_run_then_drain(coro))
+    except SystemExit as exc:  # a hook or handler asked for a specific code
+        code = int(exc.code or 0)
+    except BaseException:  # noqa: BLE001 — report, then still exit cleanly
+        traceback.print_exc()
+        code = 1
+
+    try:
+        invocation.cleanup_worktree()
+    except Exception:  # noqa: BLE001 — cleanup must not keep the process alive
+        logger.debug("worktree cleanup failed on exit", exc_info=True)
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+
+    # Only skip interpreter shutdown when a normal exit would actually be at
+    # risk. ``threading._shutdown`` and
+    # ``concurrent.futures.thread._python_exit`` join *non-daemon* threads with
+    # no timeout, so surviving ones are precisely the hazard — most often the
+    # ``_do_shutdown`` thread left stuck in ``executor.shutdown(wait=True)``.
+    # With none of them the normal path is safe, which also keeps the in-process
+    # CLI tests (11 of them patch ``asyncio.run`` and call straight through
+    # here) from being killed mid-suite.
+    lingering = [
+        thread
+        for thread in stdlib_threading.enumerate()
+        if thread is not stdlib_threading.main_thread() and not thread.daemon
+    ]
+    if lingering:
+        logger.debug("hard-exiting past %d non-daemon thread(s)", len(lingering))
+        os._exit(code)
+    if code:
+        raise SystemExit(code)
+
+
 def _run_pipe(invocation: CliInvocation) -> None:
     """Read stdin + ``-m`` and route through the session runner."""
     text = invocation.read_pipe_message()
-    asyncio.run(
+    _run_session(
+        invocation,
         _session_module.run_single_message(
             invocation.settings,
             text,
             resume_session_id=invocation.resume_session_id,
             project_dir=invocation.project_dir,
             additional_dirs=invocation.additional_dirs,
-        )
+        ),
     )
-    invocation.cleanup_worktree()
 
 
 def _run_single_message(invocation: CliInvocation, message: str) -> None:
     """Route a ``-m`` message through the session runner."""
-    asyncio.run(
+    _run_session(
+        invocation,
         _session_module.run_single_message(
             invocation.settings,
             message,
             resume_session_id=invocation.resume_session_id,
             project_dir=invocation.project_dir,
             additional_dirs=invocation.additional_dirs,
-        )
+        ),
     )
-    invocation.cleanup_worktree()
 
 
 __all__ = ["cli"]

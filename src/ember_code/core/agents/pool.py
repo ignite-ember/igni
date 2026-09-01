@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ember_code.core.agents.builder import AgentBuilder
 from ember_code.core.agents.ephemeral import EphemeralAgentStore
@@ -88,6 +88,7 @@ class AgentPool(LegacyAgentPoolMixin):
         # Pending knowledge manager set before ``build_agents``
         # first runs. Declared here so no ``getattr`` hidden-field.
         self._pending_knowledge_mgr: KnowledgeManager | None = None
+        self._pending_code_index_provider: Any | None = None
         # Per-session sub-agent budget cache — lazily constructed
         # on first :meth:`spawn_budget` call so every
         # :class:`OrchestrateTools` for the same session shares one
@@ -116,6 +117,7 @@ class AgentPool(LegacyAgentPoolMixin):
         object.__setattr__(self, "_base_dir", None)
         object.__setattr__(self, "_codeindex_available_flag", False)
         object.__setattr__(self, "_pending_knowledge_mgr", None)
+        object.__setattr__(self, "_pending_code_index_provider", None)
         object.__setattr__(self, "_spawn_budgets", {})
 
     # ── Introspection helpers used by the collaborators ─────────
@@ -305,6 +307,7 @@ class AgentPool(LegacyAgentPoolMixin):
             base_dir=self._base_dir,
             mcp_clients=mcp_clients,
             knowledge_mgr=self._pending_knowledge_mgr,
+            code_index_provider=self._pending_code_index_provider,
             db=self._db,
             broadcast=self._broadcast,
         )
@@ -313,6 +316,22 @@ class AgentPool(LegacyAgentPoolMixin):
         else:
             self._builder.replace_context(context)
         self._agents.clear()
+
+    def attach_code_index_provider(self, provider: Any | None) -> None:
+        """Give spawned agents a way to reach the session's code index.
+
+        Mirrors :meth:`attach_knowledge_manager`. A callable rather than the
+        index itself: ``attach_codeindex_neo4j`` replaces
+        ``session.code_index`` when a Neo4j runtime arrives, and a specialist
+        built before that must still see the replacement.
+        """
+        self._pending_code_index_provider = provider
+        if self._builder is not None:
+            new_context = self._builder.context.model_copy(
+                update={"code_index_provider": provider}
+            )
+            self._builder.replace_context(new_context)
+            self._agents.clear()
 
     def attach_knowledge_manager(self, knowledge_mgr: KnowledgeManager | None) -> None:
         """Public setter so :class:`Session` no longer reaches for
@@ -525,6 +544,7 @@ class AgentPool(LegacyAgentPoolMixin):
             base_dir=self._base_dir,
             mcp_clients=None,
             knowledge_mgr=self._pending_knowledge_mgr,
+            code_index_provider=self._pending_code_index_provider,
             db=self._db,
             broadcast=self._broadcast,
         )

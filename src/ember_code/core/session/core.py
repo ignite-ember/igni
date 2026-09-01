@@ -307,6 +307,9 @@ class Session:
         self.knowledge_mgr = SessionKnowledgeManager(self.knowledge, settings, self.project_dir)
         # Share knowledge_mgr with the pool so all sub-agents get the toolkit.
         self.pool.attach_knowledge_manager(self.knowledge_mgr if self.knowledge else None)
+        # Late-bound: ``attach_codeindex_neo4j`` swaps ``self.code_index`` when a
+        # Neo4j runtime attaches, which happens after the pool is configured.
+        self.pool.attach_code_index_provider(lambda: self.code_index)
 
         # ── Learning coordinator (owns _learning + inject/extract) ──
         # Composed after ``persistence`` / ``memory_mgr`` so the

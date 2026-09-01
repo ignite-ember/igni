@@ -356,11 +356,56 @@ class CodeIndex:
         through the same per-commit driver as the typed methods.
         Lives here (rather than reaching into the underscored
         ``_client_for``) so the toolkit has a stable surface.
+
+        Raises:
+            ValueError: when ``sha`` names no indexed commit. See
+                :meth:`_resolve_indexed_commit` for why this is louder than
+                returning ``None``.
         """
         target = sha or self.head()
         if target is None:
             return None
+        if sha:
+            # Only for a caller-supplied sha. ``head()`` is authoritative and
+            # the write paths (``_client_for_active_commit``) legitimately open
+            # commits that are not in the manifest yet.
+            target = self._resolve_indexed_commit(sha)
         return await self._client_for(target)
+
+    def _resolve_indexed_commit(self, sha: str) -> str:
+        """Map a caller-supplied ``sha`` onto a commit that is actually indexed.
+
+        Agents pass the abbreviated sha they saw in conversation —
+        ``commit="84a9f3b"`` — and ``(project, commit)`` is a *store identity*,
+        not a lookup. So an abbreviation silently became a different pair:
+        ``start_for_commit`` spawned a second Neo4j on an empty store, the query
+        returned zero rows, and the agent reported the index as empty. A capture
+        run produced two servers for one project, one with the 40-char sha and
+        one with 7 chars, and left ``<project>-<7 chars>`` directories behind —
+        the same shape as the stale ``…-c3f316b`` and empty-sha dirs already on
+        disk.
+
+        Silent wrong answers are the worst outcome here, worse than an error:
+        a training corpus built on them teaches that the index has no data. So
+        resolve an unambiguous prefix, and refuse anything else.
+        """
+        commits = self.manifest.load().commits
+        if sha in commits:
+            return sha
+        matches = [commit for commit in commits if commit.startswith(sha)]
+        if len(matches) == 1:
+            logger.debug("resolved abbreviated commit %s -> %s", sha, matches[0])
+            return matches[0]
+        if len(matches) > 1:
+            raise ValueError(
+                f"commit {sha!r} is ambiguous — it matches {len(matches)} indexed "
+                "commits. Pass the full 40-character sha, or omit `commit` to use HEAD."
+            )
+        known = ", ".join(sorted(commits)[:3]) or "none"
+        raise ValueError(
+            f"commit {sha!r} is not indexed, so there is no graph to query. Omit "
+            f"`commit` to use HEAD. Indexed commits: {known}"
+        )
 
     async def _client_for(self, sha: str) -> Any | None:
         """Return the per-commit ``Neo4jClient`` (or None if no backend).

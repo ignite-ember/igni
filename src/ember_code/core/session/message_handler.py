@@ -114,6 +114,7 @@ class SessionMessageHandler:
         try:
             team = self._team_ref()
             response = await team.arun(effective_message, stream=False, **media_kwargs)
+            self._reject_paused_run(response)
             response_text = self._extract_response_text(response)
 
             self._audit.log(
@@ -137,6 +138,36 @@ class SessionMessageHandler:
 
         except Exception as exc:
             return await self._handle_run_failure(exc)
+
+    @staticmethod
+    def _reject_paused_run(response: Any) -> None:
+        """Refuse to treat a confirmation pause as a finished turn.
+
+        When a tool needs confirmation, Agno returns early with
+        ``status=RunStatus.paused`` and content ``"I have tools to execute, but
+        I need confirmation."`` — the tool never ran. Only ``backend/`` knows how
+        to resolve a pause (over a client RPC), so on this path the placeholder
+        was extracted, printed as the assistant's answer, and the process exited
+        0. A turn that silently dropped the work it asked for is worse than a
+        crash, so raise and let ``_handle_run_failure`` report it.
+
+        Compared by name rather than against ``RunStatus`` so the module keeps
+        its lazy-Agno property.
+        """
+        status = getattr(response, "status", None)
+        if str(getattr(status, "value", status)).lower() != "paused":
+            return
+        paused = [
+            getattr(call, "tool_name", None) or "?"
+            for call in (getattr(response, "tools", None) or [])
+            if getattr(call, "is_paused", False)
+        ]
+        raise RuntimeError(
+            f"Run paused for confirmation on {paused or ['unknown tool']} but this "
+            "session cannot resolve a pause; the tool did not run. Grant the tool "
+            "up front (--auto-approve or a settings rule) or use a client that "
+            "supports confirmations."
+        )
 
     async def _check_user_prompt_hook(self, message: str) -> str | None:
         """Fire the ``UserPromptSubmit`` hook. Returns the blocked

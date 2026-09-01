@@ -385,6 +385,11 @@ class AgentBuildContext(BaseModel):
     knowledge_mgr: Any | None = None
     db: Any | None = None
     broadcast: Any | None = None
+    #: Resolves the session's ``CodeIndex`` when a specialist first queries it.
+    #: Without this a spawned agent's ``CodeIndexTools`` self-builds an index
+    #: with no Neo4j runtime, so ``codeindex_cypher`` answers ``no_backend`` —
+    #: which is what the ``data-architect`` hit on every delegated query.
+    code_index_provider: Any | None = None
 
 
 __all__ = [

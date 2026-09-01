@@ -61,6 +61,8 @@ class ToolPermissions:
         self._writer = SettingsFileWriter(project_dir=project_dir)
         self._resolver = ToolNameResolver()
         self._category_map = CategoryToToolMap()
+        #: Permission mode from settings, when any were supplied.
+        self._mode: str = ""
 
         # State: bare tool-level permissions (mutable — file overrides
         # accumulate here) + typed rule list.
@@ -107,6 +109,15 @@ class ToolPermissions:
         These take priority over anything in the settings.json files
         — same as the pre-refactor behaviour.
         """
+        # ``mode`` was previously dropped here, and only ``PermissionEvaluator``
+        # ever read it — which the CLI does not consult. So
+        # ``mode=bypassPermissions`` was invisible at registry-build time and
+        # ``needs_confirmation`` still said yes. ``--auto-approve`` sets four
+        # *category* fields, and the category map knows three categories, so any
+        # tool outside them stayed at the ``ask`` default: ``NotebookEdit`` and
+        # ``CodeIndex`` both did. Recording the mode fixes that class of hole
+        # once rather than adding tools to the map as they are discovered.
+        self._mode = str(getattr(cfg, "mode", "") or "")
         defaults = self._defaults
         for raw_level, tools in self._category_map.iter_config_levels(cfg):
             if raw_level not in ("allow", "ask", "deny"):
@@ -161,6 +172,18 @@ class ToolPermissions:
         return self.get_level(tool_name) == "deny"
 
     def needs_confirmation(self, tool_name: str) -> bool:
+        """Whether a tool must pause for human confirmation before running.
+
+        ``bypassPermissions`` short-circuits, because that is what the mode
+        means and because a pause has nowhere to go in a headless run: the only
+        code that resolves one lives in ``backend/`` behind a client RPC, so a
+        confirmation raised by ``ember-code -p`` waits until a timeout. The
+        argument-level guards that survive a bypass are enforced separately by
+        ``PermissionEvaluator`` — this flag only decides whether Agno stops and
+        asks.
+        """
+        if getattr(self, "_mode", "") == "bypassPermissions":
+            return False
         return self.get_level(tool_name) == "ask"
 
     def has_arg_rules(self, tool_name: str) -> bool:

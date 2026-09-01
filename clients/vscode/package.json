@@ -42,12 +42,12 @@
       },
       {
         "command": "emberCode.addSelectionToChat",
-        "title": "Add Selection to Ember Chat",
+        "title": "Add Selection to igni Chat",
         "category": "igni"
       },
       {
         "command": "emberCode.addFileToChat",
-        "title": "Add to Ember Chat",
+        "title": "Add to igni Chat",
         "category": "igni"
       },
       {

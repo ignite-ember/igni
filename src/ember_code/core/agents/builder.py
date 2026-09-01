@@ -162,11 +162,31 @@ class AgentBuilder:
         ctx = self._context
         tools: list[Any] = []
         if definition.tools:
-            permissions = ToolPermissions(project_dir=Path(ctx.base_dir) if ctx.base_dir else None)
+            # ``settings_permissions`` matters here as much as it does for the
+            # main agent. Without it a specialist got pure defaults — save_file,
+            # edit_file and run_shell_command all at ``ask`` — no matter what the
+            # user asked for, so ``--auto-approve`` silently did not apply to any
+            # spawned agent. Headless that is fatal rather than merely wrong: the
+            # specialist's first write pauses for a confirmation, and the only
+            # code that resolves a pause lives in ``backend/`` behind an RPC, so
+            # ``SubAgentHITLCoordinator.wait_resolved`` blocks until the 1800s
+            # spawn timeout. Measured: sessions sat for the full timeout while
+            # every model call had already completed in seconds.
+            permissions = ToolPermissions(
+                project_dir=Path(ctx.base_dir) if ctx.base_dir else None,
+                settings_permissions=getattr(ctx.settings, "permissions", None),
+            )
             registry = type(self)._tool_registry_cls(
                 base_dir=ctx.base_dir,
                 permissions=permissions,
                 broadcast=ctx.broadcast,
+                # Same reason as ``settings_permissions`` above: a specialist
+                # built without this got a ``CodeIndexTools`` that self-builds a
+                # runtime-less index, so every query it made answered
+                # ``no_backend``. Measured: the ``data-architect``'s Cypher
+                # failed on every delegated question while the main agent's
+                # worked.
+                code_index_provider=ctx.code_index_provider,
             )
             tools = registry.resolve(definition.tools)
 

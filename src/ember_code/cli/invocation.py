@@ -178,8 +178,14 @@ class CliInvocation:
         Exits with code 1 when neither stdin nor ``-m`` supplied a
         message — matches the pre-refactor error path.
         """
-        text = sys.stdin.read().strip()
         message = self._options.message
+        if message and sys.stdin.isatty():
+            # Nothing is ever piped in from a terminal, and ``read()`` on a tty
+            # blocks until the user sends EOF by hand — so ``-p -m "..."``
+            # invoked interactively hung before the session even started, with
+            # no output on either stream.
+            return message
+        text = sys.stdin.read().strip()
         if message:
             text = f"{message}\n\n{text}" if text else message
         if not text:

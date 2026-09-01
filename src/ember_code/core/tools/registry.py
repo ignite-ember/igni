@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from agno.tools import Toolkit
 
@@ -74,6 +75,7 @@ class ToolRegistry:
         cloud_server_url: str | None = None,
         broadcast: BroadcastFn | None = None,
         file_edit_notifier: FileEditNotifier | None = None,
+        code_index_provider: Callable[[], Any] | None = None,
     ):
         self.base_dir = Path(base_dir) if base_dir else Path.cwd()
         self.permissions = permissions or ToolPermissions(project_dir=self.base_dir)
@@ -90,6 +92,9 @@ class ToolRegistry:
         # the push bridge binds to by default, so the shared-listener
         # invariant holds without explicit wiring at every call site.
         self._file_edit_notifier = file_edit_notifier
+        # Lets ``CodeIndexTools`` reach the session's index — the one that gets
+        # a Neo4j runtime — instead of self-building a backend-less one.
+        self._code_index_provider = code_index_provider
         # Custom factories registered at runtime via :meth:`register`.
         # These don't fit the spec-catalog shape (they're raw callables
         # returning ``Toolkit`` instances) so they live on the instance
@@ -115,6 +120,7 @@ class ToolRegistry:
             cloud_token=self._cloud_token,
             cloud_server_url=self._cloud_server_url,
             file_edit_notifier=self._file_edit_notifier,
+            code_index_provider=self._code_index_provider,
         )
 
     @property

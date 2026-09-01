@@ -18,8 +18,13 @@ from ember_code.core.scheduler import db_models as _scheduler_models  # noqa: F4
 
 config = context.config
 
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# ``fileConfig`` reconfigures the *root* logger from alembic.ini, which
+# replaces every handler the application installed — including the
+# ``--debug`` file handler — with a NOTSET stderr handler. Correct when
+# someone runs the ``alembic`` CLI, wrong when we upgrade in-process on
+# every startup, so the programmatic caller opts out via this attribute.
+if config.config_file_name is not None and config.attributes.get("configure_logging", True):
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

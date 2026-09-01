@@ -24,7 +24,7 @@ Result-shape ``NormalizeResult`` is used internally; the legacy
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from functools import cached_property
 from pathlib import Path
 from typing import Any, ClassVar
@@ -76,6 +76,10 @@ class ToolBuildContext(BaseModel):
     # :data:`ember_code.core.tools.edit.default_file_edit_notifier`,
     # the module-level default the backend also wires to by default.
     file_edit_notifier: FileEditNotifier | None = None
+    # Resolves the session's ``CodeIndex`` on first query. A callable, not the
+    # index, because the session swaps in a Neo4j-backed one after the team is
+    # built — see ``CodeIndexTools.index_provider``.
+    code_index_provider: Callable[[], Any] | None = None
 
 
 class NormalizeResult(BaseModel):
@@ -427,14 +431,27 @@ class CodeIndexSpec(ToolSpec):
     # CodeIndex is not exposed to ephemeral agents by function-name
     # aliasing today — it's a registry-level name only.
     agno_function_names: tuple[str, ...] = ()
-    confirm_function_names: tuple[str, ...] = (
-        "codeindex_search",
-        "codeindex_item",
-        "codeindex_references",
-        "codeindex_commits",
-    )
+    # The four search/item/references/commits functions were collapsed into a
+    # single Cypher entry point; these names outlived them. Agno matches
+    # ``requires_confirmation_tools`` against the toolkit's real functions and
+    # warns on a miss, so the gate had been dead — CodeIndex ran unconfirmed
+    # whatever the level said.
+    confirm_function_names: tuple[str, ...] = ("codeindex_cypher",)
     toolkit_cls: type[Toolkit] = CodeIndexTools
     base_dir_kwarg: str | None = "project_dir"
+
+    def _build_kwargs(self, context: ToolBuildContext, confirm: bool) -> dict[str, Any]:
+        """Hand the toolkit the session's index provider.
+
+        Without it the toolkit self-builds a ``CodeIndex`` with no ``runtime=``,
+        so ``client_for`` returns ``None`` and every query answers
+        ``no_backend``. Nothing passed ``index=`` anywhere in the codebase, so
+        that was the behaviour on every path, not just the headless one.
+        """
+        kwargs = super()._build_kwargs(context, confirm)
+        if context.code_index_provider is not None:
+            kwargs["index_provider"] = context.code_index_provider
+        return kwargs
     # Not reachable via ephemeral ``tools:`` frontmatter — matches the
     # historical ``VALID_EPHEMERAL_TOOL_NAMES`` which excluded it.
     ephemeral_visible: bool = False

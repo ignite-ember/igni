@@ -20,6 +20,7 @@ Responsibilities:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,11 @@ class CodeIndexTools(Toolkit):
         index: pre-built :class:`CodeIndex` (used by tests / advanced
             callers). When provided, ``project_dir`` and ``data_dir``
             are ignored.
+        index_provider: callable returning the :class:`CodeIndex` to use,
+            resolved on first query rather than at construction. This is how a
+            session hands over its own index — which only acquires a Neo4j
+            runtime *after* the team is built, so anything captured eagerly
+            here has no backend behind it.
     """
 
     def __init__(
@@ -58,6 +64,7 @@ class CodeIndexTools(Toolkit):
         project_dir: str | Path | None = None,
         data_dir: str | Path = DEFAULT_DATA_DIR,
         index: CodeIndex | None = None,
+        index_provider: Callable[[], CodeIndex | None] | None = None,
         **kwargs: Any,
     ):
         super().__init__(name="codeindex", **kwargs)
@@ -65,6 +72,7 @@ class CodeIndexTools(Toolkit):
             project_dir=Path(str(project_dir)) if project_dir else Path.cwd(),
             data_dir=data_dir,
             explicit_index=index,
+            index_provider=index_provider,
         )
         self._serializer = JsonSerializer()
         self._recorder = ToolInvocationRecorder(

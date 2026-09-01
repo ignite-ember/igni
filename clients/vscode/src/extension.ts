@@ -446,7 +446,7 @@ function registerHostBridge(p: vscode.WebviewPanel, context: vscode.ExtensionCon
         }
       }
     } catch (e) {
-      vscode.window.showErrorMessage(`Ember bridge: ${String(e)}`);
+      vscode.window.showErrorMessage(`igni bridge: ${String(e)}`);
     }
   });
   // Wire theme bridge — push current + on change.
@@ -659,7 +659,7 @@ export function activate(context: vscode.ExtensionContext) {
       backend?.kill();
       backend = undefined;
       backendPort = undefined;
-      vscode.window.showInformationMessage("Ember backend killed. Reopening will respawn it.");
+      vscode.window.showInformationMessage("igni backend killed. Reopening will respawn it.");
       if (panel) {
         panel.dispose();
       }

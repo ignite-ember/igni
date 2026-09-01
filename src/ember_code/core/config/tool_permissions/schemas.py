@@ -322,6 +322,12 @@ class ToolPermissionDefaults(BaseModel):
             "WebSearch": "allow",
             "WebFetch": "allow",
             "NotebookEdit": "ask",
+            # Read-only by construction: ``codeindex_cypher`` is the toolkit's
+            # only function and ``assert_read_only_cypher`` rejects every
+            # mutating clause before the query reaches the driver. Same class as
+            # Grep, so listed here rather than left to the ``"ask"`` fallback —
+            # which is what silently gated it in the main agent's toolkit.
+            "CodeIndex": "allow",
         }
     )
 
