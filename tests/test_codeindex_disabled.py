@@ -409,23 +409,46 @@ class TestTheServerChannel:
     def test_the_group_tier_runs_after_every_project_tier(self):
         """The ordering that makes the test above load-bearing.
 
-        ``merge_plan`` calls its tier list "the ONE place the merge order
-        is specified", so this pins the position rather than trusting the
-        comment: if a refactor moved the group tier above the project
-        files, an admin's setting would become a default a project could
-        quietly override.
+        Asserted by building the plan and reading the tier order, not by
+        searching the source of ``default()``. The first version did the
+        latter and broke the moment a *comment* in that function mentioned
+        ``GroupPolicyTier`` — a text search cannot tell code from prose,
+        and it failed pointing at a real ordering that had not changed.
         """
-        import inspect
+        from ember_code.core.config.accumulator import SettingsAccumulator
+        from ember_code.core.config.merge_plan import (
+            GroupPolicyTier,
+            JsonFragmentTier,
+            ManagedTier,
+            SettingsMergePlan,
+            YamlTier,
+        )
+        from ember_code.core.config.schemas.models import ModelsConfig
+        from ember_code.core.config.settings import Settings
 
-        from ember_code.core.config import merge_plan
+        plan = SettingsMergePlan.default(
+            project_dir=Path("/tmp/does-not-matter"),
+            cli=None,
+            accumulator=SettingsAccumulator.from_defaults({}),
+            settings_cls=Settings,
+            defaults_models=ModelsConfig(),
+            managed_path_provider=lambda: None,
+            group_policy_fetcher=lambda: None,
+        )
+        # _tiers rather than a public accessor: the ordering is the
+        # contract this test exists for, and there is no other way to read
+        # it without re-running the whole merge.
+        order = [type(tier) for tier in plan._tiers]
 
-        source = inspect.getsource(merge_plan.SettingsMergePlan.default)
-        group_at = source.index("GroupPolicyTier")
-        for project_tier in (
-            'project_ember / "config.yaml"',
-            'project_ember / "config.local.yaml"',
-        ):
-            assert source.index(project_tier) < group_at, project_tier
+        group_at = order.index(GroupPolicyTier)
+        file_tiers = [
+            index for index, tier in enumerate(order) if tier in (YamlTier, JsonFragmentTier)
+        ]
+
+        assert file_tiers, "no file-based tiers found — the plan shape changed"
+        assert max(file_tiers) < group_at, "a project file now outranks group policy"
+        # And the sysadmin file still outranks the group.
+        assert group_at < order.index(ManagedTier)
 
     def test_the_default_is_on(self):
         """Nobody who has not asked for this should notice it exists."""

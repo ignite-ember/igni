@@ -13,13 +13,16 @@ Precedence (highest first — later tiers in the list win because
 their ``apply`` runs last):
 
     1. Managed policy (sysadmin-controlled, OS-specific path)
-    2. CLI flags
-    3. .igni/config.local.yaml + settings.local.json (project)
-    4. .igni/config.yaml + settings.json (project)
-    5. ~/.igni/settings.local.json (permissions fragment)
-    6. ~/.igni/settings.json (permissions fragment)
-    7. ~/.igni/config.yaml (user global)
-    8. Built-in defaults (from ``Settings.default_dict()`` — seeded
+    2. Org-group policy (from the server) — with one exception: it
+       cannot loosen a ``permissions`` field the CLI set to ``deny``.
+       See ``GroupPolicyTier``.
+    3. CLI flags
+    4. .igni/config.local.yaml + settings.local.json (project)
+    5. .igni/config.yaml + settings.json (project)
+    6. ~/.igni/settings.local.json (permissions fragment)
+    7. ~/.igni/settings.json (permissions fragment)
+    8. ~/.igni/config.yaml (user global)
+    9. Built-in defaults (from ``Settings.default_dict()`` — seeded
        into the accumulator BEFORE the plan runs)
 
 Managed sits ABOVE CLI on purpose — the whole point is that a user
@@ -29,6 +32,7 @@ command line.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -43,6 +47,9 @@ if TYPE_CHECKING:
     from ember_code.core.config.group_policy import GroupPolicyPack
     from ember_code.core.config.models import CliOverrides
     from ember_code.core.config.schemas.models import ModelsConfig
+
+
+logger = logging.getLogger(__name__)
 
 
 class Tier:
@@ -95,6 +102,15 @@ class CliTier(Tier):
     def __init__(self, overrides: CliOverrides | dict[str, Any] | None) -> None:
         self._overrides = overrides
 
+    #: Permission fields this tier set to ``deny``, in the order applied.
+    #:
+    #: Read by :class:`GroupPolicyTier` so a group can tighten a
+    #: permission but never loosen one the operator denied on the command
+    #: line. Kept here rather than inferred from the payload because
+    #: "the CLI denied this" and "something upstream happened to deny
+    #: this" are different facts, and only the first is a ratchet.
+    denied_by_cli: frozenset[str] = frozenset()
+
     def apply(self, accumulator: SettingsAccumulator) -> SettingsAccumulator:
         if self._overrides is None:
             return accumulator
@@ -106,6 +122,11 @@ class CliTier(Tier):
             payload = self._overrides.as_merge_dict()
         else:
             payload = self._overrides
+
+        permissions = payload.get("permissions") or {}
+        self.denied_by_cli = frozenset(
+            field for field, value in permissions.items() if value == "deny"
+        )
         return accumulator.merge(payload)
 
 
@@ -173,19 +194,74 @@ class GroupPolicyTier(Tier):
     ``None`` when the user has no group. It is invoked once per
     :meth:`Tier.apply` call; callers should memoize or cache at the
     fetcher level to avoid repeated network calls.
+
+    ## The deny ratchet
+
+    Sitting above the CLI is deliberate and one-directional in intent:
+    the point is that a user cannot escape org policy by adding
+    ``--auto-approve``. The implementation was bidirectional, which is
+    not the same thing — a group could turn a developer's ``--strict``
+    into ``shell_execute: allow`` and nothing said so. A safety flag that
+    silently does nothing is worse than no flag.
+
+    So a permission the CLI set to ``deny`` stays denied. A group can
+    still *tighten* anything, and ``--auto-approve`` still cannot get
+    past a group's ``deny`` — both directions of the original intent
+    survive, and only the loosening of an explicit local deny does not.
+
+    Everything else a group sets still wins over the CLI. This is a
+    ratchet on ``permissions`` denies specifically, not a general
+    reversal of precedence.
     """
 
     def __init__(
         self,
         fetcher: Callable[[], GroupPolicyPack | None],  # type: ignore[name-defined]
+        cli_tier: CliTier | None = None,
     ) -> None:
         self._fetcher = fetcher
+        self._cli_tier = cli_tier
+        #: Fields the group tried to loosen and could not, as
+        #: ``{field: attempted_value}``. Read by the session to tell the
+        #: developer, because a policy that quietly does not apply is its
+        #: own kind of surprise.
+        self.refused_loosening: dict[str, str] = {}
 
     def apply(self, accumulator: SettingsAccumulator) -> SettingsAccumulator:
         pack = self._fetcher()
         if pack is None:
             return accumulator
-        return accumulator.merge(pack.to_settings_dict())
+
+        payload = pack.to_settings_dict()
+        self.refused_loosening = {}
+
+        denied = self._cli_tier.denied_by_cli if self._cli_tier else frozenset()
+        if denied:
+            permissions = dict(payload.get("permissions") or {})
+            for field in sorted(denied):
+                attempted = permissions.get(field)
+                if attempted is not None and attempted != "deny":
+                    self.refused_loosening[field] = str(attempted)
+                    # Drop the key rather than writing 'deny' back: the
+                    # accumulator already holds the CLI's deny, and
+                    # rewriting it would hide which tier decided.
+                    permissions.pop(field)
+            if self.refused_loosening:
+                payload = {**payload, "permissions": permissions}
+                # Said out loud, because a policy that quietly does not
+                # apply is its own surprise — the admin believes they set
+                # something, and nothing anywhere disagrees.
+                logger.warning(
+                    "Group policy tried to relax %s, which you denied on the command "
+                    "line; the local deny stands. An organisation policy can tighten a "
+                    "permission but not loosen one you denied yourself.",
+                    ", ".join(
+                        f"{field} to {value!r}"
+                        for field, value in sorted(self.refused_loosening.items())
+                    ),
+                )
+
+        return accumulator.merge(payload)
 
 
 class SettingsMergePlan:
@@ -240,6 +316,10 @@ class SettingsMergePlan:
             project_dir = Path.cwd()
         project_ember = project_config_dir(project_dir)
 
+        # Built ahead of the list: ``GroupPolicyTier`` needs the same
+        # instance, because the ratchet reads what this one actually set.
+        cli_tier = CliTier(cli)
+
         tiers: list[Tier] = [
             # User global (lowest priority above built-in defaults)
             YamlTier(user_ember / "config.yaml"),
@@ -252,9 +332,17 @@ class SettingsMergePlan:
             YamlTier(project_ember / "config.local.yaml"),
             JsonFragmentTier(project_ember / "settings.local.json"),
             # CLI
-            CliTier(cli),
-            # Org-group policy — wins over CLI, loses to sysadmin ManagedPolicy.
-            *([GroupPolicyTier(fetcher=group_policy_fetcher)] if group_policy_fetcher else []),
+            cli_tier,
+            # Org-group policy — wins over CLI, loses to sysadmin
+            # ManagedPolicy. Handed the CLI tier so it can honour the deny
+            # ratchet: a group tightens freely but cannot loosen a
+            # permission the operator denied on the command line. See
+            # ``GroupPolicyTier``.
+            *(
+                [GroupPolicyTier(fetcher=group_policy_fetcher, cli_tier=cli_tier)]
+                if group_policy_fetcher
+                else []
+            ),
             # Managed policy — last, so it wins over CLI and group policy.
             ManagedTier(path_provider=managed_path_provider),
             # Migration — replaces cloud rows with shipping defaults.
