@@ -52,7 +52,7 @@ dependencies = [
     "tiktoken~=0.13.0",
     "ripgrep~=15.1.0",
     "beautifulsoup4~=4.15.0",
-    "pypdf~=6.13.0",
+    "pypdf~=6.15.0",
     "python-docx~=1.2.0",
     "python-pptx~=1.0.2",
     "openpyxl~=3.1.5",
@@ -81,7 +81,7 @@ dev = [
     "python-dotenv~=1.2.2",
 ]
 mcp = [
-    "mcp~=1.26.0",
+    "mcp~=1.28.1",
 ]
 gemini = [
     "google-genai~=2.8.0",
@@ -142,3 +142,17 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
 disable_error_code = ["union-attr", "annotation-unchecked", "arg-type", "return-value", "attr-defined", "import-untyped", "call-arg", "override"]
+
+# numpy 2.5 writes ``type X = ...`` in its own stubs, which mypy refuses to
+# parse while ``python_version`` is 3.11. It does not report it as one
+# skipped dependency either — it aborts with "errors prevented further
+# checking", so the whole run checked **zero files** and still exited
+# non-zero for a reason that named numpy, not this project.
+#
+# Skipping numpy's stubs keeps the 3.11 floor above honest. Raising
+# ``python_version`` instead would silently stop checking the 3.11
+# compatibility the package still claims to support.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true

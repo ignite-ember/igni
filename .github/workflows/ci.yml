@@ -32,6 +32,31 @@ jobs:
       - name: Mypy
         run: uv run mypy src/ember_code/
 
+  # Nothing audited dependencies here either. The first run found 101
+  # advisories across 21 packages — 19 in gitpython, which this app uses to
+  # run real git operations on a developer's checkout, and 20 in pillow.
+  # All 101 cleared: most from `uv lock --upgrade`, the last 9 by relaxing
+  # two of our own `~=` pins (`pypdf`, `mcp`) that were capping the fixes.
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      # No ignores: this repo is clean, and it should stay a job that fails
+      # on the first new advisory rather than one carrying an exception list.
+      - name: pip-audit
+        run: uv run --with pip-audit pip-audit
+
   test:
     runs-on: ubuntu-latest
     strategy:

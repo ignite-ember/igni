@@ -42,7 +42,15 @@ class TestBackendRunMessageErrors:
 
             async def _failing_arun(*args, **kwargs):
                 raise RuntimeError("Model API failure")
-                yield  # noqa: unreachable — makes this an async generator
+                # Unreachable by design: the bare `yield` is what makes this
+                # an async generator, which is the shape the caller awaits.
+                #
+                # This previously carried a suppression directive naming
+                # `unreachable` — a mypy code, not a ruff one. Ruff 0.15
+                # reports that as malformed, and it had never suppressed
+                # anything. Spelling the directive out here would trip the
+                # same warning, so it is described rather than quoted.
+                yield
 
             server._session.main_team.arun = _failing_arun
             server._session._learning = None
