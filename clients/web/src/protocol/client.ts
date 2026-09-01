@@ -121,12 +121,27 @@ export class EmberClient {
   private eventListeners = new Set<StreamHandler>();
   private stateListeners = new Set<(s: ConnectionState) => void>();
   private reconnectDelay = 500;
+  /** Handle of a scheduled reconnect, so teardown can cancel it.
+   *
+   *  Without this, ``close()`` left the timer running: it fired,
+   *  ``connect()`` reset the closed latch, and a client the caller had
+   *  finished with produced a fresh socket. The BE serves one client at a
+   *  time, so that zombie could take the slot from a legitimate client —
+   *  which then gets close code 1008 and, by design, does not
+   *  auto-reconnect. The user is left on a dead session, caused by a
+   *  connection that was supposed to be gone. */
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(url: string = resolveWsUrl()) {
     this.url = url;
   }
 
   connect(): void {
+    // Any retry queued by a previous failure is now moot: we are
+    // connecting right now, and letting it fire would open a second
+    // socket behind this one.
+    this.cancelReconnect();
+
     // Reset the closed latch: React StrictMode mounts effects twice
     // (mount → cleanup → mount), and cleanup calls close(). Without
     // the reset, the second mount's connect() would no-op and the UI
@@ -174,7 +189,10 @@ export class EmberClient {
       }
       this.emitState("disconnected");
       if (!this.closed) {
-        setTimeout(() => this.connect(), this.reconnectDelay);
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = null;
+          this.connect();
+        }, this.reconnectDelay);
         this.reconnectDelay = Math.min(this.reconnectDelay * 2, 5_000);
       }
     };
@@ -185,7 +203,15 @@ export class EmberClient {
 
   close(): void {
     this.closed = true;
+    this.cancelReconnect();
     this.ws?.close();
+  }
+
+  private cancelReconnect(): void {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
   }
 
   onEvent(fn: StreamHandler): () => void {

@@ -122,9 +122,18 @@ describe("resolveWsUrl precedence", () => {
 //   * unsubscribe removes the listener (no leak across React
 //     mount cycles)
 //   * close() is safe before connect (constructor-only path)
-// The WebSocket connection lifecycle is too entangled with the
-// real Web API to unit-test usefully — covered by Playwright
-// e2e under clients/web/e2e/.
+// The connection lifecycle used to be described here as "too entangled
+// with the real Web API to unit-test usefully — covered by Playwright
+// e2e". Half right: ``e2e/app.spec.ts`` does cover "server crash →
+// composer flips to 'Connecting…'", but the backoff schedule, its reset,
+// ``close()`` during a pending retry, and close code 1008 were covered
+// nowhere — and the e2e comment excludes 1008 as "BE-initiated and
+// platform-specific".
+//
+// A stubbed WebSocket plus fake timers covers all of it, so it lives in
+// ``client.reconnect.test.ts``. Writing it found a real bug: ``close()``
+// did not cancel a scheduled retry, so a client the caller had finished
+// with opened a fresh socket and could take the BE's single-client slot.
 
 describe("EmberClient — listener subscription", () => {
   let EmberClient: typeof import("./client").EmberClient;
