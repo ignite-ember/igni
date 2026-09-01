@@ -124,8 +124,8 @@ class TestTheRatchetHolds:
         handler = _Collect()
         previous_level = module_logger.level
         assert not module_logger.disabled, (
-            'this logger is disabled, so the assertions below would pass '
-            'vacuously — nothing it emits is recorded'
+            "this logger is disabled, so the assertions below would pass "
+            "vacuously — nothing it emits is recorded"
         )
         module_logger.addHandler(handler)
         module_logger.setLevel(logging.WARNING)

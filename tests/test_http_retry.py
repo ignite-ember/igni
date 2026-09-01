@@ -234,9 +234,9 @@ async def test_retry_logs_debug_when_retries_occur():
     # silent workaround denied: a suppressed logger makes an assertion about
     # log contents pass for the wrong reason.
     assert not logger.disabled, (
-        'this logger is disabled, so nothing it emits will be recorded and the '
-        'assertion below would pass vacuously. Something in the session set '
-        '.disabled — the cause was never identified when this was last seen.'
+        "this logger is disabled, so nothing it emits will be recorded and the "
+        "assertion below would pass vacuously. Something in the session set "
+        ".disabled — the cause was never identified when this was last seen."
     )
     logger.addHandler(handler)
     logger.setLevel(logging.DEBUG)

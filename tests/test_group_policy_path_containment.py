@@ -143,8 +143,8 @@ class TestMaterializeSkipsRatherThanDies:
         # An assertion replaces the clearing, so a recurrence fails loudly
         # instead of a log assertion passing for the wrong reason.
         assert not module_logger.disabled, (
-            'this logger is disabled, so the assertions below would pass '
-            'vacuously — nothing it emits is recorded'
+            "this logger is disabled, so the assertions below would pass "
+            "vacuously — nothing it emits is recorded"
         )
         module_logger.addHandler(handler)
         module_logger.setLevel(logging.WARNING)
