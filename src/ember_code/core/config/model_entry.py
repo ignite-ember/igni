@@ -1,7 +1,7 @@
 """Typed registry entry for the model registry.
 
 Owns API-key resolution (see :meth:`ModelRegistryEntry.resolve_api_key`)
-and Ember Cloud-gateway detection (see
+and igni cloud-gateway detection (see
 :meth:`ModelRegistryEntry.matches_cloud_gateway`). Both live as Pydantic
 methods on the model — the entry IS the subject, so the behavior rides
 with the data instead of in a free helper taking the entry-as-dict.
@@ -21,6 +21,8 @@ import subprocess
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict
+
+from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +137,11 @@ class ModelRegistryEntry(BaseModel):
             return f"No API key for {self.model_id!r}: tried " + ", and ".join(tried) + "."
         return (
             f"No API key for {self.model_id!r}, and nothing was configured to find one. "
-            "Add `api_key` for it in {DEFAULT_DATA_DIR}/config.yaml — or `api_key_env` / "
+            # The ``f`` does not carry across an implicit concatenation, so this
+            # part printed a literal ``{DEFAULT_DATA_DIR}`` to whoever hit it —
+            # an instruction naming a path they cannot find. Same class as the
+            # twelve placeholders the .igni rename left behind.
+            f"Add `api_key` for it in {DEFAULT_DATA_DIR}/config.yaml — or `api_key_env` / "
             "`api_key_cmd` in the project's config, which name a secret rather "
             "than containing one and are safe to commit."
         )

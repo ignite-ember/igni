@@ -125,6 +125,38 @@ jobs:
         if: runner.os == 'Linux'
         run: npx playwright test
 
+      # The wire-format smoke spawns the real Python BE and drives the FE
+      # against it — the only test that catches drift between the Python
+      # emitter and the TypeScript decoder, whose schemas evolve
+      # independently. Its own docstring claimed "CI sets that var on hosts
+      # with the venv prepared". CI did not, so it had never run anywhere.
+      #
+      # It is runnable now because its fixture writes its own model
+      # registry entry. It used to copy the developer's gitignored
+      # .igni/config.local.yaml, which meant it could only pass on a
+      # machine that happened to have the right model in it — and on the
+      # machine where this was first tried, it did not.
+      - name: Set up Python for the real-BE E2E
+        if: runner.os == 'Linux'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        if: runner.os == 'Linux'
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install the backend for the real-BE E2E
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: uv sync --all-extras
+
+      - name: E2E tests (real backend wire format)
+        if: runner.os == 'Linux'
+        env:
+          IGNI_E2E_REAL_BE: "1"
+        run: npx playwright test e2e/real-be.spec.ts
+
       - name: Upload Playwright report on failure
         if: failure() && runner.os == 'Linux'
         uses: actions/upload-artifact@v4

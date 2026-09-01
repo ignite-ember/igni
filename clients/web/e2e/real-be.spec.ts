@@ -58,20 +58,44 @@ const test = base.extend<Fixtures>({
       path.join(os.tmpdir(), "ember-real-be-"),
     );
 
-    // Copy the repo's local config into the fixture's tmpdir so the
-    // BE's registry lookup finds the project's default model
-    // (``MiniMax-M2.7``). Without this, the BE's default-agent
-    // build hits ``ValueError: Unknown model 'MiniMax-M2.7'`` and
-    // never reaches the ready line. Best-effort: a missing source
-    // file (e.g. CI without local config) leaves the BE in its
-    // pre-fix state — same failure, just earlier in the stack.
-    const localConfig = path.join(REPO_ROOT, ".igni", "config.local.yaml");
-    try {
-      await fs.mkdir(path.join(projectDir, ".igni"), { recursive: true });
-      await fs.copyFile(localConfig, path.join(projectDir, ".igni", "config.local.yaml"));
-    } catch (err) {
-      console.warn(`realBe fixture: could not copy ${localConfig}: ${err}`);
-    }
+    // The BE refuses to build its default agent unless the configured
+    // model resolves against ``models.registry``, and that registry ships
+    // empty — entries arrive from a cloud login or from local config. So
+    // this fixture writes its own.
+    //
+    // It used to copy ``REPO_ROOT/.igni/config.local.yaml`` instead, and
+    // that could not work: ``.igni/`` is gitignored, so the file is
+    // whatever a given developer happens to have. On the machine where
+    // this was first run it existed and registered ``MiniMax-M3`` — not
+    // the built-in default ``MiniMax-M2.7`` — so the BE still died with
+    // ``ValueError: Unknown model 'MiniMax-M2.7'`` before printing its
+    // ready line. The old comment called the copy "best-effort" and
+    // accepted that a missing file left the BE "in its pre-fix state",
+    // which is another way of saying the test could not pass.
+    //
+    // Writing a stub entry *and* pointing ``models.default`` at it makes
+    // this independent of both the developer's config and whatever the
+    // built-in default happens to be called. The URL is never dialled:
+    // this spec deliberately does not drive the agent loop, only boot and
+    // the RPCs the connect flow issues.
+    const STUB_MODEL = "e2e-wire-format-stub";
+    await fs.mkdir(path.join(projectDir, ".igni"), { recursive: true });
+    await fs.writeFile(
+      path.join(projectDir, ".igni", "config.local.yaml"),
+      [
+        "models:",
+        `  default: ${STUB_MODEL}`,
+        "  registry:",
+        `    ${STUB_MODEL}:`,
+        "      provider: openai_like",
+        `      model_id: ${STUB_MODEL}`,
+        "      url: http://127.0.0.1:9/v1",
+        "      context_window: 8192",
+        "      vision: false",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
 
     const proc: ChildProcessWithoutNullStreams = spawn(
       VENV_PYTHON,
