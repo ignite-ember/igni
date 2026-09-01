@@ -31,7 +31,7 @@ export function LoginPanel({
   return (
     <div className="overlay">
       <div className="dialog">
-        <div className="dialog-title">Log in to Ember Cloud</div>
+        <div className="dialog-title">Log in to igni</div>
         <div className="dialog-sub" style={{ whiteSpace: "pre-wrap" }}>
           {statusText}
         </div>

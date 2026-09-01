@@ -152,7 +152,7 @@ function startBackend(
       .get<string>("pythonPath", "")
       .trim();
 
-    progress("Preparing Ember backend…");
+    progress("Preparing the igni backend…");
     const install = await ensureBackendPython({
       cacheDir: context.globalStorageUri.fsPath,
       configuredPython: configured || undefined,
@@ -173,7 +173,7 @@ function startBackend(
     // ``src/ember_code/backend/lockfile.py`` for the write side.
     const discovered = await discoverExistingBackend(projectDir, install.expectedCliVersion);
     if (discovered.status === "ok") {
-      progress(`Reusing running Ember backend on port ${discovered.port}`);
+      progress(`Reusing the running igni backend on port ${discovered.port}`);
       return discovered.port;
     }
     if (discovered.status === "version_mismatch") {
@@ -192,7 +192,7 @@ function startBackend(
     // ``status === "spawn"`` — either no lockfile or the recorded
     // BE is dead. Fall through to the normal spawn path.
 
-    progress("Starting Ember backend…");
+    progress("Starting the igni backend…");
     return new Promise<number>((resolve, reject) => {
       const child = spawn(
         install.python,
@@ -212,7 +212,7 @@ function startBackend(
 
       const timer = setTimeout(() => {
         child.kill();
-        reject(new Error("Ember backend did not become ready within 120s"));
+        reject(new Error("The igni backend did not become ready within 120s"));
       }, 120_000);
 
       let buf = "";
@@ -257,7 +257,7 @@ function startBackend(
           const detail = tail ? `\n\nstderr:\n${tail}` : "";
           reject(
             new Error(
-              `Ember backend exited during startup (code ${code}).\n` +
+              `The igni backend exited during startup (code ${code}).\n` +
                 `Python used: ${install.python}` +
                 detail,
             ),

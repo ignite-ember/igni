@@ -1,0 +1,9 @@
+# Local test and build output. `node_modules`, `dist` and `test-results`
+# are covered by the repository root; these two were not.
+#
+# F68 in the production review found 29 Playwright artifacts committed to
+# the portal repo — 16 of them failure screenshots and trace.zips from a
+# red run. `playwright-report/` here is the same shape and was one bad run
+# away from the same outcome.
+coverage/
+playwright-report/

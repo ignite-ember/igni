@@ -37,7 +37,7 @@ class EmberToolWindowFactory : ToolWindowFactory {
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val panel = JPanel(BorderLayout())
-        val statusLabel = JBLabel("Preparing Ember backend…", JBLabel.CENTER).apply {
+        val statusLabel = JBLabel("Preparing the igni backend…", JBLabel.CENTER).apply {
             border = JBUI.Borders.empty(24)
         }
         panel.add(statusLabel, BorderLayout.CENTER)
@@ -72,7 +72,7 @@ class EmberToolWindowFactory : ToolWindowFactory {
                 if (err != null || port == null) {
                     panel.add(
                         JBLabel(
-                            "<html>Ember backend failed to start.<br>" +
+                            "<html>The igni backend failed to start.<br>" +
                                 "${err?.message ?: "Unknown error"}<br><br>" +
                                 "Try <b>Tools → igni → Reinstall Backend</b>.</html>",
                             JBLabel.CENTER,
@@ -439,7 +439,7 @@ class EmberToolWindowFactory : ToolWindowFactory {
                 }
             }
             "ember:notify" -> {
-                val title = parseJsonField(raw, "title") ?: "Ember"
+                val title = parseJsonField(raw, "title") ?: "igni"
                 val body = parseJsonField(raw, "body") ?: ""
                 NotificationGroupManager.getInstance()
                     .getNotificationGroup("igni")

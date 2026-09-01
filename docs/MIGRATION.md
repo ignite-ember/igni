@@ -21,7 +21,7 @@ Cross-tool support is **enabled by default** — igni reads `CLAUDE.md` files, `
 ```bash
 brew install ignite-ember
 # or: pip install ignite-ember
-ignite-ember /login                   # sign up at ignite-ember.sh
+igni                                  # then type /login at the prompt
 ignite-ember                         # start — picks up existing agents, skills, CLAUDE.md automatically
 ```
 
@@ -192,7 +192,7 @@ models:
 ### Minimal (just switch)
 
 - [ ] `brew install ignite-ember` (or `pip install ignite-ember`)
-- [ ] `ignite-ember /login` (sign up at ignite-ember.sh)
+- [ ] `igni`, then `/login` at the prompt
 - [ ] Run `ignite-ember` — it automatically picks up:
   - `.mcp.json` (your MCP servers)
   - `ember.md` and `CLAUDE.md` (project instructions)

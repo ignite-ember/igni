@@ -60,7 +60,7 @@ When an agent references `model: <name>`:
 Sign up at **https://ignite-ember.sh**. All built-in models route through the Ember hosted endpoint. Free tier available.
 
 ```bash
-ignite-ember /login         # opens browser for device-flow login
+igni                        # then type /login at the prompt (device-flow login)
 ```
 
 **Device-flow login:** Running `/login` opens your browser to the Ember portal. After you authenticate, the CLI automatically receives your access token and model credentials. Platform credentials are saved to `~/.igni/credentials.json` (token, email, expiry). Model credentials (API key, URL) are saved to `~/.igni/config.yaml`.

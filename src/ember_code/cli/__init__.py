@@ -55,7 +55,13 @@ from ember_code.core.paths import DEFAULT_DATA_DIR
 logger = stdlib_logging.getLogger(__name__)
 
 
-@click.group(invoke_without_command=True)
+# A plain command, not a group. This was ``@click.group`` with zero
+# commands registered — nothing anywhere calls ``add_command`` and nothing
+# is decorated with ``@cli.command`` — so Click put ``[COMMAND] [ARGS]...``
+# in the usage line advertising something that did not exist. Every
+# natural first move after reading ``--help`` (``igni help``,
+# ``igni login``, ``igni chat``) produced a usage error instead.
+@click.command()
 @click.version_option(version=__version__, prog_name="igni")
 @click.option("--model", default=None, help="Model to use")
 @click.option("--verbose", is_flag=True, help="Show routing and reasoning")
@@ -92,25 +98,24 @@ logger = stdlib_logging.getLogger(__name__)
 )
 @click.pass_context
 def cli(ctx: click.Context, **_params: object) -> None:
-    """igni — AI coding assistant powered by Agno.
+    """igni — an AI coding assistant that works on your code where it lives.
 
-    Body deliberately delegates to :class:`CliInvocation` — Click
-    forces a decorator-per-option surface here, but every ounce of
-    logic lives on the invocation object so the callback stays
-    small and readable.
+    Run with no arguments for an interactive session, or use -m to ask a
+    single question and exit.
     """
+    # Click prints the docstring above verbatim as ``--help`` output, so
+    # implementation notes do not belong in it. This one used to explain
+    # the delegation to ``CliInvocation`` and every user saw it, complete
+    # with a ``:class:`` reStructuredText marker Click does not render.
+    #
+    # The note itself is worth keeping: Click forces a
+    # decorator-per-option surface here, so all the logic lives on the
+    # invocation object and this callback stays small.
     options = CliOptions.model_validate(ctx.params)
     settings = load_settings_from_options(options)
 
     invocation = CliInvocation(options, settings, ctx)
     invocation.enable_debug_logging()
-
-    # Subcommand invoked — the group callback stops here so the
-    # subcommand handler owns the rest of the dispatch. Store just
-    # enough on ``ctx.obj`` for subcommands to find the settings.
-    if ctx.invoked_subcommand is not None:
-        invocation.store_context()
-        return
 
     invocation.resolve_resume_id()
     invocation.setup_worktree()

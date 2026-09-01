@@ -56,7 +56,7 @@ export function resolveWsUrl(): string {
   // ended up on the wire. Logged once at construction time.
   // eslint-disable-next-line no-console
   console.info(
-    "[Ember] WS URL:",
+    "[igni] WS URL:",
     url,
     "(param:",
     param,

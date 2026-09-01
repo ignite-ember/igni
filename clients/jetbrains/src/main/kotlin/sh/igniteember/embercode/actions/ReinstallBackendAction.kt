@@ -25,7 +25,7 @@ class ReinstallBackendAction : AnAction() {
             project,
             "Wipe the managed Python cache and re-download uv + Python + ignite-ember?\n\n" +
                 "This takes about a minute on a typical connection.",
-            "Reinstall Ember Backend",
+            "Reinstall the igni Backend",
             "Reinstall",
             "Cancel",
             Messages.getQuestionIcon(),
@@ -35,16 +35,16 @@ class ReinstallBackendAction : AnAction() {
         project.service<EmberBackendService>().restart(cleanInstall = true)
             .whenComplete { port, err ->
                 val group = NotificationGroupManager.getInstance()
-                    .getNotificationGroup("EmberCode")
+                    .getNotificationGroup("igni")
                 if (err != null) {
                     group.createNotification(
-                        "Ember backend reinstall failed",
+                        "igni backend reinstall failed",
                         err.message ?: "Unknown error",
                         NotificationType.ERROR,
                     ).notify(project)
                 } else {
                     group.createNotification(
-                        "Ember backend reinstalled",
+                        "igni backend reinstalled",
                         "Fresh managed install ready on port $port.",
                         NotificationType.INFORMATION,
                     ).notify(project)

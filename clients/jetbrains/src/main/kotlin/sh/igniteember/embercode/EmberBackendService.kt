@@ -71,7 +71,7 @@ class EmberBackendService(private val project: Project) : Disposable {
 
         Thread {
             try {
-                progressListener?.invoke("Preparing Ember backend…")
+                progressListener?.invoke("Preparing the igni backend…")
                 val install = EmberRuntime.ensureBackendPython { msg ->
                     progressListener?.invoke(msg)
                 }
@@ -90,7 +90,7 @@ class EmberBackendService(private val project: Project) : Disposable {
                 when (discovered) {
                     is DiscoveryResult.Ok -> {
                         wsPort = discovered.port
-                        progressListener?.invoke("Reusing running Ember backend on port ${discovered.port}")
+                        progressListener?.invoke("Reusing the running igni backend on port ${discovered.port}")
                         future.complete(discovered.port)
                         return@Thread
                     }
@@ -115,7 +115,7 @@ class EmberBackendService(private val project: Project) : Disposable {
                     is DiscoveryResult.Spawn -> { /* fall through */ }
                 }
 
-                progressListener?.invoke("Starting Ember backend…")
+                progressListener?.invoke("Starting the igni backend…")
 
                 val proc = ProcessBuilder(
                     install.python.toString(), "-m", "ember_code.backend",
@@ -184,11 +184,11 @@ class EmberBackendService(private val project: Project) : Disposable {
                 val detail = if (tail.isNotEmpty()) "\n\nstderr:\n$tail" else ""
                 future.completeExceptionally(
                     IllegalStateException(
-                        "Ember backend exited during startup.$detail"
+                        "The igni backend exited during startup.$detail"
                     )
                 )
             } catch (e: Exception) {
-                log.warn("Ember backend failed to start", e)
+                log.warn("The igni backend failed to start", e)
                 future.completeExceptionally(e)
             }
         }.apply {

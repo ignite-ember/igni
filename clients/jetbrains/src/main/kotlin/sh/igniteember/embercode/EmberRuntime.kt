@@ -546,7 +546,7 @@ object EmberRuntime {
         if (free >= minBytes) return
         val freeMb = free / (1024 * 1024)
         val needMb = minBytes / (1024 * 1024)
-        val msg = "Not enough disk space for the Ember backend bootstrap: " +
+        val msg = "Not enough disk space for the igni backend bootstrap: " +
             "${freeMb} MB free at ${cache}, need at least ${needMb} MB. " +
             "Free up space and try again."
         listener("Disk space check failed.")
@@ -568,7 +568,7 @@ object EmberRuntime {
     fun resetCache() {
         val root = cacheRoot()
         if (Files.exists(root)) {
-            log.info("Wiping Ember managed cache: $root")
+            log.info("Wiping the igni managed cache: $root")
             deleteRecursively(root)
         }
     }

@@ -26,13 +26,19 @@ uv pip install -e ".[dev]"
 
 ## Authenticate
 
-**Option A: igni account (zero-config)**
+**Option A: your igni server**
 
-Sign up for a free API key — all built-in models (MiniMax M2.7) work out of the box:
+Point `api_url` at the server your team runs, start a session, and type the
+slash command inside it:
 
 ```bash
-ignite-ember /login
+igni                    # then, at the prompt:
+/login
 ```
+
+`/login` is a slash command handled inside the session, not a shell
+subcommand — `igni /login` at a shell prompt answers `Error: No such
+command`. This guide used to say to run it that way.
 
 **Option B: Bring your own model**
 

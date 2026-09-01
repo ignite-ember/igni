@@ -346,7 +346,7 @@ async function ensureFreeSpace(
   const needMb = Math.round(minBytes / (1024 * 1024));
   log("Disk space check failed.");
   throw new Error(
-    `Not enough disk space for the Ember backend bootstrap: ` +
+    `Not enough disk space for the igni backend bootstrap: ` +
       `${freeMb} MB free at ${dir}, need at least ${needMb} MB. ` +
       `Free up space and try again.`,
   );

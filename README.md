@@ -49,9 +49,17 @@ The architectural choices that drive the gap: (1) **CodeIndex queried first, not
 
 ```bash
 brew install ignite-ember/tap/ignite-ember  # or: pip install ignite-ember
-ignite-ember /login              # sign up for hosted models (MiniMax M2.7)
-ignite-ember                     # start coding
+igni                             # start coding
 ```
+
+`igni` is the command; `ignite-ember` is kept as an alias so existing
+shell aliases and scripts keep working. Both are the same entry point.
+
+To point it at your own igni server, set `api_url` in
+`.igni/config.local.yaml` and type `/login` **inside** a session — it is a
+slash command, not a shell subcommand. `igni /login` at a shell prompt
+answers `Error: No such command`, which is what this Quick Start used to
+tell you to run.
 
 Or bring your own model (OpenAI, Anthropic, Groq, Ollama, etc.):
 
@@ -78,8 +86,10 @@ See [Quickstart](QUICKSTART.md) for the full setup guide.
 ### Quickstart (new setup)
 
 1. **Install** — `brew install ignite-ember/tap/ignite-ember` (or `pip install ignite-ember`)
-2. **Authenticate** — `ignite-ember /login` for hosted models, or set `OPENAI_API_KEY` + add model to `.igni/config.yaml` for your own
-3. **Run** — `ignite-ember`
+2. **Configure a model** — set `OPENAI_API_KEY` (or any provider key) and add the
+   model to `.igni/config.yaml`; or point `api_url` at your igni server and run
+   `/login` inside a session
+3. **Run** — `igni`
 
 See [Quickstart](QUICKSTART.md) for the full guide.
 
