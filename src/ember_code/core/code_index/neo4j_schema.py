@@ -270,7 +270,8 @@ section body as content.
 | ``vulnerabilities`` | — | 10% | — |
 | ``fan_in``, ``fan_out``, ``test_refs`` | — | always | **always** |
 | ``importer_count`` | — | always | — |
-| ``error_handlers``, ``empty_handlers``, ``broad_handlers`` | — | always | **always** |
+| ``error_handlers``, ``empty_handlers`` | — | always | **always** |
+| ``broad_handlers`` (Python-family only; 0 in JS/TS by design) | — | always | **always** |
 | ``member_count``, ``method_count`` | — | always 0 | **always** |
 | ``is_callable``, ``is_type`` | — | false | **always** |
 | ``subproject`` | — | when nested | when nested |
@@ -350,6 +351,20 @@ is counted from the parse tree and the reference graph and is stable across runs
   language, not about the code. Prefer these over searching ``content`` for
   words like "except": ``content`` is a written summary of what the code does,
   not the code.
+
+  **``broad_handlers`` is zero in JavaScript and TypeScript, and that is not a
+  finding.** Neither language has a typed catch: ``catch (e)`` catches
+  everything, so ``broad_handlers`` would equal ``error_handlers`` in every file
+  and the column would carry no information while looking like it did. It is
+  deliberately left at zero there. Concretely, across the evaluation corpus:
+  axios has 91 error handlers and 0 broad, zod 172 and 0, nestjs 69 and 0, while
+  the Python projects report 540 broad between them.
+
+  So do **not** answer "does this project catch too broadly" from this column in
+  a JS/TS repository — the honest answer is that every catch there is broad and
+  the question needs asking a different way, for instance by looking at
+  ``empty_handlers``, which *is* populated for those languages and measures
+  something the language does not force.
 - ``meta`` (map) — per-item metadata (line ranges, etc.)
 
 ### :Chunk
