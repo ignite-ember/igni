@@ -46,7 +46,6 @@ from ember_code.core.code_index.paths import (
 )
 from ember_code.core.code_index.project import resolve_project_id
 from ember_code.core.db.database import Database
-from ember_code.core.db.engine import get_async_engine
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +108,23 @@ async def _drop_legacy_tables(project: Path, data_dir: str | Path) -> None:
     if not db_path.exists():
         logger.debug("no state.db at %s; skipping table drop", db_path)
         return
-    engine = get_async_engine(db_path)
-    async with Database(engine).session() as session, session.begin():
+    # ``Database`` takes a *path*, not an engine. This passed
+    # ``get_async_engine(db_path)`` — and ``Database.__init__`` does
+    # ``Path(str(db_path))``, so the engine's ``repr`` became a filename:
+    #
+    #     <sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x10f7f6490>
+    #
+    # A real SQLite file of that name appeared in the working directory,
+    # ``upgrade_to_head`` migrated it to head, and the DROP statements below
+    # ran against *that* — a brand-new empty database. So the legacy
+    # ``code_index_*`` tables were never dropped from the project's
+    # state.db, and the line after logged success naming the real path.
+    #
+    # Found because the stray files were not gitignored and turned up in
+    # ``git status`` after a test run; their schema (alembic_version,
+    # scheduler_tasks, loop_state, loop_progress, background_processes) is
+    # state.db's, which is what identified the caller.
+    async with Database(db_path).session() as session, session.begin():
         for table in _LEGACY_CODE_INDEX_TABLES:
             await session.execute(text(f"DROP TABLE IF EXISTS {table}"))
     logger.info("dropped legacy code_index tables from %s", db_path)

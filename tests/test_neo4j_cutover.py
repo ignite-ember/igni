@@ -125,3 +125,107 @@ def test_resolve_project_id_is_deterministic(project_tree) -> None:
     """resolve_project_id produces the same hash for the same path."""
     project, _ = project_tree
     assert resolve_project_id(project) == resolve_project_id(project)
+
+
+# ── The table drop, which nothing here covered ──────────────────────────
+
+
+async def test_drop_legacy_tables_drops_them_from_the_real_state_db(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The one step that touches the database, and the one nothing tested.
+
+    ``_drop_legacy_tables`` passed ``get_async_engine(db_path)`` to
+    ``Database(...)``, which takes a *path* and does ``Path(str(db_path))``.
+    So the engine's ``repr`` became a filename — a real SQLite file called
+    ``<sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x...>`` appeared
+    in the working directory, ``upgrade_to_head`` migrated it, and the DROP
+    statements ran against *that*. The project's own ``state.db`` kept its
+    legacy tables, and the next line logged success naming the real path.
+
+    Which is why this asserts on the database rather than on the log: the
+    log was already saying the right thing while nothing had happened.
+
+    Setup order matters, and two earlier versions of this test got it
+    wrong in opposite ways. Creating the legacy tables *before* the
+    migration collides with alembic ("table code_index_commit_metadata
+    already exists"), because the history creates them mid-way. Relying on
+    the migration to leave them behind does not work either: at head they
+    are gone, which is the whole reason this cutover exists — it cleans up
+    what an *older* install left in a database that is otherwise current.
+
+    So: migrate to head first, then plant the leftovers by hand, which is
+    the state a real upgraded install is in.
+    """
+    import sqlite3
+
+    from ember_code.core.code_index.cutover import _drop_legacy_tables
+    from ember_code.core.code_index.paths import state_db_path
+    from ember_code.core.db.database import Database
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    project = tmp_path / "proj"
+    project.mkdir()
+
+    db_path = state_db_path(project, data_dir=data_dir)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    Database(db_path)  # migrate to head — at head the legacy tables are absent
+
+    def tables() -> set[str]:
+        connection = sqlite3.connect(db_path)
+        try:
+            return {
+                r[0]
+                for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+        finally:
+            connection.close()
+
+    # Plant what an older install would have left behind, plus one table the
+    # cutover must not touch.
+    connection = sqlite3.connect(db_path)
+    try:
+        for table in _LEGACY_CODE_INDEX_TABLES:
+            connection.execute(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY)")
+        connection.execute("CREATE TABLE keep_me (id INTEGER PRIMARY KEY)")
+        connection.commit()
+    finally:
+        connection.close()
+
+    present = tables() & set(_LEGACY_CODE_INDEX_TABLES)
+    assert present == set(_LEGACY_CODE_INDEX_TABLES), present
+
+    # Run from a directory of our own, so a stray file lands somewhere
+    # observable instead of in the repository root.
+    workdir = tmp_path / "cwd"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+
+    await _drop_legacy_tables(project, data_dir)
+
+    remaining = tables()
+    for table in present:
+        assert table not in remaining, (
+            f"{table} survived in the real state.db — the drop ran somewhere else"
+        )
+    assert "keep_me" in remaining, "the cutover dropped a table it does not own"
+
+    # The symptom that gave the bug away, asserted directly.
+    strays = [p.name for p in workdir.iterdir() if "AsyncEngine object at" in p.name]
+    assert not strays, f"a database was created from an engine repr: {strays}"
+
+
+async def test_drop_legacy_tables_is_a_no_op_without_a_state_db(tmp_path: Path) -> None:
+    """It returns early rather than creating one."""
+    from ember_code.core.code_index.cutover import _drop_legacy_tables
+    from ember_code.core.code_index.paths import state_db_path
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    project = tmp_path / "proj"
+    project.mkdir()
+
+    await _drop_legacy_tables(project, data_dir)
+
+    assert not state_db_path(project, data_dir=data_dir).exists()
