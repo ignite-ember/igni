@@ -63,7 +63,15 @@ from ember_code.core.paths import DEFAULT_DATA_DIR
 @click.option("--no-web", is_flag=True, help="Disable web search/fetch tools")
 @click.option("--no-color", is_flag=True, help="Disable color output")
 @click.option("--debug", is_flag=True, help=f"Enable debug logging to {DEFAULT_DATA_DIR}/debug.log")
-@click.option("--strict", is_flag=True, help="Strict mode: deny all dangerous operations")
+@click.option(
+    "--strict",
+    is_flag=True,
+    # Not "deny all dangerous operations": hooks run shell commands on a
+    # separate path that no permission gates, so a group-supplied hook
+    # still executes here. See
+    # tests/test_hooks_are_outside_the_permission_ratchet.py.
+    help="Deny the agent's dangerous operations (writes, shell, git push)",
+)
 @click.option("--worktree", is_flag=True, help="Run in an isolated git worktree")
 @click.option(
     "--add-dir",
