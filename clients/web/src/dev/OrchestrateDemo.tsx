@@ -1241,7 +1241,7 @@ const SCENARIOS: Scenario[] = [
           "added 482 packages in 12s",
           "$ npm run dev",
           "",
-          "> @ember-code/web-ui@0.1.0 dev",
+          "> @igni/web-ui@0.1.0 dev",
           "> vite",
           "",
           "  VITE v6.4.3  ready in 129 ms",

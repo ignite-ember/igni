@@ -77,7 +77,7 @@ object EmberRuntime {
      *  managed venv. If any of these fields drift from the constants
      *  above we tear the venv down and rebuild — that's the upgrade
      *  path on plugin updates. */
-    private const val INSTALL_MARKER = "ember-install.json"
+    private const val INSTALL_MARKER = "igni-install.json"
 
     /** Result of [ensureBackendPython]: the Python interpreter to
      *  spawn the BE with, plus environment variables the caller

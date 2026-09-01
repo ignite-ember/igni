@@ -626,7 +626,7 @@ fn build_diagnostic_report() -> String {
     let expected = env!("CARGO_PKG_VERSION");
     let cache = runtime::cache_root_or_display();
     let venv_python = runtime::venv_python_path(&cache);
-    let marker_path = cache.join("ember-install.json");
+    let marker_path = cache.join("igni-install.json");
 
     let dev_backend = std::env::var("EMBER_DEV_BACKEND").ok();
     let ember_python = std::env::var("EMBER_PYTHON").ok();

@@ -27,7 +27,7 @@ use std::time::Duration;
 const PYTHON_VERSION: &str = "3.12";
 const UV_VERSION: &str = "0.5.7";
 const IGNITE_EMBER_VERSION: &str = env!("CARGO_PKG_VERSION");
-const INSTALL_MARKER: &str = "ember-install.json";
+const INSTALL_MARKER: &str = "igni-install.json";
 
 /// 1 GB. Sized for uv (~25 MB) + CPython (~50 MB) + ignite-ember +
 /// transitives (chromadb / sentence-transformers / torch — ~600 MB

@@ -71,7 +71,7 @@ class DoctorAction : AnAction() {
 
         val cache = EmberRuntime.cacheRoot()
         val venvPython = cache.resolve("venv").resolve(EmberRuntime.venvPythonRelPath())
-        val markerPath = cache.resolve("ember-install.json")
+        val markerPath = cache.resolve("igni-install.json")
 
         val devPath = System.getenv("EMBER_DEV_BACKEND")
         val devAck = System.getenv("IGNITE_EMBER_DEV")

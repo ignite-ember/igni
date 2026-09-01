@@ -36,7 +36,7 @@ class DoctorReportTest {
         managedVenvPresent = true,
         devPath = null,
         devAck = null,
-        markerPath = Path.of("/tmp/ember/ember-install.json"),
+        markerPath = Path.of("/tmp/ember/igni-install.json"),
         markerContents = "uv=0.5.7;python=3.12;ignite=0.8.3",
     )
 

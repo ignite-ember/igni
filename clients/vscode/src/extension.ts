@@ -148,7 +148,7 @@ function startBackend(
 ): Promise<number> {
   return (async () => {
     const configured = vscode.workspace
-      .getConfiguration("emberCode")
+      .getConfiguration("igni")
       .get<string>("pythonPath", "")
       .trim();
 
@@ -547,7 +547,7 @@ function pushToComposer(payload: {
   end_line?: number;
 }) {
   if (!panel) {
-    vscode.commands.executeCommand("emberCode.open").then(() => {
+    vscode.commands.executeCommand("igni.open").then(() => {
       // After the panel opens, deliver the event.
       setTimeout(() => panel?.webview.postMessage({ type: "ember:addToComposer", payload }), 300);
     });
@@ -559,7 +559,7 @@ function pushToComposer(payload: {
 
 function attachFile(path: string) {
   if (!panel) {
-    vscode.commands.executeCommand("emberCode.open").then(() => {
+    vscode.commands.executeCommand("igni.open").then(() => {
       setTimeout(
         () => panel?.webview.postMessage({ type: "ember:attachFile", payload: { path } }),
         300,
@@ -574,7 +574,7 @@ function attachFile(path: string) {
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     // ── Open / show the chat panel ─────────────────────────────
-    vscode.commands.registerCommand("emberCode.open", async () => {
+    vscode.commands.registerCommand("igni.open", async () => {
       if (panel) {
         panel.reveal();
         return;
@@ -600,7 +600,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       panel = vscode.window.createWebviewPanel(
-        "emberCode",
+        "igni",
         "igni",
         vscode.ViewColumn.Beside,
         {
@@ -618,7 +618,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     // ── Editor → chat ──────────────────────────────────────────
-    vscode.commands.registerCommand("emberCode.addSelectionToChat", () => {
+    vscode.commands.registerCommand("igni.addSelectionToChat", () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
       const sel = editor.selection;
@@ -643,7 +643,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // ── Explorer → chat (single or multi-select) ──────────────
     vscode.commands.registerCommand(
-      "emberCode.addFileToChat",
+      "igni.addFileToChat",
       (single: vscode.Uri | undefined, multi: vscode.Uri[] | undefined) => {
         const targets = multi && multi.length ? multi : single ? [single] : [];
         const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -655,7 +655,7 @@ export function activate(context: vscode.ExtensionContext) {
     ),
 
     // ── Restart backend (preserve cache) ──────────────────────
-    vscode.commands.registerCommand("emberCode.restart", async () => {
+    vscode.commands.registerCommand("igni.restart", async () => {
       backend?.kill();
       backend = undefined;
       backendPort = undefined;
@@ -663,11 +663,11 @@ export function activate(context: vscode.ExtensionContext) {
       if (panel) {
         panel.dispose();
       }
-      await vscode.commands.executeCommand("emberCode.open");
+      await vscode.commands.executeCommand("igni.open");
     }),
 
     // ── Reinstall backend (wipe cache, redownload everything) ─
-    vscode.commands.registerCommand("emberCode.reinstall", async () => {
+    vscode.commands.registerCommand("igni.reinstall", async () => {
       const confirm = await vscode.window.showWarningMessage(
         "Wipe the managed Python cache and re-download uv + Python + ignite-ember?",
         { modal: true },
@@ -679,7 +679,7 @@ export function activate(context: vscode.ExtensionContext) {
       backendPort = undefined;
       if (panel) panel.dispose();
       await resetCache(context.globalStorageUri.fsPath);
-      await vscode.commands.executeCommand("emberCode.open");
+      await vscode.commands.executeCommand("igni.open");
     }),
 
     // ── Diagnose backend ────────────────────────────────────────
@@ -689,7 +689,7 @@ export function activate(context: vscode.ExtensionContext) {
     // dialogs on macOS collapse whitespace) and also placed on
     // the clipboard so the user can paste it into a bug report
     // without transcription.
-    vscode.commands.registerCommand("emberCode.doctor", async () => {
+    vscode.commands.registerCommand("igni.doctor", async () => {
       const report = await buildDiagnosticReport(context);
       const channel = getDiagnosticsChannel();
       channel.clear();
@@ -723,10 +723,10 @@ async function buildDiagnosticReport(
     "venv",
     isWin ? "Scripts/python.exe" : "bin/python",
   );
-  const markerPath = path.join(cacheDir, "ember-install.json");
+  const markerPath = path.join(cacheDir, "igni-install.json");
 
   const configured = vscode.workspace
-    .getConfiguration("emberCode")
+    .getConfiguration("igni")
     .get<string>("pythonPath", "")
     .trim();
   const devBackend = process.env.EMBER_DEV_BACKEND?.trim();
@@ -779,7 +779,7 @@ async function buildDiagnosticReport(
   lines.push(`Managed venv present     : ${venvPresent}`);
   lines.push("");
   lines.push(`EMBER_DEV_BACKEND        : ${devBackend ?? "<unset>"}`);
-  lines.push(`emberCode.pythonPath     : ${configured || "<unset>"}`);
+  lines.push(`igni.pythonPath     : ${configured || "<unset>"}`);
   lines.push(`IGNITE_EMBER_DEV         : ${devAck ?? "<unset>"}`);
   if ((devBackend || configured) && !devActive) {
     lines.push(

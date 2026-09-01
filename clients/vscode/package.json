@@ -1,5 +1,5 @@
 {
-  "name": "ember-code-vscode",
+  "name": "igni-vscode",
   "displayName": "igni",
   "description": "AI coding assistant with multi-agent orchestration — chat panel with zero-touch backend install",
   "version": "1.0.3",
@@ -36,32 +36,32 @@
   "contributes": {
     "commands": [
       {
-        "command": "emberCode.open",
+        "command": "igni.open",
         "title": "Open Chat",
         "category": "igni"
       },
       {
-        "command": "emberCode.addSelectionToChat",
+        "command": "igni.addSelectionToChat",
         "title": "Add Selection to igni Chat",
         "category": "igni"
       },
       {
-        "command": "emberCode.addFileToChat",
+        "command": "igni.addFileToChat",
         "title": "Add to igni Chat",
         "category": "igni"
       },
       {
-        "command": "emberCode.restart",
+        "command": "igni.restart",
         "title": "Restart Backend",
         "category": "igni"
       },
       {
-        "command": "emberCode.reinstall",
+        "command": "igni.reinstall",
         "title": "Reinstall Backend (Clean)",
         "category": "igni"
       },
       {
-        "command": "emberCode.doctor",
+        "command": "igni.doctor",
         "title": "Diagnose Backend",
         "category": "igni"
       }
@@ -69,14 +69,14 @@
     "menus": {
       "editor/context": [
         {
-          "command": "emberCode.addSelectionToChat",
+          "command": "igni.addSelectionToChat",
           "group": "1_modification@1",
           "when": "editorTextFocus"
         }
       ],
       "explorer/context": [
         {
-          "command": "emberCode.addFileToChat",
+          "command": "igni.addFileToChat",
           "group": "1_modification@1",
           "when": "!explorerResourceIsFolder"
         }
@@ -84,7 +84,7 @@
     },
     "keybindings": [
       {
-        "command": "emberCode.addSelectionToChat",
+        "command": "igni.addSelectionToChat",
         "key": "ctrl+e",
         "mac": "cmd+e",
         "when": "editorTextFocus"
@@ -93,7 +93,7 @@
     "configuration": {
       "title": "igni",
       "properties": {
-        "emberCode.pythonPath": {
+        "igni.pythonPath": {
           "type": "string",
           "default": "",
           "description": "Optional: path to a Python interpreter with an editable ignite-ember install. Bypasses the managed venv. Intended for ember-code contributors; end users should leave empty so the extension manages everything via uv."
