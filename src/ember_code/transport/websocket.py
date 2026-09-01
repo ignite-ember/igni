@@ -72,15 +72,15 @@ _BROADCAST_SEND_TIMEOUT = 2.0
 # first :meth:`send` call, which silently drops our
 # ``logger.debug`` calls. To make the chunk trace reliable we attach
 # a *dedicated* file handler to this module's logger the first time
-# it's imported, gated on ``EMBER_CHUNK_TRACE=1`` so non-debug runs
+# it's imported, gated on ``IGNI_CHUNK_TRACE=1`` so non-debug runs
 # don't pay the cost. The handler writes to
-# ``~/.igni/chunk_trace.log`` (overridable via EMBER_CHUNK_TRACE_LOG)
+# ``~/.igni/chunk_trace.log`` (overridable via IGNI_CHUNK_TRACE_LOG)
 # and bypasses root propagation entirely — the file is the only sink.
-if os.environ.get("EMBER_CHUNK_TRACE") == "1" and not any(
+if os.environ.get("IGNI_CHUNK_TRACE") == "1" and not any(
     getattr(h, "_ember_chunk_trace", False) for h in logger.handlers
 ):
     _trace_path = Path(
-        os.environ.get("EMBER_CHUNK_TRACE_LOG") or (Path.home() / CONFIG_DIR / "chunk_trace.log")
+        os.environ.get("IGNI_CHUNK_TRACE_LOG") or (Path.home() / CONFIG_DIR / "chunk_trace.log")
     )
     _trace_path.parent.mkdir(parents=True, exist_ok=True)
 

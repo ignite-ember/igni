@@ -36,7 +36,7 @@ def test_jdk_bootstrap_paths_resolve_under_cache_root(tmp_path: Path) -> None:
 
 
 # The async tests are covered by the subprocess Neo4j integration tests
-# (EMBER_TEST_NEO4J_RUNTIME=1). Here we test the synchronous path/marker logic.
+# (IGNI_TEST_NEO4J_RUNTIME=1). Here we test the synchronous path/marker logic.
 
 
 def test_jdk_bootstrap_marker_path_format(tmp_path: Path) -> None:

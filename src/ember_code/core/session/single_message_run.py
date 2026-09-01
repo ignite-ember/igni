@@ -119,8 +119,8 @@ class SingleMessageRun(SessionRun):
 
         Returns the runtime (or ``None``), for :meth:`_release_neo4j`.
         """
-        if os.environ.get("EMBER_NEO4J_DISABLED"):
-            logger.info("EMBER_NEO4J_DISABLED set — skipping the Neo4j runtime attach.")
+        if os.environ.get("IGNI_NEO4J_DISABLED"):
+            logger.info("IGNI_NEO4J_DISABLED set — skipping the Neo4j runtime attach.")
             return None
 
         session = self._session
@@ -137,7 +137,7 @@ class SingleMessageRun(SessionRun):
         except Exception:  # noqa: BLE001 — degrade to no-index, don't kill the run
             logger.exception(
                 "Neo4j runtime construction failed; CodeIndex is unavailable this "
-                "session. Set EMBER_NEO4J_DISABLED=1 to skip Neo4j entirely."
+                "session. Set IGNI_NEO4J_DISABLED=1 to skip Neo4j entirely."
             )
             return None
 
@@ -198,7 +198,7 @@ class SingleMessageRun(SessionRun):
         """
         if runtime is None:
             return
-        if os.environ.get("EMBER_NEO4J_KEEP_ALIVE"):
+        if os.environ.get("IGNI_NEO4J_KEEP_ALIVE"):
             # Opt-in for batch callers that run many single-shot sessions over
             # the same repo. Releasing at zero shuts the server down, and the
             # next session pays a cold start: measured 44s end-to-end cold
@@ -206,7 +206,7 @@ class SingleMessageRun(SessionRun):
             # sessions that is the difference between hours and days, so the
             # caller can choose to keep the pair up and reclaim it once at the
             # end (``pkill -f CommunityEntryPoint``, or a backend shutdown).
-            logger.info("EMBER_NEO4J_KEEP_ALIVE set — leaving the Neo4j pair running.")
+            logger.info("IGNI_NEO4J_KEEP_ALIVE set — leaving the Neo4j pair running.")
             return
         started = getattr(self, "_started_commit", None)
         try:

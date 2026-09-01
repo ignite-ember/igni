@@ -40,7 +40,7 @@ SNAPSHOT_RELATIVE_PATH = "evals/fixtures/codeindex_repo.snapshot.jsonl"
 async def setup(work_dir: Path, project_dir: Path) -> None:
     """Initialize git + apply the JSONL snapshot to populate the local index.
 
-    When ``EMBER_EVAL_NO_CODEINDEX=1`` is set, we still git-init the
+    When ``IGNI_EVAL_NO_CODEINDEX=1`` is set, we still git-init the
     work_dir (Session needs a real HEAD to construct
     ``CodeIndexSyncManager``) but skip the apply_delta step. Without a
     populated chroma dir, the tool gate in
@@ -61,9 +61,9 @@ async def setup(work_dir: Path, project_dir: Path) -> None:
     # Bail before chroma if the comparison run wants no codeindex.
     import os
 
-    if os.environ.get('EMBER_EVAL_NO_CODEINDEX') == '1':
+    if os.environ.get('IGNI_EVAL_NO_CODEINDEX') == '1':
         logger.info(
-            "codeindex eval setup: SKIPPING JSONL apply (EMBER_EVAL_NO_CODEINDEX=1) — "
+            "codeindex eval setup: SKIPPING JSONL apply (IGNI_EVAL_NO_CODEINDEX=1) — "
             "agent will fall back to shell/grep. HEAD=%s",
             head_sha[:8],
         )

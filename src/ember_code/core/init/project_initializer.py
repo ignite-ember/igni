@@ -35,7 +35,7 @@ from ember_code.core.init.schemas import (
     SettingsFile,
 )
 from ember_code.core.init_templates import (
-    EMBER_MD_TEMPLATE,
+    IGNI_MD_TEMPLATE,
     PROJECT_CONFIG_TEMPLATE,
 )
 from ember_code.core.paths import CONFIG_DIR
@@ -155,7 +155,7 @@ class ProjectInitializer(BaseModel):
         """Write a starter ``ember.md`` if one doesn't exist."""
         path = self.project_dir / "ember.md"
         if not path.exists():
-            path.write_text(EMBER_MD_TEMPLATE)
+            path.write_text(IGNI_MD_TEMPLATE)
 
     def _write_project_config(self) -> None:
         """Write a starter ``.igni/config.yaml`` with commented-out options."""

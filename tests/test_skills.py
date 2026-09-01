@@ -65,7 +65,7 @@ class TestSkillDefinition:
     def test_render_skill_dir(self, tmp_path):
         defn = SkillDefinition(
             name="test",
-            body="Dir: ${EMBER_SKILL_DIR}/template.txt",
+            body="Dir: ${IGNI_SKILL_DIR}/template.txt",
             source_dir=tmp_path / "skills" / "test",
         )
         result = defn.render()
@@ -86,12 +86,12 @@ class TestSkillDefinition:
         assert result == "Do  now."
 
     def test_render_session_id(self):
-        defn = SkillDefinition(name="test", body="Session: ${EMBER_SESSION_ID}")
+        defn = SkillDefinition(name="test", body="Session: ${IGNI_SESSION_ID}")
         result = defn.render("", session_id="abc-123")
         assert result == "Session: abc-123"
 
     def test_render_session_id_empty_default(self):
-        defn = SkillDefinition(name="test", body="Session: ${EMBER_SESSION_ID}")
+        defn = SkillDefinition(name="test", body="Session: ${IGNI_SESSION_ID}")
         result = defn.render("")
         assert result == "Session: "
 

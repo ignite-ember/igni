@@ -45,7 +45,7 @@ async def main() -> int:
 
     # A throwaway HOME so this cannot read or write the real one.
     os.environ["HOME"] = str(home)
-    os.environ["EMBER_NEO4J_DISABLED"] = "1"
+    os.environ["IGNI_NEO4J_DISABLED"] = "1"
 
     from ember_code.core.auth.portal_client import PortalClient
     from ember_code.core.config.group_policy import GroupPolicyCache

@@ -505,7 +505,7 @@ def test_keep_alive_leaves_the_pair_running() -> None:
 
     class Runtime:
         async def stop_for_commit(self, *_: str) -> bool:  # pragma: no cover
-            raise AssertionError("released despite EMBER_NEO4J_KEEP_ALIVE")
+            raise AssertionError("released despite IGNI_NEO4J_KEEP_ALIVE")
 
         async def stop_all(self) -> None:  # pragma: no cover
             raise AssertionError("stop_all is never correct here")
@@ -515,7 +515,7 @@ def test_keep_alive_leaves_the_pair_running() -> None:
 
     monkey = pytest.MonkeyPatch()
     try:
-        monkey.setenv("EMBER_NEO4J_KEEP_ALIVE", "1")
+        monkey.setenv("IGNI_NEO4J_KEEP_ALIVE", "1")
         asyncio.run(run._release_neo4j(Runtime()))
     finally:
         monkey.undo()

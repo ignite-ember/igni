@@ -315,7 +315,7 @@ class BackendSupervisor:
 
     @staticmethod
     def _resolve_parent_pid() -> int:
-        raw = os.environ.get("EMBER_PARENT_PID", "0") or "0"
+        raw = os.environ.get("IGNI_PARENT_PID", "0") or "0"
         try:
             return int(raw)
         except ValueError:

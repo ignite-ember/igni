@@ -71,18 +71,18 @@ End-to-end tests that verify the full request path. These are **not** run in CI 
 
 | Variable | Required | Default |
 |----------|----------|---------|
-| `EMBER_TEST_LLM_API_KEY` | yes — test skips when unset | — |
-| `EMBER_TEST_LLM_BASE_URL` | no | `https://api.openai.com/v1` |
-| `EMBER_TEST_LLM_MODEL` | no | `gpt-4o-mini` |
+| `IGNI_TEST_LLM_API_KEY` | yes — test skips when unset | — |
+| `IGNI_TEST_LLM_BASE_URL` | no | `https://api.openai.com/v1` |
+| `IGNI_TEST_LLM_MODEL` | no | `gpt-4o-mini` |
 
 `tests/conftest.py` calls `load_dotenv()` on the repo's `.env` before any
 test runs, so the easiest setup is to drop the keys into `.env`:
 
 ```dotenv
 # .env
-EMBER_TEST_LLM_API_KEY=sk-...
-EMBER_TEST_LLM_BASE_URL=https://api.openai.com/v1
-EMBER_TEST_LLM_MODEL=gpt-4o-mini
+IGNI_TEST_LLM_API_KEY=sk-...
+IGNI_TEST_LLM_BASE_URL=https://api.openai.com/v1
+IGNI_TEST_LLM_MODEL=gpt-4o-mini
 ```
 
 Then run normally:
@@ -92,7 +92,7 @@ uv run --extra dev pytest tests/test_queue_hook.py::TestRealAgnoRun -v
 ```
 
 Real shell env vars override `.env` (`override=False`), so
-`EMBER_TEST_LLM_API_KEY=other-key pytest ...` still works for one-off
+`IGNI_TEST_LLM_API_KEY=other-key pytest ...` still works for one-off
 overrides.
 
 ## Coverage Targets

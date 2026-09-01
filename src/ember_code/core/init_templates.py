@@ -100,7 +100,7 @@ exit 0
 
 # ── Starter ember.md template ─────────────────────────────────────────
 
-EMBER_MD_TEMPLATE = """\
+IGNI_MD_TEMPLATE = """\
 # Project Context
 
 <!-- This file gives igni agents context about your project.

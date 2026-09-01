@@ -204,7 +204,7 @@ function startBackend(
           env: {
             ...process.env,
             ...install.env,
-            EMBER_PARENT_PID: String(process.pid),
+            IGNI_PARENT_PID: String(process.pid),
           },
           stdio: ["ignore", "pipe", "pipe"],
         },
@@ -729,7 +729,7 @@ async function buildDiagnosticReport(
     .getConfiguration("igni")
     .get<string>("pythonPath", "")
     .trim();
-  const devBackend = process.env.EMBER_DEV_BACKEND?.trim();
+  const devBackend = process.env.IGNI_DEV_BACKEND?.trim();
   const devAck = process.env.IGNITE_EMBER_DEV;
   const devActive =
     devAck === "1" ||
@@ -778,7 +778,7 @@ async function buildDiagnosticReport(
   lines.push(`Managed venv path        : ${venvPython}`);
   lines.push(`Managed venv present     : ${venvPresent}`);
   lines.push("");
-  lines.push(`EMBER_DEV_BACKEND        : ${devBackend ?? "<unset>"}`);
+  lines.push(`IGNI_DEV_BACKEND        : ${devBackend ?? "<unset>"}`);
   lines.push(`igni.pythonPath     : ${configured || "<unset>"}`);
   lines.push(`IGNITE_EMBER_DEV         : ${devAck ?? "<unset>"}`);
   if ((devBackend || configured) && !devActive) {

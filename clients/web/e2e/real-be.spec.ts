@@ -5,7 +5,7 @@
  * JS-fixture suite cannot see (their schemas evolve independently).
  *
  * Not run by default in ``npm test`` workflows where Python isn't on
- * PATH; gated by ``EMBER_E2E_REAL_BE=1``. CI sets that var on hosts
+ * PATH; gated by ``IGNI_E2E_REAL_BE=1``. CI sets that var on hosts
  * with the venv prepared.
  *
  * What's covered:
@@ -47,10 +47,10 @@ const VENV_PYTHON = path.join(REPO_ROOT, ".venv", "bin", "python");
 
 const test = base.extend<Fixtures>({
   realBe: async ({}, use) => {
-    if (process.env.EMBER_E2E_REAL_BE !== "1") {
+    if (process.env.IGNI_E2E_REAL_BE !== "1") {
       test.skip(
         true,
-        "Set EMBER_E2E_REAL_BE=1 to run; requires the project venv.",
+        "Set IGNI_E2E_REAL_BE=1 to run; requires the project venv.",
       );
     }
 
@@ -90,7 +90,7 @@ const test = base.extend<Fixtures>({
           // The watchdog (``_watch_parent``) self-terminates the BE
           // when our PID disappears — guarantees no orphaned BEs even
           // if Playwright crashes mid-test.
-          EMBER_PARENT_PID: String(process.pid),
+          IGNI_PARENT_PID: String(process.pid),
         },
       },
     );

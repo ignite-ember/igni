@@ -32,10 +32,10 @@ class SkillDefinition(BaseModel):
             text = text.replace(f"$ARGUMENTS[{i}]", arg)
 
         if self.source_dir:
-            text = text.replace("${EMBER_SKILL_DIR}", str(self.source_dir))
+            text = text.replace("${IGNI_SKILL_DIR}", str(self.source_dir))
             text = text.replace("${CLAUDE_SKILL_DIR}", str(self.source_dir))
 
-        text = text.replace("${EMBER_SESSION_ID}", session_id)
+        text = text.replace("${IGNI_SESSION_ID}", session_id)
         return text
 
 

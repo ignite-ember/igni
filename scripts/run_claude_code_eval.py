@@ -6,7 +6,7 @@ Each case's ``input`` is sent as a one-shot prompt to ``claude -p`` with
 (those live in the ember-code repo, outside the working dir). Responses
 are captured and graded by the same Agno ``AccuracyEval`` ember-code's
 runner uses, with a configurable judge model (default: the
-``EMBER_TEST_LLM_*`` triple, which currently points at MiniMax-M2.7 — keep
+``IGNI_TEST_LLM_*`` triple, which currently points at MiniMax-M2.7 — keep
 the judge separate from the agent's model to avoid self-grading bias).
 
 Output JSON shape mirrors ``run_codeindex_eval.py``'s ``--out`` so the
@@ -204,7 +204,7 @@ async def main() -> int:
         return 1
 
     # Auto-source .env so the judge can connect — same pattern as run_codeindex_eval.
-    if not os.environ.get("EMBER_TEST_LLM_API_KEY"):
+    if not os.environ.get("IGNI_TEST_LLM_API_KEY"):
         env_path = ember_code_dir / ".env"
         if env_path.exists():
             for line in env_path.read_text().splitlines():
@@ -214,23 +214,23 @@ async def main() -> int:
                 k, v = line.split("=", 1)
                 os.environ.setdefault(k, v)
 
-    # Build a judge model from the same EMBER_TEST_LLM_* triple the
+    # Build a judge model from the same IGNI_TEST_LLM_* triple the
     # ember-code eval runner uses. Keeps the judge model independent of
     # the agent (Claude Code) — avoids "Claude grades Claude" bias.
     judge_model = None
     if not args.no_judge:
-        api_key = os.environ.get("EMBER_TEST_LLM_API_KEY")
+        api_key = os.environ.get("IGNI_TEST_LLM_API_KEY")
         if not api_key:
             print(
-                "WARNING: EMBER_TEST_LLM_API_KEY not set — running without judge.",
+                "WARNING: IGNI_TEST_LLM_API_KEY not set — running without judge.",
                 file=sys.stderr,
             )
         else:
             settings = Settings()
             base_url = os.environ.get(
-                "EMBER_TEST_LLM_BASE_URL", "https://api.minimax.io/v1"
+                "IGNI_TEST_LLM_BASE_URL", "https://api.minimax.io/v1"
             )
-            model_id = os.environ.get("EMBER_TEST_LLM_MODEL", "MiniMax-M2.7")
+            model_id = os.environ.get("IGNI_TEST_LLM_MODEL", "MiniMax-M2.7")
             settings.models.registry["judge-model"] = {
                 "provider": "openai_like",
                 "model_id": model_id,

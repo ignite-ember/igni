@@ -108,10 +108,10 @@ class TestModelRegistry:
         assert entry.resolve_api_key() is None
 
     def test_env_model_override(self, monkeypatch, registry):
-        """``EMBER_MODEL`` selects an entry from the registry. The
+        """``IGNI_MODEL`` selects an entry from the registry. The
         fixture has already seeded the M2.7 entry that cloud
         discovery would normally populate."""
-        monkeypatch.setenv("EMBER_MODEL", "MiniMax-M2.7")
+        monkeypatch.setenv("IGNI_MODEL", "MiniMax-M2.7")
         entry = registry._resolve_entry("MiniMax-M2.7")
         assert entry.model_id == "MiniMaxAI/MiniMax-M2.7"
 

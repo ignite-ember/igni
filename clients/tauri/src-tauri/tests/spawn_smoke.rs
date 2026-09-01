@@ -16,7 +16,7 @@
 //! class ("a refactor in ``run()`` silently breaks startup") fails
 //! here loudly.
 //!
-//! Gated behind ``EMBER_TAURI_SMOKE=1`` because it (a) takes
+//! Gated behind ``IGNI_TAURI_SMOKE=1`` because it (a) takes
 //! ~10-20s, (b) needs the debug binary + the project venv +
 //! ``clients/web/dist`` to all be pre-built, and (c) actually
 //! opens a webview window on macOS. CI sets the env var on the
@@ -64,7 +64,7 @@ fn find_be_descendant(parent_pid: u32) -> Option<u32> {
     }
     let text = String::from_utf8_lossy(&out.stdout);
     // BFS through the process tree — the BE may be a grandchild via
-    // a shell wrapper. (In practice ``EMBER_DEV_BACKEND`` makes it a
+    // a shell wrapper. (In practice ``IGNI_DEV_BACKEND`` makes it a
     // direct child, but be defensive.)
     let mut want = vec![parent_pid];
     let mut seen: Vec<u32> = vec![parent_pid];
@@ -165,9 +165,9 @@ fn pid_alive(pid: u32) -> bool {
 
 #[test]
 fn tauri_binary_boots_be_and_watchdog_cleans_up_on_exit() {
-    if std::env::var("EMBER_TAURI_SMOKE").ok().as_deref() != Some("1") {
+    if std::env::var("IGNI_TAURI_SMOKE").ok().as_deref() != Some("1") {
         eprintln!(
-            "skip: set EMBER_TAURI_SMOKE=1 to run this test (needs \
+            "skip: set IGNI_TAURI_SMOKE=1 to run this test (needs \
              .venv, web/dist, and pops a webview window)"
         );
         return;
@@ -211,12 +211,12 @@ fn tauri_binary_boots_be_and_watchdog_cleans_up_on_exit() {
     // we skip the uv-download bootstrap (which would dominate the
     // test runtime + require network).
     let mut child: Child = Command::new(&binary)
-        .env("EMBER_DEV_BACKEND", &venv_python)
-        .env("EMBER_PROJECT_DIR", &project_dir)
+        .env("IGNI_DEV_BACKEND", &venv_python)
+        .env("IGNI_PROJECT_DIR", &project_dir)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .expect("spawn ember-code-app");
+        .expect("spawn igni-app");
     let tauri_pid = child.id();
 
     // Use a guard so the binary is killed even if assertions panic.
@@ -259,7 +259,7 @@ fn tauri_binary_boots_be_and_watchdog_cleans_up_on_exit() {
     // Defuse the drop guard — we already waited.
     std::mem::forget(guard);
 
-    // The EMBER_PARENT_PID watchdog inside the BE must notice its
+    // The IGNI_PARENT_PID watchdog inside the BE must notice its
     // parent (the Tauri shell) is gone and self-terminate. Default
     // watchdog interval is fast — 10s is generous.
     let exited = poll_until(Duration::from_secs(15), || {

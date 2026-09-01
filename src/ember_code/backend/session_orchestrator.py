@@ -133,7 +133,7 @@ class SessionOrchestrator:
         self._default_runtime = default_runtime
 
         config = SessionPoolConfig()
-        idle_env = os.environ.get("EMBER_SESSION_IDLE_TIMEOUT", "")
+        idle_env = os.environ.get("IGNI_SESSION_IDLE_TIMEOUT", "")
         try:
             secs = float(idle_env) if idle_env else 0.0
         except ValueError:
@@ -165,7 +165,7 @@ class SessionOrchestrator:
         ``~/.igni/neo4j.runtime.json``. Turning the features off but
         still attaching would pay all of that for nothing.
 
-        ``EMBER_NEO4J_DISABLED=1`` remains as a local escape hatch for
+        ``IGNI_NEO4J_DISABLED=1`` remains as a local escape hatch for
         headless CI, where the settings plumbing is beside the point.
 
         Graceful degradation: if the runtime fails to construct (missing
@@ -179,8 +179,8 @@ class SessionOrchestrator:
         Idempotent — a second call is a no-op (the runtime itself is
         cached on ``self._neo4j_runtime``).
         """
-        if os.environ.get("EMBER_NEO4J_DISABLED"):
-            logger.info("EMBER_NEO4J_DISABLED set — skipping the Neo4j runtime attach.")
+        if os.environ.get("IGNI_NEO4J_DISABLED"):
+            logger.info("IGNI_NEO4J_DISABLED set — skipping the Neo4j runtime attach.")
             return None
 
         wants_codeindex = self._settings.code_index.enabled
@@ -203,7 +203,7 @@ class SessionOrchestrator:
         except Exception:  # noqa: BLE001 — degrade so BE boot doesn't die
             logger.exception(
                 "Neo4j runtime construction failed; CodeIndex and knowledge will be "
-                "unavailable this session. Set EMBER_NEO4J_DISABLED=1 to skip Neo4j "
+                "unavailable this session. Set IGNI_NEO4J_DISABLED=1 to skip Neo4j "
                 "entirely and silence this."
             )
             return None

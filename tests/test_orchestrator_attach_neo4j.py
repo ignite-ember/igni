@@ -4,7 +4,7 @@ default session's knowledge + code_index backends to neo4j.
 Neo4j is the DEFAULT storage — ``attach_neo4j`` fires unconditionally on
 BE boot and constructs a :class:`Neo4jRuntime` that attaches to the
 session's knowledge + code_index. The rare opt-out is
-``EMBER_NEO4J_DISABLED=1``, which turns the attach into a no-op so
+``IGNI_NEO4J_DISABLED=1``, which turns the attach into a no-op so
 headless CI / test scenarios don't pay the JDK-download cost.
 
 Live integration — requires ``NEO4J_TEST_URI``. Skipped otherwise.
@@ -87,9 +87,9 @@ def _make_orchestrator(tmp_path: Path) -> SessionOrchestrator:
 
 
 async def test_orchestrator_attach_neo4j_no_op_when_disabled(tmp_path, monkeypatch):
-    """With ``EMBER_NEO4J_DISABLED=1``, ``attach_neo4j`` is a no-op
+    """With ``IGNI_NEO4J_DISABLED=1``, ``attach_neo4j`` is a no-op
     and no runtime is built."""
-    monkeypatch.setenv("EMBER_NEO4J_DISABLED", "1")
+    monkeypatch.setenv("IGNI_NEO4J_DISABLED", "1")
     orch = _make_orchestrator(tmp_path)
     # The constructor doesn't construct the runtime (it's lazy).
     assert orch._neo4j_runtime is None
@@ -102,10 +102,10 @@ async def test_orchestrator_attach_neo4j_no_op_when_disabled(tmp_path, monkeypat
 
 
 async def test_orchestrator_attach_neo4j_swaps_knowledge_by_default(tmp_path, monkeypatch, driver):
-    """Without ``EMBER_NEO4J_DISABLED``, ``attach_neo4j`` builds a
+    """Without ``IGNI_NEO4J_DISABLED``, ``attach_neo4j`` builds a
     runtime by default and calls ``Session.attach_knowledge_neo4j``
     + ``Session.attach_codeindex_neo4j``."""
-    monkeypatch.delenv("EMBER_NEO4J_DISABLED", raising=False)
+    monkeypatch.delenv("IGNI_NEO4J_DISABLED", raising=False)
 
     # A real Session for the swap target (the stub's MagicMock
     # can't run the real attach path). Use a lightweight stand-in
@@ -166,7 +166,7 @@ async def test_orchestrator_attach_neo4j_swaps_knowledge_by_default(tmp_path, mo
 async def test_orchestrator_attach_neo4j_idempotent(tmp_path, monkeypatch, driver):
     """A second ``attach_neo4j`` call returns the cached runtime
     without rebuilding it."""
-    monkeypatch.delenv("EMBER_NEO4J_DISABLED", raising=False)
+    monkeypatch.delenv("IGNI_NEO4J_DISABLED", raising=False)
 
     class _Session:
         def __init__(self):
@@ -213,7 +213,7 @@ async def test_orchestrator_attach_neo4j_degrades_gracefully_on_construction_fai
     """Runtime construction failures (missing Java, disk full, blocked
     download) must NOT crash BE boot — attach_neo4j logs + returns None
     so the session falls back to legacy Chroma-backed indices."""
-    monkeypatch.delenv("EMBER_NEO4J_DISABLED", raising=False)
+    monkeypatch.delenv("IGNI_NEO4J_DISABLED", raising=False)
 
     # Patch the import inside attach_neo4j so construction raises.
     def _boom(**_kwargs):

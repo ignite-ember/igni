@@ -97,7 +97,7 @@ class DoctorReportTest {
         // managed venv. Naming the source lets them confirm the
         // override was on purpose (not a stray env var).
         assertTrue(
-            out.contains("Backend source           : EMBER_DEV_BACKEND override"),
+            out.contains("Backend source           : IGNI_DEV_BACKEND override"),
             "expected dev-override callout; got:\n$out",
         )
     }
@@ -111,7 +111,7 @@ class DoctorReportTest {
         val out = DoctorReport.render(hijack)
         // The exact footgun the version gate closes: an old
         // ``~/.zshenv`` or ``launchctl setenv`` sets
-        // ``EMBER_DEV_BACKEND`` without the user realizing.
+        // ``IGNI_DEV_BACKEND`` without the user realizing.
         // Report has to explain why the override wasn't honored.
         assertTrue(
             out.contains("set without ack — ignored, using managed venv"),
@@ -133,7 +133,7 @@ class DoctorReportTest {
             devAck = "TRUE",
         )
         val out = DoctorReport.render(dev)
-        assertTrue(out.contains("EMBER_DEV_BACKEND override"))
+        assertTrue(out.contains("IGNI_DEV_BACKEND override"))
         assertFalse(out.contains("set without ack"))
     }
 
@@ -144,7 +144,7 @@ class DoctorReportTest {
         // literally paste this into a ticket. ``<unset>`` is
         // unambiguously "not set" whereas an empty string or a
         // JVM-null looks like a bug in the report itself.
-        assertTrue(out.contains("EMBER_DEV_BACKEND        : <unset>"))
+        assertTrue(out.contains("IGNI_DEV_BACKEND        : <unset>"))
         assertTrue(out.contains("IGNITE_EMBER_DEV         : <unset>"))
     }
 

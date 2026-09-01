@@ -14,7 +14,7 @@ fixture copy). The setup hook:
    so when Session(project=ember-server).code_index queries, it
    finds populated data.
 
-When ``EMBER_EVAL_NO_CODEINDEX=1`` is set, we bail before applying —
+When ``IGNI_EVAL_NO_CODEINDEX=1`` is set, we bail before applying —
 gives us the WITHOUT-codeindex baseline for the comparison report.
 """
 
@@ -40,7 +40,7 @@ async def setup(work_dir: Path, project_dir: Path) -> None:
     ``--target-project-dir`` flag). The eval's per-case work_dir is
     not used here — the agent operates on project_dir directly.
     """
-    snapshot_path = Path(os.environ.get("EMBER_EVAL_SERVER_SNAPSHOT") or DEFAULT_SNAPSHOT_PATH)
+    snapshot_path = Path(os.environ.get("IGNI_EVAL_SERVER_SNAPSHOT") or DEFAULT_SNAPSHOT_PATH)
     if not snapshot_path.exists():
         raise RuntimeError(
             f"ember-server snapshot not found at {snapshot_path}. "
@@ -55,9 +55,9 @@ async def setup(work_dir: Path, project_dir: Path) -> None:
         snapshot_path,
     )
 
-    if os.environ.get("EMBER_EVAL_NO_CODEINDEX") == "1":
+    if os.environ.get("IGNI_EVAL_NO_CODEINDEX") == "1":
         logger.info(
-            "EMBER_EVAL_NO_CODEINDEX=1 — skipping JSONL apply. "
+            "IGNI_EVAL_NO_CODEINDEX=1 — skipping JSONL apply. "
             "Agent will fall back to shell on %s.",
             project_dir,
         )

@@ -152,7 +152,7 @@ export function SessionChip({ sessionId }: { sessionId: string }) {
  *
  *   * ``ok``       — actual == expected AND managed venv is active.
  *                    Small neutral chip: "cli · vX.Y.Z".
- *   * ``dev``      — running through EMBER_DEV_BACKEND override.
+ *   * ``dev``      — running through IGNI_DEV_BACKEND override.
  *                    Amber chip; hover text names the env var.
  *   * ``mismatch`` — actual != expected. Red chip; tooltip suggests
  *                    Tools → igni → Diagnose Backend.

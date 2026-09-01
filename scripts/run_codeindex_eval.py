@@ -61,7 +61,7 @@ async def main() -> int:
     args = parser.parse_args()
 
     if args.no_codeindex:
-        os.environ['EMBER_EVAL_NO_CODEINDEX'] = '1'
+        os.environ['IGNI_EVAL_NO_CODEINDEX'] = '1'
 
     ember_code_dir = Path(__file__).resolve().parent.parent
     # ``project_dir`` is what the agent's Session targets — its CWD,
@@ -123,22 +123,22 @@ async def main() -> int:
     settings = Settings()
 
     # Optional: enable Agno ``ReasoningTools`` (the ``think`` / ``analyze``
-    # scratchpad) for this eval run. Toggled via ``EMBER_EVAL_REASONING=1``.
+    # scratchpad) for this eval run. Toggled via ``IGNI_EVAL_REASONING=1``.
     # Used by v9 onwards to give the main agent a structured place to
     # commit to a reuse target before writing code.
-    if os.environ.get('EMBER_EVAL_REASONING') == '1':
+    if os.environ.get('IGNI_EVAL_REASONING') == '1':
         settings.reasoning.enabled = True
         print('Reasoning tools enabled (think/analyze).', file=sys.stderr)
 
     # Wire the test API key into the model registry so the eval can run
     # without relying on a logged-in cloud-token. We override
     # ``models.default`` to a synthetic entry that points at the
-    # EMBER_TEST_LLM_* env triple — same shape the Ember cloud uses
+    # IGNI_TEST_LLM_* env triple — same shape the Ember cloud uses
     # internally, just with explicit credentials.
     # Auto-source the project .env so callers don't have to remember
     # to ``set -a; source .env`` before each run. Lines are
     # ``KEY=VALUE`` (no quoting); skip blanks and comments.
-    if not os.environ.get('EMBER_TEST_LLM_API_KEY'):
+    if not os.environ.get('IGNI_TEST_LLM_API_KEY'):
         env_path = ember_code_dir / '.env'
         if env_path.exists():
             for line in env_path.read_text().splitlines():
@@ -148,10 +148,10 @@ async def main() -> int:
                 k, v = line.split('=', 1)
                 os.environ.setdefault(k, v)
 
-    api_key = os.environ.get('EMBER_TEST_LLM_API_KEY')
+    api_key = os.environ.get('IGNI_TEST_LLM_API_KEY')
     if api_key:
-        base_url = os.environ.get('EMBER_TEST_LLM_BASE_URL', 'https://api.minimax.io/v1')
-        model_id = os.environ.get('EMBER_TEST_LLM_MODEL', 'MiniMax-M2.7')
+        base_url = os.environ.get('IGNI_TEST_LLM_BASE_URL', 'https://api.minimax.io/v1')
+        model_id = os.environ.get('IGNI_TEST_LLM_MODEL', 'MiniMax-M2.7')
         settings.models.registry['eval-model'] = {
             'provider': 'openai_like',
             'model_id': model_id,

@@ -2,7 +2,7 @@
  * Live verification of orphan-process rehydration.
  *
  * Drives a real browser against the running Tauri BE
- * (``EMBER_LIVE_WS``). Assumes the test environment has
+ * (``IGNI_LIVE_WS``). Assumes the test environment has
  * pre-seeded an orphan row in the project's ``state.db`` AND
  * has a real OS process matching that pid still alive (see
  * the harness shell script that calls this spec).
@@ -16,8 +16,8 @@ type Fixtures = { liveWsUrl: string };
 
 const test = base.extend<Fixtures>({
   liveWsUrl: async ({}, use) => {
-    const url = process.env.EMBER_LIVE_WS;
-    if (!url) test.skip(true, "Set EMBER_LIVE_WS");
+    const url = process.env.IGNI_LIVE_WS;
+    if (!url) test.skip(true, "Set IGNI_LIVE_WS");
     await use(url as string);
   },
 });

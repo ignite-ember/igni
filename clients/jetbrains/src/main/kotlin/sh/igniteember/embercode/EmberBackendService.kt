@@ -29,7 +29,7 @@ private const val LEGACY_CONFIG_DIR = ".ember"
  * `python -m ember_code.backend --ws-port 0 --project-dir <root>`,
  * parsing the JSON ready line for the bound WebSocket port. The
  * process is killed when the project closes (Disposable), and also
- * self-terminates if the IDE dies (EMBER_PARENT_PID watchdog).
+ * self-terminates if the IDE dies (IGNI_PARENT_PID watchdog).
  *
  * The user is never asked for a Python interpreter — the runtime
  * downloads ``uv`` on first launch and uses it to provision Python
@@ -122,7 +122,7 @@ class EmberBackendService(private val project: Project) : Disposable {
                     "--ws-port", "0",
                     "--project-dir", projectDir,
                 ).apply {
-                    environment()["EMBER_PARENT_PID"] = ProcessHandle.current().pid().toString()
+                    environment()["IGNI_PARENT_PID"] = ProcessHandle.current().pid().toString()
                     // HF_HOME / any other runtime-managed env from
                     // ``EmberRuntime`` so the BE process sees the
                     // managed cache instead of ~/.cache/huggingface.

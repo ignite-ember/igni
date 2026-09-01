@@ -245,7 +245,7 @@ class TestTheSidecarIsNotAttached:
                 raise AssertionError("the Neo4j runtime must not be constructed")
 
         monkeypatch.setattr(runtime_module, "Neo4jRuntime", _Boom)
-        monkeypatch.delenv("EMBER_NEO4J_DISABLED", raising=False)
+        monkeypatch.delenv("IGNI_NEO4J_DISABLED", raising=False)
 
         settings = Settings()
         object.__setattr__(settings.code_index, "enabled", code_index)
@@ -279,7 +279,7 @@ class TestTheSidecarIsNotAttached:
         from ember_code.backend import neo4j_runtime as runtime_module
         from ember_code.backend import session_orchestrator as module
 
-        monkeypatch.delenv("EMBER_NEO4J_DISABLED", raising=False)
+        monkeypatch.delenv("IGNI_NEO4J_DISABLED", raising=False)
 
         attempted: list[bool] = []
 

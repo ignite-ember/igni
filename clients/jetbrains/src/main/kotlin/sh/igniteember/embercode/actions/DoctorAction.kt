@@ -20,8 +20,8 @@ import sh.igniteember.embercode.EmberRuntime
  *   * which ``ignite-ember`` version the plugin was pinned to
  *   * which version their venv (or dev override) actually resolves
  *   * the interpreter path — so we can tell managed-venv from
- *     ``EMBER_DEV_BACKEND`` at a glance
- *   * whether ``EMBER_DEV_BACKEND`` / ``IGNITE_EMBER_DEV`` are set
+ *     ``IGNI_DEV_BACKEND`` at a glance
+ *   * whether ``IGNI_DEV_BACKEND`` / ``IGNITE_EMBER_DEV`` are set
  *   * the marker file's contents — reveals stale-marker cases where
  *     the venv on disk doesn't match what the plugin last installed
  *
@@ -73,7 +73,7 @@ class DoctorAction : AnAction() {
         val venvPython = cache.resolve("venv").resolve(EmberRuntime.venvPythonRelPath())
         val markerPath = cache.resolve("igni-install.json")
 
-        val devPath = System.getenv("EMBER_DEV_BACKEND")
+        val devPath = System.getenv("IGNI_DEV_BACKEND")
         val devAck = System.getenv("IGNITE_EMBER_DEV")
         val devActive = !devPath.isNullOrBlank() &&
             (devAck == "1" || devAck.equals("true", ignoreCase = true))

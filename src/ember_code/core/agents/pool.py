@@ -327,9 +327,7 @@ class AgentPool(LegacyAgentPoolMixin):
         """
         self._pending_code_index_provider = provider
         if self._builder is not None:
-            new_context = self._builder.context.model_copy(
-                update={"code_index_provider": provider}
-            )
+            new_context = self._builder.context.model_copy(update={"code_index_provider": provider})
             self._builder.replace_context(new_context)
             self._agents.clear()
 

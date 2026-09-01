@@ -452,6 +452,7 @@ class CodeIndexSpec(ToolSpec):
         if context.code_index_provider is not None:
             kwargs["index_provider"] = context.code_index_provider
         return kwargs
+
     # Not reachable via ephemeral ``tools:`` frontmatter — matches the
     # historical ``VALID_EPHEMERAL_TOOL_NAMES`` which excluded it.
     ephemeral_visible: bool = False

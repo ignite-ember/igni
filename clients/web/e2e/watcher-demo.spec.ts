@@ -1,7 +1,7 @@
 /**
  * One-shot screenshot of the WatcherPanel in action.
  *
- * Drives the FE against a live BE (``EMBER_LIVE_WS``), spawns a
+ * Drives the FE against a live BE (``IGNI_LIVE_WS``), spawns a
  * background process by calling the agent's
  * ``run_shell_command(background=True)`` tool through a direct
  * RPC, then opens the watcher panel and captures it.
@@ -16,9 +16,9 @@ type Fixtures = {
 
 const test = base.extend<Fixtures>({
   liveWsUrl: async ({}, use) => {
-    const url = process.env.EMBER_LIVE_WS;
+    const url = process.env.IGNI_LIVE_WS;
     if (!url) {
-      test.skip(true, "Set EMBER_LIVE_WS to a running BE's ws URL.");
+      test.skip(true, "Set IGNI_LIVE_WS to a running BE's ws URL.");
     }
     await use(url as string);
   },

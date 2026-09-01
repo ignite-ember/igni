@@ -6,8 +6,8 @@ reports pass/fail per case, then aggregate per agent + per category.
 Usage:
     .venv/bin/python scripts/run_evals_smoke.py [--cases N] [--suite editor|main]
 
-Requires EMBER_TEST_LLM_API_KEY (and optionally EMBER_TEST_LLM_MODEL /
-EMBER_TEST_LLM_BASE_URL) — same env vars used by tests/test_live_agno_loops.py.
+Requires IGNI_TEST_LLM_API_KEY (and optionally IGNI_TEST_LLM_MODEL /
+IGNI_TEST_LLM_BASE_URL) — same env vars used by tests/test_live_agno_loops.py.
 The same model serves as both the agent under test and the LLM judge for
 AccuracyEval — keeps the smoke fast and self-contained.
 """
@@ -124,13 +124,13 @@ def _categorize(case_name: str, suite_agent: str) -> str:
 
 
 def _build_live_model():
-    """Construct the OpenAI-compatible model wired to EMBER_TEST_LLM_* env vars."""
+    """Construct the OpenAI-compatible model wired to IGNI_TEST_LLM_* env vars."""
     from agno.models.openai.like import OpenAILike
 
     return OpenAILike(
-        id=os.getenv("EMBER_TEST_LLM_MODEL") or "gpt-4o-mini",
-        api_key=os.environ["EMBER_TEST_LLM_API_KEY"],
-        base_url=os.getenv("EMBER_TEST_LLM_BASE_URL") or "https://api.openai.com/v1",
+        id=os.getenv("IGNI_TEST_LLM_MODEL") or "gpt-4o-mini",
+        api_key=os.environ["IGNI_TEST_LLM_API_KEY"],
+        base_url=os.getenv("IGNI_TEST_LLM_BASE_URL") or "https://api.openai.com/v1",
     )
 
 
@@ -224,13 +224,13 @@ def _build_main_agent(model, project_dir: Path):
     from ember_code.core.session.core import Session
 
     # Override the default model to use our live test model
-    os.environ["EMBER_TEST_LLM_API_KEY_OVERRIDE"] = os.environ["EMBER_TEST_LLM_API_KEY"]
+    os.environ["IGNI_TEST_LLM_API_KEY_OVERRIDE"] = os.environ["IGNI_TEST_LLM_API_KEY"]
 
     settings = load_settings(project_dir=project_dir)
     # Patch settings to redirect the default model at our test endpoint
-    test_model_id = os.getenv("EMBER_TEST_LLM_MODEL") or "gpt-4o-mini"
-    test_base_url = os.getenv("EMBER_TEST_LLM_BASE_URL") or "https://api.openai.com/v1"
-    test_api_key = os.environ["EMBER_TEST_LLM_API_KEY"]
+    test_model_id = os.getenv("IGNI_TEST_LLM_MODEL") or "gpt-4o-mini"
+    test_base_url = os.getenv("IGNI_TEST_LLM_BASE_URL") or "https://api.openai.com/v1"
+    test_api_key = os.environ["IGNI_TEST_LLM_API_KEY"]
 
     settings.models.registry["MiniMax-M2.7"] = {
         "provider": "openai_like",
@@ -550,7 +550,7 @@ async def main():
     )
     args = parser.parse_args()
 
-    if not os.getenv("EMBER_TEST_LLM_API_KEY"):
+    if not os.getenv("IGNI_TEST_LLM_API_KEY"):
         # Try to load from .env
         env_path = Path(".env")
         if env_path.exists():
@@ -558,8 +558,8 @@ async def main():
                 if "=" in line and not line.lstrip().startswith("#"):
                     k, v = line.split("=", 1)
                     os.environ.setdefault(k.strip(), v.strip())
-        if not os.getenv("EMBER_TEST_LLM_API_KEY"):
-            print("Set EMBER_TEST_LLM_API_KEY (in .env or env).")
+        if not os.getenv("IGNI_TEST_LLM_API_KEY"):
+            print("Set IGNI_TEST_LLM_API_KEY (in .env or env).")
             sys.exit(1)
 
     n = args.cases if args.cases > 0 else None
@@ -635,9 +635,9 @@ async def main():
         )
 
         settings = load_settings(project_dir=project_dir)
-        test_model_id = os.getenv("EMBER_TEST_LLM_MODEL") or "gpt-4o-mini"
-        test_base_url = os.getenv("EMBER_TEST_LLM_BASE_URL") or "https://api.openai.com/v1"
-        test_api_key = os.environ["EMBER_TEST_LLM_API_KEY"]
+        test_model_id = os.getenv("IGNI_TEST_LLM_MODEL") or "gpt-4o-mini"
+        test_base_url = os.getenv("IGNI_TEST_LLM_BASE_URL") or "https://api.openai.com/v1"
+        test_api_key = os.environ["IGNI_TEST_LLM_API_KEY"]
         settings.models.registry["MiniMax-M2.7"] = {
             "provider": "openai_like",
             "model_id": test_model_id,

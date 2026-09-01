@@ -149,7 +149,7 @@ async def _drive(n_sessions: int) -> None:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         cwd=REPO_ROOT,
-        env={**os.environ, "EMBER_PARENT_PID": str(os.getpid())},
+        env={**os.environ, "IGNI_PARENT_PID": str(os.getpid())},
     )
 
     # Wait for the ready line.

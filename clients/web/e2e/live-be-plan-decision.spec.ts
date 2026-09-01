@@ -2,7 +2,7 @@
  * Live-BE verification of the plan-decision wire contract.
  *
  * Drives a real browser against the running Tauri BE (set
- * ``EMBER_LIVE_WS`` to the BE's WS URL). Unlike ``real-be.spec.ts``
+ * ``IGNI_LIVE_WS`` to the BE's WS URL). Unlike ``real-be.spec.ts``
  * which spawns a fresh BE, this points at whatever the developer
  * has running — useful for "verify the build I'm staring at"
  * checks.
@@ -35,11 +35,11 @@ type Fixtures = {
 
 const test = base.extend<Fixtures>({
   liveWsUrl: async ({}, use) => {
-    const url = process.env.EMBER_LIVE_WS;
+    const url = process.env.IGNI_LIVE_WS;
     if (!url) {
       test.skip(
         true,
-        "Set EMBER_LIVE_WS to the running BE's ws:// URL to run.",
+        "Set IGNI_LIVE_WS to the running BE's ws:// URL to run.",
       );
     }
     await use(url as string);

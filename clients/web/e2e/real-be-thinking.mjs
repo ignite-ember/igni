@@ -20,12 +20,12 @@
  * Requires:
  *   - project .venv
  *   - Vite dev server running on 5179 (the script starts the BE itself)
- *   - EMBER_E2E_MINIMAX_KEY env var — a direct MiniMax-M2.7 API key
+ *   - IGNI_E2E_MINIMAX_KEY env var — a direct MiniMax-M2.7 API key
  *     (https://api.minimax.io/v1). The script writes it into the
  *     temp project's config so the BE uses M2.7 as its default model.
  *
  * Usage:
- *   EMBER_E2E_MINIMAX_KEY=sk-... node clients/web/e2e/real-be-thinking.mjs
+ *   IGNI_E2E_MINIMAX_KEY=sk-... node clients/web/e2e/real-be-thinking.mjs
  */
 
 import { chromium } from "@playwright/test";
@@ -41,12 +41,12 @@ const REPO_ROOT = path.resolve(HERE, "..", "..", "..");
 const VENV_PYTHON = path.join(REPO_ROOT, ".venv", "bin", "python");
 const FE_URL = "http://127.0.0.1:5179";
 
-const MINIMAX_KEY = process.env.EMBER_E2E_MINIMAX_KEY;
+const MINIMAX_KEY = process.env.IGNI_E2E_MINIMAX_KEY;
 if (!MINIMAX_KEY) {
   console.error(
-    "[e2e] EMBER_E2E_MINIMAX_KEY is not set.\n" +
+    "[e2e] IGNI_E2E_MINIMAX_KEY is not set.\n" +
       "      Provide a direct MiniMax-M2.7 API key, e.g.:\n" +
-      "      EMBER_E2E_MINIMAX_KEY=sk-... node clients/web/e2e/real-be-thinking.mjs",
+      "      IGNI_E2E_MINIMAX_KEY=sk-... node clients/web/e2e/real-be-thinking.mjs",
   );
   process.exit(2);
 }
@@ -68,7 +68,7 @@ async function bootBE() {
   const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "ember-think-"));
   await fs.mkdir(path.join(projectDir, ".igni"), { recursive: true });
   // Force a working MiniMax-M2.7 registry entry (key from
-  // EMBER_E2E_MINIMAX_KEY) as the default. M2.7 is the project's real
+  // IGNI_E2E_MINIMAX_KEY) as the default. M2.7 is the project's real
   // model and emits inline-<think> reasoning — exactly the path under
   // test.
   const cfgBody = `models:
@@ -94,7 +94,7 @@ async function bootBE() {
       cwd: REPO_ROOT,
       env: {
         ...process.env,
-        EMBER_PARENT_PID: String(process.pid),
+        IGNI_PARENT_PID: String(process.pid),
       },
     },
   );

@@ -377,7 +377,7 @@ onboarding:
 
 Environment variables:
 ```
-EMBER_SKIP_ONBOARDING=true     # Skip onboarding (CI/CD)
+IGNI_SKIP_ONBOARDING=true     # Skip onboarding (CI/CD)
 ```
 
 ---

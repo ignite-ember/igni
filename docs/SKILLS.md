@@ -97,8 +97,8 @@ description: This skill should be used when the user asks to "deploy", "push to 
 |---|---|
 | `$ARGUMENTS` | All arguments passed to the skill |
 | `$ARGUMENTS[0]`, `$1` | Specific argument by index |
-| `${EMBER_SESSION_ID}` | Current session ID |
-| `${EMBER_SKILL_DIR}` | Directory containing the SKILL.md |
+| `${IGNI_SESSION_ID}` | Current session ID |
+| `${IGNI_SKILL_DIR}` | Directory containing the SKILL.md |
 
 Example:
 ```markdown
@@ -260,8 +260,8 @@ my-skill/
 Reference these from SKILL.md so agents know they exist:
 
 ```markdown
-For the full API reference, read `${EMBER_SKILL_DIR}/references/detailed-guide.md`.
-Use `${EMBER_SKILL_DIR}/templates/output-template.md` as the output format.
+For the full API reference, read `${IGNI_SKILL_DIR}/references/detailed-guide.md`.
+Use `${IGNI_SKILL_DIR}/templates/output-template.md` as the output format.
 ```
 
 Agents read supporting files on demand via the Read tool. This keeps the initial context small.
@@ -421,7 +421,7 @@ Skills are executed **by** agents. When you invoke `/resolve-issues main`, the O
 igni skills use the **same format** as Claude Code:
 - Same `SKILL.md` file in named directory
 - Same frontmatter fields (`name`, `description`, `context`, `agent`, `allowed-tools`, etc.)
-- Same string substitutions (`$ARGUMENTS`, `$1`, `${CLAUDE_SKILL_DIR}` mapped to `${EMBER_SKILL_DIR}`)
+- Same string substitutions (`$ARGUMENTS`, `$1`, `${CLAUDE_SKILL_DIR}` mapped to `${IGNI_SKILL_DIR}`)
 - Same directory scoping (`.claude/skills/` is scanned alongside `.igni/skills/`)
 
 Claude Code skills work in igni out of the box. The key difference: in igni, skills can leverage CodeIndex for semantic understanding and the Orchestrator distributes skill instructions across a coordinated team — not just a single agent loop.
@@ -477,8 +477,8 @@ argument-hint: [method] [path]
 
 Create a new $1 endpoint at $2.
 
-Follow the conventions documented in `${EMBER_SKILL_DIR}/references/api-conventions.md`.
-Use `${EMBER_SKILL_DIR}/templates/endpoint.py` as a starting template.
+Follow the conventions documented in `${IGNI_SKILL_DIR}/references/api-conventions.md`.
+Use `${IGNI_SKILL_DIR}/templates/endpoint.py` as a starting template.
 ```
 
 ---

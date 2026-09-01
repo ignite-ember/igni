@@ -188,7 +188,7 @@ Plus `test_permission_eval.py::test_scoped_deny_survives_bypass_permissions` + `
 * Refine has the same shape with `dismiss_plan`.
 * `plan_decided` routes to the right card by run_id when multiple plans are stacked.
 
-**Live-BE Playwright** — `clients/web/e2e/live-be-plan-decision.spec.ts` (2 specs, gated on `EMBER_LIVE_WS`). Drives a real browser against a running BE: the dispatch lambdas, `Session.approve_plan` / `dismiss_plan`, real Agno SQLite persistence, broadcasts. Surfaced (and fixed in the same session) the silent-no-op bug where `save_plan_decisions` returned without writing when the session row didn't yet exist in Agno's DB.
+**Live-BE Playwright** — `clients/web/e2e/live-be-plan-decision.spec.ts` (2 specs, gated on `IGNI_LIVE_WS`). Drives a real browser against a running BE: the dispatch lambdas, `Session.approve_plan` / `dismiss_plan`, real Agno SQLite persistence, broadcasts. Surfaced (and fixed in the same session) the silent-no-op bug where `save_plan_decisions` returned without writing when the session row didn't yet exist in Agno's DB.
 
 **52. Output styles** — `tests/test_output_styles.py` (24 tests, style discovery + selection + system-prompt injection).
 

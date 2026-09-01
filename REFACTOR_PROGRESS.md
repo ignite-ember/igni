@@ -3026,7 +3026,7 @@ they're literal source-code fixtures, and must stay put.
 
 **Target:** ad-hoc — 11 inline imports. All safe: file is
 guarded by suite-wide `pytestmark.skipif` on
-`EMBER_TEST_LLM_API_KEY`, but the imports themselves resolve
+`IGNI_TEST_LLM_API_KEY`, but the imports themselves resolve
 against always-installed deps (`agno`, `httpx`, `inspect`).
 
 **Changes:**
@@ -6239,7 +6239,7 @@ logic; they belong somewhere else.
 **Changes:**
 - New `core/init_templates.py` (~180 LoC of `str` constants):
   `PRE_PR_REVIEW_HOOK`, `POST_COMMIT_TODO_HOOK`,
-  `EMBER_MD_TEMPLATE`, `CONFIG_YAML_HEADER`,
+  `IGNI_MD_TEMPLATE`, `CONFIG_YAML_HEADER`,
   `PROJECT_CONFIG_TEMPLATE`, `_HOME_CONFIG_BOOTSTRAP`. Pure data,
   no imports beyond `__future__.annotations` (needed here just
   for consistency with the rest of the package).

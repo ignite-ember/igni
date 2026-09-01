@@ -12,7 +12,7 @@
 //! (``~/Library/Caches/ember-code`` on macOS, ``$XDG_CACHE_HOME``
 //! on Linux, ``%LOCALAPPDATA%\ember-code`` on Windows).
 //!
-//! **Dev override.** When ``EMBER_DEV_BACKEND`` is set we use that
+//! **Dev override.** When ``IGNI_DEV_BACKEND`` is set we use that
 //! Python path verbatim and skip every download. This is the
 //! escape hatch for ember-code contributors who want to point the
 //! shell at an editable ``pip install -e .`` install — same
@@ -90,7 +90,7 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
     let expected = IGNITE_EMBER_VERSION.to_string();
 
     // ── Dev / user overrides ──
-    // Both ``EMBER_DEV_BACKEND`` and ``EMBER_PYTHON`` are opt-in
+    // Both ``IGNI_DEV_BACKEND`` and ``IGNI_PYTHON`` are opt-in
     // escape hatches for contributors running against an editable
     // checkout. They're deliberately gated on the explicit
     // ``IGNITE_EMBER_DEV=1`` ack so an ambient env var left over
@@ -98,11 +98,11 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
     // a regular user to a stale interpreter — the exact footgun
     // that hid a v0.3.8 Homebrew CLI behind a v0.8.x plugin.
     let dev_ack = ack_dev_mode();
-    let dev_backend = std::env::var("EMBER_DEV_BACKEND")
+    let dev_backend = std::env::var("IGNI_DEV_BACKEND")
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    let ember_python = std::env::var("EMBER_PYTHON")
+    let ember_python = std::env::var("IGNI_PYTHON")
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
@@ -114,7 +114,7 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
             if let Some(ref v) = actual {
                 if v != &expected {
                     eprintln!(
-                        "EMBER_DEV_BACKEND at {} runs ignite-ember {}, plugin pinned to {}. \
+                        "IGNI_DEV_BACKEND at {} runs ignite-ember {}, plugin pinned to {}. \
                          Continuing (dev mode).",
                         dev, v, expected
                     );
@@ -129,7 +129,7 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
             });
         } else {
             eprintln!(
-                "EMBER_DEV_BACKEND={} detected but IGNITE_EMBER_DEV is unset — \
+                "IGNI_DEV_BACKEND={} detected but IGNITE_EMBER_DEV is unset — \
                  ignoring override and using the managed venv. \
                  Set IGNITE_EMBER_DEV=1 to opt in to the dev-mode override.",
                 dev
@@ -149,7 +149,7 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
             });
         } else {
             eprintln!(
-                "EMBER_PYTHON={} detected but IGNITE_EMBER_DEV is unset — \
+                "IGNI_PYTHON={} detected but IGNITE_EMBER_DEV is unset — \
                  ignoring override and using the managed venv.",
                 py
             );

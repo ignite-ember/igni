@@ -4,7 +4,7 @@
 //! waits for its JSON ready line to learn the bound WebSocket port, then
 //! opens the shared web UI (clients/web) pointed at that port via the
 //! `?ws=` query param. The backend self-terminates if this process dies
-//! (EMBER_PARENT_PID watchdog), and we also kill it on window close.
+//! (IGNI_PARENT_PID watchdog), and we also kill it on window close.
 
 mod runtime;
 
@@ -248,7 +248,7 @@ fn spawn_backend(
         "--project-dir",
         project_dir,
     ])
-    .env("EMBER_PARENT_PID", std::process::id().to_string())
+    .env("IGNI_PARENT_PID", std::process::id().to_string())
     .stdout(Stdio::piped())
     .stderr(Stdio::null());
     for (k, v) in &install.env {
@@ -299,7 +299,7 @@ fn project_dir() -> String {
     if let Some(arg) = std::env::args().skip(1).find(|a| !a.starts_with("--")) {
         return arg;
     }
-    if let Ok(env) = std::env::var("EMBER_PROJECT_DIR") {
+    if let Ok(env) = std::env::var("IGNI_PROJECT_DIR") {
         let trimmed = env.trim();
         if !trimmed.is_empty() {
             return trimmed.to_string();
@@ -628,8 +628,8 @@ fn build_diagnostic_report() -> String {
     let venv_python = runtime::venv_python_path(&cache);
     let marker_path = cache.join("igni-install.json");
 
-    let dev_backend = std::env::var("EMBER_DEV_BACKEND").ok();
-    let ember_python = std::env::var("EMBER_PYTHON").ok();
+    let dev_backend = std::env::var("IGNI_DEV_BACKEND").ok();
+    let ember_python = std::env::var("IGNI_PYTHON").ok();
     let dev_ack = std::env::var("IGNITE_EMBER_DEV").ok();
     let dev_active = dev_ack
         .as_deref()
@@ -676,11 +676,11 @@ fn build_diagnostic_report() -> String {
     ));
     out.push('\n');
     out.push_str(&format!(
-        "EMBER_DEV_BACKEND        : {}\n",
+        "IGNI_DEV_BACKEND        : {}\n",
         dev_backend.as_deref().unwrap_or("<unset>")
     ));
     out.push_str(&format!(
-        "EMBER_PYTHON             : {}\n",
+        "IGNI_PYTHON             : {}\n",
         ember_python.as_deref().unwrap_or("<unset>")
     ));
     out.push_str(&format!(

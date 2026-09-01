@@ -216,7 +216,7 @@ class BackendApp:
         # op will block while the runtime downloads the Neo4j
         # distribution + JDK (one-time; cached at ``~/.igni/neo4j``)
         # and spawns the per-(project, commit) subprocess; subsequent
-        # ops hit the live driver. Set ``EMBER_NEO4J_DISABLED=1`` for
+        # ops hit the live driver. Set ``IGNI_NEO4J_DISABLED=1`` for
         # rare headless-CI/test cases where Neo4j should be skipped;
         # the orchestrator will fall back to legacy Chroma-backed
         # indices in that mode.

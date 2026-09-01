@@ -2,7 +2,7 @@
 
 For each prompt size in ``--sizes`` and concurrency level in
 ``--levels``, fires that many requests in parallel against the same
-endpoint the smoke eval uses (``EMBER_TEST_LLM_*`` env vars), then
+endpoint the smoke eval uses (``IGNI_TEST_LLM_*`` env vars), then
 reports per-cell counts and latency stats. Stops escalating
 concurrency on a given size once we see sustained throttling
 (rate-limited fraction ≥ ``--stop-rl-pct``) so we don't keep banging
@@ -236,13 +236,13 @@ async def main() -> int:
     args = parser.parse_args()
 
     _load_dotenv()
-    if not os.getenv("EMBER_TEST_LLM_API_KEY"):
-        print("Set EMBER_TEST_LLM_API_KEY (in .env or env).", file=sys.stderr)
+    if not os.getenv("IGNI_TEST_LLM_API_KEY"):
+        print("Set IGNI_TEST_LLM_API_KEY (in .env or env).", file=sys.stderr)
         return 1
 
-    base_url = os.getenv("EMBER_TEST_LLM_BASE_URL") or "https://api.openai.com/v1"
-    model = os.getenv("EMBER_TEST_LLM_MODEL") or "gpt-4o-mini"
-    api_key = os.environ["EMBER_TEST_LLM_API_KEY"]
+    base_url = os.getenv("IGNI_TEST_LLM_BASE_URL") or "https://api.openai.com/v1"
+    model = os.getenv("IGNI_TEST_LLM_MODEL") or "gpt-4o-mini"
+    api_key = os.environ["IGNI_TEST_LLM_API_KEY"]
 
     sizes = [int(s) for s in args.sizes.split(",") if s.strip()]
     levels = [int(s) for s in args.levels.split(",") if s.strip()]

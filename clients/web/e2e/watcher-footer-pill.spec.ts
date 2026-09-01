@@ -7,8 +7,8 @@ import { test as base, expect } from "@playwright/test";
 
 const test = base.extend<{ liveWsUrl: string }>({
   liveWsUrl: async ({}, use) => {
-    const url = process.env.EMBER_LIVE_WS;
-    if (!url) test.skip(true, "Set EMBER_LIVE_WS");
+    const url = process.env.IGNI_LIVE_WS;
+    if (!url) test.skip(true, "Set IGNI_LIVE_WS");
     await use(url as string);
   },
 });

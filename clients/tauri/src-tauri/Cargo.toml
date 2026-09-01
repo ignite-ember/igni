@@ -1,5 +1,5 @@
 [package]
-name = "ember-code-app"
+name = "igni-app"
 # Kept in lockstep with ``pyproject.toml`` by
 # ``scripts/sync-version.mjs`` (also drives the runtime's
 # ``IGNITE_EMBER_VERSION`` pin via ``CARGO_PKG_VERSION``).
@@ -66,5 +66,5 @@ tauri-plugin-macos-fps = "0.1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [lib]
-name = "ember_code_app_lib"
+name = "igni_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]

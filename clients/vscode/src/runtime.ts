@@ -15,7 +15,7 @@
  *       bin/python | Scripts/python.exe
  *     igni-install.json               ← marker recording installed versions
  *
- * **Dev override.** Setting ``EMBER_DEV_BACKEND=/abs/path/to/python``
+ * **Dev override.** Setting ``IGNI_DEV_BACKEND=/abs/path/to/python``
  * bypasses the bootstrap and returns that path verbatim. The
  * ``igni.pythonPath`` user setting is honored the same way —
  * for users who want to point at their own venv (e.g. ember-code
@@ -96,7 +96,7 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
   //
   // Two different threat models here:
   //
-  //   * ``EMBER_DEV_BACKEND`` is an ENV VAR. Env vars travel
+  //   * ``IGNI_DEV_BACKEND`` is an ENV VAR. Env vars travel
   //     through ``~/.zshenv`` / ``launchctl setenv`` / macOS
   //     plists — a value set years ago can silently redirect
   //     today's plugin to a stale interpreter, which is
@@ -113,7 +113,7 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
   //     interpreter and log any version drift so the reader
   //     sees what they're running.
   const devAck = isDevAcked();
-  const devBackend = process.env.EMBER_DEV_BACKEND?.trim();
+  const devBackend = process.env.IGNI_DEV_BACKEND?.trim();
   const configured = opts.configuredPython?.trim();
 
   if (devBackend) {
@@ -121,7 +121,7 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
       const actual = await probeCliVersion(devBackend);
       if (actual && actual !== expected) {
         console.warn(
-          `EMBER_DEV_BACKEND at ${devBackend} runs ignite-ember ${actual}, ` +
+          `IGNI_DEV_BACKEND at ${devBackend} runs ignite-ember ${actual}, ` +
             `plugin pinned to ${expected}. Continuing (dev mode).`,
         );
       }
@@ -134,7 +134,7 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
       };
     } else {
       console.warn(
-        `EMBER_DEV_BACKEND=${devBackend} detected but IGNITE_EMBER_DEV is unset — ` +
+        `IGNI_DEV_BACKEND=${devBackend} detected but IGNITE_EMBER_DEV is unset — ` +
           "ignoring override and using the managed venv. " +
           "Set IGNITE_EMBER_DEV=1 to opt in to the dev-mode override.",
       );
