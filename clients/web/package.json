@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "gen:visualizer-prompt": "tsx scripts/gen-visualizer-prompt.ts"
+    "gen:visualizer-prompt": "tsx scripts/gen-visualizer-prompt.ts",
+    "coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@json-render/core": "^0.19.0",
@@ -39,6 +40,7 @@
     "@types/react-dom": "^19.0.0",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "^4.1.11",
     "jsdom": "^29.1.1",
     "typescript": "^5.7.2",
     "vite": "^6.0.0",

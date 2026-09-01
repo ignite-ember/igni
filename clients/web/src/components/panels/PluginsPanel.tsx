@@ -58,7 +58,44 @@ type Tab = "installed" | "marketplace";
 // Extending the rehype-sanitize default schema is the right surface
 // for this — it already blocks <script>, <iframe>, event handlers,
 // and javascript: URLs by default.
-const README_SANITIZE_SCHEMA = {
+//
+// Those four claims were checked by rendering payloads through this exact
+// pipeline, and all four hold: `<script>` and `<iframe>` are dropped
+// entirely, `onerror` is stripped off an `<img>` that survives, and
+// `href="javascript:..."` becomes a bare `<a>`.
+//
+// Three things did NOT hold, and this is a third party's markup rendered
+// inside a desktop app, so they matter more than they would on a web page:
+//
+//  1. `style` on `*` allowed a **full-viewport overlay**. Verified:
+//     `<div style="position:fixed;top:0;left:0;width:100vw;height:100vh;
+//     z-index:99999;background:#fff">Paste your token</div>` survived
+//     intact. A marketplace listing could cover the entire app with
+//     something that looks like the app's own dialog. `defaultSchema`
+//     excludes `style` deliberately; extending it put that back.
+//
+//  2. `style` also allowed **outbound requests**: `background-image:
+//     url(https://evil.example/pixel.png)` survived. In this product that
+//     is not a privacy footnote — self-hosting.md §8 is explicit that a
+//     silent phone-home breaks the air-gap claim, and browsing a
+//     marketplace should not tell anybody you did.
+//
+//  3. `rel` on `<a>` let a README ask for `rel="opener"` alongside
+//     `target="_blank"`, re-enabling reverse tabnabbing that the browser
+//     default prevents.
+//
+// So: no `style` anywhere, and `rel` is ours to set rather than the
+// README's — see the `a` component override at the render site. `align`,
+// `width`, `height`, `srcset` and `media` stay, and they are what the
+// layouts in the comment above actually use.
+//
+// Remote `<img>` src is still allowed and still an outbound request. That
+// one is a deliberate trade-off rather than an oversight: shields.io
+// badges are the single most common thing in a real README, and blocking
+// them makes every listing look broken. It is scoped — an image request
+// leaks that a listing was viewed, where `style` leaked the same thing
+// from any of a dozen elements and could also repaint the whole window.
+export const README_SANITIZE_SCHEMA = {
   ...defaultSchema,
   tagNames: [
     ...(defaultSchema.tagNames || []),
@@ -76,7 +113,7 @@ const README_SANITIZE_SCHEMA = {
   ],
   attributes: {
     ...defaultSchema.attributes,
-    "*": [...(defaultSchema.attributes?.["*"] || []), "align", "style"],
+    "*": [...(defaultSchema.attributes?.["*"] || []), "align"],
     img: [
       ...(defaultSchema.attributes?.img || []),
       "align",
@@ -84,13 +121,28 @@ const README_SANITIZE_SCHEMA = {
       "height",
       "loading",
     ],
-    source: ["srcset", "media", "type"],
-    a: [
-      ...(defaultSchema.attributes?.a || []),
-      "target",
-      "rel",
-    ],
+    // ``srcSet``, not ``srcset``. rehype-sanitize matches **hast property
+    // names**, which are camelCase, so the lowercase spelling allowed
+    // nothing and the attribute was stripped on every render. That made
+    // `<picture>` light/dark sources — one of the four layouts this schema
+    // was widened for — silently inert: the dark variant was dropped and
+    // every reader got the `<img>` fallback. Both spellings are listed so
+    // the intent survives a future reader.
+    source: ["srcSet", "srcset", "media", "type"],
+    a: [...(defaultSchema.attributes?.a || []), "target"],
   },
+};
+
+/** Anchors in a README point outward, so they open in a new context with
+ *  `rel` we control. Allowing the README to supply `rel` let it ask for
+ *  `opener`; setting it here means it cannot. */
+export const README_COMPONENTS = {
+  a: ({
+    node: _node,
+    ...props
+  }: { node?: unknown } & React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a {...props} target="_blank" rel="noopener noreferrer" />
+  ),
 };
 
 type Selection =
@@ -866,6 +918,7 @@ function PluginContentsView({
                 [rehypeSanitize, README_SANITIZE_SCHEMA],
                 rehypeHighlight,
               ]}
+              components={README_COMPONENTS}
             >
               {contents.readme}
             </ReactMarkdown>
