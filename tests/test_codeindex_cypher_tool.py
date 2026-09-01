@@ -601,3 +601,86 @@ class TestTheStringLiteralBypass:
     )
     def test_legitimate_reads_are_untouched(self, query: str):
         assert_read_only_cypher(query)
+
+
+class TestStringLiteralsAreDataNotKeywords:
+    """A string literal's contents must not decide the guard's verdict.
+
+    The tokeniser splits on whitespace and Cypher punctuation but not on
+    quotes, so a quote glued itself to whichever word it touched. That made
+    the verdict depend on where in a string a keyword sat:
+
+        WHERE n.body CONTAINS 'DELETE FROM users'   → tokens 'DELETE, FROM  → allowed
+        WHERE n.body CONTAINS 'and then DELETE it'  → tokens ..., DELETE     → rejected
+
+    Same keyword, same kind of string, opposite outcomes — and the rejection
+    said "this tool is read-only" about a query that only reads. Searching a
+    code graph for source containing `DELETE` or `DROP TABLE` is an ordinary
+    request; this tool is pointed at code, so those words are *data* here far
+    more often than they are instructions.
+
+    Literals are now redacted before the scan. That is safe because a keyword
+    inside a string is only dangerous if something executes the string, and
+    nothing can: `_ALLOWED_APOC` is empty precisely because
+    `apoc.cypher.run` did exactly that, and the two allowed procedures take
+    an index name and a search term.
+    """
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "MATCH (n) WHERE n.body CONTAINS 'and then DELETE it' RETURN n",
+            "MATCH (n) WHERE n.body CONTAINS 'DELETE FROM users' RETURN n",
+            "MATCH (n) WHERE n.body CONTAINS 'we CREATE a node here' RETURN n",
+            "MATCH (n) WHERE n.body CONTAINS 'op.drop_table(\"users\")' RETURN n",
+            'MATCH (n) WHERE n.body CONTAINS "MERGE (a)-[:R]->(b)" RETURN n',
+            "MATCH (n) WHERE n.body =~ '.* SET .*' RETURN n",
+            # A `;` inside a literal is not a statement separator.
+            "MATCH (n) WHERE n.body = 'a;b' RETURN n",
+            # Nor is a `$name` inside a literal a parameter reference.
+            "MATCH (n) WHERE n.body CONTAINS '$not_a_param' RETURN n",
+        ],
+    )
+    def test_a_keyword_inside_a_literal_is_allowed(self, query):
+        assert assert_read_only_cypher(query) == query
+
+    def test_the_query_comes_back_with_its_literals_intact(self):
+        """The redaction is for scanning only. Returning the redacted form
+        would hand Neo4j a query searching for the empty string, silently
+        breaking every search this change exists to permit — a far worse
+        outcome than the false rejection it fixes."""
+        query = (
+            "MATCH (n) WHERE n.body CONTAINS 'DELETE FROM users' AND n.path = \"src/a.py\" RETURN n"
+        )
+
+        assert assert_read_only_cypher(query) == query
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            # Redacting literals must not open any of these.
+            "CREATE (n:X) RETURN n",
+            "MATCH (n) DETACH DELETE n",
+            "MATCH (n) SET n.x = 1 RETURN n",
+            "MATCH (a) MERGE (a)-[:R]->(b) RETURN a",
+            "MATCH (n) REMOVE n.x RETURN n",
+            "DROP INDEX idx",
+            "MATCH (n) RETURN n; CREATE (m:X) RETURN m",
+            "CALL apoc.cypher.run('CREATE (n:X) RETURN n', {})",
+            "CALL dbms.listQueries() YIELD query RETURN query",
+            "CALL db.labels() YIELD label RETURN label",
+            "PROFILE MATCH (n) RETURN n",
+            "SHOW DATABASES",
+        ],
+    )
+    def test_the_writes_and_admin_paths_are_still_closed(self, query):
+        with pytest.raises(CypherGuardError):
+            assert_read_only_cypher(query)
+
+    def test_an_unterminated_literal_does_not_swallow_a_write(self):
+        """The literal regexes require a closing quote, so an unbalanced one
+        matches nothing and the text stays visible to the scan. Worth pinning:
+        "redact up to the next quote or end of input" would let a lone quote
+        hide the rest of the statement."""
+        with pytest.raises(CypherGuardError):
+            assert_read_only_cypher("MATCH (n) WHERE n.x = 'oops DETACH DELETE n RETURN n")

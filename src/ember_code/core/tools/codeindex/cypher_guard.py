@@ -180,9 +180,54 @@ class CypherUnknownParam(CypherGuardError):
 
 _COMMENT_RE = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
 
+# Cypher string literals (both quote styles, backslash escapes honoured) and
+# backtick-quoted identifiers.
+#
+# These are redacted before the keyword scan, because otherwise the scan's
+# verdict on a string depends on where in it a keyword happens to sit. The
+# tokeniser splits on whitespace and Cypher punctuation but not on quotes, so
+# a quote glues itself to the word it touches:
+#
+#     WHERE n.body CONTAINS 'DELETE FROM users'   → tokens 'DELETE, FROM, users'   → ALLOWED
+#     WHERE n.body CONTAINS 'and then DELETE it'  → tokens 'and, then, DELETE, it' → REJECTED
+#
+# Same keyword, same kind of string, opposite outcomes — and the rejection
+# says "this tool is read-only" about a query that only reads. Searching a
+# code graph for code that contains `DELETE` or `DROP TABLE` is an ordinary
+# thing to want, so the false rejection is not hypothetical.
+#
+# Redacting is safe here, and it is worth being precise about why: a keyword
+# inside a string is only dangerous if something goes on to *execute* that
+# string. Nothing can. ``_ALLOWED_APOC`` is empty precisely because
+# ``apoc.cypher.run`` did exactly that, and the two procedures in
+# ``_ALLOWED_PROCEDURES`` take an index name and a search term, neither of
+# which is Cypher. The allowlist is the gate; the token scan is defence for
+# the statement itself.
+#
+# (The comment beside ``_ALLOWED_APOC`` said string literals were already
+# stripped before the scan. They were not — nothing stripped them, and the
+# quote-adjacency accident above is what made a write inside a string
+# invisible. Its conclusion was right and its mechanism was wrong.)
+_STRING_RE = re.compile(
+    r"'(?:[^'\\]|\\.)*'"
+    r'|"(?:[^"\\]|\\.)*"'
+    r"|`(?:[^`\\]|\\.)*`",
+    re.DOTALL,
+)
+
 
 def _strip_comments(cypher: str) -> str:
     return _COMMENT_RE.sub(" ", cypher)
+
+
+def _redact_strings(cypher: str) -> str:
+    """Replace every string literal with a placeholder of the same shape.
+
+    Only ever used for *scanning*. ``assert_read_only_cypher`` returns the
+    query with its literals intact — handing the database a redacted query
+    would break every search this function exists to permit.
+    """
+    return _STRING_RE.sub(" '' ", cypher)
 
 
 def _tokenize(cypher: str) -> list[str]:
@@ -331,11 +376,14 @@ def assert_read_only_cypher(cypher: str) -> str:
     if not isinstance(cypher, str) or not cypher.strip():
         raise CypherGuardError("Cypher must be a non-empty string.")
     stripped = _strip_comments(cypher).strip()
+    # Scan against the string-redacted form so a literal's contents cannot
+    # decide the verdict; return the real query below.
+    scannable = _redact_strings(stripped)
     # Tokenize once and reuse across checks.
-    tokens = _tokenize(stripped)
-    _check_keywords(cypher, tokens)
-    _check_call_tokens(stripped, tokens)
-    _check_multi_statement(stripped)
+    tokens = _tokenize(scannable)
+    _check_keywords(scannable, tokens)
+    _check_call_tokens(scannable, tokens)
+    _check_multi_statement(scannable)
     # Note: no `project_hash` predicate check. Each (project, commit)
     # runs in its own Neo4j PROCESS (see `neo4j_schema.py:1-31`), so
     # cross-project leakage is impossible by construction — the
@@ -343,5 +391,5 @@ def assert_read_only_cypher(cypher: str) -> str:
     # An earlier `_check_project_hash` guard was removed because it
     # both duplicated the process boundary and made every query
     # verbose without adding safety.
-    _check_param_names(stripped)
+    _check_param_names(scannable)
     return stripped
