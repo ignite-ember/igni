@@ -129,17 +129,23 @@ class TestMaterializeSkipsRatherThanDies:
         module_logger = logging.getLogger("ember_code.core.config.group_policy")
         handler = _Collect()
         previous_level = module_logger.level
-        # ``disabled`` is cleared as well as adding a local handler, and
-        # both are needed. Something in this test session sets
-        # ``logger.disabled`` on module loggers so nothing is emitted, and
-        # pytest's capture handler is removed from the root logger so
-        # anything emitted is not recorded. ``tests/test_http_retry.py``
-        # documents the same pair at length — including that the cause of
-        # the ``disabled`` flag is not identified — and handles it the
-        # same way. Restored afterwards so this test changes nothing for
-        # the next one.
-        previously_disabled = module_logger.disabled
-        module_logger.disabled = False
+        # A local handler is used rather than ``caplog``: pytest's capture
+        # handler gets removed from the root logger by an earlier test, so
+        # anything emitted is not recorded. That part is real.
+        #
+        # This also used to clear ``logger.disabled``, for a suppression
+        # whose cause was never identified. That is no longer reproducible —
+        # instrumenting ``logging.config.fileConfig`` and ``dictConfig``
+        # across the suite recorded zero calls to either, and a probe on
+        # this logger was never disabled in 3432 tests. See
+        # ``tests/test_http_retry.py`` for the full account.
+        #
+        # An assertion replaces the clearing, so a recurrence fails loudly
+        # instead of a log assertion passing for the wrong reason.
+        assert not module_logger.disabled, (
+            'this logger is disabled, so the assertions below would pass '
+            'vacuously — nothing it emits is recorded'
+        )
         module_logger.addHandler(handler)
         module_logger.setLevel(logging.WARNING)
         try:
@@ -147,7 +153,6 @@ class TestMaterializeSkipsRatherThanDies:
         finally:
             module_logger.removeHandler(handler)
             module_logger.setLevel(previous_level)
-            module_logger.disabled = previously_disabled
 
         written = {p.name for p in cache_dir.rglob("*") if p.is_file()}
         assert "good-one.md" in written

@@ -104,13 +104,15 @@ class TestTheRatchetHolds:
         """A policy that quietly does not apply is its own surprise — the
         admin believes they set something and nothing disagrees.
 
-        Captured with a local handler and ``disabled`` cleared, not
-        through ``caplog``. Something in this test session sets
-        ``logger.disabled`` on module loggers and pytest's capture handler
-        is removed from the root logger, so a caplog version passes in
-        this file and fails in the suite — which is exactly what it did.
-        ``tests/test_http_retry.py`` documents the pair at length,
-        including that the cause of the flag is unidentified.
+        Captured with a local handler rather than through ``caplog``:
+        pytest's capture handler gets removed from the root logger by an
+        earlier test, so a caplog version passes in this file and fails in
+        the suite — which is exactly what it did.
+
+        It also used to clear ``logger.disabled`` for a suppression whose
+        cause was never identified. That is no longer reproducible, so an
+        assertion has replaced the clearing — see
+        ``tests/test_http_retry.py`` for what was measured.
         """
         records: list[logging.LogRecord] = []
 
@@ -121,8 +123,10 @@ class TestTheRatchetHolds:
         module_logger = logging.getLogger("ember_code.core.config.merge_plan")
         handler = _Collect()
         previous_level = module_logger.level
-        previously_disabled = module_logger.disabled
-        module_logger.disabled = False
+        assert not module_logger.disabled, (
+            'this logger is disabled, so the assertions below would pass '
+            'vacuously — nothing it emits is recorded'
+        )
         module_logger.addHandler(handler)
         module_logger.setLevel(logging.WARNING)
         try:
@@ -130,7 +134,6 @@ class TestTheRatchetHolds:
         finally:
             module_logger.removeHandler(handler)
             module_logger.setLevel(previous_level)
-            module_logger.disabled = previously_disabled
 
         messages = " ".join(record.getMessage() for record in records)
         assert "shell_execute" in messages

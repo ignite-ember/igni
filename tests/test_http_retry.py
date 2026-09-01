@@ -207,26 +207,37 @@ async def test_retry_logs_debug_when_retries_occur():
     logger = logging.getLogger("ember_code.core.utils.http_retry")
     handler = _Collect(level=logging.DEBUG)
     previous_level = logger.level
-    # Two independent suppressions, each enough on its own to empty this
-    # assertion, both left behind by other tests in the session:
+    # Two suppressions were once documented here, each enough on its own to
+    # empty this assertion:
     #
-    #   1. ``logger.isEnabledFor(DEBUG)`` returns False even with the level set
-    #      to DEBUG on this exact logger object, while ``logging.disable`` reads
-    #      0. Both measured directly. Clearing ``logger.disabled`` restores
-    #      emission, so that flag is the proximate cause — but **what sets it is
-    #      not identified**. It is not ``logging.config.dictConfig``: tracing that
-    #      function through the backend boot shows it is never called, and no
-    #      ``.disabled = True`` assignment exists in this repository. Instrumenting
-    #      ``Logger.__setattr__`` to catch the write makes the failure disappear,
-    #      so treat any explanation as unproven until someone catches it.
-    #   2. pytest's capture handler is removed from the root logger, so anything
-    #      that does emit is not recorded — root carries four handlers when this
-    #      file runs alone and three after ``test_backend_server.py``.
+    #   1. ``logger.disabled`` was True, set by something never identified.
+    #      Not ``dictConfig`` — traced and never called — and no
+    #      ``.disabled = True`` assignment exists in this repository.
+    #      Instrumenting ``Logger.__setattr__`` to catch the write made the
+    #      failure disappear, so no explanation was ever confirmed.
+    #   2. pytest's capture handler is removed from the root logger, so
+    #      anything that does emit is not recorded — root carries four
+    #      handlers when this file runs alone and three after
+    #      ``test_backend_server.py``.
     #
-    # The local handler above answers (2); clearing ``disabled`` answers (1).
-    # Both are restored afterwards so this test changes nothing for the next one.
-    previously_disabled_flag = logger.disabled
-    logger.disabled = False
+    # (2) is real and the local handler above answers it.
+    #
+    # (1) is no longer reproducible. Instrumenting
+    # ``logging.config.fileConfig`` and ``dictConfig`` across the whole
+    # suite recorded **zero** calls to either, and a probe on this logger,
+    # ``group_policy``'s and ``merge_plan``'s — created before collection so
+    # ``disable_existing_loggers`` could reach them — was never disabled at
+    # any point in 3432 tests.
+    #
+    # So the clearing is gone, and an assertion has taken its place. If the
+    # flag ever comes back, this fails and says so, which is the outcome a
+    # silent workaround denied: a suppressed logger makes an assertion about
+    # log contents pass for the wrong reason.
+    assert not logger.disabled, (
+        'this logger is disabled, so nothing it emits will be recorded and the '
+        'assertion below would pass vacuously. Something in the session set '
+        '.disabled — the cause was never identified when this was last seen.'
+    )
     logger.addHandler(handler)
     logger.setLevel(logging.DEBUG)
     try:
@@ -234,7 +245,6 @@ async def test_retry_logs_debug_when_retries_occur():
     finally:
         logger.removeHandler(handler)
         logger.setLevel(previous_level)
-        logger.disabled = previously_disabled_flag
 
     assert result == "success"
     assert metadata.retried
