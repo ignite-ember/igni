@@ -8,6 +8,7 @@ from ember_code.core.config.models import (
     ContextWindowResolver,
     ModelRegistry,
 )
+from ember_code.core.config.null_model import NoModelConfigured
 from ember_code.core.config.permissions import AllowlistPattern
 from ember_code.core.config.provider_builders import ProviderClientBuilder
 from ember_code.core.config.settings import ModelsConfig, Settings, load_settings
@@ -205,6 +206,101 @@ class TestEffectiveDefault:
         entry = reg._resolve_entry(reg._effective_default())
         assert entry is not None
         assert entry.model_id == "a"
+
+
+class TestAStoredDefaultThatNoLongerResolves:
+    """A default naming a model nobody registers must not be fatal.
+
+    The guard for "nothing configured" existed and worked: empty
+    default plus empty registry returns a ``NoModelConfigured``
+    placeholder so ``Session.__init__`` completes, the backend prints
+    its ready line, and the user can reach ``/login``.
+
+    The same situation arrived at by a different route — a default that
+    *is* set and does not resolve — raised instead, during session
+    construction. Measured: the backend died before its ready line, and
+    the desktop app reported "backend exited before signalling ready"
+    with stderr going to /dev/null, so the reason was destroyed. The
+    project's own `scripts/onboarding-smoke.sh` exited 1 on it.
+
+    It is reachable in production rather than hypothetical.
+    ``models.default`` is written by ``/model`` and by cloud discovery,
+    so removing a model from a deployment strands every developer whose
+    stored default pointed at it — and igni's own portal can remove one
+    by draining a node or editing what it serves.
+    """
+
+    def _settings_with(self, default: str, registry: dict[str, dict] | None = None) -> Settings:
+        return Settings(models=ModelsConfig(default=default, registry=registry or {}))
+
+    def test_it_returns_a_placeholder_instead_of_raising(self):
+        s = self._settings_with("gone-from-the-fleet", {})
+
+        model = ModelRegistry(s).get_model()
+
+        assert isinstance(model, NoModelConfigured)
+
+    def test_the_message_names_the_model_that_went_missing(self):
+        """"No model configured" would be wrong and unhelpful: one *is*
+        configured, and knowing which one is how the user works out that
+        their pinned model was removed."""
+        s = self._settings_with("gone-from-the-fleet", {})
+
+        model = ModelRegistry(s).get_model()
+
+        assert "gone-from-the-fleet" in model.ERROR_MESSAGE
+        assert "/model" in model.ERROR_MESSAGE
+
+    def test_it_still_refuses_a_model_the_caller_asked_for_by_name(self):
+        """The distinction that keeps this from swallowing real errors.
+
+        ``--model typo`` or ``/model typo`` is a request, and a request
+        for something that does not exist deserves an error. Only the
+        *stored default* degrades, because nobody asked for it today.
+        """
+        s = self._settings_with("", {"alpha": {"provider": "openai_like", "model_id": "a"}})
+
+        with pytest.raises(ValueError, match="Unknown model 'typo'"):
+            ModelRegistry(s).get_model("typo")
+
+    def test_the_placeholder_still_refuses_to_be_invoked(self):
+        """Booting is not pretending. Any real call raises with the
+        remedy, so the failure lands in the chat where the user is
+        looking rather than at startup where they cannot act on it."""
+        s = self._settings_with("gone-from-the-fleet", {})
+        model = ModelRegistry(s).get_model()
+
+        with pytest.raises(ValueError, match="gone-from-the-fleet"):
+            model.invoke()
+
+    def test_nothing_configured_still_says_nothing_configured(self):
+        """The original case has to keep its own message — the remedy
+        differs. Empty means "log in"; stale means "that one is gone"."""
+        s = self._settings_with("", {})
+
+        model = ModelRegistry(s).get_model()
+
+        assert isinstance(model, NoModelConfigured)
+        assert "No model configured" in model.ERROR_MESSAGE
+
+    def test_a_session_can_be_built_with_a_stale_default(self):
+        """The property the finding is actually about.
+
+        Every assertion above is on the registry. This is the one that
+        says the backend boots: ``ModelRegistry.get_model`` is called
+        from ``Session.__init__`` via the agent builder, and raising
+        there is what killed the process.
+        """
+        s = self._settings_with("gone-from-the-fleet", {})
+        registry = ModelRegistry(s)
+
+        # Both halves of what the builder asks for — a model and a
+        # context window — have to survive an unresolvable default.
+        model = registry.get_model()
+        window = registry.get_context_window()
+
+        assert isinstance(model, NoModelConfigured)
+        assert window > 0
 
 
 class TestContextWindowResolver:

@@ -10,7 +10,8 @@ mod runtime;
 
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 
 use tauri::menu::{AboutMetadata, Menu, MenuBuilder, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
@@ -226,6 +227,11 @@ pub struct BackendVersionInfo {
     pub source: &'static str,
 }
 
+/// How much of the backend's stderr to keep for a failure message.
+/// A Python traceback is longer than this; the last lines are the ones
+/// that name the exception, which is the part a user can act on.
+const STDERR_TAIL_LINES: usize = 40;
+
 fn spawn_backend(
     project_dir: &str,
     progress: &(dyn Fn(&str) + Sync),
@@ -250,7 +256,15 @@ fn spawn_backend(
     ])
     .env("IGNI_PARENT_PID", std::process::id().to_string())
     .stdout(Stdio::piped())
-    .stderr(Stdio::null());
+    // Captured, not discarded. This was ``Stdio::null()``, and when the
+    // backend died during startup the user was told "backend exited
+    // before signalling ready" while the one line explaining why went to
+    // /dev/null. A real case: a stored default model that no longer
+    // resolves — written by ``/model`` or by cloud discovery, so
+    // removing a model from the deployment reaches every developer
+    // pinned to it. The backend no longer dies for that reason, but the
+    // next reason it dies for should not be unknowable either.
+    .stderr(Stdio::piped());
     for (k, v) in &install.env {
         cmd.env(k, v);
     }
@@ -259,6 +273,29 @@ fn spawn_backend(
     })?;
 
     let stdout = child.stdout.take().ok_or("backend stdout unavailable")?;
+    let stderr = child.stderr.take().ok_or("backend stderr unavailable")?;
+
+    // Drained on its own thread from the start. A Python traceback is
+    // several kilobytes and the pipe buffer is not, so reading it only
+    // after the failure risks the backend blocking on a full pipe while
+    // we wait for a ready line that will never come — a deadlock in
+    // place of an error message.
+    let tail: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
+    let tail_writer = Arc::clone(&tail);
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().map_while(Result::ok) {
+            let mut kept = tail_writer.lock().unwrap_or_else(|e| e.into_inner());
+            // The last lines are the ones that matter: a traceback ends
+            // with the exception. Bounded so a chatty backend cannot
+            // grow this without limit.
+            if kept.len() == STDERR_TAIL_LINES {
+                kept.pop_front();
+            }
+            kept.push_back(line);
+        }
+    });
+
     let mut reader = BufReader::new(stdout);
     let mut line = String::new();
     let port = loop {
@@ -267,7 +304,19 @@ fn spawn_backend(
             .read_line(&mut line)
             .map_err(|e| format!("backend stdout read failed: {e}"))?;
         if n == 0 {
-            return Err("backend exited before signalling ready".to_string());
+            // Give the stderr thread a moment to finish draining what
+            // the process wrote before it died.
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let kept = tail.lock().unwrap_or_else(|e| e.into_inner());
+            let reason = kept
+                .iter()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .cloned()
+                .unwrap_or_else(|| "no output on stderr".to_string());
+            return Err(format!(
+                "backend exited before signalling ready: {reason}"
+            ));
         }
         if let Some(p) = parse_ready_line(&line) {
             break p;

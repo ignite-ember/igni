@@ -50,6 +50,28 @@ class NoModelConfigured(OpenAILike):
             api_key="placeholder",
         )
 
+    STALE_DEFAULT_MESSAGE = (
+        "The configured default model {name!r} is not in `models.registry`. "
+        "Run `/login` to rediscover the models this deployment serves, or "
+        f"pick one with `/model`. Set in {DEFAULT_DATA_DIR}/config.yaml."
+    )
+
+    @classmethod
+    def for_stale_default(cls, name: str) -> NoModelConfigured:
+        """Factory for a default that names a model nobody registers.
+
+        Distinct from :meth:`for_login_required` because the remedy
+        differs and because this one is *reachable in production*: a
+        stored default is written by ``/model`` and by cloud discovery,
+        so removing a model from the deployment strands every developer
+        pinned to it. Until this existed that state raised during
+        ``Session.__init__`` and the backend died before it could say
+        anything at all.
+        """
+        placeholder = cls()
+        placeholder.ERROR_MESSAGE = cls.STALE_DEFAULT_MESSAGE.format(name=name)
+        return placeholder
+
     @classmethod
     def for_login_required(cls) -> NoModelConfigured:
         """Factory used by ``ModelRegistry.get_model`` when the

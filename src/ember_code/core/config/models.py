@@ -276,11 +276,28 @@ class ModelRegistry:
 
         entry = self._resolve_entry(resolved_name)
         if entry is None:
-            raise ValueError(
-                f"Unknown model {resolved_name!r}. "
-                "Add an entry to `models.registry` or use a "
-                "`provider:model_id` name."
-            )
+            if name:
+                # Asked for by name: the caller typed it or passed
+                # ``--model``, so tell them it does not exist.
+                raise ValueError(
+                    f"Unknown model {resolved_name!r}. "
+                    "Add an entry to `models.registry` or use a "
+                    "`provider:model_id` name."
+                )
+            # Nobody asked for this one — it is the stored default, and
+            # it no longer resolves. Raising here killed the backend
+            # during ``Session.__init__``, before it could print its
+            # ready line: the desktop app then reported "backend exited
+            # before signalling ready" with the reason discarded, and
+            # the user had no way to reach the UI that would have fixed
+            # it.
+            #
+            # The empty case two lines up was already handled this way.
+            # This is the same situation — no usable default — arrived at
+            # by a different route, so it gets the same treatment and a
+            # message naming the model that went missing.
+            self._warn_stale_default(resolved_name)
+            return NoModelConfigured.for_stale_default(resolved_name)
 
         builder = self._catalog.builder_for(entry.provider)
         if builder is None:
@@ -334,6 +351,14 @@ class ModelRegistry:
         logger.warning(
             "No model configured — returning placeholder. "
             "Run /login or add a model to models.registry."
+        )
+
+    def _warn_stale_default(self, name: str) -> None:
+        logger.warning(
+            "Configured default model %r is not in models.registry — "
+            "returning placeholder. Run /login to rediscover models, or "
+            "pick one with /model.",
+            name,
         )
 
     def _effective_default(self) -> str:
