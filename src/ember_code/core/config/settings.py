@@ -82,6 +82,10 @@ class Settings(BaseModel):
     """Complete igni settings."""
 
     api_url: str = "https://api.ignite-ember.sh"
+    # Seconds between PyPI update checks. ``0`` disables the check
+    # entirely — the only unconfigured outbound request an ordinary run
+    # makes, and what an air-gapped deployment should set. See DP-5 in
+    # ember-server's docs/COMPLIANCE_TRACKER.md.
     update_check_ttl: int = 86400
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)

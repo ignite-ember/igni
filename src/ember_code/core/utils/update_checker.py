@@ -8,6 +8,11 @@ matching :class:`UpdateCacheEntry`) to avoid hitting the network
 on every session; the TTL is configurable via
 ``update_check_ttl`` in settings.
 
+**Set ``update_check_ttl: 0`` to disable it entirely.** An air-gapped
+deployment should: this is the only unconfigured outbound request the
+CLI makes on an ordinary run, and until that switch existed there was
+no way to stop it.
+
 Architecture — everything is on :class:`UpdateChecker`:
 
 * :class:`UpdateCache` (composed value object) owns the file-cache
@@ -180,6 +185,20 @@ class UpdateChecker:
         current = __version__
         settings = self._settings if self._settings is not None else load_settings()
         ttl = settings.update_check_ttl
+
+        # Off switch. ``update_check_ttl`` only ever changed how *often*
+        # this ran, so there was no way to stop it — an air-gapped install
+        # attempted an outbound request to pypi.org at every session start,
+        # failing silently. That request is small but it is unconfigured
+        # network traffic leaving the customer's estate, and it reveals
+        # that this machine runs igni, at this version, from this address.
+        #
+        # DP-5 in the compliance tracker is the claim that nothing leaves
+        # the customer's network, and the claim carries the GDPR position.
+        # ``0`` now means off, matching the retention settings where 0
+        # means the feature does nothing.
+        if ttl <= 0:
+            return UpdateInfo(available=False, current_version=current)
 
         # Cache lane
         cached = self._cache.read(ttl)
