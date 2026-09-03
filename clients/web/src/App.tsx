@@ -79,6 +79,7 @@ import { WatcherPanel } from "./components/panels/WatcherPanel";
 import { SchedulePanel } from "./components/panels/SchedulePanel";
 import { EmberClient, pickNativeDirectory, type ConnectionState } from "./protocol/client";
 import type { HITLRequest, ServerMessage, StatusUpdate } from "./protocol/messages";
+import { countOf } from "./lib/plural";
 
 type PanelState =
   | { kind: "none" }
@@ -779,7 +780,9 @@ export default function App() {
           }
           loaded.push(
             infoItem(
-              `${pending.length} message(s) above were interrupted before completion — the agent knows and can pick up where it left off.`,
+              `${countOf(pending.length, "message")} above ${
+                pending.length === 1 ? "was" : "were"
+              } interrupted before completion — the agent knows and can pick up where it left off.`,
             ),
           );
         }

@@ -7,3 +7,10 @@
 # away from the same outcome.
 coverage/
 playwright-report/
+
+# Screenshot output. `app-shots.spec.ts` writes a picture of every main
+# screen for review, and `landing-shot*.spec.ts` writes product shots;
+# both render whatever the run produced, so they are evidence of a
+# review rather than an artefact to keep. E5.
+shots/
+landing-shots/

@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 const E2E_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e");
 
 /** Tags that declare a skip. Must match ``e2e/reporters/skips.ts``. */
-const DECLARING_TAGS = ["@manual"];
+const DECLARING_TAGS = ["@manual", "@needs-baseline"];
 
 function specFiles(): string[] {
   return readdirSync(E2E_DIR)
@@ -49,7 +49,12 @@ describe("the e2e suite cannot skip quietly", () => {
     for (const f of specFiles()) {
       const src = read(f);
       if (!/\btest\.skip\s*\(/.test(src)) continue;
-      const declares = DECLARING_TAGS.some((t) => src.includes(`tag: "${t}"`));
+      // Either quote style. A rule that depends on formatting is a
+      // rule that fires on the formatter — this one first failed on a
+      // spec tagged `{ tag: '@manual' }` in single quotes.
+      const declares = DECLARING_TAGS.some(
+        (t) => src.includes(`tag: "${t}"`) || src.includes(`tag: '${t}'`),
+      );
       if (!declares) offenders.push(f);
     }
     expect(
@@ -67,7 +72,11 @@ describe("the e2e suite cannot skip quietly", () => {
     // a spec at a backend you already have — and lives in one place,
     // the fixture, where it is documented and where a missing value
     // falls through to spawning rather than to skipping.
-    const allowed = new Set(["IGNI_LIVE_WS", "IGNI_E2E_STRICT"]);
+    // IGNI_E2E_SHOTS gates the screenshot generator, which is tagged
+    // `@manual` and declares its skip — the thing this rule is for is
+    // coverage going quiet, not a generator that writes files for a
+    // person to look at.
+    const allowed = new Set(["IGNI_LIVE_WS", "IGNI_E2E_STRICT", "IGNI_E2E_SHOTS"]);
     const found = new Map<string, string[]>();
     for (const f of specFiles()) {
       for (const m of read(f).matchAll(/process\.env\.(IGNI_[A-Z0-9_]+)/g)) {

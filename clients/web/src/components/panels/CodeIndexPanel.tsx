@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { EmberClient } from "../../protocol/client";
 import { Drawer } from "./Drawer";
+import { countOf } from "../../lib/plural";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -287,7 +288,7 @@ export function CodeIndexPanel({
       tone: "warn",
       text:
         aheadCommits > 0
-          ? `${aheadCommits} recent commit(s) not indexed — sync to refresh.`
+          ? `${countOf(aheadCommits, "recent commit")} not indexed — sync to refresh.`
           : "HEAD isn't indexed — sync to enable code search.",
       cta: { label: "Sync now", onClick: () => void act("sync") },
     };
@@ -485,7 +486,10 @@ export function CodeIndexPanel({
        *  there's stale local data from a prior install we'd
        *  rather not surface it as if it were live. */}
       {!needsInstall && status.branches_indexed.length > 0 && (
-        <Section title="Cached locally" subtitle={`${status.branches_indexed.length} commit(s)`}>
+        <Section
+          title="Cached locally"
+          subtitle={countOf(status.branches_indexed.length, "commit")}
+        >
           <div className="codeindex-branches">
             {status.branches_indexed.slice(0, 6).map((b) => (
               <div key={b.sha} className={`codeindex-branch ${b.is_head ? "is-head" : ""}`}>

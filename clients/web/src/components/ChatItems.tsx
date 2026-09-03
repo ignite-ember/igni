@@ -493,7 +493,7 @@ export const AssistantMessage = memo(function AssistantMessage({
  * Wired by ``AssistantMessage`` when ``item.interrupted`` is set;
  * hidden on normally-completed bubbles so the chat stays clean.
  * See [[feedback-interrupted-messages]] for the UX rationale — the
- * "X message(s) above were interrupted" notice was the original
+ * "N messages above were interrupted" notice was the original
  * complaint surface, and this banner is the top-notch replacement.
  */
 function InterruptedBanner({

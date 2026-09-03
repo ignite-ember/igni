@@ -113,49 +113,63 @@ jobs:
       - name: Unit tests
         run: npx vitest run
 
-      # End-to-end tests run only on Linux — the Playwright browser
-      # binary download (~100 MB) is the same on every platform, and
-      # the demo page tests don't exercise any host-specific code path.
-      # Keeping it to one OS keeps the matrix lean.
-      - name: Install Playwright browsers
-        if: runner.os == 'Linux'
-        run: npx playwright install --with-deps chromium
+  # The browser suite is its own job, in a container.
+  #
+  # It used to be five Linux-gated steps inside the three-OS matrix
+  # above, which meant `playwright install --with-deps chromium` on a
+  # bare runner. That is a different Chromium build and a different set
+  # of fonts from the image the visual baselines were generated in
+  # (E5), and a pixel comparison against a renderer it was not
+  # baselined on fails forever on antialiasing. A container cannot be
+  # attached to a macOS or Windows runner, so the split is not
+  # cosmetic.
+  #
+  # The image is pinned to the *lockfile's* Playwright version, not the
+  # range in package.json: they differ — ^1.61.0 against 1.61.1 — and
+  # Playwright refuses a browser build that does not match its library.
+  # Bump this together with `scripts/baselines-linux.sh`, which derives
+  # the same version the same way.
+  web-e2e:
+    name: Web E2E
+    runs-on: ubuntu-latest
+    container: mcr.microsoft.com/playwright:v1.61.1-noble
+    defaults:
+      run:
+        working-directory: clients/web
+    steps:
+      - uses: actions/checkout@v4
 
-      # The backend is set up BEFORE the e2e step, not after it. There
-      # used to be two e2e steps: a bare ``npx playwright test`` that
-      # ran 41 tests and silently skipped 7, then a second one that set
+      # No setup-node and no `playwright install`: the image ships both
+      # Node and the matching browsers, and installing a second copy of
+      # either is how the renderer stops matching the baselines.
+      - name: Install dependencies
+        run: npm ci
+
+      # The backend is prepared BEFORE the e2e step. There used to be
+      # two e2e steps: a bare `npx playwright test` that ran 41 tests
+      # and silently skipped 7, then a second one that set
       # IGNI_E2E_REAL_BE=1 for a single spec. The other six were gated
       # on IGNI_LIVE_WS, which nothing here ever set, so the only tests
       # covering the backend's RPC dispatch table ran nowhere. F128.
       #
-      # ``e2e/fixtures/live-be.ts`` now spawns a backend whenever this
-      # venv exists, so preparing it is what enables that coverage —
-      # and IGNI_E2E_STRICT=1 makes the run fail if anything skips
-      # without declaring itself, which is how a regression here
-      # becomes visible instead of becoming a green tick.
-      - name: Set up Python for the live-backend E2E
-        if: runner.os == 'Linux'
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
+      # `e2e/fixtures/live-be.ts` spawns a backend whenever this venv
+      # exists, so preparing it is what enables that coverage.
       - name: Install uv
-        if: runner.os == 'Linux'
         uses: astral-sh/setup-uv@v4
 
       - name: Install the backend for the live-backend E2E
-        if: runner.os == 'Linux'
         working-directory: .
         run: uv sync --all-extras
 
+      # IGNI_E2E_STRICT=1 turns an *undeclared* skip into a failure, so
+      # coverage cannot go quiet again without this job going red. F130.
       - name: E2E tests
-        if: runner.os == 'Linux'
         env:
           IGNI_E2E_STRICT: "1"
         run: npx playwright test
 
       - name: Upload Playwright report on failure
-        if: failure() && runner.os == 'Linux'
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report

@@ -31,6 +31,11 @@ export default defineConfig({
     ["./e2e/reporters/skips.ts"],
   ],
   timeout: 20_000,
+  // A missing baseline must never write itself. Playwright's default
+  // ('missing') would have a runner *create* the baseline it has none
+  // of and then pass — a visual suite that approves whatever it first
+  // sees. Generating is deliberate: `--update-snapshots`. E5.
+  updateSnapshots: 'none',
   expect: { timeout: 5_000 },
 
   use: {

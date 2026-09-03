@@ -31,6 +31,7 @@ import {
   type WorkflowEvent,
 } from "../chat/model";
 import { WorkflowRun } from "../components/WorkflowRun";
+import { countOf } from "../lib/plural";
 
 // ── Canned event tape (mirrors what the BE pushes for
 //    refactor-to-standards.mjs). Each entry is the JSON shape
@@ -540,7 +541,7 @@ export function WorkflowDemo() {
           data-progress={progressPct}
         >
           {status} · {progressPct}% · {cursor}/{EVENTS.length} events ·{" "}
-          {items.filter((i) => i.kind === "workflow").length} run(s)
+          {countOf(items.filter((i) => i.kind === "workflow").length, "run")}
         </div>
       </header>
 

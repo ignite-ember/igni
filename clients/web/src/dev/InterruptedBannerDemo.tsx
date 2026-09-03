@@ -160,7 +160,7 @@ function App() {
         <h1>Interrupted-assistant banner</h1>
         <p className="demo-page-lede">
           Surfaces a partial assistant bubble with three recovery
-          actions instead of a hidden "X message(s) interrupted"
+          actions instead of a hidden "N messages interrupted"
           notice. Mounts when an agent run stops mid-stream — Esc,
           Stop, error, or BE crash. Same UX across the three
           reasons (cancelled / errored / abandoned), each tinted

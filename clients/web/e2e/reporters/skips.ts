@@ -38,6 +38,10 @@ import type {
 /** Tags that declare a skip as deliberate, with what they mean. */
 const DECLARED: Record<string, string> = {
   "@manual": "a by-hand check, not something CI can assert",
+  "@needs-baseline":
+    "a pixel comparison with no committed baseline for this platform; " +
+    "Playwright names baselines per-OS and only the Linux ones are in " +
+    "the repository. Run scripts/baselines-linux.sh to compare here",
 };
 
 type Skip = {

@@ -4098,6 +4098,16 @@ button {
   margin-bottom: 12px;
 }
 
+/* The agent path inside that sub-line. Monospace because it is an
+   identifier chain — `main > planner > test-runner` — and it used to
+   be rendered bare, which on a single-agent run put the lone word
+   "main" under the heading with nothing attaching it to anything.
+   F136. */
+.hitl-agent-path {
+  font-family: var(--font-mono);
+  color: var(--fg);
+}
+
 .dialog-pre {
   font-family: var(--font-mono);
   font-size: 12.5px;
