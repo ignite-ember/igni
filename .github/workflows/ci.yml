@@ -121,22 +121,19 @@ jobs:
         if: runner.os == 'Linux'
         run: npx playwright install --with-deps chromium
 
-      - name: E2E tests (demo page)
-        if: runner.os == 'Linux'
-        run: npx playwright test
-
-      # The wire-format smoke spawns the real Python BE and drives the FE
-      # against it — the only test that catches drift between the Python
-      # emitter and the TypeScript decoder, whose schemas evolve
-      # independently. Its own docstring claimed "CI sets that var on hosts
-      # with the venv prepared". CI did not, so it had never run anywhere.
+      # The backend is set up BEFORE the e2e step, not after it. There
+      # used to be two e2e steps: a bare ``npx playwright test`` that
+      # ran 41 tests and silently skipped 7, then a second one that set
+      # IGNI_E2E_REAL_BE=1 for a single spec. The other six were gated
+      # on IGNI_LIVE_WS, which nothing here ever set, so the only tests
+      # covering the backend's RPC dispatch table ran nowhere. F128.
       #
-      # It is runnable now because its fixture writes its own model
-      # registry entry. It used to copy the developer's gitignored
-      # .igni/config.local.yaml, which meant it could only pass on a
-      # machine that happened to have the right model in it — and on the
-      # machine where this was first tried, it did not.
-      - name: Set up Python for the real-BE E2E
+      # ``e2e/fixtures/live-be.ts`` now spawns a backend whenever this
+      # venv exists, so preparing it is what enables that coverage —
+      # and IGNI_E2E_STRICT=1 makes the run fail if anything skips
+      # without declaring itself, which is how a regression here
+      # becomes visible instead of becoming a green tick.
+      - name: Set up Python for the live-backend E2E
         if: runner.os == 'Linux'
         uses: actions/setup-python@v5
         with:
@@ -146,16 +143,16 @@ jobs:
         if: runner.os == 'Linux'
         uses: astral-sh/setup-uv@v4
 
-      - name: Install the backend for the real-BE E2E
+      - name: Install the backend for the live-backend E2E
         if: runner.os == 'Linux'
         working-directory: .
         run: uv sync --all-extras
 
-      - name: E2E tests (real backend wire format)
+      - name: E2E tests
         if: runner.os == 'Linux'
         env:
-          IGNI_E2E_REAL_BE: "1"
-        run: npx playwright test e2e/real-be.spec.ts
+          IGNI_E2E_STRICT: "1"
+        run: npx playwright test
 
       - name: Upload Playwright report on failure
         if: failure() && runner.os == 'Linux'

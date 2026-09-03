@@ -12,17 +12,26 @@
  */
 import { test as base, expect } from "@playwright/test";
 
-type Fixtures = { liveWsUrl: string };
-
-const test = base.extend<Fixtures>({
+const test = base.extend<{ liveWsUrl: string }>({
   liveWsUrl: async ({}, use) => {
     const url = process.env.IGNI_LIVE_WS;
-    if (!url) test.skip(true, "Set IGNI_LIVE_WS");
+    // A declared skip, not a forgotten one — see the @needs-seed tag
+    // above and ``reporters/skips.ts``. This test needs an orphan row
+    // in ``state.db`` and a live OS process matching its pid, seeded
+    // *before* the backend starts, so the fixture that spawns its own
+    // backend cannot serve it:
+    //
+    //   .venv/bin/python scripts/seed_watcher_e2e_orphan.py \\
+    //     --scenario sleep
+    //   # start the backend against the repo root, then
+    //   IGNI_LIVE_WS=ws://127.0.0.1:PORT npx playwright test e2e/watcher-orphan-live.spec.ts
+    //   .venv/bin/python scripts/seed_watcher_e2e_orphan.py --cleanup
+    if (!url) test.skip(true, "needs a seeded orphan: see the header");
     await use(url as string);
   },
 });
 
-test("orphan process surfaces after BE restart", async ({ page, liveWsUrl }) => {
+test("orphan process surfaces after BE restart", { tag: "@needs-seed" }, async ({ page, liveWsUrl }) => {
   await page.goto(`/?ws=${encodeURIComponent(liveWsUrl)}`);
   await expect(page.locator(".composer-editable")).toHaveAttribute(
     "data-placeholder",

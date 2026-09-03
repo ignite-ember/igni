@@ -24,7 +24,12 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
-  reporter: process.env.CI ? "github" : "list",
+  // ``reporters/skips.ts`` is not optional decoration: without it a run
+  // that skips every integration test still ends in "41 passed". F128.
+  reporter: [
+    [process.env.CI ? "github" : "list"],
+    ["./e2e/reporters/skips.ts"],
+  ],
   timeout: 20_000,
   expect: { timeout: 5_000 },
 

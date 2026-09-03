@@ -1,11 +1,13 @@
 /**
  * Live-BE verification of the plan-decision wire contract.
  *
- * Drives a real browser against the running Tauri BE (set
- * ``IGNI_LIVE_WS`` to the BE's WS URL). Unlike ``real-be.spec.ts``
- * which spawns a fresh BE, this points at whatever the developer
- * has running — useful for "verify the build I'm staring at"
- * checks.
+ * Drives a real browser against a live backend — one this run
+ * spawned, or the one ``IGNI_LIVE_WS`` points at if you want to
+ * verify the build you are staring at.
+ *
+ * It used to require ``IGNI_LIVE_WS`` and nothing set it, so these
+ * two tests had never run in CI: the suite reported 41 passed and
+ * skipped the only coverage of the RPC dispatch table. F128.
  *
  * What this proves that the fixture-BE specs can't:
  *   - The actual RPC dispatch lambda in
@@ -27,24 +29,7 @@
  * to drive the agent (slow, costs tokens, brittle).
  */
 
-import { test as base, expect } from "@playwright/test";
-
-type Fixtures = {
-  liveWsUrl: string;
-};
-
-const test = base.extend<Fixtures>({
-  liveWsUrl: async ({}, use) => {
-    const url = process.env.IGNI_LIVE_WS;
-    if (!url) {
-      test.skip(
-        true,
-        "Set IGNI_LIVE_WS to the running BE's ws:// URL to run.",
-      );
-    }
-    await use(url as string);
-  },
-});
+import { test, expect } from "./fixtures/live-be";
 
 test.describe("live BE: plan-decision RPCs", () => {
   test("approve_plan RPC returns the right shape + flips mode", async ({
@@ -68,9 +53,10 @@ test.describe("live BE: plan-decision RPCs", () => {
         options?: boolean | AddEventListenerOptions,
       ) {
         if (type === "message" && typeof listener === "function") {
-          const wrapped = (ev: MessageEvent) => {
+          const wrapped: EventListener = (ev: Event) => {
+            const msg = ev as MessageEvent;
             try {
-              const parsed = JSON.parse(String(ev.data));
+              const parsed = JSON.parse(String(msg.data));
               if (parsed && parsed.type === "push_notification") {
                 (window as unknown as { __pushes: unknown[] }).__pushes.push(
                   parsed,
@@ -79,7 +65,7 @@ test.describe("live BE: plan-decision RPCs", () => {
             } catch {
               // not JSON, ignore
             }
-            (listener as (e: MessageEvent) => void)(ev);
+            (listener as (e: MessageEvent) => void)(msg);
           };
           return origAddEventListener.call(this, type, wrapped, options);
         }

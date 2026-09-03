@@ -1,12 +1,14 @@
 /**
- * Real-BE smoke test: spawn the actual Python BE process, drive the
- * FE against it, exercise one round-trip. Catches wire-format drift
+ * Real-BE smoke test: spawn the actual Python backend, drive the FE
+ * against it, exercise one round-trip. Catches wire-format drift
  * between the Python emitter and the TypeScript decoder that the
  * JS-fixture suite cannot see (their schemas evolve independently).
  *
- * Not run by default in ``npm test`` workflows where Python isn't on
- * PATH; gated by ``IGNI_E2E_REAL_BE=1``. CI sets that var on hosts
- * with the venv prepared.
+ * The backend comes from ``fixtures/live-be.ts``, which spawns one
+ * whenever the project venv exists. It used to be gated on
+ * ``IGNI_E2E_REAL_BE=1``, and the docstring claimed "CI sets that var
+ * on hosts with the venv prepared" — CI had to be told to, twice, for
+ * two different variables. A capability check needs telling once. F128.
  *
  * What's covered:
  *   - The BE prints its ``{"status":"ready","ws_port":N}`` envelope
@@ -24,176 +26,15 @@
  * separately in the Python-side integration suite.
  */
 
-import { test as base, expect } from "@playwright/test";
-import {
-  ChildProcessWithoutNullStreams,
-  spawn,
-} from "node:child_process";
-import * as path from "node:path";
-import * as os from "node:os";
-import * as fs from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-
-type Fixtures = {
-  realBe: { wsUrl: string; projectDir: string };
-};
-
-// Project root: walk up from clients/web/e2e to the repo root.
-// Playwright runs specs as ES modules — ``__dirname`` isn't defined,
-// derive it from ``import.meta.url``.
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(HERE, "..", "..", "..");
-const VENV_PYTHON = path.join(REPO_ROOT, ".venv", "bin", "python");
-
-const test = base.extend<Fixtures>({
-  realBe: async ({}, use) => {
-    if (process.env.IGNI_E2E_REAL_BE !== "1") {
-      test.skip(
-        true,
-        "Set IGNI_E2E_REAL_BE=1 to run; requires the project venv.",
-      );
-    }
-
-    const projectDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "ember-real-be-"),
-    );
-
-    // The BE refuses to build its default agent unless the configured
-    // model resolves against ``models.registry``, and that registry ships
-    // empty — entries arrive from a cloud login or from local config. So
-    // this fixture writes its own.
-    //
-    // It used to copy ``REPO_ROOT/.igni/config.local.yaml`` instead, and
-    // that could not work: ``.igni/`` is gitignored, so the file is
-    // whatever a given developer happens to have. On the machine where
-    // this was first run it existed and registered ``MiniMax-M3`` — not
-    // the built-in default ``MiniMax-M2.7`` — so the BE still died with
-    // ``ValueError: Unknown model 'MiniMax-M2.7'`` before printing its
-    // ready line. The old comment called the copy "best-effort" and
-    // accepted that a missing file left the BE "in its pre-fix state",
-    // which is another way of saying the test could not pass.
-    //
-    // Writing a stub entry *and* pointing ``models.default`` at it makes
-    // this independent of both the developer's config and whatever the
-    // built-in default happens to be called. The URL is never dialled:
-    // this spec deliberately does not drive the agent loop, only boot and
-    // the RPCs the connect flow issues.
-    const STUB_MODEL = "e2e-wire-format-stub";
-    await fs.mkdir(path.join(projectDir, ".igni"), { recursive: true });
-    await fs.writeFile(
-      path.join(projectDir, ".igni", "config.local.yaml"),
-      [
-        "models:",
-        `  default: ${STUB_MODEL}`,
-        "  registry:",
-        `    ${STUB_MODEL}:`,
-        "      provider: openai_like",
-        `      model_id: ${STUB_MODEL}`,
-        "      url: http://127.0.0.1:9/v1",
-        "      context_window: 8192",
-        "      vision: false",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-
-    const proc: ChildProcessWithoutNullStreams = spawn(
-      VENV_PYTHON,
-      [
-        "-m",
-        "ember_code.backend",
-        "--ws-port",
-        "0",
-        "--project-dir",
-        projectDir,
-      ],
-      {
-        cwd: REPO_ROOT,
-        env: {
-          ...process.env,
-          // The watchdog (``_watch_parent``) self-terminates the BE
-          // when our PID disappears — guarantees no orphaned BEs even
-          // if Playwright crashes mid-test.
-          IGNI_PARENT_PID: String(process.pid),
-        },
-      },
-    );
-
-    // Capture stderr for diagnostics if startup fails.
-    let stderrBuf = "";
-    proc.stderr.on("data", (chunk) => {
-      stderrBuf += chunk.toString();
-    });
-
-    const wsUrl = await new Promise<string>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(
-          new Error(
-            `BE did not emit ready line within 30s.\nstderr:\n${stderrBuf}`,
-          ),
-        );
-      }, 30_000);
-      let stdoutBuf = "";
-      proc.stdout.on("data", (chunk) => {
-        stdoutBuf += chunk.toString();
-        // Ready line is its own JSON envelope on its own line.
-        for (const line of stdoutBuf.split("\n")) {
-          const t = line.trim();
-          if (!t.startsWith("{")) continue;
-          try {
-            const parsed = JSON.parse(t);
-            if (parsed.status === "ready" && parsed.ws_url) {
-              clearTimeout(timeout);
-              resolve(String(parsed.ws_url));
-              return;
-            }
-          } catch {
-            // partial JSON line; keep buffering
-          }
-        }
-      });
-      proc.on("exit", (code) => {
-        clearTimeout(timeout);
-        reject(
-          new Error(
-            `BE exited with code ${code} before ready.\nstderr:\n${stderrBuf}`,
-          ),
-        );
-      });
-    });
-
-    try {
-      await use({ wsUrl, projectDir });
-    } finally {
-      // Shutdown: SIGTERM first; if it lingers > 3s, hard kill. The
-      // Agno team's tail-drain can take a beat after ``shutdown()``.
-      proc.kill("SIGTERM");
-      await new Promise<void>((resolve) => {
-        const t = setTimeout(() => {
-          try {
-            proc.kill("SIGKILL");
-          } catch {
-            /* already dead */
-          }
-          resolve();
-        }, 3_000);
-        proc.on("exit", () => {
-          clearTimeout(t);
-          resolve();
-        });
-      });
-      await fs.rm(projectDir, { recursive: true, force: true });
-    }
-  },
-});
+import { test, expect } from "./fixtures/live-be";
 
 test.describe("real BE wire format", () => {
   test("boot → connected: FE decodes every RPC the real BE returns", async ({
     page,
-    realBe,
+    liveBe,
   }) => {
     // FE talks to the real loopback BE via ``?ws=`` query param.
-    await page.goto(`/?ws=${encodeURIComponent(realBe.wsUrl)}`);
+    await page.goto(`/?ws=${encodeURIComponent(liveBe.wsUrl)}`);
 
     // The composer's placeholder is set by the connection state
     // machine — flipping from "Connecting…" to "Message Ember"

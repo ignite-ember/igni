@@ -25,12 +25,6 @@ const OUT = process.env.LANDING_SHOT_DIR || "landing-shots";
 const LOGICAL = { width: 1280, height: 720 };
 const SCALE = 1.5;
 
-// Phone variant. Far fewer logical pixels so the app's type is still
-// legible once the landing page renders it ~358px wide, and portrait
-// so it does not become a 40px-tall strip.
-const NARROW = { width: 460, height: 900 };
-const NARROW_SCALE = 2;
-
 const MODEL = "igni 1.0 27b";
 const PROJECT = "/Users/dev/acme/payments-api";
 
