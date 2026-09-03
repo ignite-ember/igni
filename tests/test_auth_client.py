@@ -5,6 +5,7 @@ Exercises the OOP-first surface in
 :mod:`ember_code.core.auth.callback_server`.
 """
 
+from threading import Thread
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -41,14 +42,157 @@ class TestFindFreePort:
         assert len(ports) >= 2
 
 
+class TestTheCallbackContract:
+    """What the portal actually sends, driven over HTTP.
+
+    Every other test in this class calls ``_deliver_token`` directly,
+    which is why the handler's query-parameter contract survived F107
+    untested: the portal stopped putting a token in the URL for the
+    *browser* sign-in and this path kept doing it, and no test noticed
+    because no test ever made a request.
+
+    So these make real HTTP requests to the real handler.
+    """
+
+    @staticmethod
+    def _get(url: str) -> tuple[int, str]:
+        import urllib.error
+        import urllib.request
+
+        try:
+            with urllib.request.urlopen(url, timeout=5) as response:
+                return response.status, response.read().decode()
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode()
+
+    def test_a_code_is_exchanged_for_the_token(self, monkeypatch):
+        """The whole point: the URL carries a one-time code, and the
+        token arrives over POST."""
+        import httpx
+
+        exchanged: dict[str, object] = {}
+
+        def fake_post(url, json=None, timeout=None):  # noqa: ANN001, ARG001
+            exchanged["url"] = url
+            exchanged["code"] = (json or {}).get("code")
+            return httpx.Response(200, json={"access_token": "a-real-token"})
+
+        monkeypatch.setattr(httpx, "post", fake_post)
+
+        cb = CallbackServer(api_url="https://api.example.test")
+        try:
+            thread = Thread(target=cb._serve, daemon=True)
+            thread.start()
+            status, body = self._get(f"{cb.callback_url}?code=one-time-code")
+        finally:
+            cb.stop()
+
+        assert status == 200
+        assert exchanged["url"] == "https://api.example.test/v1/auth/exchange"
+        assert exchanged["code"] == "one-time-code"
+        assert cb._token == "a-real-token"
+        assert "a-real-token" not in body, "the token must not be written into the page"
+
+    def test_a_token_in_the_url_is_refused(self, monkeypatch):
+        """The old contract must stop working.
+
+        Left accepting both, every portal that had not been redeployed
+        would keep putting a credential in the address bar and nothing
+        would say so.
+        """
+        import httpx
+
+        monkeypatch.setattr(
+            httpx, "post", lambda *a, **k: pytest.fail("no exchange should be attempted")
+        )
+
+        cb = CallbackServer(api_url="https://api.example.test")
+        try:
+            thread = Thread(target=cb._serve, daemon=True)
+            thread.start()
+            status, body = self._get(f"{cb.callback_url}?token=a-bare-jwt")
+        finally:
+            cb.stop()
+
+        assert status == 400
+        assert cb._token is None
+        assert "did not complete" in body
+
+    def test_a_refused_code_says_so_without_saying_which_way(self, monkeypatch):
+        """Expired, already used and never existed get one message.
+
+        The difference matters to nobody except somebody probing, for
+        whom "that one was valid a moment ago" is a useful signal — the
+        same reasoning as the server's own exchange endpoint.
+        """
+        import httpx
+
+        monkeypatch.setattr(
+            httpx,
+            "post",
+            lambda *a, **k: httpx.Response(400, json={"detail": "This sign-in code is not valid."}),
+        )
+
+        cb = CallbackServer(api_url="https://api.example.test")
+        try:
+            thread = Thread(target=cb._serve, daemon=True)
+            thread.start()
+            status, body = self._get(f"{cb.callback_url}?code=stale")
+        finally:
+            cb.stop()
+
+        assert status == 400
+        assert cb._token is None
+        assert "expired" in body and "already used" in body
+
+    def test_an_unreachable_server_does_not_hang_the_login(self, monkeypatch):
+        """The code lives 30 seconds. A hang here spends all of it and
+        leaves the user with a spinner and no explanation."""
+        import httpx
+
+        def refuse(*_args, **_kwargs):
+            raise httpx.ConnectError("connection refused")
+
+        monkeypatch.setattr(httpx, "post", refuse)
+
+        cb = CallbackServer(api_url="https://api.example.test")
+        try:
+            thread = Thread(target=cb._serve, daemon=True)
+            thread.start()
+            status, _ = self._get(f"{cb.callback_url}?code=whatever")
+        finally:
+            cb.stop()
+
+        assert status == 400
+        assert cb._token is None
+
+    def test_no_api_url_cannot_silently_succeed(self):
+        """A server built without somewhere to redeem must refuse
+        rather than deliver something unverified."""
+        cb = CallbackServer()
+        try:
+            thread = Thread(target=cb._serve, daemon=True)
+            thread.start()
+            status, _ = self._get(f"{cb.callback_url}?code=one-time-code")
+        finally:
+            cb.stop()
+
+        assert status == 400
+        assert cb._token is None
+
+
 class TestCallbackServer:
     def test_exposes_port_and_callback_url_as_instance_state(self):
         cb = CallbackServer()
         try:
             assert isinstance(cb.port, int)
             assert cb.port > 0
-            assert cb.callback_url == f"http://localhost:{cb.port}/callback"
-            assert "localhost" in cb.callback_url
+            # 127.0.0.1, matching what the server binds. It said
+            # ``localhost``, which resolves to ::1 first on a
+            # dual-stack machine — a connection refused on the one
+            # step of a login the user cannot retry. F124.
+            assert cb.callback_url == f"http://127.0.0.1:{cb.port}/callback"
+            assert "127.0.0.1" in cb.callback_url
             assert "/callback" in cb.callback_url
         finally:
             cb.stop()

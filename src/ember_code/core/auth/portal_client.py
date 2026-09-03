@@ -94,7 +94,9 @@ class PortalClient:
         Exposed so callers can interleave status callbacks between
         server start (fast) and token wait (blocks on the user).
         """
-        return CallbackServer()
+        # The server needs the API base to redeem the one-time code the
+        # portal now sends in place of the token. F124.
+        return CallbackServer(api_url=self._api_url, http_timeout=self._http_timeout)
 
     async def validate_token(self, token: str) -> ValidateResult:
         """Validate ``token`` against ``/v1/portal/me``.
@@ -157,7 +159,9 @@ class PortalClient:
         caller doesn't have to string-match exception messages.
         """
         try:
-            async with CallbackServer() as server:
+            async with CallbackServer(
+                api_url=self._api_url, http_timeout=self._http_timeout
+            ) as server:
                 login_url = self.login_url(server.port)
                 with contextlib.suppress(Exception):
                     webbrowser.open(login_url)

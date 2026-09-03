@@ -34,13 +34,18 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import socket
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 from types import TracebackType
 from urllib.parse import parse_qs, urlparse
 
+import httpx
+
 from ember_code.core.auth._success_page import SUCCESS_PAGE
+
+logger = logging.getLogger(__name__)
 
 
 class _OwnedHTTPServer(HTTPServer):
@@ -61,7 +66,7 @@ class CallbackServer:
     Public surface:
 
     * :attr:`port` — the OS-assigned TCP port the server is bound to.
-    * :attr:`callback_url` — the full ``http://localhost:<port>/callback`` URL.
+    * :attr:`callback_url` — the full ``http://127.0.0.1:<port>/callback`` URL.
     * :meth:`wait_for_token` — coroutine that resolves with the token
       (or ``None`` on timeout) as soon as the browser redirects.
     * :meth:`stop` — close the underlying HTTP socket.
@@ -71,7 +76,12 @@ class CallbackServer:
     Single-use: build a fresh instance for each login.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, api_url: str | None = None, http_timeout: float = 15.0) -> None:
+        #: Where to redeem a handoff code. ``None`` means codes cannot
+        #: be exchanged — the caller only wanted the local server, which
+        #: is what the tests that construct one bare are doing.
+        self._api_url = api_url.rstrip("/") if api_url else None
+        self._http_timeout = http_timeout
         self._token: str | None = None
         # The Future is created lazily inside ``wait_for_token`` so
         # constructing the server does not require a running event
@@ -80,7 +90,11 @@ class CallbackServer:
         self._loop: asyncio.AbstractEventLoop | None = None
 
         self.port: int = self._find_free_port()
-        self.callback_url: str = f"http://localhost:{self.port}/callback"
+        # 127.0.0.1, matching what _find_free_port binds. ``localhost``
+        # resolves to ::1 first on a dual-stack machine, which is a
+        # connection refused on a step the user cannot retry without
+        # starting the whole login again.
+        self.callback_url: str = f"http://127.0.0.1:{self.port}/callback"
 
         handler_cls = self._build_handler()
         self._server = _OwnedHTTPServer(("127.0.0.1", self.port), handler_cls)
@@ -110,21 +124,40 @@ class CallbackServer:
             def do_GET(inner_self) -> None:  # noqa: N805
                 parsed = urlparse(inner_self.path)
                 params = parse_qs(parsed.query)
-                token = params.get("token", [None])[0]
 
                 owner: CallbackServer = inner_self.server.callback_server
+
+                # A one-time code is what the portal sends now. It used
+                # to send ``?token=<jwt>`` — a working org-scoped
+                # 30-day credential, in the address bar and the browser
+                # history, on every login. F107 removed exactly that
+                # from the browser sign-in redirect; this path kept it
+                # until F124.
+                code = params.get("code", [None])[0]
+                token = owner._redeem(code) if code else None
 
                 if token:
                     owner._deliver_token(token)
                     inner_self.send_response(200)
                     inner_self.send_header("Content-Type", "text/html")
+                    # Nothing on the success page is a secret now, but a
+                    # referrer policy costs one header and the page is
+                    # reached by navigation from the portal.
+                    inner_self.send_header("Referrer-Policy", "no-referrer")
                     inner_self.end_headers()
                     inner_self.wfile.write(SUCCESS_PAGE.encode())
                 else:
                     inner_self.send_response(400)
                     inner_self.send_header("Content-Type", "text/html")
                     inner_self.end_headers()
-                    inner_self.wfile.write(b"<html><body><h2>Missing token</h2></body></html>")
+                    # One message for "no code", "expired" and "already
+                    # used": the difference matters to nobody except
+                    # somebody probing.
+                    inner_self.wfile.write(
+                        b"<html><body><h2>Sign-in did not complete</h2>"
+                        b"<p>The code was missing, expired or already used. "
+                        b"Run the login again.</p></body></html>"
+                    )
 
             def log_message(inner_self, *args: object) -> None:  # noqa: N805
                 """Silence HTTP request logs during OAuth callback.
@@ -135,6 +168,38 @@ class CallbackServer:
                 """
 
         return _CallbackHandler
+
+    def _redeem(self, code: str) -> str | None:
+        """Trade the one-time code for the token it stands for.
+
+        Synchronous ``httpx`` on purpose: this runs on the handler
+        thread of a ``BaseHTTPRequestHandler``, not on the event loop,
+        so there is nothing to block. The 30-second code has to be
+        redeemed before it expires, which is why the timeout is short
+        and the failure is a plain ``None`` — the page then says the
+        sign-in did not complete rather than hanging.
+        """
+        if not self._api_url:
+            logger.error("callback received a code but no api_url was configured to redeem it")
+            return None
+        try:
+            response = httpx.post(
+                f"{self._api_url}/v1/auth/exchange",
+                json={"code": code},
+                timeout=self._http_timeout,
+            )
+        except httpx.HTTPError as exc:
+            logger.error("could not reach %s to exchange the sign-in code: %s", self._api_url, exc)
+            return None
+        if response.status_code != 200:
+            logger.error(
+                "sign-in code was refused (%s): %s",
+                response.status_code,
+                response.text[:200],
+            )
+            return None
+        token = response.json().get("access_token")
+        return str(token) if token else None
 
     def _serve(self) -> None:
         """Handle requests until a token arrives or the server closes."""

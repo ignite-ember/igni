@@ -28,7 +28,11 @@ _SRC = _ROOT / "src/ember_code"
 _ALLOWED_HOSTS: dict[str, str] = {
     # ── The customer's own deployment, or a provider they connected ──
     "github.com": "the provider, for release links and clone URLs",
-    "localhost": "the OAuth callback listener, on this machine",
+    # 127.0.0.1 rather than `localhost`: the callback server binds the
+    # literal address, and `localhost` resolves to ::1 first on a
+    # dual-stack machine — a connection refused on the one step of a
+    # login the user cannot retry. F124.
+    "127.0.0.1": "the sign-in callback listener, on this machine",
     "placeholder.invalid": "RFC 2606, a deliberately unroutable stand-in",
     # ── One-time bootstrap downloads ─────────────────────────────────
     #
