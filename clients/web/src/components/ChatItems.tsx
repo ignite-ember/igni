@@ -946,8 +946,10 @@ const OrchestrateLog = memo(function OrchestrateLog({
           <ChevronIcon size={14} />
         </button>
         <span className="orchestrate-title">Team progress</span>
+        {/* `role="img"`: aria-label on a bare span has nothing to attach
+            to, so the name is dropped and axe calls it prohibited. F138. */}
         {streaming && (
-          <span className="orchestrate-spinner" aria-label="Running" />
+          <span className="orchestrate-spinner" role="img" aria-label="Running" />
         )}
         <span
           className="orchestrate-meta"
@@ -1248,8 +1250,11 @@ function OrchestrateAgentRow({
           })}
         </div>
       )}
+      {/* Focusable: this panel scrolls, and a scroll container that
+          cannot be focused cannot be scrolled from the keyboard —
+          axe's scrollable-region-focusable. F138. */}
       {open && toolCount > 0 && (
-        <div className="orch-agent-body">
+        <div className="orch-agent-body" tabIndex={0} role="group" aria-label="Tool calls">
           {agent.tools.map((t) => (
             <ToolCardView
               key={t.id}

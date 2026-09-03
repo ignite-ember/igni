@@ -155,7 +155,7 @@ function App() {
   );
 
   return (
-    <div className="demo-page">
+    <main className="demo-page">
       <header className="demo-page-header">
         <h1>Interrupted-assistant banner</h1>
         <p className="demo-page-lede">
@@ -261,7 +261,7 @@ function App() {
           </ul>
         )}
       </section>
-    </div>
+    </main>
   );
 }
 

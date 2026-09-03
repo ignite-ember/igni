@@ -2574,6 +2574,10 @@ export default function App() {
           />
         )}
         <div className="conversation-frame">
+        {/* See `.sr-only` in theme.css: the level message content
+            sits under, so a heading the model wrote cannot skip from
+            the page down to an h3. F138. */}
+        <h2 className="sr-only">Conversation</h2>
         {items.length === 0 ? (
           <div className="conversation">
             <div className="col">

@@ -76,7 +76,15 @@ describe("the e2e suite cannot skip quietly", () => {
     // `@manual` and declares its skip — the thing this rule is for is
     // coverage going quiet, not a generator that writes files for a
     // person to look at.
-    const allowed = new Set(["IGNI_LIVE_WS", "IGNI_E2E_STRICT", "IGNI_E2E_SHOTS"]);
+    // IGNI_E2E_A11Y_BOTH *adds* the light theme to the accessibility
+    // sweep; the dark one runs unconditionally. This rule is about
+    // coverage going quiet, not about an opt-in second pass.
+    const allowed = new Set([
+      "IGNI_LIVE_WS",
+      "IGNI_E2E_STRICT",
+      "IGNI_E2E_SHOTS",
+      "IGNI_E2E_A11Y_BOTH",
+    ]);
     const found = new Map<string, string[]>();
     for (const f of specFiles()) {
       for (const m of read(f).matchAll(/process\.env\.(IGNI_[A-Z0-9_]+)/g)) {

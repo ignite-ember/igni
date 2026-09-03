@@ -120,12 +120,18 @@ export function PlanModeDemo() {
     >
       <header className="brand-band" style={{ flexShrink: 0 }}>
         <div className="brand-band-inner">
-          <span className="brand-name">igni · plan-mode demo</span>
+          {/* An h1: this was a styled span, so the page had no
+              title in its outline. F138. */}
+          <h1 className="brand-name">igni · plan-mode demo</h1>
         </div>
       </header>
 
+      {/* A landmark: these chips sat between the header and the main,
+          so they were in none — axe's `region`. F138. */}
       <div
         className="statusline"
+        role="status"
+        aria-label="Session status"
         style={{ marginTop: 0, paddingBottom: 8, flexShrink: 0 }}
       >
         <SessionChip sessionId="demoabcd1234" />
@@ -157,7 +163,7 @@ export function PlanModeDemo() {
         }}
       >
         <section className="demo-section">
-          <h3 className="demo-section-title">1. Status-line badge (top of window)</h3>
+          <h2 className="demo-section-title">1. Status-line badge (top of window)</h2>
           <p className="demo-section-blurb">
             Pulsing orange chip — only visible when{" "}
             <code>status.permission_mode === "plan"</code>. Hover shows
@@ -168,9 +174,9 @@ export function PlanModeDemo() {
         </section>
 
         <section className="demo-section">
-          <h3 className="demo-section-title">
+          <h2 className="demo-section-title">
             2. Info banner — when the AGENT entered plan mode
-          </h3>
+          </h2>
           <p className="demo-section-blurb">
             Injected as an inline info ChatItem when{" "}
             <code>permission_mode_changed</code> arrives with{" "}
@@ -181,9 +187,9 @@ export function PlanModeDemo() {
         </section>
 
         <section className="demo-section">
-          <h3 className="demo-section-title">
+          <h2 className="demo-section-title">
             3. Plan card — pending (interactive)
-          </h3>
+          </h2>
           <p className="demo-section-blurb">
             Click <strong>Approve</strong> or <strong>Refine</strong>{" "}
             below. Approve flips this card to the green "approved"
@@ -197,7 +203,7 @@ export function PlanModeDemo() {
         </section>
 
         <section className="demo-section">
-          <h3 className="demo-section-title">4. Plan card — approved</h3>
+          <h2 className="demo-section-title">4. Plan card — approved</h2>
           <p className="demo-section-blurb">
             Terminal state after Approve. Green tint, footer{" "}
             "Plan approved — plan mode exited", buttons replaced
@@ -207,7 +213,7 @@ export function PlanModeDemo() {
         </section>
 
         <section className="demo-section">
-          <h3 className="demo-section-title">5. Plan card — dismissed</h3>
+          <h2 className="demo-section-title">5. Plan card — dismissed</h2>
           <p className="demo-section-blurb">
             Terminal state after Refine. Dimmed, footer{" "}
             "Plan dismissed." The plan body stays visible because
@@ -218,9 +224,9 @@ export function PlanModeDemo() {
         </section>
 
         <section className="demo-section">
-          <h3 className="demo-section-title">
+          <h2 className="demo-section-title">
             6. Live checklist — mid-execution (approved + agent working)
-          </h3>
+          </h2>
           <p className="demo-section-blurb">
             After Approve, as the agent calls{" "}
             <code>todo_write</code> to update each step's status,
@@ -233,7 +239,7 @@ export function PlanModeDemo() {
         </section>
 
         <section className="demo-section">
-          <h3 className="demo-section-title">7. Live checklist — done</h3>
+          <h2 className="demo-section-title">7. Live checklist — done</h2>
           <p className="demo-section-blurb">
             Terminal state once the agent has called{" "}
             <code>todo_write</code> with every task marked
@@ -245,7 +251,7 @@ export function PlanModeDemo() {
         </section>
 
         <section className="demo-section">
-          <h3 className="demo-section-title">Full flow</h3>
+          <h2 className="demo-section-title">Full flow</h2>
           <ol className="demo-section-blurb">
             <li>
               User asks for a complex task (e.g. multi-file refactor).

@@ -372,8 +372,13 @@ function AgentList({ agents }: { agents: WorkflowAgentRun[] }) {
     <ul className="workflow-phase-agents">
       {groups.map((group, gi) =>
         group.kind === "serial" ? (
+          // Wrapped: this is a <ul>, and the parallel branch below
+          // already wraps its rows. A <div> straight inside a list is
+          // what axe's `list` rule reports. F138.
           group.agents.map((a) => (
-            <AgentRow key={a.agentId} agent={a} />
+            <li key={a.agentId}>
+              <AgentRow agent={a} />
+            </li>
           ))
         ) : (
           <li

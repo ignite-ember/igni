@@ -344,7 +344,7 @@
   background: var(--bg-raised);
   color: var(--fg);
 }
-.jr-badge-info    { color: var(--accent-blue); border-color: var(--accent-blue); }
+.jr-badge-info    { color: var(--accent-blue-text); border-color: var(--accent-blue-text); }
 .jr-badge-success { color: var(--success); border-color: var(--success); }
 .jr-badge-warning { color: var(--warning); border-color: var(--warning); }
 .jr-badge-danger  { color: var(--danger);  border-color: var(--danger); }
@@ -628,7 +628,7 @@
 }
 .jr-alert-title { font-weight: 600; }
 .jr-alert-body { color: var(--fg-muted); }
-.jr-alert-info    { border-left-color: var(--accent-blue); }
+.jr-alert-info    { border-left-color: var(--accent-blue-text); }
 .jr-alert-success { border-left-color: var(--success); }
 .jr-alert-warning { border-left-color: var(--warning); }
 .jr-alert-danger  { border-left-color: var(--danger); }
