@@ -1674,5 +1674,102 @@ mod tests {
         let got = parse_ready_line(&line);
         assert!(got.is_some(), "huge ws_port currently coerces, not crashes");
     }
+
+    #[test]
+    fn csp_is_set_and_names_no_host_off_this_machine() {
+        // F127. ``csp`` was null, so the webview that renders model
+        // output had no policy at all. mermaid's ``securityLevel:
+        // strict`` and react-markdown escaping HTML were the only
+        // layers; this is the second one. The reasoning lives here
+        // rather than in the config because ``tauri-build`` parses
+        // ``tauri.conf.json`` against a strict schema and rejects a
+        // ``"//"`` comment key outright — it fails the build.
+        //
+        // ``style-src`` has to keep ``'unsafe-inline'``: mermaid and
+        // rehype-highlight inject ``<style>`` at runtime, measured at
+        // 11 tags and 916 violations without it. An injected
+        // stylesheet can restyle a page but cannot invoke a command.
+        //
+        // Two things are being pinned.
+        //
+        // First that a policy exists and that ``script-src`` stays
+        // exactly ``'self'`` — that directive is what stops injected
+        // content reaching ``window.__TAURI__``, which
+        // ``withGlobalTauri`` puts on the page.
+        //
+        // Second, and this is the part a list of directives would
+        // miss: no source anywhere in the policy may name a host off
+        // this machine. The first draft of this CSP ended
+        // ``connect-src ... https:``, which would have let injected
+        // content POST a transcript to any server on the internet.
+        // The rule is written over every directive rather than over
+        // ``connect-src`` alone so the same mistake in ``img-src``
+        // (a tracking pixel) or ``font-src`` fails too.
+        let conf = include_str!("../tauri.conf.json");
+        let v: serde_json::Value =
+            serde_json::from_str(conf).expect("tauri.conf.json must be valid JSON");
+        let csp = v["app"]["security"]["csp"]
+            .as_str()
+            .expect("app.security.csp must be a string, not null");
+
+        let directives: Vec<(&str, Vec<&str>)> = csp
+            .split(';')
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .map(|d| {
+                let mut parts = d.split_whitespace();
+                let name = parts.next().unwrap_or_default();
+                (name, parts.collect())
+            })
+            .collect();
+        let find = |name: &str| {
+            directives
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, s)| s.clone())
+        };
+
+        assert_eq!(
+            find("script-src"),
+            Some(vec!["'self'"]),
+            "script-src must be exactly 'self' — no unsafe-inline, no unsafe-eval"
+        );
+        assert_eq!(find("default-src"), Some(vec!["'self'"]));
+        assert_eq!(find("object-src"), Some(vec!["'none'"]));
+        assert_eq!(find("frame-ancestors"), Some(vec!["'none'"]));
+        assert_eq!(find("base-uri"), Some(vec!["'self'"]));
+
+        // A source is allowed to be a quoted keyword, an inert scheme,
+        // Tauri's IPC scheme, or a loopback origin. Anything else names
+        // a host we cannot reach without leaving the customer's
+        // network, and this product does not do that.
+        for (name, sources) in &directives {
+            for src in sources {
+                let ok = src.starts_with('\'')
+                    || matches!(*src, "data:" | "blob:" | "ipc:")
+                    || src.starts_with("http://ipc.localhost")
+                    || src.starts_with("http://127.0.0.1")
+                    || src.starts_with("http://localhost")
+                    || src.starts_with("ws://127.0.0.1")
+                    || src.starts_with("ws://localhost");
+                assert!(
+                    ok,
+                    "{name} names {src}, which is not on this machine — \
+                     the webview must have no egress off the host"
+                );
+            }
+        }
+
+        // And the policy has to actually cover the sinks: a webview
+        // rendering markdown needs these five named, or a directive
+        // silently falls back to default-src and this test's reach
+        // shrinks without anyone noticing.
+        for required in ["style-src", "img-src", "font-src", "connect-src"] {
+            assert!(
+                find(required).is_some(),
+                "{required} must be stated explicitly, not inherited from default-src"
+            );
+        }
+    }
 }
 
