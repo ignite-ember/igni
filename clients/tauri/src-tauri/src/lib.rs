@@ -571,11 +571,86 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 /// Returns ``available=false`` (with empty fields) if no update is
 /// pending or if the check fails — silent best-effort, same
 /// behavior as the BE's existing check.
+/// Whether the user has turned update checks off.
+///
+/// `update_check_ttl: 0` in `~/.igni/config.yaml` is the documented
+/// off switch, and the setting's own comment calls the PyPI check "the
+/// only unconfigured outbound request an ordinary run makes". That was
+/// not true in the desktop app: this command went straight to the
+/// updater plugin, so an install that had explicitly disabled update
+/// checks still contacted github.com on **every launch** — the silent
+/// startup check in `App.tsx` calls it on connect. F126.
+///
+/// Read here rather than asked of the backend because this is the
+/// command that makes the request. A check that consults a policy one
+/// process away can be reached without consulting it; a check that
+/// reads the file it is about cannot.
+///
+/// Parsed by hand rather than with a YAML crate. One integer at a known
+/// key is not worth a dependency in a binary that ships to customers,
+/// and the failure mode is chosen deliberately: anything unparseable
+/// leaves checks **enabled**, because silently disabling updates on a
+/// malformed config would leave a machine on an old build with nothing
+/// said.
+fn update_checks_disabled() -> bool {
+    let Some(home) = dirs::home_dir() else {
+        return false;
+    };
+    match std::fs::read_to_string(home.join(".igni/config.yaml")) {
+        Ok(text) => update_checks_disabled_in(&text),
+        // No config at all is the default, and the default is on.
+        Err(_) => false,
+    }
+}
+
+/// The decision, over the text — so it is testable without owning
+/// `$HOME`. Mutating the environment in a Rust test is `unsafe` and
+/// races every other thread in the binary, which is a poor trade for
+/// covering one `read_to_string`.
+fn update_checks_disabled_in(text: &str) -> bool {
+    for line in text.lines() {
+        // No trimming: `strip_prefix` on the raw line is what anchors
+        // this to the top level. An indented `update_check_ttl` belongs
+        // to whatever section contains it, and reading it as the
+        // top-level setting would let an unrelated block switch off the
+        // app's updates.
+        //
+        // There was an explicit whitespace guard here as well. A
+        // revert-check removing it still passed, because it could not
+        // fail — `strip_prefix` had already rejected the indented line.
+        // Dead code that reads as defence, which is worse than no code.
+        let Some(value) = line.strip_prefix("update_check_ttl:") else {
+            continue;
+        };
+        let value = value.split('#').next().unwrap_or("").trim();
+        if let Ok(ttl) = value.parse::<i64>() {
+            return ttl <= 0;
+        }
+        // Present but unreadable — see the caller's note: enabled, so a
+        // malformed config never silently strands a machine on an old
+        // build.
+        return false;
+    }
+    false
+}
+
 #[tauri::command]
 async fn ember_check_update(app: AppHandle) -> Result<serde_json::Value, String> {
     use tauri_plugin_updater::UpdaterExt;
 
     let current_version = env!("CARGO_PKG_VERSION").to_string();
+
+    if update_checks_disabled() {
+        // Not an error: the caller asked whether an update exists and
+        // the honest answer for a deployment that has opted out is
+        // "nothing to install", with no request made.
+        return Ok(serde_json::json!({
+            "available": false,
+            "current_version": current_version,
+            "latest_version": current_version,
+            "checks_disabled": true,
+        }));
+    }
     let updater = app.updater().map_err(|e| e.to_string())?;
     match updater.check().await {
         Ok(Some(update)) => Ok(serde_json::json!({
@@ -598,6 +673,13 @@ async fn ember_check_update(app: AppHandle) -> Result<serde_json::Value, String>
 #[tauri::command]
 async fn ember_install_update(app: AppHandle) -> Result<(), String> {
     use tauri_plugin_updater::UpdaterExt;
+
+    // The same gate. Installing is a bigger outbound request than
+    // checking, and a caller that reached this without a check — the
+    // banner persisted across a config change, say — must not make it.
+    if update_checks_disabled() {
+        return Err("update checks are disabled in ~/.igni/config.yaml (update_check_ttl: 0)".to_string());
+    }
 
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update = updater
@@ -1253,6 +1335,100 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── The update-check off switch (F126) ──────────────────────
+    //
+    // `update_check_ttl: 0` is documented as the way to stop igni
+    // making outbound requests, and the desktop app ignored it — the
+    // silent startup check in App.tsx contacted github.com on every
+    // launch regardless.
+
+    #[test]
+    fn zero_disables_checks() {
+        assert!(update_checks_disabled_in("update_check_ttl: 0\n"));
+    }
+
+    #[test]
+    fn a_negative_ttl_disables_too() {
+        // The Python side treats `<= 0` as off; two implementations of
+        // one setting have to agree on the boundary or the app and the
+        // CLI disagree about whether the deployment is air-gapped.
+        assert!(update_checks_disabled_in("update_check_ttl: -1\n"));
+    }
+
+    #[test]
+    fn a_real_ttl_leaves_checks_on() {
+        assert!(!update_checks_disabled_in("update_check_ttl: 86400\n"));
+    }
+
+    #[test]
+    fn an_absent_key_leaves_checks_on() {
+        assert!(!update_checks_disabled_in("models:\n  default: x\n"));
+    }
+
+    #[test]
+    fn a_trailing_comment_is_not_part_of_the_number() {
+        assert!(update_checks_disabled_in("update_check_ttl: 0  # air-gapped\n"));
+    }
+
+    #[test]
+    fn an_indented_key_of_the_same_name_is_ignored() {
+        // A nested `update_check_ttl` belongs to whatever contains it.
+        // The property comes from matching the raw line rather than a
+        // trimmed one — stated here because the guard that used to
+        // *look* like it provided it was unreachable.
+        assert!(!update_checks_disabled_in(
+            "plugins:\n  something:\n    update_check_ttl: 0\n"
+        ));
+    }
+
+    #[test]
+    fn both_update_commands_consult_the_switch() {
+        // A wiring check, by reading this file.
+        //
+        // Everything above tests the decision; none of it proves the
+        // decision is *asked for*. Removing the gate from
+        // `ember_check_update` failed nothing, because a
+        // `#[tauri::command]` takes an `AppHandle` and needs a running
+        // Tauri application to call — there is no unit test that can
+        // reach it.
+        //
+        // So this asserts the shape instead, and says so rather than
+        // pretending the parser tests cover it. If either command ever
+        // stops consulting the switch, an air-gapped install starts
+        // contacting github.com again and nothing else here would
+        // notice.
+        // Each body is read up to the next command, not to the end of
+        // the file. The first version took "everything after
+        // ember_install_update" — which includes *this test*, where the
+        // string appears in the assertion literals, so the rule matched
+        // itself and could not fail. Third time in this review a source
+        // sweep has read its own text as evidence.
+        fn body_of<'a>(source: &'a str, name: &str) -> &'a str {
+            let after = source
+                .split_once(&format!("async fn {name}"))
+                .unwrap_or_else(|| panic!("{name} is gone"))
+                .1;
+            after.split("\n#[tauri::command]").next().unwrap_or(after)
+        }
+
+        let source = include_str!("lib.rs");
+
+        for name in ["ember_check_update", "ember_install_update"] {
+            assert!(
+                body_of(source, name).contains("update_checks_disabled()"),
+                "{name} no longer consults the off switch"
+            );
+        }
+    }
+
+    #[test]
+    fn a_garbled_value_leaves_checks_on() {
+        // Deliberately not "off". Silently disabling updates on a
+        // malformed config leaves a machine on an old build with
+        // nothing said; leaving them on is visible and recoverable.
+        assert!(!update_checks_disabled_in("update_check_ttl: never\n"));
+    }
 
     #[test]
     fn ready_line_parsed_returns_port() {

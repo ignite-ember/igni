@@ -82,10 +82,17 @@ class Settings(BaseModel):
     """Complete igni settings."""
 
     api_url: str = "https://api.ignite-ember.sh"
-    # Seconds between PyPI update checks. ``0`` disables the check
-    # entirely — the only unconfigured outbound request an ordinary run
-    # makes, and what an air-gapped deployment should set. See DP-5 in
+    # Seconds between update checks. ``0`` disables them entirely, and
+    # is what an air-gapped deployment should set. See DP-5 in
     # ember-server's docs/COMPLIANCE_TRACKER.md.
+    #
+    # This said "the only unconfigured outbound request an ordinary run
+    # makes", and in the desktop app that was untrue: the Tauri
+    # updater's silent startup check contacted github.com on every
+    # launch and never consulted this setting. It does now — the Rust
+    # side reads this same key out of ``~/.igni/config.yaml``, so one
+    # switch covers both the PyPI check here and the release check
+    # there. F126.
     update_check_ttl: int = 86400
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
