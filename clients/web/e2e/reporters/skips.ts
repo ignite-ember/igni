@@ -18,6 +18,12 @@
  *
  * Strict mode is on in CI. Locally the run still passes — but it says,
  * every time, what it did not check.
+ *
+ * As of F129 nothing carries a tag: the three specs that used to need a
+ * hand-run seeding harness now seed themselves, so all 48 run. The
+ * vocabulary stays because the rule needs somewhere for a future
+ * genuinely-manual check to declare itself; it is not a list of
+ * exceptions that has to be kept in step with the suite.
  */
 
 import type {
@@ -31,10 +37,6 @@ import type {
 
 /** Tags that declare a skip as deliberate, with what they mean. */
 const DECLARED: Record<string, string> = {
-  "@needs-seed":
-    "needs an orphan row seeded into state.db plus a matching live OS " +
-    "process, before the backend starts — see the spec header for the " +
-    "two-phase harness",
   "@manual": "a by-hand check, not something CI can assert",
 };
 

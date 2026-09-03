@@ -7,28 +7,11 @@
  * pre-seeded with real-looking dev-server output — the orphan's
  * ``read()`` should return that content verbatim.
  */
-import { test as base, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/live-be";
 
-const test = base.extend<{ liveWsUrl: string }>({
-  liveWsUrl: async ({}, use) => {
-    const url = process.env.IGNI_LIVE_WS;
-    // A declared skip, not a forgotten one — see the @needs-seed tag
-    // above and ``reporters/skips.ts``. This test needs an orphan row
-    // in ``state.db`` and a live OS process matching its pid, seeded
-    // *before* the backend starts, so the fixture that spawns its own
-    // backend cannot serve it:
-    //
-    //   .venv/bin/python scripts/seed_watcher_e2e_orphan.py \\
-    //     --scenario dev_server
-    //   # start the backend against the repo root, then
-    //   IGNI_LIVE_WS=ws://127.0.0.1:PORT npx playwright test e2e/watcher-orphan-with-logs.spec.ts
-    //   .venv/bin/python scripts/seed_watcher_e2e_orphan.py --cleanup
-    if (!url) test.skip(true, "needs a seeded orphan: see the header");
-    await use(url as string);
-  },
-});
+test.use({ orphanScenario: "dev_server" });
 
-test("orphan tail pane shows real stdout from per-pid log", { tag: "@needs-seed" }, async ({
+test("orphan tail pane shows real stdout from per-pid log", async ({
   page,
   liveWsUrl,
 }) => {

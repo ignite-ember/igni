@@ -26,8 +26,10 @@
 import { test as base } from "@playwright/test";
 import {
   ChildProcessWithoutNullStreams,
+  execFile,
   spawn,
 } from "node:child_process";
+import { promisify } from "node:util";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
@@ -165,21 +167,94 @@ async function stop(proc: ChildProcessWithoutNullStreams): Promise<void> {
   });
 }
 
-export const test = base.extend<{ liveBe: LiveBe; liveWsUrl: string }>({
-  liveBe: async ({}, use) => {
+const run = promisify(execFile);
+
+/**
+ * The three watcher specs need an orphan: a row in the project's
+ * ``state.db`` naming a pid, and a live OS process at that pid, both in
+ * place *before* the backend boots so its rehydrate pass finds them.
+ *
+ * That used to be a shell ritual — seed, start a backend rooted at the
+ * repo, run two specs, clean up, seed the other scenario, start again,
+ * run the third — which is four Playwright invocations and two manual
+ * phases for three tests. Nobody was going to do that, so nobody did.
+ * D9, F129.
+ *
+ * ``scripts/seed_watcher_e2e_orphan.py`` already took ``--project-dir``,
+ * so the whole ritual fits in a fixture: seed a throwaway project, boot
+ * the backend against it, tear both down. Each test gets its own
+ * orphan, which is also what makes their ``toHaveCount(1)`` assertions
+ * honest — the old harness wrote into the developer's *repo*, so two
+ * scenarios could not coexist and a stale row from a crashed run would
+ * fail the next one.
+ */
+export type OrphanScenario = "sleep" | "dev_server";
+
+const SEED_SCRIPT = path.join(
+  REPO_ROOT,
+  "scripts",
+  "seed_watcher_e2e_orphan.py",
+);
+
+async function seedOrphan(
+  projectDir: string,
+  scenario: OrphanScenario,
+): Promise<void> {
+  const { stdout } = await run(
+    VENV_PYTHON,
+    [SEED_SCRIPT, "--scenario", scenario, "--project-dir", projectDir],
+    { cwd: REPO_ROOT },
+  );
+  // The script prints ``scenario=… pid=… pgid=… cmd=…``. If it ever
+  // stops seeding and starts no-opping, the spec's own count assertion
+  // is the backstop — but fail here first, where the reason is visible.
+  if (!/\bpid=\d+/.test(stdout)) {
+    throw new Error(`seed did not report a pid:\n${stdout}`);
+  }
+}
+
+async function cleanupOrphans(projectDir: string): Promise<void> {
+  // Kills every process group the rows reference. Best-effort: a
+  // failure here must not mask a test failure, but it must be visible.
+  try {
+    await run(VENV_PYTHON, [SEED_SCRIPT, "--cleanup", "--project-dir", projectDir], {
+      cwd: REPO_ROOT,
+    });
+  } catch (err) {
+    console.error(`orphan cleanup failed for ${projectDir}: ${String(err)}`);
+  }
+}
+
+export const test = base.extend<{
+  /**
+   * Set with ``test.use({ orphanScenario: "sleep" })`` by the specs that
+   * need one. Seeding requires owning the project directory, so asking
+   * for a scenario overrides ``IGNI_LIVE_WS``: we cannot seed a backend
+   * whose project we did not create.
+   */
+  orphanScenario: OrphanScenario | null;
+  liveBe: LiveBe;
+  liveWsUrl: string;
+}>({
+  orphanScenario: [null, { option: true }],
+
+  liveBe: async ({ orphanScenario }, use) => {
     const borrowed = process.env.IGNI_LIVE_WS;
-    if (borrowed) {
+    if (borrowed && !orphanScenario) {
       await use({ wsUrl: borrowed, projectDir: null, origin: "IGNI_LIVE_WS" });
       return;
     }
 
-    const why = whyNoBackend();
+    const why = whyNoBackend({ ...process.env, IGNI_LIVE_WS: undefined });
     if (why) test.skip(true, why);
 
     const projectDir = await fsp.mkdtemp(
       path.join(os.tmpdir(), "igni-live-be-"),
     );
     await writeStubConfig(projectDir);
+    // Before the backend starts, or its rehydrate pass has nothing to
+    // find and the orphan never appears.
+    if (orphanScenario) await seedOrphan(projectDir, orphanScenario);
 
     const proc: ChildProcessWithoutNullStreams = spawn(
       VENV_PYTHON,
@@ -201,6 +276,11 @@ export const test = base.extend<{ liveBe: LiveBe; liveWsUrl: string }>({
       await use({ wsUrl, projectDir, origin: "spawned" });
     } finally {
       await stop(proc);
+      // Order matters: the seeded processes outlive the backend by
+      // design (that is what makes them orphans), so they have to be
+      // killed explicitly, and while the rows naming their pids still
+      // exist.
+      if (orphanScenario) await cleanupOrphans(projectDir);
       await fsp.rm(projectDir, { recursive: true, force: true });
     }
   },

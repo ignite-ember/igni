@@ -10,28 +10,12 @@
  * Captures the watcher panel showing the orphan + clicks Kill,
  * verifies the row vanishes after the BE confirms termination.
  */
-import { test as base, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/live-be";
+import { runSlashCommand } from "./fixtures/composer";
 
-const test = base.extend<{ liveWsUrl: string }>({
-  liveWsUrl: async ({}, use) => {
-    const url = process.env.IGNI_LIVE_WS;
-    // A declared skip, not a forgotten one — see the @needs-seed tag
-    // above and ``reporters/skips.ts``. This test needs an orphan row
-    // in ``state.db`` and a live OS process matching its pid, seeded
-    // *before* the backend starts, so the fixture that spawns its own
-    // backend cannot serve it:
-    //
-    //   .venv/bin/python scripts/seed_watcher_e2e_orphan.py \\
-    //     --scenario sleep
-    //   # start the backend against the repo root, then
-    //   IGNI_LIVE_WS=ws://127.0.0.1:PORT npx playwright test e2e/watcher-orphan-live.spec.ts
-    //   .venv/bin/python scripts/seed_watcher_e2e_orphan.py --cleanup
-    if (!url) test.skip(true, "needs a seeded orphan: see the header");
-    await use(url as string);
-  },
-});
+test.use({ orphanScenario: "sleep" });
 
-test("orphan process surfaces after BE restart", { tag: "@needs-seed" }, async ({ page, liveWsUrl }) => {
+test("orphan process surfaces after BE restart", async ({ page, liveWsUrl }) => {
   await page.goto(`/?ws=${encodeURIComponent(liveWsUrl)}`);
   await expect(page.locator(".composer-editable")).toHaveAttribute(
     "data-placeholder",
@@ -42,10 +26,7 @@ test("orphan process surfaces after BE restart", { tag: "@needs-seed" }, async (
   // Open the watcher panel via the slash command. The real BE
   // handles ``/watcher`` → ``CommandAction.WATCHER`` which
   // App.tsx routes to ``setPanel({kind:"watcher"})``.
-  await page.locator(".composer-editable").click();
-  await page.locator(".composer-editable").type("/watcher");
-  await page.locator(".composer-editable").press("Enter");
-  await expect(page.locator(".drawer")).toBeVisible({ timeout: 10_000 });
+  await runSlashCommand(page, "/watcher", page.locator(".drawer"));
 
   // The seeded orphan should render exactly one row.
   await expect(page.locator(".watcher-row")).toHaveCount(1, { timeout: 5_000 });

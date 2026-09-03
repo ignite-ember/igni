@@ -12,6 +12,7 @@
  * shows running, stopped, and streaming-tail at once.
  */
 import { test, expect } from "./fixtures/embed";
+import { runSlashCommand } from "./fixtures/composer";
 
 test("WatcherPanel populated render", async ({ page, backend, appUrl }) => {
   // Seed the BE-side list with two running processes so the
@@ -56,8 +57,6 @@ test("WatcherPanel populated render", async ({ page, backend, appUrl }) => {
   // ``/watcher``. The fixture doesn't run a real BE command
   // handler, but the FE only needs the response envelope to
   // route through the action switch.
-  await page.locator(".composer-editable").click();
-  await page.locator(".composer-editable").type("/watcher");
   // We need to intercept the command request to reply with an
   // action result. The fixture's ``request()`` channel uses
   // correlated ids — wire a one-shot listener.
@@ -87,8 +86,7 @@ test("WatcherPanel populated render", async ({ page, backend, appUrl }) => {
       return orig.call(this, data);
     };
   });
-  await page.locator(".composer-editable").press("Enter");
-  await expect(page.locator(".drawer")).toBeVisible();
+  await runSlashCommand(page, "/watcher", page.locator(".drawer"));
 
   // Wait for the seed list to render.
   await expect(page.locator(".watcher-row")).toHaveCount(2);

@@ -12,6 +12,7 @@
  * "show me, not CI" on the strength of the screenshot alone. F128.
  */
 import { test, expect } from "./fixtures/live-be";
+import { runSlashCommand } from "./fixtures/composer";
 
 test("watcher panel shows live background processes", async ({
   page,
@@ -54,12 +55,9 @@ test("watcher panel shows live background processes", async ({
   );
 
   // ── 3. Open the watcher panel via the slash command.
-  await page.locator(".composer-editable").click();
-  await page.locator(".composer-editable").type("/watcher");
-  await page.locator(".composer-editable").press("Enter");
+  await runSlashCommand(page, "/watcher", page.locator(".drawer"));
 
   // The drawer renders with the title "Watcher".
-  await expect(page.locator(".drawer")).toBeVisible({ timeout: 5_000 });
 
   // Settle a beat so the seed RPC + any in-flight pushes land.
   await page.waitForTimeout(500);

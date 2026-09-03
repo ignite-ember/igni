@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 const E2E_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e");
 
 /** Tags that declare a skip. Must match ``e2e/reporters/skips.ts``. */
-const DECLARING_TAGS = ["@needs-seed", "@manual"];
+const DECLARING_TAGS = ["@manual"];
 
 function specFiles(): string[] {
   return readdirSync(E2E_DIR)
