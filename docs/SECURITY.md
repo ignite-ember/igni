@@ -272,7 +272,7 @@ Guardrails are applied via `AgnoFeatures.apply_to_agent()` — they attach as pr
 For organizations, administrators can enforce security policies that individual users cannot override:
 
 ```json
-// /Library/Application Support/EmberCode/managed-settings.json (macOS)
+// /Library/Application Support/igni/managed-settings.yaml (macOS)
 // /etc/ignite-ember/managed-settings.json (Linux)
 {
   "permissions": {
@@ -330,7 +330,7 @@ Control which MCP servers are allowed or required:
 safety:
   network:
     allowed_domains:
-      - "api.ignite-ember.sh"    # All Ember services (models, CodeIndex, embeddings)
+      - "api.ignite-ember.sh"    # All igni services (models, CodeIndex, embeddings)
       - "github.com"
     block_all_other: true          # deny-by-default for network access
 ```

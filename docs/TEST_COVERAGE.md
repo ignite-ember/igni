@@ -40,14 +40,14 @@
 
 | Source Module | Test File | Tests | What's Tested | What's Missing |
 |---|---|---:|---|---|
-| `tools/edit.py` | `test_tools.py` | 23 | `EmberEditTools`, file editing, pattern matching, whitespace handling | Multi-edit operations, encoding edge cases |
-| `tools/registry.py` | `test_tools.py` | (shared) | `ToolRegistry`, tool resolution, deduplication, factory methods | Dynamic tool addition at runtime |
-| `tools/search.py` | `test_tools.py` | (shared) | `GlobTools`, file globbing, pattern matching | Symlinks, permission errors |
-| `tools/notebook.py` | `test_notebook.py` | 17 | All 5 operations (read, read_cell, edit_cell, add_cell, remove_cell), error cases, metadata preservation, output clearing | Large notebooks, kernel metadata |
-| `tools/codeindex.py` | `test_codeindex.py` | 9 | `_get_git_remote`, search, item, tree, error handling | `codeindex_similar`, `codeindex_references`, rate limiting |
-| `tools/web.py` | `test_web_tools.py` | 6 | `fetch_url`, `fetch_json`, `_extract_text_from_html`, truncation | Redirect handling, timeout errors |
-| `tools/orchestrate.py` | `test_orchestrate.py` | 5 | `spawn_agent` (success, unknown, depth limit), `spawn_team` (basic) | Timeout handling, team modes (route, broadcast, tasks) |
-| `tools/schedule.py` | `test_schedule_tools.py` | 4 | `schedule_task`, `list_scheduled_tasks`, `cancel_scheduled_task` | Recurring task scheduling |
+| `src/ember_code/core/tools/edit.py` | `test_tools.py` | 23 | `EmberEditTools`, file editing, pattern matching, whitespace handling | Multi-edit operations, encoding edge cases |
+| `src/ember_code/core/tools/registry.py` | `test_tools.py` | (shared) | `ToolRegistry`, tool resolution, deduplication, factory methods | Dynamic tool addition at runtime |
+| `src/ember_code/core/tools/search.py` | `test_tools.py` | (shared) | `GlobTools`, file globbing, pattern matching | Symlinks, permission errors |
+| `src/ember_code/core/tools/notebook/` | `test_notebook.py` | 17 | All 5 operations (read, read_cell, edit_cell, add_cell, remove_cell), error cases, metadata preservation, output clearing | Large notebooks, kernel metadata |
+| `src/ember_code/core/tools/codeindex/` | `test_codeindex.py` | 9 | `_get_git_remote`, search, item, tree, error handling | `codeindex_similar`, `codeindex_references`, rate limiting |
+| `src/ember_code/core/tools/web.py` | `test_web_tools.py` | 6 | `fetch_url`, `fetch_json`, `_extract_text_from_html`, truncation | Redirect handling, timeout errors |
+| `src/ember_code/core/tools/orchestrate.py` | `test_orchestrate.py` | 5 | `spawn_agent` (success, unknown, depth limit), `spawn_team` (basic) | Timeout handling, team modes (route, broadcast, tasks) |
+| `src/ember_code/core/tools/schedule.py` | `test_schedule_tools.py` | 4 | `schedule_task`, `list_scheduled_tasks`, `cancel_scheduled_task` | Recurring task scheduling |
 
 ### Skills (22 tests) — Good Coverage
 

@@ -207,13 +207,15 @@ In the other direction, igni acts as an MCP *client*: configure external MCP ser
 
 ### Knowledge Base
 
-Built-in vector knowledge base powered by ChromaDB and the Ember embeddings API:
+Built-in vector knowledge base powered by ChromaDB and a local embedding model (all-MiniLM-L6-v2 — no API call, nothing leaves the machine):
 
 ```yaml
 knowledge:
   enabled: true
   collection_name: "my_project"
-  embedder: "local"             # local SentenceTransformer (or "ember" for cloud)
+  # Embeddings are local (all-MiniLM-L6-v2) and not configurable — this
+  # line offered a choice between a local model and a cloud one, and
+  # `KnowledgeConfig` has no `embedder` field at all.
 ```
 
 Add content via slash commands: `/knowledge add <url|path|text>`, search with `/knowledge search <query>`. Agents can search the knowledge base automatically during execution.

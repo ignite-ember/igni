@@ -38,7 +38,7 @@ from ember_code.core.init_templates import (
     IGNI_MD_TEMPLATE,
     PROJECT_CONFIG_TEMPLATE,
 )
-from ember_code.core.paths import CONFIG_DIR
+from ember_code.core.paths import CONFIG_DIR, PROJECT_CONTEXT_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +153,7 @@ class ProjectInitializer(BaseModel):
 
     def _write_ember_md(self) -> None:
         """Write a starter ``ember.md`` if one doesn't exist."""
-        path = self.project_dir / "ember.md"
+        path = self.project_dir / PROJECT_CONTEXT_FILE
         if not path.exists():
             path.write_text(IGNI_MD_TEMPLATE)
 

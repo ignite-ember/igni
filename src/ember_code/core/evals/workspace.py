@@ -114,7 +114,7 @@ class EvalWorkspace:
         (e.g. ``evals/fixtures/`` for committed datasets, or
         ``.igni/evals/`` for user-authored ones).
         """
-        work_dir = Path(tempfile.mkdtemp(prefix="ember-eval-"))
+        work_dir = Path(tempfile.mkdtemp(prefix="igni-eval-"))
         if not self._fixtures:
             return work_dir
 

@@ -44,6 +44,12 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+# User-rules path constants — same pattern. Tests patch these on
+# THIS module (``monkeypatch.setattr(context, "USER_RULES_PATH", ...)``)
+# and the loader's ``load_user`` method reads them off ``context``
+# at call time.
+from ember_code.core.paths import PROJECT_CONTEXT_FILE
+
 # Frontmatter parsing — kept as the legacy private alias so test
 # monkeypatches against ``context._parse_frontmatter`` still resolve.
 from ember_code.core.utils.context_frontmatter import (  # noqa: F401
@@ -95,11 +101,6 @@ from ember_code.core.utils.context_schemas import (
     RulesSection,
     SubdirectoryRules,
 )
-
-# User-rules path constants — same pattern. Tests patch these on
-# THIS module (``monkeypatch.setattr(context, "USER_RULES_PATH", ...)``)
-# and the loader's ``load_user`` method reads them off ``context``
-# at call time.
 from ember_code.core.utils.context_user import (
     CLAUDE_USER_RULES_DIR,
     USER_RULES_DIR,
@@ -223,7 +224,7 @@ def load_subdirectory_rules(
 
 def load_project_context(
     project_dir: Path,
-    project_file: str = "ember.md",
+    project_file: str = PROJECT_CONTEXT_FILE,
     working_dir: Path | None = None,
     read_claude_md: bool = True,
 ) -> str:

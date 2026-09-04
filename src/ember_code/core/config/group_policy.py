@@ -289,7 +289,7 @@ class GroupPolicyCache:
     Plugins are special-cased: an entry with ``source_url`` is
     installed via :class:`PluginInstaller` into the new ``group-policy``
     root (``<data_dir>/group-policy/plugins/``, priority 4.5 between
-    project-ember and managed-ember). An entry without ``source_url``
+    project-igni and managed-igni). An entry without ``source_url``
     falls back to writing its YAML to the legacy path so old entry
     shapes keep working until they're migrated.
 

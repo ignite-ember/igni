@@ -75,7 +75,7 @@ ignite-ember
 On first launch, igni:
 1. Copies 13 built-in agents to `.igni/agents/`
 2. Copies skills to `.igni/skills/`
-3. Creates `ember.md` template and `.igni/config.yaml`
+3. Creates `igni.md` template and `.igni/config.yaml`
 4. You're ready to work
 
 ---
@@ -256,7 +256,7 @@ permissions:
 
 ### Project Instructions
 
-Create an `ember.md` in your project root (like `CLAUDE.md` for Claude Code):
+Create an `igni.md` in your project root (like `CLAUDE.md` for Claude Code):
 
 ```markdown
 # Project: My App
@@ -458,7 +458,7 @@ All flags at a glance:
 
 On startup, igni shows contextual tips based on your configuration. For example:
 
-- *Create an `ember.md` in your project root to give agents project-specific context.*
+- *Create an `igni.md` in your project root to give agents project-specific context.*
 - *Drop a `.md` file in `.igni/agents/` to create a project-specific agent — no code needed.*
 - *Use `--verbose` to see which agents and team mode the Orchestrator picks.*
 

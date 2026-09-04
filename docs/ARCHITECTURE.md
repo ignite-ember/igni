@@ -230,7 +230,7 @@ By default, igni loads agents and skills from both its own directories and Claud
 Each igni session:
 
 1. **First run?** — if `.igni/agents/` doesn't exist, run the [onboarding flow](ONBOARDING.md): create default agents, ask about the user's work, fetch project context from CodeIndex, propose tailored agents
-2. **Loads** — agent pool (from Ember/Claude/Codex directories), user memory, project context (`ember.md`), MCP servers, session history
+2. **Loads** — agent pool (from igni/Claude/Codex directories), user memory, project context (`igni.md`), MCP servers, session history
 3. **Runs** — interactive loop: user message → Orchestrator → team/agent → response
 3. **Persists** — updated memory, session state to SQLite
 4. **Cleans up** — MCP connections, temp files, background processes
@@ -245,18 +245,25 @@ igni includes a built-in vector knowledge base powered by ChromaDB and a custom 
 
 ### EmberEmbedder
 
-A custom Agno `Embedder` that calls the Ember server's `/v1/embeddings` endpoint, proxying to a text2vec-transformers model (384 dimensions). This keeps embedding generation server-side — no local GPU required.
+A custom Agno `Embedder` that calls the igni server's `/v1/embeddings` endpoint, proxying to a text2vec-transformers model (384 dimensions). This keeps embedding generation server-side — no local GPU required.
 
 ### KnowledgeManager
 
 Creates an Agno `Knowledge` instance backed by ChromaDB. Manages document ingestion, search, and status. All data models are Pydantic: `KnowledgeAddResult`, `KnowledgeSearchResponse`, `KnowledgeFilter`, `KnowledgeStatus`.
 
 ```yaml
+# .igni/config.yaml
 knowledge:
   enabled: true
   collection_name: "my_project"
-  embedder: "ember"
 ```
+
+There is no `embedder` key. This example carried one, naming a cloud
+embedder that does not exist either, and `KnowledgeConfig` has no such
+field — embeddings are local
+(all-MiniLM-L6-v2, see `src/ember_code/core/code_index/embedder.py`) and
+not selectable. The real fields are `enabled`, `collection_name`,
+`auto_sync`, `max_results`, `share` and `share_file`.
 
 Add content via `/knowledge add <url|path|text>`, search with `/knowledge search <query>`. Agents can search the knowledge base automatically during execution.
 

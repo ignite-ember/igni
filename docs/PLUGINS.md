@@ -19,9 +19,9 @@ igni scans four roots in priority order (later wins same-name collisions):
 | Priority | Path | Use case |
 |---:|---|---|
 | 1 | `~/.claude/plugins/` | Pick up whatever Claude Code installed |
-| 2 | `~/.igni/plugins/` | Ember-managed user-global plugins (where `/plugin install` lands) |
+| 2 | `~/.igni/plugins/` | igni-managed user-global plugins (where `/plugin install` lands) |
 | 3 | `<project>/.claude/plugins/` | Project-local Claude plugins |
-| 4 | `<project>/.igni/plugins/` | Project-local Ember plugins (committed alongside the repo) |
+| 4 | `<project>/.igni/plugins/` | Project-local igni plugins (committed alongside the repo) |
 
 A "plugin" = any directory under one of these roots that contains `.claude-plugin/plugin.json`. Anything else is ignored silently — leaves room for `README.md`, gitkeeps, scratch notes, etc.
 
@@ -112,7 +112,7 @@ igni reads Claude Code's `marketplace.json` schema, so any catalog built for Cla
 
 ```text
 ┌─ Plugins ────────────────────────────────────────────────────┐
-│ ▸ ● git-extras           v1.2.0  · user-ember · S A          │
+│ ▸ ● git-extras           v1.2.0  · user-igni · S A          │
 │   ○ slack-tools          v0.9.1  · user-claude · S           │
 │                                                              │
 │ ↑/↓ navigate · Space toggle · u update · r remove ·          │
@@ -184,7 +184,7 @@ Add `skills/`, `agents/`, `hooks/hooks.json`, `.mcp.json`, `tools/<file>.py` as 
 ```text
 mkdir -p ~/.igni/plugins/my-plugin/.claude-plugin
 # … drop your files in …
-# restart your ember session
+# restart your igni session
 /plugins  # should list `my-plugin`
 ```
 
@@ -192,7 +192,7 @@ Or commit the directory under `<project>/.igni/plugins/my-plugin/` to ship it al
 
 ### Cross-tool compatibility
 
-Plugins built for Claude Code work in igni with no changes — same manifest, same `skills/` / `agents/` / `hooks/` / `.mcp.json` shapes. Plugins built for igni with `tools/<file>.py` Python tools are an Ember-specific extension and won't be picked up by Claude Code (which has no equivalent loader), but the rest of the plugin still works there.
+Plugins built for Claude Code work in igni with no changes — same manifest, same `skills/` / `agents/` / `hooks/` / `.mcp.json` shapes. Plugins built for igni with `tools/<file>.py` Python tools are an igni-specific extension and won't be picked up by Claude Code (which has no equivalent loader), but the rest of the plugin still works there.
 
 ## Limitations (v1)
 

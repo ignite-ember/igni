@@ -16,7 +16,7 @@ from ember_code.core.init import (
     ProjectInitializer,
     initialize_project,
 )
-from ember_code.core.paths import CONFIG_DIR
+from ember_code.core.paths import CONFIG_DIR, PROJECT_CONTEXT_FILE
 
 # All tests patch Path.home() so that ~/.igni/ writes go to tmp_path
 # instead of the real home directory.
@@ -303,19 +303,48 @@ class TestHookProvisioning:
         assert "hooks" in settings
 
 
-class TestEmberMd:
-    def test_creates_ember_md(self, tmp_path):
+class TestTheProjectContextFile:
+    """``igni init`` writes the project's context file.
+
+    It wrote ``ember.md`` — the directory rename to ``.igni`` had
+    stopped at the directory, so a product called igni created a file
+    called ember in every project a customer initialised. The name comes
+    from ``paths.PROJECT_CONTEXT_FILE`` now, and ``ember.md`` is still
+    *read* the same way ``CLAUDE.md`` is.
+    """
+
+    def test_it_creates_the_project_context_file(self, tmp_path):
         with _patch_home(tmp_path):
             initialize_project(tmp_path)
-        path = tmp_path / "ember.md"
+        path = tmp_path / PROJECT_CONTEXT_FILE
         assert path.exists()
         assert "Project Context" in path.read_text()
 
-    def test_does_not_overwrite_existing_ember_md(self, tmp_path):
-        (tmp_path / "ember.md").write_text("my custom context")
+    def test_it_is_named_igni_not_ember(self, tmp_path):
+        """The point of the rename, pinned. Asserting the constant alone
+        would pass if somebody set it back."""
         with _patch_home(tmp_path):
             initialize_project(tmp_path)
-        assert (tmp_path / "ember.md").read_text() == "my custom context"
+
+        assert (tmp_path / "igni.md").exists()
+        assert not (tmp_path / "ember.md").exists()
+
+    def test_it_does_not_overwrite_an_existing_one(self, tmp_path):
+        (tmp_path / PROJECT_CONTEXT_FILE).write_text("my custom context")
+        with _patch_home(tmp_path):
+            initialize_project(tmp_path)
+        assert (tmp_path / PROJECT_CONTEXT_FILE).read_text() == "my custom context"
+
+    def test_an_existing_ember_md_is_still_read(self, tmp_path):
+        """A team with one in git keeps it working — it joins the list
+        of context filenames rather than being migrated, the same way
+        ``CLAUDE.md`` has always been on that list."""
+        from ember_code.core.paths import PROJECT_CONTEXT_FILES
+
+        assert "ember.md" in PROJECT_CONTEXT_FILES
+        assert PROJECT_CONTEXT_FILES[0] == "igni.md", (
+            "ours has to come first, or a project holding both gets the old one"
+        )
 
 
 class TestChecksumUpdate:

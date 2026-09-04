@@ -57,7 +57,7 @@ You are an expert code analyst specializing in tracing and understanding feature
 Provide a complete understanding of how a specific feature works by tracing its implementation from entry points to data storage.
 ```
 
-### With Ember Extensions
+### With igni extensions
 
 ```markdown
 ---
@@ -66,7 +66,7 @@ description: Deeply analyzes existing codebase features by tracing execution pat
 tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, WebSearch
 color: yellow
 
-# Ember extensions (ignored by Claude Code, used by igni)
+# igni extensions (ignored by Claude Code, used by igni)
 reasoning: false
 tags:
   - search
@@ -126,7 +126,7 @@ igni uses the **same tool names as Claude Code**. Agent files are fully cross-co
 | `Orchestrate` | `OrchestrateTools()` | Spawn sub-teams (included by default; set `can_orchestrate: false` to disable) |
 | `MCP:<server>` | `MCPTools(...)` | Tools from a named MCP server |
 
-Drop a Claude Code agent file into `.igni/agents/` — it works immediately. All agents can orchestrate (spawn sub-teams) by default. Optionally add Ember extensions like `tags`, `reasoning`, or `can_orchestrate: false` to restrict an agent.
+Drop a Claude Code agent file into `.igni/agents/` — it works immediately. All agents can orchestrate (spawn sub-teams) by default. Optionally add igni extensions like `tags`, `reasoning`, or `can_orchestrate: false` to restrict an agent.
 
 ---
 
@@ -164,13 +164,13 @@ Within the same scope, igni directories take precedence over Claude Code, which 
 
 - **Claude Code agents** — loaded natively. Same `.md` + YAML frontmatter format. No conversion needed.
 - **Codex agents** — Codex defines agent roles in `config.toml` and instructions in `AGENTS.md`. The loader parses these into the same internal representation.
-- **igni agents** — native format. Claude Code compatible fields + Ember extensions (tags, reasoning, can_orchestrate).
+- **igni agents** — native format. Claude Code compatible fields + igni extensions (tags, reasoning, can_orchestrate).
 
 If you're coming from Claude Code or Codex, your existing agents are picked up automatically — zero migration. See [Migration](MIGRATION.md) for details.
 
 ### Built-in Agents
 
-igni ships with foundational agents in Claude Code compatible format plus Ember extensions. Override or extend them freely.
+igni ships with foundational agents in Claude Code compatible format plus igni extensions. Override or extend them freely.
 
 **explorer.md** — Read-only codebase search and analysis.
 ```yaml
@@ -415,7 +415,7 @@ description: Creates and modifies code files with minimal focused changes. Can s
 tools: Read, Write, Edit, Bash, Glob, Grep
 color: blue
 
-# Ember extensions
+# igni extensions
 tags: [coding, editing, file-write]
 # can_orchestrate is true by default — this agent can spawn sub-teams
 ---
@@ -697,7 +697,7 @@ Prefer docker-compose over raw docker commands when a compose file exists.
 
 This file works in both Claude Code and igni. In igni, the Orchestrator uses the description to decide when to include this agent.
 
-### With Ember Extensions (MCP + orchestration)
+### With igni extensions (MCP + orchestration)
 
 ```markdown
 ---
@@ -706,7 +706,7 @@ description: Database operations including queries, migrations, schema design, a
 tools: Read, Write, Grep, Glob, LS
 color: green
 
-# Ember extensions
+# igni extensions
 reasoning: true
 reasoning_max_steps: 5
 tags: [database, sql, migration, schema]
@@ -735,7 +735,7 @@ description: Security-focused code review that checks for OWASP Top 10 vulnerabi
 tools: Glob, Grep, LS, Read, WebSearch
 color: red
 
-# Ember extensions
+# igni extensions
 reasoning: true
 tags: [security, review, audit, read-only]
 ---

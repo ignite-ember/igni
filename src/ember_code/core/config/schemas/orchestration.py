@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from ember_code.core.paths import PROJECT_CONTEXT_FILE
+
 
 class OrchestrationConfig(BaseModel):
     max_nesting_depth: int = 5
@@ -52,7 +54,7 @@ class SchedulerConfig(BaseModel):
 
 
 class ContextConfig(BaseModel):
-    project_file: str = "ember.md"
+    project_file: str = PROJECT_CONTEXT_FILE
     ignore_patterns: list[str] = Field(
         default_factory=lambda: [
             "node_modules/",

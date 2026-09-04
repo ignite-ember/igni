@@ -34,6 +34,11 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from ember_code.core.paths import (
+    PROJECT_CONTEXT_FILES_CROSS_TOOL,
+    RULES_FILES,
+    RULES_FILES_CROSS_TOOL,
+)
 from ember_code.core.utils.context_frontmatter import (
     matches_paths,
     parse_frontmatter,
@@ -81,14 +86,12 @@ def rules_filenames(read_claude_md: bool = True) -> tuple[str, ...]:
     each level so their content takes precedence in any subsequent
     string concatenation that the model reads top-to-bottom.
     """
-    if read_claude_md:
-        return ("ember.md", "ember.local.md", "CLAUDE.md", "CLAUDE.local.md")
-    return ("ember.md", "ember.local.md")
+    return RULES_FILES_CROSS_TOOL if read_claude_md else RULES_FILES
 
 
 def read_rules_dir(
     directory: Path,
-    filenames: tuple[str, ...] = ("ember.md", "CLAUDE.md"),
+    filenames: tuple[str, ...] = PROJECT_CONTEXT_FILES_CROSS_TOOL,
     allowed_root: Path | None = None,
 ) -> str:
     """Read rules from a directory, checking all candidate filenames.

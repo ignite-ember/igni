@@ -138,7 +138,7 @@ def test_discovers_plugin_with_manifest(tmp_path: Path) -> None:
 
     plugins = loader.list_plugins()
     assert [p.name for p in plugins] == ["alpha"]
-    assert plugins[0].source.root == "user-ember"
+    assert plugins[0].source.root == "user-igni"
 
 
 def test_skips_directories_without_manifest(tmp_path: Path) -> None:
@@ -175,14 +175,14 @@ def test_warns_and_skips_malformed_manifest(tmp_path: Path) -> None:
 
 
 def test_project_ember_wins_over_user_claude(tmp_path: Path) -> None:
-    """Same-named plugin in two roots: project-ember (priority 4)
+    """Same-named plugin in two roots: project-igni (priority 4)
     beats user-claude (priority 1). This is the highest-vs-lowest
     pairing; intermediate priorities exercised in other tests."""
     user_claude = tmp_path / "home" / ".claude" / "plugins"
     project_ember = tmp_path / "proj" / CONFIG_DIR / "plugins"
 
     _write_plugin(user_claude, "shared", description="from user-claude")
-    _write_plugin(project_ember, "shared", description="from project-ember")
+    _write_plugin(project_ember, "shared", description="from project-igni")
 
     loader = PluginLoader()
     with patch.object(Path, "home", return_value=tmp_path / "home"):
@@ -190,8 +190,8 @@ def test_project_ember_wins_over_user_claude(tmp_path: Path) -> None:
 
     plugin = loader.get("shared")
     assert plugin is not None
-    assert plugin.source.root == "project-ember"
-    assert plugin.manifest.description == "from project-ember"
+    assert plugin.source.root == "project-igni"
+    assert plugin.manifest.description == "from project-igni"
 
 
 def test_project_claude_beats_user_ember(tmp_path: Path) -> None:
@@ -201,7 +201,7 @@ def test_project_claude_beats_user_ember(tmp_path: Path) -> None:
     user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     project_claude = tmp_path / "proj" / ".claude" / "plugins"
 
-    _write_plugin(user_ember, "shared", description="from user-ember")
+    _write_plugin(user_ember, "shared", description="from user-igni")
     _write_plugin(project_claude, "shared", description="from project-claude")
 
     loader = PluginLoader()
@@ -221,7 +221,7 @@ def test_user_ember_beats_user_claude(tmp_path: Path) -> None:
     user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
 
     _write_plugin(user_claude, "shared", description="from user-claude")
-    _write_plugin(user_ember, "shared", description="from user-ember")
+    _write_plugin(user_ember, "shared", description="from user-igni")
 
     loader = PluginLoader()
     with patch.object(Path, "home", return_value=tmp_path / "home"):
@@ -229,7 +229,7 @@ def test_user_ember_beats_user_claude(tmp_path: Path) -> None:
 
     plugin = loader.get("shared")
     assert plugin is not None
-    assert plugin.source.root == "user-ember"
+    assert plugin.source.root == "user-igni"
 
 
 # ── Bundled-contents inventory ──────────────────────────────────────

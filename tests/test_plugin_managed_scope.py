@@ -96,7 +96,7 @@ class TestPlatformManagedPluginsRoot:
 class TestManagedDiscovery:
     def test_managed_root_loaded(self, tmp_path, monkeypatch):
         """A plugin under ``<managed>/.igni/plugins/`` is
-        discovered with ``source.root == "managed-ember"`` and
+        discovered with ``source.root == "managed-igni"`` and
         ``is_managed == True``."""
         managed = tmp_path / "managed"
         _make_plugin(managed / CONFIG_DIR / "plugins", "org-policy")
@@ -111,7 +111,7 @@ class TestManagedDiscovery:
 
         plugin = loader.get("org-policy")
         assert plugin is not None
-        assert plugin.source.root == "managed-ember"
+        assert plugin.source.root == "managed-igni"
         assert plugin.is_managed is True
 
     def test_managed_claude_namespace(self, tmp_path, monkeypatch):
@@ -218,7 +218,7 @@ class TestSetPluginEnabledRefusesManaged:
         managed_plugin = PluginDefinition(
             manifest=PluginManifest(name="org-policy"),
             source=PluginSource(
-                root="managed-ember",
+                root="managed-igni",
                 path=tmp_path / "managed" / CONFIG_DIR / "plugins" / "org-policy",
                 priority=6,
             ),
@@ -245,7 +245,7 @@ class TestSetPluginEnabledRefusesManaged:
         managed_plugin = PluginDefinition(
             manifest=PluginManifest(name="org-policy"),
             source=PluginSource(
-                root="managed-ember",
+                root="managed-igni",
                 path=tmp_path / "managed",
                 priority=6,
             ),

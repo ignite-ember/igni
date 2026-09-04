@@ -44,11 +44,11 @@ Plus `test_permission_eval.py::test_scoped_deny_survives_bypass_permissions` + `
 
 ## Settings & policy (rows 10, 11) ✅ VERIFIED
 
-**Status:** Full 5-tier precedence pinned by automated tests + the existing per-tier coverage. Two live touchpoints (writing `/Library/Application Support/Ember/managed-settings.yaml` with sudo, and verifying a managed `CLAUDE.md` shows up in agent instructions on session start) are covered by `TestFiveTierPrecedence` + `TestManagedPolicyInContextOutput` respectively — no manual sudo step required for the automated pass.
+**Status:** Full 5-tier precedence pinned by automated tests + the existing per-tier coverage. Two live touchpoints (writing `/Library/Application Support/igni/managed-settings.yaml` with sudo, and verifying a managed `CLAUDE.md` shows up in agent instructions on session start) are covered by `TestFiveTierPrecedence` + `TestManagedPolicyInContextOutput` respectively — no manual sudo step required for the automated pass.
 
 **10. Settings precedence (5 tiers)** — `tests/test_settings.py::TestFiveTierPrecedence` (4 tests, pins managed > CLI > project.local > project > user > defaults in one stack), `TestLoadSettings::{test_user_global_config_loaded, test_project_beats_user_global}`, plus the existing per-tier tests. Also exercises the `settings.json` reader added in commit `ad58a0a` so user-tier `~/.igni/settings.json` actually reaches `PermissionEvaluator`.
 
-**11. Managed-policy CLAUDE.md** — `tests/test_context.py::TestManagedPolicyInContextOutput::test_managed_section_appears_first` asserts the `# Managed Policy` section appears BEFORE any project rules in `load_project_context` output. `TestLoadManagedRules` (6 tests) covers the file-system layer: ember.md/CLAUDE.md reads, @-import scoping to the managed dir (security), unknown-platform fallback, CLAUDE.md disable flag.
+**11. Managed-policy CLAUDE.md** — `tests/test_context.py::TestManagedPolicyInContextOutput::test_managed_section_appears_first` asserts the `# Managed Policy` section appears BEFORE any project rules in `load_project_context` output. `TestLoadManagedRules` (6 tests) covers the file-system layer: igni.md/CLAUDE.md reads, @-import scoping to the managed dir (security), unknown-platform fallback, CLAUDE.md disable flag.
 
 ---
 
@@ -56,7 +56,7 @@ Plus `test_permission_eval.py::test_scoped_deny_survives_bypass_permissions` + `
 
 **Status:** Already pinned by 127 automated tests across `test_context.py`, `test_rules_index.py`, and `test_hooks_cross_tool.py`. The interesting integration points — managed-policy ordering in agent instructions, path-scoped activation, @-import depth cap + code-span skipping, dual `.igni/` + `.claude/` rules namespace, MEMORY.md ordering in the context block — all have direct assertions.
 
-**12. CLAUDE.md root + subdir hierarchy** — `test_rules_index.py::{test_subdirectory_rules_found, test_multiple_levels_returned_shallowest_first, test_claude_md_picked_up_when_enabled, test_both_ember_and_claude_md_load_in_same_dir, test_each_file_returned_at_most_once}` + `test_context.py::TestLoadSubdirectoryRules::{test_collects_subdirectory_rules, test_collects_claude_md_from_subdirectories}`. Walks ember.md + CLAUDE.md from root and every nested subdir, asserts shallowest-first ordering and per-file dedup.
+**12. CLAUDE.md root + subdir hierarchy** — `test_rules_index.py::{test_subdirectory_rules_found, test_multiple_levels_returned_shallowest_first, test_claude_md_picked_up_when_enabled, test_both_ember_and_claude_md_load_in_same_dir, test_each_file_returned_at_most_once}` + `test_context.py::TestLoadSubdirectoryRules::{test_collects_subdirectory_rules, test_collects_claude_md_from_subdirectories}`. Walks igni.md + CLAUDE.md from root and every nested subdir, asserts shallowest-first ordering and per-file dedup.
 
 **13. .local.md overrides** — `test_rules_index.py::{test_local_md_override_loads_after_committed, test_local_md_alone_still_loads, test_claude_local_md_picked_up, test_local_dedup_across_calls}` + `test_context.py::TestLocalOverrides`. Pins that ``.local.md`` loads AFTER the committed file (so its content overrides) and survives the dedup pass across repeated RulesIndex calls.
 
@@ -68,7 +68,7 @@ Plus `test_permission_eval.py::test_scoped_deny_survives_bypass_permissions` + `
 
 **17. Cross-tool rules reading** — `test_context.py::TestLoadUserRules::{test_reads_claude_rules_when_enabled, test_skips_claude_rules_when_disabled}` for user-tier `~/.claude/rules/`; `test_rules_index.py::{test_path_scoped_claude_rules_dir, test_path_scoped_claude_rules_skipped_when_cross_tool_disabled, test_dual_namespace_independent_rules_both_fire}` for the project tier `<proj>/.claude/rules/` + dual-namespace coexistence with `<proj>/.igni/rules/`. Plus `test_hooks_cross_tool.py` (the test plan's mis-citation — that file covers HOOK cross-tool, not rules; the rule cases live in test_context/test_rules_index as above).
 
-**18. Auto-memory MEMORY.md index** — `test_context.py::TestLoadMemoryIndex` (8 tests, line/byte caps + UTF-8 boundary + Claude fallback + ember-wins-over-claude) + `TestMemoryIndexInContextOutput::test_memory_section_after_managed_before_user` (pins the section ordering: Managed Policy → Memory Index → User Rules), `TestProjectMemorySlug` (slug derivation from project path), `TestEnsureMemoryDir` (creation + idempotence + OSError-swallow), `TestMemoryWritebackInstructions` (frontmatter shape + memory-dir path + all four memory types named in the writeback instructions).
+**18. Auto-memory MEMORY.md index** — `test_context.py::TestLoadMemoryIndex` (8 tests, line/byte caps + UTF-8 boundary + Claude fallback + igni-wins-over-claude) + `TestMemoryIndexInContextOutput::test_memory_section_after_managed_before_user` (pins the section ordering: Managed Policy → Memory Index → User Rules), `TestProjectMemorySlug` (slug derivation from project path), `TestEnsureMemoryDir` (creation + idempotence + OSError-swallow), `TestMemoryWritebackInstructions` (frontmatter shape + memory-dir path + all four memory types named in the writeback instructions).
 
 ---
 
@@ -76,7 +76,7 @@ Plus `test_permission_eval.py::test_scoped_deny_survives_bypass_permissions` + `
 
 **Status:** Pinned by 131 automated tests across 7 files + a contract test in `clients/web/src/components/Composer.test.ts` that the FE autocomplete menu lists every BE handler.
 
-**19. Markdown-authored commands** — `tests/test_markdown_commands.py` (29 tests: frontmatter parsing, discovery in `.igni/commands/` + `.claude/commands/` across project + user tiers, project-overrides-user collisions, ember-beats-claude at same tier) + `tests/test_handle_markdown_command.py` (12 tests: dispatch integration, `$ARGUMENTS` rendering, exception fall-through, cross-tool toggle).
+**19. Markdown-authored commands** — `tests/test_markdown_commands.py` (29 tests: frontmatter parsing, discovery in `.igni/commands/` + `.claude/commands/` across project + user tiers, project-overrides-user collisions, igni-beats-claude at same tier) + `tests/test_handle_markdown_command.py` (12 tests: dispatch integration, `$ARGUMENTS` rendering, exception fall-through, cross-tool toggle).
 
 **20. `slash_commands` RPC** — `tests/test_slash_commands_rpc.py` (12 tests). Asserts the RPC returns built-ins + markdown commands + user-invocable skills in one response, honours the cross-tool toggle for `.claude/` markdown commands, excludes non-user-invocable skills.
 

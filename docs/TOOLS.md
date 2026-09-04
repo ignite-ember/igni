@@ -293,13 +293,15 @@ Git operations are handled via `EmberShellTools` with git/gh commands. The Git A
 
 ### Knowledge (KnowledgeManager)
 
-Built-in vector knowledge base powered by ChromaDB and the Ember embeddings API. Unlike CodeIndex (which provides pre-processed semantic code intelligence), the Knowledge system is a general-purpose document store that users can populate with any content.
+Built-in vector knowledge base powered by ChromaDB and a local embedding model (all-MiniLM-L6-v2 — no API call, nothing leaves the machine). Unlike CodeIndex (which provides pre-processed semantic code intelligence), the Knowledge system is a general-purpose document store that users can populate with any content.
 
 ```yaml
 knowledge:
   enabled: true
   collection_name: "my_project"
-  embedder: "ember"            # uses Ember server's /v1/embeddings (384-dim)
+  # No `embedder` key: embeddings are local (all-MiniLM-L6-v2, 384-dim)
+  # and not selectable. This line named a cloud embedder and an
+  # `/v1/embeddings` endpoint, neither of which exists.
 ```
 
 **Slash commands:**
@@ -308,7 +310,7 @@ knowledge:
 - `/knowledge search <query>` — search the knowledge base
 
 **How it works:**
-1. `EmberEmbedder` calls the Ember server's `/v1/embeddings` endpoint (proxying to text2vec-transformers, 384 dimensions)
+1. `EmberEmbedder` calls the igni server's `/v1/embeddings` endpoint (proxying to text2vec-transformers, 384 dimensions)
 2. Documents are chunked and stored in ChromaDB with vector embeddings
 3. Agents can search the knowledge base automatically during execution via Agno's `Knowledge` integration
 

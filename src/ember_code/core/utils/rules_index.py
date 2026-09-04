@@ -22,7 +22,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ember_code.core.paths import CONFIG_DIR
+from ember_code.core.paths import CONFIG_DIR, RULES_FILES, RULES_FILES_CROSS_TOOL
 from ember_code.core.utils.context_frontmatter import parse_frontmatter
 from ember_code.core.utils.context_imports import resolve_imports
 
@@ -81,12 +81,11 @@ _EXCLUDED_DIR_NAMES = frozenset(
 
 
 def _rules_filenames(read_claude_md: bool) -> tuple[str, ...]:
-    # Keep in lockstep with ``context._rules_filenames`` — both
-    # surfaces should see the same set of variants (incl. the
-    # ``.local`` override siblings).
-    if read_claude_md:
-        return ("ember.md", "ember.local.md", "CLAUDE.md", "CLAUDE.local.md")
-    return ("ember.md", "ember.local.md")
+    # Both surfaces see the same variants because both read the same
+    # tuple. This carried a comment asking a human to "keep in lockstep
+    # with ``context._rules_filenames``", which is the arrangement that
+    # drifts.
+    return RULES_FILES_CROSS_TOOL if read_claude_md else RULES_FILES
 
 
 class RulesIndex:

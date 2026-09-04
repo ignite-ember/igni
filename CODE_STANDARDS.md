@@ -1,4 +1,4 @@
-# Ember Code — how the code is supposed to be written
+# igni Code — how the code is supposed to be written
 
 Companion to `CODE_AUDIT.md`. That doc grades what exists; this one
 prescribes what to write. Concrete patterns, drawn from the A-tier

@@ -22,18 +22,33 @@ igni needs an LLM to run. Models are resolved through a **config-driven registry
 
 The registry has two layers:
 
-1. **Built-in models** — ship with igni, route through the Ember hosted endpoint
-2. **Custom models (BYOM)** — user-defined entries that override or extend the built-ins
+1. **Models your server advertises** — fetched from `/v1/chat/models` on
+   the igni server you are signed in to, and merged into the registry at
+   session start. Yours, not a vendor's: the URL comes from `api_url`,
+   which has no default.
+2. **Custom models (BYOM)** — entries you write, which always win. A
+   same-named entry from the server is a no-op, so pinning a different
+   timeout or provider survives every startup merge.
+
+**There is no built-in registry.** This section said "Built-in registry
+(hardcoded in defaults.py, shown here for reference)" and showed a
+MiniMax entry pointing at a vendor host. There is no `defaults.py`,
+`Settings().models.registry` is empty, and nothing ships a model
+pointing anywhere — which is what being self-hosted means here. An
+install that has never signed in has whatever you wrote and nothing
+else.
+
+A fetched entry looks like this once merged:
 
 ```yaml
-# Built-in registry (hardcoded in defaults.py, shown here for reference)
+# .igni/config.yaml
 models:
   registry:
     MiniMax-M2.7:
       provider: openai_like
       model_id: MiniMax-Text-01
-      url: https://api.ignite-ember.sh/v1
-      api_key: cloud_token    # uses Ember Cloud login credentials
+      url: https://api.your-igni-server.example/v1
+      api_key: cloud_token    # use the credentials from `igni login`
       context_window: 204800
       vision: false
 ```
@@ -50,26 +65,26 @@ When an agent references `model: <name>`:
 
 ```
 1. Is <name> in models.registry (user config)?     → use it
-2. Is <name> in built-in registry?                  → use it (Ember hosted endpoint)
+2. Is <name> in built-in registry?                  → use it (your igni server)
 3. Does <name> contain ":" (e.g., "openai:gpt-4o")? → parse as provider:model_id
 4. None of the above?                               → error: unknown model
 ```
 
 ### Option 1: igni Account (default, zero-config)
 
-Sign up at **https://ignite-ember.sh**. All built-in models route through the Ember hosted endpoint. Free tier available.
+Sign up at **https://ignite-ember.sh**. All built-in models route through the your igni server. Free tier available.
 
 ```bash
 igni                        # then type /login at the prompt (device-flow login)
 ```
 
-**Device-flow login:** Running `/login` opens your browser to the Ember portal. After you authenticate, the CLI automatically receives your access token and model credentials. Platform credentials are saved to `~/.igni/credentials.json` (token, email, expiry). Model credentials (API key, URL) are saved to `~/.igni/config.yaml`.
+**Device-flow login:** Running `/login` opens your browser to your igni server's portal. After you authenticate, the CLI automatically receives your access token and model credentials. Platform credentials are saved to `~/.igni/credentials.json` (token, email, expiry). Model credentials (API key, URL) are saved to `~/.igni/config.yaml`.
 
 No manual model configuration needed — the built-in registry handles everything.
 
 #### Cloud model auto-discovery
 
-When you're logged in, igni fetches the deduplicated `(model, base_url)` catalogue from your Ember Cloud key pool (`GET /v1/chat/models`) and merges each entry into the local registry on session start. Opening the model picker (`/model`) refreshes the catalogue so models added on the portal show up without restarting the CLI.
+When you're logged in, igni fetches the deduplicated `(model, base_url)` catalogue from your your igni server key pool (`GET /v1/chat/models`) and merges each entry into the local registry on session start. Opening the model picker (`/model`) refreshes the catalogue so models added on the portal show up without restarting the CLI.
 
 Cloud-discovered entries always use `api_key: cloud_token` (your login credentials) and are tagged with `source: "cloud"`. **User-defined entries always win** — if your config already defines `gpt-4o`, the cloud entry with the same name is skipped, so pinned timeouts and provider overrides survive.
 
@@ -83,7 +98,7 @@ Add entries to `models.registry` in your config. These override built-in entries
 # .igni/config.yaml
 models:
   registry:
-    # Ember Cloud model — uses login credentials
+    # your igni server model — uses login credentials
     MiniMax-M2.7:
       provider: openai_like
       model_id: MiniMaxAI/MiniMax-M2.7
@@ -126,7 +141,7 @@ Works with MiniMax, OpenAI, Anthropic, Groq, Together AI, OpenRouter, Ollama, or
 | `provider` | string | yes | Agno model class to use. `openai_like` for any OpenAI-compatible API |
 | `model_id` | string | yes | Model identifier sent to the API (e.g., `MiniMax-Text-01`, `gpt-4o`) |
 | `url` | string | yes | API base URL (e.g., `https://api.openai.com/v1`). Omit only for OpenAI models that use the default endpoint |
-| `api_key` | string | no | API key value, or `cloud_token` to use Ember Cloud login credentials |
+| `api_key` | string | no | API key value, or `cloud_token` to use your igni server login credentials |
 | `api_key_env` | string | no | Environment variable name containing the API key |
 | `api_key_cmd` | string | no | Shell command that outputs the API key (e.g., `op read ...` for 1Password) |
 | `context_window` | int | no | Context window size in tokens. Falls back to 128k if not set |
@@ -135,7 +150,7 @@ Works with MiniMax, OpenAI, Anthropic, Groq, Together AI, OpenRouter, Ollama, or
 | `max_tokens` | int | no | Default max output tokens |
 | `timeout` | int | no | Request timeout in seconds. Default 120 |
 
-> **API key resolution order:** `api_key` (direct) → `api_key_env` (env var) → `api_key_cmd` (shell command). The special value `cloud_token` resolves to your Ember Cloud login credentials (from `/login`).
+> **API key resolution order:** `api_key` (direct) → `api_key_env` (env var) → `api_key_cmd` (shell command). The special value `cloud_token` resolves to your your igni server login credentials (from `/login`).
 
 ### Comparison with Claude Code
 
@@ -144,7 +159,7 @@ Claude Code uses a simple alias map (`"sonnet"` → `"claude-sonnet-4-6"`) becau
 | Aspect | Claude Code | igni |
 |---|---|---|
 | Model resolution | Alias map (string → string) | Config-driven registry (name → provider + URL + key) |
-| First-party API | `ANTHROPIC_API_KEY` | `/login` device-flow (Ember hosted MiniMax M2.7) |
+| First-party API | `ANTHROPIC_API_KEY` | `/login` device-flow (server-hosted MiniMax M2.7) |
 | Hosted endpoint | `api.anthropic.com` | `api.ignite-ember.sh` |
 | AWS Bedrock | `CLAUDE_CODE_USE_BEDROCK` | BYOM registry entry with Bedrock URL |
 | Google Vertex | `CLAUDE_CODE_USE_VERTEX` | BYOM registry entry with Vertex URL |
@@ -178,7 +193,7 @@ models:
 
   # Model registry: maps model names (used in agent .md files) to providers.
   # Built-in entries (MiniMax-M2.7, MiniMax-M2.7-highspeed) route through
-  # the Ember hosted endpoint and are always available.
+  # the your igni server and are always available.
   # Add entries here to override built-ins or register new models.
   registry:
     # Example: Gemini (direct API key)
@@ -269,8 +284,8 @@ storage:
 #    Automatically compresses tool outputs (file contents, shell output, etc.)
 #    when context usage reaches 80% of the effective context window.
 #
-# 2. **Conversation history compaction** (Ember's compact_if_needed)
-#    At the same 80% threshold, Ember generates a session summary covering
+# 2. **Conversation history compaction** (igni's compact_if_needed)
+#    At the same 80% threshold, igni generates a session summary covering
 #    older turns, then trims the verbatim history to keep only recent turns.
 #    Subsequent compactions halve the kept turns (minimum 2).
 #
@@ -293,13 +308,13 @@ storage:
 # Project rules
 # Controls cross-tool compatibility for project instruction files.
 # When cross_tool_support is true, igni reads CLAUDE.md files
-# in addition to ember.md at every level (root + subdirectories).
+# in addition to igni.md at every level (root + subdirectories).
 rules:
   cross_tool_support: true         # also reads CLAUDE.md files (set false to disable)
 
 # Project context
 context:
-  project_file: "ember.md"         # Project instructions file
+  project_file: "igni.md"         # Project instructions file
   ignore_patterns:                 # Patterns to exclude from search
     - "node_modules/"
     - ".git/"
@@ -327,7 +342,7 @@ scheduler:
 # Set cross_tool_support: false to only scan igni directories.
 agents:
   cross_tool_support: true         # also scans .claude/agents/, .codex/, etc.
-  # Ember dirs (always scanned):
+  # igni dirs (always scanned):
   #   .igni/agents/              (project, committed)
   #   .igni/agents.local/        (project, gitignored)
   #   ~/.igni/agents/            (user global)
@@ -340,7 +355,7 @@ agents:
 skills:
   cross_tool_support: true         # also scans .claude/skills/
   auto_trigger: true               # Allow Orchestrator to auto-trigger skills
-  # Ember dirs (always scanned):
+  # igni dirs (always scanned):
   #   .igni/skills/              (project, committed)
   #   .igni/skills.local/        (project, gitignored)
   #   ~/.igni/skills/            (user global)
@@ -348,34 +363,17 @@ skills:
   #   .claude/skills/             (Claude Code project)
   #   ~/.claude/skills/           (Claude Code user global)
 
-# Embeddings — BYOM registry (same pattern as models.registry)
-# Resolution: user registry → built-in → provider:model_id
-embeddings:
-  default: "local"                 # Default embedder name
-  registry:
-    # Example: use Voyage AI
-    # voyage:
-    #   provider: openai_compatible
-    #   model_id: voyage-3
-    #   url: https://api.voyageai.com/v1
-    #   api_key_env: VOYAGE_API_KEY
-    #   dimensions: 1024
-
-    # Example: use OpenAI native embedder
-    # openai-embed:
-    #   provider: openai
-    #   model_id: text-embedding-3-small
-    #   api_key_env: OPENAI_API_KEY
-    #   dimensions: 1536
-
-    # Example: local Ollama embeddings
-    # local-embed:
-    #   provider: openai_compatible
-    #   model_id: nomic-embed-text
-    #   url: http://localhost:11434/v1
-    #   dimensions: 768
-
-# Knowledge base (requires: pip install ember-code[knowledge])
+# Embeddings are not configurable. The code index is built with
+# all-MiniLM-L6-v2 (384 dimensions), fixed, because the vector store's
+# dimension is fixed to match it — swapping the embedder without
+# rebuilding every index would produce a store whose vectors cannot be
+# compared. See `src/ember_code/core/code_index/embedder.py`.
+#
+# This section previously documented an `embeddings:` block with a
+# `default` and a BYOM `registry`, mirroring `models.registry`. No such
+# setting exists, and `Settings` drops unknown keys in silence — so a
+# config file written from that documentation did nothing at all, with
+# no error to say so.
 knowledge:
   enabled: true                    # Enable ChromaDB knowledge base
   collection_name: "ember_knowledge"  # ChromaDB collection name
@@ -425,7 +423,7 @@ display:
 
 ## Environment Variables
 
-Authentication is handled by `/login` — no API key environment variables needed for Ember hosted models. The default model is set via `models.default` in your config, and agents can override it per-agent in their `.md` files.
+Authentication is handled by `/login` — no API key environment variables needed for server-hosted models. The default model is set via `models.default` in your config, and agents can override it per-agent in their `.md` files.
 
 > **Note:** BYOM API keys (OpenAI, Anthropic, etc.) are configured per model in your registry via `api_key_env`, `api_key`, or `api_key_cmd` — you choose the variable name yourself.
 
@@ -467,31 +465,31 @@ igni loads project instructions from multiple levels, merging them top-down. Thi
 (Most general → most specific)
 
 1. **User-level** — `~/.igni/rules.md` (global rules for all projects)
-2. **Project root** — `ember.md` at the project root
-3. **Subdirectory** — `ember.md` in any parent directory between the current working file and the project root
+2. **Project root** — `igni.md` at the project root
+3. **Subdirectory** — `igni.md` in any parent directory between the current working file and the project root
 
 At each level, rules are merged additively. Subdirectory rules add specificity without overriding root rules.
 
 ### CLAUDE.md Compatibility
 
-When `rules.cross_tool_support` is `true`, igni also reads `CLAUDE.md` files at every level (root and subdirectories), in addition to `ember.md`. If both files exist in the same directory, their contents are merged.
+When `rules.cross_tool_support` is `true`, igni also reads `CLAUDE.md` files at every level (root and subdirectories), in addition to `igni.md`. If both files exist in the same directory, their contents are merged.
 
 ```yaml
 # .igni/config.yaml
 rules:
-  cross_tool_support: true   # read CLAUDE.md files alongside ember.md
+  cross_tool_support: true   # read CLAUDE.md files alongside igni.md
 ```
 
 ### Example
 
 ```
 my-project/
-├── ember.md                  # root rules (always loaded)
+├── igni.md                  # root rules (always loaded)
 ├── CLAUDE.md                 # loaded when rules.cross_tool_support: true
 ├── src/
-│   ├── ember.md              # subdirectory rules for src/
+│   ├── igni.md              # subdirectory rules for src/
 │   └── auth/
-│       ├── ember.md          # subdirectory rules for src/auth/
+│       ├── igni.md          # subdirectory rules for src/auth/
 │       └── middleware/
 │           └── handler.py    # ← working file
 └── ~/.igni/rules.md         # user-level global rules
@@ -499,14 +497,14 @@ my-project/
 
 When editing `handler.py`, the merged context includes:
 1. `~/.igni/rules.md` (user rules)
-2. `my-project/ember.md` + `CLAUDE.md` (project root)
-3. `src/ember.md` (subdirectory)
-4. `src/auth/ember.md` (subdirectory, most specific)
+2. `my-project/igni.md` + `CLAUDE.md` (project root)
+3. `my-project/src/igni.md` (subdirectory)
+4. `my-project/src/auth/igni.md` (subdirectory, most specific)
 
 ### Root-Level Example
 
 ```markdown
-# ember.md — Project: My API
+# igni.md — Project: My API
 
 ## Stack
 - Python 3.12, FastAPI, SQLAlchemy, PostgreSQL
@@ -527,7 +525,7 @@ When editing `handler.py`, the merged context includes:
 ### Subdirectory Example
 
 ```markdown
-# src/auth/ember.md
+# my-project/src/auth/igni.md
 
 ## Auth Module Rules
 - All auth endpoints must validate JWT tokens
@@ -542,7 +540,7 @@ igni uses a two-level TODO system for persistent progress tracking across sessio
 ### Two Levels
 
 - **Root `.igni/TODO.md`** — high-level goals and milestones. Automatically loaded into agent context at session start. Tracks *what* needs to happen, not *how*.
-- **Subdirectory `.igni/TODO.md`** (e.g., `src/auth/.igni/TODO.md`) — detailed implementation steps for that specific area. Not auto-loaded; agents read them when working in that directory.
+- **Subdirectory `.igni/TODO.md`** (e.g., `my-project/src/auth/.igni/TODO.md`) — detailed implementation steps for that specific area. Not auto-loaded; agents read them when working in that directory.
 
 The root TODO is the map. Subdirectory TODOs are the turn-by-turn directions.
 
@@ -560,7 +558,7 @@ The root TODO is the map. Subdirectory TODOs are the turn-by-turn directions.
 - [ ] API documentation
 ```
 
-**Subdirectory** (`src/auth/.igni/TODO.md`):
+**Subdirectory** (`my-project/src/auth/.igni/TODO.md`):
 ```markdown
 # TODO — Auth endpoints
 

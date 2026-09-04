@@ -14,7 +14,7 @@ Covers two surfaces:
     and swallowed so one bad plugin can't take down the rest of
     the pack.
 
-The plugin loader's new ``group-policy-ember`` root is covered in
+The plugin loader's new ``group-policy-igni`` root is covered in
 ``test_plugins_loader_root_priority.py``.
 """
 
@@ -394,7 +394,7 @@ class TestGroupPolicyCacheMaterializePlugin:
 
 
 class TestPluginLoaderGroupPolicyRoot:
-    """The new ``group-policy-ember`` root at priority 5."""
+    """The new ``group-policy-igni`` root at priority 5."""
 
     @staticmethod
     def _capture_roots(tmp_path: Path) -> dict[str, tuple[Path, int]]:
@@ -407,8 +407,8 @@ class TestPluginLoaderGroupPolicyRoot:
 
     def test_root_registered_with_data_dir_relative_path(self, tmp_path: Path):
         roots = self._capture_roots(tmp_path)
-        assert "group-policy-ember" in roots
-        path, priority = roots["group-policy-ember"]
+        assert "group-policy-igni" in roots
+        path, priority = roots["group-policy-igni"]
         assert path == tmp_path / "group-policy" / "plugins"
         assert priority == 5
 
@@ -417,17 +417,17 @@ class TestPluginLoaderGroupPolicyRoot:
         prios = {k: v[1] for k, v in roots.items()}
 
         # Outrank user + project
-        assert prios["group-policy-ember"] > prios["user-ember"]
-        assert prios["group-policy-ember"] > prios["project-ember"]
-        assert prios["group-policy-ember"] > prios["project-claude"]
+        assert prios["group-policy-igni"] > prios["user-igni"]
+        assert prios["group-policy-igni"] > prios["project-igni"]
+        assert prios["group-policy-igni"] > prios["project-claude"]
 
     def test_priority_loses_to_managed_tiers(self, tmp_path: Path):
         roots = self._capture_roots(tmp_path)
         prios = {k: v[1] for k, v in roots.items()}
 
         # Submit to the OS-managed tiers
-        assert prios["group-policy-ember"] < prios["managed-claude"]
-        assert prios["group-policy-ember"] < prios["managed-ember"]
+        assert prios["group-policy-igni"] < prios["managed-claude"]
+        assert prios["group-policy-igni"] < prios["managed-igni"]
 
     def test_loader_does_not_flag_group_policy_as_managed(self, tmp_path: Path):
         """Group-policy installs aren't OS-managed — users can still
@@ -454,7 +454,7 @@ class TestPluginLoaderGroupPolicyRoot:
         plugin = loader.get("test-plugin")
         assert plugin is not None
         # Root kind, not priority, drives is_managed — and the
-        # new tier isn't in the managed-claude/managed-ember set.
+        # new tier isn't in the managed-claude/managed-igni set.
         assert plugin.is_managed is False
 
 

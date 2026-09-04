@@ -12,7 +12,7 @@ from ember_code.core.config.settings import (
     PermissionsConfig,
     Settings,
 )
-from ember_code.core.paths import CONFIG_DIR
+from ember_code.core.paths import CONFIG_DIR, PROJECT_CONTEXT_FILE
 from ember_code.core.utils.tips import CONTEXTUAL_TIPS, GENERAL_TIPS, get_tip, random_tip
 from ember_code.core.utils.update_checker import (
     UpdateCache,
@@ -52,23 +52,48 @@ class TestTips:
     def test_get_tip_contextual_knowledge_disabled(self, tmp_path):
         """When knowledge is disabled, suggests enabling it."""
         settings = Settings(knowledge=KnowledgeConfig(enabled=False))
-        # Create ember.md so that tip doesn't fire instead
-        (tmp_path / "ember.md").write_text("# test")
+        # Create the project context file so that tip doesn't fire instead
+        (tmp_path / PROJECT_CONTEXT_FILE).write_text("# test")
         tip = get_tip(settings, tmp_path)
         assert isinstance(tip, str)
         assert len(tip) > 0
 
-    def test_get_tip_contextual_no_ember_md(self, tmp_path):
-        """When ember.md is missing, suggests creating it."""
+    def test_get_tip_contextual_no_project_context_file(self, tmp_path):
+        """When the project context file is missing, suggests creating it."""
         settings = Settings()
         tip = get_tip(settings, tmp_path)
-        # Should be one of the contextual tips (ember.md missing is a match)
+        # Should be one of the contextual tips (the missing file is a match)
         assert isinstance(tip, str)
         assert len(tip) > 0
+
+    def test_that_tip_names_the_file_the_check_looks_for(self, tmp_path):
+        """The tip said "create an ember.md" while its predicate read
+        ``settings.context.project_file`` — so a project that had
+        configured a different name was told to create the wrong file,
+        and the rename would have made that true for everybody. The
+        sentence is built from the setting now.
+
+        Asserted on the tip itself rather than through ``get_tip``,
+        which picks at random among every tip that matches — a test
+        that went through it would pass or fail depending on the draw,
+        which is worse than no test.
+        """
+        from ember_code.core.utils.tips import NoProjectContextTip, TipContext
+
+        settings = Settings()
+        settings.context.project_file = "TEAM_CONTEXT.md"
+        ctx = TipContext(settings=settings, project_dir=tmp_path)
+        tip = NoProjectContextTip()
+
+        assert tip.matches(ctx) is True
+        assert "TEAM_CONTEXT.md" in tip.render(ctx)
+
+        (tmp_path / "TEAM_CONTEXT.md").write_text("# here")
+        assert tip.matches(ctx) is False
 
     def test_get_tip_all_features_enabled(self, tmp_path):
         """When everything is configured, falls back to general tips."""
-        (tmp_path / "ember.md").write_text("# test")
+        (tmp_path / PROJECT_CONTEXT_FILE).write_text("# test")
         (tmp_path / CONFIG_DIR / "agents").mkdir(parents=True)
         (tmp_path / CONFIG_DIR / "agents" / "custom.md").write_text("---\nname: custom\n---")
         settings = Settings(

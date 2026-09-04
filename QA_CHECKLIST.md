@@ -50,7 +50,7 @@
 - [x] **Edit** — targeted string replacement works
 - [x] **WebSearch** — returns search results
 - [x] **WebFetch** — fetches and extracts URL content
-- [ ] **CodeIndex** — semantic search works (if Ember Cloud connected)
+- [ ] **CodeIndex** — semantic search works (if your igni server connected)
 - [x] **NotebookEdit** — edits .ipynb cells correctly
 - [x] **Orchestrate** — spawns sub-teams from agent pool
 - [x] `--no-web` — disables WebSearch and WebFetch
@@ -100,7 +100,7 @@
 - [x] `.igni/config.yaml` — project overrides work (knowledge, guardrails verified)
 - [x] `.igni/config.local.yaml` — local overrides (gitignored) (file doesn't exist to test)
 - [x] CLI flags — highest priority, override all config files (--model, --verbose, --read-only exist)
-- [x] `ember.md` at project root — loaded as system context (646 chars loaded)
+- [x] `igni.md` at project root — loaded as system context (646 chars loaded)
 - [x] `~/.igni/rules.md` — user-global rules loaded (file doesn't exist to test)
 
 ---
@@ -277,7 +277,7 @@
 ### @file mention autocomplete
 - [x] Type `@` — file picker dropdown appears above input
 - [x] Type `@src/` — filters to files under src/
-- [x] Fuzzy matching works (e.g., `@s/u/m` matches `src/utils/media.py`)
+- [x] Fuzzy matching works (e.g., `@s/u/m` matches `src/ember_code/core/utils/media.py`)
 - [x] Up/Down arrows navigate the picker
 - [x] Tab selects file and inserts path after `@`
 - [x] Enter selects file (does NOT submit message)
@@ -359,7 +359,7 @@
 - [ ] Tip bar visible
 
 ### First-run onboarding
-- [x] Fresh project — creates `.igni/`, copies agents/skills/hooks, `ember.md`
+- [x] Fresh project — creates `.igni/`, copies agents/skills/hooks, `igni.md`
 - [x] Delete project `.igni/` folder, re-run — re-initializes project (agents, skills, hooks copied)
 - [x] Home `~/.igni/.initialized` and project `.igni/.initialized` tracked independently
 - [x] Second run (both markers exist) — no re-initialization

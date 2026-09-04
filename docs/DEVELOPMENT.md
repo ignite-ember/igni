@@ -152,7 +152,7 @@ ember-code/
 │       │   └── store.py               # Task store (SQLite-backed)
 │       └── utils/
 │           ├── __init__.py
-│           ├── context.py             # Project context loading (ember.md)
+│           ├── context.py             # Project context loading (igni.md)
 │           ├── display.py             # Rich terminal formatting
 │           ├── audit.py               # Audit logging (JSON lines)
 │           ├── response.py            # Response formatting utilities
@@ -176,7 +176,7 @@ ember-code/
 │   └── test_tui_handlers.py           # TUI handlers and commands
 ├── Makefile                           # Build commands (see below)
 ├── pyproject.toml                     # Package metadata, deps, tool config
-├── ember.md                           # Project instructions for self-use
+├── igni.md                           # Project instructions for self-use
 ├── README.md
 └── LICENSE
 ```
@@ -268,7 +268,7 @@ The main agent has `OrchestrateTools` which provides `spawn_agent()`, `spawn_tea
 
 ### 3. Knowledge System (knowledge/)
 
-The knowledge system uses a custom `EmberEmbedder` that calls the Ember server's `/v1/embeddings` endpoint (proxying to CodeIndex's text2vec-transformers model, 384 dimensions):
+The knowledge system uses a custom `EmberEmbedder` that calls the igni server's `/v1/embeddings` endpoint (proxying to CodeIndex's text2vec-transformers model, 384 dimensions):
 
 ```python
 class EmberEmbedder(Embedder):
@@ -300,7 +300,7 @@ Agent `.md` files specify models by name. The registry maps names to provider, e
 ```python
 def get_model(name: str, config: Settings) -> Model:
     # 1. User config registry (BYOM)
-    # 2. Built-in registry (Ember hosted)
+    # 2. Built-in registry (server-hosted)
     # 3. provider:model_id syntax (e.g., "openai_like:gpt-4o")
 ```
 
@@ -364,8 +364,8 @@ Built-in commands available in interactive mode:
 | `/codeindex` | Show CodeIndex sync status for the current project |
 | `/mcp` | List configured MCP servers and their connection status |
 | `/model` | Switch the active model (or show current) |
-| `/whoami` | Show the active Ember Cloud login |
-| `/logout` | Clear cached Ember Cloud credentials |
+| `/whoami` | Show the active your igni server login |
+| `/logout` | Clear cached your igni server credentials |
 | `/<skill-name> [args]` | Invoke a skill (e.g., `/commit`, `/resolve-issues`) |
 
 ## Architecture Decisions
@@ -406,7 +406,7 @@ The TUI is the default interface — `ignite-ember` launches `EmberApp` unless `
 See [GitHub Issues](https://github.com/ignite-ember/ember-code/issues) for the current roadmap.
 
 **Planned features:**
-- [ ] Centralized tracing (OpenTelemetry → Ember server)
+- [ ] Centralized tracing (OpenTelemetry → igni server)
 - [ ] Plugin system (installable agent/tool packages)
 - [ ] Web UI (Agno Playground integration)
 - [ ] Voice mode (speech-to-text input)

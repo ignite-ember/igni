@@ -31,6 +31,7 @@ from typing import Any
 from ember_code.core.guardrails.runner import GuardrailRunner
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.hooks.executor import HookExecutor
+from ember_code.core.paths import MAIN_AGENT_NAME
 from ember_code.core.session.schemas import (
     McpInitResult,
     StopFailureHookPayload,
@@ -120,7 +121,7 @@ class SessionMessageHandler:
             self._audit.log(
                 AuditEntry.success(
                     session_id=self._session_id,
-                    agent_name="ember",
+                    agent_name=MAIN_AGENT_NAME,
                     tool_name="main_team",
                 )
             )

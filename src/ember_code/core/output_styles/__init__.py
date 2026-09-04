@@ -11,8 +11,8 @@ YAML frontmatter in:
 * ``~/.claude/output-styles/<name>.md`` (cross-tool, gated)
 * Plugin-bundled ``<plugin>/output-styles/<name>.md``
 
-Discovery precedence (last write wins): user-claude < user-ember <
-project-claude < project-ember < plugin. Identical model to
+Discovery precedence (last write wins): user-claude < user-igni <
+project-claude < project-igni < plugin. Identical model to
 markdown-commands / skills.
 """
 

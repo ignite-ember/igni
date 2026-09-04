@@ -11,7 +11,7 @@ collisions):
     6. <managed>/.claude/plugins/                (sysadmin, cross-tool)
     7. <managed>/.igni/plugins/                 (sysadmin, ember-native)
 
-The new tier 5 (``group-policy-ember``) holds plugins installed
+The new tier 5 (``group-policy-igni``) holds plugins installed
 from URL/ref/subdir specified in :class:`GroupPolicyEntry`
 via :class:`PluginInstaller`. It sits between project-local
 installs (3/4) and the OS-managed tiers (6/7) so org-shared
@@ -102,9 +102,9 @@ class PluginLoader:
 
         roots: list[tuple[str, Path, int]] = [
             ("user-claude", Path.home() / ".claude" / "plugins", 1),
-            ("user-ember", Path.home() / CONFIG_DIR / "plugins", 2),
+            ("user-igni", Path.home() / CONFIG_DIR / "plugins", 2),
             ("project-claude", project_dir / ".claude" / "plugins", 3),
-            ("project-ember", project_dir / CONFIG_DIR / "plugins", 4),
+            ("project-igni", project_dir / CONFIG_DIR / "plugins", 4),
         ]
 
         # Group-policy tier — plugins installed from
@@ -119,7 +119,7 @@ class PluginLoader:
         # hidden dependence.
         roots.append(
             (
-                "group-policy-ember",
+                "group-policy-igni",
                 self._data_dir / "group-policy" / "plugins",
                 5,
             )
@@ -132,7 +132,7 @@ class PluginLoader:
         managed_root = _platform_managed_plugins_root()
         if managed_root is not None:
             roots.append(("managed-claude", managed_root / ".claude" / "plugins", 6))
-            roots.append(("managed-ember", managed_root / CONFIG_DIR / "plugins", 7))
+            roots.append(("managed-igni", managed_root / CONFIG_DIR / "plugins", 7))
 
         for root_kind, root_path, priority in roots:
             self._load_root(root_kind, root_path, priority)

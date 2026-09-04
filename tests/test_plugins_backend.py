@@ -110,7 +110,7 @@ def test_get_plugin_details_basic(tmp_path: Path) -> None:
     assert d.version == "1.2.3"
     assert d.description == "A test"
     assert d.enabled is True
-    assert d.source_root == "user-ember"
+    assert d.source_root == "user-igni"
     assert d.pin == ""
     for attr in ("has_skills", "has_agents", "has_hooks", "has_mcp", "has_tools"):
         assert getattr(d, attr) is False

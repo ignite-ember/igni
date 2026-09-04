@@ -1,4 +1,4 @@
-"""The name of igni's configuration directory, in one place.
+"""The names igni writes down, in one place.
 
 There are two of these and they hold different things:
 
@@ -52,6 +52,74 @@ DEFAULT_DATA_DIR = f"~/{CONFIG_DIR}"
 #: ``CONFIG_DIR`` because the two are always considered together: every
 #: loader that scans one scans the other when cross-tool support is on.
 CLAUDE_CONFIG_DIR = ".claude"
+
+#: The project's context file — the one a team writes and commits.
+#:
+#: The directory rename above stopped at the directory. This file was
+#: still ``ember.md``: created by ``igni init``, named in the settings
+#: default, and hardcoded in seven more tuples — so a product called
+#: igni wrote a file called ember into every project a customer
+#: initialised. Finishing the rename is the same change, one file later.
+PROJECT_CONTEXT_FILE = "igni.md"
+
+#: Still read when present, exactly as ``CLAUDE.md`` is.
+#:
+#: Not a compatibility shim to be swept away later: the context loaders
+#: have always read a *list* of filenames, because a repository may
+#: carry another tool's context file and there is no reason to ignore
+#: it. ``ember.md`` joins that list rather than being special — a team
+#: with one in git keeps it working, and nothing has to migrate.
+LEGACY_PROJECT_CONTEXT_FILE = "ember.md"
+
+#: Every project-context filename, in precedence order: ours, the name
+#: ours used to have, then the sibling tool's.
+#:
+#: One tuple because it was spelled out in five places, and two of them
+#: carried a comment asking a human to "keep in lockstep with" the
+#: other — which is the shape that has drifted every other time this
+#: review has found it. Now there is nothing to keep in step.
+PROJECT_CONTEXT_FILES = (PROJECT_CONTEXT_FILE, LEGACY_PROJECT_CONTEXT_FILE)
+
+#: With the sibling tool's, for when cross-tool support is on.
+PROJECT_CONTEXT_FILES_CROSS_TOOL = (*PROJECT_CONTEXT_FILES, "CLAUDE.md")
+
+
+def _with_local_overrides(names: tuple[str, ...]) -> tuple[str, ...]:
+    """``a.md`` → ``a.md, a.local.md`` for each name, order preserved.
+
+    The ``.local.md`` sibling is the personal override of a committed
+    file (the convention is to gitignore it), and it must load *after*
+    its committed partner so its content wins in the concatenation the
+    model reads top to bottom. Interleaving rather than appending all
+    the local ones at the end is what preserves that pairing.
+    """
+    out: list[str] = []
+    for name in names:
+        stem, _, suffix = name.rpartition(".")
+        out.append(name)
+        out.append(f"{stem}.local.{suffix}")
+    return tuple(out)
+
+
+#: The rules-file variants, including personal overrides.
+RULES_FILES = _with_local_overrides(PROJECT_CONTEXT_FILES)
+RULES_FILES_CROSS_TOOL = _with_local_overrides(PROJECT_CONTEXT_FILES_CROSS_TOOL)
+
+#: The top-level agent's name. User-visible in the TUI, and persisted as
+#: ``agent_id`` on every saved session — which is what makes it more
+#: than a label: ``persistence.listing`` uses it to tell the user's own
+#: chats from the scratch sessions sub-agents write to the same
+#: database.
+MAIN_AGENT_NAME = "igni"
+
+#: What it was called before. Sessions saved under the old name are
+#: still listed, for the reason the listing module already gives about
+#: rows from earlier versions: a rename that hid somebody's history
+#: would be a worse outcome than the wrong name in a header.
+LEGACY_MAIN_AGENT_NAMES = ("ember",)
+
+#: Every ``agent_id`` that means "this was the user talking to igni".
+MAIN_AGENT_IDS = (MAIN_AGENT_NAME, *LEGACY_MAIN_AGENT_NAMES)
 
 
 def managed_policy_dir() -> Path | None:

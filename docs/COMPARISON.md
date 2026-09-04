@@ -53,11 +53,11 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 | Bash | Yes | Yes (ShellTools) | Same concept |
 | Grep | Yes (ripgrep-based) | Yes (GrepTools, ripgrep) | Same backend |
 | Glob | Yes | Yes (GlobTools) | Same concept |
-| WebSearch | Yes (limited) | Yes (DuckDuckGo) | Ember uses DDG |
+| WebSearch | Yes (limited) | Yes (DuckDuckGo) | igni uses DDG |
 | WebFetch | Yes | Yes (httpx) | |
 | LS | No (uses Bash) | Yes (FileTools) | Dedicated tool |
 | Python | No | Yes (Agno PythonTools) | Execute Python inline |
-| CodeIndex | No | Yes (semantic search) | Ember Cloud feature |
+| CodeIndex | No | Yes (semantic search) | your igni server feature |
 | Schedule | No | Yes (ScheduleTools) | Background task scheduling |
 | Orchestrate | No (implicit via Agent tool) | Yes (OrchestrateTools) | Explicit `spawn_agent()`, `spawn_team()` |
 | NotebookEdit | Yes | Yes (NotebookTools) | Read, edit, add, remove cells |
@@ -80,7 +80,7 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 
 | Aspect | Claude Code | igni |
 |---|---|---|
-| **Default model** | Claude Sonnet 4.6 (Anthropic) | MiniMax M2.7 (Ember hosted) |
+| **Default model** | Claude Sonnet 4.6 (Anthropic) | MiniMax M2.7 (server-hosted) |
 | **Provider lock-in** | Anthropic only (Claude models) | Any OpenAI-compatible provider |
 | **BYOM** | No (Anthropic, Bedrock, or Vertex only) | Yes — full registry with provider, URL, key per model |
 | **API key sources** | `ANTHROPIC_API_KEY` env var | `api_key` (direct) / `api_key_env` (env var) / `api_key_cmd` (shell command, e.g. 1Password) |
@@ -113,7 +113,7 @@ Claude Code has no equivalent — it's always "single agent decides everything, 
 
 | Aspect | Claude Code | igni |
 |---|---|---|
-| **Project instructions** | `CLAUDE.md` (root + subdirectories) | `ember.md` (root + subdirectories) + optionally `CLAUDE.md` |
+| **Project instructions** | `CLAUDE.md` (root + subdirectories) | `igni.md` (root + subdirectories) + optionally `CLAUDE.md` |
 | **User-level rules** | `~/.claude/CLAUDE.md` | `~/.igni/rules.md` |
 | **Hierarchy** | User → Root → Subdirectory (automatic) | User → Root → Subdirectory (automatic) |
 | **Subdirectory rules** | Walk from working file up to root | Same walk-up approach |

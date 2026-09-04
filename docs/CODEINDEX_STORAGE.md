@@ -221,8 +221,8 @@ For `target="references"`:
 ## File references
 
 - Index core: `src/ember_code/core/code_index/index.py`
-- Op parsing + delta application: `src/ember_code/core/code_index/delta.py`
+- Op parsing + delta application: `src/ember_code/core/code_index/delta/`
 - Item schema: `src/ember_code/core/code_index/schema/items.py`
-- Agent tool: `src/ember_code/core/tools/codeindex.py`
+- Agent tool: `src/ember_code/core/tools/codeindex/`
 - Tool gate + prompt section: `src/ember_code/core/session/core.py`
 - Server emitter (producer): `ember-server/app/services/jsonl_changeset/{writer,emitter}.py`

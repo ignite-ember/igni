@@ -42,6 +42,8 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
 
+from ember_code.core.paths import PROJECT_CONTEXT_FILES_CROSS_TOOL
+
 # ── Data schemas ────────────────────────────────────────────────────
 
 
@@ -147,7 +149,7 @@ class ReadRulesDir(Protocol):
     def __call__(
         self,
         directory: Path,
-        filenames: tuple[str, ...] = ("ember.md", "CLAUDE.md"),
+        filenames: tuple[str, ...] = PROJECT_CONTEXT_FILES_CROSS_TOOL,
         allowed_root: Path | None = None,
     ) -> str: ...
 

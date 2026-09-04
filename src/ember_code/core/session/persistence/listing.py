@@ -1,15 +1,20 @@
 """Session-listing coordinator.
 
-Owns the Agno session enumeration + the ``agent_id == "ember"``
-sub-agent filter that used to sit inline in
-``SessionPersistence.list_sessions``. Sub-agents (visualizer,
-editor, every specialist in the pool) share the top-level DB so
-paused runs can be resumed via ``acontinue_run`` — see
-``AgentPool.__init__``'s ``_db`` — but they must NEVER appear as
-chats in the user-facing session list. The top-level session is
-built with ``Agent(name="ember")`` (see
-``_build_main_agent``), so ``agent_id == "ember"`` is the
-discriminator. Anything else is scratch.
+Owns the Agno session enumeration + the main-agent filter that used to
+sit inline in ``SessionPersistence.list_sessions``. Sub-agents
+(visualizer, editor, every specialist in the pool) share the top-level
+DB so paused runs can be resumed via ``acontinue_run`` — see
+``AgentPool.__init__``'s ``_db`` — but they must NEVER appear as chats
+in the user-facing session list. The top-level session is built with
+``Agent(name=MAIN_AGENT_NAME)`` (see ``_build_main_agent``), so its
+``agent_id`` is the discriminator. Anything else is scratch.
+
+``MAIN_AGENT_IDS`` rather than one name, because the agent was called
+``ember`` before the product settled on igni and that name is written
+into every session saved until then. Matching only the new one would
+hide a user's own history behind a rename — the same failure the
+``agent_id == ""`` case below is defensive about, arriving by a
+different route.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ import logging
 
 from agno.db.base import SessionType
 
+from ember_code.core.paths import MAIN_AGENT_IDS
 from ember_code.core.session.persistence.db_protocol import AgnoSessionDb
 from ember_code.core.session.schemas import LoadResult, SessionListRow
 
@@ -64,7 +70,7 @@ class SessionListing:
             # have ``agent_id == ""`` or missing entirely. Those
             # must NOT be filtered out — otherwise a user could
             # lose access to historical chats.
-            if agent_id and agent_id != "ember":
+            if agent_id and agent_id not in MAIN_AGENT_IDS:
                 continue
             results.append(SessionListRow.from_agno(s))
         return LoadResult(ok=True, value=results)

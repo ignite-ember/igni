@@ -236,7 +236,7 @@ fn spawn_backend(
     project_dir: &str,
     progress: &(dyn Fn(&str) + Sync),
 ) -> Result<(Child, u16, BackendVersionInfo), String> {
-    progress("Preparing Ember backend…");
+    progress("Preparing the igni backend…");
     let install = runtime::ensure_backend_python(progress)?;
     let version_info = BackendVersionInfo {
         actual: install.actual_cli_version.clone(),
@@ -244,7 +244,7 @@ fn spawn_backend(
         source: install.source.as_str(),
     };
 
-    progress("Starting Ember backend…");
+    progress("Starting the igni backend…");
     let mut cmd = Command::new(&install.python);
     cmd.args([
         "-m",

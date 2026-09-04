@@ -98,7 +98,7 @@ exit 0
 """
 
 
-# ── Starter ember.md template ─────────────────────────────────────────
+# ── Starter igni.md template ──────────────────────────────────────────
 
 IGNI_MD_TEMPLATE = """\
 # Project Context

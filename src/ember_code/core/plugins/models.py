@@ -22,14 +22,21 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+#: Where a plugin came from. User-visible: the plugins panel prints the
+#: root beside each entry.
+#:
+#: The igni tiers were spelled ``*-ember`` while the directories they
+#: name are ``.igni`` — so the panel labelled a plugin in
+#: ``~/.igni/plugins/`` as ``user-ember``. Renamed with the rest; not
+#: persisted anywhere, so there is nothing to migrate.
 PluginRoot = Literal[
     "user-claude",  # ~/.claude/plugins/
-    "user-ember",  # ~/.igni/plugins/
+    "user-igni",  # ~/.igni/plugins/
     "project-claude",  # <project>/.claude/plugins/
-    "project-ember",  # <project>/.igni/plugins/
-    "group-policy-ember",  # <data_dir>/group-policy/plugins/
+    "project-igni",  # <project>/.igni/plugins/
+    "group-policy-igni",  # <data_dir>/group-policy/plugins/
     "managed-claude",  # sysadmin <managed>/.claude/plugins/
-    "managed-ember",  # sysadmin <managed>/.igni/plugins/
+    "managed-igni",  # sysadmin <managed>/.igni/plugins/
 ]
 
 
@@ -93,7 +100,7 @@ class PluginDefinition(BaseModel):
         (sysadmin) root. Managed plugins can't be disabled from
         the panel or via plugin state — they're enforced by the
         OS-protected source location."""
-        return self.source.root in ("managed-claude", "managed-ember")
+        return self.source.root in ("managed-claude", "managed-igni")
 
     @property
     def root_path(self) -> Path:

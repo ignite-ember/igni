@@ -30,12 +30,12 @@
 | **Scheduling, looping, forking** | `/schedule` (cron + one-shot), `/loop` (recurring), `/fork [name]` (clone history under new id). Claude Code now ships `/loop` and `/fork` and a `CronCreate`/`CronList`/`CronDelete` cron toolkit — igni's differentiator is the **explicit user-facing `/schedule` slash command + a `scheduler_tasks` SQLite table** that surfaces scheduled work as a first-class UI concept, rather than relying on the model picking up the agent-loop Tools. |
 | **In-session chat search** | SQLite-backed `search_chat` RPC + UI bar (BE 23 cases, FE 24 cases — snippet windowing, case-insensitive, scroll formatting). |
 | **Guardrails** | PII detection, prompt injection detection, OpenAI moderation API (configurable, off by default). |
-| **Audit logging + managed policy** | `AuditLogger` with `jq`-compatible JSON lines, ISO-8601 timestamps, OSError-swallowing kill-switch. Enterprise: 5 settings tiers (managed > CLI > local > project > user), 4 plugin scopes (managed beats project), platform-managed CLAUDE.md/ember.md. |
+| **Audit logging + managed policy** | `AuditLogger` with `jq`-compatible JSON lines, ISO-8601 timestamps, OSError-swallowing kill-switch. Enterprise: 5 settings tiers (managed > CLI > local > project > user), 4 plugin scopes (managed beats project), platform-managed CLAUDE.md/igni.md. |
 | **Plugin primitives** | LSP server primitive (33 tests), monitor primitive with bounded exponential backoff (26 tests), plugin agent security envelope (force_isolation=worktree, no hooks/mcpServers for plugin agents). Only explicit gap: plugin theme primitive. |
 | **Cross-tool compatibility** | Reads `CLAUDE.md`, `.claude/agents/*.md`, `.claude/skills/`, `.mcp.json` out of the box when `cross_tool_support` is enabled — explicit positioning for Claude Code refugees. |
 | **Org-level Groups (zero-install departmental rollout)** | Org admins curate per-department override packs — agents (markdown), MCPs (JSON), plugins (git-source or YAML), settings (deep-merged). The end-user CLI fetches the pack at login and materializes it to `~/.igni/group-policy/` at priority 4.5. No per-machine deployment needed; admins push, users receive on next fetch. See [Groups](#org-level-groups-and-overrides) for the full story. |
 
-Source: `README.md:1-251`, `QUICKSTART.md:1-483`, `CLAUDE_CODE_PARITY.md:13-66` (parity tally table), `docs/ARCHITECTURE.md:1-120`, `docs/CODEINDEX.md`, `docs/NEO4J_MIGRATION_DONE.md`, `pyproject.toml:38-67`. (Internal module is still `ember_code` and project-context file is still `ember.md` — preserved per the v0.7.0 rebrand for back-compat with existing installs.)
+Source: `README.md:1-251`, `QUICKSTART.md:1-483`, `CLAUDE_CODE_PARITY.md:13-66` (parity tally table), `docs/ARCHITECTURE.md:1-120`, `docs/CODEINDEX.md`, `docs/NEO4J_MIGRATION_DONE.md`, `pyproject.toml:38-67`. (Internal module is still `ember_code` and project-context file is still `igni.md` — preserved per the v0.7.0 rebrand for back-compat with existing installs.)
 
 ### 2.2 Architecture shape
 
@@ -97,7 +97,7 @@ The rollout mechanic — packs published from the portal, fetched at login or su
 
 **Solo developer / OSS community path** — since the Textual TUI is no longer shipped, end users go straight to one of the four GUI surfaces: the **Tauri desktop app** (signed + notarized installer for macOS / Windows / Linux — CI-built from `clients/tauri`), the **VSCode extension** (one-command marketplace install; auto-bootstraps the Python backend on first activation), the **JetBrains plugin** (IntelliJ / PyCharm / WebStorm via the Marketplace, JCEF panel hosting the shared web UI), or the **browser bundle** (`clients/web` Vite/React served from any host). The backend comes embedded with each surface — there is no separate CLI mode. BYO model supported for any OpenAI-compatible API (OpenAI, Anthropic, Gemini, Groq, Ollama, OpenRouter per portal docs). The default hosted MiniMax-M2.7 model plus the in-session `/login` makes the first-run path zero-config. See `docs/CONFIGURATION.md`.
 
-**Team / enterprise path** — self-hostable `ember-server` (FastAPI + Postgres + Celery + Redis + GCS), GKE-deployed via Helm with three environments (dev/stage/prod) and WIF-based GitHub Actions deploys. Enterprise-grade controls: 5-tier settings precedence including platform-managed `/Library/Application Support/Ember/managed-settings.yaml` (kept under the `Ember/` directory name for back-compat with org policies that already reference the legacy path) that wins over CLI flags; 4-tier plugin scopes including `/etc/ember/` managed scope; scoped deny rules that survive bypass mode. Apache 2.0 license permits commercial use. Source: `ember-server/README.md:178-216`, `README.md:241-249`.
+**Team / enterprise path** — self-hostable `ember-server` (FastAPI + Postgres + Celery + Redis + GCS), GKE-deployed via Helm with three environments (dev/stage/prod) and WIF-based GitHub Actions deploys. Enterprise-grade controls: 5-tier settings precedence including platform-managed `/Library/Application Support/igni/managed-settings.yaml` (`/etc/igni/` on Linux, `%PROGRAMDATA%\igni\` on Windows — this said the directory kept its pre-rename name for back-compat, which was not true of the code: `paths.managed_policy_dir` has read `igni` on all three platforms, so an admin following the old text deployed policy where nothing looked for it, and managed policy is the one tier a user cannot override) that wins over CLI flags; 4-tier plugin scopes including `/etc/igni/` managed scope; scoped deny rules that survive bypass mode. Apache 2.0 license permits commercial use. Source: `ember-server/README.md:178-216`, `README.md:241-249`.
 
 ### Use cases the docs actively support
 
@@ -139,7 +139,7 @@ This is the headline story for **admins who want a curated AI experience deliver
 - **Client materialization.** At startup, the CLI fetches the pack for the authenticated user's groups and materializes each entry:
   - Agents → `~/.igni/group-policy/agents/<name>.md` (picked up by the agent loader at priority 4.5)
   - MCPs → `~/.igni/group-policy/mcps/<name>.json`
-  - Plugins → installed via `PluginInstaller` into `<data_dir>/group-policy/plugins/` (priority 4.5 — between project-ember and managed-ember), so the plugin loader sees them naturally
+  - Plugins → installed via `PluginInstaller` into `<data_dir>/group-policy/plugins/` (priority 4.5 — between project-igni and managed-igni), so the plugin loader sees them naturally
   - Settings → deep-merged into the existing settings tier stack via `core/config/merge_plan.py:250` (`GroupPolicyTier`)
 - **Zero install at the workstation.** The end user's machine only needs `brew install ignite-ember` (or the desktop app). When they log in with `/login`, the appropriate group packs are pulled automatically — they get the curated agent set, MCP servers, plugin roster, and merged config without anyone running a setup script. A backend/security team can flip the group's overrides today; every member of the group sees the change on next fetch (5-min TTL on the cache, `group_policy.py:22-24`).
 - **What this enables.** Per-department personas without per-user configuration:
@@ -245,7 +245,7 @@ The CLI points at `api.ignite-ember.sh` by default. A self-hosted `ember-server`
 | **Hook handler types** | 5 | 4 of 5 (missing `agent`) | ⚠ partial |
 | **Hook `permissionDecision` envelope** | yes | yes (post-2026-06-25) | ✅ parity |
 | **Bypass-resistant scoped deny** | yes | yes (`Bash(rm *)` survives bypass) | ✅ parity |
-| **Managed policy tier** | `/Library/.../CLAUDE.md` | `/Library/Application Support/Ember/...` | ✅ parity |
+| **Managed policy tier** | `/Library/.../CLAUDE.md` | `/Library/Application Support/igni/...` | ✅ parity |
 | **Auto-memory MEMORY.md** | `~/.claude/.../MEMORY.md` | `~/.igni/.../MEMORY.md` + CC fallback | ✅ parity |
 | **Cross-tool rules** | n/a (single namespace) | `.claude/*` reads when `cross_tool_support` on | igni broader |
 | **Plugin LSP primitive** | yes | yes (33 tests) | ✅ parity |
@@ -396,7 +396,7 @@ Selected key citations. Line numbers refer to the files as of the snapshot read.
 | Neo4j migration (in flight) | `docs/NEO4J_MIGRATION_DONE.md` |
 | Self-host CLI config override | `ember-server/README.md:191-216` |
 | Three-environment branch-to-env mapping | `ember-server/README.md:184-188` |
-| ember-iac repo dependency for Helm charts | `ember-server/README.md:297-303` |
+| `ember-iac` repo dependency for Helm charts | `ember-server/README.md:297-303` |
 
 ---
 

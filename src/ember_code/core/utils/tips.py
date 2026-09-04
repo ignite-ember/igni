@@ -55,21 +55,48 @@ class ContextualTip(BaseModel):
     """
 
     id: str
-    message: str
+    message: str = ""
 
     @abstractmethod
     def matches(self, ctx: TipContext) -> bool:
         """Return True when this tip is relevant to ``ctx``."""
 
+    def render(self, ctx: TipContext) -> str:
+        """The sentence to show. Defaults to the static ``message``.
 
-class NoEmberMdTip(ContextualTip):
-    id: str = "no_ember_md"
-    message: str = (
-        "Create an ember.md in your project root to give agents project-specific context."
-    )
+        Overridable because a tip that tells somebody to create a file
+        has to name the file the *check* is looking at. One tip did not:
+        it said "create an ember.md" while its predicate read
+        ``settings.context.project_file``, so a project that had
+        configured a different name was told to create the wrong thing —
+        and the rename to ``igni.md`` would have made that true for
+        everybody.
+        """
+        return self.message
+
+
+class NoProjectContextTip(ContextualTip):
+    """Suggest a project context file when there is none.
+
+    The message is built from the configured filename rather than
+    spelling one out: `matches` already reads
+    ``settings.context.project_file``, so a hardcoded name in the
+    sentence beside it could tell somebody to create a file the check
+    was not looking for. It said "ember.md" while the setting said
+    something else was possible, which is that bug waiting to happen —
+    and after the rename to ``igni.md`` it would have been that bug.
+    """
+
+    id: str = "no_project_context"
 
     def matches(self, ctx: TipContext) -> bool:
         return not (ctx.project_dir / ctx.settings.context.project_file).exists()
+
+    def render(self, ctx: TipContext) -> str:
+        return (
+            f"Create an {ctx.settings.context.project_file} in your project root to give "
+            "agents project-specific context."
+        )
 
 
 class KnowledgeDisabledTip(ContextualTip):
@@ -180,7 +207,7 @@ class TipRegistry(BaseModel):
         """Build a registry populated with the shipped tip catalog."""
         return cls(
             contextual=[
-                NoEmberMdTip(),
+                NoProjectContextTip(),
                 KnowledgeDisabledTip(),
                 KnowledgeNoShareTip(),
                 GuardrailsOffTip(),
@@ -207,7 +234,7 @@ class TipRegistry(BaseModel):
         if ctx is None:
             return self.random_general()
 
-        matching = [tip.message for tip in self.contextual if self._safe_match(tip, ctx)]
+        matching = [tip.render(ctx) for tip in self.contextual if self._safe_match(tip, ctx)]
         if matching:
             return random.choice(matching)
         return self.random_general()
