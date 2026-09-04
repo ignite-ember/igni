@@ -634,10 +634,96 @@ fn update_checks_disabled_in(text: &str) -> bool {
     false
 }
 
-#[tauri::command]
-async fn ember_check_update(app: AppHandle) -> Result<serde_json::Value, String> {
+/// Where this install looks for releases.
+///
+/// DEC-11. `tauri.conf.json` names
+/// `github.com/ignite-ember/igni/releases`, which is the one outbound
+/// host a default install has — and it sits awkwardly beside DP-5's
+/// claim that nothing leaves the customer's cloud. Worse, an air-gapped
+/// customer could not update at all: `update_check_ttl: 0` turns the
+/// check off, and there was nothing to turn it *towards*.
+///
+/// So `update_endpoint` in `~/.igni/config.yaml` replaces the compiled
+/// default. A customer mirrors releases and points the app at their own
+/// host.
+///
+/// **Signature verification is unchanged, and that is the whole reason
+/// this is safe.** The public key lives in `tauri.conf.json` and is not
+/// configurable here, so a mirror can serve a different *version* but
+/// cannot serve a different *build* — an artefact it signed itself
+/// fails `minisign-verify` before anything is installed. Pointing at a
+/// hostile mirror costs you updates, not integrity.
+///
+/// The plugin additionally refuses a non-HTTPS endpoint unless the app
+/// was built with `dangerous_insecure_transport_protocol`, which this
+/// one is not. So `http://` fails, and it fails at the builder rather
+/// than mid-download.
+///
+/// Same hand-parse as `update_checks_disabled_in`, for the same
+/// reasons, with the same top-level anchoring — an indented
+/// `update_endpoint` belongs to whatever contains it, and reading it as
+/// the app's release source would let an unrelated config block choose
+/// where the binary comes from.
+fn configured_update_endpoint() -> Option<String> {
+    let home = dirs::home_dir()?;
+    let text = std::fs::read_to_string(home.join(".igni/config.yaml")).ok()?;
+    configured_update_endpoint_in(&text)
+}
+
+/// The decision, over the text, so it is testable without owning
+/// `$HOME`.
+fn configured_update_endpoint_in(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let Some(value) = line.strip_prefix("update_endpoint:") else {
+            continue;
+        };
+        // No `#` splitting here, unlike the TTL: a URL may legitimately
+        // contain a fragment, and eating everything after the first
+        // `#` would silently truncate one. A trailing YAML comment on
+        // this key is worth losing to keep that true.
+        let value = value.trim().trim_matches('"').trim_matches('\'');
+        if value.is_empty() {
+            // Present and blank means "use the compiled default",
+            // which is a different statement from absent and reads
+            // the same — deliberately, since both are "I have not
+            // chosen a mirror".
+            return None;
+        }
+        return Some(value.to_string());
+    }
+    None
+}
+
+/// An updater pointed at whatever this install is configured to use.
+///
+/// Falls back to the compiled endpoint when nothing is set, so the
+/// default path is unchanged. A configured endpoint that will not parse
+/// as a URL, or that the plugin rejects, is an error rather than a
+/// silent fallback: an operator who set a mirror and got the vendor's
+/// host anyway has been quietly overruled, which is the failure DEC-11
+/// exists to prevent.
+fn updater_for(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
     use tauri_plugin_updater::UpdaterExt;
 
+    let Some(endpoint) = configured_update_endpoint() else {
+        return app.updater().map_err(|e| e.to_string());
+    };
+
+    let url = tauri::Url::parse(&endpoint).map_err(|e| {
+        format!("update_endpoint in ~/.igni/config.yaml is not a valid URL ({endpoint}): {e}")
+    })?;
+
+    app.updater_builder()
+        .endpoints(vec![url])
+        .map_err(|e| {
+            format!("update_endpoint in ~/.igni/config.yaml was refused ({endpoint}): {e}")
+        })?
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn ember_check_update(app: AppHandle) -> Result<serde_json::Value, String> {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
 
     if update_checks_disabled() {
@@ -651,7 +737,7 @@ async fn ember_check_update(app: AppHandle) -> Result<serde_json::Value, String>
             "checks_disabled": true,
         }));
     }
-    let updater = app.updater().map_err(|e| e.to_string())?;
+    let updater = updater_for(&app)?;
     match updater.check().await {
         Ok(Some(update)) => Ok(serde_json::json!({
             "available": true,
@@ -672,8 +758,6 @@ async fn ember_check_update(app: AppHandle) -> Result<serde_json::Value, String>
 /// Called from the FE's "Install" button on the update banner.
 #[tauri::command]
 async fn ember_install_update(app: AppHandle) -> Result<(), String> {
-    use tauri_plugin_updater::UpdaterExt;
-
     // The same gate. Installing is a bigger outbound request than
     // checking, and a caller that reached this without a check — the
     // banner persisted across a config change, say — must not make it.
@@ -681,7 +765,7 @@ async fn ember_install_update(app: AppHandle) -> Result<(), String> {
         return Err("update checks are disabled in ~/.igni/config.yaml (update_check_ttl: 0)".to_string());
     }
 
-    let updater = app.updater().map_err(|e| e.to_string())?;
+    let updater = updater_for(&app)?;
     let update = updater
         .check()
         .await
@@ -1771,5 +1855,132 @@ mod tests {
             );
         }
     }
-}
 
+    // ── DEC-11: where an install looks for releases ─────────────────
+    //
+    // `tauri.conf.json` compiles in `github.com/ignite-ember/igni`,
+    // which is the one outbound host a default install has and cannot
+    // be reached at all from an air-gapped network. `update_endpoint`
+    // in `~/.igni/config.yaml` replaces it.
+    //
+    // The parse is asserted here rather than through the plugin,
+    // because constructing an `AppHandle` in a unit test means running
+    // a Tauri app. What the plugin does with the URL — refuse
+    // non-HTTPS, verify the signature against the compiled pubkey — is
+    // its own tested behaviour, and the pubkey is deliberately not
+    // configurable, so a mirror can serve a different version but not
+    // a different build.
+
+    #[test]
+    fn absent_means_the_compiled_default() {
+        assert_eq!(configured_update_endpoint_in("update_check_ttl: 86400\n"), None);
+    }
+
+    #[test]
+    fn a_configured_endpoint_is_returned() {
+        assert_eq!(
+            configured_update_endpoint_in("update_endpoint: https://releases.acme.example/latest.json\n"),
+            Some("https://releases.acme.example/latest.json".to_string())
+        );
+    }
+
+    #[test]
+    fn quotes_are_stripped() {
+        // YAML lets you quote a URL and people do, especially one with
+        // a `#` in it. Returning the quotes would fail `Url::parse`
+        // with a message about the scheme, which points at the wrong
+        // thing entirely.
+        for line in [
+            "update_endpoint: \"https://releases.acme.example/l.json\"\n",
+            "update_endpoint: 'https://releases.acme.example/l.json'\n",
+        ] {
+            assert_eq!(
+                configured_update_endpoint_in(line),
+                Some("https://releases.acme.example/l.json".to_string()),
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn present_and_blank_means_the_compiled_default() {
+        // Same outcome as absent, deliberately: both are "I have not
+        // chosen a mirror". Returning `Some("")` would reach
+        // `Url::parse` and fail with a message about an empty string.
+        assert_eq!(configured_update_endpoint_in("update_endpoint:\n"), None);
+        assert_eq!(configured_update_endpoint_in("update_endpoint:   \n"), None);
+    }
+
+    #[test]
+    fn a_fragment_survives() {
+        // The TTL parser splits on `#` to drop trailing comments. Doing
+        // that here would silently truncate a URL fragment, so this key
+        // does not — and the cost, a trailing comment on this one line,
+        // is stated in the code.
+        assert_eq!(
+            configured_update_endpoint_in("update_endpoint: https://a.example/l.json#v2\n"),
+            Some("https://a.example/l.json#v2".to_string())
+        );
+    }
+
+    #[test]
+    fn an_indented_key_belongs_to_whatever_contains_it() {
+        // The same anchoring as `update_checks_disabled_in`, and it
+        // matters more here: an unrelated config block choosing where
+        // the binary comes from is a supply-chain question, not a
+        // preference. A nested key must not be read as the app's.
+        assert_eq!(
+            configured_update_endpoint_in(
+                "plugins:\n  something:\n    update_endpoint: https://evil.example/l.json\n"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn the_first_top_level_occurrence_wins() {
+        // Matches the TTL parser's behaviour rather than inventing a
+        // second rule for a duplicated key.
+        assert_eq!(
+            configured_update_endpoint_in(
+                "update_endpoint: https://first.example/l.json\nupdate_endpoint: https://second.example/l.json\n"
+            ),
+            Some("https://first.example/l.json".to_string())
+        );
+    }
+
+    #[test]
+    fn a_configured_endpoint_parses_as_a_url() {
+        // The step between reading the file and handing it to the
+        // plugin. A value that will not parse is an error rather than a
+        // silent fallback to the vendor host — an operator who set a
+        // mirror and got github.com anyway has been quietly overruled.
+        let raw = configured_update_endpoint_in(
+            "update_endpoint: https://releases.acme.example/latest.json\n",
+        )
+        .expect("configured");
+        let url = tauri::Url::parse(&raw).expect("parses");
+
+        assert_eq!(url.scheme(), "https");
+        assert_eq!(url.host_str(), Some("releases.acme.example"));
+    }
+
+    #[test]
+    fn the_compiled_default_is_still_the_vendor_host() {
+        // Not an endorsement — a pin. If somebody changes
+        // `tauri.conf.json`'s endpoint, this fails and they have to
+        // decide deliberately. And it keeps the claim in DEC-11
+        // ("one outbound host a default install has") checkable rather
+        // than remembered.
+        let conf = include_str!("../tauri.conf.json");
+
+        assert!(
+            conf.contains("github.com/ignite-ember/igni/releases"),
+            "the compiled default endpoint changed; DEC-11 and DP-5 both describe it"
+        );
+        assert!(
+            conf.contains("\"pubkey\""),
+            "the updater has no pubkey, so a mirror could serve any build it liked"
+        );
+    }
+}

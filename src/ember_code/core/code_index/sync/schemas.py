@@ -139,6 +139,25 @@ class SyncResult(BaseModel):
         return cls(skipped=True, reason="not signed in to igni")
 
     @classmethod
+    def no_server_configured(cls) -> SyncResult:
+        """``api_url`` is unset, so there is nowhere to sync from.
+
+        DEC-14 removed the vendor default, which makes this a state an
+        ordinary first run is in — not an error. It is checked *before*
+        :meth:`not_authenticated` because you cannot be signed in to a
+        server you have not named, and "not signed in to igni" would
+        send somebody to a login flow that has nothing to talk to.
+
+        The reason names the setting, because a bare "codeindex
+        unavailable" is what this used to look like when the default
+        pointed somewhere unreachable.
+        """
+        return cls(
+            skipped=True,
+            reason="no igni server configured — set `api_url` in ~/.igni/config.yaml",
+        )
+
+    @classmethod
     def preflight_failed(cls, commit_sha: str, message: str) -> SyncResult:
         """Preflight round-trip raised — signed URL layer error."""
         return cls(commit_sha=commit_sha, error=message)

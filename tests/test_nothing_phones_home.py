@@ -44,17 +44,30 @@ _ALLOWED_HOSTS: dict[str, str] = {
     "dist.neo4j.org": "Neo4j download, for the local code index",
     # ── The vendor's own hosts ───────────────────────────────────────
     "docs.ignite-ember.sh": "a documentation link in a generated config template",
-    "ignite-ember.sh": "the portal URL a login flow opens in a browser",
-    "api.ignite-ember.sh": (
-        "OPEN QUESTION, not a settled answer. This is the default value of "
-        "`api_url`, so a CLI nobody configured talks to the vendor. For a "
-        "product whose stated decision is self-hosted only — no hosted tier — "
-        "that default points at infrastructure that should not exist, and it "
-        "means an unconfigured install reaches out from the customer network. "
-        "Changing it needs a refusal path: nothing today validates an empty "
-        "`api_url`, so an empty default would produce malformed requests "
-        "instead of a clear error. Recorded in F94 and left as the product "
-        "owner's call."
+    # `ignite-ember.sh` and `api.ignite-ember.sh` used to be here, and
+    # the second carried a paragraph beginning "OPEN QUESTION, not a
+    # settled answer": `api_url` defaulted to the vendor, so a CLI
+    # nobody configured talked to infrastructure that should not exist,
+    # and flipping the default to empty needed a refusal path first.
+    #
+    # DEC-14 answered it. `api_url` defaults to empty,
+    # `core/config/endpoint.py` refuses with the setting name and an
+    # example, and the paths for which no server is a supported state
+    # ask `is_configured` and skip. `PortalClient` no longer has a
+    # portal-host default at all — that one had no setting anywhere, so
+    # a customer pointing the CLI at their own deployment still got sent
+    # to the vendor's website to sign in.
+    #
+    # Their absence from this list is now the evidence. `#
+    # test_the_allow_list_has_not_gone_stale` fails if either name comes
+    # back without an entry, which is the check that keeps this
+    # paragraph honest rather than merely well-intentioned.
+    "igni.your-company.example": (
+        "not a host anything contacts — the example URL in the refusal message "
+        "`core/config/endpoint.py` prints when `api_url` is unset. RFC 2606 "
+        "reserves `.example`, so it is unroutable by construction. Listed "
+        "because the scan reads string literals and cannot tell an example "
+        "from a destination, and a scan that guessed would be the wrong scan."
     ),
     "pypi.org": (
         "the update check. It was unconditional at every session start with "

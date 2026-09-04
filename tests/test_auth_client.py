@@ -13,21 +13,106 @@ import pytest
 from ember_code.core.auth.callback_server import CallbackServer
 from ember_code.core.auth.portal_client import PortalClient
 from ember_code.core.auth.schemas import ValidateResult
+from ember_code.core.config.endpoint import ApiUrlNotConfigured
 
 
 class TestPortalClientLoginUrl:
-    def test_default_portal(self):
-        url = PortalClient().login_url(9999)
-        assert "ignite-ember.sh" in url
-        assert "cli-auth" in url
-        assert "port=9999" in url
+    """DEC-14 changed the shape here.
 
-    def test_custom_portal(self):
-        url = PortalClient(portal_url="https://portal.test.com").login_url(9999)
+    ``test_default_portal`` used to construct ``PortalClient()`` with no
+    arguments and assert ``ignite-ember.sh`` appeared in the sign-in
+    URL — which is precisely the behaviour the decision removed, and the
+    test asserting it was the clearest statement of the problem: the
+    portal host had no setting anywhere, so a customer pointing the CLI
+    at their own deployment still got sent to the vendor's website to
+    sign in.
+
+    There is no default now. ``api_url`` is required and the portal host
+    is derived from it, so one value configures the pair.
+    """
+
+    def test_the_portal_host_is_derived_from_the_api_host(self):
+        url = PortalClient(api_url="https://api.acme.example").login_url(9999)
+
+        assert url == "https://acme.example/cli-auth?port=9999"
+
+    def test_a_host_that_is_not_an_api_host_is_used_as_is(self):
+        """One deployment serving both from one name is a normal shape,
+        and guessing at it would be worse than doing nothing."""
+        url = PortalClient(api_url="https://igni.acme.example").login_url(9999)
+
+        assert url == "https://igni.acme.example/cli-auth?port=9999"
+
+    def test_there_is_no_default_server(self):
+        with pytest.raises(TypeError):
+            PortalClient()  # type: ignore[call-arg]
+
+    def test_constructing_with_no_server_does_not_refuse(self):
+        """An ``AuthController`` is built at startup whether or not
+        anybody signs in, so refusing here stopped an unconfigured
+        install from booting at all — which the backend-server tests
+        caught. Refusing to start because a *future* operation might
+        need a setting is the wrong trade."""
+        client = PortalClient(api_url="")
+
+        assert client.configured is False
+
+    def test_using_it_with_no_server_refuses_and_says_what_to_set(self):
+        """The F69 pattern, at the operation rather than the
+        constructor. Without it the client would build
+        ``/v1/portal/me`` — a relative URL — and fail as a parse error
+        inside httpx, which tells the operator nothing.
+
+        Every entry point, not just one: a refusal on `login_url` while
+        `validate_token` built a malformed request would be the same bug
+        with one door shut.
+        """
+        client = PortalClient(api_url="")
+
+        for operation in (
+            lambda: client.login_url(9999),
+            lambda: client.portal_url,
+            lambda: client.start_callback(),
+        ):
+            with pytest.raises(ApiUrlNotConfigured) as raised:
+                operation()
+
+            message = str(raised.value)
+            assert "api_url" in message
+            assert "~/.igni/config.yaml" in message
+            assert "self-hosted" in message
+
+    def test_the_refusal_names_what_the_caller_was_doing(self):
+        """"api_url is not set" leaves the reader to work out which of
+        the things they just asked for needed it."""
+        client = PortalClient(api_url="")
+
+        with pytest.raises(ApiUrlNotConfigured) as raised:
+            client.login_url(9999)
+
+        assert str(raised.value).startswith("Opening the portal")
+
+    @pytest.mark.asyncio
+    async def test_validating_a_token_with_no_server_refuses(self):
+        client = PortalClient(api_url="")
+
+        with pytest.raises(ApiUrlNotConfigured):
+            await client.validate_token("tok")
+
+    def test_an_explicit_portal_url_still_wins(self):
+        """Derivation is a default, not a rule — a deployment whose
+        portal is on an unrelated host may say so."""
+        url = PortalClient(
+            api_url="https://api.acme.example", portal_url="https://portal.test.com"
+        ).login_url(9999)
+
         assert url == "https://portal.test.com/cli-auth?port=9999"
 
     def test_strips_trailing_slash(self):
-        url = PortalClient(portal_url="https://portal.test.com/").login_url(9999)
+        url = PortalClient(
+            api_url="https://api.acme.example", portal_url="https://portal.test.com/"
+        ).login_url(9999)
+
         assert url == "https://portal.test.com/cli-auth?port=9999"
 
 

@@ -70,7 +70,9 @@ class ToolBuildContext(BaseModel):
     base_dir: Path
     broadcast: BroadcastFn | None = None
     cloud_token: str | None = None
-    cloud_server_url: str = "https://api.ignite-ember.sh"
+    # DEC-14: no vendor default. Empty means "no server configured",
+    # which a self-hosted first run legitimately is.
+    cloud_server_url: str = ""
     # Shared notifier for the file-edit push channel. ``None`` lets
     # ``EmberEditTools`` fall back to
     # :data:`ember_code.core.tools.edit.default_file_edit_notifier`,

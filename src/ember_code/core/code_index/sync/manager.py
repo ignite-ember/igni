@@ -52,6 +52,7 @@ from ember_code.core.code_index.sync.schemas import (
     SyncProgressSnapshot,
     SyncResult,
 )
+from ember_code.core.config.endpoint import is_configured
 
 if TYPE_CHECKING:
     # ``CodeIndexActivityEntry`` is a wire-name alias for
@@ -253,6 +254,13 @@ class CodeIndexSyncManager:
         if not force_snapshot and self.code_index.has_commit(target_sha):
             self._last_synced_sha = target_sha
             return SyncResult.already_indexed(target_sha)
+
+        # DEC-14: before anything that needs the server. The resolver
+        # would otherwise build a request against an empty base and fail
+        # as a URL parse error, and ``not_authenticated`` below would
+        # send somebody to a login flow with no server to talk to.
+        if not is_configured(self.server_url):
+            return SyncResult.no_server_configured()
 
         resolved = await self.resolver.resolve()
         if resolved is None:
