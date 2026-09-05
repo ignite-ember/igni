@@ -349,7 +349,25 @@ jobs:
         with:
           workspaces: clients/tauri/src-tauri
 
+      # `--lib` is gone. It runs the library's unit tests and *only*
+      # those — `tests/spawn_smoke.rs` was never compiled here, so the
+      # one test that boots the shell end to end had no CI coverage of
+      # any kind, not even "does it still build".
+      #
+      # It had rotted exactly as you would expect: it looked for
+      # `target/debug/ember-code-app`, a binary this crate stopped
+      # producing at the rename, and it set `IGNI_DEV_BACKEND` without
+      # the `IGNITE_EMBER_DEV` acknowledgement that `runtime.rs` later
+      # started requiring. Its own docstring claimed "CI sets the env
+      # var on the macOS runner", and no workflow has ever set it.
+      #
+      # The smoke test does not run here — it needs macOS, a built
+      # binary, the venv and the web bundle — but it compiles, which is
+      # the decay that was actually happening. It is `#[ignore]`d rather
+      # than returning early on an env var, so the summary reads
+      # `1 ignored` instead of `1 passed`: this job now reports what it
+      # covered rather than counting a no-op as a pass.
       - name: Cargo test
         run: |
           cd clients/tauri/src-tauri
-          cargo test --no-default-features --lib
+          cargo test --no-default-features

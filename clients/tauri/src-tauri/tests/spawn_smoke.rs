@@ -16,12 +16,24 @@
 //! class ("a refactor in ``run()`` silently breaks startup") fails
 //! here loudly.
 //!
-//! Gated behind ``IGNI_TAURI_SMOKE=1`` because it (a) takes
-//! ~10-20s, (b) needs the debug binary + the project venv +
-//! ``clients/web/dist`` to all be pre-built, and (c) actually
-//! opens a webview window on macOS. CI sets the env var on the
-//! macOS runner where those preconditions hold; local dev runs
-//! ``cargo test`` without flipping it.
+//! Marked ``#[ignore]`` because it (a) takes ~10-20s, (b) needs the
+//! debug binary + the project venv + ``clients/web/dist`` to all be
+//! pre-built, and (c) actually opens a webview window on macOS. Run it
+//! with ``cargo test -- --ignored``.
+//!
+//! **Nothing runs this in CI**, and this paragraph used to claim
+//! otherwise — "CI sets the env var on the macOS runner where those
+//! preconditions hold". No workflow sets ``IGNI_TAURI_SMOKE``, the only
+//! Rust job runs on ``ubuntu-latest``, and it passed ``--lib``, which
+//! skips this directory entirely. Three independent reasons, and the
+//! sentence claiming coverage is how none of them got noticed.
+//!
+//! CI compiles it now — ``--lib`` is gone, so a refactor that breaks
+//! this file fails there, which is the most likely decay. *Running* it
+//! needs a macOS runner with the venv, the web bundle and a built
+//! binary, and that is not wired up. Until it is, this test runs when a
+//! person runs it, and the honest reading of a green CI is "it still
+//! compiles".
 //!
 //! Currently macOS-only (uses ``pgrep``/``lsof``). Linux support is
 //! a small addition (same tools exist); Windows would need a
@@ -163,15 +175,22 @@ fn pid_alive(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
+/// `#[ignore]` rather than an early `return` on an env var.
+///
+/// The gate used to be `IGNI_TAURI_SMOKE=1`, checked inside the body,
+/// which meant an ordinary `cargo test` printed **`1 passed`** for a
+/// test that did nothing. A skip that reports as a pass is the same
+/// mistake as a `--grep-invert` in a Playwright command line: no
+/// skipped test, no line in the report, and a green run that covered
+/// nothing.
+///
+/// `#[ignore]` is the mechanism built for this. `cargo test` now says
+/// `1 ignored` — visible in every summary — and `cargo test --
+/// --ignored` runs it. Nothing outside this file referenced the env
+/// var, so there was nothing to keep working.
 #[test]
+#[ignore = "needs macOS, a built debug binary, the project venv and clients/web/dist;             pops a webview window. Run with `cargo test -- --ignored`."]
 fn tauri_binary_boots_be_and_watchdog_cleans_up_on_exit() {
-    if std::env::var("IGNI_TAURI_SMOKE").ok().as_deref() != Some("1") {
-        eprintln!(
-            "skip: set IGNI_TAURI_SMOKE=1 to run this test (needs \
-             .venv, web/dist, and pops a webview window)"
-        );
-        return;
-    }
     if !cfg!(target_os = "macos") {
         eprintln!("skip: tauri_binary_boots_be_and_watchdog_cleans_up_on_exit only supports macOS today");
         return;
@@ -191,8 +210,18 @@ fn tauri_binary_boots_be_and_watchdog_cleans_up_on_exit() {
         dist_index.display()
     );
 
-    let binary = root
-        .join("clients/tauri/src-tauri/target/debug/ember-code-app");
+    // Cargo resolves this at compile time from the bin target, so a
+    // renamed binary is a build error rather than a silent miss.
+    //
+    // It was a hardcoded `target/debug/ember-code-app`, which is a name
+    // this crate stopped producing at the rename — the package builds
+    // `igni-app` now. On a fresh clone the assert below would have
+    // fired; on any machine that had built before the rename, the stale
+    // artifact was still sitting in `target/debug` and the test would
+    // have spawned a month-old binary and passed. Testing dead code and
+    // reporting success is the worse of the two failures, and only one
+    // of them is visible.
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_igni-app"));
     assert!(
         binary.is_file(),
         "expected debug binary at {} — run `cargo build` in src-tauri/ first",
@@ -212,6 +241,19 @@ fn tauri_binary_boots_be_and_watchdog_cleans_up_on_exit() {
     // test runtime + require network).
     let mut child: Child = Command::new(&binary)
         .env("IGNI_DEV_BACKEND", &venv_python)
+        // The dev override is gated on an explicit acknowledgement,
+        // added after this test was written: `runtime.rs` ignores
+        // `IGNI_DEV_BACKEND` unless `IGNITE_EMBER_DEV` is `1` or
+        // `true`, so an ambient variable in a shell profile cannot
+        // silently redirect a real user to a stale interpreter.
+        //
+        // Without it the shell fell through to the managed-venv
+        // bootstrap — a uv download over the network — and phase A
+        // timed out after 30 seconds. The test then reported "startup
+        // is broken", which was not true and was the only thing anybody
+        // would have read. Setting it here is the test opting in to the
+        // dev mode it was always assuming.
+        .env("IGNITE_EMBER_DEV", "1")
         .env("IGNI_PROJECT_DIR", &project_dir)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -234,9 +276,16 @@ fn tauri_binary_boots_be_and_watchdog_cleans_up_on_exit() {
         find_be_descendant(tauri_pid)
     })
     .unwrap_or_else(|| {
+        // Two causes, and the test cannot tell them apart from here, so
+        // it names both rather than accusing the app. It accused the app
+        // for as long as it went unrun: the real cause was this test not
+        // acknowledging dev mode, and "startup is broken" is what
+        // somebody would have spent the afternoon on.
         panic!(
-            "Tauri (pid={tauri_pid}) never spawned an ember_code.backend \
-             child within 30s — startup is broken"
+            "Tauri (pid={tauri_pid}) never spawned an ember_code.backend child \
+             within 30s. Either startup is broken, or the dev-backend override \
+             was declined and the shell is bootstrapping a managed venv over the \
+             network — check stderr for the IGNITE_EMBER_DEV notice."
         )
     });
 
