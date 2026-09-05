@@ -59,7 +59,7 @@ export const TERMINAL_PHASES: ReadonlySet<RunPhase> = new Set<RunPhase>([
 
 /**
  * True while the model is actively producing content. Blocks composer
- * submit, shows the "Ember is replying…" label.
+ * submit, shows the "igni is replying…" label.
  */
 export function isProcessing(phase: RunPhase): boolean {
   return phase === "starting" || phase === "streaming";

@@ -100,9 +100,41 @@ Generalizes: if a downstream consumer treats your output as
 authoritative, and you'd have to guess to fill it, don't guess.
 Surface the gap.
 
-### Rule 5: commits use "Ignite Ember" as co-author
+### Rule 5: an AI-assisted commit names the model that assisted
 
-Not Claude. `Co-Authored-By: Ignite Ember <noreply@igniteember.sh>`.
+`Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
+
+A commit written by a person alone carries no such trailer. This is the
+only accepted one: if a commit has a `Co-Authored-By` line at all, it
+must be that.
+
+**What this rule said before, and why it changed.** It said commits use
+`Co-Authored-By: Ignite Ember <noreply@igniteember.sh>` — "Not Claude."
+Two things were wrong with it.
+
+It was never followed. Every commit in the history with a co-author
+names the model; not one names the company. A standard nobody has ever
+applied is not a standard, and leaving it written down costs more than
+having no rule, because the next person to read this file cannot tell
+which of its rules are real.
+
+And the attribution was backwards. A `Co-Authored-By` trailer credits
+*who wrote the change*. The company is the author of the repository, not
+a co-author of each commit; naming it there would be the same claim as
+putting your employer in the trailer of everything you write. The model
+is the thing that co-wrote it, and saying so is what makes the history
+searchable when somebody later asks which changes were AI-assisted.
+
+(The old line also used `igniteember.sh`, unhyphenated, which is not a
+domain this project owns — everything else says `ignite-ember.sh`. A
+rule that has never run does not get its typos found.)
+
+`tests/test_the_commit_convention_is_followed.py` reads the trailer out
+of this section and checks it against the history, so this paragraph and
+the commits cannot drift apart again. It compares the **address**, not
+the whole line: the history holds the same model with and without a
+`(1M context)` label, and failing a correct commit over a parenthetical
+nobody can go back and edit is how a rule earns being ignored.
 
 ### Rule 6: OOP over procedural — classes own data + behaviour
 

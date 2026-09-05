@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { EmberClient } from "../../protocol/client";
+import type { IgniClient } from "../../protocol/client";
 import { Drawer } from "./Drawer";
 
 interface LoopStatus {
@@ -20,7 +20,7 @@ export function LoopPanel({
   onResume,
   onClose,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   /** Called when the user presses Resume. The panel-side ``loop_resume``
    *  RPC flips the paused flag and returns the wrapped iteration
    *  prompt — actually firing the iteration is the caller's job

@@ -112,7 +112,7 @@ describe("resolveWsUrl precedence", () => {
   });
 });
 
-// ── EmberClient listener subscription contract ──────────────
+// ── IgniClient listener subscription contract ──────────────
 //
 // ``onEvent`` and ``onStateChange`` are pub/sub APIs the rest of
 // the app builds on (App.tsx wires status / push / HITL handlers
@@ -135,14 +135,14 @@ describe("resolveWsUrl precedence", () => {
 // did not cancel a scheduled retry, so a client the caller had finished
 // with opened a fresh socket and could take the BE's single-client slot.
 
-describe("EmberClient — listener subscription", () => {
-  let EmberClient: typeof import("./client").EmberClient;
+describe("IgniClient — listener subscription", () => {
+  let IgniClient: typeof import("./client").IgniClient;
 
   beforeEach(async () => {
     // Use a fresh module instance; matchMedia + WebSocket
     // globals aren't touched because we never call connect().
     vi.resetModules();
-    ({ EmberClient } = await import("./client"));
+    ({ IgniClient } = await import("./client"));
   });
 
   it("onEvent registers a listener and returns an unsubscribe", () => {
@@ -150,14 +150,14 @@ describe("EmberClient — listener subscription", () => {
     // React-effect-cleanup shape. Without it, components that
     // mount/unmount repeatedly (sidebar open/close, etc.) leak
     // listeners — every leak silently re-fires every message.
-    const client = new EmberClient("ws://test");
+    const client = new IgniClient("ws://test");
     const fn = vi.fn();
     const unsubscribe = client.onEvent(fn);
     expect(typeof unsubscribe).toBe("function");
   });
 
   it("onStateChange registers a listener and returns an unsubscribe", () => {
-    const client = new EmberClient("ws://test");
+    const client = new IgniClient("ws://test");
     const fn = vi.fn();
     const unsubscribe = client.onStateChange(fn);
     expect(typeof unsubscribe).toBe("function");
@@ -167,7 +167,7 @@ describe("EmberClient — listener subscription", () => {
     // React StrictMode mounts effects twice — the second mount
     // cleanup may fire before the actual connect lands. close()
     // must be a no-op pre-connect, not throw on ``null.close()``.
-    const client = new EmberClient("ws://test");
+    const client = new IgniClient("ws://test");
     // No raise.
     client.close();
   });
@@ -175,7 +175,7 @@ describe("EmberClient — listener subscription", () => {
   it("close() is idempotent (multiple calls safe)", () => {
     // Same defensive shape — repeated close() must not throw.
     // Tests + lifecycle code may call it more than once.
-    const client = new EmberClient("ws://test");
+    const client = new IgniClient("ws://test");
     client.close();
     client.close();
     client.close();
@@ -186,7 +186,7 @@ describe("EmberClient — listener subscription", () => {
     // The unsubscribe returned from one subscribe call must NOT
     // affect other subscribers' slots — pinned by checking
     // that both unsubscribe functions are distinct.
-    const client = new EmberClient("ws://test");
+    const client = new IgniClient("ws://test");
     const fn1 = vi.fn();
     const fn2 = vi.fn();
     const unsub1 = client.onEvent(fn1);
@@ -207,10 +207,10 @@ describe("EmberClient — listener subscription", () => {
     // first half of this file tests at the function level.
     // Pinned here so the constructor wiring stays connected
     // to the resolver.
-    const client = new EmberClient();
+    const client = new IgniClient();
     // ``url`` is private; we can't inspect it directly. The
     // constructor not throwing is enough — resolveWsUrl is
     // covered above.
-    expect(client).toBeInstanceOf(EmberClient);
+    expect(client).toBeInstanceOf(IgniClient);
   });
 });

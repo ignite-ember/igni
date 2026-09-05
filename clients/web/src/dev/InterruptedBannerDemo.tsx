@@ -208,7 +208,7 @@ function App() {
                the edited text.
           The real app uses the actual ``Composer`` component;
           this is a faithful stub so the demo doesn't need a
-          EmberClient or BE connection. */}
+          IgniClient or BE connection. */}
       <section className="demo-page-composer">
         <h3>Composer (faux)</h3>
         <p className="demo-page-composer-subtitle">

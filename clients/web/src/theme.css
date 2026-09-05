@@ -8725,7 +8725,7 @@ button {
 /* Faux Composer — used by ``?demo=interrupted`` to show the
    Composer area that fills when Edit prompt fires. Faithful
    stub of the real Composer component so the demo doesn't
-   need an EmberClient or BE connection. */
+   need an IgniClient or BE connection. */
 .demo-page-composer {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);

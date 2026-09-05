@@ -53,7 +53,7 @@ class FakeWebSocket {
   }
 }
 
-let EmberClient: typeof import("./client").EmberClient;
+let IgniClient: typeof import("./client").IgniClient;
 
 beforeEach(async () => {
   vi.resetModules();
@@ -65,7 +65,7 @@ beforeEach(async () => {
   vi.spyOn(console, "info").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
-  ({ EmberClient } = await import("./client"));
+  ({ IgniClient } = await import("./client"));
 });
 
 afterEach(() => {
@@ -80,7 +80,7 @@ const latest = () => FakeWebSocket.instances[FakeWebSocket.instances.length - 1]
 
 describe("backoff schedule", () => {
   it("retries after 500ms on an abnormal close", () => {
-    const client = new EmberClient("ws://test");
+    const client = new IgniClient("ws://test");
     client.connect();
     expect(FakeWebSocket.instances).toHaveLength(1);
 
@@ -95,7 +95,7 @@ describe("backoff schedule", () => {
   });
 
   it("doubles up to a 5s ceiling", () => {
-    const client = new EmberClient("ws://test");
+    const client = new IgniClient("ws://test");
     client.connect();
 
     // Each failure without an intervening open should wait longer, and
@@ -112,7 +112,7 @@ describe("backoff schedule", () => {
   });
 
   it("resets to 500ms after a successful open", () => {
-    const client = new EmberClient("ws://test");
+    const client = new IgniClient("ws://test");
     client.connect();
 
     // Walk the backoff up first.
@@ -135,7 +135,7 @@ describe("backoff schedule", () => {
 describe("close code 1008 — another tab took the slot", () => {
   it("yields instead of reconnecting", () => {
     const states: string[] = [];
-    const client = new EmberClient("ws://test");
+    const client = new IgniClient("ws://test");
     client.onStateChange((s) => states.push(s));
     client.connect();
 
@@ -150,7 +150,7 @@ describe("close code 1008 — another tab took the slot", () => {
 
   it("does not emit 'disconnected' for the replaced case", () => {
     const states: string[] = [];
-    const client = new EmberClient("ws://test");
+    const client = new IgniClient("ws://test");
     client.onStateChange((s) => states.push(s));
     client.connect();
 
@@ -162,7 +162,7 @@ describe("close code 1008 — another tab took the slot", () => {
 
 describe("teardown", () => {
   it("close() stops a retry that was already scheduled", () => {
-    const client = new EmberClient("ws://test");
+    const client = new IgniClient("ws://test");
     client.connect();
 
     latest().fail(); // schedules a retry
@@ -175,7 +175,7 @@ describe("teardown", () => {
 
   it("a socket replaced by connect() cannot flip the shared state", () => {
     const states: string[] = [];
-    const client = new EmberClient("ws://test");
+    const client = new IgniClient("ws://test");
     client.onStateChange((s) => states.push(s));
     client.connect();
     const orphan = latest();

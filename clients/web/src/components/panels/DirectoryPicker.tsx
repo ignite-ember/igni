@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { EmberClient } from "../../protocol/client";
+import type { IgniClient } from "../../protocol/client";
 import { ArrowUpIcon, FolderIcon } from "../Icons";
 
 interface DirListing {
@@ -23,7 +23,7 @@ export function DirectoryPicker({
   onSelect,
   onCancel,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   title: string;
   /** Where to start browsing — the session's currently locked dir.
    *  Empty falls back to the BE's home directory. */

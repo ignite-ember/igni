@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import type { EmberClient } from "../../protocol/client";
+import type { IgniClient } from "../../protocol/client";
 import { Drawer } from "./Drawer";
 
 type Json = Record<string, unknown>;
@@ -55,7 +55,7 @@ export function DetailsPanel({
   fallbackMarkdown,
   onClose,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   title: string;
   method: string;
   fallbackMarkdown?: string;

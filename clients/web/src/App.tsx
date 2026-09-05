@@ -77,7 +77,7 @@ import { LoopPanel } from "./components/panels/LoopPanel";
 import { McpPanel } from "./components/panels/McpPanel";
 import { WatcherPanel } from "./components/panels/WatcherPanel";
 import { SchedulePanel } from "./components/panels/SchedulePanel";
-import { EmberClient, pickNativeDirectory, type ConnectionState } from "./protocol/client";
+import { IgniClient, pickNativeDirectory, type ConnectionState } from "./protocol/client";
 import type { HITLRequest, ServerMessage, StatusUpdate } from "./protocol/messages";
 import { countOf } from "./lib/plural";
 
@@ -158,7 +158,7 @@ function formatPlanName(tier: string): string {
 }
 
 export default function App() {
-  const client = useMemo(() => new EmberClient(), []);
+  const client = useMemo(() => new IgniClient(), []);
   const [conn, setConn] = useState<ConnectionState>("connecting");
   const [items, setItems] = useState<ChatItem[]>([]);
   // Mirror of ``items`` for callbacks whose deps don't include

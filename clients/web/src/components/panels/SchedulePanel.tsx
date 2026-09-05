@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import type { EmberClient } from "../../protocol/client";
+import type { IgniClient } from "../../protocol/client";
 import { Drawer } from "./Drawer";
 import { ChevronIcon } from "../Icons";
 
@@ -115,7 +115,7 @@ export function SchedulePanel({
   client,
   onClose,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   onClose: () => void;
 }) {
   const [tasks, setTasks] = useState<ScheduledTask[] | null>(null);

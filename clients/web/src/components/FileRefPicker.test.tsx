@@ -27,7 +27,7 @@ afterEach(() => {
 function makeClient(
   completeFiles: (q: string) => Promise<CompleteFilesResp>,
 ) {
-  return { completeFiles } as unknown as import("../protocol/client").EmberClient;
+  return { completeFiles } as unknown as import("../protocol/client").IgniClient;
 }
 
 describe("FileRefPicker — initial render", () => {

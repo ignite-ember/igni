@@ -1,5 +1,5 @@
 /**
- * EmberClient — WebSocket protocol client for the igni backend.
+ * IgniClient — WebSocket protocol client for the igni backend.
  *
  * Responsibilities:
  *  - connect/reconnect to `python -m ember_code.backend --ws-port N`
@@ -106,7 +106,7 @@ function genId(prefix: string): string {
 
 const RPC_TIMEOUT_MS = 60_000;
 
-export class EmberClient {
+export class IgniClient {
   private ws: WebSocket | null = null;
   private url: string;
   private closed = false;

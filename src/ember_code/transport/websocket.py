@@ -203,7 +203,7 @@ class WebSocketServerTransport(ListeningTransport):
         # Stamp a per-stream monotonic ``event_seq`` so the FE can
         # dedup events that arrive twice (e.g. when two WebSocket
         # clients are attached due to a StrictMode double-mount of
-        # EmberClient) AND so the ordering is preserved across
+        # IgniClient) AND so the ordering is preserved across
         # duplicates — the FE keys dedup on (id, event_seq) and the
         # sequence itself is the canonical order of events in the
         # stream. ``stream_end`` resets the counter so a new turn

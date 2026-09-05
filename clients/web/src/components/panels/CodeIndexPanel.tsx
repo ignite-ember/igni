@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { EmberClient } from "../../protocol/client";
+import type { IgniClient } from "../../protocol/client";
 import { Drawer } from "./Drawer";
 import { countOf } from "../../lib/plural";
 
@@ -195,7 +195,7 @@ export function CodeIndexPanel({
   client,
   onClose,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   onClose: () => void;
 }) {
   const [status, setStatus] = useState<CodeIndexStatus | null>(null);

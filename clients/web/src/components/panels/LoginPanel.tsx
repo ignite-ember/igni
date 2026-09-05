@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { EmberClient } from "../../protocol/client";
+import type { IgniClient } from "../../protocol/client";
 
 /**
  * Browser-callback login. Progress streams in as push notifications:
@@ -9,7 +9,7 @@ export function LoginPanel({
   client,
   onDone,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   onDone: (success: boolean, detail: string) => void;
 }) {
   const [statusText, setStatusText] = useState("Starting login…");

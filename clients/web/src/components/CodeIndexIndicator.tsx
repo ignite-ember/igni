@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { EmberClient } from "../protocol/client";
+import type { IgniClient } from "../protocol/client";
 
 export interface CodeIndexStatus {
   head_indexed: boolean;
@@ -51,7 +51,7 @@ export function CodeIndexIndicator({
   client,
   onOpen,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   onOpen: () => void;
 }) {
   const [status, setStatus] = useState<CodeIndexStatus | null>(null);

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { EmberClient } from "../protocol/client";
+import type { IgniClient } from "../protocol/client";
 import { host } from "../lib/host";
 import { codePillLabels, EditableInput, type EditableInputHandle } from "./EditableInput";
 import { ArrowUpIcon, ChevronIcon, StopIcon } from "./Icons";
@@ -114,7 +114,7 @@ export function Composer({
   permissionMode,
   onPickMode,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   connected: boolean;
   processing: boolean;
   skills: SlashCommand[];

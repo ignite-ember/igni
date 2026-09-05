@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import type { EmberClient } from "../../protocol/client";
+import type { IgniClient } from "../../protocol/client";
 import { Drawer } from "./Drawer";
 import { Skeleton } from "../Skeleton";
 
@@ -82,7 +82,7 @@ export function KnowledgePanel({
   client,
   onClose,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   onClose: () => void;
 }) {
   const [status, setStatus] = useState<KnowledgeStatus | null>(null);
@@ -543,7 +543,7 @@ function DocumentDetail({
   client,
   id,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   id: string;
 }) {
   const [doc, setDoc] = useState<KnowledgeDocFull | null>(null);

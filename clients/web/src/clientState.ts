@@ -13,7 +13,7 @@
  * the composer doesn't flood the WS.
  */
 
-import type { EmberClient } from "./protocol/client";
+import type { IgniClient } from "./protocol/client";
 
 const CLIENT_ID_KEY = "ember-code:client-id";
 
@@ -60,7 +60,7 @@ export class ClientStateStore {
   private listeners: Set<(key: string, value: string) => void> = new Set();
 
   constructor(
-    private client: EmberClient,
+    private client: IgniClient,
     public readonly clientId: string,
     private debounceMs = 250,
   ) {}

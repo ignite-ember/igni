@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
-import type { EmberClient } from "../../protocol/client";
+import type { IgniClient } from "../../protocol/client";
 import { Drawer } from "./Drawer";
 import { Skeleton } from "../Skeleton";
 
@@ -156,7 +156,7 @@ export function PluginsPanel({
   client,
   onClose,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   onClose: () => void;
 }) {
   const [plugins, setPlugins] = useState<PluginRow[] | null>(null);
@@ -667,7 +667,7 @@ function PluginDetailPage({
   onToggle,
   onRemove,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   selection: Selection;
   plugins: PluginRow[] | null;
   busy: string;

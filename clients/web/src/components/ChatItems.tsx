@@ -337,7 +337,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
  *  via a key further up). */
 type MermaidLib = { initialize: (opts: Record<string, unknown>) => void; render: (id: string, src: string) => Promise<{ svg: string }> };
 let mermaidPromise: Promise<MermaidLib> | null = null;
-/** Pick a mermaid built-in theme that matches the current Ember
+/** Pick a mermaid built-in theme that matches the current igni
  *  theme. ``default`` = the colored light palette (purples / teals
  *  / pinks); ``dark`` = a colored dark palette. Both run in colour;
  *  the previous ``neutral`` choice was the cause of the all-grey

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { EmberClient } from "../../protocol/client";
+import type { IgniClient } from "../../protocol/client";
 import { Drawer } from "./Drawer";
 
 interface SkillRow {
@@ -13,7 +13,7 @@ export function SkillsPanel({
   onRun,
   onClose,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   onRun: (command: string) => void;
   onClose: () => void;
 }) {

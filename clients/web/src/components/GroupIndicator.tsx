@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { EmberClient } from "../protocol/client";
+import type { IgniClient } from "../protocol/client";
 
 export interface GroupPolicy {
   group_id: string | null;
@@ -51,7 +51,7 @@ export function classify(policy: GroupPolicy | null): GroupBadge {
 }
 
 /** The group this person is in. */
-export function GroupIndicator({ client }: { client: EmberClient }) {
+export function GroupIndicator({ client }: { client: IgniClient }) {
   const [policy, setPolicy] = useState<GroupPolicy | null>(null);
 
   const refresh = useCallback(async () => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { EmberClient } from "../../protocol/client";
+import type { IgniClient } from "../../protocol/client";
 import { Drawer } from "./Drawer";
 import { ChevronIcon } from "../Icons";
 import { Skeleton } from "../Skeleton";
@@ -324,7 +324,7 @@ export function McpPanel({
   onClose,
   onAddServer,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   onClose: () => void;
   onAddServer: (seed: string) => void;
 }) {

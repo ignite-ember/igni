@@ -55,7 +55,7 @@ vi.hoisted(() => {
 });
 
 import { ClientStateStore, ensureClientId } from "./clientState";
-import type { EmberClient } from "./protocol/client";
+import type { IgniClient } from "./protocol/client";
 
 beforeEach(() => {
   localStorage.clear();
@@ -160,8 +160,8 @@ interface Rpc {
   (method: string, params?: unknown): Promise<unknown>;
 }
 
-function makeClient(rpc: Rpc): EmberClient {
-  return { rpc } as unknown as EmberClient;
+function makeClient(rpc: Rpc): IgniClient {
+  return { rpc } as unknown as IgniClient;
 }
 
 describe("ClientStateStore — hydrate", () => {
