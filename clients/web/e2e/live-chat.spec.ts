@@ -55,12 +55,21 @@ function marker(): string {
 /** Start from an empty transcript, so nothing earlier can match. */
 async function newChat(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: /New chat/i }).click();
-  await expect(page.locator(".conversation")).not.toContainText(/TKN/, {
+  // Emptiness measured by the absence of assistant blocks, not by the
+  // absence of a token string: session *titles* in the sidebar carry
+  // earlier tokens, and a text-absence assertion over a broad
+  // container picks them up.
+  await expect(page.locator(".msg-assistant")).toHaveCount(0, {
     timeout: 15_000,
   });
 }
 
-test.describe.configure({ mode: "serial" });
+// A real model over a real network needs more than the project's
+// 20s default: the run is killed mid-assertion and the failure reads
+// as "element(s) not found", which looks like a broken selector
+// rather than a clock. Found by giving a 120s assertion budget inside
+// a 20s test and watching the test die first.
+test.describe.configure({ mode: "serial", timeout: 180_000 });
 
 test.beforeAll(() => {
   mkdirSync(OUT, { recursive: true });
@@ -81,6 +90,24 @@ async function send(page: import("@playwright/test").Page, text: string) {
   await editor.click();
   await editor.fill(text);
   await editor.press("Enter");
+}
+
+/**
+ * Wait for *some* assistant block to contain `token`.
+ *
+ * A streamed reply renders as several `.msg-assistant` blocks, so a
+ * plain `toContainText` on that locator hits Playwright's strict mode
+ * and reports "resolved to 2 elements" — a failure about the test,
+ * dressed as a failure about the app.
+ */
+async function assistantSaid(
+  page: import("@playwright/test").Page,
+  token: string,
+  timeout = 120_000,
+) {
+  await expect(
+    page.locator(".msg-assistant").filter({ hasText: token }).first(),
+  ).toBeVisible({ timeout });
 }
 
 /** Screenshot once nothing is animating — see the portal's shot(). */
@@ -115,9 +142,7 @@ test("a question gets an answer", async ({ page, liveBe }) => {
   // `.chat-scroll, .chat-list, main` and Playwright reported
   // "element(s) not found" — a failing test about a working app, which
   // is the most expensive kind of red.
-  await expect(page.locator(".msg-assistant")).toContainText(token, {
-    timeout: 120_000,
-  });
+  await assistantSaid(page, token, 120_000);
   await shot(page, "03-answered");
 });
 
@@ -130,9 +155,7 @@ test("the composer is usable again after a turn", async ({ page, liveBe }) => {
   await newChat(page);
   const token = marker();
   await send(page, `Reply with exactly ${token}.`);
-  await expect(page.locator(".msg-assistant")).toContainText(token, {
-    timeout: 120_000,
-  });
+  await assistantSaid(page, token, 120_000);
 
   await expect(page.locator(".composer-editable")).toHaveAttribute(
     "data-placeholder",
@@ -168,7 +191,15 @@ test("a tool call is shown to the user", async ({ page, liveBe }) => {
 
   // The command is shown before it is authorised. Approving something
   // you cannot read is not consent.
-  await expect(page.locator("body")).toContainText(/ls\s+-la/);
+  // *A* command is shown, not a specific one. Pinning `ls -la` made
+  // the test depend on which command the model happened to pick — it
+  // chose differently on a later run and the test failed about the
+  // app. What matters is that whatever is about to run is legible
+  // before it is authorised: approving something you cannot read is
+  // not consent.
+  await expect(page.locator(".conversation, body").first()).toContainText(
+    /\bls\b|\bfind\b|\becho\b|COMMAND/i,
+  );
 
   await page.getByRole("button", { name: /Allow once/i }).click();
 

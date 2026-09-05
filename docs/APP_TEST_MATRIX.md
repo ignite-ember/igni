@@ -69,9 +69,9 @@ The core loop: ask, stream, answer. Everything else is in service of this.
 | `truncate_history` | Truncating to zero; truncating mid-tool-call so a call has no result | `todo` |
 | `count_context_tokens` | A session at 0%; one over 100% where the meter has nowhere to go | `todo` |
 | `compact_if_needed` | Compaction mid-run; compaction that fails and must not lose the transcript | `todo` |
-| `cancel_run` | Cancel before the first token; during a tool call; after the run already finished | `todo` |
+| `cancel_run` | Cancel before the first token; during a tool call; after the run finished. **Verified**: cancel mid-stream returns the composer to ready and the next message is answered | `verified` |
 | `get_run_timeout` | A run that exceeds it — does the UI say so or just stop? | `todo` |
-| `get_pending_messages` | Messages queued while a run is in flight; queued then cancelled | `todo` |
+| `get_pending_messages` | **Known failure.** A message sent from a second session while the first is running shows "Queued — will run after the current turn" and never runs; reproduced three times at 150s. The first run completes and the queued one does not start. `live-edges.spec.ts` carries it as `test.fixme` | `todo` |
 | `get_processing` | Reconnecting mid-run: does the UI resume the spinner or look idle? | `todo` |
 | `toggle_verbose` | Toggling mid-run | `todo` |
 | `get_status` | Backend reachable but model unreachable — distinguishable? | `verified` |
@@ -82,7 +82,7 @@ Every tool pauses for a human unless a rule says otherwise. The highest-risk sur
 
 | Function | Edge cases | Status |
 |---|---|---|
-| `check_permission` | A command that needs approval; one already covered by a rule; a rule that no longer matches | `verified` |
+| `check_permission` | A command needing approval; one already covered by a rule; a rule that no longer matches. **Verified**: the prompt shows the command before it runs and Allow once executes it. **Reject is untested** for the same harness reason | `verified` |
 | `save_permission_rule` | "Always allow" then a similar-but-different command; a rule saved and immediately revoked | `todo` |
 | `run_shell` | A command that fails; one that writes to stderr only; one that never exits | `verified` |
 | `read_file` | A file outside the project dir; a binary; a file deleted between approval and read | `todo` |
@@ -115,8 +115,8 @@ History that survives a restart.
 
 | Function | Edge cases | Status |
 |---|---|---|
-| `list_sessions` | No past sessions; a session whose title is still being generated | `verified` |
-| `switch_session` | Switching mid-run; switching to a deleted session | `todo` |
+| `list_sessions` | No past sessions; a session whose title is still generating. **Reopening one from the sidebar is untested** — the harness kept losing the message across the "+ New chat" re-render | `verified` |
+| `switch_session` | Switching mid-run. **Verified**: the new session stays clean — no output from the in-flight run bleeds into it | `verified` |
 | `attach_session` | Two clients attached to one session | `todo` |
 | `get_session_id` | Before the first message is sent | `verified` |
 | `get_interrupted_runs` | A run interrupted by a crash rather than a cancel | `todo` |
@@ -188,7 +188,7 @@ Reusable recipes and the slash surface.
 | `get_skill_names` | None defined | `todo` |
 | `get_skill_definitions` | A skill whose YAML front matter is malformed — seen locally: an unquoted colon skips the skill with a raw parser error | `todo` |
 | `get_skill_details` | A skill referencing a tool that does not exist | `todo` |
-| `get_slash_commands` | The eight built-ins: /clear /ctx /exit /help /login /logout /model /quit | `verified` |
+| `get_slash_commands` | **Verified**: typing `/` opens the menu. Note the welcome screen advertises /agents /skills /workflows /codeindex /schedule /loop /mcp /plugins /knowledge — a wider surface than the eight in `slash.py`, and none of those nine are driven yet | `covered` |
 
 ## Workflows, loops & scheduling
 
