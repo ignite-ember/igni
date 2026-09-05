@@ -116,7 +116,7 @@ History that survives a restart.
 | Function | Edge cases | Status |
 |---|---|---|
 | `list_sessions` | No past sessions; a session whose title is still generating. **Reopening one from the sidebar is untested** — the harness kept losing the message across the "+ New chat" re-render | `verified` |
-| `switch_session` | Switching mid-run. **Verified**: the new session stays clean — no output from the in-flight run bleeds into it | `verified` |
+| `switch_session` | Switching mid-run. **Verified**: the new session stays clean — no output from the in-flight run bleeds in. **`/fork` fails on a fresh session**: "Fork failed: source session not found: <id>", though the id is shown in the footer, so the user is forking something that visibly exists. Works once the session has a message | `verified` |
 | `attach_session` | Two clients attached to one session | `todo` |
 | `get_session_id` | Before the first message is sent | `verified` |
 | `get_interrupted_runs` | A run interrupted by a crash rather than a cancel | `todo` |
@@ -188,7 +188,7 @@ Reusable recipes and the slash surface.
 | `get_skill_names` | None defined | `todo` |
 | `get_skill_definitions` | A skill whose YAML front matter is malformed — seen locally: an unquoted colon skips the skill with a raw parser error | `todo` |
 | `get_skill_details` | A skill referencing a tool that does not exist | `todo` |
-| `get_slash_commands` | **Verified**: typing `/` opens the menu. Note the welcome screen advertises /agents /skills /workflows /codeindex /schedule /loop /mcp /plugins /knowledge — a wider surface than the eight in `slash.py`, and none of those nine are driven yet | `covered` |
+| `get_slash_commands` | **Verified**: the menu lists 12 commands with descriptions, and typing narrows it. The composer enters a distinct *command mode* (`mode-command`, "Command name (Backspace to return to chat)") that consumes the leading slash. `/help /ctx /sessions /model /agents /skills /mcp` all open and render. `/clear` empties its transcript. **`/login` and `/logout` are not run** — `/logout` would clear the operator's stored token | `verified` |
 
 ## Workflows, loops & scheduling
 
