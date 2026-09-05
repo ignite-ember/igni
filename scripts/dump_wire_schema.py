@@ -66,7 +66,23 @@ def main() -> None:
     schema: dict[str, dict[str, list[str]]] = {"messages": {}, "rpc": {}}
 
     for _name, cls in inspect.getmembers(msg, inspect.isclass):
-        if cls.__module__ != msg.__name__ or not hasattr(cls, "model_fields"):
+        # Anything pydantic that the protocol package re-exports through
+        # `messages`. That namespace *is* the FE-facing surface, which
+        # is the property worth filtering on.
+        #
+        # This read `cls.__module__ != msg.__name__` — only classes
+        # defined in `messages` itself. Then `messages` became a
+        # re-export shim over `protocol/schemas/`, every class's
+        # `__module__` became `...schemas.be_events` and friends, and
+        # the filter excluded all fifty. The script kept exiting 0 and
+        # writing an empty contract, so anybody who ran it destroyed the
+        # snapshot — which is why nobody had, and why the FE's
+        # wire-contract test spent two months validating against a
+        # frozen copy. The guard's input generator failed silently, and
+        # a guard checking a fossil passes exactly like one that works.
+        if not hasattr(cls, "model_fields"):
+            continue
+        if not cls.__module__.startswith("ember_code.protocol."):
             continue
         type_field = cls.model_fields.get("type")
         wire_type = getattr(type_field, "default", None) if type_field else None
@@ -76,6 +92,23 @@ def main() -> None:
     schema["rpc"] = {k: sorted(v) for k, v in RPC_PAYLOADS.items()}
     schema["rpc"]["agent_info"] = sorted(_agent_info_fields())
     schema["rpc"]["scheduled_task"] = sorted(_scheduled_task_fields())
+
+    # Refuse rather than write an empty contract.
+    #
+    # The failure this script had was silent: it emitted zero messages,
+    # exited 0, and printed "0 messages" in a line nobody read. Anybody
+    # who ran it replaced a working snapshot with an empty one, so the
+    # only reason the contract survived is that nobody ran it for two
+    # months. A generator that can destroy its own output has to check
+    # its output.
+    if len(schema["messages"]) < 20:
+        raise SystemExit(
+            f"refusing to write: found only {len(schema['messages'])} message types. "
+            "The protocol has not shrunk by that much — the more likely explanation is "
+            "that the enumeration above stopped matching where the classes live, which "
+            "is what happened when `messages` became a re-export shim over "
+            "`protocol/schemas/`."
+        )
 
     OUT.write_text(json.dumps(schema, indent=2, sort_keys=True) + "\n")
     print(f"wrote {OUT} ({len(schema['messages'])} messages, {len(schema['rpc'])} rpc payloads)")

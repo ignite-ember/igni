@@ -163,7 +163,36 @@ class TestTheHistoryFollowsIt:
         """It was never in practice to begin with — that is the point —
         so this pins that it does not creep back in from somebody reading
         an old copy of the standards.
+
+        Checked against the **trailers**, not the message body. Written
+        against the body it fired on the commit that retired the rule,
+        because that message quotes the old address in order to explain
+        why it went — and a commit message cannot be reworded
+        afterwards. A rule that flags the prose describing a change is
+        the shape this suite keeps finding; here the fix is to ask the
+        narrower question, which is also the one that was meant.
         """
-        offenders = [sha for sha, body in _history() if "igniteember.sh" in body]
+        offenders = [
+            f'{sha}: {found.strip()!r}'
+            for sha, body in _history()
+            for found in _TRAILER.findall(body)
+            if 'igniteember.sh' in found
+        ]
 
         assert not offenders, offenders
+
+    def test_that_narrowing_still_catches_the_thing_it_is_for(self):
+        """A rule made narrower has to be shown to still bite. This is
+        the trailer it exists to reject, as it would appear in a real
+        commit body."""
+        body = (
+            'Some change\n\nCo-Authored-By: Ignite Ember <noreply@igniteember.sh>\n'
+        )
+        found = [t for t in _TRAILER.findall(body) if 'igniteember.sh' in t]
+
+        assert found, 'the narrowed check no longer recognises the retired trailer'
+
+        prose = 'It said `Co-Authored-By: Ignite Ember <noreply@igniteember.sh>` and was wrong.\n'
+        assert not [t for t in _TRAILER.findall(prose) if 'igniteember.sh' in t], (
+            'the check still fires on prose that merely mentions the address'
+        )

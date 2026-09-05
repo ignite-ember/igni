@@ -1,21 +1,58 @@
 {
   "messages": {
     "Message": [
+      "event_seq",
       "id",
       "session_id",
       "type"
     ],
+    "RunHeader": [
+      "parent_run_id",
+      "run_id"
+    ],
+    "RunScopedMessage": [
+      "event_seq",
+      "id",
+      "parent_run_id",
+      "run_id",
+      "session_id",
+      "type"
+    ],
+    "SessionListEntry": [
+      "agent_name",
+      "created_at",
+      "name",
+      "run_count",
+      "session_id",
+      "summary",
+      "updated_at"
+    ],
+    "TaskSnapshot": [
+      "assignee",
+      "status",
+      "task_id",
+      "title"
+    ],
+    "ToolResultData": [
+      "diff_rows",
+      "full_result",
+      "has_markup",
+      "summary"
+    ],
     "cancel": [
+      "event_seq",
       "id",
       "session_id",
       "type"
     ],
     "cancel_login": [
+      "event_seq",
       "id",
       "session_id",
       "type"
     ],
     "command": [
+      "event_seq",
       "id",
       "session_id",
       "text",
@@ -25,12 +62,14 @@
       "action",
       "content",
       "display_content",
+      "event_seq",
       "id",
       "kind",
       "session_id",
       "type"
     ],
     "content_delta": [
+      "event_seq",
       "id",
       "is_thinking",
       "session_id",
@@ -38,6 +77,7 @@
       "type"
     ],
     "error": [
+      "event_seq",
       "id",
       "session_id",
       "text",
@@ -46,14 +86,17 @@
     "hitl_decision": [
       "action",
       "choice",
+      "event_seq",
       "id",
       "requirement_id",
       "session_id",
+      "set_permission_mode",
       "type"
     ],
     "hitl_request": [
       "agent_path",
       "details",
+      "event_seq",
       "friendly_name",
       "id",
       "requirement_id",
@@ -65,6 +108,7 @@
     "hitl_response": [
       "action",
       "choice",
+      "event_seq",
       "id",
       "requirement_id",
       "session_id",
@@ -72,11 +116,13 @@
     ],
     "hitl_response_batch": [
       "decisions",
+      "event_seq",
       "id",
       "session_id",
       "type"
     ],
     "info": [
+      "event_seq",
       "id",
       "session_id",
       "text",
@@ -84,12 +130,14 @@
     ],
     "mcp_toggle": [
       "connect",
+      "event_seq",
       "id",
       "server_name",
       "session_id",
       "type"
     ],
     "model_completed": [
+      "event_seq",
       "id",
       "input_tokens",
       "output_tokens",
@@ -99,6 +147,7 @@
       "type"
     ],
     "model_switch": [
+      "event_seq",
       "id",
       "model_name",
       "session_id",
@@ -106,6 +155,7 @@
     ],
     "push_notification": [
       "channel",
+      "event_seq",
       "id",
       "payload",
       "session_id",
@@ -113,18 +163,22 @@
     ],
     "queue_message": [
       "client_id",
+      "event_seq",
       "id",
       "session_id",
       "text",
       "type"
     ],
     "reasoning_started": [
+      "event_seq",
       "id",
+      "parent_run_id",
       "run_id",
       "session_id",
       "type"
     ],
     "requirement_resolved": [
+      "event_seq",
       "id",
       "requirement_id",
       "session_id",
@@ -132,6 +186,7 @@
     ],
     "rpc_request": [
       "args",
+      "event_seq",
       "id",
       "method",
       "session_id",
@@ -139,6 +194,7 @@
     ],
     "rpc_response": [
       "error",
+      "event_seq",
       "id",
       "result",
       "session_id",
@@ -146,6 +202,7 @@
     ],
     "run_completed": [
       "duration",
+      "event_seq",
       "id",
       "input_tokens",
       "output_tokens",
@@ -157,12 +214,15 @@
     ],
     "run_error": [
       "error",
+      "event_seq",
       "id",
       "session_id",
       "type"
     ],
     "run_paused": [
+      "event_seq",
       "id",
+      "parent_run_id",
       "requirements",
       "run_id",
       "session_id",
@@ -170,6 +230,7 @@
     ],
     "run_started": [
       "agent_name",
+      "event_seq",
       "id",
       "model",
       "parent_run_id",
@@ -179,6 +240,7 @@
     ],
     "scheduler_event": [
       "description",
+      "event_seq",
       "event_type",
       "id",
       "result",
@@ -187,6 +249,7 @@
       "type"
     ],
     "session_cleared": [
+      "event_seq",
       "id",
       "new_session_id",
       "session_id",
@@ -194,22 +257,26 @@
       "type"
     ],
     "session_list": [
+      "event_seq",
       "id",
       "session_id",
       "type"
     ],
     "session_list_result": [
+      "event_seq",
       "id",
       "session_id",
       "sessions",
       "type"
     ],
     "session_switch": [
+      "event_seq",
       "id",
       "session_id",
       "type"
     ],
     "shutdown": [
+      "event_seq",
       "id",
       "session_id",
       "type"
@@ -218,6 +285,7 @@
       "cloud_connected",
       "cloud_org",
       "context_tokens",
+      "event_seq",
       "id",
       "input_tokens",
       "max_context",
@@ -228,18 +296,22 @@
       "type"
     ],
     "stream_end": [
+      "event_seq",
       "id",
       "session_id",
       "type"
     ],
     "streaming_done": [
+      "event_seq",
       "id",
+      "parent_run_id",
       "run_id",
       "session_id",
       "type"
     ],
     "task_created": [
       "assignee",
+      "event_seq",
       "id",
       "session_id",
       "status",
@@ -248,6 +320,7 @@
       "type"
     ],
     "task_iteration": [
+      "event_seq",
       "id",
       "iteration",
       "max_iterations",
@@ -255,6 +328,7 @@
       "type"
     ],
     "task_state_updated": [
+      "event_seq",
       "id",
       "session_id",
       "tasks",
@@ -262,6 +336,7 @@
     ],
     "task_updated": [
       "assignee",
+      "event_seq",
       "id",
       "session_id",
       "status",
@@ -270,10 +345,12 @@
     ],
     "tool_completed": [
       "diff_rows",
+      "event_seq",
       "full_result",
       "has_markup",
       "id",
       "is_error",
+      "parent_run_id",
       "run_id",
       "session_id",
       "summary",
@@ -281,15 +358,19 @@
     ],
     "tool_error": [
       "error",
+      "event_seq",
       "id",
+      "parent_run_id",
       "run_id",
       "session_id",
       "type"
     ],
     "tool_started": [
       "args_summary",
+      "event_seq",
       "friendly_name",
       "id",
+      "parent_run_id",
       "run_id",
       "session_id",
       "tool_name",
@@ -297,6 +378,7 @@
     ],
     "typing": [
       "client_id",
+      "event_seq",
       "id",
       "session_id",
       "text",
@@ -304,7 +386,9 @@
     ],
     "user_message": [
       "client_id",
+      "event_seq",
       "file_contents",
+      "force",
       "id",
       "session_id",
       "text",
@@ -312,6 +396,7 @@
     ],
     "user_message_received": [
       "client_id",
+      "event_seq",
       "id",
       "queued",
       "session_id",
@@ -320,6 +405,7 @@
     ],
     "welcome": [
       "client_id",
+      "event_seq",
       "id",
       "session_id",
       "type"
@@ -337,7 +423,8 @@
       "source_path",
       "system_prompt",
       "tags",
-      "tools"
+      "tools",
+      "unknown_tools"
     ],
     "loop_status": [
       "active",
