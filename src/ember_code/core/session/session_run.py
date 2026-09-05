@@ -111,7 +111,28 @@ class SessionRun(ABC):
         start_time = time.monotonic()
         response = await session.handle_message(message)
         elapsed = time.monotonic() - start_time
-        display.print_response(response)
+        if response and response.strip():
+            display.print_response(response)
+        else:
+            # A model may return an assistant turn with no content and
+            # no tool calls. Captured on the wire against a real
+            # provider: `content: ''`, `tool_calls: []`, one round trip,
+            # nothing else.
+            #
+            # `print_response` hands that to `print_markdown`, which
+            # renders nothing, so the run printed a timing line and
+            # exited 0. To the user that is indistinguishable from a
+            # crash, a hang, or a question the agent decided to ignore —
+            # and it is the one failure mode with no message anywhere to
+            # search for.
+            #
+            # Said here rather than at the `-m` entry point because this
+            # is the shared turn pipeline: the interactive loop renders
+            # the same silence.
+            display.print_warning(
+                'The model returned an empty response — no text and no tool call. '
+                'Nothing was run. Try again, or pick another model with /model.'
+            )
         display.print_run_stats(
             RunStats(
                 elapsed_seconds=elapsed,

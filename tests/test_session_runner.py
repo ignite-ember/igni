@@ -76,3 +76,74 @@ class TestRunSingleMessage:
             call_kwargs = MockSession.call_args[1]
             assert call_kwargs["project_dir"] == Path("/tmp/proj")
             assert call_kwargs["additional_dirs"] == [Path("/tmp/extra")]
+
+
+class TestAnEmptyModelTurnIsNotSilence:
+    """A model can return an assistant turn with nothing in it.
+
+    Captured on the wire against a real provider: one round trip,
+    ``content: ''``, ``tool_calls: []``, no ``reasoning_content``
+    either. The agent loop is right to stop — there is nothing to run
+    and nothing to say.
+
+    What was wrong is what the user saw. ``print_response`` hands the
+    empty string to ``print_markdown``, which renders nothing, so the
+    command printed a timing line and exited 0. That is
+    indistinguishable from a crash, a hang, or a question the agent
+    decided to ignore, and it is the only failure mode in the product
+    with no message anywhere to search for. Reproduced three times out
+    of three with one model before the fix, and it is silence every
+    time.
+
+    The notice lives in the shared turn pipeline rather than at the
+    ``-m`` entry point, because the interactive loop renders the same
+    silence through the same call.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('empty', ['', '   ', '\n\n'])
+    async def test_an_empty_response_says_so(self, empty):
+        with patch("ember_code.core.session.session_run.Session") as MockSession:
+            mock_session = _make_mock_session()
+            mock_session.handle_message = AsyncMock(return_value=empty)
+            MockSession.return_value = mock_session
+
+            await run_single_message(MagicMock(), "anything")
+
+            mock_session.display.print_response.assert_not_called()
+            mock_session.display.print_warning.assert_called_once()
+            said = mock_session.display.print_warning.call_args[0][0]
+            assert 'empty response' in said
+            # Actionable, or it is a nicer-looking dead end.
+            assert '/model' in said
+
+    @pytest.mark.asyncio
+    async def test_a_real_response_is_still_rendered_normally(self):
+        """Guards the guard: a warning on every turn would be worse
+        than the silence it replaced."""
+        with patch("ember_code.core.session.session_run.Session") as MockSession:
+            mock_session = _make_mock_session()
+            mock_session.handle_message = AsyncMock(return_value="the answer")
+            MockSession.return_value = mock_session
+
+            await run_single_message(MagicMock(), "anything")
+
+            mock_session.display.print_response.assert_called_once_with("the answer")
+            mock_session.display.print_warning.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_response_that_is_only_whitespace_counts_as_empty(self):
+        """A model that answers with a newline has answered nothing.
+
+        Split out because ``if response:`` would pass this one — the
+        string is truthy — and the user would still see a blank line
+        and a timing figure.
+        """
+        with patch("ember_code.core.session.session_run.Session") as MockSession:
+            mock_session = _make_mock_session()
+            mock_session.handle_message = AsyncMock(return_value=" \n\t ")
+            MockSession.return_value = mock_session
+
+            await run_single_message(MagicMock(), "anything")
+
+            mock_session.display.print_warning.assert_called_once()
