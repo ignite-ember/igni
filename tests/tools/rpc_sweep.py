@@ -22,6 +22,12 @@ marked `verified` in the matrix on the strength of this sweep says so.
 Read-only by default. Mutating methods are listed separately and only
 run with ``--mutating``, because "call every RPC" against a backend
 someone is using would delete their sessions.
+
+**``--mutating`` leaves traces.** ``save_permission_rule`` writes a
+real rule into ``.igni/settings.local.json`` — the sweep does not
+clean up after itself, because a probe that edits files it did not
+create is worse than one that says what it left. Snapshot that file
+first if you care about it.
 """
 
 from __future__ import annotations
@@ -70,6 +76,48 @@ ARGS: dict[str, dict] = {
     "count_context_tokens": {"text": "hello"},
     "read_process_tail": {"pid": 0},
     "list_dirs": {"path": "."},
+    # Mutating, with arguments taken from the handlers. Values chosen
+    # to be answerable but inert: a model that exists, names that do
+    # not, a zero-length attachment. What is being established is that
+    # the method accepts its arguments and returns — not that the
+    # side effect is right, which needs a person.
+    "switch_model": {"model_name": "DeepSeek-V4-Pro"},
+    "truncate_history": {"session_id": "SESSION", "run_id": ""},
+    "compact_if_needed": {
+        "ctx_tokens": 100,
+        "max_ctx": 100000,
+        "user_msg": "hello",
+        "assistant_msg": "hi",
+    },
+    "discard_ephemeral_agent": {"name": "no-such-agent"},
+    "promote_ephemeral_agent": {"name": "no-such-agent"},
+    "discard_interrupted_run": {"session_id": "SESSION", "message_id": ""},
+    "set_plugin_enabled": {"name": "no-such-plugin", "enabled": False, "ref": ""},
+    "upload_attachment": {
+        "filename": "sweep.txt",
+        "content_base64": "",
+        "session_id": "SESSION",
+    },
+    "extract_learnings": {"user_msg": "hello", "assistant_msg": "hi"},
+    "knowledge_add": {"source": "sweep-probe"},
+    "knowledge_remove": {"id": "no-such-doc"},
+    "mcp_connect": {"server_name": "no-such-server"},
+    "mcp_disconnect": {"server_name": "no-such-server"},
+    "remove_plugin": {"name": "no-such-plugin"},
+    "install_plugin": {"ref": ""},
+    "update_plugin": {"name": "no-such-plugin"},
+    "add_marketplace": {"url": ""},
+    "remove_marketplace": {"name": "no-such-marketplace"},
+    "cancel_scheduled_task": {"task_id": "no-such-task"},
+    "execute_scheduled_task": {"description": "sweep probe"},
+    "cancel_workflow": {"workflow_run_id": "no-such-run"},
+    "run_workflow": {"name": "no-such-workflow"},
+    "save_permission_rule": {"rule": "Bash(sweep-probe)", "level": "ask"},
+    "set_mcp_tool_enabled": {
+        "server": "no-such-server",
+        "tool": "no-such-tool",
+        "enabled": False,
+    },
 }
 
 #: Never called, whatever the flags say.
