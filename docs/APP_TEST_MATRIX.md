@@ -82,8 +82,8 @@ Every tool pauses for a human unless a rule says otherwise. The highest-risk sur
 
 | Function | Edge cases | Status |
 |---|---|---|
-| `check_permission` | A command needing approval; one already covered by a rule; a rule that no longer matches. **Verified**: the prompt shows the command before it runs and Allow once executes it. **Reject is untested** for the same harness reason | `verified` |
-| `save_permission_rule` | "Always allow" then a similar-but-different command; a rule saved and immediately revoked | `todo` |
+| `check_permission` | A command needing approval; one already covered by a rule; a rule that no longer matches. **Verified**: the prompt shows the command before it runs, Allow once executes it, and rules persist in `.igni/settings.local.json` (`allow`/`ask` by tool name). **Reject is untested** — the harness kept losing the message across the "+ New chat" re-render | `verified` |
+| `save_permission_rule` | **Verified by hand, against the rules file.** "Always allow" on one command writes an **exact-match** rule — `Bash(echo alpha-bh3nty)` — so `echo beta` still asks. "Allow similar" widens to the **binary**: `Bash(git *)`, which covers `git push --force` and `git reset --hard`, a bigger step than "similar" suggests but scoped to one program. **Neither ever writes bare `Bash`**, so approving one command never hands over the shell. An unrelated command (`pwd`) still prompted after both. Not automated: the spec was written and withdrawn — it depends on the model choosing to call the tool, and on the runs where it answered in prose all three tests skipped, which reads as green | `verified` |
 | `run_shell` | A command that fails; one that writes to stderr only; one that never exits | `verified` |
 | `read_file` | A file outside the project dir; a binary; a file deleted between approval and read | `todo` |
 | `complete_files` | No matches; thousands of matches; a path with spaces | `todo` |
