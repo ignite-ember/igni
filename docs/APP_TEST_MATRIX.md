@@ -71,7 +71,7 @@ The core loop: ask, stream, answer. Everything else is in service of this.
 | `compact_if_needed` | Compaction mid-run; compaction that fails and must not lose the transcript | `todo` |
 | `cancel_run` | Cancel before the first token; during a tool call; after the run finished. **Verified**: cancel mid-stream returns the composer to ready and the next message is answered | `verified` |
 | `get_run_timeout` | A run that exceeds it — does the UI say so or just stop? | `todo` |
-| `get_pending_messages` | **Known failure.** A message sent from a second session while the first is running shows "Queued — will run after the current turn" and never runs; reproduced three times at 150s. The first run completes and the queued one does not start. `live-edges.spec.ts` carries it as `test.fixme` | `todo` |
+| `get_pending_messages` | **Known failure — diagnosed.** A message sent while a run is in progress is queued and labelled "Queued — will run after the current turn." It is drained by a *tool hook*: `TeamWiring.wire_queue_hook` registers a `QueueBridge` whose own docstring says "Tool-hook (injector) drains the queue after each tool call". So a turn that makes **no tool call** — plain text generation — never fires the hook and the queued message is never picked up. Reproduced three times at 150s each with the composer back to idle, i.e. the run had finished. The label promises "after the current turn"; the implementation delivers "after the next tool call". Carried as `test.fixme` in `live-edges.spec.ts` | `todo` |
 | `get_processing` | Reconnecting mid-run: does the UI resume the spinner or look idle? | `todo` |
 | `toggle_verbose` | Toggling mid-run | `todo` |
 | `get_status` | Backend reachable but model unreachable — distinguishable? | `verified` |
