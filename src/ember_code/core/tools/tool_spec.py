@@ -347,11 +347,27 @@ class WebSearchSpec(ToolSpec):
     ``ddgs.text(backend="duckduckgo")`` path (which raises
     ``DDGSException("No results found.")`` in ddgs 9.x regardless of
     query). ``search_news`` is unaffected — it was already working.
+
+    **The gate named functions that do not exist.**
+    ``confirm_function_names`` was ``("duckduckgo_search",
+    "duckduckgo_news")``; ``DuckDuckGoTools`` registers ``web_search``
+    and ``search_news``. agno matches the list against its own
+    registry, found neither, and logged "Requires confirmation
+    tool(s) not present in the toolkit" — so web search ran with no
+    approval prompt while this file asserted it was gated. For a
+    product whose premise is that nothing leaves the customer's
+    network, an ungated outbound search is not a small thing.
+
+    Same shape as ``/config``'s ``storage.backend``: a name that had
+    been renamed upstream, still referenced, failing silently. There
+    is a rule for it now —
+    ``tests/test_every_tool_function_is_reachable.py`` asserts every
+    name in ``confirm_function_names`` exists in the built toolkit.
     """
 
     name: str = "WebSearch"
     agno_function_names: tuple[str, ...] = ("web_search", "search_news")
-    confirm_function_names: tuple[str, ...] = ("duckduckgo_search", "duckduckgo_news")
+    confirm_function_names: tuple[str, ...] = ("web_search", "search_news")
     # ``DuckDuckGoTools`` doesn't accept a base_dir.
     base_dir_kwarg: str | None = None
     # ``toolkit_cls`` is populated at import time; ``None`` sentinel
@@ -385,11 +401,44 @@ class WebFetchSpec(ToolSpec):
 
 
 class PythonSpec(ToolSpec):
+    """Python execution. **Every** function gated, not just one.
+
+    ``PythonTools`` registers seven functions and this spec used to
+    name one of them, ``run_python_code``. The other six ran with no
+    approval prompt at all — including ``save_to_file_and_run``, which
+    writes a file and executes it, ``run_python_file_return_variable``,
+    which executes one, and ``pip_install_package`` /
+    ``uv_pip_install_package``, which fetch and install packages from
+    the internet into the user's environment.
+
+    Gating the *most obviously named* one and leaving the rest is the
+    worst arrangement available: a user who writes ``tools: [Python]``
+    in an agent file sees an approval prompt, concludes the toolkit is
+    supervised, and is wrong about four code-execution paths.
+
+    ``read_file`` and ``list_files`` are gated too, matching
+    :class:`ReadFileSpec`, which gates reads. One rule per toolkit
+    beats a per-function judgement nobody will maintain.
+
+    Reachability does not change the argument. ``Python`` is in no
+    bundled agent and never in ``_MAIN_CORE_TOOLS``, so only a
+    user-authored ephemeral agent can ask for it — which is exactly
+    the person relying on the prompt.
+    """
+
     name: str = "Python"
     # No LLM-function aliases for Python — the ephemeral path takes the
     # registry name directly.
     agno_function_names: tuple[str, ...] = ()
-    confirm_function_names: tuple[str, ...] = ("run_python_code",)
+    confirm_function_names: tuple[str, ...] = (
+        "run_python_code",
+        "save_to_file_and_run",
+        "run_python_file_return_variable",
+        "pip_install_package",
+        "uv_pip_install_package",
+        "read_file",
+        "list_files",
+    )
     toolkit_cls: type[Toolkit] = PythonTools
 
 

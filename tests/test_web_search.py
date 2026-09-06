@@ -44,22 +44,54 @@ def test_build_passes_backend_auto(ctx: ToolBuildContext, confirm: bool) -> None
     assert toolkit.backend == "auto"
 
 
-def test_build_confirm_true_registers_confirmation_tools(ctx: ToolBuildContext) -> None:
-    """Confirm mode should still register the legacy
-    ``duckduckgo_search`` / ``duckduckgo_news`` function names so the
-    BE's confirmation gate matches them. The fix must not drop this."""
-    spec = WebSearchSpec()
-    toolkit = spec.build(ctx, confirm=True)
-    assert "duckduckgo_search" in toolkit.requires_confirmation_tools
-    assert "duckduckgo_news" in toolkit.requires_confirmation_tools
+def test_build_confirm_true_gates_the_functions_that_exist(
+    ctx: ToolBuildContext,
+) -> None:
+    """Confirm mode must gate the search functions.
+
+    This test used to assert that ``duckduckgo_search`` and
+    ``duckduckgo_news`` were *in the list* — and they were, and
+    ``DuckDuckGoTools`` registers neither. agno matched the list
+    against its registry, found nothing, logged "Requires confirmation
+    tool(s) not present in the toolkit", and web search ran with no
+    approval prompt. The test passed the whole time, because a list
+    containing two strings is not a gate.
+
+    So the assertion is on the *effect*: the functions the model can
+    actually call carry ``requires_confirmation``. That cannot be
+    satisfied by a name.
+    """
+    toolkit = WebSearchSpec().build(ctx, confirm=True)
+
+    registered = {
+        **(toolkit.functions or {}),
+        **(getattr(toolkit, "async_functions", {}) or {}),
+    }
+    assert registered, "DuckDuckGoTools registered nothing at all"
+    ungated = sorted(
+        name
+        for name, fn in registered.items()
+        if not getattr(fn, "requires_confirmation", False)
+    )
+    assert ungated == [], (
+        f"{ungated} reach the internet with no approval prompt. "
+        "For a product that promises nothing leaves the customer's "
+        "network, an ungated outbound search is not a detail."
+    )
 
 
 def test_build_confirm_false_no_confirmation_tools(ctx: ToolBuildContext) -> None:
-    """Without confirm mode, no tool should require confirmation —
-    the legacy names exist only for the confirm-gate match above."""
-    spec = WebSearchSpec()
-    toolkit = spec.build(ctx, confirm=False)
+    """Without confirm mode, nothing requires confirmation."""
+    toolkit = WebSearchSpec().build(ctx, confirm=False)
+
     assert not getattr(toolkit, "requires_confirmation_tools", [])
+    registered = {
+        **(toolkit.functions or {}),
+        **(getattr(toolkit, "async_functions", {}) or {}),
+    }
+    assert not any(
+        getattr(fn, "requires_confirmation", False) for fn in registered.values()
+    )
 
 
 def test_web_search_invokes_ddgs_with_auto_backend(ctx: ToolBuildContext) -> None:

@@ -301,20 +301,21 @@ test(
       page.locator(".msg-assistant").filter({ hasText: "FORKME" }).first(),
     ).toBeVisible({ timeout: 120_000 });
 
-    const before = await page.locator("body").innerText();
-    const idBefore = /session\s+([0-9a-f]{6,})/i.exec(before)?.[1];
+    // The footer chip, not a regex over the whole page: the sidebar
+    // prints an id beside every session in the project, and on a
+    // backend with a few hundred of them a body-wide match is a
+    // coin toss. This test failed that way in a full sweep and passed
+    // alone, which is the signature of reading the wrong element
+    // rather than of a broken fork.
+    const chip = page.locator(".session-chip code");
+    const idBefore = (await chip.innerText()).trim();
+    expect(idBefore).toMatch(/^[0-9a-f]{6,}$/);
 
     await runCommand(page, "/fork");
     await shot(page, "cmd-fork");
 
     await expect
-      .poll(
-        async () => {
-          const now = await page.locator("body").innerText();
-          return /session\s+([0-9a-f]{6,})/i.exec(now)?.[1];
-        },
-        { timeout: 30_000 },
-      )
+      .poll(async () => (await chip.innerText()).trim(), { timeout: 30_000 })
       .not.toBe(idBefore);
   },
 );

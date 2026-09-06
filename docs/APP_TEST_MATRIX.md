@@ -310,7 +310,12 @@ Each was reproduced, and each is recorded on its own row above.
 | `/plugin` did nothing at all — no output, no panel, not even the echoed command. The picker lists `/plugins` before `/plugin`, and Enter's "already-complete command runs it" test compares against the *highlighted* entry | `components/Composer.tsx` | **fixed** — `filterSlashCommands` puts an exact match first, so what runs is what is highlighted |
 | `@` file mentions stopped working after "+ New chat". The session id rotates one RPC round trip later, the Composer re-hydrates its draft from `draft:<sessionId>`, and the `@` the parser needs was blanked out of the editor. The picker stayed open, filtered to nothing, and the query went to the model as chat | `App.tsx` | **fixed** — `carryDraft` moves the draft onto the new id across `/clear` and `/fork` |
 | `/knowledge` said "Knowledge base failed to initialize." — no cause, and untrue. The index is *deferred* until CodeIndex's Neo4j attaches. `Session._knowledge_error` was initialised to `None` and assigned nowhere, so the branch that exists to explain the failure could not run | `core/session/core.py`, `backend/cmd_knowledge.py` | **fixed** — the deferred state explains itself and points at `/codeindex` |
+| **Web search ran with no approval prompt.** `WebSearchSpec.confirm_function_names` was `("duckduckgo_search", "duckduckgo_news")`; `DuckDuckGoTools` registers `web_search` and `search_news`. agno matched the list against its registry, found neither, and logged "Requires confirmation tool(s) not present in the toolkit". `test_web_search.py` asserted the two strings were *in the list* and passed throughout | `core/tools/tool_spec.py` | **fixed** — gates the real names; a rule now asserts every gated name exists in the built toolkit |
+| `PythonSpec` gated one of `PythonTools`' seven functions. `save_to_file_and_run`, `run_python_file_return_variable`, `pip_install_package` and `uv_pip_install_package` ran ungated — two of them install from the internet. Partial gating is worse than none: the prompt on `run_python_code` reads as "this toolkit is supervised" | `core/tools/tool_spec.py` | **fixed** — all seven gated |
+| Eight of eighteen hook events were undocumented — `PermissionRequest`, `PermissionDenied`, `PreCompact`, `PostCompact`, `TaskCreated`, `TaskCompleted`, `StopFailure`, `InstructionsLoaded`. All eight fire. `docs/HOOKS.md` listed ten and read as complete, and hooks are how a self-hosted deployment extends the product | `docs/HOOKS.md` | **fixed** — documented with payloads; `test_every_hook_event_is_documented.py` requires a table row per event |
+| Nine CLI-flag tests ran no CLI. `test_read_only_denies_writes` set two `Settings` fields and asserted one back; `test_add_dir_setting` asserted `len([a, b]) == 2`. Every one would pass with its flag deleted | `tests/test_cli_flags.py` | **fixed** — replaced by `test_the_cli_flags_do_something.py`, which drives Click and the real settings mapping |
 | `/bug` opens `github.com/ignite-ember/igni/issues` in a browser **on the backend host**. From a product whose premise is that nothing leaves the customer's cloud, and in an air-gapped deployment it opens a tab that cannot load | `backend/cmd_bug.py` | open — a product decision, not a code defect |
+| **A message sent immediately after "+ New chat" is lost.** The composer accepts it — the editor empties, so `submit` ran — and it never appears: no user bubble, no error, the welcome screen still on the page. `/clear` asks the backend for a fresh session id and rebinds the view when the answer arrives, one RPC round trip later; anything submitted inside that window lands in a view about to be replaced. Reproduced on every attempt; waiting five seconds first works every time | `App.tsx`, `/clear` handler | open — declared as `test.fixme` in `live-chat.spec.ts`. Not fixed because the choice (refuse input until the rotation lands, vs. queue the submit behind it) is a product decision. `carryDraft` fixes the neighbouring `@` symptom and not this one |
 | A "+ New chat" session vanishes from the sidebar before its first message. `App.tsx` inserts an optimistic row and says it survives "until the first message lands"; the `refreshSessions()` two lines later replaces the list with the backend's, which has no row for it | `App.tsx`, `/clear` handler | open |
 | `/fork` on a session with no messages fails: "Fork failed: source session not found: &lt;id&gt;", though the id is in the footer | session persistence | open |
 | A message queued while a run is in progress never runs if that run makes no tool call — the queue is drained by a tool hook, but the label promises "after the current turn" | `TeamWiring.wire_queue_hook` | open |
@@ -334,6 +339,16 @@ Each was reproduced, and each is recorded on its own row above.
   asserted on their contents; nothing inside any of them is clicked.
   The plugins panel lists 291 marketplace entries and no test installs
   one.
+* **The tool functions are unit-tested, not driven through the app.**
+  Thirteen that had nothing now have direct tests, and that is a
+  different claim from "the agent can use them": nothing here proves
+  the model is offered the right tool, picks it, and gets a useful
+  answer back. `live-chat.spec.ts` does that for exactly one —
+  `run_shell_command`, through the approval dialog.
+* **Three toolkits are agno's and remain untested here** — its
+  `PythonTools` (7 functions), `DuckDuckGoTools.search_news`,
+  `ReasoningTools.think`/`analyze`. Their *attachment and gating* is
+  covered; their internals are a vendored library's business.
 * **`/eject` and `/watcher` are registered backend-side and missing
   from `BUILTIN_COMMANDS`**, so neither appears in the composer's
   picker. Both work when typed. Whether a command should be typeable
@@ -348,12 +363,20 @@ Each was reproduced, and each is recorded on its own row above.
   is not coverage: the evidence for eleven tests exists on a
   developer's machine. Giving CI a model is a separate decision, and
   the one that would actually close this.
-* **The live specs must run serially.** Four Playwright workers share
-  one `IGNI_LIVE_WS` backend, and one backend has one current session:
+* **The live specs must run serially.** Every worker shares one
+  `IGNI_LIVE_WS` backend, and one backend has one current session:
   `/clear` opened onto `/fork`'s transcript and failed looking for its
-  own token. `mode: "serial"` on all three files. A parallel run of
-  these against a shared backend produces failures that are about the
-  harness.
+  own token. `mode: "serial"` on all five live files.
+* **Three kinds of cross-test leak were found and fixed, all of them
+  producing failures that named the wrong thing.** A test that left a
+  run paused at an approval dialog handed the next spec an app whose
+  composer could not be typed into. A `session <hex>` regex over
+  `body.innerText()` also matched the sidebar, which lists an id for
+  every session in the project. And `newChat()` returned before the
+  session id had rotated, so the next action raced the rebind. Each
+  failed intermittently in full sweeps and passed alone — the
+  signature of a harness bug, and worth saying out loud because the
+  first instinct on all three was to suspect the product.
 
 ## The surface this table does not cover
 
@@ -365,12 +388,12 @@ user-facing, and has no row above:
 | Surface | Size | State |
 |---|---|---|
 | Slash commands | 31 in `Composer.tsx`, 34 registered backend-side | **31 driven**, each asserted inside the surface it opens or against text from its own output. Not run, and why: `/login` and `/logout` (real credentials), `/bug` (opens a browser on the host). `/plan`, `/accept` and `/bypass` are driven *and toggled back*, so the suite cannot leave a session auto-approving tools |
-| Model-callable tools | ~58 functions across the always-attached toolkits and registry specs | none driven through the app; this is what the agent actually does |
+| Model-callable tools | 66 statically-named functions across 24 toolkits | 13 of igni's own had **no direct test**; all 13 now have one (`stop_process`, `watch_process`, `list_processes`, all of `LoopProgressTool`, all of `KnowledgeTools`, `loop_resume`). `test_every_tool_function_is_reachable.py` fails when a registered function has none. Still not driven *through the app* — these are unit tests of the functions, not of the model choosing to call them |
 | UI panels | 15 under `components/panels/` | 7 opened live via their commands — plugins, codeindex, hooks, loop, schedule, watcher, mcp — asserted on content, not merely on the drawer existing. Opening is not driving: nothing inside any of them is clicked |
-| Header tools menu | 13 entries, documented in-code as "no slash command visible to the user" | none clicked |
-| Welcome cards | 9 clickable | none clicked. One of them, `/workflows`, is a client-side regex intercept and never appears in the slash picker at all |
-| Hook events | 18 (`PreToolUse`, `PermissionRequest`, `PreCompact`, `SubagentStart`, …) | three rows above, all about *listing* hook config |
-| CLI flags | 17 on `igni`, 6 on the backend — `--read-only`, `--auto-approve`, `--worktree` | none |
+| Header tools menu | 13 entries, documented in-code as "no slash command visible to the user" | all 13 clicked, each asserted on the surface it opens, plus that the list is exactly what `App.tsx` defines |
+| Welcome cards | 9 clickable | all 9 clicked. One, `/workflows`, is a client-side regex intercept and never appears in the slash picker at all |
+| Hook events | 18 | 17 fire in the product and 16 test files exercise the pipeline — the earlier "only listing" note was wrong, and was about the three *RPCs*. What was missing was documentation: eight events were absent from `docs/HOOKS.md`. `Notification` is fired by nothing, and the page says so |
+| CLI flags | 16 on `igni` plus `--help`/`--version` | all 16 driven through Click and through `load_settings_from_options`, both directions (set *and* unset). `--worktree` and `--pipe` have tests for their refusals. A rule fails when an option no test mentions is added |
 | Composer input modes | `/` commands, `@` file mentions, `$` shell | all three. `live-composer.spec.ts` covers the `@` picker (open, narrow, accept a pill, send as a resolved reference) and `$` (mode in and out, output, non-zero exit, and that no approval dialog appears — `$` is the user's own command, a different path from the model's `run_shell_command` tool) |
 | Other client hosts | tauri, vscode, jetbrains | none. The title said "desktop and web"; only web is tested |
 

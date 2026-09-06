@@ -43,10 +43,47 @@ async function connected(page: Page) {
   );
 }
 
-/** The session id as the footer prints it. */
-async function sessionId(page: Page): Promise<string | undefined> {
-  const body = await page.locator("body").innerText();
-  return /session\s+([0-9a-f]{6,})/i.exec(body)?.[1];
+/** The session id, read from the footer chip itself.
+ *
+ *  Regexing `body.innerText()` for `session <hex>` also reads the
+ *  sidebar, which lists an id next to every session in the project —
+ *  hundreds of them on a backend that has been used. `.session-chip`
+ *  is the one element that means "the session you are in".
+ */
+async function sessionId(page: Page): Promise<string> {
+  return (await page.locator(".session-chip code").innerText()).trim();
+}
+
+/**
+ * Leave the shared backend session idle.
+ *
+ * Every live spec under `IGNI_LIVE_WS` talks to one backend with one
+ * current session, so a test that walks away from a run in progress
+ * hands the next one a broken app. This test found that the hard way:
+ * asking the model to summarise a file made it reach for `cat
+ * calc.py`, the run paused at the approval dialog, and the *next*
+ * spec's page opened onto "Allow Bash?" with a composer it could not
+ * type into. Two tests in other files failed, and neither failure was
+ * about the thing it was testing.
+ *
+ * Reject rather than approve: the run should end, not continue
+ * unattended after the test that started it has finished.
+ */
+async function leaveIdle(page: Page) {
+  const reject = page.getByRole("button", { name: /^Reject$/i }).first();
+  if (await reject.isVisible().catch(() => false)) {
+    await reject.click();
+  }
+  const stop = page.getByRole("button", { name: /stop|cancel/i }).first();
+  if (await stop.isVisible().catch(() => false)) {
+    await stop.click();
+  }
+  await expect(page.locator(".composer-editable")).toHaveAttribute(
+    "data-placeholder",
+    /Message (Ember|igni)/,
+    { timeout: 60_000 },
+  );
+  await expect(page.locator(".hitl-card")).toHaveCount(0);
 }
 
 async function shot(page: Page, name: string) {
@@ -146,6 +183,10 @@ test.describe("@ file mentions", () => {
       { timeout: 30_000 },
     );
     await shot(page, "04-mention-sent");
+
+    // "summarise this" is enough to make the model reach for the
+    // shell, and the run then waits for a human. See `leaveIdle`.
+    await leaveIdle(page);
   });
 
   test("the picker still works right after + New chat", async ({

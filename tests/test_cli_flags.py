@@ -21,74 +21,29 @@ class TestCLIFlagBehaviors:
         result = runner.invoke(cli, ["--version"])
         assert result.exit_code == 0
 
-    def test_debug_creates_settings(self):
-        """--debug should be a valid flag (tested via settings)."""
-        # Debug flag sets up logging, doesn't change Settings
-        settings = Settings()
-        # Just verify settings is valid
-        assert settings.models.default is not None
-
-    def test_no_color_flag_exists(self):
-        """--no-color should be a recognized CLI option."""
-        runner = CliRunner()
-        # Should not raise "no such option"
-        result = runner.invoke(cli, ["--no-color", "--help"])
-        assert "--no-color" not in result.output or result.exit_code == 0
-
-    def test_read_only_denies_writes(self):
-        """--read-only behavior: file_write and shell_execute = deny."""
-        settings = Settings()
-        settings.permissions.file_write = "deny"
-        settings.permissions.shell_execute = "deny"
-        assert settings.permissions.file_write == "deny"
-        assert settings.permissions.shell_execute == "deny"
-
-    def test_auto_approve_allows_all(self):
-        """--auto-approve behavior: all permissions = allow."""
-        settings = Settings()
-        settings.permissions.file_write = "allow"
-        settings.permissions.shell_execute = "allow"
-        settings.permissions.git_push = "allow"
-        settings.permissions.git_destructive = "allow"
-        assert settings.permissions.file_write == "allow"
-
-    def test_strict_denies_all(self):
-        """--strict behavior: deny all."""
-        settings = Settings()
-        settings.permissions.file_write = "deny"
-        settings.permissions.shell_execute = "deny"
-        settings.permissions.git_push = "deny"
-        settings.permissions.git_destructive = "deny"
-        assert settings.permissions.file_write == "deny"
-        assert settings.permissions.git_push == "deny"
-
-    def test_accept_edits_allows_writes_only(self):
-        """--accept-edits behavior: file_write=allow, shell=ask."""
-        settings = Settings()
-        settings.permissions.file_write = "allow"
-        settings.permissions.shell_execute = "ask"
-        assert settings.permissions.file_write == "allow"
-        assert settings.permissions.shell_execute == "ask"
-
-    def test_verbose_sets_display(self):
-        """--verbose behavior: show_routing=True, show_reasoning=True."""
-        settings = Settings()
-        settings.display.show_routing = True
-        settings.display.show_reasoning = True
-        assert settings.display.show_routing is True
-
-    def test_quiet_hides_details(self):
-        """--quiet behavior: show_tool_calls=False, show_routing=False."""
-        settings = Settings()
-        settings.display.show_tool_calls = False
-        settings.display.show_routing = False
-        assert settings.display.show_tool_calls is False
-
-    def test_add_dir_setting(self):
-        """--add-dir stores additional directories."""
-        # This is handled in cli.py, not Settings — just verify the pattern
-        dirs = [Path("/tmp/dir1"), Path("/tmp/dir2")]
-        assert len(dirs) == 2
+    # Everything that used to sit between here and
+    # ``test_max_run_timeout_exists`` has moved to
+    # ``tests/test_the_cli_flags_do_something.py``, because none of it
+    # ran the CLI.
+    #
+    # The shape, verbatim from the version this replaces::
+    #
+    #     def test_read_only_denies_writes(self):
+    #         settings = Settings()
+    #         settings.permissions.file_write = "deny"
+    #         settings.permissions.shell_execute = "deny"
+    #         assert settings.permissions.file_write == "deny"
+    #
+    # It sets two fields and asserts one of them back, and would pass
+    # with ``--read-only`` deleted from the CLI. ``test_add_dir_setting``
+    # asserted ``len([Path("/tmp/dir1"), Path("/tmp/dir2")]) == 2``.
+    # ``test_no_color_flag_exists`` asserted
+    # ``"--no-color" not in result.output or result.exit_code == 0``,
+    # which is satisfied by either half.
+    #
+    # Nine tests, one flag name each, and no coverage of any of them.
+    # That is worse than a gap: a gap gets filled, and a row of green
+    # ticks does not.
 
     def test_max_run_timeout_exists(self):
         """max_run_timeout setting exists for arun timeout."""

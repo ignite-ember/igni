@@ -42,7 +42,60 @@ Agent calls Edit tool
 | `Stop` | When agent wants to finish | Yes | Completion validation (did tests run?) |
 | `SubagentStart` | When a sub-team spawns | No | Logging, resource tracking |
 | `SubagentStop` | When a sub-team finishes | No | Result validation |
-| `Notification` | *(reserved for future use)* | No | Custom notification handlers |
+| `Notification` | *(reserved for future use — nothing fires it)* | No | Custom notification handlers |
+
+### Permission events
+
+Fired by the permission evaluator, paired. Both carry
+`{session_id, tool_name, tool_args, rule?, reason?}`.
+
+| Event | When It Fires | Can Block? | Use Case |
+|---|---|---|---|
+| `PermissionRequest` | The evaluator returned `ASK` and the request is about to be put to the user | No | Audit who was asked for what; route approvals to Slack |
+| `PermissionDenied` | `DENY` won — a deny rule, a plan-mode block, or headless mode with no matching allow | No | Alerting on blocked tools; explaining refusals in your own words |
+
+`PreToolUse` is the one that can *change* the answer; these two
+observe the decision after it is made.
+
+### Compaction events
+
+Fired around `/compact` and around the automatic trigger when input
+tokens approach the model's context window.
+
+| Event | When It Fires | Can Block? | Payload |
+|---|---|---|---|
+| `PreCompact` | Before context is compacted | No | `{scope: "manual"\|"auto", tokens_before}` |
+| `PostCompact` | After it completes | No | `{scope, tokens_before, tokens_after, summary_chars}` |
+
+Use these for export-before-compact, or to drive your own
+context-budget strategy from a plugin.
+
+### Scheduler events
+
+Fired by `core/tools/schedule.py` around the tasks behind
+`/schedule` — cron and one-shot. Distinct from
+`SubagentStart`/`SubagentStop`, which cover within-turn dispatch;
+these cover the longer-lived scheduled-execution layer.
+
+| Event | When It Fires | Can Block? | Payload |
+|---|---|---|---|
+| `TaskCreated` | A scheduled task is registered | No | `{task_id, description, scheduled_at, recurrence?}` |
+| `TaskCompleted` | It finishes, is cancelled, or errors | No | `{task_id, status, result?, error?, duration_seconds?}` |
+
+### Other
+
+| Event | When It Fires | Can Block? | Payload |
+|---|---|---|---|
+| `StopFailure` | A run ends in an unhandled exception rather than normal completion. Paired with `Stop` | No | `{session_id, error, error_type}` |
+| `InstructionsLoaded` | Project rules resolve — once at session init, and again from `RulesIndex.consume_path` when subdirectory or path-scoped rules surface lazily | No | `{source: "session_init"\|"rules_index", files: [str], bytes}` |
+
+Every event in `HookEvent` is on this page, and
+`tests/test_every_hook_event_is_documented.py` fails if one is added
+without a row. Eight of them were missing when that rule was written
+— `PermissionRequest`, `PermissionDenied`, `PreCompact`,
+`PostCompact`, `TaskCreated`, `TaskCompleted`, `StopFailure` and
+`InstructionsLoaded` — all of them firing in the product and none of
+them findable by anyone reading this page.
 
 ---
 

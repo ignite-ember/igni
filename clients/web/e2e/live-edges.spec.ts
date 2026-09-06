@@ -28,7 +28,7 @@
 import { expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
-import { test } from "./fixtures/live-be";
+import { test, whyNoModel } from "./fixtures/live-be";
 
 const OUT = "shots/live";
 const READY = /Message (Ember|igni)/;
@@ -54,10 +54,36 @@ async function connected(page: Page) {
 }
 
 async function newChat(page: Page) {
+  const idBefore = (
+    await page.locator(".session-chip code").innerText()
+  ).trim();
   await page.getByRole("button", { name: /New chat/i }).click();
   await expect(page.locator(".msg-assistant")).toHaveCount(0, {
     timeout: 15_000,
   });
+  // Wait for the session id to actually rotate before returning.
+  //
+  // "+ New chat" runs `/clear`, which asks the backend for a fresh
+  // session id and rebinds the view when the answer arrives — one RPC
+  // round trip after the click. A message sent inside that window is
+  // accepted by the composer and then never appears: the transcript
+  // stays empty and nothing says why. Measured, reproducibly, and
+  // pinned as a declared product defect in
+  // `live-chat.spec.ts`'s "a message sent immediately after + New
+  // chat is not lost".
+  //
+  // So every caller waits. Without this, three tests across three
+  // files failed intermittently in full sweeps and passed alone —
+  // failures about the race, dressed as failures about cancelling,
+  // forking, and tool calls.
+  await expect
+    .poll(
+      async () => (await page.locator(".session-chip code").innerText()).trim(),
+      {
+        timeout: 30_000,
+      },
+    )
+    .not.toBe(idBefore);
 }
 
 async function send(page: Page, text: string) {
@@ -114,128 +140,150 @@ async function open(page: Page, ws: string) {
   await connected(page);
 }
 
-test("cancelling a run stops it and leaves the composer usable", async ({
-  page,
-  liveBe,
-}) => {
-  // The worst outcome here is not "cancel did nothing" — it is a UI
-  // stuck in the running state with no way back, which reads as a
-  // hang and costs the user the session.
-  await open(page, liveBe.wsUrl);
-  await newChat(page);
+// Three of the four tests here wait on a model. They had no gate, so
+// on a stub-spawned run — which is what CI does — they went red
+// blaming the app for a reply nothing was ever asked for. Same
+// omission as `live-chat.spec.ts` had; see `whyNoModel`.
+//
+// Per-test rather than in a `beforeEach`: the slash-menu test needs no
+// model and runs in CI today, and skipping the whole file would trade
+// three false failures for four missing results.
+function needsAModel(): void {
+  const why = whyNoModel();
+  if (why) test.skip(true, why);
+}
 
-  await send(page, "Count slowly from 1 to 200, one number per line.");
+test(
+  "cancelling a run stops it and leaves the composer usable",
+  { tag: "@needs-model" },
+  async ({ page, liveBe }) => {
+    needsAModel();
 
-  // Wait until it is genuinely running before cancelling, or the test
-  // is cancelling nothing.
-  const stop = page.getByRole("button", { name: /stop|cancel/i }).first();
-  await expect(stop).toBeVisible({ timeout: 60_000 });
-  await shot(page, "10-running");
+    // The worst outcome here is not "cancel did nothing" — it is a UI
+    // stuck in the running state with no way back, which reads as a
+    // hang and costs the user the session.
+    await open(page, liveBe.wsUrl);
+    await newChat(page);
 
-  await stop.click();
-  await shot(page, "11-cancelled");
+    await send(page, "Count slowly from 1 to 200, one number per line.");
 
-  // Back to a state that accepts work.
-  await expect(page.locator(".composer-editable")).toHaveAttribute(
-    "data-placeholder",
-    READY,
-    { timeout: 60_000 },
-  );
+    // Wait until it is genuinely running before cancelling, or the test
+    // is cancelling nothing.
+    const stop = page.getByRole("button", { name: /stop|cancel/i }).first();
+    await expect(stop).toBeVisible({ timeout: 60_000 });
+    await shot(page, "10-running");
 
-  // And it actually accepts it.
-  const token = marker();
-  await send(page, `Reply with exactly ${token}.`);
-  await assistantSaid(page, token, 120_000);
-});
+    await stop.click();
+    await shot(page, "11-cancelled");
 
-test("switching session mid-run does not bleed one conversation into another", async ({
-  page,
-  liveBe,
-}) => {
-  // Two sessions, one in flight. The answer must land in the session
-  // that asked, not in whichever one is on screen when it arrives.
-  await open(page, liveBe.wsUrl);
-  await newChat(page);
+    // Back to a state that accepts work.
+    await expect(page.locator(".composer-editable")).toHaveAttribute(
+      "data-placeholder",
+      READY,
+      { timeout: 60_000 },
+    );
 
-  const slow = marker();
-  // Short enough that the queue below drains inside the test budget.
-  await send(page, `Count from 1 to 20, then say ${slow}.`);
-  await expect(
-    page.getByRole("button", { name: /stop|cancel/i }).first(),
-  ).toBeVisible({ timeout: 60_000 });
+    // And it actually accepts it.
+    const token = marker();
+    await send(page, `Reply with exactly ${token}.`);
+    await assistantSaid(page, token, 120_000);
+  },
+);
 
-  // Leave for a fresh session while that one runs.
-  await newChat(page);
-  await shot(page, "12-switched-away");
+test(
+  "switching session mid-run does not bleed one conversation into another",
+  { tag: "@needs-model" },
+  async ({ page, liveBe }) => {
+    needsAModel();
 
-  // Absence is asserted against a container that always exists.
-  // `.msg-assistant` matches nothing in a fresh session, and
-  // `expect(locator).not.toContainText()` on an empty locator *fails*
-  // rather than passing — it cannot resolve an element to read. The
-  // first version reported a cross-session bleed that was not there.
-  await expect(page.locator(".conversation")).not.toContainText(slow, {
-    timeout: 20_000,
-  });
+    // Two sessions, one in flight. The answer must land in the session
+    // that asked, not in whichever one is on screen when it arrives.
+    await open(page, liveBe.wsUrl);
+    await newChat(page);
 
-  // Sending here does not start a second run — the app serialises
-  // them and *says so*: "Queued — will run after the current turn."
-  // My first version expected an immediate reply and spent two
-  // minutes proving the app was right. Correct behaviour, clearly
-  // communicated, and worth pinning: a queue that ran silently would
-  // look like a message that went nowhere.
-  const here = marker();
-  await send(page, `Reply with exactly ${here}.`);
-  await expect(page.locator(".conversation")).toContainText(
-    /Queued — will run after the current turn/i,
-    { timeout: 30_000 },
-  );
-  await shot(page, "13-queued");
+    const slow = marker();
+    // Short enough that the queue below drains inside the test budget.
+    await send(page, `Count from 1 to 20, then say ${slow}.`);
+    await expect(
+      page.getByRole("button", { name: /stop|cancel/i }).first(),
+    ).toBeVisible({ timeout: 60_000 });
 
-  // Still no leakage from the session that was running.
-  await expect(page.locator(".conversation")).not.toContainText(slow);
-});
+    // Leave for a fresh session while that one runs.
+    await newChat(page);
+    await shot(page, "12-switched-away");
 
-test("a message queued from another session eventually runs", async ({
-  page,
-  liveBe,
-}) => {
-  // **Known failure.** Reproduced three times, 150s each: send in
-  // session A, switch to a new session, send there, and the second
-  // message sits at "Queued — will run after the current turn"
-  // forever. The first run finishes — its session gets its generated
-  // title, the composer returns to idle — and the queued one never
-  // starts.
-  //
-  // `test.fixme` rather than deleting it or leaving a permanent red:
-  // the expectation is right and the product does not meet it, and
-  // that is worth carrying in the report as a declared gap rather
-  // than as noise somebody learns to scroll past.
-  //
-  // Not diagnosed further. The backend log showed transient
-  // `API connection error` around the same window, but the proxy was
-  // healthy before and after and a CLI call through it answered in
-  // 2.0s — so "the upstream was down" does not explain it, and
-  // "queued work is dropped" is not yet proven either. Whoever picks
-  // this up should start at `get_pending_messages`.
-  test.fixme();
+    // Absence is asserted against a container that always exists.
+    // `.msg-assistant` matches nothing in a fresh session, and
+    // `expect(locator).not.toContainText()` on an empty locator *fails*
+    // rather than passing — it cannot resolve an element to read. The
+    // first version reported a cross-session bleed that was not there.
+    await expect(page.locator(".conversation")).not.toContainText(slow, {
+      timeout: 20_000,
+    });
 
-  await open(page, liveBe.wsUrl);
-  await newChat(page);
-  const slow = marker();
-  await send(page, `Count from 1 to 20, then say ${slow}.`);
-  await expect(
-    page.getByRole("button", { name: /stop|cancel/i }).first(),
-  ).toBeVisible({ timeout: 60_000 });
+    // Sending here does not start a second run — the app serialises
+    // them and *says so*: "Queued — will run after the current turn."
+    // My first version expected an immediate reply and spent two
+    // minutes proving the app was right. Correct behaviour, clearly
+    // communicated, and worth pinning: a queue that ran silently would
+    // look like a message that went nowhere.
+    const here = marker();
+    await send(page, `Reply with exactly ${here}.`);
+    await expect(page.locator(".conversation")).toContainText(
+      /Queued — will run after the current turn/i,
+      { timeout: 30_000 },
+    );
+    await shot(page, "13-queued");
 
-  await newChat(page);
-  const here = marker();
-  await send(page, `Reply with exactly ${here}.`);
-  await expect(page.locator(".conversation")).toContainText(/Queued/i, {
-    timeout: 30_000,
-  });
+    // Still no leakage from the session that was running.
+    await expect(page.locator(".conversation")).not.toContainText(slow);
+  },
+);
 
-  await assistantSaid(page, here, 150_000);
-});
+test(
+  "a message queued from another session eventually runs",
+  { tag: "@needs-model" },
+  async ({ page, liveBe }) => {
+    needsAModel();
+
+    // **Known failure.** Reproduced three times, 150s each: send in
+    // session A, switch to a new session, send there, and the second
+    // message sits at "Queued — will run after the current turn"
+    // forever. The first run finishes — its session gets its generated
+    // title, the composer returns to idle — and the queued one never
+    // starts.
+    //
+    // `test.fixme` rather than deleting it or leaving a permanent red:
+    // the expectation is right and the product does not meet it, and
+    // that is worth carrying in the report as a declared gap rather
+    // than as noise somebody learns to scroll past.
+    //
+    // Not diagnosed further. The backend log showed transient
+    // `API connection error` around the same window, but the proxy was
+    // healthy before and after and a CLI call through it answered in
+    // 2.0s — so "the upstream was down" does not explain it, and
+    // "queued work is dropped" is not yet proven either. Whoever picks
+    // this up should start at `get_pending_messages`.
+    test.fixme();
+
+    await open(page, liveBe.wsUrl);
+    await newChat(page);
+    const slow = marker();
+    await send(page, `Count from 1 to 20, then say ${slow}.`);
+    await expect(
+      page.getByRole("button", { name: /stop|cancel/i }).first(),
+    ).toBeVisible({ timeout: 60_000 });
+
+    await newChat(page);
+    const here = marker();
+    await send(page, `Reply with exactly ${here}.`);
+    await expect(page.locator(".conversation")).toContainText(/Queued/i, {
+      timeout: 30_000,
+    });
+
+    await assistantSaid(page, here, 150_000);
+  },
+);
 
 test("the slash menu opens and lists the built-in commands", async ({
   page,
@@ -254,4 +302,3 @@ test("the slash menu opens and lists the built-in commands", async ({
   const body = page.locator("body");
   await expect(body).toContainText(/help|model|clear/i, { timeout: 15_000 });
 });
-
