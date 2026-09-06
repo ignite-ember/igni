@@ -215,15 +215,23 @@ def test_plan_mode_blocks_edit_tools() -> None:
 
 
 def test_plan_mode_allows_read_tools() -> None:
-    # Plan mode lets the agent investigate freely: ``Read`` (and
-    # other tools in FILE_READ_TOOLS) auto-allow so the user isn't
-    # prompted for every cat / grep / glob during planning.
+    """Plan mode lets the agent investigate without prompting.
+
+    This used to assert ``Read`` / ``read_file`` / ``Grep`` / ``Glob``
+    / ``LS``. Those toolkits left the registry, so nothing emits those
+    names any more and an auto-allow for them granted nothing. The
+    behaviour is unchanged and lives in two places now: the
+    non-mutating entries still in ``FILE_READ_TOOLS``, asserted here,
+    and read-only shell — ``cat`` / ``ls`` / ``grep`` — which is how
+    the agent actually reads a file, asserted in
+    ``test_plan_mode_allows_readonly_shell`` below.
+    """
     ev = PermissionEvaluator.from_strings(mode="plan")
-    assert ev.evaluate("Read", {"file_path": "x.py"}) is PermissionDecision.ALLOW
-    assert ev.evaluate("read_file", {"file_path": "x.py"}) is PermissionDecision.ALLOW
-    assert ev.evaluate("Grep", {"pattern": "foo"}) is PermissionDecision.ALLOW
-    assert ev.evaluate("Glob", {"pattern": "*.py"}) is PermissionDecision.ALLOW
-    assert ev.evaluate("LS", {"path": "."}) is PermissionDecision.ALLOW
+    assert ev.evaluate("WebSearch", {"query": "x"}) is PermissionDecision.ALLOW
+    assert ev.evaluate("fetch_url", {"url": "https://x.test"}) is PermissionDecision.ALLOW
+    assert ev.evaluate("CodeIndex", {"cypher": "MATCH (n) RETURN n"}) is (
+        PermissionDecision.ALLOW
+    )
 
 
 def test_plan_mode_allows_readonly_shell() -> None:
@@ -346,10 +354,18 @@ def test_plan_mode_deny_still_wins() -> None:
     """``plan`` blocks edit tools and auto-allows reads; an explicit
     deny on a read tool is still honoured (otherwise the deny list
     would be silently eclipsed by the plan-mode auto-allow)."""
-    ev = PermissionEvaluator.from_strings(mode="plan", deny=["Read(./.env)"])
-    assert ev.evaluate("Read", {"file_path": "./.env"}) is PermissionDecision.DENY
-    # Other reads still get the plan-mode auto-allow.
-    assert ev.evaluate("Read", {"file_path": "x.py"}) is PermissionDecision.ALLOW
+    ev = PermissionEvaluator.from_strings(
+        mode="plan", deny=["WebFetch(https://secret.internal/*)"]
+    )
+    assert (
+        ev.evaluate("fetch_url", {"url": "https://secret.internal/keys"})
+        is PermissionDecision.DENY
+    )
+    # Other fetches still get the plan-mode auto-allow.
+    assert (
+        ev.evaluate("fetch_url", {"url": "https://example.test/docs"})
+        is PermissionDecision.ALLOW
+    )
 
 
 # ── Mode enum smoke ──────────────────────────────────────────────

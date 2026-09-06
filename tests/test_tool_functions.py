@@ -5,8 +5,6 @@ registry), Agno FileTools, and Bash execution.
 Edit and Glob already have good coverage in test_tools.py.
 """
 
-import subprocess
-from unittest.mock import patch
 
 import pytest
 from agno.tools.file import FileTools
@@ -14,7 +12,6 @@ from agno.tools.shell import ShellTools
 
 from ember_code.core.config.tool_permissions import ToolPermissions
 from ember_code.core.tools.registry import ToolRegistry
-from ember_code.core.tools.search import GrepTools
 
 # ── Read (Agno FileTools) ────────────────────────────────────────
 
@@ -55,78 +52,6 @@ class TestReadTool:
         result = tools.list_files(dir_path=str(tmp_path))
         assert "a.py" in result
         assert "b.txt" in result
-
-
-# ── Grep ─────────────────────────────────────────────────────────
-
-
-_has_rg = __import__("shutil").which("rg") is not None
-
-
-class TestGrepTool:
-    """Test grep tool functions."""
-
-    @pytest.mark.skipif(not _has_rg, reason="ripgrep not in PATH")
-    def test_grep_finds_pattern(self, tmp_path):
-        (tmp_path / "test.py").write_text("def hello():\n    return 'world'\n")
-        tools = GrepTools(base_dir=str(tmp_path))
-        result = tools.grep("hello", path="")
-        assert "hello" in result
-
-    @pytest.mark.skipif(not _has_rg, reason="ripgrep not in PATH")
-    def test_grep_no_matches(self, tmp_path):
-        (tmp_path / "test.py").write_text("nothing here\n")
-        tools = GrepTools(base_dir=str(tmp_path))
-        result = tools.grep("nonexistent_pattern_xyz")
-        assert "No matches" in result
-
-    @pytest.mark.skipif(not _has_rg, reason="ripgrep not in PATH")
-    def test_grep_with_glob_filter(self, tmp_path):
-        (tmp_path / "a.py").write_text("target\n")
-        (tmp_path / "b.txt").write_text("target\n")
-        tools = GrepTools(base_dir=str(tmp_path))
-        result = tools.grep("target", glob="*.py")
-        assert "a.py" in result
-        # b.txt should be excluded by glob
-        assert "b.txt" not in result
-
-    @pytest.mark.skipif(not _has_rg, reason="ripgrep not in PATH")
-    def test_grep_with_context(self, tmp_path):
-        (tmp_path / "test.py").write_text("line1\nline2\ntarget\nline4\nline5\n")
-        tools = GrepTools(base_dir=str(tmp_path))
-        result = tools.grep("target", context_lines=1)
-        # Should include context lines
-        assert "line2" in result or "line4" in result
-
-    @pytest.mark.skipif(not _has_rg, reason="ripgrep not in PATH")
-    def test_grep_files_returns_paths(self, tmp_path):
-        (tmp_path / "a.py").write_text("match\n")
-        (tmp_path / "b.py").write_text("no\n")
-        tools = GrepTools(base_dir=str(tmp_path))
-        result = tools.grep_files("match")
-        assert "a.py" in result
-        assert "b.py" not in result
-
-    @pytest.mark.skipif(not _has_rg, reason="ripgrep not in PATH")
-    def test_grep_count(self, tmp_path):
-        (tmp_path / "test.py").write_text("match\nmatch\nmatch\n")
-        tools = GrepTools(base_dir=str(tmp_path))
-        result = tools.grep_count("match")
-        assert "3" in result or "test.py" in result
-
-    @pytest.mark.skipif(not _has_rg, reason="ripgrep not in PATH")
-    def test_grep_rg_not_installed(self, tmp_path):
-        tools = GrepTools(base_dir=str(tmp_path))
-        with patch("subprocess.run", side_effect=FileNotFoundError("rg not found")):
-            result = tools.grep("test")
-        assert "not installed" in result or "Error" in result
-
-    @pytest.mark.skipif(not _has_rg, reason="ripgrep not in PATH")
-    def test_grep_timeout(self, tmp_path):
-        tools = GrepTools(base_dir=str(tmp_path))
-        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("rg", 30)):
-            result = tools.grep("test")
-        assert "timed out" in result.lower() or "Error" in result
 
 
 # ── Bash (Shell execution) ───────────────────────────────────────

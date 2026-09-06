@@ -31,8 +31,12 @@ class ToolNameCatalog:
     """
 
     #: Class-level defaults; instances may override per-suite or in tests.
+    #:
+    #: ``Read`` / ``Grep`` / ``Glob`` / ``LS`` are gone — an expansion
+    #: for a tool no suite can call is a mapping to nothing. A suite
+    #: still naming one falls through unchanged, which then fails to
+    #: match any function call, which is the correct answer.
     DEFAULT_EXPANSIONS: ClassVar[dict[str, list[str]]] = {
-        "Read": ["read_file", "read_file_chunk", "list_files"],
         "Write": ["save_file", "create_file"],
         "Edit": ["edit_file", "edit_file_replace_all"],
         "Bash": [
@@ -42,9 +46,6 @@ class ToolNameCatalog:
             "stop_process",
             "list_processes",
         ],
-        "Grep": ["grep", "grep_files", "grep_count"],
-        "Glob": ["glob_files"],
-        "LS": ["list_files"],
         "WebSearch": ["web_search", "search_news"],
         "WebFetch": ["ember_web", "fetch_url"],
         # All ScheduleTools functions — without this, ``Schedule`` falls

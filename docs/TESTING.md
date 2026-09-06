@@ -125,7 +125,6 @@ overrides.
 | `auth/client.py` | `test_auth.py` | NEW |
 | `src/ember_code/core/tools/registry.py` | `test_tools.py` | ✅ |
 | `src/ember_code/core/tools/edit.py` | `test_tools.py` | ✅ |
-| `src/ember_code/core/tools/search.py` | `test_tools.py` | ✅ |
 | `src/ember_code/core/tools/notebook/` | `test_notebook.py` | ✅ |
 | `src/ember_code/core/tools/web.py` | `test_web_tools.py` | NEW |
 | `src/ember_code/core/tools/codeindex/` | `test_codeindex.py` | NEW |

@@ -42,7 +42,6 @@
 |---|---|---:|---|---|
 | `src/ember_code/core/tools/edit.py` | `test_tools.py` | 23 | `EmberEditTools`, file editing, pattern matching, whitespace handling | Multi-edit operations, encoding edge cases |
 | `src/ember_code/core/tools/registry.py` | `test_tools.py` | (shared) | `ToolRegistry`, tool resolution, deduplication, factory methods | Dynamic tool addition at runtime |
-| `src/ember_code/core/tools/search.py` | `test_tools.py` | (shared) | `GlobTools`, file globbing, pattern matching | Symlinks, permission errors |
 | `src/ember_code/core/tools/notebook/` | `test_notebook.py` | 17 | All 5 operations (read, read_cell, edit_cell, add_cell, remove_cell), error cases, metadata preservation, output clearing | Large notebooks, kernel metadata |
 | `src/ember_code/core/tools/codeindex/` | `test_codeindex.py` | 9 | `_get_git_remote`, search, item, tree, error handling | `codeindex_similar`, `codeindex_references`, rate limiting |
 | `src/ember_code/core/tools/web.py` | `test_web_tools.py` | 6 | `fetch_url`, `fetch_json`, `_extract_text_from_html`, truncation | Redirect handling, timeout errors |

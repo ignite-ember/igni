@@ -52,19 +52,15 @@ FILE_EDIT_TOOLS: frozenset[str] = frozenset(
 #: investigate without prompting. Catalog names + internal Agno
 #: function names (the evaluator may see either depending on the
 #: call site).
+#
+# ``Read`` / ``Grep`` / ``Glob`` / ``LS`` and their function names were
+# here until those toolkits left the registry. An auto-allow for a
+# tool that cannot be attached grants nothing and reads as though it
+# does. Reading and searching in plan mode go through ``Bash``, which
+# is *not* auto-allowed — plan mode blocks mutating shell and prompts
+# for the rest, which is the intended posture.
 FILE_READ_TOOLS: frozenset[str] = frozenset(
     {
-        "Read",
-        "read_file",
-        "read_file_chunk",
-        "Grep",
-        "grep",
-        "grep_files",
-        "grep_count",
-        "Glob",
-        "glob_files",
-        "LS",
-        "list_files",
         "WebSearch",
         "duckduckgo_search",
         "duckduckgo_news",
