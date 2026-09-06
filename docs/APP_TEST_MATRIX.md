@@ -383,7 +383,14 @@ Each was reproduced, and each is recorded on its own row above.
 `RpcMethod` is the client↔backend wire contract. It is **not** the
 product's feature list, and a table complete against it should not be
 read as complete against the app. Everything here ships, is
-user-facing, and has no row above:
+user-facing, and has no row above.
+
+Two of these entries said "none" and were wrong when written —
+hook events and the other client hosts both had substantial coverage
+I had not looked for. The habit that produced the rest of this
+document produced those too: writing down what I had checked as
+though it were everything there was. Corrected in place, with what
+was actually there.
 
 | Surface | Size | State |
 |---|---|---|
@@ -395,7 +402,7 @@ user-facing, and has no row above:
 | Hook events | 18 | 17 fire in the product and 16 test files exercise the pipeline — the earlier "only listing" note was wrong, and was about the three *RPCs*. What was missing was documentation: eight events were absent from `docs/HOOKS.md`. `Notification` is fired by nothing, and the page says so |
 | CLI flags | 16 on `igni` plus `--help`/`--version` | all 16 driven through Click and through `load_settings_from_options`, both directions (set *and* unset). `--worktree` and `--pipe` have tests for their refusals. A rule fails when an option no test mentions is added |
 | Composer input modes | `/` commands, `@` file mentions, `$` shell | all three. `live-composer.spec.ts` covers the `@` picker (open, narrow, accept a pill, send as a resolved reference) and `$` (mode in and out, output, non-zero exit, and that no approval dialog appears — `$` is the user's own command, a different path from the model's `run_shell_command` tool) |
-| Other client hosts | tauri, vscode, jetbrains | none. The title said "desktop and web"; only web is tested |
+| Other client hosts | tauri, vscode, jetbrains | **this row said "none" and was wrong.** vscode: 10 tests in `test/suite/extension.test.ts`, run in CI against a real VSCode binary under xvfb. jetbrains: 34 `@Test` methods across four Kotlin files, run by `gradlew test` in CI. tauri: `spawn_smoke.rs` boots the shell, waits for the backend child and its bound port, and checks the parent-PID watchdog kills it — CI compiles it and cannot run it (needs macOS plus a built binary, the venv and the web bundle), so it was run **by hand on macOS: passed in 9.7s**, the first time anything had run it. What none of them cover is the webview DOM inside the IDE hosts, which is a sandboxed iframe the extension host cannot introspect |
 
 `$` deserves its own line: `run_shell` is defined in `rpc.py` as the
 **`$`-prefix shell mode**, and the only test touching shell drives the
