@@ -631,6 +631,22 @@ class Session:
         # an index at construction pass a ``pre_knowledge`` (or
         # a ``neo4j_client`` via ``pre_knowledge=``).
         self.knowledge = None
+        # Say *why* there is no index, in words a user can act on.
+        #
+        # ``_knowledge_error`` was set to ``None`` here and assigned
+        # nowhere else in the codebase, which made
+        # ``KnowledgeCommand.panel``'s "Knowledge failed to load:
+        # {err}" branch unreachable — a diagnostic that existed, was
+        # documented, and could not fire. Every user hit the fallback
+        # instead: "Knowledge base failed to initialize.", which names
+        # no cause and is not even true. Nothing failed. The index is
+        # deferred by design and this session never got the runtime it
+        # was deferred for.
+        self._knowledge_error = (
+            "no Neo4j runtime has attached to this session. The knowledge "
+            "index is created when CodeIndex's Neo4j comes up — open "
+            "/codeindex and check that it is running and synced."
+        )
         logger.info(
             "Knowledge: deferred (no neo4j runtime at construction); "
             "call attach_knowledge_neo4j(runtime) to install"
@@ -688,6 +704,11 @@ class Session:
         # the neo4j backend.
         if self.knowledge_mgr is not None:
             self.knowledge_mgr.knowledge = index
+        # The deferred-state explanation set in the constructor is no
+        # longer true. Leaving it would have ``/knowledge`` telling a
+        # working session to go and start the runtime it is already
+        # using.
+        self._knowledge_error = None
         logger.info("Knowledge: switched to neo4j backend (project=%s)", project_id)
 
     def group_dir_for(self, kind: str) -> Path:

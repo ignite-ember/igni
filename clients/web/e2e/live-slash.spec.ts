@@ -19,6 +19,16 @@
  * transcript it is run against; it is exercised, but only in a
  * session created for the purpose.
  *
+ * `/bug` is the third. It calls `webbrowser.open` on the **backend
+ * host**, so running it pops a real tab on the machine running the
+ * suite — it did exactly that while this file was being written.
+ * Two things are worth writing down rather than testing around:
+ * it reaches the vendor's issue tracker at
+ * `github.com/ignite-ember/igni/issues`, from a product whose whole
+ * premise is that nothing leaves the customer's cloud; and a
+ * self-hosted deployment behind a firewall gets a browser tab that
+ * cannot load. Recorded in docs/APP_TEST_MATRIX.md.
+ *
  * Requires a real backend: `IGNI_LIVE_WS`. See docs/APP_TEST_MATRIX.md.
  */
 
@@ -93,6 +103,65 @@ const READ_ONLY: {
   { cmd: "/agents", where: ".drawer", shows: /agent/i },
   { cmd: "/skills", where: ".drawer", shows: /skill/i },
   { cmd: "/mcp", where: ".drawer", shows: /mcp|server/i },
+  { cmd: "/plugins", where: ".drawer", shows: /marketplace|installed/i },
+  { cmd: "/codeindex", where: ".drawer", shows: /sync|resync|clean/i },
+  { cmd: "/hooks", where: ".drawer", shows: /hook/i },
+  { cmd: "/loop", where: ".drawer", shows: /loop/i },
+  { cmd: "/schedule", where: ".drawer", shows: /scheduled|task/i },
+  // `/watcher` is in the header tools menu and in the backend's
+  // registry, and **not** in `BUILTIN_COMMANDS` — so it never appears
+  // in the composer's picker. It still runs when typed, which is how
+  // it is reached here. Recorded rather than fixed: whether a command
+  // should be typeable but not offered is a product decision.
+  { cmd: "/watcher", where: ".drawer", shows: /watcher|process/i },
+];
+
+/**
+ * Commands that answer in the transcript rather than opening a panel.
+ *
+ * Each `shows` is taken from the command's own output, read off a
+ * live run — not guessed, and not loose enough to match an error. Two
+ * of these were broken when this table was written and their tests
+ * are what caught it:
+ *
+ * * `/config` raised `AttributeError` on a `StorageConfig` field that
+ *   had been deleted, and the user got `session routing failed: …`.
+ * * `/knowledge` said "failed to initialize", which named no cause
+ *   and was not true — the index is deferred until Neo4j attaches.
+ *
+ * A generic `shows: /\w/` would have passed on both.
+ *
+ * `/knowledge` is not in this table: what it prints depends on
+ * whether a Neo4j runtime attached, so it has its own test below.
+ * `/bug` is not here either — it opens the vendor's issue tracker in
+ * a **real browser on the host machine**, which is not a side effect
+ * a test suite gets to have. See the module docstring.
+ */
+const ANSWERS: { cmd: string; shows: RegExp }[] = [
+  { cmd: "/compact", shows: /compact/i },
+  { cmd: "/memory", shows: /learning|memor/i },
+  { cmd: "/rename", shows: /Usage: \/rename/ },
+  { cmd: "/config", shows: /## Configuration|\*\*Storage:\*\*|Storage:/ },
+  { cmd: "/whoami", shows: /logged in|not logged in|session expired|\S+@\S+/i },
+  { cmd: "/output-style", shows: /output style/i },
+  { cmd: "/plugin", shows: /Usage: \/plugin/ },
+  { cmd: "/sync-knowledge", shows: /knowledge/i },
+  { cmd: "/evals", shows: /eval/i },
+  { cmd: "/quit", shows: /close button|quit/i },
+  // Not in `BUILTIN_COMMANDS`, so not in the picker — but the backend
+  // registers it and typing it works.
+  { cmd: "/eject", shows: /Usage: \/eject/ },
+  // A client-side intercept in `App.tsx`, not a backend command at
+  // all. It reads `.claude/workflows/` — the sibling tool's
+  // directory. Recorded, not asserted as correct.
+  { cmd: "/workflows", shows: /workflow/i },
+];
+
+/** The permission modes. Sticky, session-scoped, and toggling. */
+const MODES: { cmd: string; becomes: RegExp }[] = [
+  { cmd: "/plan", becomes: /plan mode/i },
+  { cmd: "/accept", becomes: /acceptEdits/i },
+  { cmd: "/bypass", becomes: /bypassPermissions/i },
 ];
 
 /** Credentials. Not run — see the module docstring. */
@@ -281,6 +350,127 @@ test(
     });
   },
 );
+
+for (const { cmd, shows } of ANSWERS) {
+  test(`${cmd} answers`, async ({ page, liveBe }) => {
+    await page.goto(`/?ws=${encodeURIComponent(liveBe.wsUrl)}`);
+    await connected(page);
+
+    // Its own conversation. `/compact` and `/memory` read session
+    // state, and running them against whatever the previous test left
+    // behind makes the assertion depend on test order.
+    await page.getByRole("button", { name: /New chat/i }).click();
+
+    await runCommand(page, cmd);
+    await shot(page, `ans${cmd.replace("/", "-")}`);
+
+    const conversation = page.locator(".conversation");
+    await expect(conversation).toContainText(shows, { timeout: 30_000 });
+    // The two shapes a broken command took. `session routing failed`
+    // is the message dispatcher's generic catch — anything reaching
+    // the user through it is an unhandled exception wearing an
+    // infrastructure costume, and it is how both `/ctx` and `/config`
+    // presented.
+    await expect(conversation).not.toContainText(
+      /session routing failed|traceback|has no attribute|errors\.pydantic\.dev/i,
+    );
+  });
+}
+
+test("/knowledge says why it is unavailable", async ({ page, liveBe }) => {
+  // Either it opens the panel, or it explains itself. What it must
+  // not do is the third thing, which is what it did: "Knowledge base
+  // failed to initialize." — no cause, and not a failure. The index
+  // is deferred until CodeIndex's Neo4j attaches, and this branch
+  // exists to say so. `Session._knowledge_error` was never assigned,
+  // so it could not.
+  await page.goto(`/?ws=${encodeURIComponent(liveBe.wsUrl)}`);
+  await connected(page);
+  await page.getByRole("button", { name: /New chat/i }).click();
+
+  await runCommand(page, "/knowledge");
+  await shot(page, "ans-knowledge");
+
+  const opened = await page
+    .locator(".drawer")
+    .first()
+    .isVisible()
+    .catch(() => false);
+  if (opened) return;
+
+  const conversation = page.locator(".conversation");
+  await expect(conversation).toContainText(/knowledge/i, { timeout: 30_000 });
+  // A cause, in words that point somewhere.
+  await expect(conversation).toContainText(/neo4j|codeindex|disabled|config/i);
+  await expect(conversation).not.toContainText(/failed to initialize\.?\s*$/i);
+});
+
+for (const { cmd, becomes } of MODES) {
+  test(`${cmd} switches the permission mode and back`, async ({
+    page,
+    liveBe,
+  }) => {
+    // These are sticky and session-scoped: leaving the session in
+    // `bypassPermissions` would auto-approve every tool call for
+    // whatever runs next, and `live-chat.spec.ts` proves the approval
+    // dialog appears. A suite that quietly disarms the thing another
+    // suite asserts is worse than no coverage.
+    //
+    // So each mode is entered and left, and leaving it is asserted —
+    // which also covers the toggle, the half nobody would otherwise
+    // drive.
+    await page.goto(`/?ws=${encodeURIComponent(liveBe.wsUrl)}`);
+    await connected(page);
+    await page.getByRole("button", { name: /New chat/i }).click();
+
+    await runCommand(page, cmd);
+    const conversation = page.locator(".conversation");
+    await expect(conversation).toContainText(becomes, { timeout: 30_000 });
+    // The message says what changed, not just what it is now. A mode
+    // switch you cannot see is a permission change you did not
+    // consent to.
+    await expect(conversation).toContainText(/Permission mode:.*→/, {
+      timeout: 30_000,
+    });
+    await shot(page, `mode${cmd.replace("/", "-")}`);
+
+    await runCommand(page, cmd);
+    await expect(conversation).toContainText(/→\s*default/i, {
+      timeout: 30_000,
+    });
+  });
+}
+
+test("/rename refuses to confirm a rename it did not make", async ({
+  page,
+  liveBe,
+}) => {
+  // The usage line is in ANSWERS above; this is the half that does
+  // something. A command whose only tested path is its error message
+  // is a command nobody has run.
+  //
+  // And this is the state every freshly-opened app is in. Agno does
+  // not write a session row until the first run completes, so a page
+  // load — or "+ New chat" — leaves nothing to rename. `/rename` used
+  // to answer "Session renamed to: X" anyway: `rename_session`
+  // updated no rows, raised nothing, and the confirmation was
+  // unconditional. The sidebar never showed X and never would.
+  await page.goto(`/?ws=${encodeURIComponent(liveBe.wsUrl)}`);
+  await connected(page);
+  await page.getByRole("button", { name: /New chat/i }).click();
+
+  const name = `e2e-renamed-${Date.now()}`;
+  await runCommand(page, `/rename ${name}`);
+  await shot(page, "ans-rename-unsaved");
+
+  const conversation = page.locator(".conversation");
+  await expect(conversation).toContainText(/Nothing to rename yet/i, {
+    timeout: 30_000,
+  });
+  // And specifically not the confirmation. Asserted separately: a
+  // build that printed both would satisfy the line above.
+  await expect(conversation).not.toContainText(`Session renamed to: ${name}`);
+});
 
 test("the credential commands are offered but not run here", async ({
   page,

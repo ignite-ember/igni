@@ -54,16 +54,30 @@ class TestTheModelIsFullyDefined:
 
         assert view.breakdown.total == 1000
 
-    def test_importing_this_module_first_still_works(self):
-        """Order-independence, because the fix depends on it.
+    @pytest.mark.parametrize(
+        "first",
+        [
+            "ember_code.backend.schemas_context",
+            "ember_code.core.session",
+            "ember_code.backend.command_handler",
+        ],
+    )
+    def test_it_is_complete_whichever_module_is_imported_first(self, first: str):
+        """Order-independence, in a subprocess, because the fix is about
+        import order and this process has already imported everything.
 
-        ``ContextBreakdown`` cannot be imported at the top of
-        ``schemas_context``: it drags in ``core.session.__init__``,
-        which comes back around to ``schemas_context`` mid-definition.
-        The import lives at the foot of the module instead. That works
-        — but it is the kind of arrangement a later tidy-up moves back
-        up "for consistency", so pin it: a subprocess importing this
-        module before anything else must get a complete model.
+        ``ContextBreakdown`` cannot be imported into
+        ``schemas_context`` at runtime **at all**: it drags in
+        ``core.session.__init__``, which reaches
+        ``interactive → interactive_loop → commands →
+        backend.command_handler``, which is what imports
+        ``schemas_context``. Putting the import at the top killed one
+        entry point; moving it to the foot killed a different one —
+        ``command_handler`` first, which is how the test suite loads.
+        Hence ``Any`` on the field.
+
+        Three entry points because two of them each passed while the
+        third was broken.
         """
         import subprocess
         import sys
@@ -72,8 +86,9 @@ class TestTheModelIsFullyDefined:
             [
                 sys.executable,
                 "-c",
-                "from ember_code.backend.schemas_context import ContextBreakdownView;"
-                "print(ContextBreakdownView.__pydantic_complete__)",
+                f"import {first};"
+                "from ember_code.backend.schemas_context import ContextBreakdownView as V;"
+                "print(V.__pydantic_complete__)",
             ],
             capture_output=True,
             text=True,

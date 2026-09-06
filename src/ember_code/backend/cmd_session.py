@@ -97,11 +97,42 @@ class SessionCommand:
         return CommandResult.for_action(CommandAction.SESSIONS)
 
     async def rename(self, args: str) -> CommandResult:
-        """Set the display name on the current session row."""
+        """Set the display name on the current session row.
+
+        The confirmation used to be unconditional: ``rename`` swallowed
+        its :class:`PersistResult` and this method reported success
+        whatever happened. Two ways that lied.
+
+        A DB error logs at DEBUG inside the namer, so a failed write
+        looked identical to a successful one.
+
+        And a session has no row until its first run. Agno writes it
+        when the first message completes, so a freshly-opened app —
+        every page load, and every "+ New chat" — is renaming a row
+        that does not exist. ``rename_session`` updates nothing, no
+        exception is raised, and the user is told "Session renamed to:
+        X" while the sidebar never shows X. That is the state this was
+        found in.
+
+        So: write, then read back. A name that is not there afterwards
+        was not set, and saying so beats a confirmation the sidebar
+        contradicts.
+        """
         name = args.strip()
         if not name:
             return CommandResult.error("Usage: /rename <new session name>")
-        await self._session.persistence.rename(name)
+        result = await self._session.persistence.rename(name)
+        if not result.ok:
+            return CommandResult.error(f"Rename failed: {result.error}")
+        if not await self._session.persistence.get_name():
+            return CommandResult.error(
+                "Nothing to rename yet — this session is not saved until its "
+                "first message. Send one, then /rename."
+            )
+        # ``session_named`` is documented as "resumed *or has been
+        # renamed*", and only ``/fork`` and ``rebind`` ever set it. A
+        # name the user chose must outrank an auto-generated one.
+        self._session.session_named = True
         return CommandResult.info(f"Session renamed to: {name}")
 
     async def fork(self, args: str) -> CommandResult:

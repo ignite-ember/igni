@@ -305,6 +305,13 @@ Each was reproduced, and each is recorded on its own row above.
 | An empty model turn rendered as silence: no text, no warning, exit 0 | `SessionRun._run_turn` | **fixed** — says so and points at `/model` |
 | A missing RPC argument reached the client as a bare key name (`'session_id'`) | `MessageDispatcher._on_rpc_request` | **fixed** — names the method and the argument |
 | `/ctx` raised on **every** invocation and put `PydanticUserError: ContextBreakdownView is not fully defined … errors.pydantic.dev` in a chat bubble. `ContextBreakdown` annotates a Pydantic field and was imported under `TYPE_CHECKING`, so with `from __future__ import annotations` the model never finished building | `backend/schemas_context.py` | **fixed** — runtime import + `model_rebuild()` at the foot of the module; `tests/test_ctx_actually_renders.py` |
+| `/config` raised on every invocation. `ConfigView` read `settings.storage.backend`, a field `StorageConfig` no longer has; the user saw `session routing failed: 'StorageConfig' object has no attribute 'backend'`. Two test files had mocked `storage.backend = "sqlite"`, so both stayed green | `backend/schemas_config.py` | **fixed** — reads `storage.data_dir`; the two mocks corrected; `tests/test_the_slash_commands_answer.py` |
+| `/rename` confirmed renames it had not made. A session has no row until its first run, so on every page load and every "+ New chat" `rename_session` updated nothing, raised nothing, and the user was told "Session renamed to: X" while the sidebar never showed X. A DB error was swallowed at DEBUG and reported the same way | `backend/cmd_session.py`, `persistence/facade.py` | **fixed** — writes, reads back, and says so when nothing was stored; also sets `session_named`, which its own docstring already claimed |
+| `/plugin` did nothing at all — no output, no panel, not even the echoed command. The picker lists `/plugins` before `/plugin`, and Enter's "already-complete command runs it" test compares against the *highlighted* entry | `components/Composer.tsx` | **fixed** — `filterSlashCommands` puts an exact match first, so what runs is what is highlighted |
+| `@` file mentions stopped working after "+ New chat". The session id rotates one RPC round trip later, the Composer re-hydrates its draft from `draft:<sessionId>`, and the `@` the parser needs was blanked out of the editor. The picker stayed open, filtered to nothing, and the query went to the model as chat | `App.tsx` | **fixed** — `carryDraft` moves the draft onto the new id across `/clear` and `/fork` |
+| `/knowledge` said "Knowledge base failed to initialize." — no cause, and untrue. The index is *deferred* until CodeIndex's Neo4j attaches. `Session._knowledge_error` was initialised to `None` and assigned nowhere, so the branch that exists to explain the failure could not run | `core/session/core.py`, `backend/cmd_knowledge.py` | **fixed** — the deferred state explains itself and points at `/codeindex` |
+| `/bug` opens `github.com/ignite-ember/igni/issues` in a browser **on the backend host**. From a product whose premise is that nothing leaves the customer's cloud, and in an air-gapped deployment it opens a tab that cannot load | `backend/cmd_bug.py` | open — a product decision, not a code defect |
+| A "+ New chat" session vanishes from the sidebar before its first message. `App.tsx` inserts an optimistic row and says it survives "until the first message lands"; the `refreshSessions()` two lines later replaces the list with the backend's, which has no row for it | `App.tsx`, `/clear` handler | open |
 | `/fork` on a session with no messages fails: "Fork failed: source session not found: &lt;id&gt;", though the id is in the footer | session persistence | open |
 | A message queued while a run is in progress never runs if that run makes no tool call — the queue is drained by a tool hook, but the label promises "after the current turn" | `TeamWiring.wire_queue_hook` | open |
 | The `explorer` sub-agent has no file-reading tool and writes `<bash>` tags as prose | `bundled_agents`, mid-edit | open, and someone's in-flight work |
@@ -323,11 +330,14 @@ Each was reproduced, and each is recorded on its own row above.
   spec passed, then skipped all three tests on a later run because the
   model answered in prose instead of calling the tool. Three declared
   skips read as green.
-* **Six of the nine slash commands** the welcome screen advertises are
-  opened by **no test at all** — `/workflows`, `/codeindex`,
-  `/schedule`, `/loop`, `/plugins`, `/knowledge`. An earlier draft of
-  this line said all nine were "opened but not driven", which was too
-  generous by six.
+* **Opening a panel is not driving it.** Seven panels open and are
+  asserted on their contents; nothing inside any of them is clicked.
+  The plugins panel lists 291 marketplace entries and no test installs
+  one.
+* **`/eject` and `/watcher` are registered backend-side and missing
+  from `BUILTIN_COMMANDS`**, so neither appears in the composer's
+  picker. Both work when typed. Whether a command should be typeable
+  but not offered is a product decision; recorded, not fixed.
 * **The live specs skip in CI, they do not run there.** `ci.yml` runs
   `npx playwright test` without `IGNI_LIVE_WS`, so the fixture spawns
   the `e2e-wire-format-stub` — the thing this document elsewhere calls
@@ -354,14 +364,14 @@ user-facing, and has no row above:
 
 | Surface | Size | State |
 |---|---|---|
-| Slash commands | 31 in `Composer.tsx`, 34 registered backend-side | 9 driven — `/help` `/ctx` `/sessions` `/model` `/agents` `/skills` `/mcp` `/fork` `/clear`, each asserted inside the surface it opens. `/accept` and `/bypass` change the session's permission posture and are **not** among them |
+| Slash commands | 31 in `Composer.tsx`, 34 registered backend-side | **31 driven**, each asserted inside the surface it opens or against text from its own output. Not run, and why: `/login` and `/logout` (real credentials), `/bug` (opens a browser on the host). `/plan`, `/accept` and `/bypass` are driven *and toggled back*, so the suite cannot leave a session auto-approving tools |
 | Model-callable tools | ~58 functions across the always-attached toolkits and registry specs | none driven through the app; this is what the agent actually does |
-| UI panels | 15 under `components/panels/` | only the watcher appears in any e2e file, through mocked demos |
+| UI panels | 15 under `components/panels/` | 7 opened live via their commands — plugins, codeindex, hooks, loop, schedule, watcher, mcp — asserted on content, not merely on the drawer existing. Opening is not driving: nothing inside any of them is clicked |
 | Header tools menu | 13 entries, documented in-code as "no slash command visible to the user" | none clicked |
 | Welcome cards | 9 clickable | none clicked. One of them, `/workflows`, is a client-side regex intercept and never appears in the slash picker at all |
 | Hook events | 18 (`PreToolUse`, `PermissionRequest`, `PreCompact`, `SubagentStart`, …) | three rows above, all about *listing* hook config |
 | CLI flags | 17 on `igni`, 6 on the backend — `--read-only`, `--auto-approve`, `--worktree` | none |
-| Composer input modes | `/` commands, `@` file mentions, `$` shell | only `/`. `@` and `$` appear in no e2e spec |
+| Composer input modes | `/` commands, `@` file mentions, `$` shell | all three. `live-composer.spec.ts` covers the `@` picker (open, narrow, accept a pill, send as a resolved reference) and `$` (mode in and out, output, non-zero exit, and that no approval dialog appears — `$` is the user's own command, a different path from the model's `run_shell_command` tool) |
 | Other client hosts | tauri, vscode, jetbrains | none. The title said "desktop and web"; only web is tested |
 
 `$` deserves its own line: `run_shell` is defined in `rpc.py` as the

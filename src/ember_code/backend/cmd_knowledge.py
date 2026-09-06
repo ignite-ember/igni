@@ -159,7 +159,12 @@ class KnowledgeCommand:
             if self._session.settings.knowledge.enabled:
                 err = self._session.knowledge_error
                 if err:
-                    return CommandResult.error(f"Knowledge failed to load: {err}")
+                    # "is not available" rather than "failed to load":
+                    # the commonest cause is a deferred index whose
+                    # Neo4j runtime never attached, and calling that a
+                    # failure sends people looking for a crash that
+                    # did not happen.
+                    return CommandResult.error(f"Knowledge is not available — {err}")
                 return CommandResult.error("Knowledge base failed to initialize.")
             return CommandResult.info(
                 "Knowledge base is disabled. Set knowledge.enabled=true in config."

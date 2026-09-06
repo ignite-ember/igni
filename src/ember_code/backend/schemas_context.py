@@ -59,9 +59,10 @@ failed: …`` with a Pydantic docs link in it. ``arbitrary_types_
 allowed`` does not help: it permits non-pydantic *types*, it does
 not conjure a *name*.
 
-The import that fixes it sits at the **foot** of this module, with
-an explicit ``model_rebuild()``; see the comment there for why the
-top of the file is not available.
+The field is annotated ``Any`` now — see the comment on it. No
+import of ``ContextBreakdown`` at runtime is possible from this
+module at all; both the top and the foot of the file were tried and
+each only changed which entry point the cycle killed.
 
 The domain :class:`~ember_code.core.session.pending_messages.PendingMessage`
 dataclass — the storage-row type this module's wire model wraps —
@@ -71,7 +72,7 @@ avoid shadowing the wire-model class name at runtime.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -86,6 +87,7 @@ if TYPE_CHECKING:
     from ember_code.core.session.pending_messages import (
         PendingMessage as PendingMessageRow,
     )
+    from ember_code.core.session.schemas import ContextBreakdown
 
 
 # How stale a pending-message row must be before we surface it
@@ -260,7 +262,26 @@ class ContextBreakdownView(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    breakdown: ContextBreakdown
+    #: The domain :class:`ContextBreakdown`, typed ``Any`` on purpose.
+    #:
+    #: It cannot be annotated with the real class. With
+    #: ``from __future__ import annotations`` Pydantic resolves the
+    #: annotation against this module's runtime namespace, so the name
+    #: has to be importable *here* — and importing
+    #: ``core.session.schemas`` runs ``core.session.__init__``, which
+    #: reaches ``interactive → interactive_loop → commands →
+    #: backend.command_handler``, which is what imports this file. A
+    #: genuine cycle, and it does not matter whether the import sits
+    #: at the top of the module or the foot: both were tried, and each
+    #: only moved which entry point died.
+    #:
+    #: ``Any`` always resolves, so the model finishes building. The
+    #: real type still guards the boundary — ``from_domain`` is the
+    #: only constructor and it is annotated, so a wrong argument is a
+    #: type error at the call site rather than a validation error at
+    #: runtime. That is the right trade for an internal view whose
+    #: input comes from one method in this repository.
+    breakdown: Any
 
     @classmethod
     def from_domain(cls, breakdown: ContextBreakdown) -> ContextBreakdownView:
@@ -284,25 +305,6 @@ class ContextBreakdownView(BaseModel):
         ]
         return CommandResult.markdown("\n".join(lines))
 
-
-# Imported here, at the foot of the module, and not at the top.
-#
-# ``core.session.schemas`` is a leaf, but importing it runs
-# ``core.session.__init__``, which reaches
-# ``interactive → interactive_loop → commands → backend.command_handler
-# → builtin_command_registry → cmd_context → schemas_context`` — back
-# to this file. From the top of the module that lands mid-definition
-# and dies with "cannot import name 'ContextBreakdownView' from
-# partially initialized module". From down here every class above is
-# already bound, so the cycle closes on a complete module.
-#
-# ``model_rebuild()`` is then what actually finishes
-# ``ContextBreakdownView``: the import above only puts the name in this
-# module's globals, and Pydantic resolved the annotation — and gave up
-# — back when the class body ran.
-from ember_code.core.session.schemas import ContextBreakdown  # noqa: E402
-
-ContextBreakdownView.model_rebuild()
 
 __all__ = [
     "PENDING_STALENESS_SECONDS",

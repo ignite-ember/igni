@@ -1973,6 +1973,35 @@ export default function App() {
         return;
       }
       if (echo) append(userItem(text));
+      /** Move the composer draft from a retired session id onto its
+       *  replacement.
+       *
+       *  ``/clear`` and ``/fork`` rotate the session id one RPC round
+       *  trip after the click, and the Composer hydrates its draft
+       *  from ``draft:<sessionId>`` whenever that key changes. So
+       *  anything typed in that window was blanked: the user hit
+       *  "+ New chat", typed, and watched the composer empty itself.
+       *
+       *  It read worst with ``@``. Typing ``@`` opens the file picker
+       *  and leaves the ``@`` in the editor for the mention parser to
+       *  find; the rotation removed it, so the menu stayed on screen
+       *  and every keystroke after it went to a parser that could no
+       *  longer see an ``@`` — a picker that lists 42 files, filters
+       *  to none, and sends your query to the model as chat. It looks
+       *  like @-mentions are broken. They are not: the ``@`` was
+       *  taken out from under them.
+       *
+       *  Carrying the draft is the fix rather than not-clearing,
+       *  because a genuine session switch *should* swap the draft —
+       *  that is the feature — and text following you into an
+       *  unrelated conversation is its own hazard. */
+      const carryDraft = (from: string, to: string) => {
+        if (!from || !to || from === to) return;
+        const draft = clientState.get(`draft:${from}`);
+        if (!draft) return;
+        clientState.set(`draft:${to}`, draft);
+        clientState.delete(`draft:${from}`);
+      };
       try {
         const result = await client.handleCommand(text);
         if (result.type !== "command_result") {
@@ -1990,10 +2019,12 @@ export default function App() {
             // doesn't keep showing the prior session's count.
             void refreshStatus();
             let renewed = "";
+            const retiring = client.sessionId;
             try {
               // /clear renews the runtime's session id — rebind so
               // this view follows the fresh conversation.
               renewed = await client.rpc<string>("get_session_id");
+              carryDraft(retiring, renewed);
               client.sessionId = renewed;
               clientState.set(SESSION_KEY, renewed);
               setSessionId(renewed);
@@ -2038,6 +2069,7 @@ export default function App() {
             viewGenRef.current++;
             setItems([]);
             setHistoryIndexToItemIndex([]);
+            carryDraft(client.sessionId, newId);
             client.sessionId = newId;
             clientState.set(SESSION_KEY, newId);
             setSessionId(newId);

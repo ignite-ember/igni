@@ -31,7 +31,11 @@ def _make_session():
     session.settings.models.registry = {"test-model": MagicMock()}
     session.settings.permissions.file_write = "ask"
     session.settings.permissions.shell_execute = "ask"
-    session.settings.storage.backend = "sqlite"
+    # ``data_dir``, not ``backend`` — ``StorageConfig`` has had no
+    # ``backend`` field for a long time, and MagicMock answering the
+    # attribute anyway is what kept ``/config`` green here while it
+    # raised for every real user.
+    session.settings.storage.data_dir = "/tmp/igni-test-data"
     session.settings.memory.enable_agentic_memory = False
     session.settings.learning.enabled = False
     session.settings.reasoning.enabled = False

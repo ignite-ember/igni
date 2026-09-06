@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { IgniClient } from "../protocol/client";
 import { host } from "../lib/host";
-import { codePillLabels, EditableInput, type EditableInputHandle } from "./EditableInput";
+import {
+  codePillLabels,
+  EditableInput,
+  type EditableInputHandle,
+} from "./EditableInput";
 import { ArrowUpIcon, ChevronIcon, StopIcon } from "./Icons";
 
 export interface SlashCommand {
@@ -15,7 +19,10 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/help", description: "Show available commands" },
   { name: "/clear", description: "Start a new conversation" },
   { name: "/compact", description: "Summarize old context to free tokens" },
-  { name: "/ctx", description: "Show context breakdown — floor vs conversation" },
+  {
+    name: "/ctx",
+    description: "Show context breakdown — floor vs conversation",
+  },
   { name: "/sessions", description: "List and switch sessions" },
   { name: "/fork", description: "Fork this session — continue in a new id" },
   { name: "/model", description: "Pick a model" },
@@ -30,16 +37,25 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/hooks", description: "Configured hooks" },
   { name: "/loop", description: "Repeat a prompt until done" },
   { name: "/schedule", description: "Background scheduled tasks" },
-  { name: "/plan", description: "Toggle plan mode — agent proposes, you approve" },
+  {
+    name: "/plan",
+    description: "Toggle plan mode — agent proposes, you approve",
+  },
   { name: "/accept", description: "Auto-approve file edits" },
-  { name: "/bypass", description: "Skip permission prompts (scoped denies still apply)" },
+  {
+    name: "/bypass",
+    description: "Skip permission prompts (scoped denies still apply)",
+  },
   { name: "/memory", description: "View or edit project memory" },
   { name: "/rename", description: "Rename this session" },
   { name: "/config", description: "Show current settings" },
   { name: "/whoami", description: "Show the signed-in account" },
   { name: "/output-style", description: "Switch the agent's output style" },
   { name: "/plugin", description: "Install, update, remove plugins" },
-  { name: "/sync-knowledge", description: "Push project knowledge to your igni server" },
+  {
+    name: "/sync-knowledge",
+    description: "Push project knowledge to your igni server",
+  },
   { name: "/evals", description: "Run an evaluation suite" },
   { name: "/bug", description: "Open the bug report form" },
   { name: "/quit", description: "Exit the session" },
@@ -51,16 +67,35 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
  *  (case-insensitive, prefix-only on the name after the leading
  *  '/', capped at 12 results) is testable without driving the
  *  contenteditable surface. Call with the full command pool
- *  (built-ins + skills) and the query text AFTER the ``/``. */
+ *  (built-ins + skills) and the query text AFTER the ``/``.
+ *
+ *  **An exact match is always first.** Without that, typing a command
+ *  whose name is a prefix of another one ran the *other* one: the
+ *  pool lists `/plugins` before `/plugin`, so typing `/plugin` left
+ *  `/plugins` highlighted, and ``onKeyDown``'s "Enter on an
+ *  already-complete command runs it" test compares against the
+ *  highlighted entry — which was not what the user had typed. Enter
+ *  completed the text to `/plugins` instead of running `/plugin`, and
+ *  the user saw nothing happen at all. `/plugin` was unreachable from
+ *  the composer.
+ *
+ *  Fixing it here rather than in the Enter handler keeps one answer
+ *  for both keyboards and mice: whatever runs is also what is
+ *  highlighted on screen. */
 export function filterSlashCommands(
   pool: SlashCommand[],
   query: string,
   limit: number = 12,
 ): SlashCommand[] {
   const q = query.toLowerCase();
-  return pool
-    .filter((c) => c.name.slice(1).toLowerCase().startsWith(q))
-    .slice(0, limit);
+  const matches = pool.filter((c) =>
+    c.name.slice(1).toLowerCase().startsWith(q),
+  );
+  const exact = matches.findIndex((c) => c.name.slice(1).toLowerCase() === q);
+  if (exact > 0) {
+    matches.unshift(matches.splice(exact, 1)[0]);
+  }
+  return matches.slice(0, limit);
 }
 
 interface MenuState {
@@ -207,7 +242,9 @@ export function Composer({
 
   const pickFiles = () => fileInputRef.current?.click();
 
-  const uploadOne = async (file: File): Promise<{ path: string; name: string } | null> => {
+  const uploadOne = async (
+    file: File,
+  ): Promise<{ path: string; name: string } | null> => {
     if (file.size > 5 * 1024 * 1024) {
       // 5MB ceiling — base64 over WS is wasteful for huge files;
       // larger payloads should land via the file system directly.
@@ -221,13 +258,17 @@ export function Composer({
     const view = new Uint8Array(buf);
     const CHUNK = 0x8000;
     for (let i = 0; i < view.length; i += CHUNK) {
-      bin += String.fromCharCode.apply(null, Array.from(view.subarray(i, i + CHUNK)));
+      bin += String.fromCharCode.apply(
+        null,
+        Array.from(view.subarray(i, i + CHUNK)),
+      );
     }
     const content_base64 = btoa(bin);
-    const res = await client.rpc<{ path: string; size: number; error?: string }>(
-      "upload_attachment",
-      { filename: file.name, content_base64 },
-    );
+    const res = await client.rpc<{
+      path: string;
+      size: number;
+      error?: string;
+    }>("upload_attachment", { filename: file.name, content_base64 });
     if (!res.path) return null;
     return { path: res.path, name: file.name };
   };
@@ -237,7 +278,11 @@ export function Composer({
     const list = Array.from(files);
     if (!list.length) return;
     // Optimistic placeholder rows so the chips appear instantly.
-    const placeholders = list.map((f) => ({ path: `pending:${f.name}-${Date.now()}-${Math.random()}`, name: f.name, uploading: true }));
+    const placeholders = list.map((f) => ({
+      path: `pending:${f.name}-${Date.now()}-${Math.random()}`,
+      name: f.name,
+      uploading: true,
+    }));
     setAttachments((prev) => [...prev, ...placeholders]);
     for (let i = 0; i < list.length; i++) {
       const file = list[i];
@@ -247,17 +292,22 @@ export function Composer({
         // Drop the placeholder either way; on success, inject the
         // path into the editor as an `@<path>` reference. The
         // EditableInput renders it as a pill automatically.
-        setAttachments((prev) => prev.filter((a) => a.path !== placeholder.path));
+        setAttachments((prev) =>
+          prev.filter((a) => a.path !== placeholder.path),
+        );
         if (result) {
           setText((prev) => {
-            const sep = prev && !prev.endsWith(" ") && !prev.endsWith("\n") ? " " : "";
+            const sep =
+              prev && !prev.endsWith(" ") && !prev.endsWith("\n") ? " " : "";
             return `${prev}${sep}@${result.path} `;
           });
           requestAnimationFrame(() => ref.current?.caretToEnd());
         }
       } catch (e) {
         console.error("upload failed", e);
-        setAttachments((prev) => prev.filter((a) => a.path !== placeholder.path));
+        setAttachments((prev) =>
+          prev.filter((a) => a.path !== placeholder.path),
+        );
       }
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -269,7 +319,9 @@ export function Composer({
   const [mode, setMode] = useState<"chat" | "command" | "shell">("chat");
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [toolsOpen, setToolsOpen] = useState(false);
-  const [modelMenu, setModelMenu] = useState<{ name: string; current: boolean }[] | null>(null);
+  const [modelMenu, setModelMenu] = useState<
+    { name: string; current: boolean }[] | null
+  >(null);
   // Mode-picker dropdown for the split send button. ``true`` =
   // open. Mode selection itself happens via ``onPickMode``;
   // the popup just surfaces the options.
@@ -293,14 +345,16 @@ export function Composer({
   const loadMoreMentions = async () => {
     if (loadingMore.current) return;
     if (!menu || menu.kind !== "mention") return;
-    if (typeof menu.total !== "number" || typeof menu.limit !== "number") return;
+    if (typeof menu.total !== "number" || typeof menu.limit !== "number")
+      return;
     if (menu.entries.length >= menu.total) return;
     loadingMore.current = true;
     const seq = ++mentionSeq.current;
     const nextLimit = menu.limit + MENTION_PAGE_SIZE;
     try {
       const { matches, total } = await client.completeFiles(
-        menu.query || "", nextLimit,
+        menu.query || "",
+        nextLimit,
       );
       if (seq !== mentionSeq.current) return;
       setMenu((cur) =>
@@ -352,11 +406,14 @@ export function Composer({
     // is in the first token (mirrors TUI autocomplete behaviour).
     if (value.startsWith("/") && !value.slice(0, caret).includes(" ")) {
       const q = value.slice(1, caret);
-      const entries = filterSlashCommands([...BUILTIN_COMMANDS, ...skills], q).map(
-        (c) => ({ key: c.name, label: c.name, desc: c.description }),
-      );
+      const entries = filterSlashCommands(
+        [...BUILTIN_COMMANDS, ...skills],
+        q,
+      ).map((c) => ({ key: c.name, label: c.name, desc: c.description }));
       setMenu(
-        entries.length ? { kind: "slash", entries, active: 0, tokenStart: 0 } : null,
+        entries.length
+          ? { kind: "slash", entries, active: 0, tokenStart: 0 }
+          : null,
       );
       return;
     }
@@ -372,7 +429,8 @@ export function Composer({
           // Start with a small page; the popup paginates on scroll
           // so we don't ship a 50k-file blob on every keystroke.
           const { matches, total } = await client.completeFiles(
-            q, MENTION_PAGE_SIZE,
+            q,
+            MENTION_PAGE_SIZE,
           );
           if (seq !== mentionSeq.current) return; // stale response
           setMenu(
@@ -447,7 +505,10 @@ export function Composer({
       const byPath = new Map<string, [number, number][]>();
       for (const r of data.refs) {
         const start = r.line;
-        const end = Math.max(start, (r as { end_line?: number }).end_line ?? start);
+        const end = Math.max(
+          start,
+          (r as { end_line?: number }).end_line ?? start,
+        );
         if (!byPath.has(r.path)) byPath.set(r.path, []);
         byPath.get(r.path)!.push([start, end]);
       }
@@ -491,7 +552,8 @@ export function Composer({
         const delta = e.key === "ArrowDown" ? 1 : -1;
         setMenu({
           ...menu,
-          active: (menu.active + delta + menu.entries.length) % menu.entries.length,
+          active:
+            (menu.active + delta + menu.entries.length) % menu.entries.length,
         });
         return;
       }
@@ -500,7 +562,11 @@ export function Composer({
         const entry = menu.entries[menu.active];
         // Enter on an already-complete command runs it — otherwise a
         // fully-typed "/help" would need Enter twice (complete, send).
-        if (e.key === "Enter" && menu.kind === "slash" && entry.key === withPrefix(text.trim())) {
+        if (
+          e.key === "Enter" &&
+          menu.kind === "slash" &&
+          entry.key === withPrefix(text.trim())
+        ) {
           setMenu(null);
           submit();
           return;
@@ -552,7 +618,11 @@ export function Composer({
     //     mode prompt that needs a second backspace to escape.
     // Backspace with 2+ chars deletes one character normally so
     // ``/list`` → ``/lis`` works for fixing typos.
-    if (e.key === "Backspace" && mode !== "chat" && textRef.current.length <= 1) {
+    if (
+      e.key === "Backspace" &&
+      mode !== "chat" &&
+      textRef.current.length <= 1
+    ) {
       e.preventDefault();
       setMode("chat");
       setText("");
@@ -570,13 +640,10 @@ export function Composer({
     // one re-enters the matching mode with the prefix consumed.
     // History-recall ArrowUp only fires when the editor caret is
     // already at the top of the input (single-line case).
-    if (
-      e.key === "ArrowUp" &&
-      !text.includes("\n") &&
-      history.length
-    ) {
+    if (e.key === "ArrowUp" && !text.includes("\n") && history.length) {
       e.preventDefault();
-      const idx = histIdx === -1 ? history.length - 1 : Math.max(0, histIdx - 1);
+      const idx =
+        histIdx === -1 ? history.length - 1 : Math.max(0, histIdx - 1);
       if (histIdx === -1) setDraft(withPrefix(text));
       setHistIdx(idx);
       setFromFull(history[idx]);
@@ -602,9 +669,10 @@ export function Composer({
 
   const openModelMenu = async () => {
     try {
-      const reg = await client.rpc<{ registry: Record<string, unknown>; default: string }>(
-        "get_model_registry",
-      );
+      const reg = await client.rpc<{
+        registry: Record<string, unknown>;
+        default: string;
+      }>("get_model_registry");
       setModelMenu(
         Object.keys(reg.registry)
           .sort()
@@ -785,7 +853,9 @@ export function Composer({
           ref={ref}
           value={text}
           disabled={!connected}
-          className={commandMode ? "mode-command" : shellMode ? "mode-shell" : ""}
+          className={
+            commandMode ? "mode-command" : shellMode ? "mode-shell" : ""
+          }
           placeholder={
             !connected
               ? "Connecting to backend…"
@@ -797,7 +867,10 @@ export function Composer({
           }
           onValueChange={(value, caret) => {
             setHistIdx(-1);
-            if (mode === "chat" && (value.startsWith("/") || value.startsWith("$"))) {
+            if (
+              mode === "chat" &&
+              (value.startsWith("/") || value.startsWith("$"))
+            ) {
               const m = value.startsWith("/") ? "command" : "shell";
               const body = value.slice(1).replace(/^ /, "");
               setMode(m);
@@ -911,7 +984,10 @@ export function Composer({
 
                     codePillIdCounter.current += 1;
                     const id = `c${codePillIdCounter.current}`;
-                    codePillData.current.set(id, { snippet: pasted, refs: res.matches });
+                    codePillData.current.set(id, {
+                      snippet: pasted,
+                      refs: res.matches,
+                    });
                     codePillLabels.set(id, label);
 
                     // Swap the just-pasted snippet for an ``@code:<id>``
@@ -927,8 +1003,18 @@ export function Composer({
                       if (at < 0) return cur;
                       const before = cur.slice(0, at);
                       const after = cur.slice(at + pasted.length);
-                      const lead = before.endsWith(" ") || before === "" || before.endsWith("\n") ? "" : " ";
-                      const trail = after.startsWith(" ") || after === "" || after.startsWith("\n") ? " " : "";
+                      const lead =
+                        before.endsWith(" ") ||
+                        before === "" ||
+                        before.endsWith("\n")
+                          ? ""
+                          : " ";
+                      const trail =
+                        after.startsWith(" ") ||
+                        after === "" ||
+                        after.startsWith("\n")
+                          ? " "
+                          : "";
                       const token = `${lead}@code:${id}${trail}`;
                       caretAfter = before.length + token.length;
                       return `${before}${token}${after}`;
@@ -938,7 +1024,9 @@ export function Composer({
                     // Browsers default the post-paste caret to the end
                     // of the pasted text, which lands before our shorter
                     // token, so we explicitly re-anchor.
-                    requestAnimationFrame(() => ref.current?.setCaretAt(caretAfter));
+                    requestAnimationFrame(() =>
+                      ref.current?.setCaretAt(caretAfter),
+                    );
                   }
                 } catch (err) {
                   console.warn("search_code failed", err);
@@ -972,13 +1060,19 @@ export function Composer({
             <button
               className="chip composer-model"
               title="Switch model"
-              onClick={() => (modelMenu ? setModelMenu(null) : void openModelMenu())}
+              onClick={() =>
+                modelMenu ? setModelMenu(null) : void openModelMenu()
+              }
             >
               {model} <ChevronIcon size={9} down />
             </button>
           )}
           {processing ? (
-            <button className="send-btn stop" title="Stop (Esc)" onClick={onStop}>
+            <button
+              className="send-btn stop"
+              title="Stop (Esc)"
+              onClick={onStop}
+            >
               <StopIcon />
             </button>
           ) : (
@@ -1109,4 +1203,3 @@ function SendButton({
     </div>
   );
 }
-
