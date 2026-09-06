@@ -24,6 +24,13 @@
  * vocabulary stays because the rule needs somewhere for a future
  * genuinely-manual check to declare itself; it is not a list of
  * exceptions that has to be kept in step with the suite.
+ *
+ * ``@needs-model`` is that future arriving. The live-chat and
+ * live-slash specs drive a real model turn; without ``IGNI_LIVE_WS``
+ * the fixture spawns a backend pointed at a dead port, and those
+ * tests failed rather than skipped — a red suite that said nothing
+ * about the app. They declare the skip now, which is honest, and is
+ * not the same as being covered: see docs/APP_TEST_MATRIX.md.
  */
 
 import type {
@@ -42,6 +49,12 @@ const DECLARED: Record<string, string> = {
     "a pixel comparison with no committed baseline for this platform; " +
     "Playwright names baselines per-OS and only the Linux ones are in " +
     "the repository. Run scripts/baselines-linux.sh to compare here",
+  "@needs-model":
+    "drives a real model turn, and CI has no model. The fixture's " +
+    "spawned backend is configured with e2e-wire-format-stub, which " +
+    "points at a port nothing listens on — so these do not degrade, " +
+    "they fail. Export IGNI_LIVE_WS=ws://127.0.0.1:PORT against a " +
+    "backend running on your own config to include them",
 };
 
 type Skip = {

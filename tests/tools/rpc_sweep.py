@@ -242,9 +242,24 @@ def main() -> int:
         action="store_true",
         help="also call methods that change state — never against a backend in use",
     )
+    parser.add_argument(
+        "--json",
+        metavar="PATH",
+        help="write the per-method outcome here, so a document can cite it "
+        "instead of somebody retyping the result from memory",
+    )
     args = parser.parse_args()
 
     results = asyncio.run(sweep(args.url, args.mutating))
+
+    if args.json:
+        Path(args.json).write_text(
+            json.dumps(
+                {m: {"outcome": o, "detail": d} for m, (o, d) in sorted(results.items())},
+                indent=1,
+            )
+            + "\n"
+        )
 
     by_outcome: dict[str, list[str]] = {}
     for method, (outcome, detail) in sorted(results.items()):

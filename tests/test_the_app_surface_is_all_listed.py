@@ -32,7 +32,7 @@ _MATRIX = _ROOT / "docs/APP_TEST_MATRIX.md"
 
 #: Statuses a row may carry. Anything else is a typo that would quietly
 #: drop the row out of the counts somebody reads.
-_STATUSES = {"verified", "covered", "todo", "blocked"}
+_STATUSES = {"verified", "answers", "todo", "blocked"}
 
 
 def _protocol_methods() -> set[str]:

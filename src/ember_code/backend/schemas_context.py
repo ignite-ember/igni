@@ -35,12 +35,33 @@ Chat-view models (slash-command output):
   :mod:`ember_code.core.session.schemas` stays presentation-
   free (no ``CommandResult`` import in the domain layer).
 
-``OutputStyle`` (a ``@dataclass``) and ``ContextBreakdown`` (a
-``BaseModel``) are both imported lazily under ``TYPE_CHECKING``
-so this module stays import-cheap. Views that wrap the
-``OutputStyle`` dataclass set ``arbitrary_types_allowed=True``,
-matching the treatment :class:`CodeIndexStatusView` gives to the
+``OutputStyle`` (a ``@dataclass``) is imported lazily under
+``TYPE_CHECKING`` so this module stays import-cheap. Views that
+wrap it set ``arbitrary_types_allowed=True``, matching the
+treatment :class:`CodeIndexStatusView` gives to the
 ``ResolvedRepository`` dataclass.
+
+``ContextBreakdown`` **is not**, and cannot be. It is the
+*annotation of a Pydantic field*, and with
+``from __future__ import annotations`` every annotation in this
+file is a string that Pydantic resolves at class-build time
+against the module's real namespace. Under ``TYPE_CHECKING`` that
+name does not exist at runtime, so the model never finished
+building and every construction raised::
+
+    PydanticUserError: `ContextBreakdownView` is not fully
+    defined; you should define `ContextBreakdown`, then call
+    `ContextBreakdownView.model_rebuild()`.
+
+Which means ``/ctx`` did not work at all — not in an edge case,
+ever — and the error reached the user as ``session routing
+failed: …`` with a Pydantic docs link in it. ``arbitrary_types_
+allowed`` does not help: it permits non-pydantic *types*, it does
+not conjure a *name*.
+
+The import that fixes it sits at the **foot** of this module, with
+an explicit ``model_rebuild()``; see the comment there for why the
+top of the file is not available.
 
 The domain :class:`~ember_code.core.session.pending_messages.PendingMessage`
 dataclass — the storage-row type this module's wire model wraps —
@@ -65,7 +86,6 @@ if TYPE_CHECKING:
     from ember_code.core.session.pending_messages import (
         PendingMessage as PendingMessageRow,
     )
-    from ember_code.core.session.schemas import ContextBreakdown
 
 
 # How stale a pending-message row must be before we surface it
@@ -264,6 +284,25 @@ class ContextBreakdownView(BaseModel):
         ]
         return CommandResult.markdown("\n".join(lines))
 
+
+# Imported here, at the foot of the module, and not at the top.
+#
+# ``core.session.schemas`` is a leaf, but importing it runs
+# ``core.session.__init__``, which reaches
+# ``interactive → interactive_loop → commands → backend.command_handler
+# → builtin_command_registry → cmd_context → schemas_context`` — back
+# to this file. From the top of the module that lands mid-definition
+# and dies with "cannot import name 'ContextBreakdownView' from
+# partially initialized module". From down here every class above is
+# already bound, so the cycle closes on a complete module.
+#
+# ``model_rebuild()`` is then what actually finishes
+# ``ContextBreakdownView``: the import above only puts the name in this
+# module's globals, and Pydantic resolved the annotation — and gave up
+# — back when the class body ran.
+from ember_code.core.session.schemas import ContextBreakdown  # noqa: E402
+
+ContextBreakdownView.model_rebuild()
 
 __all__ = [
     "PENDING_STALENESS_SECONDS",

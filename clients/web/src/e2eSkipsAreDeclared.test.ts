@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 const E2E_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e");
 
 /** Tags that declare a skip. Must match ``e2e/reporters/skips.ts``. */
-const DECLARING_TAGS = ["@manual", "@needs-baseline"];
+const DECLARING_TAGS = ["@manual", "@needs-baseline", "@needs-model"];
 
 function specFiles(): string[] {
   return readdirSync(E2E_DIR)
@@ -116,13 +116,9 @@ describe("the e2e suite cannot skip quietly", () => {
     // case until F128, and the first check found four errors including
     // a listener typed against the wrong event. A spec that skips *and*
     // is unchecked is invisible twice over.
-    const cfg = readFileSync(
-      join(E2E_DIR, "..", "tsconfig.json"),
-      "utf8",
-    );
-    const include = JSON.parse(
-      cfg.replace(/\/\*[\s\S]*?\*\//g, ""),
-    ).include as string[];
+    const cfg = readFileSync(join(E2E_DIR, "..", "tsconfig.json"), "utf8");
+    const include = JSON.parse(cfg.replace(/\/\*[\s\S]*?\*\//g, ""))
+      .include as string[];
     expect(include).toContain("e2e");
     expect(include).toContain("src");
   });
@@ -137,9 +133,9 @@ describe("the e2e suite cannot skip quietly", () => {
     }
     // And the reverse: a tag the reporter honours but this file does
     // not know about would let a spec pass here and skip there.
-    const inReporter = [
-      ...reporter.matchAll(/^ {2}"(@[a-z-]+)":/gm),
-    ].map((m) => m[1]);
+    const inReporter = [...reporter.matchAll(/^ {2}"(@[a-z-]+)":/gm)].map(
+      (m) => m[1],
+    );
     expect(inReporter.sort()).toEqual([...DECLARING_TAGS].sort());
   });
 });

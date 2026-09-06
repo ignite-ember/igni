@@ -56,7 +56,9 @@ export const REPO_ROOT = path.resolve(HERE, "..", "..", "..", "..");
 export const VENV_PYTHON = path.join(REPO_ROOT, ".venv", "bin", "python");
 
 /** The reason a run cannot have a backend, or null if it can. */
-export function whyNoBackend(env: NodeJS.ProcessEnv = process.env): string | null {
+export function whyNoBackend(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
   if (env.IGNI_LIVE_WS) return null;
   if (fs.existsSync(VENV_PYTHON)) return null;
   return (
@@ -217,12 +219,51 @@ async function cleanupOrphans(projectDir: string): Promise<void> {
   // Kills every process group the rows reference. Best-effort: a
   // failure here must not mask a test failure, but it must be visible.
   try {
-    await run(VENV_PYTHON, [SEED_SCRIPT, "--cleanup", "--project-dir", projectDir], {
-      cwd: REPO_ROOT,
-    });
+    await run(
+      VENV_PYTHON,
+      [SEED_SCRIPT, "--cleanup", "--project-dir", projectDir],
+      {
+        cwd: REPO_ROOT,
+      },
+    );
   } catch (err) {
     console.error(`orphan cleanup failed for ${projectDir}: ${String(err)}`);
   }
+}
+
+/**
+ * Why this run has no model that answers, or null if it has one.
+ *
+ * A backend is not a model. When we spawn one we write ``STUB_MODEL``
+ * above, whose registry entry points at ``http://127.0.0.1:9`` — a
+ * port chosen because nothing listens on it. That is exactly right for
+ * the wire-format specs and useless for anything that waits on a
+ * reply: those tests do not fail slowly, they fail *wrongly*, reporting
+ * a missing assistant bubble when the truth is that no model was ever
+ * dialled.
+ *
+ * Only a borrowed backend (``IGNI_LIVE_WS``) is running against the
+ * developer's real config, so only that counts. This is the same shape
+ * as ``whyNoBackend``: a declared skip that ``reporters/skips.ts``
+ * surfaces, rather than a red test blaming the app.
+ *
+ * The consequence is worth stating plainly: CI runs ``npx playwright
+ * test`` with no ``IGNI_LIVE_WS``, so every model-driven spec skips
+ * there. Their evidence is produced on a developer's machine. Making
+ * CI hold a model key is a separate decision — see
+ * ``docs/APP_TEST_MATRIX.md``.
+ */
+export function whyNoModel(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  if (env.IGNI_LIVE_WS) return null;
+  return (
+    `no model that answers: this spec drives a real turn, and without ` +
+    `IGNI_LIVE_WS the fixture spawns a backend configured with the ` +
+    `'${STUB_MODEL}' registry entry, which points at http://127.0.0.1:9. ` +
+    `Start a backend against your own config and export ` +
+    `IGNI_LIVE_WS=ws://127.0.0.1:PORT.`
+  );
 }
 
 export const test = base.extend<{
@@ -258,7 +299,14 @@ export const test = base.extend<{
 
     const proc: ChildProcessWithoutNullStreams = spawn(
       VENV_PYTHON,
-      ["-m", "ember_code.backend", "--ws-port", "0", "--project-dir", projectDir],
+      [
+        "-m",
+        "ember_code.backend",
+        "--ws-port",
+        "0",
+        "--project-dir",
+        projectDir,
+      ],
       {
         cwd: REPO_ROOT,
         env: {
