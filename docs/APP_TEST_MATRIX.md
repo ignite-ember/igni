@@ -68,6 +68,15 @@ a model the endpoint actually serves — pointing it at one that had
 been retired produced `invalid params, unknown model … (2013)` in a
 chat bubble, which the app reports clearly and no test noticed.
 
+Two provider failures show up as a chat bubble rather than as
+anything a test can distinguish from a product fault, and both were
+met while writing this: `invalid params, unknown model …` when
+`models.default` names something the endpoint has retired, and
+`Token Plan usage limit reached` when the account runs out of
+credit. The app reports each clearly; a red suite after a long live
+run is worth checking against the provider before it is read as a
+regression.
+
 Without `IGNI_LIVE_WS` the model-driven tests declare a skip
 (`whyNoModel`) rather than failing against the stub. All three live
 files are `mode: "serial"`; see below for why.
@@ -315,7 +324,7 @@ Each was reproduced, and each is recorded on its own row above.
 | Eight of eighteen hook events were undocumented — `PermissionRequest`, `PermissionDenied`, `PreCompact`, `PostCompact`, `TaskCreated`, `TaskCompleted`, `StopFailure`, `InstructionsLoaded`. All eight fire. `docs/HOOKS.md` listed ten and read as complete, and hooks are how a self-hosted deployment extends the product | `docs/HOOKS.md` | **fixed** — documented with payloads; `test_every_hook_event_is_documented.py` requires a table row per event |
 | Nine CLI-flag tests ran no CLI. `test_read_only_denies_writes` set two `Settings` fields and asserted one back; `test_add_dir_setting` asserted `len([a, b]) == 2`. Every one would pass with its flag deleted | `tests/test_cli_flags.py` | **fixed** — replaced by `test_the_cli_flags_do_something.py`, which drives Click and the real settings mapping |
 | `/bug` opens `github.com/ignite-ember/igni/issues` in a browser **on the backend host**. From a product whose premise is that nothing leaves the customer's cloud, and in an air-gapped deployment it opens a tab that cannot load | `backend/cmd_bug.py` | open — a product decision, not a code defect |
-| **A message sent immediately after "+ New chat" is lost.** The composer accepts it — the editor empties, so `submit` ran — and it never appears: no user bubble, no error, the welcome screen still on the page. `/clear` asks the backend for a fresh session id and rebinds the view when the answer arrives, one RPC round trip later; anything submitted inside that window lands in a view about to be replaced. Reproduced on every attempt; waiting five seconds first works every time | `App.tsx`, `/clear` handler | open — declared as `test.fixme` in `live-chat.spec.ts`. Not fixed because the choice (refuse input until the rotation lands, vs. queue the submit behind it) is a product decision. `carryDraft` fixes the neighbouring `@` symptom and not this one |
+| **A message sent immediately after "+ New chat" was lost.** The composer accepted it — the editor emptied, so `submit` ran — and nothing appeared: no bubble, no answer, no error. Destroyed twice over: `/clear` emptied the transcript when its *response* arrived, one round trip after the click, and `viewGenRef.current++` at the same moment invalidated the run that had just started, so its events were dropped too. Roughly one attempt in four; a few seconds' wait always worked, which made it look like flaky tests | `App.tsx`, `/clear` and `/fork` | **fixed** — the clear filters to items added after the command was *issued* instead of emptying, and the generation bumps at issue time rather than on the response. Regression test delays the `/clear` frame by 1.5s with `routeWebSocket`, so the race is a certainty rather than a one-in-four; each half revert-checked separately |
 | A "+ New chat" session vanishes from the sidebar before its first message. `App.tsx` inserts an optimistic row and says it survives "until the first message lands"; the `refreshSessions()` two lines later replaces the list with the backend's, which has no row for it | `App.tsx`, `/clear` handler | open |
 | `/fork` on a session with no messages fails: "Fork failed: source session not found: &lt;id&gt;", though the id is in the footer | session persistence | open |
 | A message queued while a run is in progress never runs if that run makes no tool call — the queue is drained by a tool hook, but the label promises "after the current turn" | `TeamWiring.wire_queue_hook` | open |
@@ -367,8 +376,10 @@ Each was reproduced, and each is recorded on its own row above.
   `IGNI_LIVE_WS` backend, and one backend has one current session:
   `/clear` opened onto `/fork`'s transcript and failed looking for its
   own token. `mode: "serial"` on all five live files.
-* **Three kinds of cross-test leak were found and fixed, all of them
-  producing failures that named the wrong thing.** A test that left a
+* **Four kinds of cross-test leak were found, all of them producing
+  failures that named the wrong thing** — and the fourth turned out
+  to be a product defect, not a leak: acting inside the `/clear`
+  window lost the message. The other three were mine. A test that left a
   run paused at an approval dialog handed the next spec an app whose
   composer could not be typed into. A `session <hex>` regex over
   `body.innerText()` also matched the sidebar, which lists an id for

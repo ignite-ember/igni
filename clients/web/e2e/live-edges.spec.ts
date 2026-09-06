@@ -65,17 +65,17 @@ async function newChat(page: Page) {
   //
   // "+ New chat" runs `/clear`, which asks the backend for a fresh
   // session id and rebinds the view when the answer arrives — one RPC
-  // round trip after the click. A message sent inside that window is
-  // accepted by the composer and then never appears: the transcript
-  // stays empty and nothing says why. Measured, reproducibly, and
-  // pinned as a declared product defect in
+  // round trip after the click. Acting inside that window used to
+  // lose the message entirely; that is fixed, and
   // `live-chat.spec.ts`'s "a message sent immediately after + New
-  // chat is not lost".
+  // chat is not lost" is the regression test, which deliberately does
+  // *not* wait.
   //
-  // So every caller waits. Without this, three tests across three
-  // files failed intermittently in full sweeps and passed alone —
-  // failures about the race, dressed as failures about cancelling,
-  // forking, and tool calls.
+  // The wait stays for a different reason: a test that starts before
+  // the rotation is asserting against a session it is about to leave.
+  // Three tests across three files failed intermittently in full
+  // sweeps and passed alone for exactly that reason, and each failure
+  // named the wrong thing — cancelling, forking, tool calls.
   await expect
     .poll(
       async () => (await page.locator(".session-chip code").innerText()).trim(),

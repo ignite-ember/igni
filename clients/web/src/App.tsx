@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  lastItemId,
   applyEvent,
   applyOrchestrateEvent,
   assistantItem,
@@ -2002,6 +2003,42 @@ export default function App() {
         clientState.set(`draft:${to}`, draft);
         clientState.delete(`draft:${from}`);
       };
+      // ── The window between issuing a view-clearing command and its
+      // answer coming back ────────────────────────────────────────────
+      //
+      // `/clear` and `/fork` empty the transcript when the *response*
+      // arrives, which is one round trip after the click. A message
+      // the user sent inside that window was destroyed twice over:
+      // `setItems([])` threw away the bubble that had just been
+      // appended, and `viewGenRef.current++` invalidated the run that
+      // had just started, so its reply was dropped too. The composer
+      // emptied — proof the submit ran — and absolutely nothing
+      // appeared. No bubble, no answer, no error. Measured on roughly
+      // one attempt in four; a wait of a few seconds always worked,
+      // which is what made it look like flakiness in the tests rather
+      // than a defect in the app.
+      //
+      // Two fixes, one per half.
+      //
+      // `itemBoundary` is the highest item id at *issue* time.
+      // Everything above it was added afterwards and is not what the
+      // user asked to clear, so the clear filters rather than empties.
+      //
+      // The generation bumps at issue time too, instead of on the
+      // response. That is the correct moment anyway: the view changes
+      // when the user asks for a new one. Runs already streaming
+      // captured the old generation and are still dropped, which is
+      // what the counter is for; a run started after the click
+      // captures the new one and survives.
+      //
+      // Recognised from the text because the action is only known once
+      // the backend answers, and by then the window has closed. The
+      // `case` branches still bump if the text did not say so — a
+      // skill that expands to a clear server-side keeps the old
+      // behaviour rather than none.
+      const clearsTheView = /^\/(clear|fork)\b/.test(text.trim());
+      const itemBoundary = lastItemId();
+      if (clearsTheView) viewGenRef.current++;
       try {
         const result = await client.handleCommand(text);
         if (result.type !== "command_result") {
@@ -2011,8 +2048,9 @@ export default function App() {
         const content = result.display_content || result.content;
         switch (result.action) {
           case "clear": {
-            viewGenRef.current++;
-            setItems([]);
+            if (!clearsTheView) viewGenRef.current++;
+            // Keep whatever the user added while this was in flight.
+            setItems((prev) => prev.filter((it) => it.id > itemBoundary));
             setHistoryIndexToItemIndex([]);
             // The session id rotated and the new conversation has 0
             // context; pull a fresh StatusUpdate so the footer
@@ -2066,8 +2104,11 @@ export default function App() {
             // Same dance as ``/clear`` but we also rehydrate the
             // cloned history so the fork opens with the same context
             // the user just left in the source session.
-            viewGenRef.current++;
-            setItems([]);
+            if (!clearsTheView) viewGenRef.current++;
+            // Same window as `/clear`. The survivors are re-appended
+            // after the fork's history loads below, so they sit at the
+            // end of the cloned conversation where they were typed.
+            setItems((prev) => prev.filter((it) => it.id > itemBoundary));
             setHistoryIndexToItemIndex([]);
             carryDraft(client.sessionId, newId);
             client.sessionId = newId;
@@ -2075,7 +2116,9 @@ export default function App() {
             setSessionId(newId);
             try {
               const loaded = await fetchHistoryItems(newId);
-              setItems(loaded.items);
+              // `prev` is only the survivors — the filter above ran
+              // before the history fetch minted any ids.
+              setItems((prev) => [...loaded.items, ...prev]);
               setHistoryIndexToItemIndex(loaded.historyMap);
             } catch (e) {
               append(errorItem(`Loaded fork id but history fetch failed: ${e}`));

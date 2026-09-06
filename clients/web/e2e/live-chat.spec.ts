@@ -37,7 +37,7 @@
  * screen a person would accept.
  */
 
-import { expect } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
 import { test, whyNoModel } from "./fixtures/live-be";
@@ -86,17 +86,17 @@ async function newChat(page: import("@playwright/test").Page) {
   //
   // "+ New chat" runs `/clear`, which asks the backend for a fresh
   // session id and rebinds the view when the answer arrives — one RPC
-  // round trip after the click. A message sent inside that window is
-  // accepted by the composer and then never appears: the transcript
-  // stays empty and nothing says why. Measured, reproducibly, and
-  // pinned as a declared product defect in
+  // round trip after the click. Acting inside that window used to
+  // lose the message entirely; that is fixed, and
   // `live-chat.spec.ts`'s "a message sent immediately after + New
-  // chat is not lost".
+  // chat is not lost" is the regression test, which deliberately does
+  // *not* wait.
   //
-  // So every caller waits. Without this, three tests across three
-  // files failed intermittently in full sweeps and passed alone —
-  // failures about the race, dressed as failures about cancelling,
-  // forking, and tool calls.
+  // The wait stays for a different reason: a test that starts before
+  // the rotation is asserting against a session it is about to leave.
+  // Three tests across three files failed intermittently in full
+  // sweeps and passed alone for exactly that reason, and each failure
+  // named the wrong thing — cancelling, forking, tool calls.
   await expect
     .poll(
       async () => (await page.locator(".session-chip code").innerText()).trim(),
@@ -223,49 +223,79 @@ test(
   },
 );
 
+/**
+ * Hold back the `/clear` result so the race is a certainty.
+ *
+ * The window between issuing `/clear` and its answer arriving is
+ * about fifty milliseconds on loopback, so a test that simply types
+ * fast reproduces the bug roughly one attempt in four — and a
+ * regression test that passes three times out of four is not one.
+ * Delaying that single frame turns a coin toss into a fact.
+ *
+ * Everything after the delayed frame queues behind it, which is fine:
+ * the point is that the composer accepts a message *before* the clear
+ * result lands, which is exactly the user's situation.
+ */
+async function delayTheClearResult(page: Page, ms: number) {
+  await page.routeWebSocket(/.*/, (route) => {
+    const server = route.connectToServer();
+    route.onMessage((message) => server.send(message as string));
+    server.onMessage(async (message) => {
+      const frame = String(message);
+      if (
+        frame.includes('"command_result"') &&
+        frame.includes('"action":"clear"')
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      }
+      route.send(message as string);
+    });
+  });
+}
+
 test(
   "a message sent immediately after + New chat is not lost",
   { tag: "@needs-model" },
   async ({ page, liveBe }) => {
-    // **Known failure.** Reproduced on every attempt.
+    // `/clear` used to empty the transcript when its *response*
+    // arrived, one round trip after the click, and a message sent
+    // inside that window was destroyed twice over: `setItems([])`
+    // threw away the bubble that had just been appended, and
+    // `viewGenRef.current++` invalidated the run that had just
+    // started, so the reply was dropped too. The composer emptied —
+    // proof the submit had run — and nothing appeared at all. No
+    // bubble, no answer, no error.
     //
-    // Click "+ New chat", type, press Enter. The composer accepts it —
-    // the editor empties, so `submit` ran — and the message never
-    // appears. No user bubble, no error, the welcome screen still on
-    // the page. Wait five seconds after the click and the same steps
-    // work, every time.
+    // Fixed in `App.tsx`: the clear filters to items added after the
+    // command was issued instead of emptying, and the view generation
+    // bumps at issue time rather than on the response.
     //
-    // `/clear` asks the backend for a fresh session id and rebinds the
-    // view when the answer arrives, one RPC round trip after the
-    // click. Anything submitted inside that window is appended to a
-    // view that is about to be replaced. `carryDraft` in `App.tsx`
-    // fixes the neighbouring symptom — the `@` character being taken
-    // out of the editor mid-mention — and does not fix this one,
-    // because here the text does reach `submit`.
-    //
-    // Not fixed here on purpose. The candidate fixes are a composer
-    // that refuses input until the rotation lands (simple, and a
-    // visible stall) or a submit that queues behind it (better, and
-    // more to get wrong), and picking between them is a product
-    // decision rather than a test's.
-    //
-    // `test.fixme` rather than a deleted test or a permanent red: the
-    // expectation is right, the product does not meet it, and it is
-    // worth carrying in the report as a declared gap. Every other
-    // spec's `newChat()` now waits for the rotation, which is what
-    // stopped this race from failing three unrelated tests.
-    test.fixme();
-
+    // Both halves are asserted, because either one alone leaves the
+    // user with half a conversation.
+    await delayTheClearResult(page, 1500);
     await page.goto(`/?ws=${encodeURIComponent(liveBe.wsUrl)}`);
     await connected(page);
 
     await page.getByRole("button", { name: /New chat/i }).click();
-    // Deliberately no wait. The wait is the workaround.
+    // Deliberately no wait for the rotation. The wait is the
+    // workaround, and every other spec's `newChat()` uses it; this is
+    // the one test that must not.
     const token = marker();
     await send(page, `Reply with exactly ${token}.`);
 
-    // The user's own turn, before any question of a reply.
+    // Half one: the bubble survives the clear. Asserted after the
+    // delayed frame has certainly landed, or this passes on a clear
+    // that has not happened yet.
     await expect(page.locator(".msg-user")).toHaveCount(1, { timeout: 15_000 });
+    await page.waitForTimeout(2500);
+    await expect(
+      page.locator(".msg-user"),
+      "the clear wiped the message the user had already sent",
+    ).toHaveCount(1);
+
+    // Half two: the run that started in the window still paints. A
+    // stale view generation drops every event it emits, so the bubble
+    // would sit there alone and the answer never arrive.
     await assistantSaid(page, token, 120_000);
   },
 );
