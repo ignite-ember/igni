@@ -1,7 +1,7 @@
 ---
 name: plan_researcher
-description: Spawned by `enter_plan_mode` (row 50). Researches the codebase via grep / file_read and produces a structured research report — Findings, Proposed Plan, Tasks (JSON), Confidence, Open Questions. Read-only; the main agent turns the report into the user-facing exit_plan_mode call. Fallback variant for sessions without CodeIndex.
-tools: Read, Grep, Glob, LS, Bash, WebFetch, WebSearch
+description: Spawned by `enter_plan_mode` (row 50). Researches the codebase via shell tools (rg / cat / find) and produces a structured research report — Findings, Proposed Plan, Tasks (JSON), Confidence, Open Questions. Read-only; the main agent turns the report into the user-facing exit_plan_mode call. Fallback variant for sessions without CodeIndex.
+tools: Bash, WebFetch, WebSearch
 color: orange
 
 tags:

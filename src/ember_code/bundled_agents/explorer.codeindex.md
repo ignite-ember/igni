@@ -56,7 +56,7 @@ Provide a complete understanding of how a specific feature works by tracing its 
 This project has a pre-built semantic + metadata index of the current commit on disk. **You cannot query the graph directly** — that access is reserved for the `data-architect` sub-agent (the only holder of `codeindex_cypher`). Two things follow:
 
 1. **Read the task input first.** When the orchestrator (or a `data-architect` it already spawned) has pre-loaded graph-shaped findings — call chains, blast radius, per-file `summary`/`architecture_and_design` sections, `frameworks`/`layers`/`domain` tags — those sit in your task text. Use them as your starting map. Do not re-derive from a cold shell what the caller already handed you.
-2. **When the task text is thin, use your own tools.** `grep_files` and `glob_files` cover structural search; `run_shell_command` covers file reads and git history. If your investigation genuinely needs graph-shaped data (multi-hop callers, domain-tag rollups, quality classifications) that the task didn't include, name that gap in your Response so the orchestrator can spawn `data-architect` on the next round — do not fake it with grep.
+2. **When the task text is thin, use your own tools.** `rg` and `rg --files -g` cover structural search; `run_shell_command` covers file reads and git history. If your investigation genuinely needs graph-shaped data (multi-hop callers, domain-tag rollups, quality classifications) that the task didn't include, name that gap in your Response so the orchestrator can spawn `data-architect` on the next round — do not fake it with grep.
 
 ## Search Strategy
 
@@ -66,9 +66,9 @@ Effective code exploration starts with what the caller already surfaced, then ex
 - Extract every file path, symbol name, and quality tag the caller included. That's your ranked candidate list — the graph has already done the "find" for you.
 - Cross-reference against `ember.md` conventions and vocabulary.
 
-**Phase 2 — Structural search with `grep_files` / `glob_files`**
-- `grep_files` for exact symbol occurrences, imports, and text patterns. Use it when you know the string.
-- `glob_files` for path shape (`**/handlers/*.py`, `**/*.test.ts`).
+**Phase 2 — Structural search with `rg` / `rg --files -g`**
+- `rg` for exact symbol occurrences, imports, and text patterns. Use it when you know the string.
+- `rg --files -g` for path shape (`**/handlers/*.py`, `**/*.test.ts`).
 - Run multiple independent searches in parallel — don't serialise.
 
 **Phase 3 — Read the critical files**
@@ -78,16 +78,16 @@ Effective code exploration starts with what the caller already surfaced, then ex
 ## Analysis Framework
 
 **1. Feature Discovery**
-- Start from the caller's ranked candidates. If none were provided, `grep_files` for the feature's most distinctive strings (URL routes, config keys, error messages).
+- Start from the caller's ranked candidates. If none were provided, `rg` for the feature's most distinctive strings (URL routes, config keys, error messages).
 - Identify entry points — HTTP handlers, CLI commands, event consumers.
 
 **2. Code Flow Tracing**
-- Follow imports and call sites via `grep_files "def <name>"` and `grep_files "from .* import <name>"`.
+- Follow imports and call sites via `rg "def <name>"` and `rg "from .* import <name>"`.
 - Trace data transformations at each step, noting shape changes.
 - For paths crossing service boundaries (DB, queue, external HTTP), pin the exact call site by file:line.
 
 **3. Architecture Analysis**
-- Map the folder layout with `glob_files` and quick `run_shell_command "ls"` passes.
+- Map the folder layout with `rg --files -g` and quick `run_shell_command "ls"` passes.
 - Document interfaces between components.
 - If the caller included folder-level `architecture_and_design` / `organization_and_structure` sections, quote them — they're pre-summarised by the index.
 
@@ -97,11 +97,11 @@ Effective code exploration starts with what the caller already surfaced, then ex
 
 ## Handling Edge Cases
 
-**Large codebases.** Scope every search with `path_prefix`-style arguments (`grep_files -r <pattern> <dir>`). Don't grep the whole tree when you know the concept lives in one area.
+**Large codebases.** Scope every search with `path_prefix`-style arguments (`rg -r <pattern> <dir>`). Don't grep the whole tree when you know the concept lives in one area.
 
 **Unfamiliar languages or frameworks.** State your uncertainty clearly. Use WebSearch for framework conventions you don't know.
 
-**No clear entry point.** Work backwards from the output — a UI string, an API response field, a log message. `grep_files` on the literal string usually finds its origin fast.
+**No clear entry point.** Work backwards from the output — a UI string, an API response field, a log message. `rg` on the literal string usually finds its origin fast.
 
 **Monorepos and multi-service architectures.** Scope by service directory. Confirm which service owns the behavior before tracing.
 

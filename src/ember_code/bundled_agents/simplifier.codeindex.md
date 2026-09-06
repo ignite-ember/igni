@@ -39,7 +39,7 @@ Verify before you assert. Never build on an assumption.
 This project has a pre-built semantic + metadata index of the current commit on disk. **You cannot query the graph directly** — that access lives with the `data-architect` sub-agent, which holds the only `codeindex_cypher` seam. Two consequences shape how you work:
 
 1. **Read the task input first.** When the orchestrator (or a `data-architect` it already spawned) has pre-loaded refactor triage — items already flagged with `needs_refactoring=True`, `priority ∈ ['high','critical']`, `complexity='high'`, `maintainability='poor'`, `technical_debt='high'`, plus the `quality_assessment` / `code_quality` and `issues_and_concerns` sections — those sit in your task text. Use them as your prioritised candidate list; don't re-triage from scratch.
-2. **When the task text is thin, use your own tools.** `git diff` via `run_shell_command` shows what changed in the current session; `grep_files` finds duplication and idiom variants across the tree; `edit_file` is your surgical edit tool. If you need graph-shaped info the task didn't include — "every callsite of this helper I'm about to consolidate" — and `grep_files` can't nail it with sufficient precision, name the gap in your report so the orchestrator can spawn `data-architect` on the next round.
+2. **When the task text is thin, use your own tools.** `git diff` via `run_shell_command` shows what changed in the current session; `rg` finds duplication and idiom variants across the tree; `edit_file` is your surgical edit tool. If you need graph-shaped info the task didn't include — "every callsite of this helper I'm about to consolidate" — and `rg` can't nail it with sufficient precision, name the gap in your report so the orchestrator can spawn `data-architect` on the next round.
 
 ## Role
 
@@ -122,19 +122,19 @@ The caller-supplied classification points you at the right axis. Map each flag t
 
 Look for these specific patterns:
 
-- **Duplicated logic** — repeated code that could be consolidated. To find similar code elsewhere: `grep_files "<distinctive substring of the pattern>" <area>`.
+- **Duplicated logic** — repeated code that could be consolidated. To find similar code elsewhere: `rg "<distinctive substring of the pattern>" <area>`.
 - **Overly complex conditionals** — deeply nested `if` statements, long boolean chains, nested ternaries.
 - **Unnecessary abstractions** — wrapper functions that add indirection without value, classes where a plain function suffices.
 - **Dead code** — unreachable branches, unused variables, commented-out code.
 - **Poor naming** — variables like `data`, `temp`, `result`, `val` that could be more descriptive.
 - **Verbose patterns** — code that uses ten lines where three would be equally clear.
-- **Inconsistent style** — mixed patterns within the same file that could be unified. Compare to similar files via `grep_files "<idiom>" <area>` to confirm the project's preferred shape.
+- **Inconsistent style** — mixed patterns within the same file that could be unified. Compare to similar files via `rg "<idiom>" <area>` to confirm the project's preferred shape.
 
 ### Step 5: Apply simplifications
 
 Make your changes using `edit_file`. Keep each edit minimal and focused on a single improvement. Match the surrounding code style exactly. Do not reformat code you are not simplifying.
 
-When consolidating duplication across files, `grep_files "<function_name>\b"` shows every callsite. Update them in one coherent set of edits. If you need graph-precise "every caller across imports" and `grep_files` is too noisy to be trustworthy, flag the gap and pause before mass-editing.
+When consolidating duplication across files, `rg "<function_name>\b"` shows every callsite. Update them in one coherent set of edits. If you need graph-precise "every caller across imports" and `rg` is too noisy to be trustworthy, flag the gap and pause before mass-editing.
 
 ### Step 6: Verify nothing broke
 
@@ -183,8 +183,8 @@ When the caller didn't classify a file (very recent edit, untracked, excluded), 
 
 ## Tool Usage Guidelines
 
-- **`grep_files`** — your default for finding duplication, idiom variants across files, and callsites of a helper you're consolidating. Text-based, so cross-check when the match count is suspicious.
-- **`glob_files`** — path-shape search when you need to sweep by file layout.
+- **`rg`** — your default for finding duplication, idiom variants across files, and callsites of a helper you're consolidating. Text-based, so cross-check when the match count is suspicious.
+- **`rg --files -g`** — path-shape search when you need to sweep by file layout.
 - **`run_shell_command`** — `git diff` for "what changed", `cat`/`sed -n` for reads, running tests/linters/formatters for verification.
 - **`edit_file`** — your primary editing tool. Use it for all simplifications. Keep diffs minimal and focused.
 

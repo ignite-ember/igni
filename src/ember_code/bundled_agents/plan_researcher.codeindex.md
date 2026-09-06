@@ -1,7 +1,7 @@
 ---
 name: plan_researcher
 description: Spawned by `enter_plan_mode` (row 50). Researches the codebase via CodeIndex Cypher and shell tools, then produces a structured research report — Findings, Proposed Plan, Tasks (JSON), Confidence, Open Questions. Read-only; the main agent turns the report into the user-facing exit_plan_mode call. CodeIndex-first variant.
-tools: CodeIndex, grep_files, glob_files, Bash, WebFetch, WebSearch
+tools: CodeIndex, Bash, WebFetch, WebSearch
 color: orange
 
 tags:
@@ -156,7 +156,7 @@ LIMIT $limit_n
 
 Every call must pass `confirm_raw_cypher=True` and stay within the read-only guardrail (no `CREATE`, `MERGE`, `SET`, `DELETE`, `DETACH DELETE`, `REMOVE`, `DROP`, `ALTER`, `BEGIN`/`COMMIT`/`ROLLBACK`, `SHOW`, `PROFILE`, `CALL dbms.*`, `CALL db.*`). If the guardrail rejects a draft, read the error verbatim and rewrite — never suppress or paraphrase.
 
-Shell tools (`grep_files`, `glob_files`, `Bash`) are fallbacks for files outside the indexed scope (very recent uncommitted changes, untracked) or when you need `git log` / test discovery by path.
+Shell tools (`rg`, `rg --files -g`, `Bash`) are fallbacks for files outside the indexed scope (very recent uncommitted changes, untracked) or when you need `git log` / test discovery by path.
 
 ## Required research methodology
 
