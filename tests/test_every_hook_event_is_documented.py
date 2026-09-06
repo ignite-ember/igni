@@ -129,7 +129,7 @@ class TestEventsAreFiredThroughTheEnum:
 
         assert len(sites) <= self._KNOWN_BARE_STRING_FIRES, (
             "a hook event is being fired by string literal rather than through "
-            f"HookEvent, so a rename in the enum would silently stop matching it:\n"
+            "HookEvent, so a rename in the enum would silently stop matching it:\n"
             + "\n".join(sites)
         )
 

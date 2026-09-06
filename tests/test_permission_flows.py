@@ -39,10 +39,13 @@ class TestPermissionCheckLevels:
         level = perms.check("Bash", "run_shell_command", {"args": ["ls"]})
         assert level in ("ask", "allow")
 
-    def test_read_is_always_allowed(self):
-        """File reads should always be allowed."""
+    def test_web_fetch_is_allowed_by_default(self):
+        """This used to assert ``Read``/``read_file``. Reading is a
+        shell command now — ``Read`` left the registry, so the level it
+        returns is the "ask" fallback, and asserting "allow" for it
+        would be asserting a grant for a tool nothing can call."""
         perms = ToolPermissions()
-        level = perms.check("Read", "read_file", {"file_path": "test.py"})
+        level = perms.check("WebFetch", "fetch_url", {"url": "https://x.test"})
         assert level == "allow"
 
 

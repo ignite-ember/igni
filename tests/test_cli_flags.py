@@ -4,7 +4,6 @@ Tests the settings/behavior that CLI flags control, not the CLI invocation itsel
 CLI invocation tests are in test_cli.py.
 """
 
-from pathlib import Path
 
 from click.testing import CliRunner
 

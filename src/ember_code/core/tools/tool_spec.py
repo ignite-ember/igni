@@ -31,14 +31,12 @@ from typing import Any, ClassVar
 
 from agno.tools import Toolkit
 from agno.tools.file import FileTools
-from agno.tools.python import PythonTools
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ember_code.core.tools.codeindex import CodeIndexTools
 from ember_code.core.tools.edit import EmberEditTools, FileEditNotifier
 from ember_code.core.tools.notebook import NotebookTools
 from ember_code.core.tools.schedule import ScheduleTools
-from ember_code.core.tools.search import GlobTools, GrepTools
 from ember_code.core.tools.shell import EmberShellTools
 from ember_code.core.tools.visualize import BroadcastFn, VisualizeTools
 from ember_code.core.tools.web import WebTools
@@ -214,31 +212,6 @@ class ToolSpec(BaseModel):
 # subclass overrides, not in a flag-heavy build path.
 
 
-class ReadFileSpec(ToolSpec):
-    """Read-only ``FileTools`` — read/list ops, no writes.
-
-    ``FileTools`` takes a raw ``Path`` for ``base_dir`` (not the
-    stringified form the shell-family toolkits use).
-    """
-
-    name: str = "Read"
-    agno_function_names: tuple[str, ...] = ("read_file", "read_file_chunk", "list_files")
-    confirm_function_names: tuple[str, ...] = ("read_file", "list_files")
-    toolkit_cls: type[Toolkit] = FileTools
-    static_kwargs: dict[str, Any] = Field(
-        default_factory=lambda: dict(
-            enable_read_file=True,
-            enable_save_file=False,
-            enable_list_files=True,
-            enable_search_files=False,
-            enable_read_file_chunk=True,
-            enable_replace_file_chunk=False,
-            enable_search_content=False,
-        )
-    )
-    base_dir_as_str: bool = False
-
-
 class WriteFileSpec(ToolSpec):
     """Write-only ``FileTools`` — the ``save_file`` half of the read
     spec's toolkit."""
@@ -297,42 +270,6 @@ class BashSpec(ToolSpec):
     agno_function_names: tuple[str, ...] = ("run_shell_command",)
     confirm_function_names: tuple[str, ...] = ("run_shell_command", "stop_process")
     toolkit_cls: type[Toolkit] = EmberShellTools
-
-
-class LSSpec(ToolSpec):
-    """``LS`` uses the same shell toolkit as :class:`BashSpec` but with
-    no confirmation gating — listing is read-only. A dedicated subclass
-    (rather than sharing BashSpec's confirm list) prevents the shell
-    HITL from firing on directory listings.
-    """
-
-    name: str = "LS"
-    # No ``agno_function_names`` — ``LS`` doesn't add new function
-    # names to the LLM's function-to-registry mapping; the ephemeral
-    # path recognises ``LS`` as a registry name directly.
-    agno_function_names: tuple[str, ...] = ()
-    confirm_function_names: tuple[str, ...] = ()
-    toolkit_cls: type[Toolkit] = EmberShellTools
-
-    def build(self, context: ToolBuildContext, confirm: bool) -> Toolkit:
-        # Force ``confirm=False`` — LS must never gate. Explicit override
-        # so a future bug (e.g. someone flipping the confirm default)
-        # can't silently start prompting on LS calls.
-        return super().build(context, confirm=False)
-
-
-class GrepSpec(ToolSpec):
-    name: str = "Grep"
-    agno_function_names: tuple[str, ...] = ("grep", "grep_files", "grep_count")
-    confirm_function_names: tuple[str, ...] = ("grep", "grep_files", "grep_count")
-    toolkit_cls: type[Toolkit] = GrepTools
-
-
-class GlobSpec(ToolSpec):
-    name: str = "Glob"
-    agno_function_names: tuple[str, ...] = ("glob_files",)
-    confirm_function_names: tuple[str, ...] = ("glob_files",)
-    toolkit_cls: type[Toolkit] = GlobTools
 
 
 class WebSearchSpec(ToolSpec):
@@ -398,48 +335,6 @@ class WebFetchSpec(ToolSpec):
         if context.broadcast:
             kwargs["broadcast"] = context.broadcast
         return WebTools(**kwargs)
-
-
-class PythonSpec(ToolSpec):
-    """Python execution. **Every** function gated, not just one.
-
-    ``PythonTools`` registers seven functions and this spec used to
-    name one of them, ``run_python_code``. The other six ran with no
-    approval prompt at all — including ``save_to_file_and_run``, which
-    writes a file and executes it, ``run_python_file_return_variable``,
-    which executes one, and ``pip_install_package`` /
-    ``uv_pip_install_package``, which fetch and install packages from
-    the internet into the user's environment.
-
-    Gating the *most obviously named* one and leaving the rest is the
-    worst arrangement available: a user who writes ``tools: [Python]``
-    in an agent file sees an approval prompt, concludes the toolkit is
-    supervised, and is wrong about four code-execution paths.
-
-    ``read_file`` and ``list_files`` are gated too, matching
-    :class:`ReadFileSpec`, which gates reads. One rule per toolkit
-    beats a per-function judgement nobody will maintain.
-
-    Reachability does not change the argument. ``Python`` is in no
-    bundled agent and never in ``_MAIN_CORE_TOOLS``, so only a
-    user-authored ephemeral agent can ask for it — which is exactly
-    the person relying on the prompt.
-    """
-
-    name: str = "Python"
-    # No LLM-function aliases for Python — the ephemeral path takes the
-    # registry name directly.
-    agno_function_names: tuple[str, ...] = ()
-    confirm_function_names: tuple[str, ...] = (
-        "run_python_code",
-        "save_to_file_and_run",
-        "run_python_file_return_variable",
-        "pip_install_package",
-        "uv_pip_install_package",
-        "read_file",
-        "list_files",
-    )
-    toolkit_cls: type[Toolkit] = PythonTools
 
 
 class ScheduleSpec(ToolSpec):
@@ -673,16 +568,11 @@ class ToolSpecCatalog:
         ``_factories`` dict insertion order for stability)."""
         return cls(
             [
-                ReadFileSpec(),
                 WriteFileSpec(),
                 EditSpec(),
                 BashSpec(),
-                GrepSpec(),
-                GlobSpec(),
-                LSSpec(),
                 WebSearchSpec(),
                 WebFetchSpec(),
-                PythonSpec(),
                 ScheduleSpec(),
                 NotebookSpec(),
                 CodeIndexSpec(),

@@ -367,9 +367,15 @@ class InitResult(BaseModel):
 # display name (``Bash`` / ``Edit`` / ``Write``) before any rule
 # lookup, so listing both is redundant and leaks an internal detail
 # into a user-facing config file.
+#
+# ``Glob`` / ``Grep`` / ``LS`` / ``Read`` / ``Python`` used to be here.
+# They were removed from the tool registry — no bundled agent declared
+# them and the main agent never had them, so a fresh project was
+# pre-approving five tools nothing could call. Searching and reading
+# go through ``Bash`` now (``rg`` / ``cat`` / ``find``).
 _DEFAULT_PROJECT_PERMISSIONS = EmberSettingsPermissionsFile(
-    allow=["Glob", "Grep", "LS", "Read", "WebSearch", "WebFetch"],
-    ask=["Write", "Edit", "Bash", "BashOutput", "Python"],
+    allow=["WebSearch", "WebFetch"],
+    ask=["Write", "Edit", "Bash", "BashOutput"],
     deny=[],
 )
 

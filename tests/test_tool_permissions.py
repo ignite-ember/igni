@@ -129,7 +129,12 @@ class TestMatchRuleArgs:
 class TestToolPermissions:
     def test_default_levels(self, tmp_path):
         perms = ToolPermissions(project_dir=tmp_path)
-        assert perms.get_level("Read") == "allow"
+        # ``Read`` used to be the "allow" example. It left the
+        # registry with ``Grep`` / ``Glob`` / ``LS`` / ``Python``, and a
+        # default level for a tool nothing can call is a rule about
+        # nothing — so it now falls through to the "ask" fallback,
+        # pinned below.
+        assert perms.get_level("WebFetch") == "allow"
         assert perms.get_level("Write") == "ask"
         assert perms.get_level("Bash") == "ask"
         assert perms.get_level("WebSearch") == "allow"
@@ -138,12 +143,12 @@ class TestToolPermissions:
     def test_is_denied(self, tmp_path):
         perms = ToolPermissions(project_dir=tmp_path)
         assert not perms.is_denied("WebSearch")
-        assert not perms.is_denied("Read")
+        assert not perms.is_denied("WebFetch")
 
     def test_needs_confirmation(self, tmp_path):
         perms = ToolPermissions(project_dir=tmp_path)
         assert perms.needs_confirmation("Bash")
-        assert not perms.needs_confirmation("Read")
+        assert not perms.needs_confirmation("WebSearch")
 
     def test_loads_settings_file(self, tmp_path):
         settings_dir = tmp_path / CONFIG_DIR
@@ -202,7 +207,7 @@ class TestToolPermissions:
 
     def test_func_to_tool_mapping(self):
         assert FUNC_TO_TOOL["run_shell_command"] == "Bash"
-        assert FUNC_TO_TOOL["read_file"] == "Read"
+        assert FUNC_TO_TOOL["save_file"] == "Write"
         assert FUNC_TO_TOOL["edit_file"] == "Edit"
         assert FUNC_TO_TOOL["notebook_edit_cell"] == "NotebookEdit"
 
@@ -214,3 +219,16 @@ class TestToolPermissions:
     def test_unknown_tool_defaults_to_ask(self, tmp_path):
         perms = ToolPermissions(project_dir=tmp_path)
         assert perms.get_level("SomeNewTool") == "ask"
+
+    def test_a_retired_tool_name_falls_through_to_ask(self, tmp_path):
+        """``Read`` / ``Grep`` / ``Glob`` / ``LS`` / ``Python`` left the
+        registry, and their default levels went with them.
+
+        A project whose ``settings.json`` still lists one of them keeps
+        working — the name simply has no built-in level and lands on
+        the "ask" fallback, which is the safe direction. Pinned because
+        the alternative, a stale "allow" for a name nothing resolves,
+        is the kind of leftover that reads as a grant."""
+        perms = ToolPermissions(project_dir=tmp_path)
+        for retired in ("Read", "Grep", "Glob", "LS", "Python"):
+            assert perms.get_level(retired) == "ask"

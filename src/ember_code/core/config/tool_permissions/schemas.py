@@ -310,23 +310,22 @@ class ToolPermissionDefaults(BaseModel):
 
     levels: dict[str, PermissionLevel] = Field(
         default_factory=lambda: {
-            "Read": "allow",
-            "Glob": "allow",
-            "Grep": "allow",
-            "LS": "allow",
+            # ``Read`` / ``Glob`` / ``Grep`` / ``LS`` / ``Python`` are
+            # gone from the tool registry, so a default level for them
+            # would be a rule for a tool that cannot be called.
             "Write": "ask",
             "Edit": "ask",
             "Bash": "ask",
             "BashOutput": "ask",
-            "Python": "ask",
             "WebSearch": "allow",
             "WebFetch": "allow",
             "NotebookEdit": "ask",
             # Read-only by construction: ``codeindex_cypher`` is the toolkit's
             # only function and ``assert_read_only_cypher`` rejects every
-            # mutating clause before the query reaches the driver. Same class as
-            # Grep, so listed here rather than left to the ``"ask"`` fallback —
-            # which is what silently gated it in the main agent's toolkit.
+            # mutating clause before the query reaches the driver. Read-only
+            # by construction, so listed here rather than left to the ``"ask"``
+            # fallback — which is what silently gated it in the main agent's
+            # toolkit.
             "CodeIndex": "allow",
         }
     )

@@ -67,11 +67,15 @@ class TestRegisterEphemeral:
             name="searcher",
             description="Searches code",
             system_prompt="Search.",
-            tools=["Read", "Grep", "Glob"],
+            # ``Read`` / ``Grep`` / ``Glob`` used to be the example
+            # here. They were removed from the registry — searching and
+            # reading go through ``Bash`` (``rg`` / ``cat``) — so the
+            # fixture names tools that still resolve.
+            tools=["Bash", "Edit", "WebSearch"],
         )
         md_path = tmp_path / CONFIG_DIR / "agents.tmp" / "searcher.md"
         content = md_path.read_text()
-        assert "Read, Grep, Glob" in content
+        assert "Bash, Edit, WebSearch" in content
 
     @patch("ember_code.core.agents.builder.AgentBuilder.build")
     def test_register_with_model(self, mock_build, pool, tmp_path):

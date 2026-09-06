@@ -123,12 +123,14 @@ class TestEveryRegisteredFunctionHasADocstring:
         for path in _TOOLS.rglob("*.py"):
             tree = ast.parse(path.read_text())
             for node in ast.walk(tree):
-                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-                    if node.name in registered:
-                        out[node.name] = (
-                            str(path.relative_to(_ROOT)),
-                            ast.get_docstring(node),
-                        )
+                if (
+                    isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+                    and node.name in registered
+                ):
+                    out[node.name] = (
+                        str(path.relative_to(_ROOT)),
+                        ast.get_docstring(node),
+                    )
         return out
 
     @pytest.mark.parametrize("name", sorted(_registered_functions()))
@@ -190,30 +192,42 @@ class TestExecutionToolsAreGated:
             **(getattr(toolkit, "async_functions", {}) or {}),
         }
 
-    def test_python_gates_every_function_its_toolkit_registers(self):
-        """Pinned by name because this one shipped ungated.
+    def test_python_is_not_in_the_registry_at_all(self):
+        """The stronger version of the gate that used to be here.
 
-        Asked of the live toolkit rather than of a list here, so
-        an agno upgrade that adds an eighth execution path fails
-        instead of passing on a stale copy.
+        ``PythonSpec`` named one of ``PythonTools``' seven functions in
+        ``confirm_function_names``; the other six ran with no approval
+        prompt, four of them executing code or installing packages from
+        the internet. That was fixed by gating all seven — and then the
+        whole spec was removed, because nothing shipped declared
+        ``Python`` and the main agent never had it.
+
+        Removal beats gating: a toolkit that cannot be attached cannot
+        be mis-gated. Pinned by name so a future re-introduction is a
+        decision somebody makes on purpose, with the paragraph above
+        in front of them.
         """
-        from agno.tools.python import PythonTools
-
         from ember_code.core.tools.tool_spec import ToolSpecCatalog
 
-        spec = next(s for s in ToolSpecCatalog.default().specs if s.name == "Python")
-        built = PythonTools(base_dir=None)
-        registered = set(self._registered(built))
-        ungated = sorted(registered - set(spec.confirm_function_names))
+        catalog = ToolSpecCatalog.default()
+        assert "Python" not in catalog.registry_names_with_aliases
+        assert "Python" not in catalog.valid_ephemeral_names
 
-        assert ungated == [], (
-            f"PythonTools registers {ungated} and PythonSpec does not gate them. "
-            "Every one runs on the user's machine without an approval prompt."
-        )
+    @pytest.mark.parametrize(
+        "retired", ["Read", "Grep", "Glob", "LS", "Python"]
+    )
+    def test_the_retired_toolkits_stay_retired(self, retired: str):
+        """No bundled agent declared them and the main agent never had
+        them, so they granted nothing and could only be reached by a
+        user-authored ephemeral — which ``create_agent``'s own
+        docstring was still recommending."""
+        from ember_code.core.tools.tool_spec import ToolSpecCatalog
+
+        assert retired not in ToolSpecCatalog.default().registry_names_with_aliases
 
     @pytest.mark.parametrize(
         "spec_name",
-        ["Read", "Write", "Edit", "WebSearch", "WebFetch", "NotebookEdit"],
+        ["Write", "Edit", "WebSearch", "WebFetch", "NotebookEdit"],
     )
     def test_every_gated_name_exists_in_the_built_toolkit(self, spec_name: str):
         """A gate on a function that does not exist gates nothing.
@@ -264,7 +278,7 @@ class TestExecutionToolsAreGated:
 
     @pytest.mark.parametrize(
         "spec_name",
-        ["Read", "Write", "Edit", "WebSearch", "WebFetch", "NotebookEdit"],
+        ["Write", "Edit", "WebSearch", "WebFetch", "NotebookEdit"],
     )
     def test_nothing_that_writes_or_leaves_the_machine_is_ungated(
         self, spec_name: str

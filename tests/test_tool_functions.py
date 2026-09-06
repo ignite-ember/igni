@@ -1,6 +1,7 @@
 """Tests for tool function execution — P0 critical.
 
-Covers: Read (via Agno FileTools), Grep, LS, Bash execution.
+Covers: the Grep/Glob toolkits (still importable, no longer in the
+registry), Agno FileTools, and Bash execution.
 Edit and Glob already have good coverage in test_tools.py.
 """
 
@@ -162,28 +163,31 @@ class TestBashTool:
 class TestToolRegistryResolve:
     """Test that all tools resolve correctly."""
 
-    def test_resolve_read(self):
+    def test_resolve_write(self):
         registry = ToolRegistry(
             base_dir=".",
             permissions=ToolPermissions(),
         )
-        tools = registry.resolve(["Read"])
+        tools = registry.resolve(["Write"])
         assert len(tools) == 1
 
-    def test_resolve_grep(self):
+    def test_resolve_bash(self):
         registry = ToolRegistry(
             base_dir=".",
             permissions=ToolPermissions(),
         )
-        tools = registry.resolve(["Grep"])
+        tools = registry.resolve(["Bash"])
         assert len(tools) == 1
 
     def test_resolve_all_standard(self):
+        # ``Read`` / ``Grep`` / ``Glob`` were in this list until they
+        # left the registry — nothing shipped declared them, and
+        # searching and reading go through ``Bash`` (``rg`` / ``cat``).
         registry = ToolRegistry(
             base_dir=".",
             permissions=ToolPermissions(),
         )
-        standard = ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
+        standard = ["Write", "Edit", "Bash", "NotebookEdit", "Schedule"]
         tools = registry.resolve(standard)
         assert len(tools) == len(standard)
 
@@ -200,26 +204,26 @@ class TestToolRegistryResolveEdges:
         )
 
     def test_accepts_comma_separated_string(self):
-        # Agent definitions often carry ``tools: "Read,Write,Edit"``
+        # Agent definitions often carry ``tools: "Bash,Write,Edit"``
         # in YAML. Without the comma-split path, those agents
         # would silently get zero tools.
         registry = self._registry()
-        tools = registry.resolve("Read,Write,Edit")
+        tools = registry.resolve("Bash,Write,Edit")
         assert len(tools) == 3
 
     def test_strips_whitespace_in_comma_split(self):
-        # ``Read, Write , Edit`` is what YAML lists with
+        # ``Bash, Write , Edit`` is what YAML lists with
         # human-friendly spacing produce. The split must
         # strip each segment.
         registry = self._registry()
-        tools = registry.resolve("Read , Write,  Edit")
+        tools = registry.resolve("Bash , Write,  Edit")
         assert len(tools) == 3
 
     def test_filters_empty_segments(self):
         # Trailing commas / double commas shouldn't yield
         # empty tool names that would then raise ValueError.
         registry = self._registry()
-        tools = registry.resolve("Read,,Write,")
+        tools = registry.resolve("Bash,,Write,")
         assert len(tools) == 2
 
     def test_denied_tool_silently_skipped(self):
@@ -231,7 +235,7 @@ class TestToolRegistryResolveEdges:
         # Mark Bash as denied via the internal level map.
         perms._tool_levels["Bash"] = "deny"  # type: ignore[attr-defined]
         registry = self._registry(permissions=perms)
-        tools = registry.resolve(["Read", "Bash", "Write"])
+        tools = registry.resolve(["Edit", "Bash", "Write"])
         assert len(tools) == 2
 
     def test_mcp_prefix_silently_skipped(self):
@@ -239,7 +243,7 @@ class TestToolRegistryResolveEdges:
         # by the MCP manager elsewhere — not a registry-resolved
         # toolkit. Skip silently rather than raise.
         registry = self._registry()
-        tools = registry.resolve(["Read", "MCP:slack:send", "Write"])
+        tools = registry.resolve(["Edit", "MCP:slack:send", "Write"])
         assert len(tools) == 2
 
     def test_orchestrate_and_knowledge_silently_skipped(self):
@@ -247,7 +251,7 @@ class TestToolRegistryResolveEdges:
         # not the registry. Listing them in an agent's tools
         # should be a clean no-op rather than an error.
         registry = self._registry()
-        tools = registry.resolve(["Read", "Orchestrate", "Knowledge", "Write"])
+        tools = registry.resolve(["Edit", "Orchestrate", "Knowledge", "Write"])
         assert len(tools) == 2
 
     def test_unknown_tool_raises_with_helpful_message(self):
@@ -261,7 +265,7 @@ class TestToolRegistryResolveEdges:
         assert "NotARealTool" in msg
         # A known tool name appears in the message so the
         # author has at least one anchor.
-        assert "Read" in msg
+        assert "Write" in msg
 
     def test_bashoutput_aliases_to_bash_for_dedup(self):
         # ``BashOutput`` is a separate tool name (CC convention)
@@ -274,10 +278,10 @@ class TestToolRegistryResolveEdges:
         assert len(tools) == 1
 
     def test_same_tool_listed_twice_deduplicated(self):
-        # Defensive — an agent author listing ``Read`` twice
+        # Defensive — an agent author listing ``Write`` twice
         # should get one instance.
         registry = self._registry()
-        tools = registry.resolve(["Read", "Read", "Read"])
+        tools = registry.resolve(["Write", "Write", "Write"])
         assert len(tools) == 1
 
     def test_available_tools_property_returns_sorted_list(self):
@@ -290,7 +294,7 @@ class TestToolRegistryResolveEdges:
         names = registry.available_tools  # no parens — property
         assert names == sorted(names)
         # Sanity — the standard tools are present.
-        for expected in ("Read", "Write", "Edit", "Bash", "Grep", "Glob"):
+        for expected in ("Write", "Edit", "Bash", "NotebookEdit", "Schedule"):
             assert expected in names
 
     def test_register_adds_custom_factory(self):

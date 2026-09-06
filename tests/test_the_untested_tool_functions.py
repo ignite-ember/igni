@@ -41,7 +41,6 @@ from ember_code.core.tools.loop_progress import LoopProgressTool
 from ember_code.core.tools.process_supervisor import ProcessSupervisor
 from ember_code.core.tools.shell import EmberShellTools
 
-
 # ── EmberShellTools: the three process-control functions ────────────
 
 

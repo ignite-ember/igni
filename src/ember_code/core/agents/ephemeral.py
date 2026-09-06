@@ -41,7 +41,14 @@ class EphemeralAgentStore:
     highest priority — so they win against any base entry.
     """
 
-    DEFAULT_TOOLS: tuple[str, ...] = ("Read", "Write", "Edit", "Bash", "Grep", "Glob")
+    #: What an ephemeral gets when its creator names no tools.
+    #:
+    #: Was ``("Read", "Write", "Edit", "Bash", "Grep", "Glob")``. Four
+    #: of those left the registry — reading and searching go through
+    #: ``Bash`` (``cat`` / ``rg`` / ``find``) — and a default naming
+    #: tools the registry rejects fails every ``create_agent`` call
+    #: that does not override it.
+    DEFAULT_TOOLS: tuple[str, ...] = ("Write", "Edit", "Bash")
 
     def __init__(
         self,

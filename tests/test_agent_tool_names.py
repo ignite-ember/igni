@@ -20,7 +20,7 @@ from ember_code.core.tools.tool_spec import ToolResolutionRequest
 class TestWhatResolvesAndWhatDoesNot:
     def test_a_real_tool_resolves(self, tmp_path):
         result = ToolRegistry(base_dir=str(tmp_path)).resolve_typed(
-            ToolResolutionRequest(tool_names=["Bash", "Read"])
+            ToolResolutionRequest(tool_names=["Bash", "Write"])
         )
 
         assert result.unknown == []
@@ -62,7 +62,7 @@ class TestTheSessionCheck:
         return type("Defn", (), {"name": name, "tools": tools})()
 
     def test_a_clean_agent_reports_nothing(self, tmp_path):
-        session = self._session(tmp_path, [self._agent("reviewer", ["Bash", "Read"])])
+        session = self._session(tmp_path, [self._agent("reviewer", ["Bash", "Write"])])
 
         session._check_agent_tools()
 

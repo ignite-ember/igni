@@ -32,19 +32,17 @@ class ToolNameResolver:
     without worrying about lifecycle.
     """
 
+    #: The ``Read`` / ``LS`` / ``Grep`` / ``Glob`` / ``Python`` rows
+    #: went with their registry entries — a function that cannot be
+    #: attached needs no permission name.
     _MAP: ClassVar[dict[str, str]] = {
         "run_shell_command": "Bash",
-        "read_file": "Read",
         "save_file": "Write",
-        "list_files": "LS",
         "edit_file": "Edit",
         "replace_in_file": "Edit",
-        "grep_search": "Grep",
-        "glob_files": "Glob",
         "web_fetch": "WebFetch",
         "duckduckgo_search": "WebSearch",
         "duckduckgo_news": "WebSearch",
-        "run_python_code": "Python",
         "notebook_read": "NotebookEdit",
         "notebook_read_cell": "NotebookEdit",
         "notebook_edit_cell": "NotebookEdit",

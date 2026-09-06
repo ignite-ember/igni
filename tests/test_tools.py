@@ -11,26 +11,32 @@ class TestToolRegistry:
     def test_available_tools(self):
         reg = ToolRegistry()
         names = reg.available_tools
-        assert "Read" in names
+        # ``Read`` / ``Grep`` / ``Glob`` / ``LS`` / ``Python`` were
+        # removed from the registry — nothing shipped declared them and
+        # the main agent never had them, so searching and reading go
+        # through ``Bash``. Asserted as absent too: a registry that
+        # quietly reinstates them is a registry handing agents tools
+        # nobody decided to give back.
         assert "Write" in names
         assert "Edit" in names
         assert "Bash" in names
-        assert "Grep" in names
-        assert "Glob" in names
+        assert "NotebookEdit" in names
+        for gone in ("Read", "Grep", "Glob", "LS", "Python"):
+            assert gone not in names
 
     def test_resolve_single_tool(self):
         reg = ToolRegistry()
-        tools = reg.resolve(["Read"])
+        tools = reg.resolve(["Write"])
         assert len(tools) == 1
 
     def test_resolve_multiple_tools(self):
         reg = ToolRegistry()
-        tools = reg.resolve(["Read", "Edit", "Glob"])
+        tools = reg.resolve(["Write", "Edit", "NotebookEdit"])
         assert len(tools) == 3
 
     def test_resolve_comma_string(self):
         reg = ToolRegistry()
-        tools = reg.resolve("Read, Edit, Glob")
+        tools = reg.resolve("Write, Edit, NotebookEdit")
         assert len(tools) == 3
 
     def test_resolve_deduplicates_bash(self):
@@ -45,7 +51,7 @@ class TestToolRegistry:
 
     def test_resolve_skips_mcp_and_orchestrate(self):
         reg = ToolRegistry()
-        tools = reg.resolve(["Read", "MCP:github", "Orchestrate"])
+        tools = reg.resolve(["Write", "MCP:github", "Orchestrate"])
         assert len(tools) == 1
 
     def test_register_custom_tool(self):
@@ -56,7 +62,7 @@ class TestToolRegistry:
 
     def test_resolve_tools_direct(self):
         registry = ToolRegistry()
-        tools = registry.resolve(["Read", "Glob"])
+        tools = registry.resolve(["Write", "Edit"])
         assert len(tools) == 2
 
 
