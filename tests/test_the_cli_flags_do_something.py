@@ -148,9 +148,7 @@ class TestClickParsesEachFlag:
     def test_add_dir_rejects_a_directory_that_is_not_there(self, tmp_path):
         """``type=click.Path(exists=True, file_okay=False)`` — a typo in
         a path must fail at the boundary, not halfway through a session."""
-        result = CliRunner().invoke(
-            cli_module.cli, ["--add-dir", str(tmp_path / "nope")]
-        )
+        result = CliRunner().invoke(cli_module.cli, ["--add-dir", str(tmp_path / "nope")])
 
         assert result.exit_code != 0
         assert "does not exist" in result.output.lower()
@@ -163,17 +161,13 @@ class TestClickParsesEachFlag:
             ("-m", "--message", "message"),
         ],
     )
-    def test_the_short_form_means_the_same_thing(
-        self, parsed, short: str, long: str, field: str
-    ):
+    def test_the_short_form_means_the_same_thing(self, parsed, short: str, long: str, field: str):
         """Documented aliases. ``-c``, ``-p`` and ``-m`` appear in the
         help text; a mismatch between one and its long form is
         invisible until somebody types the short one."""
         args = ["hi"] if field == "message" else []
 
-        assert getattr(parsed(short, *args), field) == getattr(
-            parsed(long, *args), field
-        )
+        assert getattr(parsed(short, *args), field) == getattr(parsed(long, *args), field)
 
 
 class TestFlagsThatRefuse:
@@ -269,9 +263,7 @@ class TestFlagsBecomeSettings:
         assert settings.permissions.web_fetch == "deny"
 
     def test_model_overrides_the_configured_default(self):
-        assert self._settings(model="some-other-model").models.default == (
-            "some-other-model"
-        )
+        assert self._settings(model="some-other-model").models.default == ("some-other-model")
 
 
 class TestEveryOptionIsCovered:
@@ -296,8 +288,7 @@ class TestEveryOptionIsCovered:
         from pathlib import Path
 
         source = (
-            Path(__file__).resolve().parent.parent
-            / "src/ember_code/cli/__init__.py"
+            Path(__file__).resolve().parent.parent / "src/ember_code/cli/__init__.py"
         ).read_text()
         return set(re.findall(r'@click\.option\([^)]*?"(--[a-z0-9-]+)"', source, re.S))
 

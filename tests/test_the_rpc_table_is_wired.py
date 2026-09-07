@@ -53,9 +53,7 @@ def _router() -> RpcRouter:
     """
     backend = MagicMock()
     backend.project_dir = Path(tempfile.mkdtemp())
-    return RpcRouter(
-        backend=backend, transport=MagicMock(), login=MagicMock(), push=MagicMock()
-    )
+    return RpcRouter(backend=backend, transport=MagicMock(), login=MagicMock(), push=MagicMock())
 
 
 class TestTheTableBuilds:
@@ -94,15 +92,14 @@ class TestEveryBindingCanBeCalled:
             positional = [
                 p
                 for p in inspect.signature(fn).parameters.values()
-                if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
-                and p.name != 'self'
+                if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) and p.name != "self"
             ]
             if len(positional) != 1:
                 wrong[str(method)] = str(inspect.signature(fn))
 
         assert not wrong, (
-            f'these bindings do not take exactly one positional argument, so dispatch will '
-            f'fail when the app calls them: {wrong}'
+            f"these bindings do not take exactly one positional argument, so dispatch will "
+            f"fail when the app calls them: {wrong}"
         )
 
     def test_the_dispatcher_awaits_the_async_ones(self):
@@ -125,19 +122,21 @@ class TestEveryBindingCanBeCalled:
         coroutines = sorted(str(m) for m, fn in table.items() if inspect.iscoroutinefunction(fn))
 
         assert coroutines, (
-            'no handler is async any more. If that is deliberate the await below is dead '
-            'code, but the likelier reading is that this test has stopped finding them.'
+            "no handler is async any more. If that is deliberate the await below is dead "
+            "code, but the likelier reading is that this test has stopped finding them."
         )
 
         dispatcher = (
             pathlib.Path(__file__).resolve().parent.parent
-            / 'src/ember_code/backend/message_dispatcher.py'
+            / "src/ember_code/backend/message_dispatcher.py"
         ).read_text()
 
-        assert 'asyncio.iscoroutine(result)' in dispatcher and 'result = await result' in dispatcher, (
-            f'{len(coroutines)} handlers are async and the dispatcher no longer awaits the '
-            f'result. Each of them now answers with an un-awaited coroutine, which '
-            f'serialises to nonsense and reports success: {coroutines[:3]}…'
+        assert (
+            "asyncio.iscoroutine(result)" in dispatcher and "result = await result" in dispatcher
+        ), (
+            f"{len(coroutines)} handlers are async and the dispatcher no longer awaits the "
+            f"result. Each of them now answers with an un-awaited coroutine, which "
+            f"serialises to nonsense and reports success: {coroutines[:3]}…"
         )
 
 
@@ -148,15 +147,15 @@ class TestThePoolLevelGuardsRefuse:
     def test_all_four_are_in_the_table(self):
         table = _router().build_table()
 
-        assert RpcRouter.POOL_LEVEL_RPCS, 'no pool-level RPCs declared'
+        assert RpcRouter.POOL_LEVEL_RPCS, "no pool-level RPCs declared"
         for method in RpcRouter.POOL_LEVEL_RPCS:
-            assert method in table, f'{method} is intercepted but not registered as a guard'
+            assert method in table, f"{method} is intercepted but not registered as a guard"
 
-    @pytest.mark.parametrize('method', sorted(RpcRouter.POOL_LEVEL_RPCS, key=str), ids=str)
+    @pytest.mark.parametrize("method", sorted(RpcRouter.POOL_LEVEL_RPCS, key=str), ids=str)
     def test_reaching_one_raises(self, method):
         table = _router().build_table()
 
-        with pytest.raises(RuntimeError, match='pool-level RPC dispatched'):
+        with pytest.raises(RuntimeError, match="pool-level RPC dispatched"):
             table[method]({})
 
 
@@ -171,5 +170,5 @@ class TestDuplicateRegistrationIsRejected:
         first = router._handlers[0]
         router._handlers = [first, first]
 
-        with pytest.raises(RuntimeError, match='duplicate RPC binding'):
+        with pytest.raises(RuntimeError, match="duplicate RPC binding"):
             router.build_table()

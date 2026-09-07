@@ -58,13 +58,11 @@ _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _DOCS = sorted((_ROOT / "docs").glob("*.md")) + sorted(_ROOT.glob("*.md"))
 
 _REPO_DIRS = ("src", "tests", "clients", "tools", "docs", "scripts")
-_PATH = re.compile(rf'`((?:{"|".join(_REPO_DIRS)})/[\w./-]*[\w/])`')
+_PATH = re.compile(rf"`((?:{'|'.join(_REPO_DIRS)})/[\w./-]*[\w/])`")
 
 #: A fence that claims to be the igni config file. The convention was
 #: already in `CONFIGURATION.md`; this is what makes it mean something.
-_CONFIG_FENCE = re.compile(
-    r"```ya?ml\n(#\s*(?:~/)?\.igni/config\.yaml[^\n]*\n.*?)```", re.S
-)
+_CONFIG_FENCE = re.compile(r"```ya?ml\n(#\s*(?:~/)?\.igni/config\.yaml[^\n]*\n.*?)```", re.S)
 _TOP_LEVEL_KEY = re.compile(r"^([a-z][a-z0-9_]*):", re.M)
 
 #: The product is igni. What is allowed to contain "ember":
@@ -262,8 +260,7 @@ class TestTheHistoricalExemptionIsNarrow:
                 if "*" not in p and "{" not in p and "..." not in p
             ]
             if any(not (_ROOT / p).exists() for p in quoted) or any(
-                _EMBER.search(_LEGITIMATE.sub("", line))
-                for line in doc.read_text().splitlines()
+                _EMBER.search(_LEGITIMATE.sub("", line)) for line in doc.read_text().splitlines()
             ):
                 still_needed.append(name)
 

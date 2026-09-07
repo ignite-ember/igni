@@ -102,9 +102,7 @@ class TestEveryRegisteredFunctionIsNamedByATest:
     def test_the_exceptions_list_names_real_functions(self):
         invented = sorted(set(_UNTESTED) - set(_registered_functions()))
 
-        assert invented == [], (
-            f"{invented} are excused from a rule they were never subject to."
-        )
+        assert invented == [], f"{invented} are excused from a rule they were never subject to."
 
 
 class TestEveryRegisteredFunctionHasADocstring:
@@ -213,9 +211,7 @@ class TestExecutionToolsAreGated:
         assert "Python" not in catalog.registry_names_with_aliases
         assert "Python" not in catalog.valid_ephemeral_names
 
-    @pytest.mark.parametrize(
-        "retired", ["Read", "Grep", "Glob", "LS", "Python"]
-    )
+    @pytest.mark.parametrize("retired", ["Read", "Grep", "Glob", "LS", "Python"])
     def test_the_retired_toolkits_stay_retired(self, retired: str):
         """No bundled agent declared them and the main agent never had
         them, so they granted nothing and could only be reached by a
@@ -256,9 +252,7 @@ class TestExecutionToolsAreGated:
 
         from ember_code.core.tools.tool_spec import ToolBuildContext, ToolSpecCatalog
 
-        spec = next(
-            (s for s in ToolSpecCatalog.default().specs if s.name == spec_name), None
-        )
+        spec = next((s for s in ToolSpecCatalog.default().specs if s.name == spec_name), None)
         assert spec is not None, f"{spec_name} is no longer in the catalog"
         if not spec.confirm_function_names:
             pytest.skip(f"{spec_name} gates nothing by design")
@@ -280,9 +274,7 @@ class TestExecutionToolsAreGated:
         "spec_name",
         ["Write", "Edit", "WebSearch", "WebFetch", "NotebookEdit"],
     )
-    def test_nothing_that_writes_or_leaves_the_machine_is_ungated(
-        self, spec_name: str
-    ):
+    def test_nothing_that_writes_or_leaves_the_machine_is_ungated(self, spec_name: str):
         """Read-only functions may go ungated; the rest may not.
 
         A blunter rule — "a spec that gates anything gates everything"
@@ -313,9 +305,7 @@ class TestExecutionToolsAreGated:
             "glob_files",
         }
 
-        spec = next(
-            (s for s in ToolSpecCatalog.default().specs if s.name == spec_name), None
-        )
+        spec = next((s for s in ToolSpecCatalog.default().specs if s.name == spec_name), None)
         assert spec is not None
         try:
             toolkit = spec.build(ToolBuildContext(base_dir=Path("/tmp")), confirm=True)
@@ -325,8 +315,7 @@ class TestExecutionToolsAreGated:
         ungated = sorted(
             name
             for name, fn in self._registered(toolkit).items()
-            if name not in read_only
-            and not getattr(fn, "requires_confirmation", False)
+            if name not in read_only and not getattr(fn, "requires_confirmation", False)
         )
 
         assert ungated == [], (

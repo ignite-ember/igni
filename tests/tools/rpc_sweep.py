@@ -171,9 +171,7 @@ async def sweep(url: str, include_mutating: bool) -> dict[str, tuple[str, str]]:
             matched on id rather than taken in order.
             """
             await ws.send(
-                json.dumps(
-                    {"type": "rpc_request", "id": req_id, "method": method, "args": args}
-                )
+                json.dumps({"type": "rpc_request", "id": req_id, "method": method, "args": args})
             )
             deadline = asyncio.get_running_loop().time() + timeout
             while asyncio.get_running_loop().time() < deadline:

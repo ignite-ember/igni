@@ -229,9 +229,7 @@ def test_plan_mode_allows_read_tools() -> None:
     ev = PermissionEvaluator.from_strings(mode="plan")
     assert ev.evaluate("WebSearch", {"query": "x"}) is PermissionDecision.ALLOW
     assert ev.evaluate("fetch_url", {"url": "https://x.test"}) is PermissionDecision.ALLOW
-    assert ev.evaluate("CodeIndex", {"cypher": "MATCH (n) RETURN n"}) is (
-        PermissionDecision.ALLOW
-    )
+    assert ev.evaluate("CodeIndex", {"cypher": "MATCH (n) RETURN n"}) is (PermissionDecision.ALLOW)
 
 
 def test_plan_mode_allows_readonly_shell() -> None:
@@ -354,17 +352,13 @@ def test_plan_mode_deny_still_wins() -> None:
     """``plan`` blocks edit tools and auto-allows reads; an explicit
     deny on a read tool is still honoured (otherwise the deny list
     would be silently eclipsed by the plan-mode auto-allow)."""
-    ev = PermissionEvaluator.from_strings(
-        mode="plan", deny=["WebFetch(https://secret.internal/*)"]
-    )
+    ev = PermissionEvaluator.from_strings(mode="plan", deny=["WebFetch(https://secret.internal/*)"])
     assert (
-        ev.evaluate("fetch_url", {"url": "https://secret.internal/keys"})
-        is PermissionDecision.DENY
+        ev.evaluate("fetch_url", {"url": "https://secret.internal/keys"}) is PermissionDecision.DENY
     )
     # Other fetches still get the plan-mode auto-allow.
     assert (
-        ev.evaluate("fetch_url", {"url": "https://example.test/docs"})
-        is PermissionDecision.ALLOW
+        ev.evaluate("fetch_url", {"url": "https://example.test/docs"}) is PermissionDecision.ALLOW
     )
 
 

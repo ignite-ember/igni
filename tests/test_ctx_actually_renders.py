@@ -48,9 +48,7 @@ class TestTheModelIsFullyDefined:
         assert ContextBreakdownView.__pydantic_complete__ is True
 
     def test_from_domain_does_not_raise(self):
-        view = ContextBreakdownView.from_domain(
-            ContextBreakdown(total=1000, runs=400, floor=600)
-        )
+        view = ContextBreakdownView.from_domain(ContextBreakdown(total=1000, runs=400, floor=600))
 
         assert view.breakdown.total == 1000
 
@@ -107,16 +105,22 @@ class TestTheCardReads:
     """
 
     def test_the_percentage_is_runs_over_total(self):
-        text = ContextBreakdownView.from_domain(
-            ContextBreakdown(total=1000, runs=400, floor=600)
-        ).to_command_result().content
+        text = (
+            ContextBreakdownView.from_domain(ContextBreakdown(total=1000, runs=400, floor=600))
+            .to_command_result()
+            .content
+        )
 
         assert "40.0% of total" in text
 
     def test_the_three_numbers_are_all_present_and_grouped(self):
-        text = ContextBreakdownView.from_domain(
-            ContextBreakdown(total=1_234_567, runs=234_567, floor=1_000_000)
-        ).to_command_result().content
+        text = (
+            ContextBreakdownView.from_domain(
+                ContextBreakdown(total=1_234_567, runs=234_567, floor=1_000_000)
+            )
+            .to_command_result()
+            .content
+        )
 
         assert "1,234,567 tokens" in text
         assert "234,567 tokens" in text
@@ -126,9 +130,11 @@ class TestTheCardReads:
         """``total`` is 0 on a session that has not run anything, which
         is the state the app is in the moment it opens — the most
         likely moment for a user to press ``/ctx`` out of curiosity."""
-        text = ContextBreakdownView.from_domain(
-            ContextBreakdown(total=0, runs=0, floor=0)
-        ).to_command_result().content
+        text = (
+            ContextBreakdownView.from_domain(ContextBreakdown(total=0, runs=0, floor=0))
+            .to_command_result()
+            .content
+        )
 
         assert "0.0% of total" in text
 
@@ -140,9 +146,11 @@ class TestTheCardReads:
         refactor that swallows the raise and renders the message would
         pass every test above.
         """
-        text = ContextBreakdownView.from_domain(
-            ContextBreakdown(total=10, runs=5, floor=5)
-        ).to_command_result().content
+        text = (
+            ContextBreakdownView.from_domain(ContextBreakdown(total=10, runs=5, floor=5))
+            .to_command_result()
+            .content
+        )
 
         assert "not fully defined" not in text
         assert "errors.pydantic.dev" not in text
@@ -163,9 +171,13 @@ class TestTheDomainModelStaysRenderFree:
 
 @pytest.mark.parametrize("total,runs", [(100, 0), (100, 100), (1, 1)])
 def test_the_percentage_stays_within_bounds(total: int, runs: int):
-    text = ContextBreakdownView.from_domain(
-        ContextBreakdown(total=total, runs=runs, floor=total - runs)
-    ).to_command_result().content
+    text = (
+        ContextBreakdownView.from_domain(
+            ContextBreakdown(total=total, runs=runs, floor=total - runs)
+        )
+        .to_command_result()
+        .content
+    )
 
     percent = float(text.split("% of total")[0].split("(")[-1])
     assert 0.0 <= percent <= 100.0

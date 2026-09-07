@@ -69,9 +69,7 @@ def test_build_confirm_true_gates_the_functions_that_exist(
     }
     assert registered, "DuckDuckGoTools registered nothing at all"
     ungated = sorted(
-        name
-        for name, fn in registered.items()
-        if not getattr(fn, "requires_confirmation", False)
+        name for name, fn in registered.items() if not getattr(fn, "requires_confirmation", False)
     )
     assert ungated == [], (
         f"{ungated} reach the internet with no approval prompt. "
@@ -89,9 +87,7 @@ def test_build_confirm_false_no_confirmation_tools(ctx: ToolBuildContext) -> Non
         **(toolkit.functions or {}),
         **(getattr(toolkit, "async_functions", {}) or {}),
     }
-    assert not any(
-        getattr(fn, "requires_confirmation", False) for fn in registered.values()
-    )
+    assert not any(getattr(fn, "requires_confirmation", False) for fn in registered.values())
 
 
 def test_web_search_invokes_ddgs_with_auto_backend(ctx: ToolBuildContext) -> None:

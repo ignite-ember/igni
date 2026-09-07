@@ -5,7 +5,6 @@ registry), Agno FileTools, and Bash execution.
 Edit and Glob already have good coverage in test_tools.py.
 """
 
-
 import pytest
 from agno.tools.file import FileTools
 from agno.tools.shell import ShellTools

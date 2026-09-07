@@ -173,7 +173,9 @@ class TestTheKnowledgeErrorIsAssigned:
         not happened.
         """
         core = self._core()
-        deferred = core[core.index("Knowledge: deferred") - 1200 : core.index("Knowledge: deferred")]
+        deferred = core[
+            core.index("Knowledge: deferred") - 1200 : core.index("Knowledge: deferred")
+        ]
 
         assert "Neo4j runtime" in deferred
         assert "/codeindex" in deferred

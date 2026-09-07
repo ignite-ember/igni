@@ -82,13 +82,13 @@ class TestTheDefaultIsSilence:
         value = _env_after_import()
 
         assert value != "<unset>", (
-            'importing `ember_code` no longer sets AGNO_TELEMETRY. Agno\'s default is '
-            'on, so every run will POST to os-api.agno.com.'
+            "importing `ember_code` no longer sets AGNO_TELEMETRY. Agno's default is "
+            "on, so every run will POST to os-api.agno.com."
         )
         # Agno's check is `telemetry_env.lower() == "true"`, so anything
         # else disables — but assert the honest value rather than
         # relying on that, since a future Agno could invert the test.
-        assert value.lower() == 'false', f'AGNO_TELEMETRY is {value!r}, which is not clearly off'
+        assert value.lower() == "false", f"AGNO_TELEMETRY is {value!r}, which is not clearly off"
 
     def test_an_explicit_choice_is_honoured(self):
         """Opting in has to remain possible.
@@ -97,10 +97,10 @@ class TestTheDefaultIsSilence:
         telemetry can; the product simply does not decide that for
         them.
         """
-        assert _env_after_import({'AGNO_TELEMETRY': 'true'}) == 'true'
+        assert _env_after_import({"AGNO_TELEMETRY": "true"}) == "true"
 
     def test_an_explicit_off_is_left_alone(self):
-        assert _env_after_import({'AGNO_TELEMETRY': 'no'}) == 'no'
+        assert _env_after_import({"AGNO_TELEMETRY": "no"}) == "no"
 
 
 class TestTheMechanismIsStillTheOneAgnoReads:
@@ -118,10 +118,10 @@ class TestTheMechanismIsStillTheOneAgnoReads:
 
         source = Path(_init.__file__).read_text()
 
-        assert 'AGNO_TELEMETRY' in source, (
-            'agno no longer reads AGNO_TELEMETRY in `_init`. Find where telemetry is '
-            'switched now and set it there, or pass telemetry=False at every '
-            'Agent/Team construction site.'
+        assert "AGNO_TELEMETRY" in source, (
+            "agno no longer reads AGNO_TELEMETRY in `_init`. Find where telemetry is "
+            "switched now and set it there, or pass telemetry=False at every "
+            "Agent/Team construction site."
         )
 
     def test_the_telemetry_payload_is_still_metadata_only(self):
@@ -135,9 +135,9 @@ class TestTheMechanismIsStillTheOneAgnoReads:
 
         source = Path(_telemetry.__file__).read_text()
 
-        for leaked in ('messages', 'input', 'prompt', 'content'):
+        for leaked in ("messages", "input", "prompt", "content"):
             assert f'"{leaked}"' not in source, (
-                f'agno telemetry now sends {leaked!r}. This is no longer metadata; '
-                'the disable above is load-bearing for confidentiality, not just for '
-                'the processor list.'
+                f"agno telemetry now sends {leaked!r}. This is no longer metadata; "
+                "the disable above is load-bearing for confidentiality, not just for "
+                "the processor list."
             )

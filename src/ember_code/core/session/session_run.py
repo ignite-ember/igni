@@ -130,8 +130,8 @@ class SessionRun(ABC):
             # is the shared turn pipeline: the interactive loop renders
             # the same silence.
             display.print_warning(
-                'The model returned an empty response — no text and no tool call. '
-                'Nothing was run. Try again, or pick another model with /model.'
+                "The model returned an empty response — no text and no tool call. "
+                "Nothing was run. Try again, or pick another model with /model."
             )
         display.print_run_stats(
             RunStats(

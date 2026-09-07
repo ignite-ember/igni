@@ -38,6 +38,7 @@ import yaml
 
 _AGENT_DIR = Path(__file__).resolve().parent.parent / "src/ember_code/bundled_agents"
 
+
 def agent_files() -> list[Path]:
     return sorted(_AGENT_DIR.glob("*.md"))
 
@@ -93,9 +94,7 @@ class TestTheScanMeasuredSomething:
 
         with tempfile.TemporaryDirectory() as tmp:
             probe = Path(tmp) / "probe.md"
-            probe.write_text(
-                "---\nname: probe\ntools: Bash\n---\n\nCall notebook_edit_cell.\n"
-            )
+            probe.write_text("---\nname: probe\ntools: Bash\n---\n\nCall notebook_edit_cell.\n")
             assert tools_the_prompt_asks_for(probe) == {"NotebookEdit"}
 
 

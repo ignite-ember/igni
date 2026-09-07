@@ -125,7 +125,7 @@ class TestTheRefusalSaysWhatToDo:
         assert "https://igni.your-company.example" in message
 
     def test_it_leads_with_the_operation(self):
-        """"api_url is not set" leaves the reader to work out which of
+        """ "api_url is not set" leaves the reader to work out which of
         the things they asked for needed it."""
         with pytest.raises(ApiUrlNotConfigured) as raised:
             require_api_url(None, operation="Listing models")

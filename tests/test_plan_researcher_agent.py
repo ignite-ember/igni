@@ -62,7 +62,6 @@ def _declared_tools(path: Path) -> set[str]:
     return {str(t).strip() for t in items}
 
 
-
 class TestPlanResearcherFallbackVariant:
     """``plan_researcher.md`` — used when CodeIndex is NOT available.
     The prompt body tells the agent to search with ``rg`` / ``find``

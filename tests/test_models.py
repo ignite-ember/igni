@@ -241,7 +241,7 @@ class TestAStoredDefaultThatNoLongerResolves:
         assert isinstance(model, NoModelConfigured)
 
     def test_the_message_names_the_model_that_went_missing(self):
-        """"No model configured" would be wrong and unhelpful: one *is*
+        """ "No model configured" would be wrong and unhelpful: one *is*
         configured, and knowing which one is how the user works out that
         their pinned model was removed."""
         s = self._settings_with("gone-from-the-fleet", {})

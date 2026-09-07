@@ -101,7 +101,7 @@ class TestAnEmptyModelTurnIsNotSilence:
     """
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize('empty', ['', '   ', '\n\n'])
+    @pytest.mark.parametrize("empty", ["", "   ", "\n\n"])
     async def test_an_empty_response_says_so(self, empty):
         with patch("ember_code.core.session.session_run.Session") as MockSession:
             mock_session = _make_mock_session()
@@ -113,9 +113,9 @@ class TestAnEmptyModelTurnIsNotSilence:
             mock_session.display.print_response.assert_not_called()
             mock_session.display.print_warning.assert_called_once()
             said = mock_session.display.print_warning.call_args[0][0]
-            assert 'empty response' in said
+            assert "empty response" in said
             # Actionable, or it is a nicer-looking dead end.
-            assert '/model' in said
+            assert "/model" in said
 
     @pytest.mark.asyncio
     async def test_a_real_response_is_still_rendered_normally(self):

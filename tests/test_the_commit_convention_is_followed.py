@@ -173,10 +173,10 @@ class TestTheHistoryFollowsIt:
         narrower question, which is also the one that was meant.
         """
         offenders = [
-            f'{sha}: {found.strip()!r}'
+            f"{sha}: {found.strip()!r}"
             for sha, body in _history()
             for found in _TRAILER.findall(body)
-            if 'igniteember.sh' in found
+            if "igniteember.sh" in found
         ]
 
         assert not offenders, offenders
@@ -185,14 +185,12 @@ class TestTheHistoryFollowsIt:
         """A rule made narrower has to be shown to still bite. This is
         the trailer it exists to reject, as it would appear in a real
         commit body."""
-        body = (
-            'Some change\n\nCo-Authored-By: Ignite Ember <noreply@igniteember.sh>\n'
-        )
-        found = [t for t in _TRAILER.findall(body) if 'igniteember.sh' in t]
+        body = "Some change\n\nCo-Authored-By: Ignite Ember <noreply@igniteember.sh>\n"
+        found = [t for t in _TRAILER.findall(body) if "igniteember.sh" in t]
 
-        assert found, 'the narrowed check no longer recognises the retired trailer'
+        assert found, "the narrowed check no longer recognises the retired trailer"
 
-        prose = 'It said `Co-Authored-By: Ignite Ember <noreply@igniteember.sh>` and was wrong.\n'
-        assert not [t for t in _TRAILER.findall(prose) if 'igniteember.sh' in t], (
-            'the check still fires on prose that merely mentions the address'
+        prose = "It said `Co-Authored-By: Ignite Ember <noreply@igniteember.sh>` and was wrong.\n"
+        assert not [t for t in _TRAILER.findall(prose) if "igniteember.sh" in t], (
+            "the check still fires on prose that merely mentions the address"
         )

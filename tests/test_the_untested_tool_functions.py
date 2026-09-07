@@ -80,9 +80,7 @@ class TestListProcesses:
 
     @pytest.mark.asyncio
     async def test_a_backgrounded_process_appears_with_its_command(self, shell):
-        out = await shell.run_shell_command(
-            command="sleep 30", background=True, timeout=2
-        )
+        out = await shell.run_shell_command(command="sleep 30", background=True, timeout=2)
         pid = _pid_from(out)
 
         listing = await shell.list_processes()
@@ -102,9 +100,7 @@ class TestStopProcess:
 
     @pytest.mark.asyncio
     async def test_it_kills_a_running_process_and_forgets_it(self, shell):
-        out = await shell.run_shell_command(
-            command="sleep 30", background=True, timeout=2
-        )
+        out = await shell.run_shell_command(command="sleep 30", background=True, timeout=2)
         pid = _pid_from(out)
 
         result = await shell.stop_process(pid=pid)
@@ -157,9 +153,7 @@ class TestWatchProcess:
         """The docstring promises "or until the process exits". Without
         that, a model asking to watch for 30s blocks the turn for 30s
         on a process that ended immediately."""
-        out = await shell.run_shell_command(
-            command="sleep 3.4", background=True, timeout=2
-        )
+        out = await shell.run_shell_command(command="sleep 3.4", background=True, timeout=2)
         pid = _pid_from(out)
 
         started = asyncio.get_event_loop().time()
@@ -172,9 +166,7 @@ class TestWatchProcess:
     async def test_seconds_is_clamped_to_the_documented_range(self, shell):
         """``1–30`` per the docstring. A model that passes 3600 must
         not hold the turn open for an hour."""
-        out = await shell.run_shell_command(
-            command="sleep 60", background=True, timeout=2
-        )
+        out = await shell.run_shell_command(command="sleep 60", background=True, timeout=2)
         pid = _pid_from(out)
 
         started = asyncio.get_event_loop().time()
@@ -289,7 +281,7 @@ class TestLoopProgressRoundTrip:
 
     @pytest.mark.asyncio
     async def test_delete_distinguishes_a_hit_from_a_miss(self, progress):
-        """"Deleted" and "no entry" are different facts, and the model
+        """ "Deleted" and "no entry" are different facts, and the model
         re-does work based on which it got."""
         await progress.loop_progress_set("k", "v")
 
@@ -395,8 +387,10 @@ class _Manager:
 
 class TestKnowledgeSearch:
     @pytest.mark.asyncio
-    async def test_an_empty_result_names_the_query(self, ):
-        """"No results" without the query leaves the model unable to
+    async def test_an_empty_result_names_the_query(
+        self,
+    ):
+        """ "No results" without the query leaves the model unable to
         tell which of its several searches came back empty."""
         tools = KnowledgeTools(_Manager())  # type: ignore[arg-type]
 

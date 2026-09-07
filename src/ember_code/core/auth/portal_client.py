@@ -56,6 +56,7 @@ from ember_code.core.config.group_policy import (
 
 logger = logging.getLogger(__name__)
 
+
 class PortalClient:
     """Coordinator for portal endpoints — login + token validation.
 
@@ -136,9 +137,7 @@ class PortalClient:
         """
         # The server needs the API base to redeem the one-time code the
         # portal now sends in place of the token. F124.
-        return CallbackServer(
-            api_url=self._base("Signing in"), http_timeout=self._http_timeout
-        )
+        return CallbackServer(api_url=self._base("Signing in"), http_timeout=self._http_timeout)
 
     async def validate_token(self, token: str) -> ValidateResult:
         """Validate ``token`` against ``/v1/portal/me``.

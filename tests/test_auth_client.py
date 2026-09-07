@@ -83,7 +83,7 @@ class TestPortalClientLoginUrl:
             assert "self-hosted" in message
 
     def test_the_refusal_names_what_the_caller_was_doing(self):
-        """"api_url is not set" leaves the reader to work out which of
+        """ "api_url is not set" leaves the reader to work out which of
         the things they just asked for needed it."""
         client = PortalClient(api_url="")
 

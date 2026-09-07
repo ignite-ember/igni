@@ -45,8 +45,8 @@ import subprocess
 import sys
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
-_SCRIPT = _ROOT / 'scripts/dump_wire_schema.py'
-_SNAPSHOT = _ROOT / 'clients/web/src/protocol/wire-schema.json'
+_SCRIPT = _ROOT / "scripts/dump_wire_schema.py"
+_SNAPSHOT = _ROOT / "clients/web/src/protocol/wire-schema.json"
 
 
 def _fresh() -> dict:
@@ -72,8 +72,8 @@ class TestTheGeneratorStillFindsTheProtocol:
         the committed file had also been empty."""
         fresh = _fresh()
 
-        assert len(fresh['messages']) >= 40, sorted(fresh['messages'])
-        assert len(fresh['rpc']) >= 4, sorted(fresh['rpc'])
+        assert len(fresh["messages"]) >= 40, sorted(fresh["messages"])
+        assert len(fresh["rpc"]) >= 4, sorted(fresh["rpc"])
 
     def test_it_finds_classes_that_live_in_submodules(self):
         """The specific regression. Every message class is now defined
@@ -85,15 +85,15 @@ class TestTheGeneratorStillFindsTheProtocol:
         defined_here = [
             name
             for name in dir(msg)
-            if getattr(getattr(msg, name), '__module__', '') == msg.__name__
-            and hasattr(getattr(msg, name), 'model_fields')
+            if getattr(getattr(msg, name), "__module__", "") == msg.__name__
+            and hasattr(getattr(msg, name), "model_fields")
         ]
 
         assert not defined_here, (
-            f'{defined_here} are defined in `messages` itself now. That is fine, but the '
-            'generator must still pick up the re-exported ones — check its filter.'
+            f"{defined_here} are defined in `messages` itself now. That is fine, but the "
+            "generator must still pick up the re-exported ones — check its filter."
         )
-        assert len(_fresh()['messages']) >= 40, 'the re-exported classes are being missed again'
+        assert len(_fresh()["messages"]) >= 40, "the re-exported classes are being missed again"
 
     def test_it_refuses_to_write_an_empty_contract(self):
         """A generator that can destroy its own output has to check its
@@ -101,8 +101,8 @@ class TestTheGeneratorStillFindsTheProtocol:
         three-line file where the contract was."""
         source = _SCRIPT.read_text()
 
-        assert 'refusing to write' in source
-        assert 'raise SystemExit' in source
+        assert "refusing to write" in source
+        assert "raise SystemExit" in source
 
 
 class TestTheSnapshotIsCurrent:
@@ -111,10 +111,10 @@ class TestTheSnapshotIsCurrent:
         fresh = _fresh()
 
         assert committed == fresh, (
-            'clients/web/src/protocol/wire-schema.json is stale. The web suite validates '
-            'the fields it reads against this file, so while it is stale that check is '
-            'against a memory of the protocol rather than the protocol. Regenerate with '
-            '`uv run python scripts/dump_wire_schema.py`.'
+            "clients/web/src/protocol/wire-schema.json is stale. The web suite validates "
+            "the fields it reads against this file, so while it is stale that check is "
+            "against a memory of the protocol rather than the protocol. Regenerate with "
+            "`uv run python scripts/dump_wire_schema.py`."
         )
 
     def test_the_snapshot_covers_what_the_web_test_reads(self):
@@ -124,19 +124,19 @@ class TestTheSnapshotIsCurrent:
         it names a type the snapshot does not have, it is asserting
         nothing for that type — and it would pass.
         """
-        contract = (_ROOT / 'clients/web/src/protocol/wire-contract.test.ts').read_text()
+        contract = (_ROOT / "clients/web/src/protocol/wire-contract.test.ts").read_text()
         snapshot = json.loads(_SNAPSHOT.read_text())
 
         import re
 
         # `  type_name: ["field", ...],` inside the MESSAGE_READS map.
-        block = contract.split('MESSAGE_READS')[1].split('};')[0]
-        named = set(re.findall(r'^\s{2}(\w+):\s*\[', block, re.M))
+        block = contract.split("MESSAGE_READS")[1].split("};")[0]
+        named = set(re.findall(r"^\s{2}(\w+):\s*\[", block, re.M))
 
-        assert named, 'no message types parsed out of the web test — has it changed shape?'
-        missing = sorted(named - set(snapshot['messages']))
+        assert named, "no message types parsed out of the web test — has it changed shape?"
+        missing = sorted(named - set(snapshot["messages"]))
 
         assert not missing, (
-            f'the web test names {missing}, which the snapshot does not describe — so those '
-            f'assertions check nothing.'
+            f"the web test names {missing}, which the snapshot does not describe — so those "
+            f"assertions check nothing."
         )
