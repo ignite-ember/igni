@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import Any
 
 from neo4j import AsyncDriver, AsyncSession
@@ -214,20 +215,54 @@ class Neo4jClient:
         In the per-process model the runtime handles process
         teardown; this cleans up any remaining nodes in the
         process DB before the data dir is deleted.
+
+        Logged at WARNING with the count it removed, and with the immediate
+        caller. This is the only code path that deletes indexed nodes, so when a
+        graph is found empty the first question is whether this ran — and
+        previously nothing recorded that it had. The count matters as much as
+        the fact: "dropped 0" and "dropped 4,845" are very different events.
         """
+        caller = "unknown"
+        try:
+            import inspect
+
+            frame = inspect.stack()[1]
+            caller = f"{Path(frame.filename).name}:{frame.lineno} in {frame.function}"
+        except Exception:  # noqa: BLE001 — diagnostics must not break the drop
+            pass
+        logger.warning(
+            "drop_database: deleting every Item/Chunk for project=%s commit=%s (called from %s)",
+            project_id,
+            commit_sha[:8],
+            caller,
+        )
         async with driver.session() as session:
-            await session.execute_write(cls._drop_commit_tx, project_id)
+            removed = await session.execute_write(cls._drop_commit_tx, project_id)
+        logger.warning(
+            "drop_database: removed %s node(s) for project=%s commit=%s",
+            removed if removed is not None else "?",
+            project_id,
+            commit_sha[:8],
+        )
 
     @staticmethod
-    async def _drop_commit_tx(tx, project_id: str) -> None:
-        """Tx body for :meth:`drop_database`."""
-        # Detach-delete all nodes scoped to this project.
-        await tx.run(
+    async def _drop_commit_tx(tx, project_id: str) -> int:
+        """Tx body for :meth:`drop_database`. Returns nodes deleted."""
+        # Detach-delete all nodes scoped to this project. ``count`` is returned
+        # so the caller can log the size of what it removed rather than only
+        # that it ran.
+        result = await tx.run(
             "MATCH (i:Item {project_hash: $proj}) "
             "OPTIONAL MATCH (i)-[:HAS_CHUNK]->(c:Chunk) "
-            "DETACH DELETE i, c",
+            "WITH collect(DISTINCT i) AS items, collect(DISTINCT c) AS chunks "
+            "CALL { WITH items, chunks "
+            "  UNWIND items + [x IN chunks WHERE x IS NOT NULL] AS n "
+            "  DETACH DELETE n RETURN count(*) AS deleted } "
+            "RETURN deleted",
             proj=project_id,
         )
+        record = await result.single()
+        return int(record["deleted"]) if record and record.get("deleted") is not None else 0
 
     # ── Item writes ─────────────────────────────────────────────────
 

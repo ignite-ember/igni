@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fcntl
 import json
 import logging
 import os
@@ -537,47 +538,106 @@ class Neo4jRuntime:
                 )
                 return state.endpoints
 
-            existing = self._discover(project_hash, commit_sha)
-            if existing is not None and self._is_alive(existing):
-                # Attach to the existing process. We don't have a
-                # subprocess.Popen handle — the original BE
-                # started it — so we synthesize a minimal handle
-                # wrapper that supports ``.pid`` and the
-                # ``send_signal``/``wait`` shape ``_shutdown_one``
-                # needs. The OS still owns the actual process; we
-                # can signal it but not await its exit reliably.
-                proc = _ExternalProcessHandle(existing.pid)
-                state = _ProjectCommitState(
-                    proc=proc,
-                    endpoints=existing,
-                    refcount=1,
-                    state_dir=self._state_root / _pair_slug(project_hash, commit_sha),
-                    auth_file=self._auth_path(project_hash, commit_sha),
-                    config_file=self._config_path(project_hash, commit_sha),
-                    logs_dir=self._logs_path(project_hash, commit_sha),
-                    data_dir=self._data_path(project_hash, commit_sha),
-                    runtime_file=self._runtime_path(project_hash, commit_sha),
-                )
-                self._processes[key] = state
-                logger.info(
-                    "attached to existing (project=%s commit=%s pid=%d)",
-                    project_hash,
-                    commit_sha,
-                    existing.pid,
-                )
-                return existing
+            # Cross-process serialisation starts here. ``self._lock`` is an
+            # asyncio lock: it orders coroutines inside ONE interpreter and says
+            # nothing about the other capture workers, each of which is its own
+            # ``ember_code`` process with its own empty ``_processes`` map.
+            #
+            # A Neo4j store is single-writer. Two processes that both pass the
+            # discover check below will both spawn, and the loser dies on
+            # ``store_lock``:
+            #
+            #   FileLockException: Lock file has been locked by another process:
+            #     .../data/databases/store_lock
+            #
+            # which reaches the agent as ``client_for_failed`` — and worse, a
+            # winner that starts a *second* instance leaves readers talking to
+            # an empty database, which is how a graph verified at 4,845 nodes
+            # came back as 0. The runtime's own notes call cross-process
+            # refcounting out of scope; concurrent workers made it in scope.
+            lock_handle = await asyncio.to_thread(self._acquire_pair_lock, project_hash, commit_sha)
+            try:
+                return await self._start_locked(project_hash, commit_sha, key)
+            finally:
+                await asyncio.to_thread(self._release_pair_lock, lock_handle)
 
-            # Cold path: bootstrap (download if needed) + spawn.
-            bootstrap = Neo4jBootstrap(
-                version=self._version,
-                cache_root=self._neo4j_root,
-                tarball_url=self._download_url,
-            )
-            neo4j_bin = await bootstrap.ensure()
-            state = await self._spawn_one(project_hash, commit_sha, neo4j_bin)
-            self._processes[key] = state
-            self._save_runtime(state)
+    def _acquire_pair_lock(self, project_hash: str, commit_sha: str) -> Any:
+        """Take an exclusive OS lock for one ``(project, commit)`` pair.
+
+        Blocking on purpose, and taken on a thread so the event loop keeps
+        running: the loser of the race must *wait* and then attach to the
+        winner, not fail. The lock file sits beside the store it guards, so it
+        is scoped exactly to the pair rather than to the whole runtime.
+        """
+        state_dir = self._state_dir(project_hash, commit_sha)
+        state_dir.mkdir(parents=True, exist_ok=True)
+        handle = (state_dir / "start.lock").open("a+")
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        return handle
+
+    @staticmethod
+    def _release_pair_lock(handle: Any) -> None:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+    async def _start_locked(
+        self, project_hash: str, commit_sha: str, key: tuple[str, str]
+    ) -> Neo4jEndpoints:
+        """Discover-or-spawn, with the pair's cross-process lock held.
+
+        The re-check matters: by the time the lock is granted, the process that
+        held it has usually already started the server and written
+        ``runtime.json``, so the common path here is to attach rather than
+        spawn.
+        """
+        state = self._processes.get(key)
+        if state is not None and state.proc.returncode is None:
+            state.refcount += 1
             return state.endpoints
+
+        existing = self._discover(project_hash, commit_sha)
+        if existing is not None and self._is_alive(existing):
+            # Attach to the existing process. We don't have a
+            # subprocess.Popen handle — the original BE
+            # started it — so we synthesize a minimal handle
+            # wrapper that supports ``.pid`` and the
+            # ``send_signal``/``wait`` shape ``_shutdown_one``
+            # needs. The OS still owns the actual process; we
+            # can signal it but not await its exit reliably.
+            proc = _ExternalProcessHandle(existing.pid)
+            state = _ProjectCommitState(
+                proc=proc,
+                endpoints=existing,
+                refcount=1,
+                state_dir=self._state_root / _pair_slug(project_hash, commit_sha),
+                auth_file=self._auth_path(project_hash, commit_sha),
+                config_file=self._config_path(project_hash, commit_sha),
+                logs_dir=self._logs_path(project_hash, commit_sha),
+                data_dir=self._data_path(project_hash, commit_sha),
+                runtime_file=self._runtime_path(project_hash, commit_sha),
+            )
+            self._processes[key] = state
+            logger.info(
+                "attached to existing (project=%s commit=%s pid=%d)",
+                project_hash,
+                commit_sha,
+                existing.pid,
+            )
+            return existing
+
+        # Cold path: bootstrap (download if needed) + spawn.
+        bootstrap = Neo4jBootstrap(
+            version=self._version,
+            cache_root=self._neo4j_root,
+            tarball_url=self._download_url,
+        )
+        neo4j_bin = await bootstrap.ensure()
+        state = await self._spawn_one(project_hash, commit_sha, neo4j_bin)
+        self._processes[key] = state
+        self._save_runtime(state)
+        return state.endpoints
 
     async def stop_for_commit(self, project_hash: str, commit_sha: str) -> bool:
         """Decrement refcount; kill the pair's process at zero.

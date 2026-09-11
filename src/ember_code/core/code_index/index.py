@@ -665,17 +665,48 @@ class CodeIndex:
         state = self.manifest.load()
         cutoff = datetime.now(timezone.utc) - timedelta(days=keep_recent_days)
         to_drop: list[str] = []
+        # Log the *decision*, not only the drop. This method runs at every
+        # session startup, and an indexed graph went empty between two verified
+        # reads with no unclean shutdown in the Neo4j log — so the question
+        # "did retention evict it, and on what grounds?" has to be answerable
+        # from a log rather than by reasoning about the policy.
         for sha, info in state.commits.items():
             if sha == state.head:
+                logger.debug("clean: keeping %s — it is HEAD", sha[:8])
                 continue
             if info.branch_refs:
+                logger.debug(
+                    "clean: keeping %s — pointed to by %s", sha[:8], ", ".join(info.branch_refs)
+                )
                 continue
             try:
                 last_used = datetime.fromisoformat(info.last_used_at)
             except ValueError:
+                # Unparseable timestamps are treated as "just used" so a
+                # malformed manifest entry cannot cause an eviction.
+                logger.warning(
+                    "clean: %s has an unparseable last_used_at (%r); treating as fresh",
+                    sha[:8],
+                    info.last_used_at,
+                )
                 last_used = datetime.now(timezone.utc)
             if last_used < cutoff:
+                logger.info(
+                    "clean: EVICTING %s — no branch ref and idle since %s (cutoff %s)",
+                    sha[:8],
+                    last_used.isoformat(),
+                    cutoff.isoformat(),
+                )
                 to_drop.append(sha)
+            else:
+                logger.debug(
+                    "clean: keeping %s — last used %s, inside the %d-day window",
+                    sha[:8],
+                    last_used.isoformat(),
+                    keep_recent_days,
+                )
+        if not to_drop:
+            logger.debug("clean: nothing to evict from %d tracked commit(s)", len(state.commits))
 
         # On the neo4j path, ``Neo4jClient.drop_database`` removes
         # every :Item / :Chunk / :REL node for the (project, commit)
@@ -698,6 +729,7 @@ class CodeIndex:
                     pass  # drop is handled by runtime's evict path
             except Exception as exc:
                 logger.debug("clean: neo4j drop failed for %s (%s)", sha[:8], exc)
+            logger.info("clean: dropping manifest entry for %s", sha[:8])
             self.manifest.remove_commit(sha)
         return to_drop
 
