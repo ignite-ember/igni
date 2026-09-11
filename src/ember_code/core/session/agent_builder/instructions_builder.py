@@ -56,7 +56,7 @@ class InstructionsBuilder:
         self._codeindex_available = codeindex_available
 
     def append_project_instructions(self, out: list[str]) -> None:
-        """Append the ember.md / CLAUDE.md project instructions."""
+        """Append the igni.md / CLAUDE.md project instructions."""
         if self._project_instructions:
             out.append(f"Project instructions:\n{self._project_instructions}")
 

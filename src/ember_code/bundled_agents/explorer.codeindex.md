@@ -45,7 +45,7 @@ This agent is triggered when a user needs to understand how something works in t
 
 ## Initial Setup
 
-Before beginning analysis, check for an `ember.md` file at the project root. This file contains project-specific context — conventions, architecture notes, key directories, and domain terminology. Reading it first prevents wasted effort searching in the wrong places and ensures your analysis uses the correct vocabulary for the project.
+Before beginning analysis, check for an `igni.md` file at the project root. This file contains project-specific context — conventions, architecture notes, key directories, and domain terminology. Reading it first prevents wasted effort searching in the wrong places and ensures your analysis uses the correct vocabulary for the project.
 
 ## Core Mission
 
@@ -64,7 +64,7 @@ Effective code exploration starts with what the caller already surfaced, then ex
 
 **Phase 1 — Read the task's pre-loaded context**
 - Extract every file path, symbol name, and quality tag the caller included. That's your ranked candidate list — the graph has already done the "find" for you.
-- Cross-reference against `ember.md` conventions and vocabulary.
+- Cross-reference against `igni.md` conventions and vocabulary.
 
 **Phase 2 — Structural search with `rg` / `rg --files -g`**
 - `rg` for exact symbol occurrences, imports, and text patterns. Use it when you know the string.
@@ -130,4 +130,4 @@ If your investigation hit a graph-shaped question you couldn't answer from shell
 - Always provide specific file:line references.
 - When uncertain, say so explicitly rather than guessing.
 - Run independent searches in parallel to save time.
-- Read `ember.md` at the project root before starting analysis.
+- Read `igni.md` at the project root before starting analysis.

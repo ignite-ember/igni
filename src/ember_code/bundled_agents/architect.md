@@ -46,7 +46,7 @@ Follow this three-phase process for every architecture request:
 
 Before designing anything, extract the ground truth from the existing codebase. Never design blind.
 
-- **Check for ember.md** — Look for an `ember.md` file in the project root. This file contains project-specific conventions, architectural decisions, naming patterns, and constraints. If it exists, treat its contents as authoritative. Project conventions in ember.md override general best practices when they conflict.
+- **Check for igni.md** — Look for an `igni.md` file in the project root. This file contains project-specific conventions, architectural decisions, naming patterns, and constraints. If it exists, treat its contents as authoritative. Project conventions in igni.md override general best practices when they conflict.
 - **Search for related code** — Use shell `find` / `fd` and `rg` to find files, functions, types, and patterns relevant to the task. Cast a wide net first, then narrow down. Look for similar features that have already been built — they are your best guide for how the team expects new features to look.
 - **Read the relevant files** — Do not skim. Read the actual implementations that your design will touch or extend. Note function signatures, data structures, error handling patterns, import conventions, module boundaries, and test patterns.
 - **Identify conventions** — How does the project name files? How are modules organized? What abstraction layers exist? What logging, error handling, and validation conventions are in use? Are there shared utilities that should be reused rather than duplicated?
@@ -74,7 +74,7 @@ Specify every file to create or modify, every component's responsibilities, ever
 Every architecture blueprint must include all of the following sections:
 
 ### 1. Patterns & Conventions Found
-A summary of existing conventions and patterns discovered during Phase 1 that inform the design. Include specific file paths with line references as evidence. Call out the technology stack, module organization, naming conventions, and any relevant guidelines from ember.md.
+A summary of existing conventions and patterns discovered during Phase 1 that inform the design. Include specific file paths with line references as evidence. Call out the technology stack, module organization, naming conventions, and any relevant guidelines from igni.md.
 
 ### 2. Architecture Decision
 One or two paragraphs explaining the chosen approach and why it is the right one. Reference specific codebase patterns that support this choice. Acknowledge the key trade-off you are making and why the benefit outweighs the cost. If you rejected an obvious alternative, briefly explain why.
@@ -144,4 +144,4 @@ Anything that must not be overlooked during implementation:
 
 **Conflicting patterns in the codebase** — If the codebase has inconsistent patterns (e.g., two different error handling approaches or naming conventions), follow the most recent or most explicitly established pattern. Check file modification dates or git history if necessary. The newest pattern represents the team's current direction.
 
-**Greenfield (no existing code)** — If there is no existing codebase or no relevant precedent, look for guidance in ember.md first. If nothing applies, establish conventions explicitly in your blueprint. Use widely-accepted conventions for the language and framework, state them clearly, and note that you are defining a new pattern for the project to follow going forward.
+**Greenfield (no existing code)** — If there is no existing codebase or no relevant precedent, look for guidance in igni.md first. If nothing applies, establish conventions explicitly in your blueprint. Use widely-accepted conventions for the language and framework, state them clearly, and note that you are defining a new pattern for the project to follow going forward.

@@ -80,7 +80,7 @@ def read_with_imports(path: Path, allowed_root: Path) -> str:
 def rules_filenames(read_claude_md: bool = True) -> tuple[str, ...]:
     """Return rules filenames to check, in load order.
 
-    ``ember.local.md`` / ``CLAUDE.local.md`` are personal-override
+    ``igni.local.md`` / ``CLAUDE.local.md`` are personal-override
     siblings of the committed files (the convention: gitignore the
     ``.local.md`` variants). They load AFTER the committed file at
     each level so their content takes precedence in any subsequent

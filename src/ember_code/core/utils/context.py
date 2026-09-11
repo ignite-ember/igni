@@ -2,7 +2,7 @@
 
 Loads rules from several sources, all merged into the session prompt:
 
-0. **Managed policy** — sysadmin-enforced ``ember.md`` / ``CLAUDE.md``
+0. **Managed policy** — sysadmin-enforced ``igni.md`` / ``CLAUDE.md``
    in a platform-specific write-protected directory (e.g.
    ``/Library/Application Support/igni/`` on darwin). Prepended
    first so the model sees org-pinned guidance ahead of everything
@@ -14,11 +14,11 @@ Loads rules from several sources, all merged into the session prompt:
 1. **User-level** — ``~/.igni/rules.md`` (legacy),
    ``~/.igni/rules/*.md`` (dir form), plus ``~/.claude/rules/*.md``
    when cross-tool support is enabled.
-2. **Project root** — ``ember.md`` / ``CLAUDE.md`` and their
+2. **Project root** — ``igni.md`` / ``CLAUDE.md`` and their
    ``.local.md`` override siblings.
 3. **Project shared rules dirs** — ``<project>/.igni/rules/*.md``
    and (when cross-tool) ``<project>/.claude/rules/*.md``.
-4. **Subdirectory** — ``ember.md`` / ``CLAUDE.md`` in any parent of
+4. **Subdirectory** — ``igni.md`` / ``CLAUDE.md`` in any parent of
    the working file, walking up to the project root.
 
 ## Architecture
@@ -234,7 +234,7 @@ def load_project_context(
     the class docstring for the six-tier composition order. The
     ``project_file`` argument is retained for config compatibility
     (older callers pass it from settings) but currently unused —
-    the loader picks up ``ember.md`` / ``CLAUDE.md`` by convention.
+    the loader picks up ``igni.md`` / ``CLAUDE.md`` by convention.
     """
     del project_file  # kept for API compatibility
     return (

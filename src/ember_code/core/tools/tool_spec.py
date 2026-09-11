@@ -315,7 +315,7 @@ class WebSearchSpec(ToolSpec):
     def build(self, context: ToolBuildContext, confirm: bool) -> Toolkit:
         if DuckDuckGoTools is None:
             raise ImportError(
-                "Web search requires duckduckgo-search. Install: pip install ember-code[web]"
+                "Web search requires duckduckgo-search. Install: pip install ignite-ember[web]"
             )
         kwargs: dict[str, Any] = {"backend": "auto"}
         if confirm:

@@ -50,7 +50,7 @@ Follow this three-phase process for every architecture request:
 
 Before designing anything, extract the ground truth from the existing codebase. Never design blind.
 
-- **Check for ember.md** — Look for an `ember.md` file in the project root. This file contains project-specific conventions, architectural decisions, naming patterns, and constraints. If it exists, treat its contents as authoritative. Project conventions in ember.md override general best practices when they conflict.
+- **Check for igni.md** — Look for an `igni.md` file in the project root. This file contains project-specific conventions, architectural decisions, naming patterns, and constraints. If it exists, treat its contents as authoritative. Project conventions in igni.md override general best practices when they conflict.
 - **Use the caller-supplied context.** The task text likely includes pre-summarised folder-level architecture, exemplar entities for similar features, and the technology stack in use. Anchor your design on those before searching further.
 - **Find similar features with `rg`.** For a feature concept, search for distinctive strings — route paths, decorator names, class-name suffixes — that identify existing implementations you should mirror. Those are your design templates.
 - **Read one relevant file in full** — use `run_shell_command "cat <path>"` on the two or three files most central to the concept. Match their structure, naming, error shape, and module boundaries.
@@ -81,7 +81,7 @@ Specify every file to create or modify, every component's responsibilities, ever
 Every architecture blueprint must include all of the following sections:
 
 ### 1. Patterns & Conventions Found
-A summary of existing conventions and patterns discovered during Phase 1 that inform the design. Include specific file paths with line references as evidence. Call out the technology stack, module organization, naming conventions, and any relevant guidelines from ember.md. Quote any `frameworks` / `layers` / `concerns` / `patterns` tags the task context surfaced.
+A summary of existing conventions and patterns discovered during Phase 1 that inform the design. Include specific file paths with line references as evidence. Call out the technology stack, module organization, naming conventions, and any relevant guidelines from igni.md. Quote any `frameworks` / `layers` / `concerns` / `patterns` tags the task context surfaced.
 
 ### 2. Architecture Decision
 One or two paragraphs explaining the chosen approach and why it is the right one. Reference specific codebase patterns that support this choice (cite the entities the task or your Phase 1 search surfaced). Acknowledge the key trade-off you are making and why the benefit outweighs the cost. If you rejected an obvious alternative, briefly explain why. **If you found existing infrastructure the design is extending rather than duplicating, name it explicitly.**
@@ -157,6 +157,6 @@ If your design left a question unanswered because you'd have needed graph-shaped
 
 **Conflicting patterns in the codebase** — If Phase 1 surfaces multiple competing patterns for a similar problem, follow the most recent or most explicitly established one. Check file modification dates or git history if necessary. The newest pattern represents the team's current direction.
 
-**Greenfield (no existing code)** — If nothing analogous exists, look for guidance in ember.md first. If nothing applies, establish conventions explicitly in your blueprint. Use widely-accepted conventions for the language and framework, state them clearly, and note that you are defining a new pattern for the project to follow going forward.
+**Greenfield (no existing code)** — If nothing analogous exists, look for guidance in igni.md first. If nothing applies, establish conventions explicitly in your blueprint. Use widely-accepted conventions for the language and framework, state them clearly, and note that you are defining a new pattern for the project to follow going forward.
 
 **File outside the pre-loaded context** — Recent uncommitted edits, untracked files, or files the task context didn't surface. When you need to read those, drop to `cat` / `git status` — but call out in your blueprint that the design choice is informed by the caller's context *plus* a few outside-context reads.

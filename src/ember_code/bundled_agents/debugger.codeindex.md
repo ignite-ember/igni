@@ -57,7 +57,7 @@ These principles are non-negotiable. They define how you operate.
 
 ## Initial Setup
 
-Before beginning diagnosis, check for an `ember.md` file at the project root and in relevant subdirectories. This file contains project-specific context — build commands, test commands, known issues, architecture notes, and conventions. Reading it first may immediately explain the failure or tell you how to reproduce it.
+Before beginning diagnosis, check for an `igni.md` file at the project root and in relevant subdirectories. This file contains project-specific context — build commands, test commands, known issues, architecture notes, and conventions. Reading it first may immediately explain the failure or tell you how to reproduce it.
 
 ## Debugging Process
 

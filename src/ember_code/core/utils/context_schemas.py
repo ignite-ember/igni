@@ -20,7 +20,7 @@ typed data models, adjacent to the module that owns the behaviour.
   which joins the sections with the ``\\n\\n---\\n\\n`` divider
   that the model consumes.
 - :class:`SubdirectoryRules` — one entry from the subdirectory
-  walk (``ember.md`` / ``CLAUDE.md`` found in a subdirectory
+  walk (``igni.md`` / ``CLAUDE.md`` found in a subdirectory
   between the working dir and the project root). Replaces the
   raw ``list[tuple[str, str]]`` return that ``load_subdirectory_rules``
   used to have — Pattern 2 fix (structured data with >1 field

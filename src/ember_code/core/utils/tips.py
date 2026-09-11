@@ -161,7 +161,7 @@ class NoCustomAgentsTip(ContextualTip):
 class WebDeniedTip(ContextualTip):
     id: str = "web_denied"
     message: str = (
-        'Install ember-code[web] and set "web_search: allow" to let agents search the web.'
+        'Install ignite-ember[web] and set "web_search: allow" to let agents search the web.'
     )
 
     def matches(self, ctx: TipContext) -> bool:

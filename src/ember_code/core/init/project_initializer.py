@@ -49,7 +49,7 @@ class ProjectInitializer(BaseModel):
     Two responsibilities:
 
     1. **First-run init** — copies built-in agents/skills/hooks
-       into ``.igni/`` and creates a starter ``ember.md``. A marker
+       into ``.igni/`` and creates a starter ``igni.md``. A marker
        file (``.igni/.initialized``) ensures this only runs once.
     2. **Update on every start** — compares package files against
        local copies using SHA-256 checksums. Untouched files are
@@ -152,7 +152,7 @@ class ProjectInitializer(BaseModel):
     # ── Starter-file writers (first-run only) ─────────────────────
 
     def _write_ember_md(self) -> None:
-        """Write a starter ``ember.md`` if one doesn't exist."""
+        """Write a starter ``igni.md`` if one doesn't exist."""
         path = self.project_dir / PROJECT_CONTEXT_FILE
         if not path.exists():
             path.write_text(IGNI_MD_TEMPLATE)

@@ -71,7 +71,7 @@ This is your first action. Before reading any individual file, read what the cal
 ### Step 2: Gather Context
 
 - For each high-priority candidate, read the full entity body with `run_shell_command "sed -n '<a>,<b>p' <path>"` or `cat <path>`.
-- Check for a project instructions file (`ember.md`) at the repository root or in a `.igni` directory. If it exists, read it and incorporate any project-specific security requirements, banned patterns, required security libraries, or architectural constraints into your analysis. Project rules take precedence over general guidance.
+- Check for a project instructions file (`igni.md`) at the repository root or in a `.igni` directory. If it exists, read it and incorporate any project-specific security requirements, banned patterns, required security libraries, or architectural constraints into your analysis. Project rules take precedence over general guidance.
 - Read related files as needed — imports, middleware, configuration, environment handling, and authentication modules. `rg` for cross-references.
 
 ### Step 3: Identify the Attack Surface

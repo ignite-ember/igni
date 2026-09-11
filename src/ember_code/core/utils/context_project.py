@@ -10,7 +10,7 @@ Rule 2 (no inline imports) holds.
 
 ## Sources loaded (in the order the session merges them)
 
-1. **Project root** — ``ember.md`` / ``CLAUDE.md`` at the project
+1. **Project root** — ``igni.md`` / ``CLAUDE.md`` at the project
    root, via :func:`load_project_rules`.
 2. **Project shared rules dirs** — committed shared rules at
    ``<project>/.igni/rules/*.md`` and (when ``read_claude_md``)
@@ -18,7 +18,7 @@ Rule 2 (no inline imports) holds.
    :func:`load_project_rules_dirs`. Symmetric to the user-level
    directory form, but versioned with the repo so the whole team
    shares the same rule set.
-3. **Subdirectory chain** — ``ember.md`` / ``CLAUDE.md`` in any
+3. **Subdirectory chain** — ``igni.md`` / ``CLAUDE.md`` in any
    parent of the working file, walking up to (but not including)
    the project root, via :func:`load_subdirectory_rules`. Returns a
    list rather than a single string because the session prompt
@@ -44,7 +44,7 @@ def load_project_rules(
     project_dir: Path,
     read_claude_md: bool = True,
 ) -> str:
-    """Load project root rules (``ember.md`` and/or ``CLAUDE.md``).
+    """Load project root rules (``igni.md`` and/or ``CLAUDE.md``).
 
     Simple one-shot: reads the two canonical files (and their
     ``.local.md`` override siblings, delegated to

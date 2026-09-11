@@ -72,7 +72,7 @@ remove the relevant entry.
   are authoritative.
 * Debugging recipes or fix details — the fix is in the code; the \
   commit message has the context.
-* Anything already documented in `CLAUDE.md` / `ember.md`.
+* Anything already documented in `CLAUDE.md` / `igni.md`.
 * Ephemeral task details: in-progress work, conversation context.
 
 These exclusions apply even when the user explicitly asks you to save. \

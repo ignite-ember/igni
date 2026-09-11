@@ -106,14 +106,37 @@ class PromptBuilder:
         return prompt
 
     def append_skills(self, prompt: str) -> str:
-        """Append skill descriptions when auto-trigger is on."""
+        """Append skill descriptions when auto-trigger is on.
+
+        The heading used to read "Available Skills (user can invoke via /name)",
+        which described the capability as something the *user* does. Nothing
+        told the agent it could invoke a skill itself, by what means, or that it
+        should prefer one when a request matches — so the agent mostly
+        reimplemented the workflow by hand. Measured over capture sessions
+        against prompts written to exercise exactly these six skills, it reached
+        for one in 2 of 9 runs and otherwise went straight to shell.
+
+        That is a real behavioural gap and not only a data-collection one: SOW
+        4d expects ``/commit`` to be used rather than the work being improvised,
+        and a skill is where a team's agreed procedure lives.
+        """
         if not self._skill_descriptions:
             return prompt
         if not self._settings.skills.auto_trigger:
             return prompt
         return (
             prompt
-            + "\n\n## Available Skills (user can invoke via /name)\n"
+            + "\n\n## Available Skills\n\n"
+            + "Workflows this project has already codified. **You can invoke "
+            + "these yourself** with the `slash_command` tool — "
+            + '`slash_command("/commit")` — and it returns the skill\'s '
+            + "instructions for you to carry out. The user can also type "
+            + "`/name` directly.\n\n"
+            + "**Prefer a skill over improvising.** When a request matches one "
+            + "of these, invoke it instead of assembling the steps yourself: "
+            + "the skill encodes the agreed procedure, and doing it by hand "
+            + "quietly diverges from it. If the skill turns out not to fit, say "
+            + "so and continue.\n"
             + self._skill_descriptions
         )
 

@@ -219,7 +219,7 @@ class Session:
         self._group_agents_dir = self._group_policy_dir / "agents"
         self._group_mcps_dir = self._group_policy_dir / "mcps"
 
-        # ── First-run initialization (agents, skills, hooks, ember.md) ─
+        # ── First-run initialization (agents, skills, hooks, igni.md) ─
         # The bundled agents stand down when the group ships its own —
         # otherwise this would scaffold back the very agents an admin
         # removed, and two sources would fight over one checksum file.

@@ -562,7 +562,7 @@ When the user asks for a destructive command that combines safe + unsafe parts (
 
 ## Project Context
 
-Check for an `ember.md` file at the project root for project-specific conventions. Follow those conventions over your defaults.
+Check for an `igni.md` file at the project root for project-specific conventions. Follow those conventions over your defaults.
 
 ## Response Style
 

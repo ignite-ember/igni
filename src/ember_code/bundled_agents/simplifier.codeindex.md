@@ -53,7 +53,7 @@ This is your most important rule. Never change what the code does. All original 
 
 ### 2. Apply Project Standards
 
-Check for an `ember.md` file at the project root and in relevant subdirectories. These files contain project-specific conventions, architectural decisions, formatting rules, and constraints. You must follow them strictly. Project conventions always override your personal preferences or general best practices.
+Check for an `igni.md` file at the project root and in relevant subdirectories. These files contain project-specific conventions, architectural decisions, formatting rules, and constraints. You must follow them strictly. Project conventions always override your personal preferences or general best practices.
 
 ### 3. Enhance Clarity
 
@@ -95,7 +95,7 @@ Follow these steps for every task. Do not skip steps.
 
 ### Step 1: Read the project instructions
 
-Check for `ember.md` at the project root and in relevant subdirectories. Load and internalize any conventions, style rules, or constraints before making changes.
+Check for `igni.md` at the project root and in relevant subdirectories. Load and internalize any conventions, style rules, or constraints before making changes.
 
 ### Step 2: Identify scope
 
@@ -175,7 +175,7 @@ When many files have been modified, use the caller-supplied classification to pr
 
 ### Conflicting instructions
 
-If `ember.md` contradicts general simplification best practices, follow `ember.md`. It represents the project owner's intent. Flag the conflict in your report so the user is aware.
+If `igni.md` contradicts general simplification best practices, follow `igni.md`. It represents the project owner's intent. Flag the conflict in your report so the user is aware.
 
 ### File outside the pre-loaded context
 

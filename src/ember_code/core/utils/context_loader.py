@@ -148,7 +148,7 @@ class UserTier:
 
 
 class ProjectRootTier:
-    """Project-root ``ember.md`` / ``CLAUDE.md`` (+ ``.local.md`` overrides)."""
+    """Project-root ``igni.md`` / ``CLAUDE.md`` (+ ``.local.md`` overrides)."""
 
     heading = "Project Rules"
 
@@ -267,7 +267,7 @@ class RulesContextLoader:
         )
 
     def load_project_root(self) -> str:
-        """Project-root ``ember.md`` / ``CLAUDE.md`` (+ ``.local.md`` overrides)."""
+        """Project-root ``igni.md`` / ``CLAUDE.md`` (+ ``.local.md`` overrides)."""
         return load_project_rules(
             self.readers.read_rules_dir,
             self.readers.rules_filenames,

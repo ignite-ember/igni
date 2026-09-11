@@ -1,4 +1,4 @@
-"""Sysadmin-enforced managed policy — ``ember.md`` / ``CLAUDE.md``
+"""Sysadmin-enforced managed policy — ``igni.md`` / ``CLAUDE.md``
 in a platform-specific write-protected directory.
 
 Extracted from :mod:`ember_code.core.utils.context` per
@@ -38,7 +38,7 @@ from ember_code.core.paths import managed_policy_dir
 
 def _platform_managed_rules_dir() -> Path | None:
     """OS-specific directory that may host a sysadmin-enforced
-    instructions file (``ember.md`` and/or ``CLAUDE.md``).
+    instructions file (``igni.md`` and/or ``CLAUDE.md``).
 
     Sibling to the managed-settings file — both live in the same
     write-protected parent so a sysadmin / MDM profile can drop a
@@ -58,7 +58,7 @@ def load_managed_rules(
 ) -> str:
     """Load the sysadmin-enforced managed-policy instructions file.
 
-    Reads ``ember.md`` (and ``CLAUDE.md`` when ``read_claude_md``)
+    Reads ``igni.md`` (and ``CLAUDE.md`` when ``read_claude_md``)
     from the platform's managed directory. ``@<path>.md`` imports
     inside those files resolve against the managed directory
     itself — a managed policy can't reach into ``/etc/passwd`` or

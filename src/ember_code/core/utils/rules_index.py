@@ -1,13 +1,13 @@
 """Hierarchical rules discovery — Claude Code-style.
 
-Scans the project tree at session start for ``ember.md`` /
+Scans the project tree at session start for ``igni.md`` /
 ``CLAUDE.md`` files in subdirectories, then surfaces them lazily as
 the agent touches files in those areas. Once a rules file has been
 shown to the agent in a session, it isn't re-shown on subsequent
 tool calls touching the same directory — the model only needs the
 context delivered once.
 
-The root-level ``ember.md`` / ``CLAUDE.md`` are NOT part of this
+The root-level ``igni.md`` / ``CLAUDE.md`` are NOT part of this
 index. Those are already loaded into the system prompt at session
 init via ``load_project_context`` — they form the unconditional
 baseline. This index handles only the subdirectory tier: rules that
@@ -121,7 +121,7 @@ class RulesIndex:
         self._filenames = _rules_filenames(read_claude_md)
         # ``{dir -> list of rules files in load order}``. Multiple
         # files per dir support the override pattern: a subdir that
-        # ships both ``ember.md`` (committed) and ``ember.local.md``
+        # ships both ``igni.md`` (committed) and ``igni.local.md``
         # (gitignored personal) surfaces both, with the local
         # variant appearing AFTER so its directives take precedence
         # in the agent's read order.
@@ -137,7 +137,7 @@ class RulesIndex:
         # when ``working_dir`` is ``None``, which it is at session
         # start).
         self._scoped_rules: list[_ScopedRule] = []
-        # Shared dedup set: both subdir ``ember.md`` files and
+        # Shared dedup set: both subdir ``igni.md`` files and
         # path-scoped rules surface at most once per session.
         self._shown: set[Path] = set()
         self._build()
@@ -243,7 +243,7 @@ class RulesIndex:
         reads the more general rules before the more specific ones.
         Paths outside ``project_dir`` produce an empty list.
         """
-        # Both pools (subdir ``ember.md``-style + path-scoped
+        # Both pools (subdir ``igni.md``-style + path-scoped
         # ``.igni/rules/*.md``) are checked; bail only when both
         # are empty.
         if not self._index and not self._scoped_rules:
