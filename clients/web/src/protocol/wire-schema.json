@@ -225,6 +225,7 @@
       "output_tokens",
       "permission_mode",
       "session_id",
+      "theme",
       "type"
     ],
     "stream_end": [

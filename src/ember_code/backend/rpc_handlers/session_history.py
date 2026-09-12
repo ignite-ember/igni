@@ -33,3 +33,7 @@ class SessionHistoryRpcHandler(RpcHandler):
     @rpc(RpcMethod.COUNT_CONTEXT_TOKENS)
     def count_context_tokens(self, args: dict) -> Any:
         return self._ctx.backend.count_context_tokens()
+
+    @rpc(RpcMethod.GET_CONTEXT_BREAKDOWN)
+    def get_context_breakdown(self, args: dict) -> Any:
+        return self._ctx.backend.context_breakdown()

@@ -1,7 +1,7 @@
 """Conversation-context management RPCs.
 
 Thin coordinator over :class:`Session` + :class:`PendingMessageStore`
-that fronts six RPCs the FE calls on the status / compaction /
+that fronts the RPCs the FE calls on the status / compaction /
 history-truncation surface. Wire schemas
 (:class:`TruncateHistoryResult`, :class:`PendingMessage`) live in
 the sibling :mod:`schemas_context` module — same pattern as
@@ -10,6 +10,8 @@ the sibling :mod:`schemas_context` module — same pattern as
 * :meth:`ContextController.get_status` — status-bar snapshot.
 * :meth:`ContextController.count_context_tokens` — locally count
   tokens of the current conversation.
+* :meth:`ContextController.context_breakdown` — what that count is
+  made of, for the ``/ctx`` page.
 * :meth:`ContextController.compact_if_needed` — compaction on
   threshold cross.
 * :meth:`ContextController.extract_learnings` — fire-and-forget
@@ -101,6 +103,22 @@ class ContextController:
         except Exception as exc:  # pragma: no cover — defensive
             logger.debug("group theme unavailable (%s); using the shipped palette", exc)
             return None
+
+    async def context_breakdown(self) -> dict:
+        """What the context is made of, for the ``/ctx`` page.
+
+        ``count_context_tokens`` answers how big it is; this answers
+        what it is made of — the conversation ``/compact`` can clear
+        versus the floor (system prompt, tool schemas, project rules,
+        memories, injected summary) that is rebaked into every prompt
+        and cannot be compacted away.
+
+        A plain dict on the wire: the page renders three numbers, and
+        a model here would be a second place to change when the domain
+        one grows a field.
+        """
+        b = await self._session.context_breakdown()
+        return {"total": b.total, "runs": b.runs, "floor": b.floor}
 
     async def count_context_tokens(self) -> int:
         """Locally count tokens of the current conversation."""

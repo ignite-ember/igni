@@ -111,6 +111,7 @@ class CodeIndexController:
             install_state=install.state,
             repository_id=install.repository_id,
             install_url=install.install_url,
+            portal_url=self._portal_repositories_url(),
             commits_indexed=len(state.commits),
             index_size_bytes=index_size_bytes,
             branches_indexed=entries,
@@ -227,6 +228,20 @@ class CodeIndexController:
             sync_step = progress.apply_step or "indexing"
         return sync_progress_pct, sync_step, sync_reason, sync_error
 
+    def _portal_repositories_url(self) -> str:
+        """The portal page where indexing is enabled for a repository.
+
+        Same rewrite :meth:`install` already uses, surfaced on the
+        status so the panel can point at it whatever the install
+        state — a connected repository with nothing indexed still
+        needs somewhere to send the user, and starting an index is
+        the portal's job rather than the client's.
+        """
+        try:
+            return CodeIndexInstallResult.from_api_url(self._session.settings.api_url).install_url
+        except Exception:  # pragma: no cover — no api url configured
+            return ""
+
     def _resolve_install_state(self, sync: CodeIndexSyncManager) -> _InstallState:
         """Derive install-state fields from the resolver's cache.
 
@@ -254,13 +269,24 @@ class CodeIndexController:
 
         Uses the public :meth:`recent_activity` accessor so this
         stays free of dataclass-import coupling — the entry's
-        ``ts`` / ``items_*`` fields are all we need."""
+        ``ts`` / ``items_*`` fields are all we need.
+
+        The newest *successful* entry, not the newest entry. The ring
+        buffer holds attempts: :meth:`CodeIndexSyncManager._record_activity`
+        drops only the "watcher tick, nothing changed" no-ops, so a
+        failed or skipped sync lands in it like any other. Taking the
+        top row regardless had the panel reporting "Last sync: just
+        now" on a repository with nothing indexed at all, two tiles
+        from a coverage reading of ``0 / 1,377 files``.
+
+        No successful sync means no last sync — an empty string, which
+        the panel already renders as an em dash."""
         recent = sync.recent_activity()
-        if recent:
-            top = recent[0]
-            return top.ts, LastSyncStats(
-                items_upserted=top.items_upserted,
-                items_deleted=top.items_deleted,
+        succeeded = next((e for e in recent if e.succeeded), None)
+        if succeeded is not None:
+            return succeeded.ts, LastSyncStats(
+                items_upserted=succeeded.items_upserted,
+                items_deleted=succeeded.items_deleted,
             )
         last = progress.last_sync_result
         if last is not None and last.stats:
