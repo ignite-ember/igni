@@ -88,7 +88,7 @@ test("WatcherPanel populated render", async ({ page, backend, appUrl }) => {
     };
   });
   await page.locator(".composer-editable").press("Enter");
-  await expect(page.locator(".drawer")).toBeVisible();
+  await expect(page.locator(".page")).toBeVisible();
 
   // Wait for the seed list to render.
   await expect(page.locator(".watcher-row")).toHaveCount(2);

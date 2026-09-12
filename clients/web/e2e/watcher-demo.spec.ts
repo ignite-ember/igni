@@ -69,8 +69,9 @@ test("watcher panel shows live background processes", async ({
   await page.locator(".composer-editable").type("/watcher");
   await page.locator(".composer-editable").press("Enter");
 
-  // The drawer renders with the title "Watcher".
-  await expect(page.locator(".drawer")).toBeVisible({ timeout: 5_000 });
+  // The watcher is a page now, not a modal — it renders with the
+  // breadcrumb trail ending in "Watcher".
+  await expect(page.locator(".page")).toBeVisible({ timeout: 5_000 });
 
   // Settle a beat so the seed RPC + any in-flight pushes land.
   await page.waitForTimeout(500);

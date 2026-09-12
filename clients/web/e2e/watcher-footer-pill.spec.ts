@@ -51,6 +51,6 @@ test("footer shows watcher pill when processes are running", async ({
 
   // Click the pill — the panel opens.
   await page.locator(".watcher-pill").click();
-  await expect(page.locator(".drawer")).toBeVisible();
+  await expect(page.locator(".page")).toBeVisible();
   await page.screenshot({ path: "test-results/watcher-footer-pill-opened.png" });
 });
