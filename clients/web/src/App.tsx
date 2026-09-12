@@ -30,6 +30,17 @@ import {
 import { applyVisualizationDelta } from "./chat/visualizationStream";
 import { nextObserverBusyState } from "./chat/observerBusy";
 import { planSessionBinding } from "./chat/sessionBinding";
+import {
+  current as currentPage,
+  openRoot,
+  pop as popPage,
+  restore as restorePages,
+  serialise as serialisePages,
+  truncateTo,
+  type PageKind,
+  type PageRoute,
+} from "./chat/pageStack";
+import { PageContext } from "./components/PageShell";
 import { handleEsc } from "./chat/escHandler";
 import { buildContinuedPrompt } from "./chat/continueInterrupted";
 import {
@@ -62,7 +73,6 @@ import { ScrollIndicator } from "./components/ScrollIndicator";
 import { Sidebar, type SessionEntry } from "./components/Sidebar";
 import { AgentsPanel } from "./components/panels/AgentsPanel";
 import { CodeIndexPanel } from "./components/panels/CodeIndexPanel";
-import { DetailsPanel } from "./components/panels/DetailsPanel";
 import { FilePreview } from "./components/FilePreview";
 import { HooksPanel } from "./components/panels/HooksPanel";
 import { KnowledgePanel } from "./components/panels/KnowledgePanel";
@@ -84,21 +94,25 @@ import { IgniClient, pickNativeDirectory, type ConnectionState } from "./protoco
 import type { HITLRequest, ServerMessage, StatusUpdate } from "./protocol/messages";
 import { countOf } from "./lib/plural";
 
+/**
+ * The things that are dialogs.
+ *
+ * Everything the app could open used to live in this one slot and
+ * render as a centre-screen modal. The destinations moved out to
+ * ``chat/pageStack.ts`` — they are places you browse, and a single
+ * slot cannot hold a trail. What is left is what a dialog actually
+ * is: pick one thing and go (``dir-picker``), get through a flow
+ * (``login``), or glance at a status and act on it (``loop``).
+ *
+ * The HITL prompt is not here either, and never was — it renders as
+ * ``hitlSlot`` inside the Composer, anchored to the run it is asking
+ * about.
+ */
 type PanelState =
   | { kind: "none" }
-  | { kind: "mcp" }
-  | { kind: "codeindex" }
   | { kind: "loop" }
-  | { kind: "schedule" }
   | { kind: "login" }
   | { kind: "info"; title: string; markdown: string }
-  | { kind: "details"; title: string; method: string; fallback: string }
-  | { kind: "agents" }
-  | { kind: "skills" }
-  | { kind: "plugins" }
-  | { kind: "knowledge" }
-  | { kind: "hooks" }
-  | { kind: "watcher" }
   | { kind: "dir-picker" };
 
 interface UpdateInfo {
@@ -107,6 +121,18 @@ interface UpdateInfo {
   latest_version: string;
   download_url?: string;
 }
+
+/** The destinations with a permanent seat in the header.
+ *
+ * Three, not thirteen: a header row stops being read at about four
+ * items, and these are the ones you go back to while working rather
+ * than the ones you configure once. The rest keep their place in
+ * `TOOLS_MENU` below. */
+const HEADER_LINKS: { kind: PageKind; label: string }[] = [
+  { kind: "plugins", label: "Plugins" },
+  { kind: "knowledge", label: "Knowledge" },
+  { kind: "agents", label: "Agents" },
+];
 
 /** Entries for the header tools menu — each opens its feature's UI
  * directly (no slash command visible to the user). */
@@ -193,6 +219,9 @@ export default function App() {
   const [status, setStatus] = useState<StatusUpdate | null>(null);
   const [hitl, setHitl] = useState<HITLRequest[] | null>(null);
   const [panel, setPanel] = useState<PanelState>({ kind: "none" });
+  // Where this window is. Empty means the chat is showing. Persisted
+  // per window under PAGE_KEY — see the hydrate block below.
+  const [pages, setPages] = useState<PageRoute[]>([]);
   const [composerSeed, setComposerSeed] = useState<{ text: string; n: number } | null>(null);
   // Plain-browser fallback for host.openFile — bridge-equipped hosts
   // (Tauri / VSCode / JetBrains) handle the open themselves and never
@@ -460,6 +489,11 @@ export default function App() {
   // label reused across app runs can tell "my session" from "some
   // other repo's session that had this label last time".
   const PROJECT_DIR_KEY = "project-dir";
+  // Which page this window is on. Per-window because it is keyed by
+  // client_id like everything else here: two windows on one session
+  // navigate independently, and a reused ``w-2`` label comes back
+  // where it left off.
+  const PAGE_KEY = "page";
   const SIDEBAR_KEY = "sidebar-open";
   // The folder this window was opened onto, from New Window. Empty
   // for the first window, which uses the backend's default session.
@@ -858,6 +892,11 @@ export default function App() {
             const storedSidebar = clientState.get(SIDEBAR_KEY);
             if (storedSidebar === "true") setSidebarOpenState(true);
             else if (storedSidebar === "false") setSidebarOpenState(false);
+            // Put the window back on the page it was on. ``restore``
+            // yields an empty stack for anything it cannot read, so a
+            // value written by an older release opens the chat rather
+            // than failing the whole hydrate.
+            setPages(restorePages(clientState.get(PAGE_KEY)));
             // Adopt a session for this view. An already-bound
             // sessionId wins outright (reconnect mid-session — don't
             // churn it); otherwise the plan comes from the window's
@@ -1037,7 +1076,7 @@ export default function App() {
           void notifyHost({
             title,
             body,
-            onClick: () => setPanel({ kind: "schedule" }),
+            onClick: () => goPage({ kind: "schedule", label: "Scheduled tasks" }),
             data: { channel: m.channel, task_id: m.payload.task_id },
           });
         } else if (m.channel === "file_edited") {
@@ -1387,6 +1426,27 @@ export default function App() {
     const t = setInterval(refreshStatus, 5_000);
     return () => clearInterval(t);
   }, [conn, refreshStatus]);
+
+  // Navigation. Every mutation goes through these so the persisted
+  // copy cannot drift from the rendered one — the same reason
+  // ``setRunPhase`` exists rather than setting the phase directly.
+  // One writer. The state updater stays pure — StrictMode invokes it
+  // twice in development, and a ``clientState.set`` inside it would
+  // fire twice with it.
+  const navigate = useCallback(
+    (next: PageRoute[]) => {
+      clientState.set(PAGE_KEY, serialisePages(next));
+      setPages(next);
+    },
+    [clientState],
+  );
+
+  const goPage = useCallback((route: PageRoute) => navigate(openRoot(route)), [navigate]);
+  const goBack = useCallback(() => navigate(popPage(pages)), [navigate, pages]);
+  const goCrumb = useCallback((index: number) => navigate(truncateTo(pages, index)), [navigate, pages]);
+  const goChat = useCallback(() => navigate([]), [navigate]);
+
+  const page = currentPage(pages);
 
   // Group branding. Keyed on the serialised theme rather than the
   // object: status arrives every five seconds and carries a fresh
@@ -2191,10 +2251,10 @@ export default function App() {
             setPanel({ kind: "login" });
             return;
           case "mcp":
-            setPanel({ kind: "mcp" });
+            goPage({ kind: "mcp", label: "MCP servers" });
             return;
           case "codeindex":
-            setPanel({ kind: "codeindex" });
+            goPage({ kind: "codeindex", label: "CodeIndex" });
             return;
           case "loop":
             if (content && echo) append(assistantItem(content));
@@ -2202,25 +2262,25 @@ export default function App() {
             return;
           case "schedule":
             if (content && echo) append(assistantItem(content));
-            setPanel({ kind: "schedule" });
+            goPage({ kind: "schedule", label: "Scheduled tasks" });
             return;
           case "agents":
-            setPanel({ kind: "agents" });
+            goPage({ kind: "agents", label: "Agents" });
             return;
           case "skills":
-            setPanel({ kind: "skills" });
+            goPage({ kind: "skills", label: "Skills" });
             return;
           case "plugins":
-            setPanel({ kind: "plugins" });
+            goPage({ kind: "plugins", label: "Plugins" });
             return;
           case "knowledge":
-            setPanel({ kind: "knowledge" });
+            goPage({ kind: "knowledge", label: "Knowledge" });
             return;
           case "hooks":
-            setPanel({ kind: "hooks" });
+            goPage({ kind: "hooks", label: "Hooks" });
             return;
           case "watcher":
-            setPanel({ kind: "watcher" });
+            goPage({ kind: "watcher", label: "Watcher" });
             return;
           case "help": {
             const lines = [...BUILTIN_COMMANDS, ...skills].map(
@@ -2470,7 +2530,7 @@ export default function App() {
         onClose={() => setSidebarOpen(false)}
       />
 
-      <div className="main">
+      <div className={`main${page ? " main--paged" : ""}`}>
         {/* Window drag in the Tauri shell. Three layers of fallback —
             we want this to work on every Tauri build / WebKit quirk:
               1. ``data-tauri-drag-region`` attribute (Tauri's preferred
@@ -2529,6 +2589,25 @@ export default function App() {
                 component itself paints nothing otherwise. */}
             <BackendVersionChip />
           </div>
+          {/* The destinations people come back to, promoted out of the
+              thirteen-entry tools menu. Everything else still lives
+              there — this is about the ones you return to mid-task,
+              not about ranking features. Before this, the only
+              persistent way in was a flat menu one click deep, and the
+              only signposted way in was the empty-state cards, which
+              vanish the moment you send a first message. */}
+          <nav className="header-links" aria-label="Sections">
+            {HEADER_LINKS.map((link) => (
+              <button
+                key={link.kind}
+                className={`header-link${page?.kind === link.kind ? " active" : ""}`}
+                aria-current={page?.kind === link.kind ? "page" : undefined}
+                onClick={() => goPage({ kind: link.kind, label: link.label })}
+              >
+                {link.label}
+              </button>
+            ))}
+          </nav>
           <div className="header-spacer" />
           {items.length > 0 && (
             <button
@@ -2852,6 +2931,52 @@ export default function App() {
         )}
         </div>
 
+        {/* The page, when there is one. Rendered inside ``.main`` and
+            positioned over the conversation rather than replacing it
+            in the flow — the transcript keeps its box and its scroll
+            offset, so coming back lands where you left. ``.main--paged``
+            hides what is underneath with ``visibility``, which also
+            takes it out of the tab order.
+
+            Every panel below still renders its own ``Drawer``; the
+            context is what turns that into page chrome. */}
+        {page && (
+          <PageContext.Provider
+            value={{ trail: pages, onCrumb: goCrumb, onBack: goBack, onClose: goChat }}
+          >
+            {page.kind === "plugins" && <PluginsPanel client={client} onClose={goChat} />}
+            {page.kind === "knowledge" && <KnowledgePanel client={client} onClose={goChat} />}
+            {page.kind === "codeindex" && <CodeIndexPanel client={client} onClose={goChat} />}
+            {page.kind === "agents" && <AgentsPanel client={client} onClose={goChat} />}
+            {page.kind === "schedule" && <SchedulePanel client={client} onClose={goChat} />}
+            {page.kind === "watcher" && <WatcherPanel client={client} onClose={goChat} />}
+            {page.kind === "hooks" && <HooksPanel client={client} onClose={goChat} />}
+            {page.kind === "mcp" && (
+              <McpPanel
+                client={client}
+                onClose={goChat}
+                onAddServer={(seed) => {
+                  goChat();
+                  setComposerSeed({ text: seed, n: Date.now() });
+                }}
+              />
+            )}
+            {page.kind === "skills" && (
+              <SkillsPanel
+                client={client}
+                onRun={(cmd) => {
+                  // Don't fire the skill — drop it into the composer so
+                  // the user can add arguments and send when ready. No
+                  // trailing space, so the autocomplete menu stays open.
+                  goChat();
+                  setComposerSeed({ text: cmd, n: Date.now() });
+                }}
+                onClose={goChat}
+              />
+            )}
+          </PageContext.Provider>
+        )}
+
         <Composer
           brandName={groupName}
           hitlSlot={
@@ -2961,11 +3086,11 @@ export default function App() {
                   without a separate footer chip. */}
               <CodeIndexIndicator
                 client={client}
-                onOpen={() => setPanel({ kind: "codeindex" })}
+                onOpen={() => goPage({ kind: "codeindex", label: "CodeIndex" })}
               />
               <WatcherIndicator
                 client={client}
-                onOpen={() => setPanel({ kind: "watcher" })}
+                onOpen={() => goPage({ kind: "watcher", label: "Watcher" })}
               />
               <GroupIndicator client={client} />
             </>
@@ -2983,18 +3108,12 @@ export default function App() {
         </div>
       </div>
 
-      {panel.kind === "mcp" && (
-        <McpPanel
-          client={client}
+      {panel.kind === "info" && (
+        <InfoPanel
+          title={panel.title}
+          markdown={panel.markdown}
           onClose={() => setPanel({ kind: "none" })}
-          onAddServer={(seed) => {
-            setPanel({ kind: "none" });
-            setComposerSeed({ text: seed, n: Date.now() });
-          }}
         />
-      )}
-      {panel.kind === "codeindex" && (
-        <CodeIndexPanel client={client} onClose={() => setPanel({ kind: "none" })} />
       )}
       {panel.kind === "loop" && (
         <LoopPanel
@@ -3009,54 +3128,6 @@ export default function App() {
             void runUserMessage(prompt);
           }}
         />
-      )}
-      {panel.kind === "schedule" && (
-        <SchedulePanel client={client} onClose={() => setPanel({ kind: "none" })} />
-      )}
-      {panel.kind === "watcher" && (
-        <WatcherPanel client={client} onClose={() => setPanel({ kind: "none" })} />
-      )}
-      {panel.kind === "info" && (
-        <InfoPanel
-          title={panel.title}
-          markdown={panel.markdown}
-          onClose={() => setPanel({ kind: "none" })}
-        />
-      )}
-      {panel.kind === "details" && (
-        <DetailsPanel
-          client={client}
-          title={panel.title}
-          method={panel.method}
-          fallbackMarkdown={panel.fallback}
-          onClose={() => setPanel({ kind: "none" })}
-        />
-      )}
-      {panel.kind === "agents" && (
-        <AgentsPanel client={client} onClose={() => setPanel({ kind: "none" })} />
-      )}
-      {panel.kind === "skills" && (
-        <SkillsPanel
-          client={client}
-          onRun={(cmd) => {
-            // Don't fire the skill — drop it into the composer so the
-            // user can add arguments and send when ready.
-            setPanel({ kind: "none" });
-            // No trailing space — keeps the autocomplete menu open so
-            // the user can pick a sub-suggestion or just press Enter.
-            setComposerSeed({ text: cmd, n: Date.now() });
-          }}
-          onClose={() => setPanel({ kind: "none" })}
-        />
-      )}
-      {panel.kind === "plugins" && (
-        <PluginsPanel client={client} onClose={() => setPanel({ kind: "none" })} />
-      )}
-      {panel.kind === "knowledge" && (
-        <KnowledgePanel client={client} onClose={() => setPanel({ kind: "none" })} />
-      )}
-      {panel.kind === "hooks" && (
-        <HooksPanel client={client} onClose={() => setPanel({ kind: "none" })} />
       )}
       {previewPath && (
         <FilePreview
