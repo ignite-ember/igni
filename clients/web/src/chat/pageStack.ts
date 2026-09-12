@@ -1,8 +1,9 @@
 /**
  * Where a window is, as a stack.
  *
- * The nine browsable destinations — plugins, knowledge, codeindex, mcp,
- * watcher, hooks, schedule, agents, skills — used to share one slot of
+ * The browsable destinations — plugins, knowledge, codeindex, mcp,
+ * watcher, hooks, schedule, agents, skills, and the three that came
+ * later: loop, help, context. They used to share one slot of
  * `PanelState` and render as a centre-screen modal. One slot means no
  * history: `KnowledgePanel` walks collections into documents and had no
  * way to say where you were or to go back one level, because there was
@@ -32,7 +33,10 @@ export type PageKind =
   | "hooks"
   | "schedule"
   | "agents"
-  | "skills";
+  | "skills"
+  | "loop"
+  | "help"
+  | "context";
 
 const PAGE_KINDS: ReadonlySet<string> = new Set<PageKind>([
   "plugins",
@@ -44,6 +48,9 @@ const PAGE_KINDS: ReadonlySet<string> = new Set<PageKind>([
   "schedule",
   "agents",
   "skills",
+  "loop",
+  "help",
+  "context",
 ]);
 
 export interface PageRoute {

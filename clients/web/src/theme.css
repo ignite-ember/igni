@@ -8967,45 +8967,196 @@ button {
   cursor: not-allowed;
 }
 
-/* ── Header section links ────────────────────────────────────────
-   The three destinations promoted out of the tools menu. Sized to
-   sit in the brand row without competing with it: the brand is the
-   product, these are places. */
-.header-links {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  margin-left: 10px;
+/* ── Help page ───────────────────────────────────────────────────
+   Commands grouped by what you are trying to do. Clicking one seeds
+   the composer rather than firing it — see ``HelpPage``. */
+.help-intro {
+  color: var(--fg-muted);
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 16px;
 }
 
-.header-link {
-  background: none;
-  border: none;
-  padding: 4px 9px;
-  border-radius: var(--radius-sm);
-  color: var(--fg-faint);
-  font: inherit;
+.help-group {
+  margin-bottom: 22px;
+}
+
+.help-group-title {
+  margin: 0 0 2px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.help-group-blurb {
+  margin: 0 0 10px;
   font-size: 12.5px;
+  color: var(--fg-faint);
+}
+
+.help-commands {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  gap: 4px;
+}
+
+.help-command {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font: inherit;
   cursor: pointer;
+}
+
+.help-command:hover {
+  border-color: var(--border-soft);
+  background: var(--bg-surface);
+}
+
+.help-command-name {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent-orange-text, #fb9c5a);
   white-space: nowrap;
 }
 
-.header-link:hover {
-  color: var(--fg);
-  background: var(--bg-raised);
+.help-command-desc {
+  font-size: 12.5px;
+  color: var(--fg-muted);
 }
 
-.header-link.active {
-  color: var(--fg);
-  background: var(--bg-raised);
-  font-weight: 600;
+/* ── Context page ────────────────────────────────────────────────
+   The runs-vs-floor split, and why ``/compact`` cannot shrink the
+   second one. */
+.ctx-total {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
 }
 
-/* Narrow hosts — the JetBrains tool window and the VSCode sidebar
-   are routinely under 400px, where three links and the brand cannot
-   both fit. The tools menu still has all of them. */
-@media (max-width: 620px) {
-  .header-links {
-    display: none;
-  }
+.ctx-total-n {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.ctx-total-unit {
+  color: var(--fg-muted);
+}
+
+.ctx-total-of {
+  color: var(--fg-faint);
+  font-size: 12.5px;
+}
+
+.ctx-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-inset);
+  margin-bottom: 14px;
+}
+
+.ctx-bar-runs {
+  background: var(--accent, #f97316);
+}
+
+.ctx-bar-floor {
+  background: var(--border);
+}
+
+.ctx-key {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  margin-right: 7px;
+}
+
+.ctx-key-runs {
+  background: var(--accent, #f97316);
+}
+
+.ctx-key-floor {
+  background: var(--border);
+}
+
+.ctx-rows {
+  margin-bottom: 16px;
+}
+
+.ctx-note {
+  color: var(--fg-muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+  margin: 0 0 18px;
+}
+
+.ctx-error {
+  color: var(--danger);
+}
+
+.ctx-empty {
+  color: var(--fg-faint);
+}
+
+/* ── CodeIndex: nothing indexed yet ──────────────────────────────
+   Replaces the zeroed dashboard. See ``NotIndexedYet``. */
+.codeindex-empty {
+  padding: 18px 0 6px;
+}
+
+.codeindex-empty-lead {
+  margin: 0 0 16px;
+  max-width: 60ch;
+  line-height: 1.6;
+  color: var(--fg-muted);
+}
+
+.codeindex-empty-lead strong {
+  color: var(--fg);
+}
+
+.codeindex-empty-langs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.codeindex-empty-lang {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+.codeindex-empty-lang code {
+  font-family: var(--mono, ui-monospace, monospace);
+}
+
+.codeindex-empty-lang-n {
+  color: var(--fg-faint);
+}
+
+.codeindex-empty-where {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--fg-faint);
+}
+
+.codeindex-blocked-since {
+  color: var(--fg-faint);
+  white-space: nowrap;
 }

@@ -136,6 +136,7 @@ export type CommandAction =
   | "schedule"
   | "watcher"
   | "compact"
+  | "ctx"
   | "run_prompt";
 
 export interface CommandResult extends BaseMessage {

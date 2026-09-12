@@ -24,6 +24,8 @@ interface CodeIndexStatus {
   install_state: string;
   repository_id: string;
   install_url: string;
+  /** The portal's repositories page — where indexing is turned on. */
+  portal_url: string;
   remote_url: string;
   commits_indexed: number;
   index_size_bytes: number;
@@ -267,6 +269,57 @@ export function CodeIndexPanel({
   const s = stateSummary(status);
   const pct = status.sync_progress_pct;
   const needsInstall = status.install_state === "needs_install";
+
+  // Why nothing is being indexed, when the attempts themselves say.
+  //
+  // The watcher records every attempt, and a blocked client records
+  // the same one every second: this machine had twenty entries all
+  // reading "no igni server configured — set `api_url` in
+  // ~/.igni/config.yaml". The reason was precise, actionable, and
+  // shown nowhere — the page said "HEAD has not been indexed yet"
+  // and left the user to guess why. It is only reachable by hovering
+  // a bar in a strip that is hidden in exactly this state.
+  //
+  // Skips carry ``reason``, failures carry ``error``. Either is worth
+  // more than the absence of an index it explains.
+  const blockedBy = (() => {
+    if (status.sync_in_progress) return null;
+    const recent = activity.slice(0, 5);
+    if (!recent.length || recent.some((a) => a.succeeded)) return null;
+    const top = recent[0];
+    const text = top.error || top.reason;
+    if (!text) return null;
+    // How long it has been saying this — consecutive attempts sharing
+    // the same complaint.
+    const streak = activity.findIndex((a) => (a.error || a.reason) !== text);
+    return {
+      text,
+      failed: !!top.error,
+      count: streak === -1 ? activity.length : streak,
+      since: activity[(streak === -1 ? activity.length : streak) - 1]?.ts || top.ts,
+    };
+  })();
+
+  // Nothing has ever been indexed here.
+  //
+  // The panel used to draw its whole instrument layout in this state:
+  // a donut at 0%, five tiles reading 0% / 0 / 0 B, a language table
+  // with a 0% badge on all ten rows, and a commit list where every
+  // row said NOT INDEXED. Every number was true and the page still
+  // read as mock data, because a dashboard whose every value is zero
+  // looks like a template nobody wired up.
+  //
+  // Same reasoning the ``needsInstall`` branches below already apply,
+  // for the state where the App is connected and the index is simply
+  // empty. ``last_sync_at`` is load-bearing here and only became
+  // trustworthy when ``_derive_last_sync`` started requiring a
+  // *successful* sync.
+  const neverIndexed =
+    !needsInstall &&
+    !status.sync_in_progress &&
+    status.commits_indexed === 0 &&
+    !status.last_sync_at &&
+    (breakdown?.files_indexed ?? 0) === 0;
   const provider = gitProvider(status.remote_url);
   const lastDelta = status.last_sync_stats || {};
 
@@ -282,36 +335,37 @@ export function CodeIndexPanel({
         onClick: () => window.open(status.install_url, "_blank", "noopener"),
       },
     };
-  } else if (!status.head_indexed && !status.sync_in_progress && !needsInstall) {
+  } else if (
+    !status.head_indexed &&
+    !status.sync_in_progress &&
+    !needsInstall &&
+    !neverIndexed
+  ) {
+    // Informational, and no "Sync now". A background HEAD watcher
+    // polls at 1Hz and fires the sync itself, so the button was
+    // offering to do what is already happening — and the one case it
+    // helped with, a watcher that keeps failing, it did not explain.
+    //
+    // Suppressed entirely when nothing has ever been indexed: the
+    // text counts unindexed commits out of the recent few, so on an
+    // empty index it read "5 recent commits not indexed" as though
+    // the other 1,372 files were fine.
     const aheadCommits = (breakdown?.recent_commits || []).filter((c) => !c.indexed).length;
     actionBanner = {
       tone: "warn",
       text:
         aheadCommits > 0
-          ? `${countOf(aheadCommits, "recent commit")} not indexed — sync to refresh.`
-          : "HEAD isn't indexed — sync to enable code search.",
-      cta: { label: "Sync now", onClick: () => void act("sync") },
+          ? `${countOf(aheadCommits, "recent commit")} not indexed yet — syncing follows HEAD automatically.`
+          : "HEAD isn't indexed yet — syncing follows HEAD automatically.",
     };
   }
 
+  // Indexing is started in the portal, so the verbs that start it
+  // are not here. What remains is local disk maintenance: the index
+  // cache lives on this machine, and dropping commit indexes nothing
+  // points at any more is this side's business.
   const actionRow = (
     <div className="codeindex-toolbar">
-      <button
-        className="btn btn-sm"
-        disabled={!!busy || status.sync_in_progress || needsInstall}
-        onClick={() => act("sync")}
-        title={needsInstall ? "Connect the App first" : "Index commits since the last sync"}
-      >
-        {runningVerb === "sync" ? "Syncing…" : "Sync"}
-      </button>
-      <button
-        className="btn btn-sm"
-        disabled={!!busy || status.sync_in_progress || needsInstall}
-        onClick={() => act("resync")}
-        title={needsInstall ? "Connect the App first" : "Re-index the current HEAD from scratch"}
-      >
-        {runningVerb === "resync" ? "Resyncing…" : "Resync"}
-      </button>
       <button
         className="btn btn-sm"
         disabled={!!busy || needsInstall}
@@ -332,6 +386,8 @@ export function CodeIndexPanel({
   // display; the raw counts in the sub-line still reveal the drift.
   const coveragePct = coverageRaw == null ? null : Math.min(100, coverageRaw);
   const coverageStale = coverageRaw != null && coverageRaw > 100;
+
+
 
   return (
     <Drawer title="CodeIndex" onClose={onClose} headerExtras={actionRow}>
@@ -357,6 +413,31 @@ export function CodeIndexPanel({
         </div>
       )}
 
+      {blockedBy && (
+        <div className={`codeindex-banner tone-${blockedBy.failed ? "bad" : "warn"}`}>
+          <span>
+            <strong>
+              {blockedBy.failed ? "Syncing is failing" : "Syncing is blocked"}
+            </strong>{" "}
+            — {blockedBy.text}
+            {blockedBy.count > 1 && (
+              <span className="codeindex-blocked-since">
+                {" "}
+                ({blockedBy.count} attempts, since {formatRelative(blockedBy.since)})
+              </span>
+            )}
+          </span>
+        </div>
+      )}
+
+      {neverIndexed && (
+        <NotIndexedYet
+          breakdown={breakdown}
+          portalUrl={status.portal_url}
+          blocked={!!blockedBy}
+        />
+      )}
+
       {/* ── Stat tiles ───────────────────────────────────────────
        *  All of these (Coverage, Commits, On disk, Last sync,
        *  Connection state) are CodeIndex-specific telemetry. When
@@ -364,7 +445,7 @@ export function CodeIndexPanel({
        *  connection tile itself — keep that visible standalone so
        *  the user sees the actionable status, and skip the rest
        *  rather than render placeholder zeros. */}
-      {needsInstall ? (
+      {neverIndexed ? null : needsInstall ? (
         <div className="codeindex-stats">
           <StatTile
             icon={<Icons.plug />}
@@ -445,8 +526,12 @@ export function CodeIndexPanel({
       {/* ── Activity sparkline ─────────────────────────────────── */
       /*  Activity entries describe past sync/resync/etc. ops; when
        *  the App isn't installed there's nothing to plot and the
-       *  empty-ish strip just adds vertical noise. */}
-      {!needsInstall && activity.length > 0 && (
+       *  empty-ish strip just adds vertical noise. Same when nothing
+       *  has ever been indexed: the entries there are failed and
+       *  skipped attempts, and the strip draws them as featureless
+       *  bars — sixteen grey blocks saying nothing, which is the
+       *  look this whole empty state exists to remove. */}
+      {!needsInstall && !neverIndexed && activity.length > 0 && (
         <ActivityStrip activity={activity} />
       )}
 
@@ -463,9 +548,9 @@ export function CodeIndexPanel({
         <Section
           title="At HEAD"
           subtitle={
-            coveragePct != null
-              ? `${breakdown.file_count.toLocaleString()} files · ${coveragePct}% indexed`
-              : `${breakdown.file_count.toLocaleString()} tracked files`
+            neverIndexed || coveragePct == null
+              ? `${breakdown.file_count.toLocaleString()} tracked files`
+              : `${breakdown.file_count.toLocaleString()} files · ${coveragePct}% indexed`
           }
         >
           <div className="codeindex-head-grid">
@@ -474,6 +559,7 @@ export function CodeIndexPanel({
               total={breakdown.file_count}
               indexed={breakdown.languages_indexed || {}}
               filesIndexed={breakdown.files_indexed}
+              distributionOnly={neverIndexed}
             />
             <CommitTimeline commits={breakdown.recent_commits} />
           </div>
@@ -627,11 +713,18 @@ function LanguageDonut({
   total,
   indexed,
   filesIndexed,
+  distributionOnly = false,
 }: {
   languages: LanguageEntry[];
   total: number;
   indexed: Record<string, number>;
   filesIndexed: number;
+  /** Nothing is indexed, so answer "what is this repo made of"
+   *  instead of "how much of it is covered". The outer ring is the
+   *  type distribution either way — what changes is the centre
+   *  label and the per-language badge, which would otherwise read
+   *  0% on every row and make real data look fabricated. */
+  distributionOnly?: boolean;
 }) {
   const [hover, setHover] = useState<string | null>(null);
 
@@ -730,10 +823,22 @@ function LanguageDonut({
         )}
         {/* Center label */}
         <text x="74" y="68" textAnchor="middle" fontSize="20" fontWeight="700" fill="var(--fg)">
-          {focus ? `${Math.round(focus.coverage * 100)}%` : `${overallCoverage}%`}
+          {distributionOnly
+            ? focus
+              ? `${focus.pct}%`
+              : total.toLocaleString()
+            : focus
+              ? `${Math.round(focus.coverage * 100)}%`
+              : `${overallCoverage}%`}
         </text>
         <text x="74" y="86" textAnchor="middle" fontSize="10.5" fill="var(--fg-faint)">
-          {focus ? `.${focus.ext === "(other)" ? "·" : focus.ext} indexed` : "indexed"}
+          {distributionOnly
+            ? focus
+              ? `.${focus.ext === "(other)" ? "·" : focus.ext} of files`
+              : "files"
+            : focus
+              ? `.${focus.ext === "(other)" ? "·" : focus.ext} indexed`
+              : "indexed"}
         </text>
       </svg>
       <ul className="codeindex-donut-legend">
@@ -745,17 +850,29 @@ function LanguageDonut({
               className={hover === s.ext ? "is-hover" : ""}
               onMouseEnter={() => setHover(s.ext)}
               onMouseLeave={() => setHover(null)}
-              title={`${s.indexed.toLocaleString()} of ${s.count.toLocaleString()} indexed`}
+              title={
+                distributionOnly
+                  ? `${s.count.toLocaleString()} files · ${s.pct}% of the repo`
+                  : `${s.indexed.toLocaleString()} of ${s.count.toLocaleString()} indexed`
+              }
             >
               <span className="codeindex-donut-swatch" style={{ background: s.color }} />
               <span className="codeindex-donut-ext">.{s.ext === "(other)" ? "·" : s.ext}</span>
               <span className="codeindex-donut-count">{s.count.toLocaleString()}</span>
               <span
                 className={`codeindex-donut-cov ${
-                  cov >= 80 ? "tone-good" : cov >= 30 ? "tone-warn" : cov > 0 ? "tone-bad" : "tone-muted"
+                  distributionOnly
+                    ? "tone-muted"
+                    : cov >= 80
+                      ? "tone-good"
+                      : cov >= 30
+                        ? "tone-warn"
+                        : cov > 0
+                          ? "tone-bad"
+                          : "tone-muted"
                 }`}
               >
-                {cov}%
+                {distributionOnly ? `${s.pct}%` : `${cov}%`}
               </span>
             </li>
           );
@@ -853,6 +970,66 @@ function ActivityStrip({ activity }: { activity: ActivityEntry[] }) {
           </span>
           <span className="codeindex-spark-when">{ordered[hover].duration_ms}ms</span>
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The line that explains an unindexed repository.
+ *
+ * Deliberately small. The repository's own facts — the type
+ * distribution ring, the recent commits and whether each has been
+ * processed — are real whether or not anything is indexed, so they
+ * keep their normal place below rather than being replaced by a
+ * summary of themselves. What the page used to add on top of them
+ * was the *telemetry*: a coverage ring reading 0%, five tiles of
+ * zeroes, and a 0% badge on every language row. Those are gone, and
+ * this says why in a sentence.
+ *
+ * Reporting, not acting. Indexing is turned on per repository in the
+ * portal, where the repository record and its ``indexing_enabled``
+ * flag live; a button here would be a second way to start the same
+ * job, from the side that does not own it.
+ */
+function NotIndexedYet({
+  breakdown,
+  portalUrl,
+  blocked,
+}: {
+  breakdown: HeadBreakdown | null;
+  portalUrl: string;
+  /** Something concrete is already in the way and is named above.
+   *  Pointing at the portal underneath it would be a second, vaguer
+   *  answer to a question that has just been answered. */
+  blocked: boolean;
+}) {
+  return (
+    <div className="codeindex-empty">
+      <p className="codeindex-empty-lead">
+        {breakdown && breakdown.file_count > 0 ? (
+          <>
+            <strong>{breakdown.file_count.toLocaleString()}</strong> tracked files, none of
+            them indexed yet — the breakdown below is the repository as it stands.
+            Indexing builds the semantic search the agent uses to find code by meaning
+            rather than by name.
+          </>
+        ) : (
+          <>
+            Nothing is indexed yet. Indexing builds the semantic search the agent uses to
+            find code by meaning rather than by name.
+          </>
+        )}
+      </p>
+      {!blocked && (
+        <p className="codeindex-empty-where">
+          Indexing is enabled per repository in the portal.{" "}
+          {portalUrl && (
+            <a href={portalUrl} target="_blank" rel="noopener noreferrer">
+              Open repositories
+            </a>
+          )}
+        </p>
       )}
     </div>
   );

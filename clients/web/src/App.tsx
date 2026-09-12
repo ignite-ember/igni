@@ -41,6 +41,8 @@ import {
   type PageRoute,
 } from "./chat/pageStack";
 import { PageContext } from "./components/PageShell";
+import { HelpPage } from "./components/pages/HelpPage";
+import { ContextPage } from "./components/pages/ContextPage";
 import { handleEsc } from "./chat/escHandler";
 import { buildContinuedPrompt } from "./chat/continueInterrupted";
 import {
@@ -55,7 +57,7 @@ import { ClientStateStore, ensureClientId } from "./clientState";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ChatItemView } from "./components/ChatItems";
 import { ChatSearchBar } from "./components/ChatSearchBar";
-import { Composer, BUILTIN_COMMANDS, type SlashCommand } from "./components/Composer";
+import { Composer, type SlashCommand } from "./components/Composer";
 import { CodeIndexIndicator } from "./components/CodeIndexIndicator";
 import { GroupIndicator } from "./components/GroupIndicator";
 import { WatcherIndicator } from "./components/WatcherIndicator";
@@ -84,7 +86,6 @@ import { applyTheme, brandMark, brandName } from "./lib/theme";
 import { PluginsPanel } from "./components/panels/PluginsPanel";
 import { SkillsPanel } from "./components/panels/SkillsPanel";
 import { DirectoryPicker } from "./components/panels/DirectoryPicker";
-import { InfoPanel } from "./components/panels/InfoPanel";
 import { LoginPanel } from "./components/panels/LoginPanel";
 import { LoopPanel } from "./components/panels/LoopPanel";
 import { McpPanel } from "./components/panels/McpPanel";
@@ -110,9 +111,7 @@ import { countOf } from "./lib/plural";
  */
 type PanelState =
   | { kind: "none" }
-  | { kind: "loop" }
   | { kind: "login" }
-  | { kind: "info"; title: string; markdown: string }
   | { kind: "dir-picker" };
 
 interface UpdateInfo {
@@ -2258,7 +2257,7 @@ export default function App() {
             return;
           case "loop":
             if (content && echo) append(assistantItem(content));
-            setPanel({ kind: "loop" });
+            goPage({ kind: "loop", label: "Loop" });
             return;
           case "schedule":
             if (content && echo) append(assistantItem(content));
@@ -2282,17 +2281,12 @@ export default function App() {
           case "watcher":
             goPage({ kind: "watcher", label: "Watcher" });
             return;
-          case "help": {
-            const lines = [...BUILTIN_COMMANDS, ...skills].map(
-              (c) => `- \`${c.name}\` — ${c.description}`,
-            );
-            setPanel({
-              kind: "info",
-              title: "Help",
-              markdown: `### Commands\n\n${lines.join("\n")}`,
-            });
+          case "help":
+            goPage({ kind: "help", label: "Help" });
             return;
-          }
+          case "ctx":
+            goPage({ kind: "context", label: "Context" });
+            return;
           case "run_prompt":
             // Two sources land here:
             //  - Skills expand to a bare prompt → render nothing extra,
@@ -2806,7 +2800,6 @@ export default function App() {
                       ["/agents", "Dispatch to a specialist — architect, debugger, …"],
                       ["/skills", "Workflows like /commit and /resolve-issues"],
                       ["/workflows", "Run a CC-style multi-phase workflow"],
-                      ["/codeindex", "Semantic search across your repo"],
                       ["/schedule", "Background tasks that report back"],
                       ["/loop", "Repeat a prompt across a batch until done"],
                       ["/mcp", "Plug in external tools and data sources"],
@@ -2938,6 +2931,44 @@ export default function App() {
             {page.kind === "schedule" && <SchedulePanel client={client} onClose={goChat} />}
             {page.kind === "watcher" && <WatcherPanel client={client} onClose={goChat} />}
             {page.kind === "hooks" && <HooksPanel client={client} onClose={goChat} />}
+            {page.kind === "help" && (
+              <HelpPage
+                skills={skills}
+                onRun={(name) => {
+                  // Into the composer, not straight to the backend:
+                  // reading help is not deciding to run something, and
+                  // several of these take arguments.
+                  goChat();
+                  setComposerSeed({ text: name, n: Date.now() });
+                }}
+                onClose={goChat}
+              />
+            )}
+            {page.kind === "context" && (
+              <ContextPage
+                client={client}
+                maxContext={status?.max_context ?? 0}
+                onCompact={() => {
+                  goChat();
+                  void runCommand("/compact", false);
+                }}
+                onClose={goChat}
+              />
+            )}
+            {page.kind === "loop" && (
+              <LoopPanel
+                client={client}
+                onClose={goChat}
+                onResume={(prompt) => {
+                  // Back to the chat so the user can watch the
+                  // iteration stream — same as the slash-command path
+                  // for /loop resume.
+                  goChat();
+                  append(loopItem(prompt));
+                  void runUserMessage(prompt);
+                }}
+              />
+            )}
             {page.kind === "mcp" && (
               <McpPanel
                 client={client}
@@ -3095,27 +3126,6 @@ export default function App() {
         </div>
       </div>
 
-      {panel.kind === "info" && (
-        <InfoPanel
-          title={panel.title}
-          markdown={panel.markdown}
-          onClose={() => setPanel({ kind: "none" })}
-        />
-      )}
-      {panel.kind === "loop" && (
-        <LoopPanel
-          client={client}
-          onClose={() => setPanel({ kind: "none" })}
-          onResume={(prompt) => {
-            // Close the panel so the user can watch the iteration
-            // stream in the chat — same UX as the slash-command path
-            // for /loop resume.
-            setPanel({ kind: "none" });
-            append(loopItem(prompt));
-            void runUserMessage(prompt);
-          }}
-        />
-      )}
       {previewPath && (
         <FilePreview
           client={client}

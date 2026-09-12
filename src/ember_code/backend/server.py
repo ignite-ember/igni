@@ -853,6 +853,10 @@ class BackendServer:
         """See :meth:`ContextController.count_context_tokens`."""
         return await self.context.count_context_tokens()
 
+    async def context_breakdown(self) -> dict:
+        """See :meth:`ContextController.context_breakdown`."""
+        return await self.context.context_breakdown()
+
     async def compact_if_needed(self, ctx_tokens: int, max_ctx: int) -> msg.SessionCleared | None:
         """See :meth:`ContextController.compact_if_needed`."""
         return await self.context.compact_if_needed(ctx_tokens, max_ctx)
