@@ -204,6 +204,45 @@ button {
   background: var(--bg-raised);
 }
 
+/* Height of the floating sidebar cluster — the head row and the
+   New-chat button. ``Sidebar`` measures the rendered cluster and
+   overwrites this on the element; what is here is only the value used
+   for the first paint, before the observer runs, so it only has to be
+   close enough not to jump. */
+:root {
+  --sidebar-top-h: 90px;
+}
+
+.sidebar-links {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px 0;
+}
+
+.sidebar-link {
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.sidebar-link:hover {
+  color: var(--fg);
+  background: var(--bg-raised);
+}
+
+.sidebar-link.active {
+  color: var(--fg);
+  background: var(--bg-raised);
+  font-weight: 600;
+}
+
 .sidebar-section {
   padding: 10px 14px 4px;
   font-size: 11px;
@@ -237,8 +276,14 @@ button {
   /* ``padding-top`` matches the cluster's natural height so the
      first item sits crisp directly below the "Sessions" label at
      scroll-top, with no extra blank gap. Items only enter the blur
-     strip once the user actually scrolls. */
-  padding: 118px 8px 12px;
+     strip once the user actually scrolls.
+
+     One variable rather than the number twice: this and
+     ``.sidebar-blur``'s height are the same measurement, and they
+     were two literals that had to be changed together. Adding the
+     section links above the list is exactly the edit that would have
+     changed one and not the other. */
+  padding: var(--sidebar-top-h) 8px 12px;
   position: relative;
   z-index: 1;
   /* Same overscroll guard as ``.conversation`` so the macOS
@@ -258,7 +303,7 @@ button {
   top: 0;
   left: 0;
   right: 0;
-  height: 118px;
+  height: var(--sidebar-top-h);
   z-index: 5;
   pointer-events: none;
   background: var(--bg);
@@ -4121,6 +4166,114 @@ button {
 /* Feature panels: centered modal dialog on wide screens, right
    slide-in drawer only when the viewport is narrow (IDE side
    panels) — a full-height drawer wastes a wide screen. */
+/* ── Pages ───────────────────────────────────────────────────────
+   A destination that takes the pane, instead of a 620px modal
+   floating over it. See ``components/PageShell.tsx``.
+
+   Absolutely positioned rather than being a flex child of ``.main``,
+   so the conversation underneath keeps its box: Virtuoso stays sized
+   and holds its scroll offset, and coming back from a page lands
+   where you left rather than at the bottom of the transcript. The
+   chat and composer are hidden with ``visibility`` and not
+   ``display`` for the same reason — and because ``visibility``
+   also takes them out of the tab order, so Tab from a page cannot
+   land in a composer nobody can see. */
+.page {
+  position: absolute;
+  /* Clears the floating ``.app-header``. 58px is the same header
+     height ``.conversation``'s top padding is derived from — see the
+     comment there. Sits below the header's ``z-index: 10`` so the
+     header keeps working while a page is open. */
+  top: 58px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.main--paged > .conversation-frame,
+.main--paged > .composer-zone {
+  visibility: hidden;
+}
+
+.page-crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 10px 18px 0;
+  font-size: 12.5px;
+}
+
+.page-crumb-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.page-crumb {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  font: inherit;
+  cursor: pointer;
+}
+
+.page-crumb:hover {
+  color: var(--fg);
+  background: var(--bg-raised);
+}
+
+.page-crumb.current {
+  color: var(--fg);
+  font-weight: 600;
+  cursor: default;
+}
+
+.page-crumb-sep {
+  color: var(--fg-faint);
+  opacity: 0.6;
+}
+
+.page-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 18px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.page-title {
+  margin: 0;
+  font-weight: 700;
+  font-size: 17px;
+}
+
+.page-toolbar {
+  flex-shrink: 0;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.page-body {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 18px;
+  font-size: 13.5px;
+  /* Wider than the drawer's 620px, but not the full width of a
+     27-inch display — these are lists and forms, and a line of
+     metadata stretched across a metre reads worse than it did in
+     the modal. */
+  width: min(900px, 100%);
+  margin: 0 auto;
+}
+
 .drawer {
   position: fixed;
   top: 50%;
@@ -4229,7 +4382,11 @@ button {
   font-size: 13.5px;
 }
 
-.drawer-body .row {
+/* Shared with ``.page-body``: the nine panels that became pages kept
+   their bodies unchanged, so the row styling has to answer to either
+   wrapper. One selector rather than a duplicated block, so the two
+   cannot drift apart. */
+:is(.drawer-body, .page-body) .row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -4238,11 +4395,11 @@ button {
   border-bottom: 1px solid var(--border-soft);
 }
 
-.drawer-body .row .name {
+:is(.drawer-body, .page-body) .row .name {
   font-weight: 600;
 }
 
-.drawer-body .row .meta {
+:is(.drawer-body, .page-body) .row .meta {
   color: var(--fg-faint);
   font-size: 12px;
 }
@@ -8656,3 +8813,114 @@ button {
 .demo-page-composer-send:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* ── Header section links ────────────────────────────────────────
+   The three destinations promoted out of the tools menu. Sized to
+   sit in the brand row without competing with it: the brand is the
+   product, these are places. */
+.header-links {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 10px;
+}
+
+.header-link {
+  background: none;
+  border: none;
+  padding: 4px 9px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.header-link:hover {
+  color: var(--fg);
+  background: var(--bg-raised);
+}
+
+.header-link.active {
+  color: var(--fg);
+  background: var(--bg-raised);
+  font-weight: 600;
+}
+
+/* Narrow hosts — the JetBrains tool window and the VSCode sidebar
+   are routinely under 400px, where three links and the brand cannot
+   both fit. The tools menu still has all of them. */
+@media (max-width: 620px) {
+  .header-links {
+    display: none;
+  }
+}
+
+/* ── Workflows page ──────────────────────────────────────────────
+   One card per workflow: what it is, when to reach for it, and the
+   phases it walks through. Clicking seeds the composer — several take
+   a JSON argument object. See ``WorkflowsPage``. */
+.workflow-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md, 8px);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.workflow-card:hover {
+  border-color: var(--accent, #f97316);
+  background: var(--bg-surface);
+}
+
+.workflow-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.workflow-name {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.workflow-phases {
+  font-size: 11.5px;
+  color: var(--fg-faint);
+}
+
+.workflow-desc {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+
+.workflow-when {
+  font-size: 12px;
+  color: var(--fg-faint);
+  font-style: italic;
+}
+
+.workflow-phase-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.workflow-phase {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--fg-muted);
+}

@@ -912,6 +912,7 @@ dependencies = [
  "dirs 5.0.1",
  "flate2",
  "fs2",
+ "libc",
  "objc2 0.5.2",
  "objc2-foundation 0.2.2",
  "serde",

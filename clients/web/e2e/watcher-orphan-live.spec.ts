@@ -36,7 +36,7 @@ test("orphan process surfaces after BE restart", async ({ page, liveWsUrl }) => 
   await page.locator(".composer-editable").click();
   await page.locator(".composer-editable").type("/watcher");
   await page.locator(".composer-editable").press("Enter");
-  await expect(page.locator(".drawer")).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator(".page")).toBeVisible({ timeout: 10_000 });
 
   // The seeded orphan should render exactly one row.
   await expect(page.locator(".watcher-row")).toHaveCount(1, { timeout: 5_000 });

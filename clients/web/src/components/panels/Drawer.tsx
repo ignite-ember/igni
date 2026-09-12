@@ -1,14 +1,36 @@
-import { useEffect, type ReactNode } from "react";
+import { useContext, useEffect, type ReactNode } from "react";
 import { CloseIcon } from "../Icons";
+import { PageContext, PageShell, type PanelLevels } from "../PageShell";
 
+/**
+ * The frame a panel renders in — a modal, or a page.
+ *
+ * Which one is not the panel's business. Nine of the thirteen panels
+ * that use this are destinations you browse (plugins, knowledge,
+ * codeindex, …) and now render as pages with a breadcrumb trail; the
+ * rest are dialogs and still render as this modal. The panels
+ * themselves did not change: each one passes the same `title`,
+ * `headerExtras` and `toolbar` it always did, and `PageContext` — set
+ * by `App.tsx` around whatever the page stack says to render — decides
+ * the presentation.
+ *
+ * Doing it here rather than editing nine components is what kept the
+ * conversion honest: `PluginsPanel` is a thousand lines, and a
+ * mechanical edit repeated nine times across bodies that all differ
+ * slightly is how a wrapper swap turns into a rewrite.
+ */
 export function Drawer({
   title,
+  levels,
   headerExtras,
   toolbar,
   onClose,
   children,
 }: {
   title: ReactNode;
+  /** Depth inside this panel, for the page trail. Ignored as a
+   *  dialog — a modal has no breadcrumbs to extend. */
+  levels?: PanelLevels;
   /** Slot rendered between the title and the close button — sized
    *  to the remaining horizontal space. Used for inline search,
    *  status pills, etc. */
@@ -20,10 +42,17 @@ export function Drawer({
   onClose: () => void;
   children: ReactNode;
 }) {
+  const page = useContext(PageContext);
+
   // The close button advertises "Close (Esc)" — honor it. Capture
   // phase + stopPropagation so the app-level Esc (cancel run) doesn't
   // also fire while a panel is open.
+  //
+  // Skipped entirely as a page: `PageShell` owns Esc there, where it
+  // pops one level instead of closing outright. Two handlers on the
+  // same key would pop and close on a single press.
   useEffect(() => {
+    if (page) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       // A file preview (or any overlay marked .modal-overlay) sits
@@ -35,7 +64,24 @@ export function Drawer({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+  }, [onClose, page]);
+
+  if (page) {
+    return (
+      <PageShell
+        trail={page.trail}
+        levels={levels}
+        title={title}
+        headerExtras={headerExtras}
+        toolbar={toolbar}
+        onCrumb={page.onCrumb}
+        onBack={page.onBack}
+        onClose={page.onClose}
+      >
+        {children}
+      </PageShell>
+    );
+  }
 
   return (
     <>

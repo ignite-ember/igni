@@ -28,6 +28,19 @@ import {
 } from "./chat/model";
 import { applyVisualizationDelta } from "./chat/visualizationStream";
 import { nextObserverBusyState } from "./chat/observerBusy";
+import { planSessionBinding } from "./chat/sessionBinding";
+import {
+  current as currentPage,
+  openRoot,
+  pop as popPage,
+  restore as restorePages,
+  serialise as serialisePages,
+  truncateTo,
+  type PageKind,
+  type PageRoute,
+} from "./chat/pageStack";
+import { PageContext } from "./components/PageShell";
+import { WorkflowsPage } from "./components/pages/WorkflowsPage";
 import { handleEsc } from "./chat/escHandler";
 import { buildContinuedPrompt } from "./chat/continueInterrupted";
 import {
@@ -59,7 +72,6 @@ import { ScrollIndicator } from "./components/ScrollIndicator";
 import { Sidebar, type SessionEntry } from "./components/Sidebar";
 import { AgentsPanel } from "./components/panels/AgentsPanel";
 import { CodeIndexPanel } from "./components/panels/CodeIndexPanel";
-import { DetailsPanel } from "./components/panels/DetailsPanel";
 import { FilePreview } from "./components/FilePreview";
 import { HooksPanel } from "./components/panels/HooksPanel";
 import { KnowledgePanel } from "./components/panels/KnowledgePanel";
@@ -78,21 +90,25 @@ import { SchedulePanel } from "./components/panels/SchedulePanel";
 import { EmberClient, pickNativeDirectory, type ConnectionState } from "./protocol/client";
 import type { HITLRequest, ServerMessage, StatusUpdate } from "./protocol/messages";
 
+/**
+ * The things that are dialogs.
+ *
+ * Everything the app could open used to live in this one slot and
+ * render as a centre-screen modal. The destinations moved out to
+ * ``chat/pageStack.ts`` — they are places you browse, and a single
+ * slot cannot hold a trail. What is left is what a dialog actually
+ * is: pick one thing and go (``dir-picker``), get through a flow
+ * (``login``), or glance at a status and act on it (``loop``).
+ *
+ * The HITL prompt is not here either, and never was — it renders as
+ * ``hitlSlot`` inside the Composer, anchored to the run it is asking
+ * about.
+ */
 type PanelState =
   | { kind: "none" }
-  | { kind: "mcp" }
-  | { kind: "codeindex" }
   | { kind: "loop" }
-  | { kind: "schedule" }
   | { kind: "login" }
   | { kind: "info"; title: string; markdown: string }
-  | { kind: "details"; title: string; method: string; fallback: string }
-  | { kind: "agents" }
-  | { kind: "skills" }
-  | { kind: "plugins" }
-  | { kind: "knowledge" }
-  | { kind: "hooks" }
-  | { kind: "watcher" }
   | { kind: "dir-picker" };
 
 interface UpdateInfo {
@@ -101,6 +117,18 @@ interface UpdateInfo {
   latest_version: string;
   download_url?: string;
 }
+
+/** The destinations with a permanent seat in the sidebar.
+ *
+ * Above the session list, because that is what they are relative to
+ * it: places, not conversations. Three and not thirteen — the rest
+ * keep their place in `TOOLS_MENU` below, and these are the ones you
+ * go back to while working rather than configure once. */
+const SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
+  { kind: "plugins", label: "Plugins" },
+  { kind: "knowledge", label: "Knowledge" },
+  { kind: "agents", label: "Agents" },
+];
 
 /** Entries for the header tools menu — each opens its feature's UI
  * directly (no slash command visible to the user). */
@@ -114,6 +142,7 @@ const TOOLS_MENU: { label: string; command: string; desc: string }[] = [
   { label: "Hooks", command: "/hooks", desc: "pre/post tool hooks" },
   { label: "Loop", command: "/loop", desc: "recurring prompt status" },
   { label: "Scheduled tasks", command: "/schedule", desc: "background routines" },
+  { label: "Workflows", command: "/workflows", desc: "multi-phase agent scripts" },
   { label: "Watcher", command: "/watcher", desc: "background processes & live logs" },
   { label: "Compact context", command: "/compact", desc: "summarize old turns" },
   { label: "Context breakdown", command: "/ctx", desc: "system vs runs token split" },
@@ -187,6 +216,9 @@ export default function App() {
   const [status, setStatus] = useState<StatusUpdate | null>(null);
   const [hitl, setHitl] = useState<HITLRequest[] | null>(null);
   const [panel, setPanel] = useState<PanelState>({ kind: "none" });
+  // Where this window is. Empty means the chat is showing. Persisted
+  // per window under PAGE_KEY — see the hydrate block below.
+  const [pages, setPages] = useState<PageRoute[]>([]);
   const [composerSeed, setComposerSeed] = useState<{ text: string; n: number } | null>(null);
   // Plain-browser fallback for host.openFile — bridge-equipped hosts
   // (Tauri / VSCode / JetBrains) handle the open themselves and never
@@ -440,12 +472,32 @@ export default function App() {
   // a memoized store so all three keys (session-id, sidebar, draft)
   // round-trip the same way regardless of host (browser / VSCode /
   // JetBrains). See clientState.ts.
+  //
+  // Keyed by ``host.viewKey`` so two Tauri windows — which share an
+  // origin, and so share localStorage — are two distinct clients
+  // bound to two distinct sessions, rather than one client fighting
+  // itself over the session binding and the composer draft.
   const clientState = useMemo(
-    () => new ClientStateStore(client, ensureClientId()),
+    () => new ClientStateStore(client, ensureClientId(host.viewKey)),
     [client],
   );
   const SESSION_KEY = "session-id";
+  // The folder the stored session belongs to. Stored so a window
+  // label reused across app runs can tell "my session" from "some
+  // other repo's session that had this label last time".
+  const PROJECT_DIR_KEY = "project-dir";
+  // Which page this window is on. Per-window because it is keyed by
+  // client_id like everything else here: two windows on one session
+  // navigate independently, and a reused ``w-2`` label comes back
+  // where it left off.
+  const PAGE_KEY = "page";
   const SIDEBAR_KEY = "sidebar-open";
+  // The folder this window was opened onto, from New Window. Empty
+  // for the first window, which uses the backend's default session.
+  const windowProjectDir = useMemo(
+    () => new URLSearchParams(window.location.search).get("dir") ?? "",
+    [],
+  );
   const [sidebarOpen, setSidebarOpenState] = useState(window.innerWidth > 700);
   const setSidebarOpen = useCallback(
     (next: boolean | ((prev: boolean) => boolean)) => {
@@ -835,28 +887,53 @@ export default function App() {
             const storedSidebar = clientState.get(SIDEBAR_KEY);
             if (storedSidebar === "true") setSidebarOpenState(true);
             else if (storedSidebar === "false") setSidebarOpenState(false);
-            // Adopt a session for this view. Priority:
-            //   1. Already-bound sessionId on the client (reconnect
-            //      mid-session — don't churn it).
-            //   2. Stored session id from a previous load — re-attach
-            //      so the BE pool resumes that session in its
-            //      registered directory.
-            //   3. BE's default session.
+            // Put the window back on the page it was on. ``restore``
+            // yields an empty stack for anything it cannot read, so a
+            // value written by an older release opens the chat rather
+            // than failing the whole hydrate.
+            setPages(restorePages(clientState.get(PAGE_KEY)));
+            // Adopt a session for this view. An already-bound
+            // sessionId wins outright (reconnect mid-session — don't
+            // churn it); otherwise the plan comes from the window's
+            // ``?dir=`` param and what this client had stored. See
+            // ``chat/sessionBinding.ts`` for why the stored *folder*
+            // is part of the decision and not just the session id.
             if (!client.sessionId) {
-              const stored = clientState.get(SESSION_KEY);
-              if (stored) {
-                try {
-                  const res = await client.rpc<{
-                    session_id: string;
-                    project_dir: string;
-                  }>("attach_session", { session_id: stored });
-                  client.sessionId = res.session_id;
-                  setProjectDir(res.project_dir);
-                } catch {
-                  // Stored id is unusable — fall through to default.
-                  client.sessionId = await client.rpc<string>("get_session_id");
+              const plan = planSessionBinding({
+                wantedDir: windowProjectDir,
+                storedSession: clientState.get(SESSION_KEY) ?? "",
+                storedDir: clientState.get(PROJECT_DIR_KEY) ?? "",
+              });
+              const attach = async (args: Record<string, string>) => {
+                const res = await client.rpc<{
+                  session_id: string;
+                  project_dir: string;
+                }>("attach_session", args);
+                client.sessionId = res.session_id;
+                setProjectDir(res.project_dir);
+                clientState.set(PROJECT_DIR_KEY, res.project_dir);
+              };
+              try {
+                switch (plan.kind) {
+                  case "bind-folder":
+                    await attach({ project_dir: plan.projectDir });
+                    break;
+                  case "resume-in-folder":
+                    await attach({
+                      session_id: plan.sessionId,
+                      project_dir: plan.projectDir,
+                    });
+                    break;
+                  case "resume":
+                    await attach({ session_id: plan.sessionId });
+                    break;
+                  case "default":
+                    client.sessionId = await client.rpc<string>("get_session_id");
+                    break;
                 }
-              } else {
+              } catch {
+                // Unusable binding — fall through to the default
+                // session rather than leaving the window dead.
                 client.sessionId = await client.rpc<string>("get_session_id");
               }
             }
@@ -994,7 +1071,7 @@ export default function App() {
           void notifyHost({
             title,
             body,
-            onClick: () => setPanel({ kind: "schedule" }),
+            onClick: () => goPage({ kind: "schedule", label: "Scheduled tasks" }),
             data: { channel: m.channel, task_id: m.payload.task_id },
           });
         } else if (m.channel === "file_edited") {
@@ -1328,6 +1405,28 @@ export default function App() {
     const t = setInterval(refreshStatus, 5_000);
     return () => clearInterval(t);
   }, [conn, refreshStatus]);
+
+  // Navigation. Every mutation goes through these so the persisted
+  // copy cannot drift from the rendered one — the same reason
+  // ``setRunPhase`` exists rather than setting the phase directly.
+  // One writer. The state updater stays pure — StrictMode invokes it
+  // twice in development, and a ``clientState.set`` inside it would
+  // fire twice with it.
+  const navigate = useCallback(
+    (next: PageRoute[]) => {
+      clientState.set(PAGE_KEY, serialisePages(next));
+      setPages(next);
+    },
+    [clientState],
+  );
+
+  const goPage = useCallback((route: PageRoute) => navigate(openRoot(route)), [navigate]);
+  const goBack = useCallback(() => navigate(popPage(pages)), [navigate, pages]);
+  const goCrumb = useCallback((index: number) => navigate(truncateTo(pages, index)), [navigate, pages]);
+  const goChat = useCallback(() => navigate([]), [navigate]);
+
+  const page = currentPage(pages);
+
 
   // Esc behavior (single global handler, fires once per keydown):
   //
@@ -1911,23 +2010,16 @@ export default function App() {
       if (wfMatch) {
         const [, name, rawArgs] = wfMatch;
         if (!name) {
-          // No name → list workflows. Discovery through the BE.
-          try {
-            const list = await client.rpc<unknown[]>("list_workflows");
-            const lines = (list ?? []).map((w) => {
-              const wf = w as { name?: string; description?: string; phases?: unknown[] };
-              return `- \`${wf.name ?? "?"}\` — ${wf.description ?? "(no description)"} (${(wf.phases ?? []).length} phases)`;
-            });
-            append(
-              infoItem(
-                lines.length > 0
-                  ? `Available workflows:\n${lines.join("\n")}`
-                  : "No workflows found in .claude/workflows/",
-              ),
-            );
-          } catch (err) {
-            append(errorItem(`/workflows: list failed: ${err}`));
-          }
+          // No name → the listing, which is a place rather than a
+          // message. Appending it here is what used to destroy the
+          // chat's start screen: the welcome renders only while
+          // ``items.length === 0``, so browsing what exists replaced
+          // it permanently — and the start screen's own card was the
+          // only place ``/workflows`` was advertised.
+          //
+          // Running one still streams into the chat below, because a
+          // run belongs in the conversation that asked for it.
+          goPage({ kind: "workflows", label: "Workflows" });
           return;
         }
         let parsedArgs: Record<string, unknown> = {};
@@ -2044,10 +2136,10 @@ export default function App() {
             setPanel({ kind: "login" });
             return;
           case "mcp":
-            setPanel({ kind: "mcp" });
+            goPage({ kind: "mcp", label: "MCP servers" });
             return;
           case "codeindex":
-            setPanel({ kind: "codeindex" });
+            goPage({ kind: "codeindex", label: "CodeIndex" });
             return;
           case "loop":
             if (content && echo) append(assistantItem(content));
@@ -2055,25 +2147,25 @@ export default function App() {
             return;
           case "schedule":
             if (content && echo) append(assistantItem(content));
-            setPanel({ kind: "schedule" });
+            goPage({ kind: "schedule", label: "Scheduled tasks" });
             return;
           case "agents":
-            setPanel({ kind: "agents" });
+            goPage({ kind: "agents", label: "Agents" });
             return;
           case "skills":
-            setPanel({ kind: "skills" });
+            goPage({ kind: "skills", label: "Skills" });
             return;
           case "plugins":
-            setPanel({ kind: "plugins" });
+            goPage({ kind: "plugins", label: "Plugins" });
             return;
           case "knowledge":
-            setPanel({ kind: "knowledge" });
+            goPage({ kind: "knowledge", label: "Knowledge" });
             return;
           case "hooks":
-            setPanel({ kind: "hooks" });
+            goPage({ kind: "hooks", label: "Hooks" });
             return;
           case "watcher":
-            setPanel({ kind: "watcher" });
+            goPage({ kind: "watcher", label: "Watcher" });
             return;
           case "help": {
             const lines = [...BUILTIN_COMMANDS, ...skills].map(
@@ -2318,12 +2410,18 @@ export default function App() {
         open={sidebarOpen}
         sessions={sessions}
         currentId={sessionId}
+        links={SIDEBAR_LINKS}
+        activeLink={page?.kind}
+        onLink={(kind) => {
+          const link = SIDEBAR_LINKS.find((l) => l.kind === kind);
+          if (link) goPage({ kind: link.kind, label: link.label });
+        }}
         onNewChat={() => void runCommand("/clear", false)}
         onPick={(id) => void pickSession(id)}
         onClose={() => setSidebarOpen(false)}
       />
 
-      <div className="main">
+      <div className={`main${page ? " main--paged" : ""}`}>
         {/* Window drag in the Tauri shell. Three layers of fallback —
             we want this to work on every Tauri build / WebKit quirk:
               1. ``data-tauri-drag-region`` attribute (Tauri's preferred
@@ -2680,6 +2778,65 @@ export default function App() {
         )}
         </div>
 
+        {/* The page, when there is one. Rendered inside ``.main`` and
+            positioned over the conversation rather than replacing it
+            in the flow — the transcript keeps its box and its scroll
+            offset, so coming back lands where you left. ``.main--paged``
+            hides what is underneath with ``visibility``, which also
+            takes it out of the tab order.
+
+            Every panel below still renders its own ``Drawer``; the
+            context is what turns that into page chrome. */}
+        {page && (
+          <PageContext.Provider
+            value={{ trail: pages, onCrumb: goCrumb, onBack: goBack, onClose: goChat }}
+          >
+            {page.kind === "plugins" && <PluginsPanel client={client} onClose={goChat} />}
+            {page.kind === "knowledge" && <KnowledgePanel client={client} onClose={goChat} />}
+            {page.kind === "codeindex" && <CodeIndexPanel client={client} onClose={goChat} />}
+            {page.kind === "agents" && <AgentsPanel client={client} onClose={goChat} />}
+            {page.kind === "schedule" && <SchedulePanel client={client} onClose={goChat} />}
+            {page.kind === "watcher" && <WatcherPanel client={client} onClose={goChat} />}
+            {page.kind === "hooks" && <HooksPanel client={client} onClose={goChat} />}
+            {page.kind === "workflows" && (
+              <WorkflowsPage
+                client={client}
+                onRun={(command) => {
+                  // Into the composer: several take a JSON argument
+                  // object, and the phase list is what tells you
+                  // whether you want this one at all.
+                  goChat();
+                  setComposerSeed({ text: command, n: Date.now() });
+                }}
+                onClose={goChat}
+              />
+            )}
+            {page.kind === "mcp" && (
+              <McpPanel
+                client={client}
+                onClose={goChat}
+                onAddServer={(seed) => {
+                  goChat();
+                  setComposerSeed({ text: seed, n: Date.now() });
+                }}
+              />
+            )}
+            {page.kind === "skills" && (
+              <SkillsPanel
+                client={client}
+                onRun={(cmd) => {
+                  // Don't fire the skill — drop it into the composer so
+                  // the user can add arguments and send when ready. No
+                  // trailing space, so the autocomplete menu stays open.
+                  goChat();
+                  setComposerSeed({ text: cmd, n: Date.now() });
+                }}
+                onClose={goChat}
+              />
+            )}
+          </PageContext.Provider>
+        )}
+
         <Composer
           hitlSlot={
             hitl ? (
@@ -2788,11 +2945,11 @@ export default function App() {
                   without a separate footer chip. */}
               <CodeIndexIndicator
                 client={client}
-                onOpen={() => setPanel({ kind: "codeindex" })}
+                onOpen={() => goPage({ kind: "codeindex", label: "CodeIndex" })}
               />
               <WatcherIndicator
                 client={client}
-                onOpen={() => setPanel({ kind: "watcher" })}
+                onOpen={() => goPage({ kind: "watcher", label: "Watcher" })}
               />
             </>
           )}
@@ -2809,18 +2966,12 @@ export default function App() {
         </div>
       </div>
 
-      {panel.kind === "mcp" && (
-        <McpPanel
-          client={client}
+      {panel.kind === "info" && (
+        <InfoPanel
+          title={panel.title}
+          markdown={panel.markdown}
           onClose={() => setPanel({ kind: "none" })}
-          onAddServer={(seed) => {
-            setPanel({ kind: "none" });
-            setComposerSeed({ text: seed, n: Date.now() });
-          }}
         />
-      )}
-      {panel.kind === "codeindex" && (
-        <CodeIndexPanel client={client} onClose={() => setPanel({ kind: "none" })} />
       )}
       {panel.kind === "loop" && (
         <LoopPanel
@@ -2835,54 +2986,6 @@ export default function App() {
             void runUserMessage(prompt);
           }}
         />
-      )}
-      {panel.kind === "schedule" && (
-        <SchedulePanel client={client} onClose={() => setPanel({ kind: "none" })} />
-      )}
-      {panel.kind === "watcher" && (
-        <WatcherPanel client={client} onClose={() => setPanel({ kind: "none" })} />
-      )}
-      {panel.kind === "info" && (
-        <InfoPanel
-          title={panel.title}
-          markdown={panel.markdown}
-          onClose={() => setPanel({ kind: "none" })}
-        />
-      )}
-      {panel.kind === "details" && (
-        <DetailsPanel
-          client={client}
-          title={panel.title}
-          method={panel.method}
-          fallbackMarkdown={panel.fallback}
-          onClose={() => setPanel({ kind: "none" })}
-        />
-      )}
-      {panel.kind === "agents" && (
-        <AgentsPanel client={client} onClose={() => setPanel({ kind: "none" })} />
-      )}
-      {panel.kind === "skills" && (
-        <SkillsPanel
-          client={client}
-          onRun={(cmd) => {
-            // Don't fire the skill — drop it into the composer so the
-            // user can add arguments and send when ready.
-            setPanel({ kind: "none" });
-            // No trailing space — keeps the autocomplete menu open so
-            // the user can pick a sub-suggestion or just press Enter.
-            setComposerSeed({ text: cmd, n: Date.now() });
-          }}
-          onClose={() => setPanel({ kind: "none" })}
-        />
-      )}
-      {panel.kind === "plugins" && (
-        <PluginsPanel client={client} onClose={() => setPanel({ kind: "none" })} />
-      )}
-      {panel.kind === "knowledge" && (
-        <KnowledgePanel client={client} onClose={() => setPanel({ kind: "none" })} />
-      )}
-      {panel.kind === "hooks" && (
-        <HooksPanel client={client} onClose={() => setPanel({ kind: "none" })} />
       )}
       {previewPath && (
         <FilePreview
