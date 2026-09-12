@@ -6,12 +6,15 @@
 //! `?ws=` query param. The backend self-terminates if this process dies
 //! (IGNI_PARENT_PID watchdog), and we also kill it on window close.
 
+mod discovery;
 mod runtime;
 
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tauri::menu::{AboutMetadata, Menu, MenuBuilder, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
@@ -19,6 +22,64 @@ use tauri::{AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuil
 use tauri::{LogicalPosition, TitleBarStyle};
 
 struct BackendHandle(Mutex<Option<Child>>);
+
+/// Everything a window needs to reach the running backend.
+///
+/// Filled once bootstrap resolves and read by every window opened
+/// afterwards — a second window doesn't re-bootstrap or re-discover,
+/// it connects to the backend this app instance already has.
+#[derive(Clone)]
+struct BackendConn {
+    port: u16,
+    expected_cli: String,
+    actual_cli: String,
+    source: &'static str,
+}
+
+/// Managed in ``setup`` — before any window exists — and filled in
+/// later. Managing it up front rather than at fill time sidesteps
+/// Tauri's ``manage``-is-a-no-op-when-already-managed rule; see
+/// ``track_backend`` for what that costs when you get it wrong.
+struct BackendConnState(Mutex<Option<BackendConn>>);
+
+/// Percent-encode one query-string value.
+///
+/// Project paths reach the FE as a query param and routinely contain
+/// spaces, and may contain ``&``, ``#`` or ``%`` — any of which would
+/// otherwise truncate or corrupt the URL. Unreserved set per RFC 3986;
+/// everything else goes out as ``%XX``. Encoding bytes rather than
+/// chars keeps non-ASCII paths correct.
+fn percent_encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// The URL a window loads to reach the backend.
+///
+/// ``project_dir`` is set only for windows opened onto a folder of
+/// their own (New Window). The first window omits it and lands on the
+/// backend's default session, which is already the launch folder —
+/// passing the dir there would attach a *new* session instead of
+/// resuming the one the backend booted with.
+fn app_url(conn: &BackendConn, project_dir: Option<&str>) -> String {
+    let ws = percent_encode(&format!("ws://127.0.0.1:{}", conn.port));
+    let mut url = format!(
+        "index.html?ws={ws}&host=tauri&expected_cli={}&actual_cli={}&backend_source={}",
+        conn.expected_cli, conn.actual_cli, conn.source
+    );
+    if let Some(dir) = project_dir {
+        url.push_str(&format!("&dir={}", percent_encode(dir)));
+    }
+    url
+}
 
 /// Compile-time platform tag injected into the init script so the
 /// FE's host-aware CSS (custom title bar, drag region, traffic-light
@@ -469,6 +530,16 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         Some("CmdOrCtrl+N"),
     )?;
+    // Shift+Cmd+N, not Cmd+N: New Chat already owns the plain
+    // binding, and it is the far more frequent action. This matches
+    // VS Code, where Shift+Cmd+N is New Window.
+    let new_window = MenuItem::with_id(
+        app,
+        "new_window",
+        "New Window…",
+        true,
+        Some("CmdOrCtrl+Shift+N"),
+    )?;
     let restart_backend = MenuItem::with_id(
         app,
         "restart_backend",
@@ -503,6 +574,8 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         &[
             &new_chat,
+            &new_window,
+            &PredefinedMenuItem::separator(app)?,
             &restart_backend,
             &reinstall_backend_item,
             &diagnose_backend_item,
@@ -919,11 +992,27 @@ fn build_diagnostic_report() -> String {
 /// ``--reinstall`` CLI flag. Wipes the cache then restarts the BE.
 #[tauri::command]
 fn reinstall_backend(app: AppHandle) -> Result<(), String> {
-    if let Some(handle) = app.try_state::<BackendHandle>() {
-        if let Some(mut child) = handle.0.lock().unwrap().take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+    // ``BackendHandle`` is managed only on the spawn path, so its
+    // absence means we attached to a backend another client owns (see
+    // ``discovery.rs``). Killing it would take down their windows, and
+    // silently reinstalling around it would leave the user staring at
+    // the old backend wondering why nothing changed.
+    let Some(handle) = app.try_state::<BackendHandle>() else {
+        return Err(
+            "This window is attached to a backend started by another igni client, so it \
+             can't be reinstalled from here. Close the other client first, then reopen igni."
+                .to_string(),
+        );
+    };
+    // Forced, unlike the exit path's ``shutdown_backend``. This runs
+    // on the main thread from the menu handler, and a grace period
+    // here would freeze the UI for its duration. Nothing is lost that
+    // matters: the re-bootstrap immediately below runs discovery,
+    // which clears the stale lockfile this leaves behind, and the
+    // user asked to blow the backend away.
+    if let Some(mut child) = handle.0.lock().unwrap().take() {
+        let _ = child.kill();
+        let _ = child.wait();
     }
     runtime::reset_cache()?;
     // Walk the user back through the loading view; the next
@@ -940,6 +1029,303 @@ fn reinstall_backend(app: AppHandle) -> Result<(), String> {
         }
     });
     Ok(())
+}
+
+/// Build one app window, native chrome and all.
+///
+/// Extracted so ``setup`` and New Window cannot drift: every window
+/// needs the same title-bar treatment, the same init script (host
+/// bridges, external-link routing, menu event plumbing) and — on
+/// macOS — the same traffic-light pinning and fullscreen watcher. The
+/// traffic-light constants used to carry a "kept in lockstep with"
+/// comment pointing at a second call site, which is exactly the shape
+/// of thing that stops being true.
+fn build_app_window(
+    app: &AppHandle,
+    label: &str,
+    url: &str,
+    title: &str,
+) -> tauri::Result<tauri::WebviewWindow> {
+    let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
+        .title(title)
+        .inner_size(1100.0, 780.0);
+
+    // ── Custom title bar (macOS) ──
+    // ``TitleBarStyle::Overlay`` keeps the traffic lights visible but
+    // removes the title-bar background, so the webview extends to the
+    // very top of the window. The FE's ``.app-header`` then renders as
+    // a single row:
+    //   [traffic lights]  [☰] [🔥 igni] · folder · org …
+    // ``hidden_title`` suppresses the default centered text (we set
+    // our own brand in the row instead).
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .traffic_light_position(LogicalPosition::new(16.0, 22.0));
+
+    let window = builder
+        .initialization_script(&INIT_SCRIPT.replace("__PLATFORM__", PLATFORM))
+        .build()?;
+
+    #[cfg(target_os = "macos")]
+    {
+        // Pin the traffic-light cluster against AppKit's periodic
+        // resets — see ``install_traffic_light_observer``.
+        install_traffic_light_observer(window.clone(), 16.0, 22.0);
+        // The observer fires on ``kCFRunLoopBeforeWaiting`` — only
+        // when the runloop goes idle. Under load (debug builds, slow
+        // first paint) that idle moment can be delayed long enough
+        // for AppKit's initial title-bar layout to stick at its
+        // default y. Pin explicitly so we don't depend on timing.
+        reposition_traffic_lights(&window, 16.0, 24.0);
+        install_fullscreen_watcher(&window);
+    }
+
+    Ok(window)
+}
+
+/// Emit ``ember-fullscreen`` whenever the window enters or leaves
+/// native fullscreen, so the FE can shrink the header gutter from
+/// 48 → 16 px and slide the hamburger / brand into the freed space.
+/// Native fullscreen detaches the traffic-light cluster (it lives
+/// behind the slide-down panel afterwards), so the FE has to know.
+#[cfg(target_os = "macos")]
+fn install_fullscreen_watcher(window: &tauri::WebviewWindow) {
+    let was_fullscreen = Arc::new(AtomicBool::new(window.is_fullscreen().unwrap_or(false)));
+    let _ = window.emit("ember-fullscreen", was_fullscreen.load(Ordering::Relaxed));
+    let w_for_event = window.clone();
+    let flag = was_fullscreen.clone();
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::Resized(_) = event {
+            let is_fs = w_for_event.is_fullscreen().unwrap_or(false);
+            if is_fs != flag.load(Ordering::Relaxed) {
+                flag.store(is_fs, Ordering::Relaxed);
+                let _ = w_for_event.emit("ember-fullscreen", is_fs);
+            }
+        }
+    });
+}
+
+/// The window a menu action belongs to.
+///
+/// Menu events used to go unconditionally to ``main``. With more than
+/// one window that is wrong in the most confusing way available: New
+/// Chat pressed in the second window would start a chat in the first
+/// one, behind it. Falls back to ``main`` when nothing reports focus
+/// (the menu bar itself can hold focus on macOS).
+fn focused_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
+    app.webview_windows()
+        .into_values()
+        .find(|w| w.is_focused().unwrap_or(false))
+        .or_else(|| app.get_webview_window("main"))
+}
+
+/// Whether a folder pick is already on screen.
+///
+/// Two concurrent picks wedge the app. Observed: firing New Window
+/// twice in quick succession presents a second panel on a window that
+/// already has one as a modal sheet, and AppKit orders the parent
+/// window out — the process stays alive with no windows, and since
+/// tao never sees `Destroyed`, it never exits either. You get an app
+/// running with nothing on screen and no way back. Two taps of
+/// ⇧⌘N is all it takes.
+static PICK_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+/// Claim the pick slot. `false` means one is already open.
+fn try_begin_pick() -> bool {
+    !PICK_IN_FLIGHT.swap(true, Ordering::SeqCst)
+}
+
+fn end_pick() {
+    PICK_IN_FLIGHT.store(false, Ordering::SeqCst);
+}
+
+/// Releases the pick slot however the picking thread unwinds —
+/// cancelled dialog, unreadable path, backend not ready, or success.
+/// A missed release would disable New Window for the rest of the
+/// session, which is a worse bug than the one being fixed.
+struct PickGuard;
+
+impl Drop for PickGuard {
+    fn drop(&mut self) {
+        end_pick();
+    }
+}
+
+/// New Window: pick a folder, then open a window bound to it.
+///
+/// Pick first, build second — a cancelled picker leaves no empty
+/// window behind. The new window shares this app instance's backend
+/// (one backend per app; see ``discovery.rs``) and binds a session in
+/// the chosen folder via ``attach_session({project_dir})``, which the
+/// backend's session pool already supports per-runtime.
+///
+/// Threading: ``blocking_pick_folder`` must not run on the main
+/// thread, and window construction wants to be on it — so the pick
+/// happens on a worker and the build hops back.
+fn open_new_window(app: &AppHandle) {
+    use tauri_plugin_dialog::DialogExt;
+
+    if !try_begin_pick() {
+        // A picker is already up. Nothing to do — it is modal, so the
+        // user can see it; presenting a second one is what breaks the
+        // window. See ``PICK_IN_FLIGHT``.
+        return;
+    }
+
+    let app = app.clone();
+    std::thread::spawn(move || {
+        // Held for the whole pick. The window build is queued onto
+        // the main thread and the label is chosen there, so releasing
+        // when this thread exits cannot race two windows onto one
+        // label.
+        let _guard = PickGuard;
+        let conn = app
+            .try_state::<BackendConnState>()
+            .and_then(|state| state.0.lock().unwrap().clone());
+        let Some(conn) = conn else {
+            // Bootstrap hasn't resolved yet. Say so rather than
+            // opening a window with nowhere to connect.
+            app.dialog()
+                .message("igni is still starting. Try again once the first window has loaded.")
+                .blocking_show();
+            return;
+        };
+
+        let Some(folder) = app.dialog().file().blocking_pick_folder() else {
+            return; // cancelled
+        };
+        let Ok(path) = folder.into_path() else {
+            return;
+        };
+        let dir = path.to_string_lossy().to_string();
+        let title = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "igni".to_string());
+
+        let url = app_url(&conn, Some(&dir));
+        let app_for_build = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let existing: Vec<String> = app_for_build.webview_windows().into_keys().collect();
+            let label = next_window_label(&existing);
+            if let Err(e) = build_app_window(&app_for_build, &label, &url, &title) {
+                eprintln!("failed to open new window: {e}");
+            }
+        });
+    });
+}
+
+/// Lowest free ``w-N`` (N ≥ 2). The first window is ``main`` and
+/// keeps that label forever — it is what maps an existing install
+/// onto its pre-multi-window ``client_id`` (see `clientState.ts`).
+///
+/// Lowest-free rather than a counter so closing w-2 and opening
+/// another window reuses w-2 instead of climbing forever. A window's
+/// label is its identity: reusing it means reusing that window's
+/// stored session binding and draft, which is the behaviour you want
+/// when the "same" second window comes back.
+fn next_window_label(existing: &[String]) -> String {
+    let mut n = 2usize;
+    loop {
+        let candidate = format!("w-{n}");
+        if !existing.iter().any(|label| label == &candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// How long the backend gets to wind down before we force it.
+///
+/// Teardown cancels background tasks, drains the session pool
+/// (checkpointing each runtime), closes the transport and removes the
+/// lockfile — all local work, normally tens of milliseconds. Three
+/// seconds is headroom for a pool mid-checkpoint, not an expected
+/// wait: the poll below returns as soon as the process is gone.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
+
+#[derive(Debug, PartialEq, Eq)]
+enum ShutdownOutcome {
+    /// Already dead — crashed, or killed by something else.
+    AlreadyExited,
+    /// Exited on its own after the terminate request.
+    Graceful,
+    /// Ignored the request (or we had none to send) and was killed.
+    Forced,
+}
+
+/// Stop a backend we spawned, giving it a chance to exit cleanly.
+///
+/// ``Child::kill`` is SIGKILL, which skips the backend's teardown
+/// entirely (`backend/supervisor.py::teardown`). Two things are lost
+/// that way: sessions never checkpoint, and the discovery lockfile
+/// survives naming a dead PID — so the next launch has to probe a
+/// corpse, and a port recycled onto an unrelated process in the
+/// meantime is exactly the case `discovery::pid_alive` exists to
+/// catch. SIGTERM is a first-class exit path on the backend side: it
+/// sets the shutdown event, which drains the pool and removes the
+/// lockfile on the way out.
+///
+/// Escalates when the grace period lapses, so a wedged backend can
+/// never hold the app open.
+fn shutdown_backend(child: &mut Child, grace: Duration) -> ShutdownOutcome {
+    if matches!(child.try_wait(), Ok(Some(_))) {
+        return ShutdownOutcome::AlreadyExited;
+    }
+    if request_terminate(child) {
+        let deadline = Instant::now() + grace;
+        while Instant::now() < deadline {
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                return ShutdownOutcome::Graceful;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    ShutdownOutcome::Forced
+}
+
+#[cfg(unix)]
+fn request_terminate(child: &Child) -> bool {
+    unsafe { libc::kill(child.id() as i32, libc::SIGTERM) == 0 }
+}
+
+#[cfg(not(unix))]
+fn request_terminate(_child: &Child) -> bool {
+    // Nothing on Windows reaches a console-less child the way SIGTERM
+    // does, so go straight to the forced path — the behaviour there
+    // is what every platform had before this. The backend's own
+    // parent-PID watchdog is the cleanup story on Windows.
+    false
+}
+
+/// Record a backend we spawned, so ``RunEvent::Exit`` can kill it.
+///
+/// Not a bare ``app.manage``: Tauri's ``manage`` is a no-op when the
+/// type is already managed, and it returns ``false`` rather than
+/// replacing. ``reinstall_backend`` leaves a managed
+/// ``BackendHandle`` holding ``None`` after taking the old child, so
+/// the ``manage`` call for the *replacement* child was silently
+/// dropped and that process was tracked by nothing. It still died
+/// with the app — the ``IGNI_PARENT_PID`` watchdog saw the parent go
+/// — but the explicit kill on exit, and anything else that reaches
+/// for the handle, had lost it. Store into the existing slot when
+/// there is one.
+///
+/// Both calls take ``&self``, so holding the ``State`` borrow across
+/// the ``manage`` in the other arm is fine.
+fn track_backend(app: &AppHandle, child: Child) {
+    match app.try_state::<BackendHandle>() {
+        Some(handle) => *handle.0.lock().unwrap() = Some(child),
+        None => {
+            // Discards ``manage``'s bool: this arm only runs when
+            // nothing is managed yet, so it is always ``true``.
+            app.manage(BackendHandle(Mutex::new(Some(child))));
+        }
+    }
 }
 
 /// Bootstrap the BE on a background thread, emit progress to the
@@ -959,8 +1345,49 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
         }
     });
 
-    let (child, port, version_info) = spawn_backend(project_dir, &progress)?;
-    app.manage(BackendHandle(Mutex::new(Some(child))));
+    // Attach to a backend another client already started for this
+    // project rather than spawning a second one over the same
+    // ``state.db``. See ``discovery.rs`` for what two backends on one
+    // project actually cost.
+    //
+    // Ownership rides on ``BackendHandle``: it is only managed on the
+    // spawn path, so the ``RunEvent::Exit`` handler has nothing to
+    // kill when we attached, and a backend the plugins own survives
+    // this app quitting.
+    let (port, version_info) = match discovery::discover(project_dir, runtime::IGNITE_EMBER_VERSION)
+    {
+        discovery::Decision::Attach { port, wire_version } => {
+            progress("Connecting to the running igni backend…");
+            // Skips the whole Python bootstrap — no interpreter
+            // resolution, no model prefetch — so this path is near
+            // instant on a warm project.
+            (
+                port,
+                BackendVersionInfo {
+                    actual: Some(wire_version),
+                    expected: runtime::IGNITE_EMBER_VERSION.to_string(),
+                    source: "discovered",
+                },
+            )
+        }
+        discovery::Decision::Refuse { running } => {
+            // Mixing traffic across wire versions corrupts state, and
+            // spawning alongside it is the duplicate we're removing —
+            // so this is a dead end the user has to resolve. Mirrors
+            // what the VSCode extension tells them.
+            return Err(format!(
+                "Another igni backend is running for this project on version {running}, \
+                 but this app is {}. Close the other client (or restart it on the \
+                 matching version) and reopen igni.",
+                runtime::IGNITE_EMBER_VERSION
+            ));
+        }
+        discovery::Decision::Spawn => {
+            let (child, port, version_info) = spawn_backend(project_dir, &progress)?;
+            track_backend(app, child);
+            (port, version_info)
+        }
+    };
 
     // Initial title: project-dir basename, Finder-style. The FE
     // re-issues ``set_app_title`` on every status_update with the
@@ -972,24 +1399,27 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
         .unwrap_or_else(|| "igni".to_string());
 
+    // Publish the connection before navigating, so a New Window
+    // opened the moment the first one paints already has somewhere to
+    // point. Version params feed the shared bundle's
+    // ``BackendVersionChip`` — same shape the JetBrains plugin uses,
+    // one component, three surfaces.
+    let conn = BackendConn {
+        port,
+        expected_cli: version_info.expected.clone(),
+        actual_cli: version_info
+            .actual
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string()),
+        source: version_info.source,
+    };
+    if let Some(state) = app.try_state::<BackendConnState>() {
+        *state.0.lock().unwrap() = Some(conn.clone());
+    }
+
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.set_title(&folder);
-        // Splice version + host params into the URL so the shared
-        // web bundle's ``BackendVersionChip`` reads them off the
-        // query string. Same shape the JetBrains plugin uses —
-        // one component, three surfaces. Version strings are just
-        // digits + dots + hyphens (semver-shaped), all URL-safe,
-        // so no percent-encoding needed here.
-        let actual = version_info.actual.as_deref().unwrap_or("unknown");
-        let expected = version_info.expected.as_str();
-        let source = version_info.source;
-        let target = format!(
-            "index.html?ws=ws%3A%2F%2F127.0.0.1%3A{port}\
-             &host=tauri\
-             &expected_cli={expected}\
-             &actual_cli={actual}\
-             &backend_source={source}"
-        );
+        let target = app_url(&conn, None);
         let _ = w.eval(&format!("location.href = {}", serde_json::json!(target)));
         // Traffic-light position is maintained by the
         // CFRunLoopObserver installed in ``setup`` — no extra work
@@ -1257,6 +1687,12 @@ pub fn run() {
             let menu = build_menu(&app.handle())?;
             app.set_menu(menu)?;
 
+            // Managed before any window so the fill in
+            // ``bootstrap_and_open`` writes into an existing slot —
+            // ``manage`` refuses to replace, and a second call would
+            // be silently dropped.
+            app.manage(BackendConnState(Mutex::new(None)));
+
             let dir = project_dir();
 
             // Open the loading view IMMEDIATELY so the user sees a
@@ -1266,81 +1702,7 @@ pub fn run() {
             // when the BE is ready we navigate the same window to
             // the real UI. Same pattern as the JetBrains tool-
             // window placeholder.
-            let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("loading.html".into()))
-                .title("igni")
-                .inner_size(1100.0, 780.0);
-            // ── Custom title bar (macOS) ──
-            // ``TitleBarStyle::Overlay`` keeps the traffic lights
-            // visible but removes the title-bar background, so the
-            // webview extends to the very top of the window. The
-            // FE's ``.app-header`` then renders as a single row:
-            //   [traffic lights]  [☰] [🔥 igni] · folder · org …
-            // ``hidden_title`` suppresses the default centered text
-            // (we set our own brand in the row instead).
-            #[cfg(target_os = "macos")]
-            let builder = builder
-                .title_bar_style(TitleBarStyle::Overlay)
-                .hidden_title(true)
-                // Initial traffic-light position; the runtime
-                // ``reposition_traffic_lights`` helper re-applies
-                // the same (x, y) after every navigation to survive
-                // macOS' title-bar recompute. Kept in lockstep with
-                // the schedule below in ``bootstrap_and_open``.
-                .traffic_light_position(LogicalPosition::new(16.0, 22.0));
-            builder
-                .initialization_script(&INIT_SCRIPT.replace("__PLATFORM__", PLATFORM))
-                .build()?;
-
-            // Pin the traffic-light cluster against AppKit's
-            // periodic resets. The observer fires on the main
-            // thread (where setup() runs), after every layout
-            // pass, for the lifetime of the window — see
-            // ``install_traffic_light_observer`` for the rationale.
-            #[cfg(target_os = "macos")]
-            if let Some(w) = app.get_webview_window("main") {
-                install_traffic_light_observer(w.clone(), 16.0, 22.0);
-                // The observer fires on ``kCFRunLoopBeforeWaiting`` —
-                // only when the runloop goes idle. Under load (debug
-                // builds, slow first-frame paint), that idle moment
-                // can be delayed long enough for AppKit's initial
-                // title-bar layout to "stick" — buttons end up at
-                // AppKit's default ~y=10 instead of our requested
-                // y=24, and they don't shift until something
-                // re-triggers a layout (resize, etc.). The release
-                // (optimized) build is fast enough that the observer
-                // catches the first idle BEFORE this matters; debug
-                // builds race and lose. Belt-and-suspenders: pin
-                // explicitly right after install so we don't depend
-                // on runloop timing.
-                reposition_traffic_lights(&w, 16.0, 24.0);
-                // Native fullscreen detaches the traffic-light
-                // cluster (lives behind the slide-down panel
-                // afterwards). Watch the window's resize stream and
-                // emit a JS-visible event whenever fullscreen state
-                // flips, so the FE can shrink the header gutter
-                // from 48 → 16 px and let the hamburger / brand
-                // slide into the now-free real estate.
-                use std::sync::atomic::{AtomicBool, Ordering};
-                use std::sync::Arc;
-                let was_fullscreen = Arc::new(AtomicBool::new(
-                    w.is_fullscreen().unwrap_or(false),
-                ));
-                let _ = w.emit(
-                    "ember-fullscreen",
-                    was_fullscreen.load(Ordering::Relaxed),
-                );
-                let w_for_event = w.clone();
-                let flag = was_fullscreen.clone();
-                w.on_window_event(move |event| {
-                    if let tauri::WindowEvent::Resized(_) = event {
-                        let is_fs = w_for_event.is_fullscreen().unwrap_or(false);
-                        if is_fs != flag.load(Ordering::Relaxed) {
-                            flag.store(is_fs, Ordering::Relaxed);
-                            let _ = w_for_event.emit("ember-fullscreen", is_fs);
-                        }
-                    }
-                });
-            }
+            build_app_window(&app.handle().clone(), "main", "loading.html", "igni")?;
 
             // Bootstrap kicks off on a background thread so the
             // loading window stays responsive.
@@ -1370,8 +1732,11 @@ pub fn run() {
         // just on a separate channel because Tauri's emit format
         // and JCEF's CustomEvent shape don't line up cleanly).
         .on_menu_event(|app, event| match event.id().as_ref() {
+            "new_window" => {
+                open_new_window(app);
+            }
             "toggle_devtools" => {
-                if let Some(w) = app.get_webview_window("main") {
+                if let Some(w) = focused_window(app) {
                     #[cfg(debug_assertions)]
                     {
                         if w.is_devtools_open() {
@@ -1397,7 +1762,7 @@ pub fn run() {
                 diagnose_backend(app.clone());
             }
             id => {
-                if let Some(w) = app.get_webview_window("main") {
+                if let Some(w) = focused_window(app) {
                     let _ = w.emit("ember-menu", id.to_string());
                 }
             }
@@ -1406,10 +1771,19 @@ pub fn run() {
         .expect("error while building igni app")
         .run(|app, event| {
             if let RunEvent::Exit = event {
+                // Reached when the last window closes: the runtime
+                // fires ``ExitRequested`` on the final window's
+                // destruction and, unprevented, exits the loop — on
+                // every platform, macOS included.
+                //
+                // ``BackendHandle`` is managed on the spawn path
+                // alone, so this only ever stops a backend we
+                // started. One an IDE plugin owns (we attached to it
+                // — see ``discovery.rs``) has no handle here and
+                // outlives us, which is the whole point.
                 if let Some(handle) = app.try_state::<BackendHandle>() {
                     if let Some(mut child) = handle.0.lock().unwrap().take() {
-                        let _ = child.kill();
-                        let _ = child.wait();
+                        shutdown_backend(&mut child, SHUTDOWN_GRACE);
                     }
                 }
             }
@@ -1419,6 +1793,168 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── The New Window pick guard ───────────────────────────────
+
+    #[test]
+    fn only_one_folder_pick_at_a_time() {
+        // Observed before this guard: firing New Window twice in
+        // quick succession presented a second panel on a window that
+        // already had one as a modal sheet, AppKit ordered the parent
+        // window out, and the app was left running with no windows
+        // and no way back — tao never saw ``Destroyed``, so it never
+        // exited either.
+        //
+        // One test body rather than three: the flag is process-wide
+        // state and cargo runs tests in parallel threads.
+        assert!(try_begin_pick(), "first pick should claim the slot");
+        assert!(!try_begin_pick(), "second pick must be refused");
+
+        // The slot has to come back however the picking thread
+        // unwinds — a cancelled dialog releases it just like a
+        // successful one. Leaking it would disable New Window for the
+        // rest of the session.
+        {
+            let _guard = PickGuard;
+        }
+        assert!(try_begin_pick(), "slot must be reusable after release");
+        end_pick();
+    }
+
+    // ── Backend shutdown ────────────────────────────────────────
+    //
+    // Run against real child processes: the thing under test is
+    // whether a signal is actually delivered and reaped, which a
+    // mock would only assert back at us. Unix-only — the Windows
+    // path has no terminate request to send and goes straight to
+    // ``Forced``, which is what every platform did before.
+
+    #[cfg(unix)]
+    #[test]
+    fn a_cooperative_backend_exits_gracefully() {
+        // The case that matters: SIGTERM is what lets the backend
+        // drain its session pool and remove its lockfile.
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        let started = Instant::now();
+        let outcome = shutdown_backend(&mut child, Duration::from_secs(5));
+        assert_eq!(outcome, ShutdownOutcome::Graceful);
+        // Returns on the process actually being gone, not on the
+        // grace period elapsing.
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_wedged_backend_is_forced() {
+        // Ignores SIGTERM. A backend stuck mid-teardown must never
+        // be able to hold the app open.
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg("trap '' TERM; while :; do sleep 0.2; done")
+            .spawn()
+            .unwrap();
+        // Guard the fixture itself: if the shell exits on its own,
+        // ``shutdown_backend`` would report Graceful for the wrong
+        // reason and this test would be asserting nothing.
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(
+            matches!(child.try_wait(), Ok(None)),
+            "fixture should still be running before we signal it"
+        );
+        let outcome = shutdown_backend(&mut child, Duration::from_millis(200));
+        assert_eq!(outcome, ShutdownOutcome::Forced);
+        // Reaped, not left a zombie.
+        assert!(matches!(child.try_wait(), Ok(Some(_))));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_already_dead_backend_is_reported_not_signalled() {
+        // The crashed-backend case. Distinguished so the caller
+        // isn't told we forced something that was already gone.
+        let mut child = Command::new("true").spawn().unwrap();
+        let _ = child.wait();
+        assert_eq!(
+            shutdown_backend(&mut child, Duration::from_millis(50)),
+            ShutdownOutcome::AlreadyExited
+        );
+    }
+
+    // ── Window labels ───────────────────────────────────────────
+    //
+    // A label is a window's identity: it keys the persisted
+    // ``client_id``, which keys the session binding and draft on the
+    // backend. See ``clientState.ts``.
+
+    #[test]
+    fn first_extra_window_is_w2() {
+        // ``main`` is the launch window and never re-issued.
+        assert_eq!(next_window_label(&["main".to_string()]), "w-2");
+    }
+
+    #[test]
+    fn labels_climb_past_the_ones_in_use() {
+        let open = vec!["main".to_string(), "w-2".to_string(), "w-3".to_string()];
+        assert_eq!(next_window_label(&open), "w-4");
+    }
+
+    #[test]
+    fn a_closed_label_is_reused() {
+        // Lowest-free, not a counter. Reopening after closing w-2
+        // lands back on that window's stored session and draft
+        // instead of accruing a fresh identity every time.
+        let open = vec!["main".to_string(), "w-3".to_string()];
+        assert_eq!(next_window_label(&open), "w-2");
+    }
+
+    // ── URL construction ────────────────────────────────────────
+
+    fn conn() -> BackendConn {
+        BackendConn {
+            port: 51234,
+            expected_cli: "1.0.3".to_string(),
+            actual_cli: "1.0.3".to_string(),
+            source: "managed_venv",
+        }
+    }
+
+    #[test]
+    fn the_first_window_gets_no_dir_param() {
+        // It lands on the backend's default session, which is
+        // already the launch folder. A ``dir`` here would attach a
+        // second session to the same directory instead.
+        let url = app_url(&conn(), None);
+        assert!(!url.contains("&dir="), "unexpected dir param in {url}");
+        assert!(url.contains("ws=ws%3A%2F%2F127.0.0.1%3A51234"));
+        assert!(url.contains("&host=tauri"));
+        assert!(url.contains("&expected_cli=1.0.3"));
+        assert!(url.contains("&backend_source=managed_venv"));
+    }
+
+    #[test]
+    fn a_new_window_carries_its_folder() {
+        let url = app_url(&conn(), Some("/Users/dev/repo"));
+        assert!(url.contains("&dir=%2FUsers%2Fdev%2Frepo"), "got {url}");
+    }
+
+    #[test]
+    fn paths_with_spaces_and_specials_survive() {
+        // The real failure this prevents: an unencoded ``&`` or ``#``
+        // truncates the query string, and the window silently binds
+        // to a path that is a prefix of the one the user picked.
+        let url = app_url(&conn(), Some("/Users/dev/my repo&stuff#1"));
+        assert!(
+            url.contains("&dir=%2FUsers%2Fdev%2Fmy%20repo%26stuff%231"),
+            "got {url}"
+        );
+    }
+
+    #[test]
+    fn encoding_leaves_unreserved_characters_alone() {
+        assert_eq!(percent_encode("Az0-_.~"), "Az0-_.~");
+        // Non-ASCII is encoded per UTF-8 byte, not per char.
+        assert_eq!(percent_encode("é"), "%C3%A9");
+    }
 
     // ── The update-check off switch (F126) ──────────────────────
     //

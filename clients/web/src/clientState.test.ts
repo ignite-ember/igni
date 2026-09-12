@@ -152,6 +152,46 @@ describe("ensureClientId", () => {
       if (stripped) Object.defineProperty(globalThis, "localStorage", stripped);
     }
   });
+
+  // ── Per-window partitioning ───────────────────────────────
+  //
+  // Two Tauri windows share one origin and therefore one
+  // localStorage. The view key (window label) is what keeps them
+  // from sharing an identity — and since ``client_state`` holds
+  // which SESSION a window is bound to, sharing an identity means
+  // the second window opens onto the first one's chat.
+
+  it("gives two different view keys two different ids", () => {
+    const a = ensureClientId("w-2");
+    const b = ensureClientId("w-3");
+    expect(a).not.toBe(b);
+  });
+
+  it("returns the same id for the same view key across calls", () => {
+    // A window reload re-runs this with the same label and must
+    // land back on its own session, not a fresh client.
+    const first = ensureClientId("w-2");
+    const second = ensureClientId("w-2");
+    expect(first).toBe(second);
+  });
+
+  it("stores a named view under a suffixed key", () => {
+    ensureClientId("w-2");
+    expect(localStorage.getItem("ember-code:client-id:w-2")).toBeTruthy();
+    // The unsuffixed slot belongs to the main window — an extra
+    // window must not write into it.
+    expect(localStorage.getItem("ember-code:client-id")).toBeNull();
+  });
+
+  it("keeps the main window on the legacy unsuffixed key", () => {
+    // Upgrade path: an install that predates multi-window has its
+    // id (and therefore its bound session, drafts, sidebar state)
+    // under the unsuffixed key. The first window is labelled
+    // ``main``, and must keep reading that one.
+    localStorage.setItem("ember-code:client-id", "pre-existing-id");
+    expect(ensureClientId("main")).toBe("pre-existing-id");
+    expect(ensureClientId("")).toBe("pre-existing-id");
+  });
 });
 
 // ── ClientStateStore ────────────────────────────────────────

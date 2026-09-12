@@ -712,3 +712,68 @@ describe("Host.canOpenNatively + fallback registration", () => {
     expect(fallback).toHaveBeenCalledWith("/registered.py");
   });
 });
+
+// ── Host.viewKey ──────────────────────────────────────────
+//
+// The window label is what makes two Tauri windows of one app
+// instance distinguishable. They share an origin, so they share
+// localStorage, so without a per-window key they would share the
+// persisted client_id — and therefore the session each is bound to.
+// See ``clientState.ts``.
+
+describe("Host.viewKey", () => {
+  it("reads the label from the global Tauri API", () => {
+    win.__TAURI__ = { window: { getCurrentWindow: () => ({ label: "w-2" }) } };
+    const host = new HostMod.Host();
+    expect(host.viewKey).toBe("w-2");
+  });
+
+  it("falls back to the internals metadata", () => {
+    // ``withGlobalTauri`` can be off, or the global API can land
+    // later than the bundle; the internals object is injected
+    // before any page script either way.
+    win.__TAURI_INTERNALS__ = { metadata: { currentWindow: { label: "w-3" } } };
+    const host = new HostMod.Host();
+    expect(host.viewKey).toBe("w-3");
+  });
+
+  it("falls back to the internals metadata when getCurrentWindow throws", () => {
+    // Outside a real webview the global API is present but its
+    // accessor throws. That must not take out identity resolution.
+    win.__TAURI__ = {
+      window: {
+        getCurrentWindow: () => {
+          throw new Error("not in a Tauri webview");
+        },
+      },
+    };
+    win.__TAURI_INTERNALS__ = { metadata: { currentWindow: { label: "w-4" } } };
+    const host = new HostMod.Host();
+    expect(host.viewKey).toBe("w-4");
+  });
+
+  it("is empty on plain web", () => {
+    // Single-view hosts keep their pre-multi-window behaviour:
+    // ``ensureClientId("")`` lands on the legacy storage key.
+    const host = new HostMod.Host();
+    expect(host.viewKey).toBe("");
+  });
+
+  it("is empty on VSCode and JetBrains", () => {
+    win.acquireVsCodeApi = () => ({ postMessage: () => undefined });
+    expect(new HostMod.Host().viewKey).toBe("");
+    delete win.acquireVsCodeApi;
+    win.cefQuery = (() => undefined) as CefQueryFn;
+    expect(new HostMod.Host().viewKey).toBe("");
+  });
+
+  it("caches the label once seen", () => {
+    // A window keeps its label for its lifetime, so re-reading a
+    // resolved key must not go back to the globals.
+    win.__TAURI__ = { window: { getCurrentWindow: () => ({ label: "w-5" }) } };
+    const host = new HostMod.Host();
+    expect(host.viewKey).toBe("w-5");
+    delete win.__TAURI__;
+    expect(host.viewKey).toBe("w-5");
+  });
+});

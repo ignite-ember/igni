@@ -29,6 +29,7 @@ import {
 } from "./chat/model";
 import { applyVisualizationDelta } from "./chat/visualizationStream";
 import { nextObserverBusyState } from "./chat/observerBusy";
+import { planSessionBinding } from "./chat/sessionBinding";
 import { handleEsc } from "./chat/escHandler";
 import { buildContinuedPrompt } from "./chat/continueInterrupted";
 import {
@@ -444,12 +445,27 @@ export default function App() {
   // a memoized store so all three keys (session-id, sidebar, draft)
   // round-trip the same way regardless of host (browser / VSCode /
   // JetBrains). See clientState.ts.
+  //
+  // Keyed by ``host.viewKey`` so two Tauri windows — which share an
+  // origin, and so share localStorage — are two distinct clients
+  // bound to two distinct sessions, rather than one client fighting
+  // itself over the session binding and the composer draft.
   const clientState = useMemo(
-    () => new ClientStateStore(client, ensureClientId()),
+    () => new ClientStateStore(client, ensureClientId(host.viewKey)),
     [client],
   );
   const SESSION_KEY = "session-id";
+  // The folder the stored session belongs to. Stored so a window
+  // label reused across app runs can tell "my session" from "some
+  // other repo's session that had this label last time".
+  const PROJECT_DIR_KEY = "project-dir";
   const SIDEBAR_KEY = "sidebar-open";
+  // The folder this window was opened onto, from New Window. Empty
+  // for the first window, which uses the backend's default session.
+  const windowProjectDir = useMemo(
+    () => new URLSearchParams(window.location.search).get("dir") ?? "",
+    [],
+  );
   const [sidebarOpen, setSidebarOpenState] = useState(window.innerWidth > 700);
   const setSidebarOpen = useCallback(
     (next: boolean | ((prev: boolean) => boolean)) => {
@@ -841,28 +857,48 @@ export default function App() {
             const storedSidebar = clientState.get(SIDEBAR_KEY);
             if (storedSidebar === "true") setSidebarOpenState(true);
             else if (storedSidebar === "false") setSidebarOpenState(false);
-            // Adopt a session for this view. Priority:
-            //   1. Already-bound sessionId on the client (reconnect
-            //      mid-session — don't churn it).
-            //   2. Stored session id from a previous load — re-attach
-            //      so the BE pool resumes that session in its
-            //      registered directory.
-            //   3. BE's default session.
+            // Adopt a session for this view. An already-bound
+            // sessionId wins outright (reconnect mid-session — don't
+            // churn it); otherwise the plan comes from the window's
+            // ``?dir=`` param and what this client had stored. See
+            // ``chat/sessionBinding.ts`` for why the stored *folder*
+            // is part of the decision and not just the session id.
             if (!client.sessionId) {
-              const stored = clientState.get(SESSION_KEY);
-              if (stored) {
-                try {
-                  const res = await client.rpc<{
-                    session_id: string;
-                    project_dir: string;
-                  }>("attach_session", { session_id: stored });
-                  client.sessionId = res.session_id;
-                  setProjectDir(res.project_dir);
-                } catch {
-                  // Stored id is unusable — fall through to default.
-                  client.sessionId = await client.rpc<string>("get_session_id");
+              const plan = planSessionBinding({
+                wantedDir: windowProjectDir,
+                storedSession: clientState.get(SESSION_KEY) ?? "",
+                storedDir: clientState.get(PROJECT_DIR_KEY) ?? "",
+              });
+              const attach = async (args: Record<string, string>) => {
+                const res = await client.rpc<{
+                  session_id: string;
+                  project_dir: string;
+                }>("attach_session", args);
+                client.sessionId = res.session_id;
+                setProjectDir(res.project_dir);
+                clientState.set(PROJECT_DIR_KEY, res.project_dir);
+              };
+              try {
+                switch (plan.kind) {
+                  case "bind-folder":
+                    await attach({ project_dir: plan.projectDir });
+                    break;
+                  case "resume-in-folder":
+                    await attach({
+                      session_id: plan.sessionId,
+                      project_dir: plan.projectDir,
+                    });
+                    break;
+                  case "resume":
+                    await attach({ session_id: plan.sessionId });
+                    break;
+                  case "default":
+                    client.sessionId = await client.rpc<string>("get_session_id");
+                    break;
                 }
-              } else {
+              } catch {
+                // Unusable binding — fall through to the default
+                // session rather than leaving the window dead.
                 client.sessionId = await client.rpc<string>("get_session_id");
               }
             }
