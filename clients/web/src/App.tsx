@@ -43,6 +43,7 @@ import {
 import { PageContext } from "./components/PageShell";
 import { HelpPage } from "./components/pages/HelpPage";
 import { ContextPage } from "./components/pages/ContextPage";
+import { CodeIndexDisabled } from "./components/pages/CodeIndexDisabled";
 import { handleEsc } from "./chat/escHandler";
 import { buildContinuedPrompt } from "./chat/continueInterrupted";
 import {
@@ -135,6 +136,12 @@ const SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
 
 /** Entries for the header tools menu — each opens its feature's UI
  * directly (no slash command visible to the user). */
+/** The commands that vanish when a group turns the code index off.
+ *  Frozen module constants rather than literals built per render, so
+ *  the props they feed keep a stable identity. */
+const CODEINDEX_COMMANDS: readonly string[] = Object.freeze(["/codeindex"]);
+const EMPTY_HIDDEN: readonly string[] = Object.freeze([]);
+
 const TOOLS_MENU: { label: string; command: string; desc: string }[] = [
   { label: "MCP servers", command: "/mcp", desc: "connect external tools" },
   { label: "CodeIndex", command: "/codeindex", desc: "semantic code search" },
@@ -1458,6 +1465,21 @@ export default function App() {
     applyTheme(status?.theme, document.documentElement);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [themeKey]);
+  // A code index the group has switched off should leave no trace:
+  // not in the tools menu, not in completions, not in the help index,
+  // and no status chip for a subsystem that is not running. Typing
+  // ``/codeindex`` still reaches the page, which says so — hiding a
+  // command from a list does not stop anyone typing it, and a page
+  // that silently did nothing would be worse than one that explains.
+  //
+  // Defaults true: a backend without the field predates it, and that
+  // meant enabled.
+  const codeIndexEnabled = status?.code_index_enabled ?? true;
+  const hiddenCommands = codeIndexEnabled ? EMPTY_HIDDEN : CODEINDEX_COMMANDS;
+  const visibleTools = codeIndexEnabled
+    ? TOOLS_MENU
+    : TOOLS_MENU.filter((t) => !CODEINDEX_COMMANDS.includes(t.command));
+
   const groupName = brandName(status?.theme);
   const groupMark = brandMark(status?.theme);
 
@@ -2926,7 +2948,12 @@ export default function App() {
           >
             {page.kind === "plugins" && <PluginsPanel client={client} onClose={goChat} />}
             {page.kind === "knowledge" && <KnowledgePanel client={client} onClose={goChat} />}
-            {page.kind === "codeindex" && <CodeIndexPanel client={client} onClose={goChat} />}
+            {page.kind === "codeindex" &&
+              (codeIndexEnabled ? (
+                <CodeIndexPanel client={client} onClose={goChat} />
+              ) : (
+                <CodeIndexDisabled onClose={goChat} />
+              ))}
             {page.kind === "agents" && <AgentsPanel client={client} onClose={goChat} />}
             {page.kind === "schedule" && <SchedulePanel client={client} onClose={goChat} />}
             {page.kind === "watcher" && <WatcherPanel client={client} onClose={goChat} />}
@@ -2934,6 +2961,7 @@ export default function App() {
             {page.kind === "help" && (
               <HelpPage
                 skills={skills}
+                hiddenCommands={hiddenCommands}
                 onRun={(name) => {
                   // Into the composer, not straight to the backend:
                   // reading help is not deciding to run something, and
@@ -3023,7 +3051,8 @@ export default function App() {
           connected={conn === "connected"}
           processing={processing}
           skills={skills}
-          tools={TOOLS_MENU}
+          tools={visibleTools}
+          hiddenCommands={hiddenCommands}
           seed={composerSeed}
           sessionId={sessionId}
           clientState={clientState}
@@ -3102,10 +3131,12 @@ export default function App() {
                   picker itself — the left half tints per mode
                   so the user gets the at-a-glance signal
                   without a separate footer chip. */}
-              <CodeIndexIndicator
-                client={client}
-                onOpen={() => goPage({ kind: "codeindex", label: "CodeIndex" })}
-              />
+              {codeIndexEnabled && (
+                <CodeIndexIndicator
+                  client={client}
+                  onOpen={() => goPage({ kind: "codeindex", label: "CodeIndex" })}
+                />
+              )}
               <WatcherIndicator
                 client={client}
                 onOpen={() => goPage({ kind: "watcher", label: "Watcher" })}

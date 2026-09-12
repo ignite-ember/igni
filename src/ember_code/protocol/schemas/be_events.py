@@ -340,6 +340,16 @@ class StatusUpdate(Message):
     # before any of it reaches a stylesheet. Typing it here would add a
     # second place to update per token without adding a check.
     theme: dict | None = None
+    # Whether this session has a code index at all. Off is a real kill
+    # switch rather than a UI preference — the tool is never offered,
+    # the plain ``main_agent`` prompt replaces the CodeIndex-first
+    # variant, and the Neo4j sidecar is not attached. The frontend
+    # needs it so a subsystem that is not running stops advertising
+    # itself in menus, completions and the status bar.
+    #
+    # Defaults true so a backend that predates the field reads as
+    # "enabled", which is what it was.
+    code_index_enabled: bool = True
 
 
 class SessionListEntry(BaseModel):

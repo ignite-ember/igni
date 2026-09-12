@@ -284,6 +284,7 @@
     "status_update": [
       "cloud_connected",
       "cloud_org",
+      "code_index_enabled",
       "context_tokens",
       "event_seq",
       "id",

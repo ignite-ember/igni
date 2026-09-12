@@ -168,6 +168,12 @@ export interface StatusUpdate extends BaseMessage {
    *  untrusted here: `lib/theme.ts` validates each one against its
    *  allowlist before applying it. */
   theme?: GroupTheme | null;
+  /** Whether this session has a code index at all. Off is a kill
+   *  switch, not a preference: the tool is never offered to the agent
+   *  and the sidecar is not attached, so the UI should stop
+   *  advertising it. Optional — a backend without the field is one
+   *  that predates it, which means enabled. */
+  code_index_enabled?: boolean;
 }
 
 /** Brand overrides a group can set. Every field optional; anything

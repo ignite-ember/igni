@@ -85,6 +85,7 @@ class ContextController:
             max_context=self._settings.models.max_context_window,
             permission_mode=self._session.permission_mode_value,
             theme=self._group_theme(),
+            code_index_enabled=self._settings.code_index.enabled,
         )
 
     def _group_theme(self) -> dict | None:

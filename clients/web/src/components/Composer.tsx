@@ -149,6 +149,7 @@ export function Composer({
   permissionMode,
   onPickMode,
   brandName = "igni",
+  hiddenCommands,
 }: {
   client: IgniClient;
   connected: boolean;
@@ -192,6 +193,11 @@ export function Composer({
    *  Defaults to igni, which is what every caller without a group
    *  theme gets. See `lib/theme.ts`. */
   brandName?: string;
+  /** Commands to leave out of completions — a subsystem that is
+   *  switched off should not be suggested. Hiding them here does not
+   *  stop anyone typing one, which is why the page they open explains
+   *  itself rather than silently doing nothing. */
+  hiddenCommands?: readonly string[];
 }) {
   const draftKey = sessionId ? `draft:${sessionId}` : "";
   const [text, setText] = useState("");
@@ -411,10 +417,14 @@ export function Composer({
     // is in the first token (mirrors TUI autocomplete behaviour).
     if (value.startsWith("/") && !value.slice(0, caret).includes(" ")) {
       const q = value.slice(1, caret);
-      const entries = filterSlashCommands(
-        [...BUILTIN_COMMANDS, ...skills],
-        q,
-      ).map((c) => ({ key: c.name, label: c.name, desc: c.description }));
+      const offered = hiddenCommands?.length
+        ? [...BUILTIN_COMMANDS, ...skills].filter((c) => !hiddenCommands.includes(c.name))
+        : [...BUILTIN_COMMANDS, ...skills];
+      const entries = filterSlashCommands(offered, q).map((c) => ({
+        key: c.name,
+        label: c.name,
+        desc: c.description,
+      }));
       setMenu(
         entries.length
           ? { kind: "slash", entries, active: 0, tokenStart: 0 }

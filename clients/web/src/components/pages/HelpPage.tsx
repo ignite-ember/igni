@@ -73,24 +73,32 @@ export function groupingDrift(commands: SlashCommand[]): {
 
 export function HelpPage({
   skills,
+  hiddenCommands,
   onRun,
   onClose,
 }: {
   /** Skills are user- and plugin-supplied, so they cannot be grouped
    *  by hand — they get their own section. */
   skills: SlashCommand[];
+  /** Commands for subsystems that are switched off. Left out rather
+   *  than greyed: this page is the index of what the product can do,
+   *  and for this group it cannot do these. */
+  hiddenCommands?: readonly string[];
   /** Drop a command into the composer rather than firing it. Reading
    *  help is not the same as deciding to run something, and several
    *  of these take arguments. */
   onRun: (name: string) => void;
   onClose: () => void;
 }) {
-  const byName = new Map(BUILTIN_COMMANDS.map((c) => [c.name, c]));
+  const visible = hiddenCommands?.length
+    ? BUILTIN_COMMANDS.filter((c) => !hiddenCommands.includes(c.name))
+    : BUILTIN_COMMANDS;
+  const byName = new Map(visible.map((c) => [c.name, c]));
 
   // Anything the groups above have not placed still has to appear —
   // a command missing from help because nobody updated a list here is
   // worse than one in the wrong section.
-  const { ungrouped } = groupingDrift(BUILTIN_COMMANDS);
+  const { ungrouped } = groupingDrift(visible);
   const sections = [
     ...GROUPS.map((g) => ({ ...g, commands: g.commands.filter((n) => byName.has(n)) })),
     ...(ungrouped.length

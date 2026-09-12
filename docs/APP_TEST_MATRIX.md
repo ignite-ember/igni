@@ -112,6 +112,7 @@ The core loop: ask, stream, answer. Everything else is in service of this.
 | `search_chat` | No match; match in a tool result rather than a message; regex metacharacters typed literally. Sweep: **answers** (default run). | `answers` |
 | `truncate_history` | Truncating to zero; truncating mid-tool-call so a call has no result. Sweep: **answers** (`--mutating`). | `answers` |
 | `count_context_tokens` | A session at 0%; one over 100% where the meter has nowhere to go. Sweep: **answers** (default run). | `answers` |
+| `get_context_breakdown` | An empty session, where every part is zero and the percentages must not divide by it; one where the floor is the whole context because nothing has been said yet; one where a tokenizer disagrees with itself and the parts exceed the whole. **Verified**: the `/ctx` page reads live totals against a running backend. | `verified` |
 | `compact_if_needed` | Compaction mid-run; compaction that fails and must not lose the transcript. Sweep: **answers** (`--mutating`). | `answers` |
 | `cancel_run` | Cancel before the first token; during a tool call; after the run finished. **Verified**: cancel mid-stream returns the composer to ready and the next message is answered. | `verified` |
 | `get_run_timeout` | A run that exceeds it — does the UI say so or just stop?. Sweep: **answers** (default run). | `answers` |

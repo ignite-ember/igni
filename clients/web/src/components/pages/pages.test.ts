@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { BUILTIN_COMMANDS } from "../Composer";
+import { BUILTIN_COMMANDS, filterSlashCommands } from "../Composer";
 import { groupingDrift } from "./HelpPage";
 import { shares } from "./ContextPage";
 
@@ -76,5 +76,44 @@ describe("the context split", () => {
     // its track is a rendering bug either way.
     const s = shares({ total: 100, runs: 150, floor: 0 }, 100);
     expect(s.runsPct).toBe(100);
+  });
+});
+
+describe("hiding a switched-off subsystem", () => {
+  // A group can turn the code index off entirely, and off is a kill
+  // switch: the tool is never offered to the agent and the sidecar is
+  // not attached. The UI should stop advertising it — but only the
+  // lists. The command itself still has to land somewhere that
+  // explains, because a name removed from every menu can still be
+  // typed.
+
+  it("drops the hidden command from completions", () => {
+    const pool = BUILTIN_COMMANDS.filter((c) => !["/codeindex"].includes(c.name));
+    expect(filterSlashCommands(pool, "codeindex")).toEqual([]);
+  });
+
+  it("leaves every other command reachable", () => {
+    const pool = BUILTIN_COMMANDS.filter((c) => !["/codeindex"].includes(c.name));
+    expect(filterSlashCommands(pool, "knowledge").map((c) => c.name)).toContain(
+      "/knowledge",
+    );
+    expect(pool).toHaveLength(BUILTIN_COMMANDS.length - 1);
+  });
+
+  it("does not report the hidden command as ungrouped in help", () => {
+    // Help filters the same list before grouping. If it filtered only
+    // the render and not the drift check, hiding a command would make
+    // it reappear under "Other" — the one section that exists to
+    // catch commands nobody placed.
+    const visible = BUILTIN_COMMANDS.filter((c) => c.name !== "/codeindex");
+    expect(groupingDrift(visible).ungrouped).toEqual([]);
+  });
+
+  it("still reports a genuinely unplaced command when one is hidden", () => {
+    const visible = [
+      ...BUILTIN_COMMANDS.filter((c) => c.name !== "/codeindex"),
+      { name: "/invented", description: "" },
+    ];
+    expect(groupingDrift(visible).ungrouped).toEqual(["/invented"]);
   });
 });
