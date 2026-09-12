@@ -117,13 +117,13 @@ interface UpdateInfo {
   download_url?: string;
 }
 
-/** The destinations with a permanent seat in the header.
+/** The destinations with a permanent seat in the sidebar.
  *
- * Three, not thirteen: a header row stops being read at about four
- * items, and these are the ones you go back to while working rather
- * than the ones you configure once. The rest keep their place in
- * `TOOLS_MENU` below. */
-const HEADER_LINKS: { kind: PageKind; label: string }[] = [
+ * Above the session list, because that is what they are relative to
+ * it: places, not conversations. Three and not thirteen — the rest
+ * keep their place in `TOOLS_MENU` below, and these are the ones you
+ * go back to while working rather than configure once. */
+const SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
   { kind: "plugins", label: "Plugins" },
   { kind: "knowledge", label: "Knowledge" },
   { kind: "agents", label: "Agents" },
@@ -2415,6 +2415,12 @@ export default function App() {
         open={sidebarOpen}
         sessions={sessions}
         currentId={sessionId}
+        links={SIDEBAR_LINKS}
+        activeLink={page?.kind}
+        onLink={(kind) => {
+          const link = SIDEBAR_LINKS.find((l) => l.kind === kind);
+          if (link) goPage({ kind: link.kind, label: link.label });
+        }}
         onNewChat={() => void runCommand("/clear", false)}
         onPick={(id) => void pickSession(id)}
         onClose={() => setSidebarOpen(false)}
@@ -2472,25 +2478,6 @@ export default function App() {
                 component itself paints nothing otherwise. */}
             <BackendVersionChip />
           </div>
-          {/* The destinations people come back to, promoted out of the
-              thirteen-entry tools menu. Everything else still lives
-              there — this is about the ones you return to mid-task,
-              not about ranking features. Before this, the only
-              persistent way in was a flat menu one click deep, and the
-              only signposted way in was the empty-state cards, which
-              vanish the moment you send a first message. */}
-          <nav className="header-links" aria-label="Sections">
-            {HEADER_LINKS.map((link) => (
-              <button
-                key={link.kind}
-                className={`header-link${page?.kind === link.kind ? " active" : ""}`}
-                aria-current={page?.kind === link.kind ? "page" : undefined}
-                onClick={() => goPage({ kind: link.kind, label: link.label })}
-              >
-                {link.label}
-              </button>
-            ))}
-          </nav>
           <div className="header-spacer" />
           {items.length > 0 && (
             <button

@@ -204,6 +204,45 @@ button {
   background: var(--bg-raised);
 }
 
+/* Height of the floating sidebar cluster — the head row and the
+   New-chat button. ``Sidebar`` measures the rendered cluster and
+   overwrites this on the element; what is here is only the value used
+   for the first paint, before the observer runs, so it only has to be
+   close enough not to jump. */
+:root {
+  --sidebar-top-h: 90px;
+}
+
+.sidebar-links {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px 0;
+}
+
+.sidebar-link {
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.sidebar-link:hover {
+  color: var(--fg);
+  background: var(--bg-raised);
+}
+
+.sidebar-link.active {
+  color: var(--fg);
+  background: var(--bg-raised);
+  font-weight: 600;
+}
+
 .sidebar-section {
   padding: 10px 14px 4px;
   font-size: 11px;
@@ -237,8 +276,14 @@ button {
   /* ``padding-top`` matches the cluster's natural height so the
      first item sits crisp directly below the "Sessions" label at
      scroll-top, with no extra blank gap. Items only enter the blur
-     strip once the user actually scrolls. */
-  padding: 118px 8px 12px;
+     strip once the user actually scrolls.
+
+     One variable rather than the number twice: this and
+     ``.sidebar-blur``'s height are the same measurement, and they
+     were two literals that had to be changed together. Adding the
+     section links above the list is exactly the edit that would have
+     changed one and not the other. */
+  padding: var(--sidebar-top-h) 8px 12px;
   position: relative;
   z-index: 1;
   /* Same overscroll guard as ``.conversation`` so the macOS
@@ -258,7 +303,7 @@ button {
   top: 0;
   left: 0;
   right: 0;
-  height: 118px;
+  height: var(--sidebar-top-h);
   z-index: 5;
   pointer-events: none;
   background: var(--bg);
