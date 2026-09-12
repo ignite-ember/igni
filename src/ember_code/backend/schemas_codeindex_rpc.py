@@ -180,6 +180,12 @@ class CodeIndexStatus(BaseModel):
     install_state: str
     repository_id: str
     install_url: str
+    #: The portal's repositories page. Unlike ``install_url`` — which
+    #: is only set while the App still needs connecting — this is
+    #: populated whatever the install state, because indexing is
+    #: turned on per repository there and that is where the client
+    #: sends people to do it. Empty when no api url is configured.
+    portal_url: str = ""
     commits_indexed: int
     index_size_bytes: int
     branches_indexed: list[BranchIndexEntry]

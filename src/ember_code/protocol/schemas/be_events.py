@@ -331,6 +331,15 @@ class StatusUpdate(Message):
     # Kept as ``str`` for forward-compat with any future mode we
     # haven't yet enumerated.
     permission_mode: str = "default"
+    # Brand overrides from the signed-in user's group, straight off the
+    # group pack. ``None`` is igni's own palette, which is also what a
+    # session with no cloud connection gets.
+    #
+    # Passed through untyped: the BE has no use for these values, and
+    # the FE validates every one of them against its own allowlist
+    # before any of it reaches a stylesheet. Typing it here would add a
+    # second place to update per token without adding a check.
+    theme: dict | None = None
 
 
 class SessionListEntry(BaseModel):

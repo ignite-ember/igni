@@ -88,6 +88,7 @@ class CommandAction(StrEnum):
     SCHEDULE = "schedule"
     WATCHER = "watcher"  # opens the background-process panel
     COMPACT = "compact"
+    CTX = "ctx"  # opens the context-breakdown page
     RUN_PROMPT = "run_prompt"
 
 

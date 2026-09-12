@@ -41,6 +41,8 @@ import {
 } from "./chat/pageStack";
 import { PageContext } from "./components/PageShell";
 import { WorkflowsPage } from "./components/pages/WorkflowsPage";
+import { HelpPage } from "./components/pages/HelpPage";
+import { ContextPage } from "./components/pages/ContextPage";
 import { handleEsc } from "./chat/escHandler";
 import { buildContinuedPrompt } from "./chat/continueInterrupted";
 import {
@@ -55,7 +57,7 @@ import { ClientStateStore, ensureClientId } from "./clientState";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ChatItemView } from "./components/ChatItems";
 import { ChatSearchBar } from "./components/ChatSearchBar";
-import { Composer, BUILTIN_COMMANDS, type SlashCommand } from "./components/Composer";
+import { Composer, type SlashCommand } from "./components/Composer";
 import { CodeIndexIndicator } from "./components/CodeIndexIndicator";
 import { WatcherIndicator } from "./components/WatcherIndicator";
 import { BackendVersionChip, CtxMeter, SessionChip } from "./components/StatusBits";
@@ -78,10 +80,10 @@ import { KnowledgePanel } from "./components/panels/KnowledgePanel";
 import { Toasts, type Toast } from "./components/Toasts";
 import { UpdatePrompt } from "./components/UpdatePrompt";
 import { host } from "./lib/host";
+import { applyTheme, brandMark, brandName } from "./lib/theme";
 import { PluginsPanel } from "./components/panels/PluginsPanel";
 import { SkillsPanel } from "./components/panels/SkillsPanel";
 import { DirectoryPicker } from "./components/panels/DirectoryPicker";
-import { InfoPanel } from "./components/panels/InfoPanel";
 import { LoginPanel } from "./components/panels/LoginPanel";
 import { LoopPanel } from "./components/panels/LoopPanel";
 import { McpPanel } from "./components/panels/McpPanel";
@@ -106,9 +108,7 @@ import type { HITLRequest, ServerMessage, StatusUpdate } from "./protocol/messag
  */
 type PanelState =
   | { kind: "none" }
-  | { kind: "loop" }
   | { kind: "login" }
-  | { kind: "info"; title: string; markdown: string }
   | { kind: "dir-picker" };
 
 interface UpdateInfo {
@@ -1427,6 +1427,19 @@ export default function App() {
 
   const page = currentPage(pages);
 
+  // Group branding. Keyed on the serialised theme rather than the
+  // object: status arrives every five seconds and carries a fresh
+  // object each time, so an identity-keyed effect would re-apply the
+  // same values twelve times a minute. ``applyTheme`` clears what it
+  // owns before setting, so losing a theme restores igni's palette
+  // instead of leaving the last one stuck until reload.
+  const themeKey = JSON.stringify(status?.theme ?? null);
+  useEffect(() => {
+    applyTheme(status?.theme, document.documentElement);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [themeKey]);
+  const groupName = brandName(status?.theme);
+  const groupMark = brandMark(status?.theme);
 
   // Esc behavior (single global handler, fires once per keydown):
   //
@@ -2143,7 +2156,7 @@ export default function App() {
             return;
           case "loop":
             if (content && echo) append(assistantItem(content));
-            setPanel({ kind: "loop" });
+            goPage({ kind: "loop", label: "Loop" });
             return;
           case "schedule":
             if (content && echo) append(assistantItem(content));
@@ -2167,17 +2180,12 @@ export default function App() {
           case "watcher":
             goPage({ kind: "watcher", label: "Watcher" });
             return;
-          case "help": {
-            const lines = [...BUILTIN_COMMANDS, ...skills].map(
-              (c) => `- \`${c.name}\` — ${c.description}`,
-            );
-            setPanel({
-              kind: "info",
-              title: "Help",
-              markdown: `### Commands\n\n${lines.join("\n")}`,
-            });
+          case "help":
+            goPage({ kind: "help", label: "Help" });
             return;
-          }
+          case "ctx":
+            goPage({ kind: "context", label: "Context" });
+            return;
           case "run_prompt":
             // Two sources land here:
             //  - Skills expand to a bare prompt → render nothing extra,
@@ -2460,8 +2468,15 @@ export default function App() {
               "Sessions" section title, but the app identity belongs
               to the main pane so the user's eye anchors there. */}
           <div className="brand">
-            <FlameIcon size={20} />
-            <span>igni</span>
+            {/* A group's mark renders as an ``img``, never inlined as
+                markup — an SVG document can carry script, the same
+                bytes in an ``img`` cannot. See ``lib/theme.ts``. */}
+            {groupMark ? (
+              <img src={groupMark} alt="" width={20} height={20} style={{ objectFit: "contain" }} />
+            ) : (
+              <FlameIcon size={20} />
+            )}
+            <span>{groupName}</span>
             <span
               className={`dot ${conn === "replaced" ? "disconnected" : conn}`}
               title={`backend ${conn}`}
@@ -2655,10 +2670,24 @@ export default function App() {
           <div className="conversation">
             <div className="col">
               <div className="welcome">
+                {/* Branded the same way as the header row — an org
+                    that renames the product in one place and not the
+                    other has it staring back at them on every empty
+                    chat, which is the most-looked-at screen there is. */}
                 <div style={{ display: "flex", justifyContent: "center" }}>
-                  <FlameIcon size={56} />
+                  {groupMark ? (
+                    <img
+                      src={groupMark}
+                      alt=""
+                      width={56}
+                      height={56}
+                      style={{ objectFit: "contain" }}
+                    />
+                  ) : (
+                    <FlameIcon size={56} />
+                  )}
                 </div>
-                <h1>igni</h1>
+                <h1>{groupName}</h1>
                 <p>Your AI coding agent, in this project.</p>
                 <div className="welcome-caps">
                   {(
@@ -2666,7 +2695,6 @@ export default function App() {
                       ["/agents", "Dispatch to a specialist — architect, debugger, …"],
                       ["/skills", "Workflows like /commit and /resolve-issues"],
                       ["/workflows", "Run a CC-style multi-phase workflow"],
-                      ["/codeindex", "Semantic search across your repo"],
                       ["/schedule", "Background tasks that report back"],
                       ["/loop", "Repeat a prompt across a batch until done"],
                       ["/mcp", "Plug in external tools and data sources"],
@@ -2811,6 +2839,44 @@ export default function App() {
                 onClose={goChat}
               />
             )}
+            {page.kind === "help" && (
+              <HelpPage
+                skills={skills}
+                onRun={(name) => {
+                  // Into the composer, not straight to the backend:
+                  // reading help is not deciding to run something, and
+                  // several of these take arguments.
+                  goChat();
+                  setComposerSeed({ text: name, n: Date.now() });
+                }}
+                onClose={goChat}
+              />
+            )}
+            {page.kind === "context" && (
+              <ContextPage
+                client={client}
+                maxContext={status?.max_context ?? 0}
+                onCompact={() => {
+                  goChat();
+                  void runCommand("/compact", false);
+                }}
+                onClose={goChat}
+              />
+            )}
+            {page.kind === "loop" && (
+              <LoopPanel
+                client={client}
+                onClose={goChat}
+                onResume={(prompt) => {
+                  // Back to the chat so the user can watch the
+                  // iteration stream — same as the slash-command path
+                  // for /loop resume.
+                  goChat();
+                  append(loopItem(prompt));
+                  void runUserMessage(prompt);
+                }}
+              />
+            )}
             {page.kind === "mcp" && (
               <McpPanel
                 client={client}
@@ -2838,6 +2904,7 @@ export default function App() {
         )}
 
         <Composer
+          brandName={groupName}
           hitlSlot={
             hitl ? (
               <HitlDialog
@@ -2966,27 +3033,6 @@ export default function App() {
         </div>
       </div>
 
-      {panel.kind === "info" && (
-        <InfoPanel
-          title={panel.title}
-          markdown={panel.markdown}
-          onClose={() => setPanel({ kind: "none" })}
-        />
-      )}
-      {panel.kind === "loop" && (
-        <LoopPanel
-          client={client}
-          onClose={() => setPanel({ kind: "none" })}
-          onResume={(prompt) => {
-            // Close the panel so the user can watch the iteration
-            // stream in the chat — same UX as the slash-command path
-            // for /loop resume.
-            setPanel({ kind: "none" });
-            append(loopItem(prompt));
-            void runUserMessage(prompt);
-          }}
-        />
-      )}
       {previewPath && (
         <FilePreview
           client={client}
