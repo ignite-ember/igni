@@ -73,6 +73,39 @@ function detectHost(): HostKind {
   return "web";
 }
 
+/**
+ * Per-window identity, when the host has a concept of one.
+ *
+ * Tauri labels every webview window, and that label is what makes
+ * two windows of ONE app instance distinguishable: they share an
+ * origin, so they share `localStorage`, so without this they would
+ * also share the persisted `client_id` — and therefore the session
+ * each one is bound to, its composer draft, and its sidebar state.
+ * See `clientState.ts`.
+ *
+ * Every other host shells exactly one view per bundle instance, so
+ * they return `""` and callers keep their single-view behaviour.
+ *
+ * Read synchronously from the globals Tauri injects before any page
+ * script runs — `getCurrentWindow()` when the global API is exposed
+ * (`withGlobalTauri`), else the internals metadata.
+ */
+function detectViewKey(): string {
+  if (typeof window === "undefined") return "";
+  const w = window as unknown as {
+    __TAURI__?: { window?: { getCurrentWindow?: () => { label?: string } } };
+    __TAURI_INTERNALS__?: { metadata?: { currentWindow?: { label?: string } } };
+  };
+  try {
+    const label = w.__TAURI__?.window?.getCurrentWindow?.()?.label;
+    if (label) return label;
+  } catch {
+    /* getCurrentWindow throws outside a real Tauri webview — fall
+       through to the internals metadata. */
+  }
+  return w.__TAURI_INTERNALS__?.metadata?.currentWindow?.label || "";
+}
+
 let cachedVsCodeApi: ReturnType<NonNullable<Window["acquireVsCodeApi"]>> | null = null;
 function getVsCodeApi() {
   if (cachedVsCodeApi) return cachedVsCodeApi;
@@ -89,6 +122,8 @@ export class Host {
    *  ``host.kind`` after the shim has landed, we upgrade ``"web"``
    *  to ``"jetbrains"`` and never look back. */
   private _kind: HostKind;
+  /** Cached window label — see `viewKey`. */
+  private _viewKey = "";
   /** When the host can't natively open files, the FE shows this
    *  preview instead. Set once at app boot. */
   private fallback: ((path: string) => void) | null = null;
@@ -107,6 +142,17 @@ export class Host {
       if (next !== "web") this._kind = next;
     }
     return this._kind;
+  }
+
+  /** This view's identity within the host, or `""` when the host has
+   *  only one view. Today that means the Tauri window label.
+   *
+   *  Re-detected while empty for the same reason `kind` is: a host
+   *  shim can land after module init. Once a label is seen it never
+   *  changes — a window keeps its label for its whole lifetime. */
+  get viewKey(): string {
+    if (!this._viewKey) this._viewKey = detectViewKey();
+    return this._viewKey;
   }
 
   /** Register the in-app preview opener used by the web fallback. */
