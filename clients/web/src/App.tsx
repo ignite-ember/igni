@@ -78,6 +78,7 @@ import { KnowledgePanel } from "./components/panels/KnowledgePanel";
 import { Toasts, type Toast } from "./components/Toasts";
 import { UpdatePrompt } from "./components/UpdatePrompt";
 import { host } from "./lib/host";
+import { applyTheme, brandMark, brandName } from "./lib/theme";
 import { PluginsPanel } from "./components/panels/PluginsPanel";
 import { SkillsPanel } from "./components/panels/SkillsPanel";
 import { DirectoryPicker } from "./components/panels/DirectoryPicker";
@@ -1427,6 +1428,19 @@ export default function App() {
 
   const page = currentPage(pages);
 
+  // Group branding. Keyed on the serialised theme rather than the
+  // object: status arrives every five seconds and carries a fresh
+  // object each time, so an identity-keyed effect would re-apply the
+  // same values twelve times a minute. ``applyTheme`` clears what it
+  // owns before setting, so losing a theme restores igni's palette
+  // instead of leaving the last one stuck until reload.
+  const themeKey = JSON.stringify(status?.theme ?? null);
+  useEffect(() => {
+    applyTheme(status?.theme, document.documentElement);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [themeKey]);
+  const groupName = brandName(status?.theme);
+  const groupMark = brandMark(status?.theme);
 
   // Esc behavior (single global handler, fires once per keydown):
   //
@@ -2460,8 +2474,15 @@ export default function App() {
               "Sessions" section title, but the app identity belongs
               to the main pane so the user's eye anchors there. */}
           <div className="brand">
-            <FlameIcon size={20} />
-            <span>igni</span>
+            {/* A group's mark renders as an ``img``, never inlined as
+                markup — an SVG document can carry script, the same
+                bytes in an ``img`` cannot. See ``lib/theme.ts``. */}
+            {groupMark ? (
+              <img src={groupMark} alt="" width={20} height={20} style={{ objectFit: "contain" }} />
+            ) : (
+              <FlameIcon size={20} />
+            )}
+            <span>{groupName}</span>
             <span
               className={`dot ${conn === "replaced" ? "disconnected" : conn}`}
               title={`backend ${conn}`}
@@ -2655,10 +2676,24 @@ export default function App() {
           <div className="conversation">
             <div className="col">
               <div className="welcome">
+                {/* Branded the same way as the header row — an org
+                    that renames the product in one place and not the
+                    other has it staring back at them on every empty
+                    chat, which is the most-looked-at screen there is. */}
                 <div style={{ display: "flex", justifyContent: "center" }}>
-                  <FlameIcon size={56} />
+                  {groupMark ? (
+                    <img
+                      src={groupMark}
+                      alt=""
+                      width={56}
+                      height={56}
+                      style={{ objectFit: "contain" }}
+                    />
+                  ) : (
+                    <FlameIcon size={56} />
+                  )}
                 </div>
-                <h1>igni</h1>
+                <h1>{groupName}</h1>
                 <p>Your AI coding agent, in this project.</p>
                 <div className="welcome-caps">
                   {(
@@ -2838,6 +2873,7 @@ export default function App() {
         )}
 
         <Composer
+          brandName={groupName}
           hitlSlot={
             hitl ? (
               <HitlDialog
