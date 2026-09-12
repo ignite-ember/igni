@@ -20,23 +20,26 @@ export interface PageContextValue {
 export const PageContext = createContext<PageContextValue | null>(null);
 
 /**
- * The frame a destination renders in.
+ * Depth the panel owns, handed up so the trail can show it.
  *
- * Deliberately the same prop surface as `panels/Drawer` — `title`,
- * `headerExtras`, `toolbar`, `children` — because nine panels convert
- * by swapping this in for that, and `PluginsPanel` alone is a thousand
- * lines. The wrapper changes; the bodies do not.
+ * `labels` are the crumbs below the destination — `["acme-tools"]`
+ * under Plugins. `onTruncate(i)` asks the panel to make level `i` the
+ * deepest; `-1` means back to its own root.
  *
- * What it adds over `Drawer` is the thing a single modal slot could
- * never have: a trail. The breadcrumbs come from the stack, so a panel
- * that walks collections into documents can say where it is and get
- * back one level, instead of being one box with a close button.
- *
- * What it drops is the backdrop and the fixed 620px. A page takes the
- * pane.
+ * A prop rather than a context, because the panel renders the
+ * `Drawer` that renders this shell — it is the shell's parent, so a
+ * provider down here would be invisible to it. (It was, and driving
+ * the real thing is what showed it: the title changed and the trail
+ * did not.)
  */
+export interface PanelLevels {
+  labels: string[];
+  onTruncate: (index: number) => void;
+}
+
 export function PageShell({
   trail,
+  levels,
   title,
   headerExtras,
   toolbar,
@@ -55,6 +58,8 @@ export function PageShell({
   /** Non-scrolling row under the header, outside the scroll area so
    *  list items cannot peek above it. Same slot `Drawer` offers. */
   toolbar?: ReactNode;
+  /** Depth inside the rendered panel, if it has any. */
+  levels?: PanelLevels;
   /** A crumb was clicked: truncate to `index`. */
   onCrumb: (index: number) => void;
   /** Back one level. At the root this is the same as `onClose`. */
@@ -63,6 +68,20 @@ export function PageShell({
   onClose: () => void;
   children: ReactNode;
 }) {
+  // Depth the rendered panel owns — `KnowledgePanel` selecting a
+  // document, `PluginsPanel` opening a plugin — so there is one trail
+  // rather than the chrome's and the panel's stacked on top of it.
+  const panelCrumbs = levels?.labels ?? [];
+
+  // Back goes up one *crumb*, wherever that crumb came from: out of a
+  // document before out of Knowledge. Without this, Esc inside a
+  // document would leave the destination entirely and skip the level
+  // the user was actually in.
+  const back = () => {
+    if (panelCrumbs.length) levels?.onTruncate(panelCrumbs.length - 2);
+    else onBack();
+  };
+
   // Esc pops one level rather than dumping you all the way out — with
   // a trail, "back" and "close" stopped being the same thing.
   //
@@ -75,13 +94,15 @@ export function PageShell({
       if (e.key !== "Escape") return;
       if (document.querySelector(".file-preview, .modal-overlay")) return;
       e.stopPropagation();
-      onBack();
+      back();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [onBack]);
+    // `back` closes over the current levels; re-bind when they change.
+  }, [onBack, levels, panelCrumbs.length]);
 
   const here = trail[trail.length - 1];
+  const leaf = panelCrumbs.length ? panelCrumbs[panelCrumbs.length - 1] : here?.label;
 
   return (
     <section className="page" aria-label={here?.label ?? "Page"}>
@@ -90,7 +111,12 @@ export function PageShell({
           Chat
         </button>
         {trail.map((route, i) => {
-          const last = i === trail.length - 1;
+          // A destination is only the last crumb when the panel inside
+          // it is at its own root. With panel depth below it, clicking
+          // it means "back to the top of this destination", which only
+          // the panel can do.
+          const lastRoute = i === trail.length - 1;
+          const last = lastRoute && !panelCrumbs.length;
           return (
             <span key={`${route.kind}-${i}`} className="page-crumb-group">
               <span className="page-crumb-sep" aria-hidden="true">
@@ -101,8 +127,30 @@ export function PageShell({
                   {route.label}
                 </span>
               ) : (
-                <button className="page-crumb" onClick={() => onCrumb(i)}>
+                <button
+                  className="page-crumb"
+                  onClick={() => (lastRoute ? levels?.onTruncate(-1) : onCrumb(i))}
+                >
                   {route.label}
+                </button>
+              )}
+            </span>
+          );
+        })}
+        {panelCrumbs.map((label, i) => {
+          const last = i === panelCrumbs.length - 1;
+          return (
+            <span key={`level-${i}`} className="page-crumb-group">
+              <span className="page-crumb-sep" aria-hidden="true">
+                /
+              </span>
+              {last ? (
+                <span className="page-crumb current" aria-current="page">
+                  {label}
+                </span>
+              ) : (
+                <button className="page-crumb" onClick={() => levels?.onTruncate(i)}>
+                  {label}
                 </button>
               )}
             </span>
@@ -111,7 +159,7 @@ export function PageShell({
       </nav>
 
       <div className="page-head">
-        <h2 className="page-title">{title ?? here?.label}</h2>
+        <h2 className="page-title">{title ?? leaf}</h2>
         {headerExtras ? (
           <div className="page-head-extras">{headerExtras}</div>
         ) : (
