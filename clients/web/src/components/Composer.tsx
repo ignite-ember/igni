@@ -148,6 +148,7 @@ export function Composer({
   onStop,
   permissionMode,
   onPickMode,
+  brandName = "igni",
 }: {
   client: IgniClient;
   connected: boolean;
@@ -187,6 +188,10 @@ export function Composer({
    *  ``permission_mode`` accordingly; the dropdown is purely a
    *  trigger surface. */
   onPickMode?: (mode: string) => void;
+  /** The product's name in the placeholder — a group can rebrand it.
+   *  Defaults to igni, which is what every caller without a group
+   *  theme gets. See `lib/theme.ts`. */
+  brandName?: string;
 }) {
   const draftKey = sessionId ? `draft:${sessionId}` : "";
   const [text, setText] = useState("");
@@ -863,7 +868,7 @@ export function Composer({
                 ? "Command name (Backspace to return to chat)"
                 : shellMode
                   ? "Shell command (Backspace to return to chat)"
-                  : "Message igni — / commands, @ files, $ shell"
+                  : `Message ${brandName} — / commands, @ files, $ shell`
           }
           onValueChange={(value, caret) => {
             setHistIdx(-1);

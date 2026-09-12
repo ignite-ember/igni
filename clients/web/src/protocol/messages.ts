@@ -161,6 +161,22 @@ export interface StatusUpdate extends BaseMessage {
    *  Defaults to ``default`` so older BEs that don't send the
    *  field still type-check. */
   permission_mode: string;
+  /** Brand overrides from the signed-in user's group. Absent or null
+   *  means igni's own palette — which is also what an older backend
+   *  that doesn't send the field gets, hence optional. Values are
+   *  untrusted here: `lib/theme.ts` validates each one against its
+   *  allowlist before applying it. */
+  theme?: GroupTheme | null;
+}
+
+/** Brand overrides a group can set. Every field optional; anything
+ *  unset falls back to what igni ships. */
+export interface GroupTheme {
+  accent?: string | null;
+  danger?: string | null;
+  success?: string | null;
+  brand_name?: string | null;
+  brand_mark?: string | null;
 }
 
 export interface Info extends BaseMessage {

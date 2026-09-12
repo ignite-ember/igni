@@ -64,8 +64,17 @@ class ContextController:
         self._pending_store = pending_store
 
     def get_status(self) -> msg.StatusUpdate:
-        """Status-bar snapshot. O(1) — reads the latched
-        ``last_input_tokens`` counter."""
+        """Status-bar snapshot.
+
+        Everything here is a latched counter or a cheap attribute read
+        except the group theme, which comes off the cached pack's
+        metadata file — a couple of hundred bytes the OS has in cache,
+        read on the same path :class:`PanelsController` already reads it
+        on. Carried on the status push rather than its own message
+        because the FE already re-renders on every one of these, and a
+        second channel for six optional strings would be its own thing
+        to keep in sync.
+        """
         return msg.StatusUpdate(
             model=self._settings.models.default,
             cloud_connected=self._session.cloud_connected,
@@ -73,7 +82,25 @@ class ContextController:
             context_tokens=self._session.last_input_tokens,
             max_context=self._settings.models.max_context_window,
             permission_mode=self._session.permission_mode_value,
+            theme=self._group_theme(),
         )
+
+    def _group_theme(self) -> dict | None:
+        """Brand overrides from the cached group pack, if any.
+
+        Never raises: a missing, unreadable or theme-less pack all mean
+        the same thing to the caller, and a status poll that fails
+        because of a branding lookup would take the status bar with it.
+        """
+        try:
+            from ember_code.core.config.group_policy import GroupPolicyCache
+
+            meta = GroupPolicyCache().read_pack_meta() or {}
+            theme = meta.get("theme")
+            return theme if isinstance(theme, dict) and theme else None
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.debug("group theme unavailable (%s); using the shipped palette", exc)
+            return None
 
     async def count_context_tokens(self) -> int:
         """Locally count tokens of the current conversation."""
