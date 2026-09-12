@@ -195,34 +195,20 @@ export function KnowledgePanel({
   const selectedDoc = selected && docs ? docs.find((d) => d.id === selected) : null;
 
   // ── Header ──────────────────────────────────────────────────────
-  let title: React.ReactNode = "Knowledge";
-  if (view === "detail" && selectedDoc) {
-    title = (
-      <span className="breadcrumb" style={{ margin: 0 }}>
-        <button
-          className="breadcrumb-link"
-          onClick={() => {
-            setView("list");
-            setSelected(null);
-          }}
-        >
-          Knowledge
-        </button>
-        <span className="breadcrumb-sep">›</span>
-        <strong>{selectedDoc.name}</strong>
-      </span>
-    );
-  } else if (view === "add") {
-    title = (
-      <span className="breadcrumb" style={{ margin: 0 }}>
-        <button className="breadcrumb-link" onClick={() => setView("list")}>
-          Knowledge
-        </button>
-        <span className="breadcrumb-sep">›</span>
-        <strong>Add source</strong>
-      </span>
-    );
-  }
+  // The document and the add-source form are one level below the list.
+  // Reported to the page trail rather than drawn here: this panel's own
+  // breadcrumb used to sit directly under the chrome's, saying half of
+  // the same thing.
+  const leaf = view === "detail" && selectedDoc ? selectedDoc.name : view === "add" ? "Add source" : null;
+  const title: React.ReactNode = leaf ?? "Knowledge";
+  const levels = {
+    labels: leaf ? [leaf] : [],
+    // One level deep, so any truncation returns to the list.
+    onTruncate: () => {
+      setView("list");
+      setSelected(null);
+    },
+  };
 
   // ── Header extras: per-view actions ─────────────────────────────
   let headerExtras: React.ReactNode = null;
@@ -326,6 +312,7 @@ export function KnowledgePanel({
   return (
     <Drawer
       title={title}
+      levels={levels}
       onClose={onClose}
       headerExtras={headerExtras}
       toolbar={drawerToolbar}

@@ -1,6 +1,6 @@
 import { useContext, useEffect, type ReactNode } from "react";
 import { CloseIcon } from "../Icons";
-import { PageContext, PageShell } from "../PageShell";
+import { PageContext, PageShell, type PanelLevels } from "../PageShell";
 
 /**
  * The frame a panel renders in — a modal, or a page.
@@ -21,12 +21,16 @@ import { PageContext, PageShell } from "../PageShell";
  */
 export function Drawer({
   title,
+  levels,
   headerExtras,
   toolbar,
   onClose,
   children,
 }: {
   title: ReactNode;
+  /** Depth inside this panel, for the page trail. Ignored as a
+   *  dialog — a modal has no breadcrumbs to extend. */
+  levels?: PanelLevels;
   /** Slot rendered between the title and the close button — sized
    *  to the remaining horizontal space. Used for inline search,
    *  status pills, etc. */
@@ -66,6 +70,7 @@ export function Drawer({
     return (
       <PageShell
         trail={page.trail}
+        levels={levels}
         title={title}
         headerExtras={headerExtras}
         toolbar={toolbar}
