@@ -44,6 +44,7 @@ import { PageContext } from "./components/PageShell";
 import { HelpPage } from "./components/pages/HelpPage";
 import { ContextPage } from "./components/pages/ContextPage";
 import { CodeIndexDisabled } from "./components/pages/CodeIndexDisabled";
+import { WorkflowsPage } from "./components/pages/WorkflowsPage";
 import { handleEsc } from "./chat/escHandler";
 import { buildContinuedPrompt } from "./chat/continueInterrupted";
 import {
@@ -152,6 +153,7 @@ const TOOLS_MENU: { label: string; command: string; desc: string }[] = [
   { label: "Hooks", command: "/hooks", desc: "pre/post tool hooks" },
   { label: "Loop", command: "/loop", desc: "recurring prompt status" },
   { label: "Scheduled tasks", command: "/schedule", desc: "background routines" },
+  { label: "Workflows", command: "/workflows", desc: "multi-phase agent scripts" },
   { label: "Watcher", command: "/watcher", desc: "background processes & live logs" },
   { label: "Compact context", command: "/compact", desc: "summarize old turns" },
   { label: "Context breakdown", command: "/ctx", desc: "system vs runs token split" },
@@ -2065,23 +2067,16 @@ export default function App() {
       if (wfMatch) {
         const [, name, rawArgs] = wfMatch;
         if (!name) {
-          // No name → list workflows. Discovery through the BE.
-          try {
-            const list = await client.rpc<unknown[]>("list_workflows");
-            const lines = (list ?? []).map((w) => {
-              const wf = w as { name?: string; description?: string; phases?: unknown[] };
-              return `- \`${wf.name ?? "?"}\` — ${wf.description ?? "(no description)"} (${(wf.phases ?? []).length} phases)`;
-            });
-            append(
-              infoItem(
-                lines.length > 0
-                  ? `Available workflows:\n${lines.join("\n")}`
-                  : "No workflows found in .claude/workflows/",
-              ),
-            );
-          } catch (err) {
-            append(errorItem(`/workflows: list failed: ${err}`));
-          }
+          // No name → the listing, which is a place rather than a
+          // message. Appending it here is what used to destroy the
+          // chat's start screen: the welcome renders only while
+          // ``items.length === 0``, so browsing what exists replaced
+          // it permanently — and the start screen's own card was the
+          // only place ``/workflows`` was advertised.
+          //
+          // Running one still streams into the chat below, because a
+          // run belongs in the conversation that asked for it.
+          goPage({ kind: "workflows", label: "Workflows" });
           return;
         }
         let parsedArgs: Record<string, unknown> = {};
@@ -2979,6 +2974,19 @@ export default function App() {
                 onCompact={() => {
                   goChat();
                   void runCommand("/compact", false);
+                }}
+                onClose={goChat}
+              />
+            )}
+            {page.kind === "workflows" && (
+              <WorkflowsPage
+                client={client}
+                onRun={(command) => {
+                  // Into the composer: several take a JSON argument
+                  // object, and the phase list is what tells you
+                  // whether you want this one at all.
+                  goChat();
+                  setComposerSeed({ text: command, n: Date.now() });
                 }}
                 onClose={goChat}
               />

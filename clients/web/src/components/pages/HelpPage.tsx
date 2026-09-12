@@ -33,7 +33,7 @@ const GROUPS: { title: string; blurb: string; commands: string[] }[] = [
   {
     title: "Running work",
     blurb: "Repeat a prompt, or hand work to the background.",
-    commands: ["/loop", "/schedule", "/evals"],
+    commands: ["/loop", "/schedule", "/workflows", "/evals"],
   },
   {
     title: "How much it may do on its own",

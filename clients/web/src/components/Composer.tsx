@@ -37,6 +37,7 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/hooks", description: "Configured hooks" },
   { name: "/loop", description: "Repeat a prompt until done" },
   { name: "/schedule", description: "Background scheduled tasks" },
+  { name: "/workflows", description: "Multi-phase workflows this project defines" },
   {
     name: "/plan",
     description: "Toggle plan mode — agent proposes, you approve",
