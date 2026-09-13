@@ -84,7 +84,13 @@ def test_password_reused_across_runtime_instances(tmp_path: Path) -> None:
 
 def test_config_includes_required_keys(tmp_path: Path) -> None:
     rt = Neo4jRuntime(data_dir=tmp_path)
-    config = rt._build_config(bolt_port=7687, http_port=7474, password="hunter2")
+    config = rt._build_config(
+        bolt_port=7687,
+        http_port=7474,
+        password="hunter2",
+        data_dir=tmp_path / "proj-a" / "data",
+        logs_dir=tmp_path / "proj-a" / "logs",
+    )
     # Bolt + HTTP listen directives.
     assert "server.bolt.listen_address=:7687" in config
     assert "server.http.listen_address=:7474" in config
@@ -93,6 +99,46 @@ def test_config_includes_required_keys(tmp_path: Path) -> None:
     # HNSW-style heap sizing.
     assert "server.memory.heap.initial_size=512m" in config
     assert "server.memory.heap.max_size=2g" in config
+
+
+def test_config_points_the_store_at_this_project_only(tmp_path: Path) -> None:
+    """The store directory has to be absolute and per-instance.
+
+    It was ``./data``, with a comment claiming ``NEO4J_DATA`` carried
+    the real value. Neo4j 5 ignores that env var and resolves a
+    relative path against ``NEO4J_HOME`` — so every project's sidecar
+    opened the one store inside the unpacked distribution. The first
+    instance worked; the second found it locked and died seconds after
+    its port had started accepting connections, which is what made the
+    failure look like a flaky database rather than a config bug.
+    """
+    rt = Neo4jRuntime(data_dir=tmp_path)
+    a = rt._build_config(
+        bolt_port=1,
+        http_port=2,
+        password="x",
+        data_dir=tmp_path / "proj-a" / "data",
+        logs_dir=tmp_path / "proj-a" / "logs",
+    )
+    b = rt._build_config(
+        bolt_port=3,
+        http_port=4,
+        password="x",
+        data_dir=tmp_path / "proj-b" / "data",
+        logs_dir=tmp_path / "proj-b" / "logs",
+    )
+
+    assert f"server.directories.data={tmp_path / 'proj-a' / 'data'}" in a
+    assert f"server.directories.logs={tmp_path / 'proj-a' / 'logs'}" in a
+    # Two projects must not name the same store.
+    assert f"server.directories.data={tmp_path / 'proj-b' / 'data'}" in b
+    # No relative directory survives anywhere.
+    for config in (a, b):
+        assert "=./data" not in config
+        assert "=./logs" not in config
+        # The deprecated spellings warn on every boot and are silently
+        # ignored for the env-var trick that never worked.
+        assert "dbms.directories." not in config
 
 
 # ── Neo4jDiscovery ────────────────────────────────────────────────────

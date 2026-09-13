@@ -115,11 +115,15 @@ async def test_orchestrator_attach_neo4j_swaps_knowledge_when_env_set(
     class _Session:
         def __init__(self, project_id: str):
             self._project_id = project_id
-            # Start with a non-None knowledge + code_index (the
-            # orchestrator only swaps when there's something to
-            # swap; the real Session's constructor installs
-            # chroma-backed defaults).
-            self.knowledge = object()
+            # ``knowledge`` starts as ``None``, which is what the real
+            # constructor leaves behind now that the chroma fallback is
+            # gone — this call is what installs the index. The fake used
+            # to start it as ``object()`` to satisfy an "only swap what
+            # exists" guard, and that assumption was the bug: it kept
+            # the test green while no session could ever get knowledge.
+            # ``code_index`` is still built eagerly by the constructor,
+            # so it starts non-None here for the same reason.
+            self.knowledge = None
             self.code_index = object()
             self.attached_runtimes: list[Any] = []
             self.codeindex_attach_calls = 0
@@ -172,8 +176,8 @@ async def test_orchestrator_attach_neo4j_idempotent(tmp_path, monkeypatch, drive
 
     class _Session:
         def __init__(self):
-            # Non-None so the orchestrator's swap-condition is met.
-            self.knowledge = object()
+            # ``None``, as the real constructor leaves it.
+            self.knowledge = None
             self.attach_calls = 0
 
         async def attach_knowledge_neo4j(self, runtime):

@@ -616,6 +616,22 @@ class Session:
         from ember_code.core.knowledge.index import KnowledgeIndex
 
         project_id = resolve_project_id(self.project_dir)
+        # The per-project process has to exist before a driver can
+        # point at it: ``driver_for_knowledge`` raises rather than
+        # starting one on demand. The call was missing and nobody
+        # noticed, because the orchestrator's guard meant this method
+        # never ran outside tests — and the test runtimes hand back a
+        # driver without needing a process. Duck-typed for exactly that
+        # reason: a stub that only implements ``driver_for_knowledge``
+        # stays valid.
+        starter = getattr(runtime, "start_for_knowledge", None)
+        if starter is not None:
+            # ``start_for_knowledge`` also waits for the bolt port
+            # (``_wait_for_bolt``), so there is no separate readiness
+            # step to compose here — returning means either a spawned
+            # process that answered, or a discovered one that was
+            # probed alive.
+            await starter(project_id)
         driver = runtime.driver_for_knowledge(project_id)
         client = Neo4jKnowledgeClient(driver, project_id)
         await client.apply_schema()
