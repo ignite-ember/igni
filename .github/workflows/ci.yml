@@ -15,7 +15,10 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          # Read from ``.python-version`` rather than written out here.
+          # The version is one fact; every copy of it is a chance to
+          # drift, and this file held two of them.
+          python-version-file: .python-version
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -32,20 +35,20 @@ jobs:
       - name: Mypy
         run: uv run mypy src/ember_code/
 
+  # No matrix. The product ships one interpreter, so there is one job,
+  # and its name carries no version — which matters because the branch
+  # ruleset requires check names. A matrix made the check ``test (3.11)``
+  # and friends, so every version change silently required a ruleset
+  # edit too; forgetting it blocked every pull request on a check that
+  # could never report. That happened twice in one day.
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        # One version, because the product ships one version. The
-        # matrix was asserting support for 3.11 and 3.13 that the
-        # desktop app's own bootstrap never provides.
-        python-version: ["3.12"]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version-file: .python-version
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4

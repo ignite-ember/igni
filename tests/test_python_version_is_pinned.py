@@ -52,15 +52,47 @@ def test_the_tauri_runtime_installs_the_same_version():
     assert match.group(1) == _VERSION
 
 
-def test_ci_runs_the_suite_on_that_version_and_no_other():
-    """A matrix entry is a support claim. 3.11 and 3.13 were being
-    claimed by a product that installs neither."""
-    ci = (_ROOT / ".github/workflows/ci.yml").read_text()
-    match = re.search(r"python-version: \[([^\]]+)\]", ci)
+def test_the_version_file_is_the_pin():
+    """``.python-version`` is what ``uv venv`` and ``uv run`` read. Its
+    absence is how a development checkout ended up on 3.14 while every
+    other file said 3.12."""
+    assert (_ROOT / ".python-version").read_text().strip() == _VERSION
 
-    assert match, "the test matrix is gone from ci.yml"
-    versions = [v.strip().strip('"') for v in match.group(1).split(",")]
-    assert versions == [_VERSION], f"CI claims support for {versions}"
+
+def test_the_lock_is_resolved_for_that_version_only():
+    lock = (_ROOT / "uv.lock").read_text()
+    match = re.search(r'requires-python = "([^"]+)"', lock)
+
+    assert match, "uv.lock has no requires-python"
+    assert match.group(1) == f"=={_VERSION}.*", f"lock resolved for {match.group(1)}"
+
+
+def test_the_package_advertises_one_version():
+    """Classifiers are a public support claim; PyPI shows them."""
+    claimed = [
+        c.rsplit(" :: ", 1)[1]
+        for c in _PYPROJECT["project"]["classifiers"]
+        if c.startswith("Programming Language :: Python :: ") and "." in c
+    ]
+    assert claimed == [_VERSION], f"the package page claims {claimed}"
+
+
+def test_ci_reads_the_version_rather_than_repeating_it():
+    """Every written-out copy of the version is a chance to drift, and
+    this file held two. A matrix also put the version in the *check
+    name* (``test (3.11)``), which the branch ruleset requires by name —
+    so changing versions silently demanded a ruleset edit, and
+    forgetting it blocked every PR on a check that could never report.
+    """
+    ci = (_ROOT / ".github/workflows/ci.yml").read_text()
+
+    assert "python-version-file: .python-version" in ci
+    assert not re.search(r'python-version: "3\.\d+"', ci), (
+        "ci.yml writes a Python version out instead of reading the pin"
+    )
+    assert not re.search(r"python-version: \[", ci), (
+        "a version matrix puts the version back into the check name"
+    )
 
 
 class TestTheRuntimeWarning:
