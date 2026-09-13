@@ -126,8 +126,8 @@ interface UpdateInfo {
  * go back to while working rather than configure once. */
 const SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
   { kind: "plugins", label: "Plugins" },
+  { kind: "mcp", label: "MCPs" },
   { kind: "knowledge", label: "Knowledge" },
-  { kind: "agents", label: "Agents" },
 ];
 
 /** Entries for the header tools menu — each opens its feature's UI

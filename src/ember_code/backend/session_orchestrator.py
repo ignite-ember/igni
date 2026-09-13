@@ -176,13 +176,65 @@ class SessionOrchestrator:
         # is reachable via the bootstrap. Both attach calls are
         # safe when the field is missing or the session was built
         # with the relevant feature disabled.
-        session = getattr(self._backend, "_session", None)
-        if session is not None:
-            if getattr(session, "knowledge", None) is not None:
-                await session.attach_knowledge_neo4j(runtime)
-            if getattr(session, "code_index", None) is not None:
-                await session.attach_codeindex_neo4j(runtime)
+        await self._attach_neo4j_to(getattr(self._backend, "_session", None))
         return runtime
+
+    async def _attach_neo4j_to(self, session: Any) -> None:
+        """Give one session the neo4j-backed indexes.
+
+        Called for the boot session by :meth:`attach_neo4j` and for
+        every other session by :meth:`_create_runtime`. It has to be
+        both: the boot session is the only one the BE makes for itself,
+        and every session the user actually opens comes from the
+        factory. Attaching only the first one left the rest with no
+        index at all, which reads as "Knowledge base failed to
+        initialize" in the panel — for what is otherwise a perfectly
+        healthy session.
+
+        Knowledge is gated on the setting rather than on an index
+        already being present. That used to be the check, back when the
+        constructor installed a chroma index and this only had to swap
+        the backend for it. Removing that fallback made
+        ``Session.knowledge`` ``None`` until precisely this call
+        installs it, so "attach only if an index exists" could never
+        fire.
+
+        ``code_index`` keeps its ``is not None`` check, because its
+        constructor really does build one eagerly (``core.py``
+        ``self.code_index = CodeIndex(...)``) — there the guard still
+        means what it says.
+        """
+        runtime = self._neo4j_runtime
+        if runtime is None or session is None:
+            # Say which. A silent return here is indistinguishable from
+            # an attach that ran and failed, and both look identical
+            # from the panel: no index. That ambiguity cost a debugging
+            # session.
+            logger.debug(
+                "knowledge: skipping neo4j attach (runtime=%s session=%s)",
+                "present" if runtime is not None else "absent",
+                "present" if session is not None else "absent",
+            )
+            return
+        if getattr(self._settings.knowledge, "enabled", True):
+            # A knowledge backend that will not come up must not take
+            # the whole BE with it. This is awaited from ``BackendApp.run``
+            # during boot, so an exception here is the difference
+            # between "no knowledge panel" and "no backend at all" —
+            # and it is reachable for ordinary reasons: the runtime
+            # downloads and spawns a Neo4j process on first use.
+            #
+            # The reason is recorded where the panel already looks for
+            # it (``Session.knowledge_error``, read by
+            # ``cmd_knowledge.panel``), so the failure arrives as a
+            # sentence rather than as an empty panel.
+            try:
+                await session.attach_knowledge_neo4j(runtime)
+            except Exception as exc:  # noqa: BLE001 — see above
+                session._knowledge_error = str(exc)
+                logger.exception("knowledge: neo4j attach failed; continuing without it")
+        if getattr(session, "code_index", None) is not None:
+            await session.attach_codeindex_neo4j(runtime)
 
     @property
     def pool(self) -> SessionPool:
@@ -223,6 +275,14 @@ class SessionOrchestrator:
         # sync/watch for it (degraded vs "the TUI opened in that
         # repo").
         rt_backend.start_all_background_services()
+        # The neo4j indexes are part of that same "what the boot
+        # runtime gets" list, and were missing from it. ``attach_neo4j``
+        # is idempotent and caches the runtime, so this builds it once
+        # for the whole BE and is a cheap no-op afterwards; it returns
+        # ``None`` when the opt-in is unset, and then the attach below
+        # does nothing.
+        await self.attach_neo4j()
+        await self._attach_neo4j_to(getattr(rt_backend, "_session", None))
         rt_queue: list[str] = []
         rt_backend.wire_queue_hook(rt_queue)
         stamped = SessionStampingTransport(self._transport, rt_backend)

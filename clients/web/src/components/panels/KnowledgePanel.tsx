@@ -369,12 +369,18 @@ export function KnowledgePanel({
 // ── Disabled state ───────────────────────────────────────────────
 
 function DisabledState() {
+  // Names the switch that is actually off. `knowledge.enabled` defaults
+  // to true, so telling someone to set it was advice that changed
+  // nothing — the index is neo4j-backed now, and the runtime behind it
+  // is the opt-in. See `SessionOrchestrator.attach_neo4j`.
   return (
     <div className="kb-empty">
       <div className="kb-empty-title">Knowledge base disabled</div>
       <div className="kb-empty-hint">
-        Configure an embedder under <code>knowledge.enabled = true</code> in settings to
-        enable semantic search.
+        Semantic search runs on the Neo4j runtime, which is off unless{" "}
+        <code>EMBER_NEO4J_RUNTIME=1</code> is set for the backend. Set it and reopen the
+        app; leave <code>knowledge.enabled = false</code> in settings to keep it off
+        regardless.
       </div>
     </div>
   );
