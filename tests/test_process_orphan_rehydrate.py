@@ -223,9 +223,16 @@ class TestRehydrateOrphanProcesses:
         assert isinstance(mp, OrphanProcess)
         assert mp.cmd == "pretend dev server"
 
-    async def test_prunes_dead_pid(self, tmp_path: Path) -> None:
-        # Seed with a dead pid. Rehydrate should NOT add it AND
-        # should remove the stale DB row.
+    async def test_a_dead_pid_becomes_history_rather_than_being_deleted(
+        self, tmp_path: Path
+    ) -> None:
+        """The row survives the process, and the process survives the BE.
+
+        This used to assert the opposite — a dead pid had its row
+        deleted, which is why the watcher lost every record of what had
+        run as soon as the BE restarted. The row is now kept, stamped
+        as finished, and surfaced so the panel can show it.
+        """
         dead_pid = 0x7FFFFFFE
         store = BackgroundProcessStore(db_path=tmp_path / "state.db")
         await store.upsert(
@@ -239,11 +246,17 @@ class TestRehydrateOrphanProcesses:
         finally:
             ps_mod._resolve_db_path = original_resolver
 
-        assert count == 0
-        assert supervisors.default().registry.get(dead_pid) is None
-        # Dead row was pruned from disk.
+        assert count == 1, "the finished process was not surfaced"
+        entry = supervisors.default().registry.get(dead_pid)
+        assert entry is not None and not entry.is_running()
+
         rows = await BackgroundProcessStore(db_path=tmp_path / "state.db").list_all()
-        assert rows == []
+        assert len(rows) == 1, "history was deleted"
+        # It ended while nobody was watching, so the code is unknown —
+        # but the *fact* that it ended is recorded.
+        assert rows[0].finished_at is not None
+        assert rows[0].exit_code is None
+        supervisors.default().registry.remove(dead_pid)
 
     async def test_empty_db_is_noop(self, tmp_path: Path) -> None:
         original_resolver = ps_mod._resolve_db_path
@@ -276,9 +289,10 @@ class TestOrphanRehydratorRun:
     async def test_run_returns_typed_result_with_surfaced_and_pruned_counts(
         self, tmp_path: Path
     ) -> None:
-        # Two rows: one alive (our own pid), one dead — the pass
-        # should surface the alive one and prune the dead one, and
-        # report BOTH counts in the typed result.
+        # Two rows: one alive (our own pid), one dead. Both are now
+        # surfaced — the alive one as an orphan to adopt, the dead one
+        # as history — and ``pruned`` counts retention drops, of which
+        # there are none here because nothing is a week old yet.
         dead_pid = 0x7FFFFFFE
         store = BackgroundProcessStore(db_path=tmp_path / "state.db")
         await store.upsert(
@@ -298,9 +312,11 @@ class TestOrphanRehydratorRun:
 
         assert isinstance(result, RehydrateResult)
         assert result.ok is True
-        assert result.surfaced == 1
-        assert result.pruned == 1
+        assert result.surfaced == 2, "the finished row was not surfaced as history"
+        assert result.pruned == 0, "nothing here is past the retention window"
         assert result.reason == ""
+        supervisors.default().registry.remove(dead_pid)
+        supervisors.default().registry.remove(os.getpid())
 
     async def test_run_reports_reason_when_list_all_fails(self, tmp_path: Path) -> None:
         # A store whose ``list_all`` raises should NOT crash the
@@ -326,10 +342,17 @@ class TestOrphanRehydratorRun:
         assert "list_all" in result.reason
         assert "db locked" in result.reason
 
-    async def test_run_reports_reason_when_remove_fails(self, tmp_path: Path) -> None:
-        # A dead row whose ``remove`` raises should mark the
-        # result as ``ok=False`` with the pid encoded in the
-        # reason, without swallowing at DEBUG.
+    async def test_a_store_that_cannot_record_the_ending_still_surfaces_it(
+        self, tmp_path: Path
+    ) -> None:
+        """History is best-effort on the write, firm on the read.
+
+        This used to assert that a failing ``remove`` marked the whole
+        pass ``ok=False``. Nothing removes dead rows any more, so the
+        equivalent failure is a store that cannot stamp the ending —
+        and the right response is to still show the user the row,
+        because a process they started did run and did stop.
+        """
         dead_pid = 0x7FFFFFFE
         real_store = BackgroundProcessStore(db_path=tmp_path / "state.db")
         await real_store.upsert(
@@ -343,8 +366,11 @@ class TestOrphanRehydratorRun:
             async def list_all(self) -> list[BackgroundProcessRow]:
                 return await self._inner.list_all()
 
-            async def remove(self, pid: int) -> None:
-                raise RuntimeError("cannot delete")
+            async def remove(self, pid: int) -> None:  # pragma: no cover
+                return None
+
+            async def finish(self, pid: int, exit_code: int | None) -> None:
+                raise RuntimeError("cannot stamp")
 
             async def upsert(self, row: BackgroundProcessRow) -> None:  # pragma: no cover
                 return None
@@ -355,11 +381,11 @@ class TestOrphanRehydratorRun:
         )
         result = await rehydrator.run()
 
-        assert result.ok is False
-        assert result.surfaced == 0
-        assert result.pruned == 0
-        assert f"pid={dead_pid}" in result.reason
-        assert "cannot delete" in result.reason
+        assert result.ok is True
+        assert result.surfaced == 1, "a row we could not stamp was dropped from the panel"
+        entry = supervisors.default().registry.get(dead_pid)
+        assert entry is not None and not entry.is_running()
+        supervisors.default().registry.remove(dead_pid)
 
     async def test_build_rehydrator_reports_reason_on_store_init_failure(
         self, tmp_path: Path

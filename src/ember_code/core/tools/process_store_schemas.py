@@ -65,6 +65,15 @@ class BackgroundProcessRow(BaseModel):
     cmd: str
     pgid: int | None = None
     started_at: int  # epoch seconds
+    #: Set when the process ends. ``finished_at`` is what makes a row
+    #: history rather than liveness; ``exit_code`` can still be None on
+    #: a finished row when the BE was not around to observe the ending.
+    exit_code: int | None = None
+    finished_at: int | None = None
+
+    @property
+    def is_finished(self) -> bool:
+        return self.finished_at is not None
 
     @classmethod
     def new(
@@ -90,7 +99,13 @@ class BackgroundProcessRow(BaseModel):
     @classmethod
     def from_model(cls, m: Any) -> BackgroundProcessRow:
         """Build a row from a duck-typed ORM object exposing
-        ``.pid`` / ``.cmd`` / ``.pgid`` / ``.started_at``.
+        ``.pid`` / ``.cmd`` / ``.pgid`` / ``.started_at``, plus the
+        history pair ``.exit_code`` / ``.finished_at``.
+
+        The history fields are read with ``getattr`` defaults because
+        this mapper is duck-typed: test doubles that predate them
+        should still map, rather than failing on an attribute the real
+        model has and they do not.
 
         Kept duck-typed (no ``BackgroundProcessModel`` import) to
         avoid an import cycle with :mod:`process_store`, which
@@ -103,6 +118,8 @@ class BackgroundProcessRow(BaseModel):
             cmd=m.cmd,
             pgid=m.pgid,
             started_at=m.started_at,
+            exit_code=getattr(m, "exit_code", None),
+            finished_at=getattr(m, "finished_at", None),
         )
 
     def to_upsert_values(self) -> dict[str, int | str | None]:
@@ -116,6 +133,8 @@ class BackgroundProcessRow(BaseModel):
         insert / update / list paths.
         """
         return {
+            "exit_code": self.exit_code,
+            "finished_at": self.finished_at,
             "pid": self.pid,
             "cmd": self.cmd,
             "pgid": self.pgid,
