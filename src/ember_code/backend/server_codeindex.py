@@ -89,6 +89,7 @@ class CodeIndexController:
         )
 
         install = self._resolve_install_state(sync)
+        self._record_subsystem(install, head_indexed, sync_in_progress, sync_error)
 
         entries, index_size_bytes = BranchIndexInventory(index).build(state)
 
@@ -109,6 +110,8 @@ class CodeIndexController:
             apply_total=progress.apply_total if progress.applying else 0,
             apply_step=progress.apply_step if progress.applying else "",
             install_state=install.state,
+            install_reason=install.reason,
+            install_fix=install.fix,
             repository_id=install.repository_id,
             install_url=install.install_url,
             portal_url=self._portal_repositories_url(),
@@ -242,6 +245,64 @@ class CodeIndexController:
         except Exception:  # pragma: no cover — no api url configured
             return ""
 
+    def _record_subsystem(
+        self,
+        install: _InstallState,
+        head_indexed: bool,
+        syncing: bool,
+        sync_error: str,
+    ) -> None:
+        """Publish CodeIndex's state where anything can read it.
+
+        The second customer of the subsystem registry, and the reason
+        it is a registry rather than a field on the knowledge session:
+        every optional part of this app needs somewhere to say what it
+        is doing and why, and each one that invents its own vocabulary
+        invents a worse version of the same four states.
+
+        Never raises — a status poll that failed because of
+        bookkeeping would take the pill down with it.
+        """
+        from ember_code.backend.subsystem_status import CODE_INDEX, SubsystemState
+
+        registry = getattr(self._session, "subsystems", None)
+        if registry is None:
+            return
+        try:
+            if sync_error:
+                registry.set(
+                    CODE_INDEX,
+                    SubsystemState.FAILED,
+                    reason=sync_error,
+                    fix="Run /codeindex resync to rebuild from HEAD.",
+                )
+            elif syncing:
+                registry.set(CODE_INDEX, SubsystemState.PREPARING, reason="indexing HEAD")
+            elif install.state == "unknown" and install.reason:
+                registry.set(
+                    CODE_INDEX,
+                    SubsystemState.DISABLED,
+                    reason=install.reason,
+                    fix=install.fix,
+                )
+            elif install.state == "needs_install":
+                registry.set(
+                    CODE_INDEX,
+                    SubsystemState.DISABLED,
+                    reason="this repository is not connected to igni Cloud",
+                    fix="Connect it from the portal, then reopen the panel.",
+                )
+            elif head_indexed:
+                registry.set(CODE_INDEX, SubsystemState.READY)
+            else:
+                registry.set(
+                    CODE_INDEX,
+                    SubsystemState.PREPARING,
+                    reason="HEAD is not indexed yet",
+                )
+        except Exception:  # pragma: no cover — defensive
+            logger.exception("codeindex: could not record subsystem state")
+
     def _resolve_install_state(self, sync: CodeIndexSyncManager) -> _InstallState:
         """Derive install-state fields from the resolver's cache.
 
@@ -254,7 +315,20 @@ class CodeIndexController:
             with contextlib.suppress(RuntimeError):
                 asyncio.get_running_loop().create_task(sync.resolver.resolve())
         if resolved is None:
-            return _InstallState("unknown", "", "")
+            # "unknown" is documented as transient — fire a resolve,
+            # the next poll has the answer. On a machine that is not
+            # logged in it is permanent: the resolve returns early
+            # every time, so the state never moves and the pill says
+            # "not indexed" forever. Carry the reason so the UI can
+            # stop guessing.
+            failure = sync.resolver.failure if sync.resolver else None
+            return _InstallState(
+                "unknown",
+                "",
+                "",
+                reason=failure.reason if failure else "",
+                fix=failure.fix if failure else "",
+            )
         if resolved.needs_install:
             return _InstallState("needs_install", "", resolved.install_url or "")
         return _InstallState("installed", resolved.repository_id or "", "")
@@ -306,9 +380,20 @@ class _InstallState:
     ``install.install_url`` instead of positional indexing.
     """
 
-    __slots__ = ("state", "repository_id", "install_url")
+    __slots__ = ("state", "repository_id", "install_url", "reason", "fix")
 
-    def __init__(self, state: str, repository_id: str, install_url: str) -> None:
+    def __init__(
+        self,
+        state: str,
+        repository_id: str,
+        install_url: str,
+        reason: str = "",
+        fix: str = "",
+    ) -> None:
         self.state = state
         self.repository_id = repository_id
         self.install_url = install_url
+        #: Why the state is what it is, when "unknown" needs
+        #: explaining. See :class:`ResolveFailure`.
+        self.reason = reason
+        self.fix = fix

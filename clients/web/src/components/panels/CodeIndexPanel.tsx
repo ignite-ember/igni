@@ -21,6 +21,10 @@ interface CodeIndexStatus {
   sync_reason: string;
   sync_error: string;
   install_state: string;
+  /** Why `install_state` is "unknown". Optional — an older backend
+   *  does not send it. */
+  install_reason?: string;
+  install_fix?: string;
   repository_id: string;
   install_url: string;
   /** The portal's repositories page — where indexing is turned on. */
@@ -73,9 +77,11 @@ type Tone = "muted" | "good" | "warn" | "bad";
 // ── Helpers ──────────────────────────────────────────────────────
 
 function gitProvider(remoteUrl: string): { name: string; appLabel: string } {
-  const host = remoteUrl.match(/(?:https?:\/\/|git@)([^/:]+)/)?.[1]?.toLowerCase() || "";
+  const host =
+    remoteUrl.match(/(?:https?:\/\/|git@)([^/:]+)/)?.[1]?.toLowerCase() || "";
   if (host.includes("gitlab")) return { name: "GitLab", appLabel: "GitLab" };
-  if (host.includes("bitbucket")) return { name: "Bitbucket", appLabel: "Bitbucket" };
+  if (host.includes("bitbucket"))
+    return { name: "Bitbucket", appLabel: "Bitbucket" };
   if (host.includes("github")) return { name: "GitHub", appLabel: "GitHub" };
   return { name: "Git provider", appLabel: "Provider" };
 }
@@ -115,8 +121,16 @@ function formatNumber(n: number): string {
 }
 
 const LANG_PALETTE = [
-  "#f97316", "#3b82f6", "#10b981", "#a855f7", "#ec4899",
-  "#facc15", "#06b6d4", "#84cc16", "#f43f5e", "#64748b",
+  "#f97316",
+  "#3b82f6",
+  "#10b981",
+  "#a855f7",
+  "#ec4899",
+  "#facc15",
+  "#06b6d4",
+  "#84cc16",
+  "#f43f5e",
+  "#64748b",
 ];
 
 // ── Inline icons ─────────────────────────────────────────────────
@@ -129,19 +143,56 @@ const Icons = {
   branch: () => (
     <IconWrap>
       <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
-        <circle cx="4" cy="3.5" r="1.5" stroke="currentColor" strokeWidth="1.2" />
-        <circle cx="4" cy="12.5" r="1.5" stroke="currentColor" strokeWidth="1.2" />
-        <circle cx="12" cy="6.5" r="1.5" stroke="currentColor" strokeWidth="1.2" />
-        <path d="M4 5v6M4 8c0-1.66 1.34-3 3-3h2c1.66 0 3-1.34 3-3" stroke="currentColor" strokeWidth="1.2" />
+        <circle
+          cx="4"
+          cy="3.5"
+          r="1.5"
+          stroke="currentColor"
+          strokeWidth="1.2"
+        />
+        <circle
+          cx="4"
+          cy="12.5"
+          r="1.5"
+          stroke="currentColor"
+          strokeWidth="1.2"
+        />
+        <circle
+          cx="12"
+          cy="6.5"
+          r="1.5"
+          stroke="currentColor"
+          strokeWidth="1.2"
+        />
+        <path
+          d="M4 5v6M4 8c0-1.66 1.34-3 3-3h2c1.66 0 3-1.34 3-3"
+          stroke="currentColor"
+          strokeWidth="1.2"
+        />
       </svg>
     </IconWrap>
   ),
   disk: () => (
     <IconWrap>
       <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
-        <ellipse cx="8" cy="4" rx="5.5" ry="2" stroke="currentColor" strokeWidth="1.2" />
-        <path d="M2.5 4v8a5.5 2 0 0 0 11 0V4" stroke="currentColor" strokeWidth="1.2" />
-        <path d="M2.5 8a5.5 2 0 0 0 11 0" stroke="currentColor" strokeWidth="1.2" />
+        <ellipse
+          cx="8"
+          cy="4"
+          rx="5.5"
+          ry="2"
+          stroke="currentColor"
+          strokeWidth="1.2"
+        />
+        <path
+          d="M2.5 4v8a5.5 2 0 0 0 11 0V4"
+          stroke="currentColor"
+          strokeWidth="1.2"
+        />
+        <path
+          d="M2.5 8a5.5 2 0 0 0 11 0"
+          stroke="currentColor"
+          strokeWidth="1.2"
+        />
       </svg>
     </IconWrap>
   ),
@@ -149,14 +200,24 @@ const Icons = {
     <IconWrap>
       <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
         <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.2" />
-        <path d="M8 4.5v4l2.5 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+        <path
+          d="M8 4.5v4l2.5 1.5"
+          stroke="currentColor"
+          strokeWidth="1.2"
+          strokeLinecap="round"
+        />
       </svg>
     </IconWrap>
   ),
   plug: () => (
     <IconWrap>
       <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
-        <path d="M6 1.5v3M10 1.5v3M5 4.5h6v3a3 3 0 0 1-6 0v-3zM8 10.5v4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+        <path
+          d="M6 1.5v3M10 1.5v3M5 4.5h6v3a3 3 0 0 1-6 0v-3zM8 10.5v4"
+          stroke="currentColor"
+          strokeWidth="1.2"
+          strokeLinecap="round"
+        />
       </svg>
     </IconWrap>
   ),
@@ -172,7 +233,11 @@ const Icons = {
 
 // ── Main panel ───────────────────────────────────────────────────
 
-function stateSummary(s: CodeIndexStatus): { label: string; tone: Tone; hint?: string } {
+function stateSummary(s: CodeIndexStatus): {
+  label: string;
+  tone: Tone;
+  hint?: string;
+} {
   if (s.sync_error) return { label: "Error", tone: "bad", hint: s.sync_error };
   if (s.install_state === "needs_install") {
     const provider = gitProvider(s.remote_url);
@@ -183,13 +248,40 @@ function stateSummary(s: CodeIndexStatus): { label: string; tone: Tone; hint?: s
     };
   }
   if (s.install_state === "inactive")
-    return { label: "Inactive", tone: "muted", hint: "CodeIndex is disabled for this repository" };
+    return {
+      label: "Inactive",
+      tone: "muted",
+      hint: "CodeIndex is disabled for this repository",
+    };
+  // The resolver could not determine the state at all. Four causes,
+  // and the panel used to describe all of them as "Out of date — HEAD
+  // has not been indexed yet", pointing at a sync that would not run.
+  if (s.install_state === "unknown" && s.install_reason) {
+    return {
+      label: "Not connected",
+      tone: "warn",
+      hint: [s.install_reason, s.install_fix].filter(Boolean).join(" — "),
+    };
+  }
   if (s.sync_in_progress) {
     const pct = s.sync_progress_pct != null ? ` · ${s.sync_progress_pct}%` : "";
-    return { label: `Syncing${pct}`, tone: "warn", hint: s.sync_step || "Indexing HEAD…" };
+    return {
+      label: `Syncing${pct}`,
+      tone: "warn",
+      hint: s.sync_step || "Indexing HEAD…",
+    };
   }
-  if (s.head_indexed) return { label: "Up to date", tone: "good", hint: "HEAD is fully indexed and searchable" };
-  return { label: "Out of date", tone: "warn", hint: s.sync_reason || "HEAD has not been indexed yet" };
+  if (s.head_indexed)
+    return {
+      label: "Up to date",
+      tone: "good",
+      hint: "HEAD is fully indexed and searchable",
+    };
+  return {
+    label: "Out of date",
+    tone: "warn",
+    hint: s.sync_reason || "HEAD has not been indexed yet",
+  };
 }
 
 export function CodeIndexPanel({
@@ -203,7 +295,9 @@ export function CodeIndexPanel({
   const [breakdown, setBreakdown] = useState<HeadBreakdown | null>(null);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
-  const [runningVerb, setRunningVerb] = useState<"sync" | "resync" | null>(null);
+  const [runningVerb, setRunningVerb] = useState<"sync" | "resync" | null>(
+    null,
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -212,7 +306,9 @@ export function CodeIndexPanel({
       console.error(e);
     }
     try {
-      setActivity((await client.rpc<ActivityEntry[]>("codeindex_activity")) || []);
+      setActivity(
+        (await client.rpc<ActivityEntry[]>("codeindex_activity")) || [],
+      );
     } catch {
       /* old BE */
     }
@@ -295,7 +391,8 @@ export function CodeIndexPanel({
       text,
       failed: !!top.error,
       count: streak === -1 ? activity.length : streak,
-      since: activity[(streak === -1 ? activity.length : streak) - 1]?.ts || top.ts,
+      since:
+        activity[(streak === -1 ? activity.length : streak) - 1]?.ts || top.ts,
     };
   })();
 
@@ -324,7 +421,11 @@ export function CodeIndexPanel({
 
   // Recommended action banner — only when there's something concrete
   // for the user to do that isn't already obvious from the hero.
-  let actionBanner: { tone: Tone; text: string; cta?: { label: string; onClick: () => void } } | null = null;
+  let actionBanner: {
+    tone: Tone;
+    text: string;
+    cta?: { label: string; onClick: () => void };
+  } | null = null;
   if (needsInstall && status.install_url) {
     actionBanner = {
       tone: "warn",
@@ -349,7 +450,9 @@ export function CodeIndexPanel({
     // text counts unindexed commits out of the recent few, so on an
     // empty index it read "5 recent commits not indexed" as though
     // the other 1,372 files were fine.
-    const aheadCommits = (breakdown?.recent_commits || []).filter((c) => !c.indexed).length;
+    const aheadCommits = (breakdown?.recent_commits || []).filter(
+      (c) => !c.indexed,
+    ).length;
     actionBanner = {
       tone: "warn",
       text:
@@ -369,7 +472,9 @@ export function CodeIndexPanel({
         className="btn btn-sm"
         disabled={!!busy || needsInstall}
         onClick={() => act("clean")}
-        title={needsInstall ? "Connect the App first" : "Drop unused commit indexes"}
+        title={
+          needsInstall ? "Connect the App first" : "Drop unused commit indexes"
+        }
       >
         {busy === "clean" ? "Cleaning…" : "Clean"}
       </button>
@@ -386,8 +491,6 @@ export function CodeIndexPanel({
   const coveragePct = coverageRaw == null ? null : Math.min(100, coverageRaw);
   const coverageStale = coverageRaw != null && coverageRaw > 100;
 
-
-
   return (
     <Drawer title="CodeIndex" onClose={onClose} headerExtras={actionRow}>
       {/* ── Hero with status ring ──────────────────────────────── */}
@@ -396,7 +499,10 @@ export function CodeIndexPanel({
       {status.sync_in_progress && pct != null && (
         <div className="codeindex-progress">
           <div className="codeindex-progress-track">
-            <div className="codeindex-progress-fill" style={{ width: `${pct}%` }} />
+            <div
+              className="codeindex-progress-fill"
+              style={{ width: `${pct}%` }}
+            />
           </div>
         </div>
       )}
@@ -405,7 +511,10 @@ export function CodeIndexPanel({
         <div className={`codeindex-banner tone-${actionBanner.tone}`}>
           <span>{actionBanner.text}</span>
           {actionBanner.cta && (
-            <button className="btn btn-primary btn-sm" onClick={actionBanner.cta.onClick}>
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={actionBanner.cta.onClick}
+            >
               {actionBanner.cta.label}
             </button>
           )}
@@ -413,7 +522,9 @@ export function CodeIndexPanel({
       )}
 
       {blockedBy && (
-        <div className={`codeindex-banner tone-${blockedBy.failed ? "bad" : "warn"}`}>
+        <div
+          className={`codeindex-banner tone-${blockedBy.failed ? "bad" : "warn"}`}
+        >
           <span>
             <strong>
               {blockedBy.failed ? "Syncing is failing" : "Syncing is blocked"}
@@ -422,7 +533,8 @@ export function CodeIndexPanel({
             {blockedBy.count > 1 && (
               <span className="codeindex-blocked-since">
                 {" "}
-                ({blockedBy.count} attempts, since {formatRelative(blockedBy.since)})
+                ({blockedBy.count} attempts, since{" "}
+                {formatRelative(blockedBy.since)})
               </span>
             )}
           </span>
@@ -454,72 +566,76 @@ export function CodeIndexPanel({
           />
         </div>
       ) : (
-      <div className="codeindex-stats">
-        <StatTile
-          icon={<Icons.coverage />}
-          label="Coverage"
-          value={coveragePct != null ? `${coveragePct}%` : "—"}
-          sub={
-            breakdown && coveragePct != null
-              ? coverageStale
-                ? `${breakdown.files_indexed.toLocaleString()} / ${breakdown.file_count.toLocaleString()} · stale, resync`
-                : `${breakdown.files_indexed.toLocaleString()} / ${breakdown.file_count.toLocaleString()} files`
-              : "load breakdown…"
-          }
-          tone={
-            coveragePct == null
-              ? undefined
-              : coverageStale
-                ? "warn"
-                : coveragePct >= 80
-                  ? "good"
-                  : coveragePct >= 30
-                    ? "warn"
-                    : "bad"
-          }
-        />
-        <StatTile
-          icon={<Icons.branch />}
-          label="Commits"
-          value={formatNumber(status.commits_indexed)}
-          sub={status.local_sha ? `HEAD ${status.local_sha.slice(0, 7)}` : undefined}
-        />
-        <StatTile
-          icon={<Icons.disk />}
-          label="On disk"
-          value={formatBytes(status.index_size_bytes)}
-          sub={(() => {
-            const head = status.branches_indexed.find((b) => b.is_head);
-            const others = status.commits_indexed - (head ? 1 : 0);
-            if (head && others > 0) {
-              return `HEAD ${formatBytes(head.size_bytes)} · ${others} older`;
+        <div className="codeindex-stats">
+          <StatTile
+            icon={<Icons.coverage />}
+            label="Coverage"
+            value={coveragePct != null ? `${coveragePct}%` : "—"}
+            sub={
+              breakdown && coveragePct != null
+                ? coverageStale
+                  ? `${breakdown.files_indexed.toLocaleString()} / ${breakdown.file_count.toLocaleString()} · stale, resync`
+                  : `${breakdown.files_indexed.toLocaleString()} / ${breakdown.file_count.toLocaleString()} files`
+                : "load breakdown…"
             }
-            if (head) return `HEAD only`;
-            if (others > 0) return `${others} cached commits`;
-            return undefined;
-          })()}
-        />
-        <StatTile
-          icon={<Icons.clock />}
-          label="Last sync"
-          value={formatRelative(status.last_sync_at)}
-          sub={
-            lastDelta.items_upserted || lastDelta.items_deleted
-              ? `+${lastDelta.items_upserted || 0} / −${lastDelta.items_deleted || 0}`
-              : undefined
-          }
-        />
-        <StatTile
-          icon={<Icons.plug />}
-          label={provider.appLabel}
-          value={
-            status.install_state === "installed"
-              ? "Connected"
-              : status.install_state.replace(/_/g, " ")
-          }
-          tone={status.install_state === "installed" ? "good" : "muted"}
-        />
-      </div>
+            tone={
+              coveragePct == null
+                ? undefined
+                : coverageStale
+                  ? "warn"
+                  : coveragePct >= 80
+                    ? "good"
+                    : coveragePct >= 30
+                      ? "warn"
+                      : "bad"
+            }
+          />
+          <StatTile
+            icon={<Icons.branch />}
+            label="Commits"
+            value={formatNumber(status.commits_indexed)}
+            sub={
+              status.local_sha
+                ? `HEAD ${status.local_sha.slice(0, 7)}`
+                : undefined
+            }
+          />
+          <StatTile
+            icon={<Icons.disk />}
+            label="On disk"
+            value={formatBytes(status.index_size_bytes)}
+            sub={(() => {
+              const head = status.branches_indexed.find((b) => b.is_head);
+              const others = status.commits_indexed - (head ? 1 : 0);
+              if (head && others > 0) {
+                return `HEAD ${formatBytes(head.size_bytes)} · ${others} older`;
+              }
+              if (head) return `HEAD only`;
+              if (others > 0) return `${others} cached commits`;
+              return undefined;
+            })()}
+          />
+          <StatTile
+            icon={<Icons.clock />}
+            label="Last sync"
+            value={formatRelative(status.last_sync_at)}
+            sub={
+              lastDelta.items_upserted || lastDelta.items_deleted
+                ? `+${lastDelta.items_upserted || 0} / −${lastDelta.items_deleted || 0}`
+                : undefined
+            }
+          />
+          <StatTile
+            icon={<Icons.plug />}
+            label={provider.appLabel}
+            value={
+              status.install_state === "installed"
+                ? "Connected"
+                : status.install_state.replace(/_/g, " ")
+            }
+            tone={status.install_state === "installed" ? "good" : "muted"}
+          />
+        </div>
       )}
 
       {/* ── Activity sparkline ─────────────────────────────────── */
@@ -543,27 +659,30 @@ export function CodeIndexPanel({
        *  + a commits timeline next to a "Not connected" hero —
        *  the user reads that as live data when it's actually
        *  meaningless until they connect the App. */}
-      {!needsInstall && breakdown && !breakdown.error && breakdown.file_count > 0 && (
-        <Section
-          title="At HEAD"
-          subtitle={
-            neverIndexed || coveragePct == null
-              ? `${breakdown.file_count.toLocaleString()} tracked files`
-              : `${breakdown.file_count.toLocaleString()} files · ${coveragePct}% indexed`
-          }
-        >
-          <div className="codeindex-head-grid">
-            <LanguageDonut
-              languages={breakdown.languages}
-              total={breakdown.file_count}
-              indexed={breakdown.languages_indexed || {}}
-              filesIndexed={breakdown.files_indexed}
-              distributionOnly={neverIndexed}
-            />
-            <CommitTimeline commits={breakdown.recent_commits} />
-          </div>
-        </Section>
-      )}
+      {!needsInstall &&
+        breakdown &&
+        !breakdown.error &&
+        breakdown.file_count > 0 && (
+          <Section
+            title="At HEAD"
+            subtitle={
+              neverIndexed || coveragePct == null
+                ? `${breakdown.file_count.toLocaleString()} tracked files`
+                : `${breakdown.file_count.toLocaleString()} files · ${coveragePct}% indexed`
+            }
+          >
+            <div className="codeindex-head-grid">
+              <LanguageDonut
+                languages={breakdown.languages}
+                total={breakdown.file_count}
+                indexed={breakdown.languages_indexed || {}}
+                filesIndexed={breakdown.files_indexed}
+                distributionOnly={neverIndexed}
+              />
+              <CommitTimeline commits={breakdown.recent_commits} />
+            </div>
+          </Section>
+        )}
 
       {/* ── Cached commits ─────────────────────────────────────── */
       /*  Same reasoning as the other sections — if the index
@@ -571,26 +690,41 @@ export function CodeIndexPanel({
        *  there's stale local data from a prior install we'd
        *  rather not surface it as if it were live. */}
       {!needsInstall && status.branches_indexed.length > 0 && (
-        <Section title="Cached locally" subtitle={`${status.branches_indexed.length} commit(s)`}>
+        <Section
+          title="Cached locally"
+          subtitle={`${status.branches_indexed.length} commit(s)`}
+        >
           <div className="codeindex-branches">
             {status.branches_indexed.slice(0, 6).map((b) => (
-              <div key={b.sha} className={`codeindex-branch ${b.is_head ? "is-head" : ""}`}>
-                <code className="codeindex-branch-sha">{b.sha.slice(0, 8)}</code>
+              <div
+                key={b.sha}
+                className={`codeindex-branch ${b.is_head ? "is-head" : ""}`}
+              >
+                <code className="codeindex-branch-sha">
+                  {b.sha.slice(0, 8)}
+                </code>
                 {b.is_head && <span className="codeindex-tag">HEAD</span>}
                 {b.branch_refs.map((r) => (
-                  <span key={r} className="codeindex-ref">{r}</span>
+                  <span key={r} className="codeindex-ref">
+                    {r}
+                  </span>
                 ))}
-                <span className="codeindex-branch-when">{formatRelative(b.last_used_at)}</span>
-                <span className="codeindex-branch-size">{formatBytes(b.size_bytes)}</span>
+                <span className="codeindex-branch-when">
+                  {formatRelative(b.last_used_at)}
+                </span>
+                <span className="codeindex-branch-size">
+                  {formatBytes(b.size_bytes)}
+                </span>
               </div>
             ))}
             {status.branches_indexed.length > 6 && (
-              <div className="codeindex-branch-more">+ {status.branches_indexed.length - 6} more</div>
+              <div className="codeindex-branch-more">
+                + {status.branches_indexed.length - 6} more
+              </div>
             )}
           </div>
         </Section>
       )}
-
     </Drawer>
   );
 }
@@ -608,7 +742,10 @@ function Hero({
 }) {
   const pct = status.sync_progress_pct ?? (status.head_indexed ? 100 : 0);
   const tone = summary.tone;
-  const repoLabel = status.repository_id || status.remote_url.split("/").slice(-2).join("/") || "this repo";
+  const repoLabel =
+    status.repository_id ||
+    status.remote_url.split("/").slice(-2).join("/") ||
+    "this repo";
 
   return (
     <div className="codeindex-hero">
@@ -635,10 +772,21 @@ function Ring({ percent, tone }: { percent: number; tone: Tone }) {
   const clamped = Math.max(0, Math.min(100, percent));
   const offset = c - (clamped / 100) * c;
   const color =
-    tone === "good" ? "#10b981" : tone === "warn" ? "#f59e0b" : tone === "bad" ? "#ef4444" : "#9ca3af";
+    tone === "good"
+      ? "#10b981"
+      : tone === "warn"
+        ? "#f59e0b"
+        : tone === "bad"
+          ? "#ef4444"
+          : "#9ca3af";
 
   return (
-    <svg className="codeindex-ring" width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+    <svg
+      className="codeindex-ring"
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+    >
       <circle
         cx={size / 2}
         cy={size / 2}
@@ -763,13 +911,26 @@ function LanguageDonut({
   }, [languages, total, indexed, outerC, innerC]);
 
   const focus = hover ? segments.find((s) => s.ext === hover) : null;
-  const overallCoverage = total > 0 ? Math.round((filesIndexed / total) * 100) : 0;
+  const overallCoverage =
+    total > 0 ? Math.round((filesIndexed / total) * 100) : 0;
 
   return (
     <div className="codeindex-donut-wrap">
-      <svg width="148" height="148" viewBox="0 0 148 148" className="codeindex-donut">
+      <svg
+        width="148"
+        height="148"
+        viewBox="0 0 148 148"
+        className="codeindex-donut"
+      >
         {/* Background tracks */}
-        <circle cx="74" cy="74" r={outerR} fill="none" stroke="var(--bg-raised)" strokeWidth="10" />
+        <circle
+          cx="74"
+          cy="74"
+          r={outerR}
+          fill="none"
+          stroke="var(--bg-raised)"
+          strokeWidth="10"
+        />
         <circle
           cx="74"
           cy="74"
@@ -818,7 +979,14 @@ function LanguageDonut({
           ) : null,
         )}
         {/* Center label */}
-        <text x="74" y="68" textAnchor="middle" fontSize="20" fontWeight="700" fill="var(--fg)">
+        <text
+          x="74"
+          y="68"
+          textAnchor="middle"
+          fontSize="20"
+          fontWeight="700"
+          fill="var(--fg)"
+        >
           {distributionOnly
             ? focus
               ? `${focus.pct}%`
@@ -827,7 +995,13 @@ function LanguageDonut({
               ? `${Math.round(focus.coverage * 100)}%`
               : `${overallCoverage}%`}
         </text>
-        <text x="74" y="86" textAnchor="middle" fontSize="10.5" fill="var(--fg-faint)">
+        <text
+          x="74"
+          y="86"
+          textAnchor="middle"
+          fontSize="10.5"
+          fill="var(--fg-faint)"
+        >
           {distributionOnly
             ? focus
               ? `.${focus.ext === "(other)" ? "·" : focus.ext} of files`
@@ -852,9 +1026,16 @@ function LanguageDonut({
                   : `${s.indexed.toLocaleString()} of ${s.count.toLocaleString()} indexed`
               }
             >
-              <span className="codeindex-donut-swatch" style={{ background: s.color }} />
-              <span className="codeindex-donut-ext">.{s.ext === "(other)" ? "·" : s.ext}</span>
-              <span className="codeindex-donut-count">{s.count.toLocaleString()}</span>
+              <span
+                className="codeindex-donut-swatch"
+                style={{ background: s.color }}
+              />
+              <span className="codeindex-donut-ext">
+                .{s.ext === "(other)" ? "·" : s.ext}
+              </span>
+              <span className="codeindex-donut-count">
+                {s.count.toLocaleString()}
+              </span>
               <span
                 className={`codeindex-donut-cov ${
                   distributionOnly
@@ -887,8 +1068,12 @@ function CommitTimeline({ commits }: { commits: CommitEntry[] }) {
       {commits.map((c, i) => (
         <div key={c.full_sha} className="codeindex-timeline-row">
           <div className="codeindex-timeline-rail">
-            <span className={`codeindex-timeline-node ${c.indexed ? "tone-good" : "tone-warn"}`} />
-            {i < commits.length - 1 && <span className="codeindex-timeline-line" />}
+            <span
+              className={`codeindex-timeline-node ${c.indexed ? "tone-good" : "tone-warn"}`}
+            />
+            {i < commits.length - 1 && (
+              <span className="codeindex-timeline-line" />
+            )}
           </div>
           <div className="codeindex-timeline-body">
             <div className="codeindex-timeline-top">
@@ -898,7 +1083,9 @@ function CommitTimeline({ commits }: { commits: CommitEntry[] }) {
             <div className="codeindex-timeline-subj" title={c.subject}>
               {c.subject}
             </div>
-            {!c.indexed && <div className="codeindex-timeline-tag">not indexed</div>}
+            {!c.indexed && (
+              <div className="codeindex-timeline-tag">not indexed</div>
+            )}
           </div>
         </div>
       ))}
@@ -920,12 +1107,17 @@ function ActivityStrip({ activity }: { activity: ActivityEntry[] }) {
       <div className="codeindex-section-head">
         <span className="codeindex-section-title">Activity</span>
         <span className="codeindex-section-sub">
-          {hover != null ? formatRelative(ordered[hover].ts) : `last ${ordered.length}`}
+          {hover != null
+            ? formatRelative(ordered[hover].ts)
+            : `last ${ordered.length}`}
         </span>
       </div>
       <div className="codeindex-spark">
         {ordered.map((a, i) => {
-          const heightPct = Math.max(12, Math.round((a.duration_ms / maxDuration) * 100));
+          const heightPct = Math.max(
+            12,
+            Math.round((a.duration_ms / maxDuration) * 100),
+          );
           const tone: Tone = a.error
             ? "bad"
             : a.skipped
@@ -957,14 +1149,18 @@ function ActivityStrip({ activity }: { activity: ActivityEntry[] }) {
                   : "Synced"}
           </span>
           {ordered[hover].sha && (
-            <code className="codeindex-spark-sha">{ordered[hover].sha.slice(0, 8)}</code>
+            <code className="codeindex-spark-sha">
+              {ordered[hover].sha.slice(0, 8)}
+            </code>
           )}
           <span className="codeindex-spark-text">
             {ordered[hover].error ||
               ordered[hover].reason ||
               `+${ordered[hover].items_upserted} / −${ordered[hover].items_deleted}`}
           </span>
-          <span className="codeindex-spark-when">{ordered[hover].duration_ms}ms</span>
+          <span className="codeindex-spark-when">
+            {ordered[hover].duration_ms}ms
+          </span>
         </div>
       )}
     </div>
@@ -1005,15 +1201,15 @@ function NotIndexedYet({
       <p className="codeindex-empty-lead">
         {breakdown && breakdown.file_count > 0 ? (
           <>
-            <strong>{breakdown.file_count.toLocaleString()}</strong> tracked files, none of
-            them indexed yet — the breakdown below is the repository as it stands.
-            Indexing builds the semantic search the agent uses to find code by meaning
-            rather than by name.
+            <strong>{breakdown.file_count.toLocaleString()}</strong> tracked
+            files, none of them indexed yet — the breakdown below is the
+            repository as it stands. Indexing builds the semantic search the
+            agent uses to find code by meaning rather than by name.
           </>
         ) : (
           <>
-            Nothing is indexed yet. Indexing builds the semantic search the agent uses to
-            find code by meaning rather than by name.
+            Nothing is indexed yet. Indexing builds the semantic search the
+            agent uses to find code by meaning rather than by name.
           </>
         )}
       </p>
@@ -1043,7 +1239,10 @@ function CodeIndexSkeleton() {
           style={{ width: 68, height: 68, flexShrink: 0 }}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <span className="skeleton skeleton-text skeleton-line-mid" style={{ height: 18 }} />
+          <span
+            className="skeleton skeleton-text skeleton-line-mid"
+            style={{ height: 18 }}
+          />
           <span className="skeleton skeleton-text skeleton-line-wide" />
           <span className="skeleton skeleton-text skeleton-line-short" />
         </div>
