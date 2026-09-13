@@ -36,7 +36,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        # One version, because the product ships one version. The
+        # matrix was asserting support for 3.11 and 3.13 that the
+        # desktop app's own bootstrap never provides.
+        python-version: ["3.12"]
     steps:
       - uses: actions/checkout@v4
 
