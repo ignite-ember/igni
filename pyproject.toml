@@ -8,7 +8,13 @@ version = "1.0.3"
 description = "AI coding assistant with multi-agent orchestration — TUI, web, JetBrains, VSCode, and Tauri clients"
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.11"
+# 3.12 exactly, not a floor. The desktop app installs 3.12 and only
+# 3.12 (``clients/tauri/src-tauri/src/runtime.rs``), and the failure
+# mode off that version is silent rather than loud: on 3.14 the Neo4j
+# sidecar dies without writing stderr or a log, and the knowledge base
+# simply never comes up. A range here would let a contributor's
+# ``uv sync`` pick an interpreter the product never ships on.
+requires-python = ">=3.12,<3.13"
 authors = [{ name = "Ignite Ember" }]
 keywords = ["ai", "coding-assistant", "agent", "agno", "claude", "openai", "tui", "jetbrains"]
 classifiers = [
@@ -106,6 +112,11 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.ruff]
+# Deliberately behind ``requires-python``. Raising this to py312 is not
+# part of pinning the interpreter — it unlocks 87 pyupgrade findings
+# (``datetime.UTC``, ``StrEnum``, bare ``TimeoutError``) across the
+# codebase, which is a modernisation sweep that deserves its own change
+# rather than riding along inside a version pin.
 target-version = "py310"
 line-length = 100
 
@@ -113,11 +124,19 @@ line-length = 100
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 ignore = ["E501"]
 
+[tool.ruff.lint.isort]
+# ``target-version`` is py310 (see above), which predates ``tomllib``,
+# so isort would file a stdlib import under third-party and sort it
+# next to pytest. Stating it here keeps the grouping honest without
+# dragging in the 87-finding pyupgrade sweep that raising the target
+# would.
+extra-standard-library = ["tomllib"]
+
 [tool.mypy]
-# Matches ``requires-python = ">=3.11"`` above. ``StrEnum`` is 3.11+;
-# leaving mypy at 3.10 narrows ``StrEnum`` members to ``str`` and
-# trips dict-key / tuple-element / index checks across the codebase.
-python_version = "3.11"
+# Matches ``requires-python`` above — the one version this ships on.
+# It was 3.11 while the floor was 3.11; type-checking against a version
+# the product never runs is how a 3.12-only bug reaches a user green.
+python_version = "3.12"
 warn_return_any = false
 warn_unused_configs = true
 disallow_untyped_defs = false

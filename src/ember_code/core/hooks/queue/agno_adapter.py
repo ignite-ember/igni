@@ -6,10 +6,12 @@ Agno introspects hook callables in three places we need to satisfy:
    have one by default; we set it on the subclass so instances inherit.
 2. Coroutine marking — Agno's ``aexecute_tool_hooks`` awaits hook
    returns; ``inspect.iscoroutinefunction`` must report ``True`` for
-   an instance whose ``__call__`` is async. Python 3.12+ exposes
-   ``inspect.markcoroutinefunction``; earlier versions need the
-   private ``asyncio.coroutines._is_coroutine`` sentinel. We keep the
-   dual-path so we don't drop older Python support.
+   an instance whose ``__call__`` is async, which
+   ``inspect.markcoroutinefunction`` arranges. This used to carry a
+   second path through the private
+   ``asyncio.coroutines._is_coroutine`` sentinel for pre-3.12
+   interpreters; ``requires-python`` now pins 3.12 exactly, so that
+   branch described support the product did not have.
 3. Parameter-name pinning — Agno's ``_build_hook_args`` matches by
    exact param name. The adapter documents the pinned names so
    subclass authors don't rename ``func`` to ``next_func`` etc. and
@@ -20,7 +22,6 @@ Agno introspects hook callables in three places we need to satisfy:
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 
 
@@ -64,12 +65,23 @@ class AgnoCallableAdapter:
 
     def _mark_as_coroutine(self) -> None:
         """Mark this instance so ``inspect.iscoroutinefunction`` returns
-        True. Uses the public API on Python 3.12+ and falls back to the
-        private sentinel on earlier versions."""
-        if hasattr(inspect, "markcoroutinefunction"):
-            inspect.markcoroutinefunction(self)
-        else:  # pragma: no cover — legacy Python fallback
-            self._is_coroutine = asyncio.coroutines._is_coroutine
+        True.
+
+        The ``hasattr`` guard and its ``asyncio.coroutines._is_coroutine``
+        fallback are gone: ``markcoroutinefunction`` has existed since
+        3.12, and 3.12 is now both the floor and the ceiling
+        (``requires-python``). A branch for interpreters the product
+        cannot run on is untestable by construction.
+
+        The ignore is load-bearing rather than decorative.
+        ``markcoroutinefunction`` is typed with a TypeVar bound to
+        function types, and this is a callable *instance* — which
+        satisfies the runtime contract exactly (the marker is an
+        attribute ``iscoroutinefunction`` consults) but not the
+        annotation. Surfaced when mypy moved from 3.11 to 3.12, where
+        the symbol exists to be checked at all.
+        """
+        inspect.markcoroutinefunction(self)  # type: ignore[type-var]
 
 
 __all__ = ["AgnoCallableAdapter"]
