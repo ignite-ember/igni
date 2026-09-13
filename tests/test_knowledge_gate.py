@@ -26,6 +26,7 @@ import pytest
 
 from ember_code.backend.knowledge_gate import ENV_OVERRIDE, knowledge_runtime_enabled
 from ember_code.backend.session_orchestrator import SessionOrchestrator
+from ember_code.backend.subsystem_status import KNOWLEDGE, SubsystemRegistry, SubsystemState
 from ember_code.core.config.settings import Settings
 
 
@@ -79,10 +80,15 @@ def test_a_settings_object_without_a_knowledge_section_is_not_a_crash(monkeypatc
 # ── The sequencing ──────────────────────────────────────────────────
 
 
+def _state(orch) -> SubsystemState | None:
+    entry = orch._backend._session.subsystems.get(KNOWLEDGE)
+    return entry.state if entry else None
+
+
 def _make_orchestrator(tmp_path: Path, *, enabled: bool) -> SessionOrchestrator:
     session = MagicMock()
     session.knowledge = None
-    session.knowledge_error = None
+    session.subsystems = SubsystemRegistry()
     backend = MagicMock()
     backend._session = session
     backend.session_id = "sess-test"
@@ -125,11 +131,11 @@ async def test_background_attach_returns_immediately_even_when_the_attach_is_slo
     # whole assertion. `wait_for` would pass trivially if it had not.
     await asyncio.wait_for(started.wait(), timeout=1)
     assert not task.done()
-    assert orch._backend._session._knowledge_preparing is True
+    assert _state(orch) is SubsystemState.PREPARING
 
     release.set()
     await asyncio.wait_for(task, timeout=1)
-    assert orch._backend._session._knowledge_preparing is False
+    assert _state(orch) is SubsystemState.READY
 
 
 async def test_background_attach_does_nothing_when_knowledge_is_disabled(tmp_path, monkeypatch):
@@ -148,7 +154,11 @@ async def test_background_attach_does_nothing_when_knowledge_is_disabled(tmp_pat
     # running" from "already done".
     assert orch.attach_neo4j_in_background() is None
     assert called is False
-    assert orch._backend._session._knowledge_preparing is not True
+    # Off, and the record says who turned it off — "disabled" and
+    # "broken" are the two states this panel used to conflate.
+    entry = orch._backend._session.subsystems.get(KNOWLEDGE)
+    assert entry.state is SubsystemState.DISABLED
+    assert "knowledge.enabled" in entry.reason
 
 
 async def test_a_failing_attach_records_the_reason_and_clears_preparing(tmp_path, monkeypatch):
@@ -158,7 +168,6 @@ async def test_a_failing_attach_records_the_reason_and_clears_preparing(tmp_path
     monkeypatch.delenv(ENV_OVERRIDE, raising=False)
     orch = _make_orchestrator(tmp_path, enabled=True)
     session = orch._backend._session
-    session.knowledge_error = None
 
     async def _boom():
         raise RuntimeError("no route to dist.neo4j.org")
@@ -168,5 +177,8 @@ async def test_a_failing_attach_records_the_reason_and_clears_preparing(tmp_path
     task = orch.attach_neo4j_in_background()
     await asyncio.wait_for(task, timeout=1)
 
-    assert "no route to dist.neo4j.org" in session._knowledge_error
-    assert session._knowledge_preparing is False
+    entry = session.subsystems.get(KNOWLEDGE)
+    assert entry.state is SubsystemState.FAILED
+    assert "no route to dist.neo4j.org" in entry.reason
+    # A reason without a remedy is half an answer.
+    assert entry.fix

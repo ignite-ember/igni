@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, ClassVar
 from pydantic import BaseModel, ConfigDict, Field
 
 from ember_code.backend.command_result import CommandResult
+from ember_code.backend.subsystem_status import KNOWLEDGE, SubsystemState
 from ember_code.core.knowledge.models import KnowledgeSyncResult
 from ember_code.protocol.messages import CommandAction
 
@@ -145,36 +146,44 @@ class KnowledgeCommand:
         return CommandResult.for_action(CommandAction.KNOWLEDGE)
 
     async def panel(self) -> CommandResult:
-        """Default no-arg entry: open the panel, or surface a
-        clear error card when the base failed to initialize.
+        """Default no-arg entry: open the panel, or say why it cannot.
 
-        Consumes :attr:`Session.knowledge_error` — the public
-        property that surfaces the internal ``_knowledge_error``
-        backing field — so this method never reaches into a
-        private attribute.
+        The four answers come from the session's subsystem registry
+        rather than from this method guessing between them — see
+        :mod:`ember_code.backend.subsystem_status`. Guessing is what
+        produced "Knowledge base failed to initialize" for a healthy
+        first launch and for a config setting somebody chose, which
+        are three different situations wearing one sentence.
         """
         mgr = self._session.knowledge_mgr
         status = await mgr.status()
-        if not status.enabled:
-            if self._session.settings.knowledge.enabled:
-                err = self._session.knowledge_error
-                if err:
-                    return CommandResult.error(f"Knowledge failed to load: {err}")
-                # Order matters: an in-flight attach has no error yet,
-                # and calling that "failed to initialize" is how a
-                # first launch would describe itself for the several
-                # minutes the one-time download takes.
-                if self._session.knowledge_preparing:
-                    return CommandResult.info(
-                        "Setting up the knowledge base — a one-time ~500 MB download "
-                        "of the local database. It'll be ready shortly; the rest of "
-                        "igni works meanwhile."
-                    )
-                return CommandResult.error("Knowledge base failed to initialize.")
+        if status.enabled:
+            return CommandResult.for_action(CommandAction.KNOWLEDGE)
+
+        record = getattr(self._session, "subsystems", None)
+        entry = record.get(KNOWLEDGE) if record is not None else None
+
+        if entry is not None and entry.state is SubsystemState.PREPARING:
             return CommandResult.info(
-                "Knowledge base is disabled. Set knowledge.enabled=true in config."
+                f"Setting up the knowledge base — {entry.reason}. "
+                "It'll be ready shortly; the rest of igni works meanwhile."
             )
-        return CommandResult.for_action(CommandAction.KNOWLEDGE)
+        if entry is not None and entry.state is SubsystemState.FAILED:
+            return CommandResult.error(
+                f"Knowledge failed to load: {entry.reason}"
+                + (f"\n\n{entry.fix}" if entry.fix else "")
+            )
+        if entry is not None and entry.state is SubsystemState.DISABLED:
+            return CommandResult.info(f"Knowledge base is disabled — {entry.reason}. {entry.fix}")
+
+        # No record at all. Happens for a session built outside the
+        # backend's attach path (tests, an embedded Session); fall back
+        # to what config says rather than inventing a failure.
+        if self._session.settings.knowledge.enabled:
+            return CommandResult.error("Knowledge base failed to initialize.")
+        return CommandResult.info(
+            "Knowledge base is disabled. Set knowledge.enabled=true in config."
+        )
 
     async def sync(self) -> CommandResult:
         """Run a bidirectional cloud sync (``file_to_db`` +

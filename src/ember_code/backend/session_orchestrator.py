@@ -40,12 +40,57 @@ from ember_code.backend.schemas_rpc import (
 )
 from ember_code.backend.session_pool import SessionPool, SessionRuntime
 from ember_code.backend.session_stamping_transport import SessionStampingTransport
+from ember_code.backend.subsystem_status import KNOWLEDGE, SubsystemState
 from ember_code.core.session.client_state import ClientStateStore
 from ember_code.core.session.session_directories import SessionDirectoryStore
 from ember_code.protocol import messages as msg
 from ember_code.protocol.rpc import RpcMethod
 
 logger = logging.getLogger(__name__)
+
+
+#: What to tell someone whose knowledge base will not start. Every
+#: recovery we have actually used for a wedged sidecar comes down to
+#: this, and a reason without a remedy is only half an answer.
+_KNOWLEDGE_FIX = (
+    "Delete ~/.ember/neo4j and reopen the app to reinstall the local database. "
+    "Set EMBER_NEO4J_RUNTIME=0 to run without it."
+)
+
+
+def _record(
+    session: Any,
+    state: SubsystemState,
+    *,
+    reason: str = "",
+    fix: str = "",
+    only_if_preparing: bool = False,
+) -> None:
+    """Write one subsystem state, tolerating sessions that have none.
+
+    A session is ``None`` before the pool is built and a stub in
+    several tests, and neither is a reason to take the backend down —
+    but a state that silently fails to record is precisely the bug
+    this registry exists to prevent, so it is logged rather than
+    swallowed.
+
+    ``only_if_preparing`` keeps a late, generic failure from
+    overwriting the specific one the attach already recorded: the
+    inner handler knows *which* step broke, this one only knows that
+    something did.
+    """
+    registry = getattr(session, "subsystems", None)
+    if registry is None:
+        logger.debug("knowledge: no subsystem registry on session; state %s unrecorded", state)
+        return
+    try:
+        if only_if_preparing:
+            current = registry.get(KNOWLEDGE)
+            if current is not None and current.state is SubsystemState.FAILED:
+                return
+        registry.set(KNOWLEDGE, state, reason=reason, fix=fix)
+    except Exception:  # pragma: no cover — defensive
+        logger.exception("knowledge: could not record subsystem state %s", state)
 
 
 class SessionOrchestrator:
@@ -209,11 +254,20 @@ class SessionOrchestrator:
         it on shutdown; ``None`` when knowledge is disabled, so the
         caller can tell "not running" from "running".
         """
-        if not knowledge_runtime_enabled(self._settings):
-            return None
         session = getattr(self._backend, "_session", None)
-        if session is not None:
-            session._knowledge_preparing = True
+        if not knowledge_runtime_enabled(self._settings):
+            _record(
+                session,
+                SubsystemState.DISABLED,
+                reason="knowledge.enabled is false in config",
+                fix="Set knowledge.enabled to true in ~/.ember/config.yaml and reopen the app.",
+            )
+            return None
+        _record(
+            session,
+            SubsystemState.PREPARING,
+            reason="starting the local database (one-time ~500 MB download on first run)",
+        )
 
         async def _run() -> None:
             try:
@@ -225,11 +279,15 @@ class SessionOrchestrator:
                 # on shutdown) which would otherwise surface only as
                 # "Task exception was never retrieved" on stderr.
                 logger.exception("knowledge: background attach failed")
-                if session is not None and not session.knowledge_error:
-                    session._knowledge_error = str(exc)
-            finally:
-                if session is not None:
-                    session._knowledge_preparing = False
+                _record(
+                    session,
+                    SubsystemState.FAILED,
+                    reason=str(exc) or exc.__class__.__name__,
+                    fix=_KNOWLEDGE_FIX,
+                    only_if_preparing=True,
+                )
+            else:
+                _record(session, SubsystemState.READY)
 
         task = asyncio.create_task(_run(), name="knowledge-attach")
         self._neo4j_attach_task = task
@@ -287,8 +345,15 @@ class SessionOrchestrator:
             try:
                 await session.attach_knowledge_neo4j(runtime)
             except Exception as exc:  # noqa: BLE001 — see above
-                session._knowledge_error = str(exc)
+                _record(
+                    session,
+                    SubsystemState.FAILED,
+                    reason=str(exc) or exc.__class__.__name__,
+                    fix=_KNOWLEDGE_FIX,
+                )
                 logger.exception("knowledge: neo4j attach failed; continuing without it")
+            else:
+                _record(session, SubsystemState.READY)
         if getattr(session, "code_index", None) is not None:
             await session.attach_codeindex_neo4j(runtime)
 

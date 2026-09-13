@@ -76,6 +76,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from ember_code.backend.jdk_bootstrap import JdkBootstrap, JdkBootstrapError
+from ember_code.backend.process_exit import format_child_failure
 
 if TYPE_CHECKING:
     from neo4j import AsyncDriver
@@ -788,7 +789,12 @@ class Neo4jRuntime:
             "console",
             cwd=str(neo4j_bin.parent.parent),
             env=env,
-            stdout=asyncio.subprocess.DEVNULL,
+            # Both streams into the one file. Neo4j's console mode
+            # reports startup failures on stdout, which went to
+            # DEVNULL — so a sidecar that died before it could open
+            # its own log left a zero-byte stderr file and no other
+            # trace anywhere.
+            stdout=stderr_handle,
             stderr=stderr_handle,
             start_new_session=True,
         )
@@ -939,7 +945,12 @@ class Neo4jRuntime:
             "console",
             cwd=str(neo4j_bin.parent.parent),
             env=env,
-            stdout=asyncio.subprocess.DEVNULL,
+            # Both streams into the one file. Neo4j's console mode
+            # reports startup failures on stdout, which went to
+            # DEVNULL — so a sidecar that died before it could open
+            # its own log left a zero-byte stderr file and no other
+            # trace anywhere.
+            stdout=stderr_handle,
             stderr=stderr_handle,
             # Detach into its own process group so shutdown can signal
             # the whole subtree (Java + helpers) without touching the
@@ -1113,9 +1124,12 @@ class Neo4jRuntime:
                             stderr_text = stderr_file.read_text(encoding="utf-8", errors="replace")
                         except Exception:
                             stderr_text = "<could not read stderr file>"
+                    # Spelled out rather than numeric. The code that
+                    # actually turned up here was 137, and reading it
+                    # as "128 + SIGKILL, so the binary would not exec"
+                    # took an hour it did not need to.
                     raise Neo4jBootstrapError(
-                        f"neo4j process exited during startup (code={proc.returncode}): "
-                        f"{stderr_text[:1000]}"
+                        format_child_failure("neo4j", proc.returncode, stderr_text)
                     )
                 if _is_port_open(self._host, port):
                     logger.info("neo4j bolt port %d is accepting connections", port)
