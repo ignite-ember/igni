@@ -317,6 +317,13 @@ class StatusUpdate(Message):
     context_tokens: int = 0
     max_context: int = 0
     model: str = ""
+    #: Whether a run would reach a real model rather than the
+    #: ``NoModelConfigured`` placeholder. The frontend used to infer
+    #: this by comparing ``model`` against the placeholder's id string,
+    #: which made a sentinel into an undeclared contract between two
+    #: files. Defaults True so an older client, which never read the
+    #: field, keeps its previous behaviour.
+    model_configured: bool = True
     cloud_connected: bool = False
     cloud_org: str = ""
     # Active ``PermissionEvaluator`` mode (``default`` / ``plan`` /

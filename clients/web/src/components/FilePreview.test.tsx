@@ -163,8 +163,13 @@ describe("FilePreview — Copy path", () => {
       }),
     );
     render(<FilePreview client={client} path="x.py" onClose={() => undefined} />);
+    // Wait for the canonical path itself, not for the Copy button: the
+    // button renders immediately, before the RPC resolves, so waiting
+    // on it races the state update and copies the original prop. It
+    // lost that race on the Linux runner while passing on macOS and
+    // Windows.
     await waitFor(() => {
-      expect(screen.getByTitle("Copy path")).toBeTruthy();
+      expect(screen.getByTitle("/abs/canonical/x.py")).toBeTruthy();
     });
     fireEvent.click(screen.getByTitle("Copy path"));
     expect(writeText).toHaveBeenCalledWith("/abs/canonical/x.py");

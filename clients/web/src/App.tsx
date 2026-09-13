@@ -75,6 +75,7 @@ import { Sidebar, type SessionEntry } from "./components/Sidebar";
 import { AgentsPanel } from "./components/panels/AgentsPanel";
 import { CodeIndexPanel } from "./components/panels/CodeIndexPanel";
 import { FilePreview } from "./components/FilePreview";
+import { FirstRunSetup } from "./components/FirstRunSetup";
 import { HooksPanel } from "./components/panels/HooksPanel";
 import { KnowledgePanel } from "./components/panels/KnowledgePanel";
 import { Toasts, type Toast } from "./components/Toasts";
@@ -2689,6 +2690,14 @@ export default function App() {
                 </div>
                 <h1>{groupName}</h1>
                 <p>Your AI coding agent, in this project.</p>
+                {/* Nothing below this line works without a model, so on a
+                    fresh install the screen said "Dispatch to a
+                    specialist" to someone whose every click would come
+                    back "No model configured. Run /login". The one thing
+                    that would help was the only thing not offered. */}
+                {status && status.model_configured === false ? (
+                  <FirstRunSetup onLogin={() => setPanel({ kind: "login" })} />
+                ) : null}
                 <div className="welcome-caps">
                   {(
                     [

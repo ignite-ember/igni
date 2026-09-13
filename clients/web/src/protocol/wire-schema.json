@@ -222,6 +222,7 @@
       "input_tokens",
       "max_context",
       "model",
+      "model_configured",
       "output_tokens",
       "permission_mode",
       "session_id",
