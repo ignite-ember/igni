@@ -124,6 +124,14 @@ line-length = 100
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 ignore = ["E501"]
 
+[tool.ruff.lint.isort]
+# ``target-version`` is py310 (see above), which predates ``tomllib``,
+# so isort would file a stdlib import under third-party and sort it
+# next to pytest. Stating it here keeps the grouping honest without
+# dragging in the 87-finding pyupgrade sweep that raising the target
+# would.
+extra-standard-library = ["tomllib"]
+
 [tool.mypy]
 # Matches ``requires-python`` above — the one version this ships on.
 # It was 3.11 while the floor was 3.11; type-checking against a version
