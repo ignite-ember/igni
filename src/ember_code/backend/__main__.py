@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -29,6 +28,7 @@ import click
 # Backward-compat re-exports: keep the old import paths working for
 # in-tree tests. New callers should import from the themed modules.
 from ember_code.backend.app import BackendApp
+from ember_code.backend.logging_setup import configure_logging
 from ember_code.backend.login_coordinator import LoginCoordinator
 from ember_code.backend.message_dispatcher import MessageDispatcher, _serialize
 from ember_code.backend.push_bridge import PushNotificationBridge
@@ -75,38 +75,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-
-def _attach_package_log_handler(log_path: Path) -> None:
-    """Give ``ember_code`` its own file handler, off the root logger.
-
-    ``basicConfig`` alone is not enough here, and this module already
-    knew it: see the note in :mod:`ember_code.transport.websocket`
-    about downstream imports (httpx, litellm, …) resetting root
-    handlers between startup and first use. When that happens the
-    root file handler goes with them and the log simply stops — which
-    it did, five lines in, while the BE ran on for minutes.
-
-    So this mirrors what the chunk trace does: a handler on the
-    package logger, flushed per record so ``tail -f`` is honest, and
-    idempotent so a second call cannot double every line.
-    """
-
-    class _FlushingFileHandler(logging.FileHandler):
-        def emit(self, record: logging.LogRecord) -> None:
-            super().emit(record)
-            self.flush()
-
-    pkg = logging.getLogger("ember_code")
-    if any(getattr(h, "_ember_debug_log", False) for h in pkg.handlers):
-        return
-    handler = _FlushingFileHandler(str(log_path))
-    handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
-    handler.setLevel(logging.DEBUG)
-    handler._ember_debug_log = True  # type: ignore[attr-defined]
-    pkg.addHandler(handler)
-    pkg.setLevel(logging.DEBUG)
-
 
 #: The interpreter this ships on. Kept in step with ``requires-python``
 #: in pyproject.toml and ``PYTHON_VERSION`` in the Tauri runtime, which
@@ -169,30 +137,14 @@ def main(
     """Start the Ember Code backend server."""
     if socket_path is None and ws_port is None:
         raise click.UsageError("at least one of --socket or --ws-port is required")
-    # ``--debug`` is unreachable for the backend the desktop app
-    # spawns: the app builds the argv, and nothing in the UI edits it.
-    # So the only BE anyone actually runs is the one that cannot be
-    # asked for logs — which is how a failing knowledge attach came to
-    # report nothing anywhere. Its stdout goes to the app (which reads
-    # it for the ready line and drops the rest), so "no log file" means
-    # no record at all.
-    #
-    # The env var is the same switch by a route that survives being a
-    # child process: the app already passes ``EMBER_NEO4J_RUNTIME``
-    # down this way, and a child inherits the environment it cannot
-    # inherit a command line from.
-    if debug or os.environ.get("EMBER_DEBUG_LOG"):
-        log_path = Path(
-            os.environ.get("EMBER_DEBUG_LOG_PATH") or (Path.home() / ".ember" / "debug.log")
-        )
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        logging.basicConfig(
-            filename=str(log_path),
-            level=logging.DEBUG,
-            format="%(asctime)s %(name)s %(levelname)s %(message)s",
-            force=True,
-        )
-        _attach_package_log_handler(log_path)
+    # Always. ``--debug`` is unreachable for the backend the desktop
+    # app spawns (the app builds the argv), and the env var that
+    # replaced it still had to be set by someone who already suspected
+    # a problem and knew its name — which is nobody, before the fact.
+    # ``--debug`` / ``EMBER_DEBUG_LOG`` now choose the level.
+    log_path = configure_logging(debug_flag=debug)
+    if log_path is not None:
+        logger.info("backend log: %s", log_path)
 
     warn_if_unsupported_python()
 

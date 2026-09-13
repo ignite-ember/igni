@@ -27,6 +27,11 @@ import pytest
 
 from ember_code.backend import neo4j_runtime as neo4j_runtime_mod
 from ember_code.backend.session_orchestrator import SessionOrchestrator
+from ember_code.backend.subsystem_status import (
+    KNOWLEDGE,
+    SubsystemRegistry,
+    SubsystemState,
+)
 from ember_code.core.config.settings import Settings
 
 
@@ -52,7 +57,9 @@ class _Session:
         #: Still built eagerly by the constructor, so non-None here.
         self.code_index = object()
         self.knowledge_attach_calls = 0
-        self._knowledge_error: str | None = None
+        #: Where a failure's reason lands now — one record per
+        #: subsystem instead of a private string per failure mode.
+        self.subsystems = SubsystemRegistry()
         self.codeindex_attach_calls = 0
 
     async def attach_knowledge_neo4j(self, runtime: Any) -> None:
@@ -166,8 +173,12 @@ async def test_a_failing_attach_does_not_take_the_backend_down(tmp_path, stub_ru
     await _orchestrator(session, tmp_path, Settings()).attach_neo4j()
 
     assert session.knowledge is None
-    # The reason reaches the field the panel reads.
-    assert "neo4j would not start" in (session._knowledge_error or "")
+    # The reason reaches the record the panel reads — with a remedy
+    # attached, which is the half of the answer a user can act on.
+    entry = session.subsystems.get(KNOWLEDGE)
+    assert entry.state is SubsystemState.FAILED
+    assert "neo4j would not start" in entry.reason
+    assert entry.fix
     # The code index still gets its turn — one failure is not all of them.
     assert session.codeindex_attach_calls == 1
 
