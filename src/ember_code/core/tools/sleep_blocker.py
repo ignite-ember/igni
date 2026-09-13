@@ -31,11 +31,11 @@ reboot.
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import threading
 
@@ -58,8 +58,7 @@ class SleepBlocker:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._count = 0
-        self._proc: asyncio.subprocess.Process | None = None
-        self._popen = None
+        self._popen: subprocess.Popen[bytes] | None = None
 
     @property
     def supported(self) -> bool:
@@ -97,8 +96,6 @@ class SleepBlocker:
                 self._stop()
 
     def _start(self) -> None:
-        import subprocess
-
         try:
             # ``-i`` prevents idle system sleep. ``-w`` ties the
             # assertion's lifetime to this process, so a crash here
