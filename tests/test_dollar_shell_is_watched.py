@@ -7,9 +7,10 @@ run by the agent got a watcher row, a live log, a kill button and an
 auto-background on timeout, because it went through
 ``ProcessRegistry`` and the `$` path did not.
 
-These tests pin the two halves of that: short commands still behave as
-captured one-shots and leave nothing behind, and long ones end up in
-the registry rather than in a grave.
+These tests pin three things: a short command still reads as a captured
+one-shot, a long one is backgrounded rather than killed, and a finished
+one stays in the history instead of being deleted at the moment it
+becomes worth reading.
 """
 
 from __future__ import annotations
@@ -46,12 +47,31 @@ async def test_a_failing_command_reports_its_exit_code(tmp_path, supervisor):
     assert result.exit_code == 7
 
 
-async def test_a_quick_command_leaves_no_row_behind(tmp_path, supervisor):
-    """`$ ls` should not clutter the watcher. Short commands are
-    registered silently and deregistered on completion."""
-    await _runner(tmp_path, supervisor).run("echo done")
+async def test_a_finished_command_stays_in_the_history(tmp_path, supervisor):
+    """The row survives the process.
 
-    assert _running(supervisor) == [], "a finished one-shot was left in the registry"
+    It used to be deleted the moment the command exited, which is the
+    moment it becomes worth reading — a failed build vanished from the
+    watcher before anyone could open it. Finished entries now stay until
+    the registry's eviction TTL drops them.
+    """
+    await _runner(tmp_path, supervisor).run("echo done-and-gone")
+
+    known = _known(supervisor)
+    assert any("done-and-gone" in cmd for _, cmd in known), f"no history row: {known}"
+
+
+async def test_the_history_row_reports_how_it_ended(tmp_path, supervisor):
+    """A row that says nothing about the exit code is not history, it
+    is a list of names."""
+    from ember_code.backend.server_processes import ProcessesController
+
+    await _runner(tmp_path, supervisor).run("exit 4")
+
+    rows = ProcessesController(supervisor=supervisor).list()
+    finished = [r for r in rows if not r.is_running]
+    assert finished, f"the list RPC hid the finished process: {rows}"
+    assert finished[0].exit_code == 4
 
 
 async def test_a_long_command_is_backgrounded_not_killed(tmp_path, supervisor):
@@ -65,7 +85,7 @@ async def test_a_long_command_is_backgrounded_not_killed(tmp_path, supervisor):
     assert "timed out" not in result.output
     assert result.exit_code == 0
 
-    pids = [pid for pid, _ in _running(supervisor)]
+    pids = [pid for pid, _ in _known(supervisor)]
     assert pids, "the backgrounded process is not in the registry"
 
     for pid in pids:
@@ -79,19 +99,16 @@ async def test_the_backgrounded_command_is_visible_to_the_watcher(tmp_path, supe
 
     await runner.run("sleep 30")
 
-    commands = [cmd for _, cmd in _running(supervisor)]
+    commands = [cmd for _, cmd in _known(supervisor)]
     assert any("sleep 30" in c for c in commands), f"watcher would show: {commands}"
 
-    for pid, _ in _running(supervisor):
+    for pid, _ in _known(supervisor):
         await _stop(supervisor, pid)
 
 
-def _running(supervisor):
+def _known(supervisor):
     """(pid, cmd) for everything the watcher would list."""
-    out = []
-    for pid, mp in list(getattr(supervisor.registry, "_processes", {}).items()):
-        out.append((pid, getattr(mp, "cmd", "")))
-    return out
+    return [(pid, cmd) for pid, cmd, *_ in supervisor.registry.all_known()]
 
 
 async def _stop(supervisor, pid):

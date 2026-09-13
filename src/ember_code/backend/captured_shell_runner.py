@@ -117,7 +117,13 @@ class CapturedShellRunner:
         await asyncio.sleep(_DRAIN_SECONDS)
         output = mp.read(tail=2000)
         exit_code = mp.returncode() or 0
-        self._supervisor.registry.remove(pid)
+        # Kept, not deleted, and written down. A command that just
+        # finished — especially one that just failed — is the thing
+        # someone opens the watcher to read, and dropping the row at
+        # that exact moment is what made history impossible. The
+        # registry's eviction TTL bounds the in-memory copy; the
+        # persisted one outlives the BE.
+        self._supervisor.registry.record_finished(mp)
         return RunShellResult(
             output=output[-self._max_output_bytes :],
             exit_code=exit_code,

@@ -26,11 +26,18 @@ from pydantic import BaseModel
 
 
 class ProcessRow(BaseModel):
-    """One row of :meth:`ProcessesController.list`."""
+    """One row of :meth:`ProcessesController.list`.
+
+    ``is_running`` / ``exit_code`` default to "running" so an older
+    client that predates them — and the test fixtures that build rows
+    by hand — read a listed row the way they always did.
+    """
 
     pid: int
     cmd: str
     elapsed_seconds: float
+    is_running: bool = True
+    exit_code: int | None = None
 
 
 class ProcessTailResult(BaseModel):
