@@ -154,6 +154,13 @@ export interface StatusUpdate extends BaseMessage {
   context_tokens: number;
   max_context: number;
   model: string;
+  /** Whether a run would reach a real model rather than the BE's
+   *  ``NoModelConfigured`` placeholder. Read it instead of comparing
+   *  ``model`` against the placeholder's id string — that made a
+   *  sentinel into a contract between two files that did not know they
+   *  shared one. Optional so an older BE still type-checks; treat a
+   *  missing value as configured, which is what it meant before. */
+  model_configured?: boolean;
   cloud_connected: boolean;
   cloud_org: string;
   /** Active permission mode (row 50 — plan-mode badge). One of

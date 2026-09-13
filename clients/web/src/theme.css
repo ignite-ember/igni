@@ -1237,6 +1237,40 @@ button {
   font-size: 14.5px;
 }
 
+/* ── First run: no model yet ──────────────────────────────────────
+   Sits between the product name and the capability cards, because
+   every one of those cards leads somewhere that cannot run until this
+   is done. Deliberately not a card itself — it is the screen's
+   subject, and a ninth tile in a grid of eight reads as an option. */
+.welcome-setup {
+  margin: 26px auto 0;
+  max-width: 520px;
+  padding: 18px 20px 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+}
+
+.welcome-setup-lead {
+  margin: 0 0 14px;
+  font-size: 14.5px;
+  color: var(--fg);
+}
+
+.welcome-setup-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.welcome-setup-note {
+  margin: 14px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-faint);
+}
+
 .welcome-caps {
   margin: 28px auto 0;
   display: grid;

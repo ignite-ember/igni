@@ -79,6 +79,7 @@ class ContextController:
         """
         return msg.StatusUpdate(
             model=self._settings.models.default,
+            model_configured=self._has_usable_model(),
             cloud_connected=self._session.cloud_connected,
             cloud_org=self._session.cloud_org_name or "",
             context_tokens=self._session.last_input_tokens,
@@ -86,6 +87,21 @@ class ContextController:
             permission_mode=self._session.permission_mode_value,
             theme=self._group_theme(),
         )
+
+    def _has_usable_model(self) -> bool:
+        """Ask the registry, never raise.
+
+        A brand-new install has no model, which is the normal first-run
+        state rather than an error — and a status poll that failed
+        because of it would take the whole status bar down with it.
+        """
+        try:
+            from ember_code.core.config.models import ModelRegistry
+
+            return ModelRegistry(self._settings).has_usable_model()
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.debug("model availability unknown (%s); assuming configured", exc)
+            return True
 
     def _group_theme(self) -> dict | None:
         """Brand overrides from the cached group pack, if any.
