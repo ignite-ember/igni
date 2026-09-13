@@ -27,9 +27,11 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
+    # One classifier, because one version is supported. Listing 3.11 and
+    # 3.13 told PyPI — and anyone reading the package page — that this
+    # installs and runs there. It does not: the desktop app ships 3.12,
+    # and off-version the Neo4j sidecar fails silently.
     "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development",
     "Topic :: Software Development :: Code Generators",
     "Topic :: Terminals",
