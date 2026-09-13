@@ -26,6 +26,7 @@ import pytest
 from ember_code.backend.neo4j_runtime import (
     DEFAULT_NEO4J_VERSION,
     Neo4jBootstrap,
+    Neo4jBootstrapError,
     Neo4jDiscovery,
     Neo4jEndpoints,
     Neo4jRuntime,
@@ -266,3 +267,71 @@ def test_is_alive_returns_false_for_dead_pid() -> None:
     )
     rt = Neo4jRuntime(data_dir="/tmp")
     assert not rt._is_alive(endpoints)
+
+
+# ── _wait_for_bolt must not kill what it waited for ───────────────
+
+
+class _FakeProc:
+    """Minimal stand-in for the sidecar subprocess."""
+
+    def __init__(self) -> None:
+        self.returncode: int | None = None
+        self.terminated = False
+        self.killed = False
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.returncode = -15
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+
+    async def wait(self) -> int:
+        return self.returncode or 0
+
+
+async def test_a_started_sidecar_is_left_running(tmp_path: Path) -> None:
+    """The success path must not reap the process.
+
+    ``_wait_for_bolt`` cleaned up in a ``finally``, so returning
+    "the port is open" went straight into ``proc.terminate()``. Neo4j
+    logged `Bolt enabled` and then `shutdown initiated by request`
+    63ms later, every time, and the knowledge attach that followed
+    could never connect to it.
+    """
+    import socket as _socket
+
+    listener = _socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    proc = _FakeProc()
+    try:
+        rt = Neo4jRuntime(data_dir=tmp_path)
+        await rt._wait_for_bolt(port, "neo4j", "pw", proc)  # type: ignore[arg-type]
+    finally:
+        listener.close()
+
+    assert not proc.terminated, "the sidecar was killed on the success path"
+    assert not proc.killed
+    assert proc.returncode is None
+
+
+async def test_a_sidecar_that_never_listens_is_reaped(tmp_path: Path) -> None:
+    """The failure path still has to clean up — the fix must not
+    trade a killed-on-success for a leaked-on-timeout."""
+    proc = _FakeProc()
+    rt = Neo4jRuntime(data_dir=tmp_path)
+    rt._startup_timeout = 0.5
+    # A port nothing is listening on.
+    closed = __import__("socket").socket()
+    closed.bind(("127.0.0.1", 0))
+    port = closed.getsockname()[1]
+    closed.close()
+
+    with pytest.raises(Neo4jBootstrapError):
+        await rt._wait_for_bolt(port, "neo4j", "pw", proc)  # type: ignore[arg-type]
+
+    assert proc.terminated, "a sidecar that never came up must be reaped"

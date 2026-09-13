@@ -1095,11 +1095,19 @@ class Neo4jRuntime:
             raise Neo4jBootstrapError(
                 f"neo4j did not become reachable on {self._host}:{port} within {self._startup_timeout}s"
             )
-        finally:
-            # Always close the stderr pipe and reap the process on
-            # the way out — covers the success (return), the
-            # crash-during-startup (raise), and the timeout (raise)
-            # paths so we never leak an orphan.
+        except BaseException:
+            # Failure paths only — a crash during startup, a timeout,
+            # or cancellation. Reap so we do not leak an orphan.
+            #
+            # This used to be a ``finally``, which also ran on the
+            # success ``return`` above: the sidecar was terminated
+            # immediately after it started serving, and its own log
+            # recorded "Neo4j Server shutdown initiated by request"
+            # 63ms after "Bolt enabled". Every downstream symptom came
+            # from here — the knowledge attach failing to connect, the
+            # respawn on the next attach, and the database appearing to
+            # die on its own. On success the process is not an orphan;
+            # it is the thing we were waiting for.
             if stderr_handle is not None:
                 with contextlib.suppress(Exception):
                     stderr_handle.close()
@@ -1111,6 +1119,7 @@ class Neo4jRuntime:
                     except asyncio.TimeoutError:
                         with contextlib.suppress(Exception):
                             proc.kill()
+            raise
 
     def _save_runtime(self, state: _ProjectCommitState) -> None:
         """Write per-``(project, commit)`` runtime.json for discovery.
