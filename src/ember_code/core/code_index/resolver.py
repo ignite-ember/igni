@@ -41,6 +41,28 @@ class DiscoveryStatus(StrEnum):
 
 
 @dataclass(frozen=True)
+class ResolveFailure:
+    """Why the resolver could not answer.
+
+    It has four ways of returning ``None`` — no git remote, no cloud
+    token, an unreachable server, a response it could not read — and
+    they used to be indistinguishable to every caller. The controller
+    turned all four into ``install_state="unknown"``, and the pill
+    turned that into **"not indexed — HEAD needs a sync"**: a remedy
+    that cannot work, offered for four situations, three of which a
+    sync would not touch.
+
+    ``reason`` says what happened; ``fix`` says what to do. They are
+    separate because the second is usually actionable when the first
+    is not — see :mod:`ember_code.backend.subsystem_status`, which
+    this feeds.
+    """
+
+    reason: str
+    fix: str = ""
+
+
+@dataclass(frozen=True)
 class ResolvedRepository:
     """Result of resolving a git remote URL against ember-server."""
 
@@ -69,11 +91,21 @@ class RepositoryResolver:
         self.credentials = credentials
         self.timeout = timeout
         self._cached: ResolvedRepository | None = None
+        self._failure: ResolveFailure | None = None
         self._lock = asyncio.Lock()
 
     @property
     def cached(self) -> ResolvedRepository | None:
         return self._cached
+
+    @property
+    def failure(self) -> ResolveFailure | None:
+        """Why the last resolve came back empty, if it did.
+
+        ``None`` when the resolver has not run yet or has succeeded —
+        the two states that are genuinely "nothing to report".
+        """
+        return self._failure
 
     def remote_url(self) -> str | None:
         """Return ``git remote get-url origin``, or ``None`` if unavailable."""
@@ -103,13 +135,20 @@ class RepositoryResolver:
 
             url = self.remote_url()
             if not url:
-                logger.debug("skipping codeindex resolve: no git remote")
-                return None
+                return self._fail(
+                    "this folder has no git remote",
+                    "CodeIndex indexes a repository — open a folder with an "
+                    "`origin` remote, or add one.",
+                )
 
             token = self.credentials.access_token
             if not token:
-                logger.debug("skipping codeindex resolve: no cloud auth")
-                return None
+                return self._fail(
+                    "not logged in to igni Cloud",
+                    "Run /login. CodeIndex resolves the repository through the "
+                    "cloud, so it cannot tell what state this repo is in until "
+                    "you are signed in.",
+                )
 
             endpoint = f"{self.server_url}/v1/codeindex/repository"
             try:
@@ -120,16 +159,23 @@ class RepositoryResolver:
                         headers={"Authorization": f"Bearer {token}"},
                     )
             except httpx.HTTPError as exc:
-                logger.info("codeindex resolver: server unreachable (%s)", exc)
-                return None
-
-            if response.status_code != 200:
-                logger.info(
-                    "codeindex resolver: unexpected status %d for %s",
-                    response.status_code,
-                    url,
+                return self._fail(
+                    f"could not reach igni Cloud ({exc.__class__.__name__})",
+                    "Check your connection. Everything else in igni works "
+                    "offline; only CodeIndex needs the server.",
                 )
-                return None
+
+            if response.status_code == 401:
+                return self._fail(
+                    "igni Cloud rejected the stored credentials",
+                    "Run /login again — the session has probably expired.",
+                )
+            if response.status_code != 200:
+                return self._fail(
+                    f"igni Cloud answered {response.status_code} for this repository",
+                    "If it persists, the repository may not be reachable by the "
+                    "GitHub App. Check it at the portal.",
+                )
 
             try:
                 payload = response.json()
@@ -139,8 +185,25 @@ class RepositoryResolver:
                     install_url=payload.get("install_url"),
                 )
             except (KeyError, ValueError) as exc:
-                logger.info("codeindex resolver: malformed payload (%s)", exc)
-                return None
+                return self._fail(
+                    f"igni Cloud sent a reply this client could not read ({exc})",
+                    "This usually means the client and server are different "
+                    "versions. Updating igni is the fix.",
+                )
 
             self._cached = resolved
+            self._failure = None
             return self._cached
+
+    def _fail(self, reason: str, fix: str = "") -> ResolvedRepository | None:
+        """Record why there is no answer, and log it once.
+
+        Logged at INFO rather than DEBUG because, since the backend
+        keeps a log by default, INFO is what someone reconstructing a
+        "why is this off?" report will actually have.
+        """
+        self._failure = ResolveFailure(reason=reason, fix=fix)
+        logger.info("codeindex resolver: %s", reason)
+        # Typed as returning the same thing ``resolve`` does, so its
+        # four early exits can stay one line each.
+        return None

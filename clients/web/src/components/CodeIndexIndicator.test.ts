@@ -169,4 +169,55 @@ describe("classify — priority order (each row pins one transition)", () => {
     });
     expect(b.label).toBe("syncing 10%");
   });
+
+  it("unresolved install state reads as 'not connected', with the reason", () => {
+    // Four causes end in `unknown`: no git remote, not logged in, the
+    // server unreachable, a reply the client could not read. This
+    // used to fall through to "not indexed / HEAD needs a sync",
+    // which is a remedy for none of them — and, on a machine that is
+    // not logged in, it never changed, because the resolve returns
+    // early every poll.
+    const b = classify({
+      head_indexed: false,
+      sync_in_progress: false,
+      sync_progress_pct: null,
+      sync_error: "",
+      install_state: "unknown",
+      install_reason: "not logged in to igni Cloud",
+      install_fix: "Run /login.",
+      remote_url: "https://github.com/o/r.git",
+    });
+    expect(b.label).toBe("not connected");
+    expect(b.detail).toContain("not logged in");
+  });
+
+  it("an older backend, which sends no reason, keeps the old wording", () => {
+    // `install_reason` is optional on the wire. Without it there is
+    // nothing better to say, and inventing something would be worse.
+    const b = classify({
+      head_indexed: false,
+      sync_in_progress: false,
+      sync_progress_pct: null,
+      sync_error: "",
+      install_state: "unknown",
+      remote_url: "https://github.com/o/r.git",
+    });
+    expect(b.label).toBe("not indexed");
+  });
+
+  it("a reason not determined yet reads as 'checking', not 'not indexed'", () => {
+    // Present-but-empty is a new backend mid-resolve. The sync
+    // manager can hand back a fresh resolver, and claiming "not
+    // indexed" across that window flickers the old wrong answer.
+    const b = classify({
+      head_indexed: false,
+      sync_in_progress: false,
+      sync_progress_pct: null,
+      sync_error: "",
+      install_state: "unknown",
+      install_reason: "",
+      remote_url: "https://github.com/o/r.git",
+    });
+    expect(b.label).toBe("checking…");
+  });
 });

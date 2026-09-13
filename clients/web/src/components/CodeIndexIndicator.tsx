@@ -7,11 +7,16 @@ export interface CodeIndexStatus {
   sync_progress_pct: number | null;
   sync_error: string;
   install_state: string;
+  /** Why `install_state` is "unknown", when it is. Optional: an older
+   *  backend does not send it, and the absence is handled below. */
+  install_reason?: string;
+  install_fix?: string;
   remote_url: string;
 }
 
 export function providerName(remoteUrl: string): string {
-  const host = remoteUrl.match(/(?:https?:\/\/|git@)([^/:]+)/)?.[1]?.toLowerCase() || "";
+  const host =
+    remoteUrl.match(/(?:https?:\/\/|git@)([^/:]+)/)?.[1]?.toLowerCase() || "";
   if (host.includes("gitlab")) return "GitLab";
   if (host.includes("bitbucket")) return "Bitbucket";
   if (host.includes("github")) return "GitHub";
@@ -27,8 +32,10 @@ interface BadgeState {
 }
 
 export function classify(s: CodeIndexStatus | null): BadgeState {
-  if (!s) return { label: "checking…", tone: "muted", detail: "Probing CodeIndex" };
-  if (s.sync_error) return { label: "error", tone: "bad", detail: s.sync_error };
+  if (!s)
+    return { label: "checking…", tone: "muted", detail: "Probing CodeIndex" };
+  if (s.sync_error)
+    return { label: "error", tone: "bad", detail: s.sync_error };
   if (s.install_state === "needs_install")
     return {
       label: "uninstalled",
@@ -36,12 +43,40 @@ export function classify(s: CodeIndexStatus | null): BadgeState {
       detail: `${providerName(s.remote_url)} repository not connected`,
     };
   if (s.install_state === "inactive")
-    return { label: "inactive", tone: "muted", detail: "CodeIndex inactive for this repo" };
+    return {
+      label: "inactive",
+      tone: "muted",
+      detail: "CodeIndex inactive for this repo",
+    };
+  // "unknown" means the resolver could not answer — no git remote, not
+  // logged in, the server unreachable, a reply it could not read.
+  // It used to fall through to the bottom of this function and come
+  // out as "not indexed — HEAD needs a sync", which is a remedy for
+  // exactly none of those four.
+  if (s.install_state === "unknown" && s.install_reason)
+    return { label: "not connected", tone: "warn", detail: s.install_reason };
+  // Present but empty: a backend that reports reasons, which has not
+  // determined one yet — the sync manager can hand back a fresh
+  // resolver, and for a poll or two there is genuinely no answer.
+  // Saying "not indexed" through that window is the old lie in
+  // miniature, and it flickers. `undefined` means an older backend
+  // that never reports reasons, where the old wording is all there is.
+  if (s.install_state === "unknown" && s.install_reason === "")
+    return {
+      label: "checking…",
+      tone: "muted",
+      detail: "Resolving this repository",
+    };
   if (s.sync_in_progress) {
     const pct = s.sync_progress_pct != null ? ` ${s.sync_progress_pct}%` : "…";
-    return { label: `syncing${pct}`, tone: "warn", detail: "Indexing current HEAD" };
+    return {
+      label: `syncing${pct}`,
+      tone: "warn",
+      detail: "Indexing current HEAD",
+    };
   }
-  if (s.head_indexed) return { label: "indexed", tone: "good", detail: "HEAD is fully indexed" };
+  if (s.head_indexed)
+    return { label: "indexed", tone: "good", detail: "HEAD is fully indexed" };
   return { label: "not indexed", tone: "warn", detail: "HEAD needs a sync" };
 }
 
@@ -68,7 +103,10 @@ export function CodeIndexIndicator({
     };
     void tick();
     // Slow when stable, fast (1.5s) when syncing.
-    const interval = setInterval(tick, status?.sync_in_progress ? 1_500 : 5_000);
+    const interval = setInterval(
+      tick,
+      status?.sync_in_progress ? 1_500 : 5_000,
+    );
     return () => {
       live = false;
       clearInterval(interval);
