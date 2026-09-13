@@ -145,6 +145,15 @@ test("WatcherPanel populated render", async ({ page, backend, appUrl }) => {
     payload: { pid: 9555, cmd: "cargo check --workspace", exit_code: 0 },
   });
 
+  // Still one row: pid 8201 is selected, and watching one process shows
+  // that process. Two more starting behind it does not yank the reader
+  // out of the log they are reading — the count in the title is where
+  // arrivals are announced.
+  await expect(page.locator(".watcher-row")).toHaveCount(1);
+
+  // Deselect — clicking the watched row is the same as clicking
+  // "Watcher" in the trail — and the full list is back, now four.
+  await page.locator(".watcher-row").first().click();
   await expect(page.locator(".watcher-row")).toHaveCount(4);
   // Settle to let the streamed lines paint into the tail pane.
   await page.waitForTimeout(300);
