@@ -48,6 +48,15 @@ from ember_code.core.tools.process_supervisor_locator import supervisors
 from ember_code.core.tools.shell_config import ShellToolsConfig
 from ember_code.core.tools.tool_result import LLMResultBuffer
 
+#: Ceiling on a single ``await_process`` call: 24 hours.
+#:
+#: Not a judgement about how long a wait is reasonable — a build that
+#: takes six hours is a fine thing to wait for. It is there so a process
+#: that will never exit cannot hold a session's turn open indefinitely
+#: with no way back. The agent is told the cap so it can re-arm the wait
+#: rather than assume the process died.
+_AWAIT_PROCESS_MAX_SECONDS = 24 * 60 * 60
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,6 +67,7 @@ class EmberShellTools(Toolkit):
     event loop):
     - run_shell_command: Execute a command (waits up to timeout, then backgrounds)
     - read_process_output: Read output from a backgrounded process (idempotent)
+    - await_process: Wait until a process exits, then report its exit code
     - watch_process: Watch a process for new output for a window
     - stop_process: Stop a running process
     - list_processes: List running background processes
@@ -96,6 +106,7 @@ class EmberShellTools(Toolkit):
         self._result_buffer = LLMResultBuffer()
         self.register(self.run_shell_command)
         self.register(self.read_process_output)
+        self.register(self.await_process)
         self.register(self.watch_process)
         self.register(self.stop_process)
         self.register(self.list_processes)
@@ -232,6 +243,60 @@ class EmberShellTools(Toolkit):
         self._supervisor.registry.arm_eviction(mp)
         rc = mp.returncode()
         return self._result_buffer.truncate(f"[Finished — exit code {rc}]\n{output}")
+
+    async def await_process(self, pid: int, timeout_seconds: int = 3600) -> str:
+        """Wait until a background process exits, then report how it went.
+
+        Use this when the next thing you do depends on the result: a
+        build, a test run, a migration, a deploy. It sleeps until the
+        process is actually finished — no polling, no turn burned every
+        thirty seconds — and returns the exit code, the duration, and
+        the tail of the output.
+
+        Prefer :meth:`watch_process` when you want to *look in on*
+        something that is supposed to keep running, like a dev server.
+        Prefer this when you want to *wait for* something that is
+        supposed to stop.
+
+        Branch on the exit code in the returned text: it reads
+        ``[Exited with code 0 …]`` on success and a non-zero code on
+        failure.
+
+        Args:
+            pid: Process ID to wait for, as returned by
+                ``run_shell_command(background=True)``.
+            timeout_seconds: Give up waiting after this long and say so,
+                leaving the process running. Default 1 hour, capped at
+                24; the cap exists so a wedged process cannot pin a
+                session open forever, not because waiting is discouraged.
+
+        Returns:
+            The exit code, how long it took, and the tail of the output —
+            or a note that it is still running, if the wait timed out.
+        """
+        mp = self._supervisor.registry.get(pid)
+        if mp is None:
+            return f"No tracked process with PID {pid}."
+
+        timeout_seconds = max(1, min(timeout_seconds, _AWAIT_PROCESS_MAX_SECONDS))
+
+        try:
+            await asyncio.wait_for(mp.proc.wait(), timeout=timeout_seconds)
+        except asyncio.TimeoutError:
+            elapsed = mp.elapsed()
+            tail = mp.read(tail=40)
+            return (
+                f"[Still running after {elapsed:.0f}s — PID {pid}]\n"
+                f"Waited {timeout_seconds}s and gave up; the process was left alone.\n"
+                f"Recent output:\n{tail}"
+            )
+
+        rc = mp.returncode()
+        elapsed = mp.elapsed()
+        output = mp.read(tail=100)
+        self._supervisor.registry.remove(pid)
+        verdict = "succeeded" if rc == 0 else "failed"
+        return f"[Exited with code {rc} after {elapsed:.0f}s — {verdict}]\nOutput:\n{output}"
 
     async def watch_process(self, pid: int, seconds: int = 10) -> str:
         """Watch a background process for a period, then return new output.
