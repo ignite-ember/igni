@@ -264,6 +264,28 @@ class ContextBreakdownView(BaseModel):
         return CommandResult.markdown("\n".join(lines))
 
 
+# Resolve the ``ContextBreakdown`` forward reference. The import above
+# is under ``TYPE_CHECKING``, and with ``from __future__ import
+# annotations`` the field annotation stays a string — so pydantic never
+# had the class and every attempt to build the model raised
+# "`ContextBreakdownView` is not fully defined". Nothing caught it
+# because the failure is at *instantiation*, not at import: the module
+# loaded fine and `/ctx` blew up at the moment somebody asked for a
+# breakdown.
+#
+# Deferred to the bottom, and done with an explicit namespace, for the
+# reason `core/auth/credentials.py` gives about
+# ``LoadCredentialsResult``: the type lives in a module this one should
+# not import at the top.
+def _rebuild_context_breakdown_view() -> None:
+    from ember_code.core.session.schemas import ContextBreakdown
+
+    ContextBreakdownView.model_rebuild(_types_namespace={"ContextBreakdown": ContextBreakdown})
+
+
+_rebuild_context_breakdown_view()
+
+
 __all__ = [
     "PENDING_STALENESS_SECONDS",
     "TruncateHistoryResult",

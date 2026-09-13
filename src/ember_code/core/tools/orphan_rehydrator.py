@@ -28,8 +28,10 @@ BEFORE we have a rehydrator.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 
+from ember_code.core.tools.finished_process import FinishedProcess
 from ember_code.core.tools.orphan_process import OrphanProcess
 from ember_code.core.tools.process_store import (
     BackgroundProcessRow,
@@ -39,6 +41,12 @@ from ember_code.core.tools.process_supervisor import ProcessSupervisor
 from ember_code.core.tools.shell_orphan_schemas import RehydrateResult
 
 logger = logging.getLogger(__name__)
+
+#: How long a finished process stays in the history. Seven days is the
+#: span over which "what did that build do on Tuesday" is still a
+#: question someone asks; past that the row is clutter and the table
+#: would grow for the life of the project.
+HISTORY_RETENTION_SECONDS = 7 * 24 * 60 * 60
 
 
 @dataclass(frozen=True)
@@ -62,8 +70,9 @@ class OrphanRehydrator:
     Reads the persisted background-process rows, probes each pid
     for liveness (via :meth:`OrphanProcess.probe_alive`), injects
     alive orphans into the supervisor's registry as
-    :class:`OrphanProcess` instances, and prunes dead rows from
-    the DB in the same pass.
+    :class:`OrphanProcess` instances, surfaces finished ones as
+    :class:`FinishedProcess` history, and prunes history older than
+    :data:`HISTORY_RETENTION_SECONDS` in the same pass.
 
     Safe to call multiple times: :meth:`ProcessRegistry.add` is
     idempotent on pid, and pids the registry already tracks are
@@ -109,15 +118,24 @@ class OrphanRehydrator:
             # the same probe used inside :meth:`is_running` runs
             # here too — one source of truth.
             if not OrphanProcess.probe_alive(row.pid):
-                prune_error = await self._prune_row(row.pid)
-                if prune_error is not None:
-                    # Record the FIRST remove failure — subsequent
-                    # rows still get processed so a single bad row
-                    # can't tank the whole pass.
-                    if remove_error is None:
-                        remove_error = prune_error
-                else:
-                    pruned += 1
+                # A dead pid used to mean "delete the row", which is
+                # what made history impossible: the watcher lost every
+                # record of what had run the moment the BE restarted.
+                #
+                # A row that recorded its own ending is history and is
+                # surfaced as such. One that did not is a process the
+                # previous BE was still watching when it exited — the
+                # ending was real but nobody saw it, so it is stamped
+                # now with an unknown exit code rather than being
+                # quietly dropped or dressed up as a clean exit.
+                if not row.is_finished:
+                    await self._mark_interrupted(row.pid)
+                    row = row.model_copy(update={"finished_at": int(time.time())})
+                if self._supervisor.registry.get(row.pid) is None:
+                    self._supervisor.registry.add(
+                        FinishedProcess.from_row(row, log_store=self._supervisor.log_store)
+                    )
+                    surfaced += 1
                 continue
 
             # Skip pids the in-process registry already tracks —
@@ -130,6 +148,8 @@ class OrphanRehydrator:
             orphan = OrphanProcess.from_row(row, log_store=self._supervisor.log_store)
             self._supervisor.registry.add(orphan)
             surfaced += 1
+
+        pruned = await self._prune_expired_history()
 
         if surfaced:
             logger.info(
@@ -155,6 +175,38 @@ class OrphanRehydrator:
             logger.debug("orphan rehydrate: list_all failed: %s", exc)
             return _LoadRowsOutcome(rows=[], error=f"list_all: {exc}")
         return _LoadRowsOutcome(rows=list(rows), error=None)
+
+    async def _prune_expired_history(self) -> int:
+        """Drop history rows past the retention window.
+
+        The dead-row prune this replaces ran on liveness, which is why
+        history could not exist: every finished process was deleted the
+        next time the BE started. Retention is the bound instead — old
+        enough, not merely over.
+        """
+        prune = getattr(self._store, "prune_history", None)
+        if prune is None:
+            return 0
+        try:
+            return int(await prune(older_than_seconds=HISTORY_RETENTION_SECONDS))
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            logger.debug("orphan rehydrate: prune_history failed: %s", exc)
+            return 0
+
+    async def _mark_interrupted(self, pid: int) -> None:
+        """Stamp a row whose process died without us seeing it.
+
+        ``exit_code=None`` says "it ended, we do not know how" — the
+        one honest answer available after the BE was not running to
+        observe it.
+        """
+        finish = getattr(self._store, "finish", None)
+        if finish is None:
+            return
+        try:
+            await finish(pid, None)
+        except Exception as exc:  # noqa: BLE001 — best-effort, as everywhere here
+            logger.debug("orphan rehydrate: finish pid=%s failed: %s", pid, exc)
 
     async def _prune_row(self, pid: int) -> str | None:
         """Call ``store.remove`` for a dead pid; return a failure

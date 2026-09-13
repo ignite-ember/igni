@@ -52,6 +52,9 @@ export function WatcherPanel({
   const [filter, setFilter] = useState("");
   const [autoScroll, setAutoScroll] = useState(true);
   const [now, setNow] = useState(() => Date.now() / 1000);
+  // Mirror of ``rows`` for reads that must not re-run an effect.
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
 
   // ── Seed on open ─────────────────────────────────────────
   // ``list_background_processes`` covers the gap between "BE
@@ -60,28 +63,65 @@ export function WatcherPanel({
   // channel is sufficient.
   useEffect(() => {
     let cancelled = false;
+    // Captured before the await: which pids this panel already knew
+    // about when it asked. Anything that appears afterwards came from
+    // a push and is newer than the answer.
+    const knownAtFetch = new Set(rowsRef.current.keys());
     void (async () => {
       try {
         const initial = (await client.rpc("list_background_processes")) as Array<{
           pid: number;
           cmd: string;
           elapsed_seconds: number;
+          // Added when the list learned to include finished processes.
+          // Optional so an older BE, which only ever listed running
+          // ones, still reads as "running" rather than as "stopped".
+          is_running?: boolean;
+          exit_code?: number | null;
         }>;
         if (cancelled) return;
         const nowTs = Date.now() / 1000;
         setRows((prev) => {
           const next = new Map(prev);
           for (const p of initial) {
-            if (!next.has(p.pid)) {
-              next.set(p.pid, {
-                pid: p.pid,
-                cmd: p.cmd,
-                startedAt: nowTs - p.elapsed_seconds,
-                isRunning: true,
-                exitCode: null,
-                lastLine: "",
-              });
-            }
+            // Merge, don't skip. This used to be
+            // ``if (!next.has(p.pid))``, so a row the panel already
+            // held could never be corrected — and the case where it is
+            // wrong is exactly the case where it matters: the BE that
+            // would have sent ``process_exited`` was killed, so a
+            // window open across a restart showed processes as running
+            // forever, with a Kill button for something already dead.
+            //
+            // The BE is authoritative for the state. ``lastLine`` is
+            // not — it accumulates here from the push channel and the
+            // list RPC knows nothing about it.
+            const existing = next.get(p.pid);
+            next.set(p.pid, {
+              pid: p.pid,
+              cmd: p.cmd,
+              startedAt: nowTs - p.elapsed_seconds,
+              isRunning: p.is_running ?? true,
+              exitCode: p.exit_code ?? null,
+              lastLine: existing?.lastLine ?? "",
+            });
+          }
+          // A row the panel held that the BE no longer knows about at
+          // all — evicted past its retention, or spawned by a backend
+          // from before any of this was recorded. It is certainly not
+          // running: the process it described belonged to a BE that is
+          // gone. Marked stopped with an unknown code rather than
+          // deleted, so the window does not silently lose a line it
+          // has been showing.
+          //
+          // Only pids the panel already held when this fetch started
+          // are reconciled. One that arrived from a push while the RPC
+          // was in flight is newer than the snapshot, not missing from
+          // it.
+          for (const pid of knownAtFetch) {
+            const row = next.get(pid);
+            if (!row || !row.isRunning) continue;
+            if (initial.some((p) => p.pid === pid)) continue;
+            next.set(pid, { ...row, isRunning: false, exitCode: null });
           }
           return next;
         });
@@ -277,24 +317,23 @@ export function WatcherPanel({
 
   return (
     <Drawer
+      // The selected pid is a level on the page's own trail, not a
+      // second trail of its own. It used to render a private
+      // ``.breadcrumb`` in the title, which put `Chat / Watcher` above
+      // `Watcher › PID 8201` — the word "Watcher" twice, on two lines,
+      // describing one position. `levels` is the seam the page shell
+      // already exposes for exactly this; Plugins and Knowledge use it.
+      levels={{
+        labels: selectedRow ? [`PID ${selectedRow.pid}`] : [],
+        // One level deep, so any truncation returns to the list.
+        onTruncate: () => setSelectedPid(null),
+      }}
       title={
         selectedRow ? (
-          // Breadcrumb shape matching PluginsPanel / AgentsPanel /
-          // KnowledgePanel — same ``.breadcrumb`` / ``.breadcrumb-link``
-          // / ``.breadcrumb-sep`` classes so the watcher's
-          // navigation reads the same way as the rest of the
-          // app. Click "Watcher" to deselect and return to the
-          // list.
-          <span className="breadcrumb" style={{ margin: 0 }}>
-            <button
-              className="breadcrumb-link"
-              onClick={() => setSelectedPid(null)}
-            >
-              Watcher
-            </button>
-            <span className="breadcrumb-sep">›</span>
-            <strong>PID {selectedRow.pid}</strong>
-          </span>
+          // Constant while drilled in: the trail carries the position,
+          // so repeating it here would be the same duplication in a
+          // different place.
+          <span>Watcher</span>
         ) : (
           // The pill in the footer can show a count that the panel
           // doesn't agree with — ``list_background_processes`` is
@@ -307,13 +346,19 @@ export function WatcherPanel({
           <span>
             Watcher{" "}
             <span className="watcher-count">
-              {runningCount === 0
+              {/* "No processes" has to mean an empty list. Once the
+                  panel started keeping finished ones, zero *running*
+                  stopped meaning zero rows, and the title sat above a
+                  list of them saying there were none. */}
+              {rowsList.length === 0
                 ? "(no processes)"
-                : `(${runningCount} running${
-                    rowsList.length > runningCount
-                      ? `, ${rowsList.length - runningCount} stopped`
-                      : ""
-                  })`}
+                : runningCount === 0
+                  ? `(${rowsList.length} stopped)`
+                  : `(${runningCount} running${
+                      rowsList.length > runningCount
+                        ? `, ${rowsList.length - runningCount} stopped`
+                        : ""
+                    })`}
             </span>
           </span>
         )
@@ -322,9 +367,9 @@ export function WatcherPanel({
     >
       {rowsList.length === 0 ? (
         <div className="msg-info">
-          No background processes. The agent will spawn one when it calls{" "}
-          <code>run_shell_command(background=True)</code> — long-running tail
-          logs, dev servers, watchers, etc.
+          Nothing has run here yet. Anything you start with{" "}
+          <code>$ </code> — or that the agent backgrounds itself — shows up
+          here while it runs, and stays afterwards with its exit code.
         </div>
       ) : (
         <div
@@ -332,8 +377,12 @@ export function WatcherPanel({
             selectedRow ? " watcher-layout--split" : " watcher-layout--list-only"
           }`}
         >
+          {/* Watching one process shows that process. The other rows
+              are a way of getting here, not something to keep looking
+              at while you read a log — and the trail above already
+              says where "here" is and how to get back. */}
           <ul className="watcher-list">
-            {rowsList.map((row) => (
+            {(selectedRow ? [selectedRow] : rowsList).map((row) => (
               <li
                 key={row.pid}
                 className={`watcher-row${

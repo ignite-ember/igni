@@ -59,11 +59,21 @@ class ProcessesController:
         self._supervisor = supervisor or supervisors.default()
 
     def list(self) -> list[ProcessRow]:
-        """Every running backgrounded process the registry knows
-        about."""
+        """Every process the registry knows about, running or finished.
+
+        Finished ones are the point: a command that just failed is what
+        the panel is opened to read. They live until the registry's
+        eviction TTL drops them, so this list is bounded by that.
+        """
         return [
-            ProcessRow(pid=pid, cmd=cmd, elapsed_seconds=elapsed)
-            for pid, cmd, elapsed in self._supervisor.registry.all_running()
+            ProcessRow(
+                pid=pid,
+                cmd=cmd,
+                elapsed_seconds=elapsed,
+                is_running=running,
+                exit_code=exit_code,
+            )
+            for pid, cmd, elapsed, running, exit_code in self._supervisor.registry.all_known()
         ]
 
     def read_tail(self, pid: int, tail: int = 200) -> ProcessTailResult:
