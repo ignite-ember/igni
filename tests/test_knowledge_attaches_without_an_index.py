@@ -172,11 +172,32 @@ async def test_a_failing_attach_does_not_take_the_backend_down(tmp_path, stub_ru
     assert session.codeindex_attach_calls == 1
 
 
-async def test_nothing_attaches_without_the_opt_in(tmp_path, monkeypatch):
-    """The env var stays the opt-in. The fix is about which sessions
-    qualify once it is set, not about setting it for them."""
+async def test_nothing_attaches_when_knowledge_is_disabled(tmp_path, monkeypatch):
+    """``knowledge.enabled`` is the opt-out now.
+
+    This test used to assert that an unset ``EMBER_NEO4J_RUNTIME``
+    suppressed the attach — true at the time, and the reason the
+    feature was unreachable from the desktop app, where that variable
+    cannot be set. The env var survives only as a process-level
+    override; see :mod:`ember_code.backend.knowledge_gate`.
+    """
     monkeypatch.setattr(neo4j_runtime_mod, "Neo4jRuntime", _StubRuntime)
     monkeypatch.delenv("EMBER_NEO4J_RUNTIME", raising=False)
+    settings = Settings()
+    settings.knowledge.enabled = False
+    session = _Session()
+
+    runtime = await _orchestrator(session, tmp_path, settings).attach_neo4j()
+
+    assert runtime is None
+    assert session.knowledge_attach_calls == 0
+
+
+async def test_the_override_still_suppresses_the_attach(tmp_path, monkeypatch):
+    """The escape hatch, for a machine whose sidecar will not start:
+    the backend must still come up with knowledge forced off."""
+    monkeypatch.setattr(neo4j_runtime_mod, "Neo4jRuntime", _StubRuntime)
+    monkeypatch.setenv("EMBER_NEO4J_RUNTIME", "0")
     session = _Session()
 
     runtime = await _orchestrator(session, tmp_path, Settings()).attach_neo4j()

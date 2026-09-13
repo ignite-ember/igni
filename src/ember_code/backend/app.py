@@ -210,12 +210,21 @@ class BackendApp:
             )
         except Exception:
             logger.exception("neo4j cutover failed; will retry on next boot")
-        # Opt-in: when ``EMBER_NEO4J_RUNTIME`` is set, build the
-        # :class:`Neo4jRuntime` and switch the default session's
-        # knowledge index to it. The first knowledge op will block
-        # while the runtime downloads + spawns the per-process
-        # Neo4j subprocess; subsequent ops hit the live driver.
-        await self._orchestrator.attach_neo4j()
+        # Build the :class:`Neo4jRuntime` and switch the default
+        # session's knowledge index to it, when ``knowledge.enabled``
+        # says so (see :mod:`ember_code.backend.knowledge_gate`).
+        #
+        # Deliberately not awaited. On a cold machine the attach
+        # downloads Neo4j and a JDK — ~500 MB — and waits for the bolt
+        # port before returning. Awaiting it here would put that
+        # download between the user and a usable backend: the loading
+        # screen would sit there for minutes on a first launch, and on
+        # a blocked network it would sit there and then fail, with the
+        # knowledge base taking the whole app down with it.
+        #
+        # This was survivable before only because the env gate meant
+        # the call almost never did anything.
+        self._orchestrator.attach_neo4j_in_background()
         # Workflow runner (CC ``/workflows`` parity): the BE runs
         # ``.claude/workflows/*.mjs`` scripts in a Node subprocess
         # and streams live progress on the ``workflow_event`` push

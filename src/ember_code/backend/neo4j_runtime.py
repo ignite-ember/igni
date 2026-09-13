@@ -12,9 +12,10 @@ Module contents:
   installed under ``~/.ember/neo4j/<version>/``. Downloads the
   tarball on first launch (httpx + tarfile extract) and writes a
   ``.installed-<version>`` marker so subsequent launches skip the
-  download. Probes ``./bin/neo4j --version`` to verify the
-  extraction is intact; on probe failure the partial install is
-  wiped and one retry is attempted before raising.
+  download. Verifies the extract by its contents (launcher script +
+  a populated ``lib/``) rather than by running it; on failure the
+  partial install is wiped and one retry is attempted before
+  raising.
 * :class:`Neo4jRuntime` — refcounted singleton. :meth:`start`
   increments the refcount (or spawns a fresh server if no
   sidecar is reachable). :meth:`stop` decrements; the sidecar
@@ -186,16 +187,17 @@ class Neo4jBootstrap:
     Download flow (matches Tauri's ``ensure_backend_python``):
 
     1. Read ``<cache_root>/.installed-<version>`` marker.
-    2. If marker present and ``<cache_root>/bin/neo4j`` probes
-       ``--version`` cleanly → return the cached install path.
-    3. Else download the tarball via httpx, extract, probe again.
-    4. On probe failure after extraction → wipe the partial install,
+    2. If marker present and the install still looks whole → return
+       the cached install path.
+    3. Else download the tarball via httpx, extract, check again.
+    4. On a failed check after extraction → wipe the partial install,
        retry once. If the retry also fails → raise
        :class:`Neo4jBootstrapError`.
 
-    The marker file is written only after a successful probe, so a
+    The marker file is written only after a successful check, so a
     crash mid-extract doesn't leave the cache in a "marked-good but
-    actually broken" state.
+    actually broken" state. What that check *is* matters more than it
+    looks — see :meth:`_install_looks_good`.
     """
 
     def __init__(
@@ -228,9 +230,23 @@ class Neo4jBootstrap:
         Idempotent — second and subsequent calls are a marker check +
         a probe. The probe guards against partial extracts that left
         the marker written by a prior run.
+
+        The probe is only trusted when a JDK exists to run it with.
+        ``bin/neo4j --version`` is a shell script that starts a JVM, so
+        on a machine with no Java it exits non-zero whether the extract
+        is perfect or shredded — and this method's response to a failed
+        probe is to wipe the cache and download 159 MB again. Every
+        backend start, on any Mac without a system Java, which is most
+        of them. That went unnoticed because the old env gate meant
+        this code effectively never ran; turning knowledge on by
+        default is what made it matter.
+
+        So: no JDK, no verdict. Fall back to asking the filesystem
+        whether the extract looks whole, and let the start path report
+        Java problems, where the error can say so.
         """
         self._cache_root.mkdir(parents=True, exist_ok=True)
-        if self.marker_path.exists() and await self._probe_version():
+        if self.marker_path.exists() and await self._install_looks_good():
             logger.debug("neo4j %s already installed at %s", self._version, self._install_dir)
             return self.neo4j_bin
 
@@ -238,7 +254,14 @@ class Neo4jBootstrap:
         for attempt in (1, 2):
             try:
                 await self._download_and_extract()
-                await self._probe_version()  # raises if extraction is broken
+                # The comment here read "raises if extraction is
+                # broken". It does not — it returns a bool, and the
+                # result was dropped, so a shredded extract was stamped
+                # good and the retry loop above could never fire.
+                if not await self._install_looks_good():
+                    raise Neo4jBootstrapError(
+                        f"neo4j {self._version} did not verify after extraction"
+                    )
                 self._write_marker()
                 return self.neo4j_bin
             except Exception as exc:
@@ -302,30 +325,36 @@ class Neo4jBootstrap:
             # explicitly avoid since we don't control the upstream.
             tar.extractall(self._cache_root, filter="data")
 
-    async def _probe_version(self) -> bool:
-        """Run ``./bin/neo4j --version``; return True iff exit=0.
+    async def _install_looks_good(self) -> bool:
+        """Whether the extract is intact — asked of the filesystem.
 
-        Used both as a "did extraction succeed?" probe and as a
-        cached-marker validator. The probe is fast (sub-second) so
-        we always run it before trusting the cache.
+        This used to run ``bin/neo4j --version`` and trust its exit
+        code. That command is a shell script that boots a JVM, which
+        made a 159 MB cache's validity depend on two things that have
+        nothing to do with whether the files are there:
+
+        * **A JDK.** Without one the launcher exits non-zero whether
+          the extract is perfect or shredded — and on a Mac with no
+          system Java, that is always.
+        * **Ten seconds.** The probe killed the process after that. A
+          cold JVM starting out of a just-downloaded JDK, while macOS
+          verifies several hundred megabytes of new binaries, does not
+          finish in ten seconds. Observed: ``rc -9``, no output.
+
+        Either one meant "install is broken", whose remedy is to wipe
+        the cache and download it again — and then fail the same way,
+        twice, and delete what was there. That is how a working 519 MB
+        install on this machine was destroyed while this change was
+        being written.
+
+        A partial extract is missing files, so ask about files. The
+        JVM gets its say in :meth:`Neo4jRuntime.start`, which waits for
+        the bolt port with a real timeout and reports what went wrong.
         """
         if not self.neo4j_bin.exists():
             return False
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                str(self.neo4j_bin),
-                "--version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        except (OSError, PermissionError):
-            return False
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=10.0)
-        except asyncio.TimeoutError:
-            proc.kill()
-            return False
-        return proc.returncode == 0
+        lib = self._install_dir / "lib"
+        return lib.is_dir() and any(lib.glob("*.jar"))
 
     def _write_marker(self) -> None:
         """Stamp the install as good-after-probe.

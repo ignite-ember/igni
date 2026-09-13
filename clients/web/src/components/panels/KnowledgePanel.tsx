@@ -369,18 +369,18 @@ export function KnowledgePanel({
 // ── Disabled state ───────────────────────────────────────────────
 
 function DisabledState() {
-  // Names the switch that is actually off. `knowledge.enabled` defaults
-  // to true, so telling someone to set it was advice that changed
-  // nothing — the index is neo4j-backed now, and the runtime behind it
-  // is the opt-in. See `SessionOrchestrator.attach_neo4j`.
+  // This used to tell the reader to set `EMBER_NEO4J_RUNTIME=1` "for the
+  // backend" — a variable a Finder-launched .app cannot inherit, so the
+  // instruction could not be carried out by anyone who needed it. The
+  // switch is `knowledge.enabled` in config now, which is both settable
+  // and the one the rest of the backend already reads.
   return (
     <div className="kb-empty">
       <div className="kb-empty-title">Knowledge base disabled</div>
       <div className="kb-empty-hint">
-        Semantic search runs on the Neo4j runtime, which is off unless{" "}
-        <code>EMBER_NEO4J_RUNTIME=1</code> is set for the backend. Set it and reopen the
-        app; leave <code>knowledge.enabled = false</code> in settings to keep it off
-        regardless.
+        Semantic search is off because <code>knowledge.enabled = false</code> in{" "}
+        <code>~/.ember/config.yaml</code>. Set it to <code>true</code> and reopen the app.
+        The first launch after that downloads a local database (~500 MB, one time).
       </div>
     </div>
   );

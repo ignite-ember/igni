@@ -1,12 +1,15 @@
 """End-to-end test: SessionOrchestrator.attach_neo4j swaps the
 default session's knowledge backend to neo4j.
 
-Verifies the BE-level seam added in step 3: when the
-``EMBER_NEO4J_RUNTIME`` env var is set, the orchestrator's
-``attach_neo4j`` constructs a :class:`Neo4jRuntime` and calls
-the session's :meth:`Session.attach_knowledge_neo4j`. When the
-env var is unset, it's a no-op (the default chroma path stays
-in place).
+Verifies the BE-level seam: when knowledge is enabled, the
+orchestrator's ``attach_neo4j`` constructs a :class:`Neo4jRuntime`
+and calls the session's :meth:`Session.attach_knowledge_neo4j`;
+when it is disabled, the call is a no-op.
+
+The switch is ``knowledge.enabled`` in config. ``EMBER_NEO4J_RUNTIME``
+remains a process-level override (both directions), which is why the
+tests below still set it to pin the answer — see
+:mod:`ember_code.backend.knowledge_gate`.
 
 Live integration — requires ``NEO4J_TEST_URI``. Skipped otherwise.
 """
@@ -87,11 +90,17 @@ def _make_orchestrator(tmp_path: Path) -> SessionOrchestrator:
     )
 
 
-async def test_orchestrator_attach_neo4j_no_op_when_env_unset(tmp_path, monkeypatch):
-    """Without ``EMBER_NEO4J_RUNTIME``, ``attach_neo4j`` is a no-op
-    and no runtime is built."""
+async def test_orchestrator_attach_neo4j_no_op_when_knowledge_disabled(tmp_path, monkeypatch):
+    """With ``knowledge.enabled`` false, ``attach_neo4j`` is a no-op
+    and no runtime is built.
+
+    This used to assert the same thing about an unset
+    ``EMBER_NEO4J_RUNTIME``, back when the env var was the only gate
+    and config was ignored.
+    """
     monkeypatch.delenv("EMBER_NEO4J_RUNTIME", raising=False)
     orch = _make_orchestrator(tmp_path)
+    orch._settings.knowledge.enabled = False
     # The constructor doesn't construct the runtime (it's lazy).
     assert orch._neo4j_runtime is None
 
@@ -102,11 +111,11 @@ async def test_orchestrator_attach_neo4j_no_op_when_env_unset(tmp_path, monkeypa
     assert orch._backend._session.knowledge is None
 
 
-async def test_orchestrator_attach_neo4j_swaps_knowledge_when_env_set(
+async def test_orchestrator_attach_neo4j_swaps_knowledge_when_enabled(
     tmp_path, monkeypatch, driver
 ):
-    """With ``EMBER_NEO4J_RUNTIME=1``, ``attach_neo4j`` builds a
-    runtime and calls ``Session.attach_knowledge_neo4j``."""
+    """With knowledge enabled, ``attach_neo4j`` builds a runtime and
+    calls ``Session.attach_knowledge_neo4j``."""
     monkeypatch.setenv("EMBER_NEO4J_RUNTIME", "1")
 
     # A real Session for the swap target (the stub's MagicMock
