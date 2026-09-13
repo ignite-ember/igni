@@ -43,6 +43,39 @@ jobs:
   # could never report. That happened twice in one day.
   test:
     runs-on: ubuntu-latest
+
+    # Thirty-five tests skipped themselves here for want of a database,
+    # and they were the tests covering the subsystem that broke most
+    # often — the knowledge attach, the per-session index, the
+    # orchestrator's swap to neo4j. A suite that skips a third of its
+    # coverage of the riskiest area, and reports green, is worse than
+    # one that never had the tests: it looks like coverage.
+    #
+    # The version is pinned to the one the product downloads at
+    # runtime (``DEFAULT_NEO4J_VERSION``), so CI exercises what users
+    # actually run rather than whatever ``:latest`` is that week.
+    services:
+      neo4j:
+        image: neo4j:5.26.0-community
+        env:
+          NEO4J_AUTH: neo4j/testtest
+          # A CI container has no business reserving a heap it will
+          # never fill, and the runner has 7 GB total.
+          NEO4J_server_memory_heap_max__size: 512m
+        ports:
+          - 7687:7687
+          - 7474:7474
+        options: >-
+          --health-cmd "wget -q -O /dev/null http://localhost:7474 || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      NEO4J_TEST_URI: bolt://localhost:7687
+      NEO4J_TEST_USER: neo4j
+      NEO4J_TEST_PASSWORD: testtest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -57,7 +90,7 @@ jobs:
         run: uv sync --extra dev
 
       - name: Run tests
-        run: uv run pytest tests/ -q
+        run: uv run pytest tests/ -q -rs
 
   # The shared web UI lives under ``clients/web`` and is consumed by
   # the Tauri / VSCode / JetBrains shells. Typecheck + tests run on
