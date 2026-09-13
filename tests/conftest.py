@@ -68,6 +68,23 @@ def _isolate_user_settings(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("HOME", str(fake_home))
 
 
+@pytest.fixture(autouse=True)
+def _no_neo4j_download_in_tests(monkeypatch):
+    """Pin the knowledge runtime off for the whole suite.
+
+    ``knowledge.enabled`` defaults to true, and the attach it gates
+    downloads Neo4j plus a JDK — about 500 MB — the first time it runs.
+    Nothing in the suite boots a full ``BackendApp`` today, so nothing
+    reaches it; this exists so that the day something does, it fails as
+    a test rather than as half a gigabyte pulled onto a CI runner.
+
+    This is the override's stated purpose — a *process* forcing the
+    answer. Tests that want the runtime on set the variable themselves
+    via ``monkeypatch``, which runs after this and so wins.
+    """
+    monkeypatch.setenv("EMBER_NEO4J_RUNTIME", "0")
+
+
 @pytest.fixture
 def tmp_dir(tmp_path):
     """Provide a temporary directory as Path."""

@@ -569,6 +569,12 @@ class Session:
         works as before.
         """
         self._knowledge_error: str | None = None
+        # Set while the BE's background attach is downloading and
+        # starting the Neo4j sidecar. Without it, the panel's only
+        # vocabulary for "no index yet" was "failed to initialize" —
+        # which is what a perfectly healthy first launch would have
+        # said for the several minutes the download takes.
+        self._knowledge_preparing = False
         self._knowledge_ready = threading.Event()
         self._knowledge_ready.set()
         if pre_knowledge is not None:
@@ -1107,6 +1113,17 @@ class Session:
         base initialisation attempt.
         """
         return getattr(self, "_knowledge_error", None)
+
+    @property
+    def knowledge_preparing(self) -> bool:
+        """Whether the knowledge backend is still coming up.
+
+        True between the start of the BE's background attach and its
+        finish, however it finishes. Distinguishes "not ready yet"
+        from "tried and failed", which the panel previously could not
+        tell apart.
+        """
+        return bool(getattr(self, "_knowledge_preparing", False))
 
     @property
     def _mcp_initialized(self) -> bool:

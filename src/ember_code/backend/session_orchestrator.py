@@ -27,6 +27,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from ember_code.backend.knowledge_gate import knowledge_runtime_enabled
 from ember_code.backend.login_coordinator import LoginCoordinator
 from ember_code.backend.message_dispatcher import MessageDispatcher
 from ember_code.backend.push_bridge import PushNotificationBridge
@@ -90,14 +91,16 @@ class SessionOrchestrator:
         # ``_AUTO_NAME_TASKS`` set. Kept as instance attributes so
         # each orchestrator has its own lifetime.
         self._in_flight: set[asyncio.Task] = set()
-        # Optional Neo4j runtime. Constructed lazily in
-        # :meth:`setup_pool` when the env var is set — the
+        # Optional Neo4j runtime. Constructed lazily when
+        # ``knowledge.enabled`` says so (see
+        # :mod:`ember_code.backend.knowledge_gate`) — the
         # runtime's heavy work (downloading the JDK + Neo4j
         # distribution, spawning the per-process subprocess) is
         # triggered on first use via ``start_for_knowledge`` /
         # ``start_for_commit``, not at construction. The
         # construction itself is cheap (path resolution only).
         self._neo4j_runtime: Any = None
+        self._neo4j_attach_task: asyncio.Task | None = None
 
     # ── Setup ────────────────────────────────────────────────────
 
@@ -151,20 +154,29 @@ class SessionOrchestrator:
         """Wire the optional :class:`Neo4jRuntime` into the default
         session's knowledge index.
 
-        No-op when ``EMBER_NEO4J_RUNTIME`` is unset — the env var
-        is the explicit opt-in (constructing + downloading the JDK
-        and the Neo4j distribution is heavy, so we don't do it
-        silently). When set, builds a :class:`Neo4jRuntime` (one
-        per BE — the runtime is refcounted across sessions via
-        the per-(project, commit) subprocess map) and calls
+        No-op when :func:`knowledge_runtime_enabled` says no —
+        ``knowledge.enabled`` in config, with ``EMBER_NEO4J_RUNTIME``
+        as a process-level override. It used to be the env var alone,
+        which meant the config setting the rest of the codebase reads
+        was overridden here by a switch a desktop user could not set
+        at all; see :mod:`ember_code.backend.knowledge_gate`.
+
+        When enabled, builds a :class:`Neo4jRuntime` (one per BE —
+        the runtime is refcounted across sessions via the
+        per-(project, commit) subprocess map) and calls
         :meth:`Session.attach_knowledge_neo4j` to swap the
         default session's knowledge backend. Returns the runtime
         for tests + the supervisor; ``None`` when skipped.
 
+        **Slow on a cold machine.** The attach downloads Neo4j and a
+        JDK (~500 MB combined) and waits for the bolt port, so callers
+        on the boot path must not await this — see
+        :meth:`attach_neo4j_in_background`.
+
         Idempotent — a second call is a no-op (the runtime
         itself is cached on ``self._neo4j_runtime``).
         """
-        if not os.environ.get("EMBER_NEO4J_RUNTIME"):
+        if not knowledge_runtime_enabled(self._settings):
             return None
         if self._neo4j_runtime is not None:
             return self._neo4j_runtime
@@ -178,6 +190,50 @@ class SessionOrchestrator:
         # with the relevant feature disabled.
         await self._attach_neo4j_to(getattr(self._backend, "_session", None))
         return runtime
+
+    def attach_neo4j_in_background(self) -> asyncio.Task | None:
+        """Start :meth:`attach_neo4j` without holding up the caller.
+
+        Boot used to await the attach directly. That was survivable
+        only because the env gate meant it never ran: with config as
+        the switch and ``knowledge.enabled`` defaulting to true, the
+        first launch on a cold machine would have sat on the loading
+        screen for a ~500 MB download before the backend reported
+        ready — and reported nothing at all if the download failed.
+
+        Readiness and knowledge are now separate: the BE comes up
+        immediately, and the panel reports ``preparing`` (see
+        :attr:`Session.knowledge_preparing`) until this finishes.
+
+        Returns the task so callers can await it in tests and cancel
+        it on shutdown; ``None`` when knowledge is disabled, so the
+        caller can tell "not running" from "running".
+        """
+        if not knowledge_runtime_enabled(self._settings):
+            return None
+        session = getattr(self._backend, "_session", None)
+        if session is not None:
+            session._knowledge_preparing = True
+
+        async def _run() -> None:
+            try:
+                await self.attach_neo4j()
+            except Exception as exc:  # noqa: BLE001 — boot must survive
+                # ``attach_neo4j`` records per-session failures itself;
+                # this catches the ones before it gets that far (the
+                # runtime constructor, the download, a cancelled task
+                # on shutdown) which would otherwise surface only as
+                # "Task exception was never retrieved" on stderr.
+                logger.exception("knowledge: background attach failed")
+                if session is not None and not session.knowledge_error:
+                    session._knowledge_error = str(exc)
+            finally:
+                if session is not None:
+                    session._knowledge_preparing = False
+
+        task = asyncio.create_task(_run(), name="knowledge-attach")
+        self._neo4j_attach_task = task
+        return task
 
     async def _attach_neo4j_to(self, session: Any) -> None:
         """Give one session the neo4j-backed indexes.
@@ -471,6 +527,16 @@ class SessionOrchestrator:
             task = asyncio.create_task(self.dispatch(message))
             self._in_flight.add(task)
             task.add_done_callback(self._in_flight.discard)
+
+        # Cancel rather than drain: the knowledge attach can be
+        # minutes into a download, and nothing about it is worth
+        # making the user wait on the way out. Deliberately not a
+        # member of ``_in_flight`` for that reason — the gather below
+        # would block on it.
+        if self._neo4j_attach_task is not None and not self._neo4j_attach_task.done():
+            self._neo4j_attach_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._neo4j_attach_task
 
         # Drain in-flight tasks before shutting down so we don't
         # drop mid-stream messages on graceful exit.

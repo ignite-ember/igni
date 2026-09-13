@@ -160,6 +160,16 @@ class KnowledgeCommand:
                 err = self._session.knowledge_error
                 if err:
                     return CommandResult.error(f"Knowledge failed to load: {err}")
+                # Order matters: an in-flight attach has no error yet,
+                # and calling that "failed to initialize" is how a
+                # first launch would describe itself for the several
+                # minutes the one-time download takes.
+                if self._session.knowledge_preparing:
+                    return CommandResult.info(
+                        "Setting up the knowledge base — a one-time ~500 MB download "
+                        "of the local database. It'll be ready shortly; the rest of "
+                        "igni works meanwhile."
+                    )
                 return CommandResult.error("Knowledge base failed to initialize.")
             return CommandResult.info(
                 "Knowledge base is disabled. Set knowledge.enabled=true in config."
