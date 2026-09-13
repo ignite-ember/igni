@@ -50,6 +50,7 @@ from ember_code.core.tools.process_log import ProcessLogStore
 from ember_code.core.tools.process_store import (
     BackgroundProcessRow,
 )
+from ember_code.core.tools.sleep_blocker import SleepBlocker
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,7 @@ class ProcessRegistry:
         log_store: ProcessLogStore | None = None,
         persistence: Any | None = None,
         ttl_seconds: float = DEFAULT_FINISHED_PROCESS_TTL_SECONDS,
+        sleep_blocker: SleepBlocker | None = None,
     ) -> None:
         self._processes: dict[int, Any] = {}
         self._eviction_tasks: dict[int, asyncio.Task[Any]] = {}
@@ -91,6 +93,11 @@ class ProcessRegistry:
         self._persistence: Any | None = persistence
         self._ttl_seconds: float = ttl_seconds
         self._scheduler = AsyncFireAndForget()
+        # Held while at least one background process is tracked, so a
+        # long build is not lost to the machine idle-sleeping under it.
+        # See the module docstring for what this cannot do (a closed
+        # lid sleeps the machine regardless).
+        self._sleep_blocker = sleep_blocker if sleep_blocker is not None else SleepBlocker()
 
     # ── Persistence wiring ──────────────────────────────────────
 
@@ -149,6 +156,11 @@ class ProcessRegistry:
         tracking).
         """
         self._persist_add(mp.proc.pid, mp.cmd)
+        # Paired with the release in ``emit_completion``. Taken here
+        # rather than in ``add`` because this is the point at which the
+        # process is something the agent is waiting on, not merely a
+        # pid that exists.
+        self._sleep_blocker.acquire()
         self.bus.emit(
             "start",
             ProcessStartEvent(pid=mp.proc.pid, cmd=mp.cmd, started_at=time.time()),
@@ -178,6 +190,7 @@ class ProcessRegistry:
         in the store, surfacing as an orphan that's already gone.
         """
         self._persist_remove(mp.proc.pid)
+        self._sleep_blocker.release()
         self.bus.emit(
             "exit",
             ProcessExitEvent(
