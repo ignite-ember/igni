@@ -113,6 +113,42 @@ class BackendApp:
         self._orchestrator: SessionOrchestrator | None = None
         self._queue: list[str] = []
 
+    def _start_wake_detector(self) -> None:
+        """Notice sleep, and drop the cloud state it invalidated.
+
+        Local work survives sleep on its own — see
+        :mod:`ember_code.backend.wake_detector` — but anything with a
+        remote peer does not: the far end closes the socket while we
+        are frozen. Until now nothing knew that had happened, so the
+        codeindex pill served its pre-sleep answer until some later
+        poll happened to fail.
+
+        The only thing to do is forget. Clearing the resolver's cache
+        makes the next poll ask again, which is cheap, and leaves the
+        deciding to the code that already knows how — rather than
+        having a wake handler duplicate it.
+        """
+        from ember_code.backend.wake_detector import WakeDetector
+
+        detector = WakeDetector()
+
+        async def _forget_cloud_state(slept: float) -> None:
+            session = getattr(self._backend, "_session", None)
+            sync = getattr(session, "code_index_sync", None)
+            resolver = getattr(sync, "resolver", None)
+            if resolver is None:
+                return
+            resolver.invalidate()
+            logger.info(
+                "wake: cleared the codeindex resolution after %.0fs asleep; "
+                "the next status poll will resolve again",
+                slept,
+            )
+
+        detector.subscribe(_forget_cloud_state)
+        detector.start()
+        self._wake_detector = detector
+
     async def run(self) -> None:
         """Boot, serve, and tear down. Exceptions in the boot or
         serve phases are logged; teardown always runs."""
@@ -238,6 +274,7 @@ class BackendApp:
             push=self._push_bridge,
         )
         self._supervisor.start_evictor()
+        self._start_wake_detector()
         self._supervisor.mark_running()
 
         try:

@@ -107,6 +107,23 @@ class RepositoryResolver:
         """
         return self._failure
 
+    def invalidate(self) -> None:
+        """Forget the cached resolution, so the next call asks again.
+
+        Called on wake. The resolution is an answer about a remote
+        server, obtained before the machine slept; after a sleep of
+        any length it is a claim about the past. Dropping it costs one
+        request and removes the possibility of showing a stale
+        "connected" (or a stale reason) indefinitely.
+
+        The failure goes with it: a reason from before the sleep
+        explains a situation that may no longer exist, and "not logged
+        in" surviving a wake into a fresh session would be its own
+        small lie.
+        """
+        self._cached = None
+        self._failure = None
+
     def remote_url(self) -> str | None:
         """Return ``git remote get-url origin``, or ``None`` if unavailable."""
         try:
