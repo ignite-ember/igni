@@ -293,8 +293,17 @@ class OrchestrateTools(Toolkit):
             description: One-line description of what the agent does.
             system_prompt: Full system prompt defining the agent's behavior.
             tools: Comma-separated tool names (e.g. "Read,Write,Edit,Bash,Grep,Glob").
-                Valid: Read, Write, Edit, Bash, Grep, Glob, LS, WebSearch, WebFetch,
-                Python, Schedule, NotebookEdit.
+                Valid: Bash, BashOutput, Edit, Glob, Grep, LS, NotebookEdit,
+                Python, Read, Schedule, WebFetch, WebSearch, Write.
+
+                ``CodeIndex`` is NOT valid here, even though pooled agents may
+                declare it in their markdown (see
+                ``bundled_agents/plan_researcher.codeindex.md``). This argument
+                is validated against the Agno namespace by
+                ``ToolRegistry.normalize_agno_names``, which does not include
+                it, so passing it raises ``ValueError: Unknown tool(s):
+                CodeIndex`` — a easy trap when copying a grant line from an
+                agent definition.
 
         Returns:
             Confirmation message with the agent name.

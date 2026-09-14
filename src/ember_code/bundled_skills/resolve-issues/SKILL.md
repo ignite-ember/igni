@@ -33,16 +33,22 @@ This skill never calls `gh pr reviews` or the GitLab notes API to **fetch** issu
 5. **Query CodeIndex per changed file.** For each path in step 4, call:
 
    ```
-   codeindex_query(
-       path_prefix=<path>,
-       issues=["moderate", "severe"],
-       sections=["issues"],
+   codeindex_cypher(
+       cypher="MATCH (f:File)-[:HAS_ISSUE]->(i:Issue) "
+              "WHERE f.path CONTAINS $path AND i.severity IN $severities "
+              "RETURN f.path, i.line, i.severity, i.category, i.description "
+              "ORDER BY i.severity DESC",
+       params={"path": <path>, "severities": ["moderate", "severe"]},
        limit=20,
    )
    ```
 
    Notes:
-   - `path_prefix` is a `$contains` filter today, not a true prefix — fine for per-file scoping.
+   - `codeindex_cypher` is the only agent-facing path to the index. The older
+     `codeindex_query(path_prefix=..., issues=[...], sections=[...])` helper was
+     retired and is no longer registered — calling it fails.
+   - `CONTAINS` rather than a prefix match, which is how the retired helper's
+     `path_prefix` behaved too — fine for per-file scoping.
    - Default severity: `moderate` + `severe`. Add `"minor"` if the user asked to include nits.
    - If a path returns zero items, it may be brand-new and not yet in the index — note it and continue.
 
