@@ -403,6 +403,17 @@ class RunController:
         if gate.context_message:
             message = f"{message}\n<hook-context>{gate.context_message}</hook-context>"
 
+        # Guardrails, on the path the portal actually uses. They inform rather
+        # than block, so the caveat is prepended and the model sees it before
+        # the user text — the same call ``SessionMessageHandler.handle`` makes.
+        # This path did not make it: every portal message reached ``team.arun``
+        # unchecked, and agno's PII guardrail hard-raises before the model call
+        # rather than telling the model anything, so there was no signal of any
+        # kind here.
+        guardrail_prefix = await self._session.guardrail_runner.warning_prefix(text)
+        if guardrail_prefix:
+            message = guardrail_prefix + message
+
         # Pre-persist the user message so a kill mid-stream doesn't
         # lose it. On success the row is marked completed; on crash
         # it stays pending and the next --continue boot surfaces it.

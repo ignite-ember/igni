@@ -77,3 +77,30 @@ class GuardrailRunner:
             if not result.passed:
                 results.append(result)
         return results
+
+    async def warning_prefix(self, text: str) -> str:
+        """The inform-don't-block caveat for *text*, or ``""`` when clean.
+
+        Lives here rather than on a caller because it had exactly one caller and
+        that turned out to be the bug: ``SessionMessageHandler.handle`` built
+        this prefix, and the portal's streaming path
+        (:meth:`RunController._run_locked`) called ``team.arun`` with the raw
+        message, so a user on the portal got no guardrail signal at all. agno's
+        own PII guardrail hard-raises before the model call, so it is not a
+        model-visible substitute either — on that path there was nothing.
+
+        Two entry points calling one method can still both be wrong, but they
+        cannot silently disagree, which is what happened here.
+        """
+        if not self.enabled:
+            return ""
+        results = await self.check(text)
+        if not results:
+            return ""
+        warnings = "; ".join(r.message for r in results)
+        logger.info("Guardrails triggered: %s", warnings)
+        return (
+            f"[GUARDRAIL WARNING] The following issues were detected in "
+            f"the user message: {warnings}\n"
+            f"Please be cautious and do not repeat or use any flagged content.\n\n"
+        )
