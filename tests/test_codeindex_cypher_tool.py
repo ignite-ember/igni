@@ -684,3 +684,57 @@ class TestStringLiteralsAreDataNotKeywords:
         hide the rest of the statement."""
         with pytest.raises(CypherGuardError):
             assert_read_only_cypher("MATCH (n) WHERE n.x = 'oops DETACH DELETE n RETURN n")
+
+
+class TestAKeywordInAnIdentifierPositionIsAName:
+    """A word the user chose to call something is not a command.
+
+    The guard tokenises the statement and rejects any token on the forbidden
+    list. That list has to hold ``COMMIT``, ``SET``, ``DELETE``, ``DROP`` and
+    ``STOP`` — they end transactions and write data. But it was applied to every
+    token regardless of position, and Cypher lets you put a name in three places
+    where no command can run:
+
+        MATCH (i:Issue) RETURN i.commit_sha AS commit
+
+    That is a read. It was rejected with "this tool is read-only", because the
+    alias ``commit`` looks exactly like the transaction keyword once the
+    statement is a flat list of tokens. A code graph is full of these — issues
+    have a ``severity`` you might alias to ``drop``, files have properties named
+    ``set``, and a label called ``:Create`` is an ordinary thing to model.
+
+    So identifier positions are blanked for the keyword scan only. The risk in
+    doing that is blanking too much and hiding a real write, which is what the
+    second half of this class is for: one identifier per match, nothing else on
+    the line touched.
+    """
+
+    @pytest.mark.parametrize(
+        "name", ["commit", "create", "delete", "drop", "set", "stop", "remove"]
+    )
+    def test_an_alias_may_be_named_after_a_keyword(self, name):
+        assert_read_only_cypher(f"MATCH (n:Issue) RETURN n.severity AS {name}")
+
+    @pytest.mark.parametrize("name", ["commit", "create", "delete", "drop", "set"])
+    def test_a_property_may_be_named_after_a_keyword(self, name):
+        assert_read_only_cypher(f"MATCH (n) WHERE n.{name} = 1 RETURN n")
+
+    @pytest.mark.parametrize("label", ["Create", "Delete", "Set", "Drop"])
+    def test_a_label_may_be_named_after_a_keyword(self, label):
+        assert_read_only_cypher(f"MATCH (n:{label}) RETURN n")
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            pytest.param("MATCH (n) RETURN n AS x DELETE n", id="write-after-alias"),
+            pytest.param("MATCH (n) WHERE n.drop = 1 DELETE n", id="write-after-property"),
+            pytest.param("MATCH (n:Create) DETACH DELETE n", id="write-after-label"),
+            pytest.param("MATCH (n) RETURN n AS commit SET n.x = 1", id="set-after-alias"),
+        ],
+    )
+    def test_a_real_write_beside_one_of_those_names_is_still_rejected(self, query):
+        """The redaction consumes exactly one identifier, so the write that
+        follows is still its own token. Without this the fix would trade a false
+        rejection for a false acceptance, which is the worse of the two."""
+        with pytest.raises(CypherGuardError):
+            assert_read_only_cypher(query)
