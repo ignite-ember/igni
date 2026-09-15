@@ -203,18 +203,7 @@ class SessionMessageHandler:
         the prefix is prepended to the effective message so the model
         sees the caveat before the user text.
         """
-        if not self._guardrail_runner.enabled:
-            return ""
-        gr_results = await self._guardrail_runner.check(message)
-        if not gr_results:
-            return ""
-        warnings = "; ".join(r.message for r in gr_results)
-        logger.info("Guardrails triggered: %s", warnings)
-        return (
-            f"[GUARDRAIL WARNING] The following issues were detected in "
-            f"the user message: {warnings}\n"
-            f"Please be cautious and do not repeat or use any flagged content.\n\n"
-        )
+        return await self._guardrail_runner.warning_prefix(message)
 
     def _build_effective_message(self, message: str, guardrail_prefix: str) -> str:
         """Assemble the message the model actually sees: any queued

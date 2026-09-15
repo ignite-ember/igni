@@ -55,6 +55,9 @@ class TestBackendRunMessageErrors:
             server._session.main_team.arun = _failing_arun
             server._session._learning = None
             server._session._inject_learnings = AsyncMock()
+            # The run path checks guardrails before handing the message to the
+            # model; a bare MagicMock returns something unawaitable.
+            server._session.guardrail_runner.warning_prefix = AsyncMock(return_value="")
             server._session.inject_learnings = AsyncMock()
             server._session.hook_executor = MagicMock()
             server._session.hook_executor.execute = AsyncMock(
@@ -88,6 +91,9 @@ class TestBackendRunMessageErrors:
             server = BackendServer.__new__(BackendServer)
             server._session = MagicMock()
             server._session._inject_learnings = AsyncMock()
+            # The run path checks guardrails before handing the message to the
+            # model; a bare MagicMock returns something unawaitable.
+            server._session.guardrail_runner.warning_prefix = AsyncMock(return_value="")
             server._session.inject_learnings = AsyncMock()
             server._session.hook_executor = MagicMock()
             server._session.hook_executor.execute = AsyncMock(

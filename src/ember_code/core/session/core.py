@@ -484,7 +484,14 @@ class Session:
             embedder=LiveEmbedder(),
         )
         self.code_index_sync = CodeIndexSyncManager.from_settings(
-            settings, project_dir=self.project_dir, code_index=self.code_index
+            settings,
+            project_dir=self.project_dir,
+            code_index=self.code_index,
+            # A background sync that populates the index has to tell the
+            # session, or the agent keeps the toolset and prompt it started
+            # with. Flipping to an indexed branch mid-session left it believing
+            # CodeIndex was unavailable while the graph was ready to query.
+            on_sync_complete=lambda: self.refresh_codeindex_availability(),
         )
 
         if not settings.code_index.enabled:

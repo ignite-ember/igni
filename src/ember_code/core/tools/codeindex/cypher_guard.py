@@ -13,10 +13,11 @@ Rules (all must hold for the query to be allowed):
    following tokens (case-insensitive, separated by ``;``):
 
       MATCH, OPTIONAL MATCH, WITH, WHERE, RETURN, ORDER BY, SKIP,
-      LIMIT, UNION, UNWIND, CALL (only ``apoc.cypher.run*``
-      subprocedures — disallow any ``CALL … IN TRANSACTIONS`` /
-      ``CALL dbms.*`` / ``CALL db.*`` / admin-procedure paths),
-      USE, ON MATCH, ON CREATE
+      LIMIT, UNION, UNWIND, CALL (only the read-only procedures in
+      ``_ALLOWED_PROCEDURES`` — the vector and fulltext index lookups;
+      disallow any ``CALL … IN TRANSACTIONS`` / ``CALL dbms.*`` /
+      other ``CALL db.*`` / admin-procedure paths, and all of
+      ``apoc.*``), USE, ON MATCH, ON CREATE
 
    Specifically forbidden:
      - writes: CREATE, MERGE, SET, DELETE, DETACH DELETE, REMOVE
@@ -230,6 +231,36 @@ def _redact_strings(cypher: str) -> str:
     return _STRING_RE.sub(" '' ", cypher)
 
 
+# Identifier positions. A Cypher write is a keyword in *statement* position —
+# ``DELETE n``, ``CREATE (x)``, ``SET n.p = 1``. The same word after ``AS``,
+# after a ``.``, or after a ``:`` is a name the user chose, and cannot execute
+# anything:
+#
+#     MATCH (i:Issue) RETURN i.commit_sha AS commit   → token 'commit' → REJECTED
+#
+# ``commit`` is on the forbidden list because ``COMMIT`` ends a transaction, so
+# naming a column after the field you selected was enough to be told the tool is
+# read-only. The same went for any alias, property or label called ``set``,
+# ``create``, ``delete``, ``drop`` or ``stop`` — all ordinary words in a code
+# graph, where ``Issue.severity AS drop`` or a ``:Create`` label are things
+# people write.
+#
+# Redacted only for the keyword scan, and only one identifier per match, so a
+# real write following an alias (``RETURN n AS x DELETE n``) is still tokenised
+# and still rejected. ``_check_call_tokens`` reads the untouched text, because
+# a procedure target is dotted and redacting its dots would blind the allowlist.
+_ALIAS_RE: Final = re.compile(r"\bAS\s+([A-Za-z_]\w*)", re.IGNORECASE)
+_PROPERTY_RE: Final = re.compile(r"\.\s*([A-Za-z_]\w*)")
+_LABEL_RE: Final = re.compile(r":\s*([A-Za-z_]\w*)")
+
+
+def _redact_identifier_positions(cypher: str) -> str:
+    """Blank out names that cannot be commands, for the keyword scan only."""
+    out = _ALIAS_RE.sub("AS _alias", cypher)
+    out = _PROPERTY_RE.sub("._prop", out)
+    return _LABEL_RE.sub(":_label", out)
+
+
 def _tokenize(cypher: str) -> list[str]:
     """Whitespace + punctuation tokenizer.
 
@@ -258,29 +289,6 @@ def _is_safe_call_target(token_text: str) -> bool:
     return any(token_text.startswith(allow) for allow in _ALLOWED_APOC)
 
 
-def _collect_call_args(tokens: list[str]) -> list[tuple[int, str]]:
-    """Find ``CALL`` invocations and return ``(start_index, call_text)``
-    tuples after stripping ``CALL``. The caller checks ``call_text``
-    against the allowlist.
-
-    A ``CALL`` invocation in Cypher is the contiguous identifier
-    after ``CALL`` through to a balanced ``(``/``)`` group, ignoring
-    anything inside the parens. We approximate by taking the next
-    non-paren token after ``CALL``.
-    """
-    pairs: list[tuple[int, str]] = []
-    for i, tok in enumerate(tokens):
-        if tok.upper() == "CALL":
-            for j in range(i + 1, len(tokens)):
-                if tokens[j].startswith("(") and tokens[j].endswith(")"):
-                    continue
-                if "(" in tokens[j]:
-                    continue
-                pairs.append((i, tokens[j]))
-                break
-    return pairs
-
-
 # The procedure name after ``CALL``, dotted, taken from the text rather than the
 # token stream: the tokeniser splits on dots, so a target arrived as ``db`` and
 # an allowlist of dotted names could never match it. That is why the documented
@@ -299,8 +307,9 @@ def _check_call_tokens(cypher: str, tokens: list[str]) -> None:
         if not _is_safe_call_target(call_target):
             raise CypherReadOnlyViolation(
                 f"CALL target {call_target!r} is not on the read-only allowlist. "
-                "Only `apoc.cypher.run` (and subprocedures) and "
-                "`db.index.vector.queryNodes` are permitted."
+                f"Permitted: {sorted(_ALLOWED_PROCEDURES)}. "
+                "`apoc.*` is not — apoc.cypher.run executes its string argument, "
+                "which is how a write gets past a read-only guard."
             )
 
 
@@ -379,9 +388,13 @@ def assert_read_only_cypher(cypher: str) -> str:
     # Scan against the string-redacted form so a literal's contents cannot
     # decide the verdict; return the real query below.
     scannable = _redact_strings(stripped)
-    # Tokenize once and reuse across checks.
+    # Tokenize once and reuse across checks. The keyword scan gets its own
+    # stream with identifier positions blanked — an alias or property named
+    # ``commit`` is not a transaction command. Everything after it reads the
+    # unredacted form: ``_check_call_tokens`` needs the dots in a procedure
+    # target, and ``_check_multi_statement`` needs the real opening word.
     tokens = _tokenize(scannable)
-    _check_keywords(scannable, tokens)
+    _check_keywords(scannable, _tokenize(_redact_identifier_positions(scannable)))
     _check_call_tokens(scannable, tokens)
     _check_multi_statement(scannable)
     # Note: no `project_hash` predicate check. Each (project, commit)

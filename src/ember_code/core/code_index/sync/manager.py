@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -77,6 +78,7 @@ class CodeIndexSyncManager:
         credentials: CloudCredentials | None,
         server_url: str,
         fetch_timeout: float = 60.0,
+        on_sync_complete: Callable[[], object] | None = None,
     ) -> None:
         self.project_dir = project_dir
         self.code_index = code_index
@@ -100,6 +102,7 @@ class CodeIndexSyncManager:
             run_sync=lambda sha: self.sync_now(sha=sha),
             retry_ledger=self._retry_ledger,
             last_synced_sha_getter=lambda: self._last_synced_sha,
+            on_sync_complete=on_sync_complete,
         )
 
         # State the manager still owns.
@@ -122,6 +125,7 @@ class CodeIndexSyncManager:
         project_dir: Path,
         code_index: CodeIndex | None,
         credentials: CloudCredentials | None = None,
+        on_sync_complete: Callable[[], object] | None = None,
     ) -> CodeIndexSyncManager:
         creds = credentials or CloudCredentials(settings.auth.credentials_file)
         resolver = RepositoryResolver(
@@ -136,6 +140,7 @@ class CodeIndexSyncManager:
             credentials=creds,
             server_url=settings.api_url,
             fetch_timeout=settings.code_index.fetch_timeout,
+            on_sync_complete=on_sync_complete,
         )
 
     @property

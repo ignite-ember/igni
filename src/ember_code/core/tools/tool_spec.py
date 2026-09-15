@@ -272,6 +272,21 @@ class BashSpec(ToolSpec):
     toolkit_cls: type[Toolkit] = EmberShellTools
 
 
+class _UnbuiltToolkit(Toolkit):
+    """Stands in for a spec whose toolkit is built by hand in ``build``.
+
+    Exists so ``toolkit_cls`` can stay typed ``type[Toolkit]`` for a spec whose
+    real class is an optional import. Instantiating it is a bug — it means
+    something fell through to the base ``build`` for a spec that overrides it.
+    """
+
+    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError(
+            "_UnbuiltToolkit is a placeholder, not a toolkit. The spec holding it "
+            "overrides build(); reaching here means the base implementation ran."
+        )
+
+
 class WebSearchSpec(ToolSpec):
     """Web search via the optional ``duckduckgo-search`` extra.
 
@@ -307,10 +322,18 @@ class WebSearchSpec(ToolSpec):
     confirm_function_names: tuple[str, ...] = ("web_search", "search_news")
     # ``DuckDuckGoTools`` doesn't accept a base_dir.
     base_dir_kwarg: str | None = None
-    # ``toolkit_cls`` is populated at import time; ``None`` sentinel
-    # when the optional extra isn't installed. We override ``build`` to
-    # raise before the base implementation touches ``toolkit_cls``.
-    toolkit_cls: type[Toolkit] = FileTools  # placeholder; overridden below
+    # ``DuckDuckGoTools`` is an optional extra and may be ``None`` at import,
+    # but the field is typed ``type[Toolkit]``, so the class body needs *some*
+    # concrete class. ``build`` below never consults it — it constructs
+    # ``DuckDuckGoTools`` directly, or raises when the extra is absent.
+    #
+    # The placeholder used to be ``FileTools``, which is a real toolkit that
+    # ships and does something else entirely. Anything reading the catalog to
+    # find out what a spec builds — a doc generator, an audit script, a person —
+    # was told this spec builds ``FileTools``, and there is nothing in the value
+    # to suggest otherwise. A sentinel that is indistinguishable from a real
+    # answer is worse than no sentinel; this one says what it is.
+    toolkit_cls: type[Toolkit] = _UnbuiltToolkit
 
     def build(self, context: ToolBuildContext, confirm: bool) -> Toolkit:
         if DuckDuckGoTools is None:

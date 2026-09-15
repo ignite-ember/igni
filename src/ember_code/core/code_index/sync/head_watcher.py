@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 from collections.abc import Awaitable, Callable
 
@@ -57,11 +58,19 @@ class HeadWatcher:
         retry_ledger: InProgressRetryLedger,
         last_synced_sha_getter: Callable[[], str | None],
         interval_seconds: float | None = None,
+        on_sync_complete: Callable[[], object] | None = None,
     ) -> None:
         self._get_head = get_head
         self._run_sync = run_sync
         self._retry_ledger = retry_ledger
         self._last_synced_sha_getter = last_synced_sha_getter
+        # Fired after a sync that actually finished. The watcher used to poll
+        # HEAD, sync, and stop there — so flipping to a branch whose index is
+        # populated left the session on the toolset and prompt it was built
+        # with, i.e. still telling the agent CodeIndex is unavailable while the
+        # graph sat there ready. Injected rather than imported: this module is
+        # deliberately free of session knowledge.
+        self._on_sync_complete = on_sync_complete
         self._interval = (
             interval_seconds if interval_seconds is not None else self.DEFAULT_INTERVAL_SECONDS
         )
@@ -118,6 +127,12 @@ class HeadWatcher:
                     self._retry_ledger.mark(sha, now=loop.time())
                 else:
                     self._retry_ledger.clear()
+                    if self._on_sync_complete is not None:
+                        # Inside the try: a refresh that raises must not kill
+                        # the poll loop, and the outer handler logs it.
+                        outcome = self._on_sync_complete()
+                        if inspect.isawaitable(outcome):
+                            await outcome
             except asyncio.CancelledError:
                 raise
             except Exception:  # pragma: no cover — defensive
