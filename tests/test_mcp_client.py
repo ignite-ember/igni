@@ -163,3 +163,48 @@ class TestMCPClientManager:
         await mgr.disconnect_all()
         assert mgr._clients == {}
         mock_client.__aexit__.assert_not_called()
+
+
+class TestBothTransportsNamespaceTheirTools:
+    """An MCP server's tools are prefixed whichever transport carried them.
+
+    stdio servers got ``mcp_<server>_``; SSE servers got nothing. So an SSE
+    server exposing ``read_file`` or ``run_shell_command`` collided head-on with
+    the built-in of that name, and which one won depended on registration order.
+
+    The asymmetry is the part worth pinning. Nothing in a server's config says
+    the transport decides whether its tools are namespaced, so the collision
+    appears when someone moves a working server from stdio to SSE and the tools
+    change names underneath them.
+    """
+
+    def _prefix_of(self, source: str) -> str | None:
+        import re
+
+        found = re.search(r'tool_name_prefix=f"([^"]+)"', source)
+        return found.group(1) if found else None
+
+    def test_the_sse_path_sets_a_prefix(self):
+        import inspect
+
+        from ember_code.core.mcp.client import MCPClientManager
+
+        source = inspect.getsource(MCPClientManager._open_transport)
+
+        assert self._prefix_of(source) is not None, (
+            "the SSE branch builds MCPTools without tool_name_prefix — its tools "
+            "will collide with built-ins of the same name"
+        )
+
+    def test_both_transports_use_the_same_prefix_shape(self):
+        """Two spellings would be as bad as one missing: the same server would
+        answer to different tool names depending on how it is connected."""
+        import inspect
+
+        from ember_code.core.mcp.client import MCPClientManager
+        from ember_code.core.mcp.stdio_binding import StdioMCPBinding
+
+        sse = self._prefix_of(inspect.getsource(MCPClientManager._open_transport))
+        stdio = self._prefix_of(inspect.getsource(StdioMCPBinding.open))
+
+        assert sse == stdio, f"SSE uses {sse!r}, stdio uses {stdio!r}"

@@ -152,6 +152,13 @@ class SpawnRunner:
         :meth:`_render_error` so the failure information is typed at
         the boundary even though the outer return is a string.
         """
+        # Cannot currently fire, and that is structural rather than a missing
+        # increment: ``OrchestrateTools`` is built in one place
+        # (``ToolsBuilder.orchestrate``) with ``current_depth=0``, and a
+        # sub-team's members are pool copies that never receive it — so a
+        # spawned agent has no spawn tools and depth never leaves 0. Kept
+        # because it becomes correct the moment nesting is made reachable;
+        # ``tests/test_nesting_depth_is_unreachable.py`` fails then and says so.
         if self._current_depth >= self._max_depth:
             return f"Error: Maximum nesting depth ({self._max_depth}) reached."
 

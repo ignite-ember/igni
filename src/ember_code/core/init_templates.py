@@ -159,7 +159,7 @@ learning:
   enabled: true                   # Learn user preferences, project context, entities across sessions
 
 # orchestration:
-#   max_nesting_depth: 5          # Max recursive sub-team levels
+#   max_nesting_depth: 5          # Reserved — sub-teams cannot spawn today, so this never binds
 #   max_total_agents: 20          # Max agents per request
 #   sub_team_timeout: 600         # Sub-team kill timeout (seconds)
 """

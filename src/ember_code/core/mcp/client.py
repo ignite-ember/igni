@@ -205,7 +205,14 @@ class MCPClientManager:
         if transport == "sse":
             if not config.url:
                 raise MCPConnectError("SSE transport requires a 'url' field")
-            mcp_tools = _MCPTools(url=config.url, transport="sse")
+            # Same prefix the stdio path applies. Without it an SSE server's
+            # tools land under their bare MCP names, so a server exposing
+            # ``read_file`` or ``run_shell_command`` shadows — or is shadowed by
+            # — the built-in of that name, depending on registration order. The
+            # asymmetry was silent: stdio servers were namespaced, SSE servers
+            # were not, and nothing in the config hints that the transport
+            # decides it.
+            mcp_tools = _MCPTools(url=config.url, transport="sse", tool_name_prefix=f"mcp_{name}")
             await mcp_tools.__aenter__()
             return mcp_tools
         if transport == "stdio":

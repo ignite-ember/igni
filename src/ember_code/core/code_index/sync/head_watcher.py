@@ -21,8 +21,8 @@ manager because ``_sync_locked`` mutates it).
 from __future__ import annotations
 
 import asyncio
-import inspect
 import contextlib
+import inspect
 import logging
 from collections.abc import Awaitable, Callable
 

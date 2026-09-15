@@ -190,3 +190,31 @@ def test_cli_help_runs_without_error() -> None:
     assert "--accept-edits" in result.output
     assert "--auto-approve" in result.output
     assert "--strict" in result.output
+
+
+def test_the_strict_help_does_not_promise_reads_survive() -> None:
+    """``--strict`` denies reads too, and the help has to say so.
+
+    The flag selects ``dontAsk``, which never prompts, so anything without an
+    explicit allow rule fails closed — ``test_strict_dont_ask_denies_unmatched``
+    above pins exactly that for ``file_read``. The help previously read "Deny
+    the agent's dangerous operations (writes, shell, git push)", which names
+    three categories and implies the rest still work. Someone reaching for a
+    safe-but-capable mode got an agent that could not read a file.
+
+    The tracker's suggested fix — ship a default read-only allowlist — does not
+    work: igni reads files through ``run_shell_command``, which strict denies,
+    so there is no allowlist entry that restores reading without restoring the
+    shell. Whether ``--strict`` should mean something gentler is a policy call;
+    until it is made, the help must not describe a behaviour the flag lacks.
+    """
+    from ember_code.cli import cli as cli_main
+
+    strict = next(p for p in cli_main.params if "--strict" in p.opts)
+    help_text = (strict.help or "").lower()
+
+    assert "including reads" in help_text or "deny-by-default" in help_text, help_text
+    assert "writes, shell, git push" not in help_text, (
+        "the help lists only the dangerous categories again — that is the "
+        "sentence that promised a working read-only agent"
+    )

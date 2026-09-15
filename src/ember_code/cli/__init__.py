@@ -83,11 +83,27 @@ logger = stdlib_logging.getLogger(__name__)
 @click.option(
     "--strict",
     is_flag=True,
-    # Not "deny all dangerous operations": hooks run shell commands on a
-    # separate path that no permission gates, so a group-supplied hook
-    # still executes here. See
-    # tests/test_hooks_are_outside_the_permission_ratchet.py.
-    help="Deny the agent's dangerous operations (writes, shell, git push)",
+    # Two things this is NOT, both of which the help text used to imply.
+    #
+    # It is not "deny all dangerous operations": hooks run shell commands on a
+    # separate path that no permission gates, so a group-supplied hook still
+    # executes here. See tests/test_hooks_are_outside_the_permission_ratchet.py.
+    #
+    # And it is not "deny the dangerous ones, keep the safe ones". ``--strict``
+    # selects ``dontAsk``, whose whole point is never to prompt, so anything
+    # without an explicit allow rule must fail closed — reads included. Naming
+    # only writes/shell/git promised a working read-only agent and delivered one
+    # that can do nothing at all.
+    #
+    # A default read-only allowlist would be the obvious repair and does not
+    # work here: igni reads files through ``run_shell_command``, which strict
+    # denies, so "allow the safe reads" cannot include reading a file without
+    # re-allowing the shell. That is a policy decision, not a patch, so the help
+    # states the real behaviour instead of implying a gentler one.
+    help=(
+        "Headless deny-by-default: anything without an explicit allow rule is "
+        "denied, including reads. Pair with permissions.allow to opt tools back in"
+    ),
 )
 @click.option("--worktree", is_flag=True, help="Run in an isolated git worktree")
 @click.option(
