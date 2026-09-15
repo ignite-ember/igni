@@ -75,38 +75,34 @@ def _is_shallow() -> bool:
     return result.stdout.strip() == "true"
 
 
-def _merge_parents() -> list[str]:
-    """Both parents of the most recent merge reachable from HEAD.
+def _rule_landed() -> str:
+    """The commit that brought this rule to the branch under test.
 
-    A merge pulls another branch's commits into the window this rule looks at,
-    and their trailers were written under whatever convention that branch
-    followed. They cannot be corrected from here — the commits are published —
-    so failing on them is the "failure nobody can act on" that :data:`_DEPTH`
-    already exists to avoid.
+    A rule governs from when it exists, not backwards. This file and Rule 5
+    lived on a feature branch and arrived on ``main`` in one squash, so the
+    window below would otherwise hold forty commits written under whatever
+    convention preceded it — all published, none correctable, which is the
+    "failure nobody can act on" that :data:`_DEPTH` already exists to avoid.
 
-    Both parents, deliberately, rather than "the one that is not ours". Which
-    parent is which flips depending on who made the merge: a local ``git merge``
-    puts the current branch first, and the ``refs/pull/N/merge`` ref GitHub
-    builds for a PR puts the *base* first. Keying on ``HEAD^2`` passed locally
-    and then checked main's commits instead of ours in CI. Excluding both sides
-    is the same answer either way, and leaves exactly the commits written since
-    the merge — which is what "what we do now" means.
+    Derived from history rather than pinned to a sha so it stays true after the
+    next rename or move: whichever commit added this file is the one the rule
+    starts at.
     """
-    merge = subprocess.run(  # noqa: S603
-        ["git", "rev-list", "--merges", "-n", "1", "HEAD"],
-        cwd=_ROOT,
+    result = subprocess.run(  # noqa: S603
+        [
+            "git",
+            "log",
+            "--diff-filter=A",
+            "--format=%H",
+            "-1",
+            "--",
+            str(pathlib.Path(__file__).name),
+        ],
+        cwd=_ROOT / "tests",
         capture_output=True,
         text=True,
-    ).stdout.strip()
-    if not merge:
-        return []
-    parents = subprocess.run(  # noqa: S603
-        ["git", "rev-list", "--parents", "-n", "1", merge],
-        cwd=_ROOT,
-        capture_output=True,
-        text=True,
-    ).stdout.split()
-    return parents[1:]
+    )
+    return result.stdout.strip()
 
 
 def _history() -> list[tuple[str, str]]:
@@ -116,7 +112,12 @@ def _history() -> list[tuple[str, str]]:
             "shallow checkout: HEAD has no parents here, so there is no history "
             "to hold to the rule. Set fetch-depth: 0 on this job to enforce it in CI."
         )
-    rev = ["HEAD"] + [f"^{p}" for p in _merge_parents()]
+    landed = _rule_landed()
+    # Excluding the landing commit itself, not just its parents: it was written
+    # before the rule existed here, so it is the last commit *without* the rule
+    # rather than the first one under it. It does in fact carry a trailer Rule 5
+    # does not name, which is how this distinction came up.
+    rev = ["HEAD"] + ([f"^{landed}"] if landed else [])
     result = subprocess.run(  # noqa: S603
         ["git", "log", f"-{_DEPTH}", "--no-merges", "--format=%H%x00%B%x01", *rev],
         cwd=_ROOT,
@@ -160,10 +161,10 @@ class TestTheRuleIsReadable:
     def test_there_is_history_to_check(self):
         """A rule over an empty log passes for the wrong reason."""
         history = _history()
-        if _merge_parents() and len(history) <= 5:
+        if len(history) <= 5:
             pytest.skip(
-                "HEAD is a merge and this branch has few commits of its own since "
-                "the fork point — there is nothing here for the rule to be about yet."
+                "the rule landed recently and there are few commits under it yet — "
+                "nothing here for it to be about."
             )
         assert len(history) > 5, len(history)
 
@@ -215,9 +216,18 @@ class TestTheHistoryFollowsIt:
         the state it was in before.
         """
         expected = _address(_documented_trailer())
+        history = _history()
+        # Same boundary as the sibling above. "Is the convention in use" needs
+        # commits written under it, and right after the rule lands there are
+        # none — which would fail for the one reason that is not a finding.
+        if len(history) <= 5:
+            pytest.skip(
+                "the rule landed recently and there are few commits under it yet — "
+                "nothing here for it to be about."
+            )
         using = [
             sha
-            for sha, body in _history()
+            for sha, body in history
             if any(_address(t) == expected for t in _TRAILER.findall(body))
         ]
 

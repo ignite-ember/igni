@@ -67,7 +67,6 @@ from ember_code.core.auth.credentials import CloudCredentials
 from ember_code.core.code_index import CodeIndex, CodeIndexSyncManager
 from ember_code.core.code_index.embedder import LiveEmbedder
 from ember_code.core.config.models import ModelRegistry
-from ember_code.core.config.permissions import PermissionGuard
 from ember_code.core.config.settings import Settings
 from ember_code.core.config.tool_permissions import ToolPermissions
 from ember_code.core.guardrails.runner import GuardrailRunner
@@ -234,9 +233,6 @@ class Session:
         self.db = StorageManager.build_db(settings, project_dir=self.project_dir)
 
         self._init_knowledge(settings, pre_knowledge)
-
-        # ── Permission Guard ─────────────────────────────────────────
-        self.permission_guard = PermissionGuard(settings)
 
         # ── Audit Logger ─────────────────────────────────────────────
         self.audit = AuditLogger(settings)

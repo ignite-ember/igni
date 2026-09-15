@@ -114,6 +114,23 @@ async function writeProjectFiles(projectDir: string): Promise<void> {
       fsp.writeFile(path.join(projectDir, name), body, "utf8"),
     ),
   );
+
+  // A real project is a git repository, and the backend's file index is built
+  // by ``git ls-files --cached --others --exclude-standard`` run with this
+  // directory as cwd. Without a repo here that command walks *up* looking for
+  // one; on a CI runner it can find an enclosing checkout and answer with that
+  // repository's files instead of these. The index then holds the wrong tree,
+  // the ``@`` picker lists it, and the mention specs fail intermittently —
+  // which is what they did, taking six serial siblings down with them.
+  //
+  // ``git init`` alone is enough: ``--others`` lists untracked files, so
+  // nothing needs committing. Failure is not fatal — the index falls back to a
+  // directory walk, which is the path this was on before.
+  try {
+    await run("git", ["init", "--quiet"], { cwd: projectDir });
+  } catch {
+    // no git on PATH; the fallback walk still finds these files
+  }
 }
 
 async function writeStubConfig(projectDir: string): Promise<void> {

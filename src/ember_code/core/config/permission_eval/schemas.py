@@ -220,7 +220,14 @@ def _primary_arg(tool_name: str, tool_args: dict[str, Any]) -> str | None:
     first (six-step pipeline was built for shell rules), whereas
     that one prioritises ``args`` list first (fnmatch fallback).
     """
-    for key in ("command", "file_path", "path", "filename", "url"):
+    # ``file_name`` is agno's spelling on ``FileTools.save_file`` and was
+    # missing, so an argument-scoped rule — ``Write(.env)``, the documented
+    # bypass-resistant form — matched nothing on the one write tool that does
+    # not take ``file_path``. Bare ``Write`` still denied, because that resolves
+    # by name; only the scoped form failed, in every permission mode.
+    #
+    # ``filename`` stays: it costs nothing and something may yet use it.
+    for key in ("command", "file_path", "file_name", "path", "filename", "url"):
         v = tool_args.get(key)
         if isinstance(v, str) and v:
             return v

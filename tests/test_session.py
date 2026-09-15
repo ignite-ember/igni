@@ -29,7 +29,6 @@ def _session_patches(**overrides):
     defaults = {
         "ProjectInitializer": None,
         "StorageManager": None,
-        "PermissionGuard": None,
         "AuditLogger": None,
         "HookLoader": None,
         "HookExecutor": None,
@@ -364,7 +363,6 @@ def _patches_with_real_context_loader():
     overrides = {
         "ProjectInitializer": None,
         "StorageManager": None,
-        "PermissionGuard": None,
         "AuditLogger": None,
         "HookLoader": None,
         "HookExecutor": None,
