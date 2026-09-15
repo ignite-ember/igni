@@ -82,6 +82,20 @@ export default class SkipReporter implements Reporter {
       this.ran += 1;
       return;
     }
+    // ``onTestEnd`` fires once per *attempt*, and a serial group whose first
+    // test fails reports its remaining siblings as ``skipped`` for that
+    // attempt. They run on the retry and pass, but this had already recorded
+    // them and never took them back — so one flaky test turned six passing
+    // siblings into "undeclared skips" and failed the job under
+    // ``IGNI_E2E_STRICT``, while Playwright itself reported 163 passed and
+    // nothing failed.
+    //
+    // ``test.outcome()`` is the verdict across every attempt. Only a test that
+    // never ran at all is a skip.
+    if (test.outcome() !== "skipped") {
+      this.ran += 1;
+      return;
+    }
     const declaredBy = test.tags.find((t) => t in DECLARED) ?? null;
     this.skips.push({
       title: test.titlePath().slice(3).join(" › ") || test.title,
