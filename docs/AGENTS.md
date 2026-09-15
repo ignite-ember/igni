@@ -47,7 +47,7 @@ Agent `.md` files use **the same format as Claude Code** — YAML frontmatter wi
 ---
 name: code-explorer
 description: Deeply analyzes existing codebase features by tracing execution paths, mapping architecture layers, and documenting dependencies
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, WebSearch
+tools: Bash, WebFetch, WebSearch
 color: yellow
 ---
 
@@ -63,7 +63,7 @@ Provide a complete understanding of how a specific feature works by tracing its 
 ---
 name: code-explorer
 description: Deeply analyzes existing codebase features by tracing execution paths, mapping architecture layers, and documenting dependencies
-tools: Glob, Grep, LS, Read, NotebookRead, WebFetch, WebSearch
+tools: Bash, WebFetch, WebSearch
 color: yellow
 
 # igni extensions (ignored by Claude Code, used by igni)
@@ -72,7 +72,7 @@ tags:
   - search
   - read-only
   - exploration
-can_orchestrate: false   # opt out of orchestration for this agent
+can_orchestrate: false   # advisory today — see the field table; nothing gates on it yet
 ---
 
 You are an expert code analyst...
@@ -101,32 +101,43 @@ You are an expert code analyst...
 | `mcp_servers` | list | no | MCP servers this agent can access (by name from `.mcp.json`) |
 | `max_turns` | int | no | Maximum conversation turns. Default: unlimited |
 | `temperature` | float | no | Model temperature. Default: model default |
-| `can_orchestrate` | bool | no | If `true`, this agent can access the agent pool and spawn sub-teams. Default: `true` |
+| `can_orchestrate` | bool | no | **Advisory only today.** Parsed and shown in the agents panel, but nothing gates on it: `OrchestrateTools` is built once for the main agent, and a spawned agent never receives it, so no sub-agent can orchestrate regardless of this value. Default: `true` |
 
 ### Tool Names
 
-igni uses the **same tool names as Claude Code**. Agent files are fully cross-compatible.
+A `tools:` entry is a **registry name**, and these are all of them. Anything else
+fails to resolve, which is silent — the agent simply does not get that tool.
 
-| Tool Name | Agno Toolkit | Description |
-|---|---|---|
-| `Read` | `FileTools(read_only=True)` | Read file contents |
-| `Write` | `FileTools()` | Create/overwrite files |
-| `Edit` | `EmberEditTools()` | Targeted string-replacement editing |
-| `Grep` | `GrepTools()` | Regex content search |
-| `Glob` | `GlobTools()` | File pattern matching |
-| `Bash` | `EmberShellTools` | Non-blocking shell with process management |
-| `BashOutput` | `EmberShellTools` | Shell execution (alias) |
-| `LS` | `EmberShellTools` | List directory contents |
-| `WebSearch` | `DuckDuckGoTools()` | Web search |
-| `WebFetch` | `WebTools()` | Fetch URL content |
-| `NotebookRead` | `NotebookTools(read_only=True)` | Read Jupyter notebooks |
-| `TodoWrite` | `TodoTools()` | Task/todo management |
-| `KillShell` | `ProcessTools()` | Kill running shell processes |
-| `Python` | `PythonTools()` | Execute Python code (igni addition) |
-| `Orchestrate` | `OrchestrateTools()` | Spawn sub-teams (included by default; set `can_orchestrate: false` to disable) |
-| `MCP:<server>` | `MCPTools(...)` | Tools from a named MCP server |
+| Registry name | Toolkit | Functions the model sees | Requestable in `tools:` |
+|---|---|---|---|
+| `Write` | `FileTools` | `save_file` | yes |
+| `Edit` | `EmberEditTools` | `create_file`, `edit_file`, `edit_file_replace_all` | yes |
+| `Bash` (alias `BashOutput`) | `EmberShellTools` | `run_shell_command` | yes |
+| `WebSearch` | `DuckDuckGoTools` | `web_search`, `search_news` | yes |
+| `WebFetch` | `WebTools` | `fetch_url`, `fetch_json` | yes |
+| `Schedule` | `ScheduleTools` | `schedule_task`, `list_scheduled_tasks`, `cancel_scheduled_task` | yes |
+| `NotebookEdit` | `NotebookTools` | `notebook_read`, `notebook_read_cell`, `notebook_add_cell`, `notebook_edit_cell`, `notebook_remove_cell` | yes |
+| `CodeIndex` | `CodeIndexTools` | `codeindex_cypher` | no — main agent only |
+| `Visualize` | `VisualizeTools` | (UI payload) | no — main agent only |
+| `mcp_<server>_<tool>` | `MCPTools` | per server | via `.mcp.json`, not `tools:` |
 
-Drop a Claude Code agent file into `.igni/agents/` — it works immediately. All agents can orchestrate (spawn sub-teams) by default. Optionally add igni extensions like `tags`, `reasoning`, or `can_orchestrate: false` to restrict an agent.
+**Reading files is `Bash`.** There is no `Read` tool. igni builds agno's
+`FileTools` with `enable_read_file=False` and its siblings off, keeping only
+`save_file`, so a file is read with `run_shell_command "cat <path>"`. The same
+goes for search: no `Grep`, no `Glob`, no `LS` — those are `rg`, shell globs and
+`ls` through `Bash`.
+
+This section previously listed `Read`, `Grep`, `Glob`, `LS`, `NotebookRead`,
+`TodoWrite`, `KillShell` and `Python`, and said igni "uses the same tool names as
+Claude Code" with agent files "fully cross-compatible". None of those eight names
+resolve, and the example agent files above used four of them, so anyone following
+this page wrote an agent whose entire `tools:` list was ignored.
+
+Drop a Claude Code agent file into `.igni/agents/` and its `tools:` line will
+**not** carry over — the names differ. Translate reads and searches to `Bash`,
+and keep `Write`, `Edit`, `WebFetch` and `WebSearch`, which do match.
+
+Note that `can_orchestrate: false` does not restrict anything at present — see the field table above. Sub-agents cannot spawn sub-teams either way.
 
 ---
 
@@ -174,32 +185,32 @@ igni ships with foundational agents in Claude Code compatible format plus igni e
 
 **explorer.md** — Read-only codebase search and analysis.
 ```yaml
-tools: Glob, Grep, LS, Read, WebFetch, WebSearch
+tools: Bash, WebFetch, WebSearch
 tags: [search, read-only, exploration]
 ```
 
 **architect.md** — Designs component architecture, data flows, and interfaces.
 ```yaml
-tools: Glob, Grep, LS, Read, WebSearch
+tools: Bash, WebSearch
 reasoning: true
 tags: [architecture, design, read-only]
 ```
 
 **editor.md** — Creates and modifies files. Can spawn sub-teams for exploration or review.
 ```yaml
-tools: Read, Write, Edit, Bash, Glob, Grep
+tools: Write, Edit, Bash
 tags: [coding, editing, file-write]
 ```
 
 **simplifier.md** — Post-edit code polish, dead code removal, complexity reduction.
 ```yaml
-tools: Read, Edit, Glob, Grep, Bash
+tools: Edit, Bash
 tags: [quality, refactoring, simplification]
 ```
 
 **reviewer.md** — Reviews code for bugs, security issues, and style compliance.
 ```yaml
-tools: Glob, Grep, LS, Read, WebFetch, WebSearch
+tools: Bash, WebFetch, WebSearch
 color: red
 reasoning: true
 tags: [review, quality, read-only]
@@ -207,20 +218,20 @@ tags: [review, quality, read-only]
 
 **security.md** — Vulnerability analysis, OWASP Top 10, auth and input validation review.
 ```yaml
-tools: Glob, Grep, LS, Read, WebSearch
+tools: Bash, WebSearch
 reasoning: true
 tags: [security, audit, vulnerabilities, read-only]
 ```
 
 **qa.md** — Test generation, test quality review, and coverage gap analysis.
 ```yaml
-tools: Read, Write, Edit, Bash, Glob, Grep
+tools: Write, Edit, Bash
 tags: [testing, qa, coverage]
 ```
 
 **debugger.md** — Bug diagnosis, stack trace analysis, root cause finding.
 ```yaml
-tools: Read, Edit, Bash, Glob, Grep
+tools: Edit, Bash
 reasoning: true
 tags: [debugging, diagnostics, bug-fix]
 ```
@@ -228,7 +239,7 @@ tags: [debugging, diagnostics, bug-fix]
 > **Note:** Git operations (commits, branches, PRs, force-push safety) are handled by **editor.md**'s built-in safety protocol — there is no separate `git.md` agent.
 **docs.md** — Documentation writing and updates.
 ```yaml
-tools: Read, Write, Edit, Glob, Grep
+tools: Bash, Write, Edit
 tags: [documentation, writing, docs]
 ```
 
@@ -325,7 +336,9 @@ The Orchestrator's system prompt tells it:
 
 ## Recursive Nesting: Agents That Build Teams
 
-Unlike Claude Code (which caps sub-agents at one level), igni places **no limit on nesting**. Every agent can access the full agent pool and spawn its own sub-teams at runtime by default. Set `can_orchestrate: false` on an agent to disable this.
+igni currently caps sub-agents at **one level**, the same as Claude Code, though it arrives there by construction rather than by a check. `OrchestrateTools` — the toolkit carrying `spawn_agent` and `spawn_team` — is built once for the main agent; a sub-team's members are copies from the pool and never receive it, so a spawned agent has no way to spawn anything.
+
+Two settings read as though they govern this and do not: `orchestration.max_nesting_depth` guards a counter that never leaves 0, and `can_orchestrate: false` is not consulted by anything that spawns. Both are kept because they become meaningful the day nesting is made reachable — this page previously promised the opposite, that nesting was unlimited and every agent could spawn.
 
 ```
 Orchestrator
@@ -412,7 +425,7 @@ orchestration:
 ---
 name: editor
 description: Creates and modifies code files with minimal focused changes. Can spawn sub-teams for exploration or review when the task requires it.
-tools: Read, Write, Edit, Bash, Glob, Grep
+tools: Write, Edit, Bash
 color: blue
 
 # igni extensions
@@ -480,7 +493,7 @@ class EphemeralAgent(BaseModel):
     filename: str         # e.g., "terraform-migrator.md"
     name: str
     description: str
-    tools: str
+    tools: Bash
     model: str
     tags: list[str]
     system_prompt: str
@@ -502,7 +515,7 @@ No built-in agent knows Terraform. The Orchestrator generates:
 ---
 name: terraform-migrator
 description: Migrates Terraform configurations from AWS provider v4 to v5, handling breaking changes and deprecated resources
-tools: Read, Write, Edit, Bash, Grep, Glob
+tools: Write, Edit, Bash
 color: orange
 
 tags: [terraform, infrastructure, migration]
@@ -685,7 +698,7 @@ Drop a `.md` file in any agents directory. That's it — it joins the pool immed
 ---
 name: docker
 description: Manages Docker containers, images, and docker-compose configurations
-tools: Bash, Read, Glob
+tools: Bash
 color: blue
 ---
 
@@ -703,7 +716,7 @@ This file works in both Claude Code and igni. In igni, the Orchestrator uses the
 ---
 name: database
 description: Database operations including queries, migrations, schema design, and optimization. Connects to the project database via MCP.
-tools: Read, Write, Grep, Glob, LS
+tools: Bash, Write
 color: green
 
 # igni extensions
@@ -732,7 +745,7 @@ Use the format: `YYYYMMDD_HHMMSS_description.sql` (or framework equivalent)
 ---
 name: security-auditor
 description: Security-focused code review that checks for OWASP Top 10 vulnerabilities, dependency issues, and security anti-patterns with confidence-based scoring
-tools: Glob, Grep, LS, Read, WebSearch
+tools: Bash, WebSearch
 color: red
 
 # igni extensions
