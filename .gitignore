@@ -270,3 +270,6 @@ clients/*/.claude/
 # pnpm artifacts (project uses npm; pnpm files only present when a contributor uses pnpm)
 clients/web/pnpm-lock.yaml
 clients/web/pnpm-workspace.yaml
+
+# A test formatted an object into a filename; the repr became a real file.
+<*object at 0x*>
