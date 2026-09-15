@@ -101,8 +101,9 @@ logger = stdlib_logging.getLogger(__name__)
     # re-allowing the shell. That is a policy decision, not a patch, so the help
     # states the real behaviour instead of implying a gentler one.
     help=(
-        "Headless deny-by-default: anything without an explicit allow rule is "
-        "denied, including reads. Pair with permissions.allow to opt tools back in"
+        "Headless deny-by-default for the agent's own tool use: anything without "
+        "an explicit allow rule is denied, including reads (hooks are unaffected). "
+        "Pair with permissions.allow to opt tools back in"
     ),
 )
 @click.option("--worktree", is_flag=True, help="Run in an isolated git worktree")

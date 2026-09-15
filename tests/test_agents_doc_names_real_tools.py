@@ -17,7 +17,6 @@ or renamed this asserts against the new truth instead of a copy of the old one.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
