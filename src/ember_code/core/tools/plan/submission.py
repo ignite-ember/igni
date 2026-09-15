@@ -33,7 +33,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ember_code.core.session.broadcast_schema import BroadcastEvent
+from ember_code.core.broadcast_schema import BroadcastEvent
 from ember_code.core.tools.plan.researcher import PlanResearcherRunner
 from ember_code.core.tools.plan.schemas import (
     PermissionModeChangedPayload,

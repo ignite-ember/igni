@@ -32,8 +32,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar
 
+from ember_code.core.broadcast_schema import BroadcastEvent
 from ember_code.core.config.permission_eval import PermissionMode
-from ember_code.core.session.broadcast_schema import BroadcastEvent
 from ember_code.core.session.schemas import (
     OutputStyleChangedBroadcast,
     PermissionModeChangedBroadcast,
