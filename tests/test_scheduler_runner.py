@@ -110,4 +110,10 @@ class TestSchedulerRunner:
         await asyncio.sleep(0.5)
 
         on_started.assert_called_once_with("t2", "callback test")
-        on_completed.assert_called_once_with("t2", "callback test", True)
+        # The fourth argument is the task's own output, not decoration. The
+        # consumer publishes it into ``SchedulerCompletedPayload.result``, which
+        # is typed ``str`` — the runner used to pass its success flag into that
+        # slot, so constructing the payload raised ValidationError on every
+        # completion and the push never arrived. Asserting only the flag is what
+        # let that ship, so the value is pinned here too.
+        on_completed.assert_called_once_with("t2", "callback test", True, "ok")

@@ -29,7 +29,12 @@ class SchedulerRunner:
     on_task_started:
         Optional callback when a task begins executing.
     on_task_completed:
-        Optional callback when a task finishes (success or failure).
+        Optional callback when a task finishes (success or failure). Receives
+        ``(task_id, description, succeeded, detail)`` — ``detail`` is the task's
+        result text on success and the error message on failure. It is passed
+        because the consumer publishes it: the push payload has a ``result: str``
+        field, and sending the flag in its place raised ``ValidationError`` on
+        every completion, so the notification never arrived.
     poll_interval:
         Seconds between polls. Default 30.
     task_timeout:
@@ -45,7 +50,7 @@ class SchedulerRunner:
         store: TaskStore,
         execute_fn: Callable[[str], Coroutine[Any, Any, str]],
         on_task_started: Callable[[str, str], Any] | None = None,
-        on_task_completed: Callable[[str, str, bool], Any] | None = None,
+        on_task_completed: Callable[[str, str, bool, str], Any] | None = None,
         poll_interval: float = 30,
         task_timeout: float = 300,
         max_concurrent: int = 1,
@@ -131,19 +136,19 @@ class SchedulerRunner:
             await self._store.update_status(task_id, TaskStatus.completed, result=result)
             logger.info("Task %s completed", task_id)
             if self._on_task_completed:
-                self._on_task_completed(task_id, description, True)
+                self._on_task_completed(task_id, description, True, str(result))
         except asyncio.TimeoutError:
             error_msg = f"Task timed out after {self._task_timeout:.0f}s"
             await self._store.update_status(task_id, TaskStatus.failed, error=error_msg)
             logger.error("Task %s timed out after %.0fs", task_id, self._task_timeout)
             if self._on_task_completed:
-                self._on_task_completed(task_id, description, False)
+                self._on_task_completed(task_id, description, False, error_msg)
         except Exception as e:
             error_msg = str(e)
             await self._store.update_status(task_id, TaskStatus.failed, error=error_msg)
             logger.error("Task %s failed: %s", task_id, error_msg)
             if self._on_task_completed:
-                self._on_task_completed(task_id, description, False)
+                self._on_task_completed(task_id, description, False, error_msg)
 
         # Reschedule recurring tasks (even after failure — the schedule continues)
         await self._reschedule_if_recurring(task_id)

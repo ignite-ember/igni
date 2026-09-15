@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 
 TaskStartedCallback = Callable[[str, str], None] | None
-TaskCompletedCallback = Callable[[str, str, bool], None] | None
+TaskCompletedCallback = Callable[[str, str, bool, str], None] | None
 
 
 class SchedulerController:
@@ -216,12 +216,14 @@ class SchedulerController:
                 )
             )
 
-        def on_completed(self, task_id: str, description: str, success: bool) -> None:
+        def on_completed(
+            self, task_id: str, description: str, success: bool, detail: str = ""
+        ) -> None:
             """Runner callback for task completion. Fires the user
             callback (if any) then dispatches the typed
             ``TaskCompleted`` hook with a two-value status enum."""
             if self._user_on_completed is not None:
-                self._user_on_completed(task_id, description, success)
+                self._user_on_completed(task_id, description, success, detail)
             # ``status`` wire values match :class:`SchedulerEventType`
             # members — ``COMPLETED`` on success, ``ERROR`` (the
             # legacy alias for ``FAILED``) on failure. Kept as the

@@ -100,8 +100,23 @@ class PushNotificationBridge:
         payload = SchedulerStartedPayload(task_id=task_id, description=description)
         asyncio.ensure_future(self._transport.send(msg.push_scheduler_started(payload)))
 
-    def _on_scheduler_completed(self, task_id: str, description: str, result: str) -> None:
-        payload = SchedulerCompletedPayload(task_id=task_id, description=description, result=result)
+    def _on_scheduler_completed(
+        self, task_id: str, description: str, succeeded: bool, detail: str = ""
+    ) -> None:
+        """Publish a scheduled task's outcome.
+
+        ``detail`` carries the task's result text, or the error on failure. The
+        runner used to pass its success flag into this ``result`` slot, and
+        ``SchedulerCompletedPayload.result`` is typed ``str``, so constructing
+        the payload raised ``ValidationError`` on every single completion and
+        the push was never sent. The parameter is named for what it is now, so
+        the next person to wire a caller cannot quietly repeat it.
+        """
+        payload = SchedulerCompletedPayload(
+            task_id=task_id,
+            description=description,
+            result=detail if detail else ("completed" if succeeded else "failed"),
+        )
         asyncio.ensure_future(self._transport.send(msg.push_scheduler_completed(payload)))
 
     def start_scheduler(self, backend: Any) -> None:
