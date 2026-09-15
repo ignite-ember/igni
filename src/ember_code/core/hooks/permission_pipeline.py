@@ -32,6 +32,7 @@ from ember_code.core.config.permission_eval import (
     PermissionDecision,
     PermissionEvaluator,
 )
+from ember_code.core.config.permission_eval.catalog import BashCommand
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.hooks.hook_firer import HookFirer
 from ember_code.core.hooks.schemas import SafetyCheckResult
@@ -175,6 +176,39 @@ class PreToolUseHookStage(PermissionStage):
         return Continue()
 
 
+#: The keys :func:`_target_path` will look under, named so a test can hold them
+#: against the real function signatures. The bug this guards was a lookup key
+#: the tool did not have; a test that restates the keys instead of importing
+#: them cannot see that happen again.
+PATH_ARG_KEYS: tuple[str, ...] = ("file_path", "file_name", "path")
+
+#: Likewise for the shell stage. ``BashCommand.from_args`` reads both, in this
+#: order, and this is the declaration of that.
+SHELL_ARG_KEYS: tuple[str, ...] = ("command", "args")
+
+
+def _target_path(args: dict[str, Any]) -> str:
+    """The path a write tool is about to write to.
+
+    Three spellings because the write family does not agree on one:
+    ``edit_file`` / ``edit_file_replace_all`` / ``create_file`` take
+    ``file_path``, and agno's ``FileTools.save_file`` takes ``file_name``.
+    ``ProtectedPathStage`` listed ``save_file`` as gated and then looked only
+    for ``file_path``, so the lookup missed and every ``save_file`` write went
+    through unguarded — ``.env``, ``*.pem``, ``*.key``, ``credentials.*``
+    included. The other three worked, which is why three of four paths working
+    hid it.
+
+    ``path`` is here for tools that have not needed gating yet; a guard that
+    has to be edited to cover the next one is how this happened.
+    """
+    for key in PATH_ARG_KEYS:
+        value = args.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
 class ProtectedPathStage(PermissionStage):
     """Hard-coded defense-in-depth: block writes to protected
     paths. ALWAYS runs — a ``PreToolUse`` ``allow`` cannot unlock
@@ -244,7 +278,7 @@ class ProtectedPathStage(PermissionStage):
             return SafetyCheckResult.no_block()
         if not self.applies_to(ctx.name):
             return SafetyCheckResult.no_block()
-        file_path = ctx.args.get("file_path", "")
+        file_path = _target_path(ctx.args)
         if not file_path:
             return SafetyCheckResult.no_block()
         if self.matches_pattern(file_path, self._protected_paths):
@@ -267,7 +301,7 @@ class ProtectedPathStage(PermissionStage):
         if result.blocked:
             logger.warning(
                 "Protected path blocked: %s via %s",
-                ctx.args.get("file_path", ""),
+                _target_path(ctx.args),
                 ctx.name,
             )
             return Block(result.block_message)
@@ -300,17 +334,20 @@ class BlockedCommandStage(PermissionStage):
 
     @staticmethod
     def _join_args(args: dict[str, Any]) -> str:
-        """Join the ``args`` field of a shell tool call into a
-        single string for substring matching.
+        """The shell command as one string, whatever shape it arrived in.
 
-        Callers may pass a list (typical) or a single string
-        (some paths pre-join); both are normalised to the same
-        space-joined string form.
+        This read ``args["args"]`` and nothing else. That was correct for agno's
+        ``ShellTools.run_shell_command(args: list[str])``, which is what the
+        stage was written against; :class:`EmberShellTools` replaced it with
+        ``run_shell_command(command: str)`` and this was not updated. The lookup
+        missed on every real call, the join returned ``""``, and no blocked
+        pattern could match — so the deny list never blocked anything.
+
+        :meth:`BashCommand.from_args` already absorbs all four shapes and is
+        already used by the evaluator, so this defers to it rather than keeping
+        a second, narrower answer to the same question in a second place.
         """
-        cmd_args = args.get("args", [])
-        if isinstance(cmd_args, list):
-            return " ".join(str(a) for a in cmd_args)
-        return str(cmd_args)
+        return BashCommand.from_args(args).command
 
     def check_sync(self, ctx: ToolCallContext) -> SafetyCheckResult:
         """Pure synchronous predicate: does this shell call

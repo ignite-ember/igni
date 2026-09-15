@@ -84,7 +84,20 @@ class PermissionPolicy:
         return False
 
     def is_blocked_command(self, command: str) -> bool:
-        """True if ``command`` contains any substring listed under
+        """**Not the enforcement path.** See :class:`BlockedCommandStage`.
+
+        Nothing on the tool path consults :class:`PermissionPolicy`, so a
+        ``True`` here blocks nothing. It reads like the deny list is enforced,
+        which is exactly the wrong thing for a safety predicate to imply —
+        enforcement lives in
+        ``ember_code.core.hooks.permission_pipeline.BlockedCommandStage``, and
+        that is the copy to change if the rule changes.
+
+        Kept rather than deleted because it is a public export with its own
+        tests; removing the subsystem is a cleanup, not a safety fix, and
+        belongs in its own change.
+
+        True if ``command`` contains any substring listed under
         ``settings.safety.blocked_commands``."""
         return any(blocked in command for blocked in self._settings.safety.blocked_commands)
 
