@@ -2969,6 +2969,7 @@ export default function App() {
                           "Workflows like /commit and /resolve-issues",
                         ],
                         ["/workflows", "Run a CC-style multi-phase workflow"],
+                        ["/codeindex", "Semantic search across your repo"],
                         ["/schedule", "Background tasks that report back"],
                         ["/loop", "Repeat a prompt across a batch until done"],
                         ["/mcp", "Plug in external tools and data sources"],

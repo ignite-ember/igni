@@ -143,6 +143,12 @@ test("WatcherPanel populated render", async ({ page, backend, appUrl }) => {
     payload: { pid: 9555, cmd: "cargo check --workspace", exit_code: 0 },
   });
 
+  // Back to the list before counting. Clicking a row used to expand its tail
+  // inline, so the list stayed on screen; in the pages architecture it
+  // navigates to that process's own page and the list is no longer rendered.
+  // Without this the assertion counts the one row the detail page shows and
+  // reports "1", which looks like the two new processes never arrived.
+  await page.locator(".page-crumb", { hasText: "Watcher" }).first().click();
   await expect(page.locator(".watcher-row")).toHaveCount(4);
   // Settle to let the streamed lines paint into the tail pane.
   await page.waitForTimeout(300);

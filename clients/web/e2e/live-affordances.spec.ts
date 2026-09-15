@@ -44,22 +44,27 @@ test.describe.configure({ mode: "serial", timeout: 120_000 });
 test.beforeAll(() => mkdirSync(OUT, { recursive: true }));
 
 /** Where each command puts its answer. Taken from `App.tsx`'s
- *  `runCommand` switch, the same source `live-slash.spec.ts` uses. */
-type Lands = "drawer" | "transcript" | "either";
+ *  `runCommand` switch, the same source `live-slash.spec.ts` uses.
+ *
+ *  ``page`` rather than ``drawer``: `Drawer` returns a `PageShell` when a
+ *  `PageContext` is present and emits no `.drawer` element at all, so the
+ *  panel commands land in page chrome now. `/ctx` moved the other way — it
+ *  used to render a card into the transcript and is its own page. */
+type Lands = "page" | "transcript" | "either";
 
 const LANDS: Record<string, Lands> = {
-  "/mcp": "drawer",
-  "/codeindex": "drawer",
-  "/agents": "drawer",
-  "/skills": "drawer",
-  "/plugins": "drawer",
-  "/hooks": "drawer",
-  "/loop": "drawer",
-  "/schedule": "drawer",
-  "/watcher": "drawer",
-  "/help": "drawer",
+  "/mcp": "page",
+  "/codeindex": "page",
+  "/agents": "page",
+  "/skills": "page",
+  "/plugins": "page",
+  "/hooks": "page",
+  "/loop": "page",
+  "/schedule": "page",
+  "/watcher": "page",
+  "/help": "page",
   "/compact": "transcript",
-  "/ctx": "transcript",
+  "/ctx": "page",
   // A client-side intercept, not a backend command — it appends an
   // info line listing what it found.
   "/workflows": "transcript",
@@ -79,6 +84,7 @@ const TOOLS = [
   "Hooks",
   "Loop",
   "Scheduled tasks",
+  "Workflows",
   "Watcher",
   "Compact context",
   "Context breakdown",
@@ -95,6 +101,7 @@ const TOOL_COMMAND: Record<string, string> = {
   Hooks: "/hooks",
   Loop: "/loop",
   "Scheduled tasks": "/schedule",
+  Workflows: "/workflows",
   Watcher: "/watcher",
   "Compact context": "/compact",
   "Context breakdown": "/ctx",
@@ -149,14 +156,14 @@ async function shot(page: Page, name: string) {
 /** Assert the command's answer arrived where `App.tsx` sends it. */
 async function landed(page: Page, command: string) {
   const where = LANDS[command];
-  const drawer = page.locator(".drawer").first();
+  const surface = page.locator(".page").first();
   const conversation = page.locator(".conversation");
 
-  if (where === "drawer") {
-    await expect(drawer, `${command} opened no drawer`).toBeVisible({
+  if (where === "page") {
+    await expect(surface, `${command} opened no page`).toBeVisible({
       timeout: 30_000,
     });
-    await expect(drawer).not.toContainText(
+    await expect(surface).not.toContainText(
       /session routing failed|traceback|has no attribute/i,
     );
     return;
@@ -174,7 +181,7 @@ async function landed(page: Page, command: string) {
   await expect
     .poll(
       async () =>
-        (await drawer.isVisible().catch(() => false)) ||
+        (await surface.isVisible().catch(() => false)) ||
         (await conversation.innerText().catch(() => "")).trim().length > 0,
       { timeout: 30_000 },
     )

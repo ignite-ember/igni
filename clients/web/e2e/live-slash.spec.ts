@@ -74,22 +74,28 @@ test.beforeAll(() => mkdirSync(OUT, { recursive: true }));
  * was rewritten to stop doing, so `/sessions` closes the sidebar
  * first.
  */
+// Surfaces are ``.page``, not ``.drawer``: ``Drawer`` returns a ``PageShell``
+// when a ``PageContext`` is present and emits no ``.drawer`` element at all,
+// so every panel command opens page chrome now.
 const READ_ONLY: {
   cmd: string;
   where: string;
   shows: RegExp;
   before?: (page: Page) => Promise<void>;
 }[] = [
-  { cmd: "/help", where: ".drawer", shows: /\/compact/ },
+  // ``/help`` became a page rather than a drawer when the pages refactor
+  // landed; ``HelpPage`` renders inside ``.page``.
+  { cmd: "/help", where: ".page", shows: /\/compact/ },
   // `/context|token|floor/i` is what this used to say, and `/ctx` was
   // raising `PydanticUserError: ContextBreakdownView is not fully
   // defined` on every single invocation — a message that contains
   // "Context", rendered into the same `.conversation` this asserts on.
   // The test was green the whole time the command was broken.
   //
-  // `% of total` comes from the card's own template and appears in no
-  // error path.
-  { cmd: "/ctx", where: ".conversation", shows: /% of total/ },
+  // `tokens in context` comes from the page's own template and appears in no
+  // error path — the same property `% of total` had before `/ctx` became a
+  // page rather than a card rendered into the conversation.
+  { cmd: "/ctx", where: ".page", shows: /tokens in context/ },
   {
     cmd: "/sessions",
     where: ".sidebar:not(.closed)",
@@ -100,20 +106,20 @@ const READ_ONLY: {
     },
   },
   { cmd: "/model", where: ".model-menu", shows: /\w/ },
-  { cmd: "/agents", where: ".drawer", shows: /agent/i },
-  { cmd: "/skills", where: ".drawer", shows: /skill/i },
-  { cmd: "/mcp", where: ".drawer", shows: /mcp|server/i },
-  { cmd: "/plugins", where: ".drawer", shows: /marketplace|installed/i },
-  { cmd: "/codeindex", where: ".drawer", shows: /sync|resync|clean/i },
-  { cmd: "/hooks", where: ".drawer", shows: /hook/i },
-  { cmd: "/loop", where: ".drawer", shows: /loop/i },
-  { cmd: "/schedule", where: ".drawer", shows: /scheduled|task/i },
+  { cmd: "/agents", where: ".page", shows: /agent/i },
+  { cmd: "/skills", where: ".page", shows: /skill/i },
+  { cmd: "/mcp", where: ".page", shows: /mcp|server/i },
+  { cmd: "/plugins", where: ".page", shows: /marketplace|installed/i },
+  { cmd: "/codeindex", where: ".page", shows: /sync|resync|clean/i },
+  { cmd: "/hooks", where: ".page", shows: /hook/i },
+  { cmd: "/loop", where: ".page", shows: /loop/i },
+  { cmd: "/schedule", where: ".page", shows: /scheduled|task/i },
   // `/watcher` is in the header tools menu and in the backend's
   // registry, and **not** in `BUILTIN_COMMANDS` — so it never appears
   // in the composer's picker. It still runs when typed, which is how
   // it is reached here. Recorded rather than fixed: whether a command
   // should be typeable but not offered is a product decision.
-  { cmd: "/watcher", where: ".drawer", shows: /watcher|process/i },
+  { cmd: "/watcher", where: ".page", shows: /watcher|process/i },
 ];
 
 /**
@@ -402,7 +408,14 @@ test("/knowledge says why it is unavailable", async ({ page, liveBe }) => {
   const conversation = page.locator(".conversation");
   await expect(conversation).toContainText(/knowledge/i, { timeout: 30_000 });
   // A cause, in words that point somewhere.
-  await expect(conversation).toContainText(/neo4j|codeindex|disabled|config/i);
+  // ``setting up|local database`` are the subsystem-state wording: knowledge
+  // now reports PREPARING while the sidecar starts, where it used to report
+  // only the reasons it was off. Both name a cause, which is the property this
+  // test is for — the line below still holds the fallback to account, and that
+  // is what "says why" means here.
+  await expect(conversation).toContainText(
+    /neo4j|codeindex|disabled|config|setting up|local database/i,
+  );
   await expect(conversation).not.toContainText(/failed to initialize\.?\s*$/i);
 });
 

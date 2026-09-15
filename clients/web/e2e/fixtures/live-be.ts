@@ -86,6 +86,36 @@ export function whyNoBackend(
  */
 const STUB_MODEL = "e2e-wire-format-stub";
 
+/** A handful of real files, so the ``@`` picker has something to narrow.
+ *
+ * The specs that exercise file mentions assert on ``calc.py`` specifically.
+ * They date from the harness this fixture replaced, which ran the backend
+ * against the developer's own repository — so the file was simply there. A
+ * throwaway project dir has nothing in it, and every one of those assertions
+ * has been failing since: ``.popup-item`` never appears because there is no
+ * file to list, and the picker commits the typed text as a chip instead.
+ *
+ * Verified against the branch tip before this merge: the same failure, the same
+ * locator. It is not something the merge introduced.
+ *
+ * More than one file on purpose. "Narrowing means fewer and right, and both
+ * halves matter" is the spec's own comment, and it cannot check "fewer" against
+ * a directory holding one thing.
+ */
+async function writeProjectFiles(projectDir: string): Promise<void> {
+  const files: Record<string, string> = {
+    "calc.py": "def add(a, b):\n    return a + b\n",
+    "calendar_utils.py": "def next_monday():\n    ...\n",
+    "main.py": "from calc import add\n\nprint(add(1, 2))\n",
+    "README.md": "# e2e fixture project\n",
+  };
+  await Promise.all(
+    Object.entries(files).map(([name, body]) =>
+      fsp.writeFile(path.join(projectDir, name), body, "utf8"),
+    ),
+  );
+}
+
 async function writeStubConfig(projectDir: string): Promise<void> {
   await fsp.mkdir(path.join(projectDir, ".igni"), { recursive: true });
   await fsp.writeFile(
@@ -293,6 +323,7 @@ export const test = base.extend<{
       path.join(os.tmpdir(), "igni-live-be-"),
     );
     await writeStubConfig(projectDir);
+    await writeProjectFiles(projectDir);
     // Before the backend starts, or its rehydrate pass has nothing to
     // find and the orphan never appears.
     if (orphanScenario) await seedOrphan(projectDir, orphanScenario);
