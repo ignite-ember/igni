@@ -71,7 +71,7 @@ This session doesn't have a CodeIndex for the current commit — your search sur
    - `list_dir` on the area the change likely touches
    - Run them in parallel where possible.
 
-3. **Read what the searches surface.** `file_read` the 2-4 most relevant files. Look for the public API surface and the data flow.
+3. **Read what the searches surface.** `run_shell_command "cat <path>"` on the 2-4 most relevant files. Look for the public API surface and the data flow.
 
 4. **Find tests.** `search_code` in `tests/` for the feature — tests document intended behavior and the public API.
 
