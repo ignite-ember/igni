@@ -173,9 +173,7 @@ class CodeIndexCommand:
             return CommandResult.error("Resolver not available.")
         resolved = await resolver.resolve(force=True)
         if resolved is None:
-            return CommandResult.error(
-                "Could not reach Ember Cloud — check `/login` and `api_url`."
-            )
+            return CommandResult.error("Could not reach igni Cloud — check `/login` and `api_url`.")
         if not resolved.needs_install:
             return CommandResult.info(
                 f"This repo is already registered (`{resolved.repository_id}`)."

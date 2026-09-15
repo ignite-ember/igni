@@ -16,11 +16,13 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from ember_code.core.paths import CONFIG_DIR
+
 
 class DebugLogging:
     """Bootstrap for the ``ember --debug`` file-log surface."""
 
-    DEFAULT_PATH = Path.home() / ".ember" / "debug.log"
+    DEFAULT_PATH = Path.home() / CONFIG_DIR / "debug.log"
     _FORMAT = "%(asctime)s %(name)s %(levelname)s %(message)s"
     _MAX_BYTES = 10_000_000
     _BACKUPS = 2
@@ -50,5 +52,13 @@ class DebugLogging:
         logging.root.addHandler(handler)
         logging.root.setLevel(logging.DEBUG)
         logging.getLogger("ember_code").setLevel(logging.DEBUG)
+
+        # ``ember_code.llm_calls`` and the transport loggers deliberately do not
+        # propagate — they write request/response bodies, and letting those reach
+        # root put them on stderr (see ``LlmCallLogger._attach_transport_loggers``).
+        # A --debug run still wants them in one place, so hand them the handler
+        # directly instead of reopening the propagation path.
+        for name in ("ember_code.llm_calls", "httpx", "httpcore"):
+            logging.getLogger(name).addHandler(handler)
 
         return log_path

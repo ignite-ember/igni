@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from ember_code.backend.command_handler import CommandHandler, CommandResult
+from ember_code.core.session.schemas import PersistResult
 
 
 def _make_session():
@@ -24,7 +25,14 @@ def _make_session():
     session.settings.models.registry = {"test-model": MagicMock()}
     session.settings.permissions.file_write = "ask"
     session.settings.permissions.shell_execute = "ask"
-    session.settings.storage.backend = "sqlite"
+    # ``storage.data_dir``, not ``storage.backend``. The mock claimed
+    # a ``backend`` field for however long ago it was deleted from
+    # ``StorageConfig``, and because MagicMock answers any attribute,
+    # this file went green while ``/config`` raised ``AttributeError``
+    # for every real user. A mock that models a schema the product no
+    # longer has is worse than no test: it reports on a shape nothing
+    # in production still takes.
+    session.settings.storage.data_dir = "/tmp/igni-test-data"
     session.settings.memory.enable_agentic_memory = False
     session.settings.learning.enabled = False
     session.settings.reasoning.enabled = False
@@ -61,10 +69,29 @@ class TestRenameEdgeCases:
     @pytest.mark.asyncio
     async def test_rename_with_name_succeeds(self):
         session = _make_session()
-        session.persistence.rename = AsyncMock()
+        session.persistence.rename = AsyncMock(return_value=PersistResult(ok=True))
+        # ``/rename`` reads the name back before confirming — see
+        # ``SessionCommand.rename``. Without a row it used to report
+        # success having renamed nothing.
+        session.persistence.get_name = AsyncMock(return_value="My Session")
         handler = CommandHandler(session)
         result = await handler.handle("/rename My Session")
         assert isinstance(result, CommandResult)
+        assert result.kind != "error", result.content
+
+    @pytest.mark.asyncio
+    async def test_rename_reports_failure_when_nothing_was_stored(self):
+        """A session has no row until its first run, so this is the
+        state every freshly-opened app is in."""
+        session = _make_session()
+        session.persistence.rename = AsyncMock(return_value=PersistResult(ok=True))
+        session.persistence.get_name = AsyncMock(return_value="")
+        handler = CommandHandler(session)
+
+        result = await handler.handle("/rename My Session")
+
+        assert result.kind == "error"
+        assert "first message" in result.content
 
 
 class TestScheduleEdgeCases:

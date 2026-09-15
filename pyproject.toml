@@ -60,7 +60,11 @@ dependencies = [
     "tiktoken~=0.13.0",
     "ripgrep~=15.1.0",
     "beautifulsoup4~=4.15.0",
-    "pypdf~=6.13.0",
+    # ``~=6.16`` not ``~=6.16.1``: the tighter form caps the next patch and
+    # this pin has now capped a security fix twice — PYSEC-2026-3910/3911
+    # need 6.16.1 and 3913 needs 6.16.0, all of them out of reach of
+    # ``~=6.15.0``.
+    "pypdf~=6.16",
     "python-docx~=1.2.0",
     "python-pptx~=1.0.2",
     "openpyxl~=3.1.5",
@@ -69,7 +73,6 @@ dependencies = [
     "arxiv~=4.0.0",
     "wikipedia~=1.4.0",
     "dateparser~=1.4.0",
-    "chromadb~=1.5.9",
     "sentence-transformers~=5.5.1",
     "websockets~=16.0",
     "neo4j~=5.27.0",
@@ -90,7 +93,7 @@ dev = [
     "python-dotenv~=1.2.2",
 ]
 mcp = [
-    "mcp~=1.26.0",
+    "mcp~=1.28.1",
 ]
 gemini = [
     "google-genai~=2.8.0",
@@ -108,6 +111,26 @@ igni = "ember_code.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ember_code"]
+
+# The sdist otherwise includes everything git does not ignore, which
+# makes a release build depend on how tidy the working tree happens to
+# be. A stray virtualenv is the concrete failure: its `bin/python` is an
+# absolute symlink, and tarfile refuses it, so `python -m build` dies
+# rather than shipping something wrong.
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "/.venv*",
+  "/.git",
+  "/clients",
+  "/evals",
+  "/scripts",
+  "/docs",
+  "/.github",
+  "/.pytest_cache",
+  "/.mypy_cache",
+  "/.ruff_cache",
+  "**/__pycache__",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -144,3 +167,17 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
 disable_error_code = ["union-attr", "annotation-unchecked", "arg-type", "return-value", "attr-defined", "import-untyped", "call-arg", "override"]
+
+# numpy 2.5 writes ``type X = ...`` in its own stubs, which mypy refuses to
+# parse while ``python_version`` is 3.11. It does not report it as one
+# skipped dependency either — it aborts with "errors prevented further
+# checking", so the whole run checked **zero files** and still exited
+# non-zero for a reason that named numpy, not this project.
+#
+# Skipping numpy's stubs keeps the 3.11 floor above honest. Raising
+# ``python_version`` instead would silently stop checking the 3.11
+# compatibility the package still claims to support.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true

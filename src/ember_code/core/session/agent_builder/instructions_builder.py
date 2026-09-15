@@ -18,6 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.utils.context import (
     ProjectMemoryBank,
     load_project_context,
@@ -55,18 +56,18 @@ class InstructionsBuilder:
         self._codeindex_available = codeindex_available
 
     def append_project_instructions(self, out: list[str]) -> None:
-        """Append the ember.md / CLAUDE.md project instructions."""
+        """Append the igni.md / CLAUDE.md project instructions."""
         if self._project_instructions:
             out.append(f"Project instructions:\n{self._project_instructions}")
 
     def append_todo(self, out: list[str]) -> None:
-        """Append ``.ember/TODO.md`` if present (root only)."""
-        todo_path = self._project_dir / ".ember" / "TODO.md"
+        """Append ``.igni/TODO.md`` if present (root only)."""
+        todo_path = self._project_dir / CONFIG_DIR / "TODO.md"
         if not todo_path.is_file():
             return
         content = todo_path.read_text().strip()
         if content:
-            out.append(f"Active TODO (.ember/TODO.md):\n{content}")
+            out.append(f"Active TODO ({CONFIG_DIR}/TODO.md):\n{content}")
 
     def append_workspace_context(self, out: list[str]) -> None:
         """Append the multi-workspace context blocks.

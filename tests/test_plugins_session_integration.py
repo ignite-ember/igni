@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ember_code.core.config.settings import Settings
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.session.core import Session
 
 # ── Helpers ─────────────────────────────────────────────────────────
@@ -51,7 +52,7 @@ def _write_plugin(
 
 
 def _session_under_test(tmp_path: Path):
-    """Spin up a real Session against tmp_path's home/.ember roots,
+    """Spin up a real Session against tmp_path's home/.igni roots,
     with all the heavy deps mocked **except SkillPool and AgentPool**
     (which we need to be real so plugin contents actually land).
 
@@ -96,10 +97,10 @@ def _stop_patches(patches) -> None:
 
 
 def test_session_discovers_plugins_on_init(tmp_path: Path) -> None:
-    """A plugin under ``~/.ember/plugins/`` is discovered by the
+    """A plugin under ``~/.igni/plugins/`` is discovered by the
     ``PluginLoader`` instance owned by the Session. The list is
     populated synchronously during ``__init__`` — no lazy fetch."""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin(user_ember, "alpha")
 
     session, patches = _session_under_test(tmp_path)
@@ -111,13 +112,13 @@ def test_session_discovers_plugins_on_init(tmp_path: Path) -> None:
 
 
 def test_session_loads_plugin_state(tmp_path: Path) -> None:
-    """The Session reads ``~/.ember/plugins.json`` at start so
+    """The Session reads ``~/.igni/plugins.json`` at start so
     ``_disabled_plugins`` honors prior user toggles immediately —
     no race window where a disabled plugin's contents would briefly
     activate."""
     from ember_code.core.plugins.state import PluginsState, save_state
 
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin(user_ember, "alpha")
     save_state(
         PluginsState(disabled=["alpha"]),
@@ -136,7 +137,7 @@ def test_session_plugin_skills_land_in_skill_pool(tmp_path: Path) -> None:
     """End-to-end: plugin with ``skills/demo/SKILL.md`` shows up in
     ``session.skill_pool`` with the ``<plugin>:`` prefix. No manual
     apply call from the test."""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin(user_ember, "alpha", with_skill=True)
 
     session, patches = _session_under_test(tmp_path)
@@ -148,7 +149,7 @@ def test_session_plugin_skills_land_in_skill_pool(tmp_path: Path) -> None:
 
 
 def test_session_plugin_agents_land_in_agent_pool(tmp_path: Path) -> None:
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin(user_ember, "alpha", with_agent=True)
 
     session, patches = _session_under_test(tmp_path)
@@ -166,7 +167,7 @@ def test_session_disabled_plugin_contents_are_skipped(tmp_path: Path) -> None:
     <name>`` — the next session start sees a clean pool."""
     from ember_code.core.plugins.state import PluginsState, save_state
 
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin(user_ember, "alpha", with_skill=True, with_agent=True)
     save_state(
         PluginsState(disabled=["alpha"]),

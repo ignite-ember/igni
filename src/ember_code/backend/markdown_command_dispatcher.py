@@ -64,7 +64,7 @@ class DiscoverMarkdownCommands(Protocol):
 
 class MarkdownCommandDispatcher:
     """Match a slash-command name against markdown-authored commands
-    under ``.ember/commands/`` (and ``.claude/commands/`` when
+    under ``.igni/commands/`` (and ``.claude/commands/`` when
     cross-tool support is on) and render the body to a prompt.
 
     :meth:`try_render` returns ``None`` to signal "not a markdown
@@ -107,6 +107,7 @@ class MarkdownCommandDispatcher:
             commands = self._discover(
                 self._session.project_dir,
                 read_claude=read_claude,
+                group_dir=self._session.group_root("commands"),
             )
         except Exception as exc:  # noqa: BLE001
             logger.debug("Markdown command discovery failed: %s", exc)

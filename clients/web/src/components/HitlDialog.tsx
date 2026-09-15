@@ -132,7 +132,15 @@ export function HitlDialog({
             </span>
           )}
         </div>
-        {req.agent_path && <div className="dialog-sub">{req.agent_path}</div>}
+        {/* Labelled, not bare. On a single-agent run this rendered as
+            the word "main" floating under the heading, which reads as
+            debris; on a team run the path is the point — a sub-agent
+            the user never saw is asking to run something. F136. */}
+        {req.agent_path && (
+          <div className="dialog-sub">
+            Requested by <span className="hitl-agent-path">{req.agent_path}</span>
+          </div>
+        )}
         {req.details && <div className="dialog-sub">{req.details}</div>}
         <HitlArgsView args={req.tool_args as Record<string, unknown> | undefined} />
         {/* Action rows are indented to align with col-2 of the

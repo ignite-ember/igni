@@ -80,6 +80,30 @@ class UpsertItemOp(BaseModel):
     line_from: int | None = None
     line_to: int | None = None
 
+    # Counted failure-handling facts from extraction. Numbers, not prose, so a
+    # query can rank and join on them — an evaluation against ripgrep found the
+    # index wins on facts and loses on summaries.
+    # Counted structural facts — see the schema description for which item
+    # types carry which property, and why these exist as numbers.
+    fan_in: int | None = None
+    fan_out: int | None = None
+    test_refs: int | None = None
+    importer_count: int | None = None
+    test_importer_count: int | None = None
+    method_count: int | None = None
+    subproject: str | None = None
+    sink_hits: int | None = None
+    is_callable: bool | None = None
+    is_type: bool | None = None
+    sink_kinds: list[str] = Field(default_factory=list)
+    sink_lines: list[int] = Field(default_factory=list)
+    source: str | None = None
+    member_count: int | None = None
+    error_handlers: int | None = None
+    empty_handlers: int | None = None
+    broad_handlers: int | None = None
+    swallow_lines: list[int] = Field(default_factory=list)
+
     # Code vs docs — the only place that distinction lives. Nullable
     # because folder ops legitimately omit it.
     kind: Literal["code", "docs"] | None = None
@@ -169,6 +193,29 @@ class UpsertItemOp(BaseModel):
             stability=self.stability,
             priority=self.priority,
             needs_refactoring=self.needs_refactoring,
+            # Counted facts. Listed here because this mapping is explicit rather
+            # than a ``model_dump()``, so a field added to the op alone is parsed
+            # off the wire and then dropped one line later — which is precisely
+            # what happened, and it surfaced as a graph whose ``fan_in`` was 0 on
+            # every item while the changeset that built it carried real numbers.
+            fan_in=self.fan_in,
+            fan_out=self.fan_out,
+            test_refs=self.test_refs,
+            importer_count=self.importer_count,
+            test_importer_count=self.test_importer_count,
+            method_count=self.method_count,
+            subproject=self.subproject,
+            sink_hits=self.sink_hits,
+            is_callable=self.is_callable,
+            is_type=self.is_type,
+            sink_kinds=self.sink_kinds,
+            sink_lines=self.sink_lines,
+            source=self.source,
+            member_count=self.member_count,
+            error_handlers=self.error_handlers,
+            empty_handlers=self.empty_handlers,
+            broad_handlers=self.broad_handlers,
+            swallow_lines=self.swallow_lines,
             vulnerabilities=self.vulnerabilities,
             frameworks=self.frameworks,
             domain=self.domain,

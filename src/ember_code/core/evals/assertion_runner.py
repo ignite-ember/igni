@@ -203,6 +203,13 @@ class AccuracyDriver(AssertionDriver):
                 return CheckResult(ok=False, detail="accuracy eval returned None")
             score = result.avg_score
             threshold = ctx.case.accuracy_threshold
+            # ``avg_score`` is ``float | None`` — an eval that produced no
+            # scored iterations leaves it unset, and ``None >= threshold``
+            # is a TypeError, not a failed assertion. Reported the same way
+            # as the ``result is None`` case just above rather than crashing
+            # the run that was measuring something else.
+            if score is None:
+                return CheckResult(ok=False, detail="accuracy eval returned no score")
             passed = score >= threshold
             # Concat per-iteration reasons. Usually 1 iter, but support all.
             reasons: list[str] = []

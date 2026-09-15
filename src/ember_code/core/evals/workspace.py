@@ -112,9 +112,9 @@ class EvalWorkspace:
         ``target`` paths are interpreted relative to the temp dir.
         ``source`` is resolved relative to :attr:`_fixtures_root`
         (e.g. ``evals/fixtures/`` for committed datasets, or
-        ``.ember/evals/`` for user-authored ones).
+        ``.igni/evals/`` for user-authored ones).
         """
-        work_dir = Path(tempfile.mkdtemp(prefix="ember-eval-"))
+        work_dir = Path(tempfile.mkdtemp(prefix="igni-eval-"))
         if not self._fixtures:
             return work_dir
 

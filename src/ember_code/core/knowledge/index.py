@@ -37,6 +37,7 @@ from ember_code.core.knowledge.models import (
     KnowledgeIndexEntry,
     KnowledgeSearchResult,
 )
+from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ class KnowledgeIndex:
 
     Args:
         project: project directory (used to derive the on-disk path).
-        data_dir: ember root, defaults to ``~/.ember``.
+        data_dir: ember root, defaults to ``~/.igni``.
         chunker: how to split inline content for ``add(...)``. Default
             ``NewlinePreservingChunker(chunk_size=550, overlap=75)`` —
             sized so chunks stay under the 256-token window of our
@@ -62,7 +63,7 @@ class KnowledgeIndex:
         self,
         *,
         project: str | Path,
-        data_dir: str | Path = "~/.ember",
+        data_dir: str | Path = DEFAULT_DATA_DIR,
         chunker: ChunkingStrategy | None = None,
         neo4j_client: Any,
         embedder: Any | None = None,

@@ -13,7 +13,7 @@ into the per-case ``work_dir`` but before any case runs. We:
    freshly-minted HEAD. The quality / category data doesn't depend
    on the SHA, so this is safe.
 4. ``apply_delta`` the rewritten JSONL — populates chroma + the
-   reference SQLite under ``~/.ember/projects/<derived>/``. The
+   reference SQLite under ``~/.igni/projects/<derived>/``. The
    agent's Session, when it starts in ``work_dir``, will derive the
    same project_id and find the populated index.
 
@@ -40,7 +40,7 @@ SNAPSHOT_RELATIVE_PATH = "evals/fixtures/codeindex_repo.snapshot.jsonl"
 async def setup(work_dir: Path, project_dir: Path) -> None:
     """Initialize git + apply the JSONL snapshot to populate the local index.
 
-    When ``EMBER_EVAL_NO_CODEINDEX=1`` is set, we still git-init the
+    When ``IGNI_EVAL_NO_CODEINDEX=1`` is set, we still git-init the
     work_dir (Session needs a real HEAD to construct
     ``CodeIndexSyncManager``) but skip the apply_delta step. Without a
     populated chroma dir, the tool gate in
@@ -61,9 +61,9 @@ async def setup(work_dir: Path, project_dir: Path) -> None:
     # Bail before chroma if the comparison run wants no codeindex.
     import os
 
-    if os.environ.get('EMBER_EVAL_NO_CODEINDEX') == '1':
+    if os.environ.get('IGNI_EVAL_NO_CODEINDEX') == '1':
         logger.info(
-            "codeindex eval setup: SKIPPING JSONL apply (EMBER_EVAL_NO_CODEINDEX=1) — "
+            "codeindex eval setup: SKIPPING JSONL apply (IGNI_EVAL_NO_CODEINDEX=1) — "
             "agent will fall back to shell/grep. HEAD=%s",
             head_sha[:8],
         )
@@ -74,7 +74,7 @@ async def setup(work_dir: Path, project_dir: Path) -> None:
     _rewrite_commit_sha(snapshot_path, rewritten_jsonl, head_sha)
 
     # 3. Apply the changeset to chroma + SQLite. Uses the same
-    #    ``~/.ember`` data_dir the agent's Session will read from.
+    #    ``~/.igni`` data_dir the agent's Session will read from.
     from ember_code.core.code_index.index import CodeIndex
 
     index = CodeIndex(project=work_dir)

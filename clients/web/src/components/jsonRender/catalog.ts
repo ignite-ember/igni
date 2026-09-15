@@ -458,4 +458,4 @@ export const catalog = reactSchema.createCatalog({
   },
 });
 
-export type EmberSpec = (typeof catalog)["_specType"];
+export type IgniSpec = (typeof catalog)["_specType"];

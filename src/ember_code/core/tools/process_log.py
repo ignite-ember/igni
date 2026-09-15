@@ -7,7 +7,7 @@ process survived) can't reach it.
 
 This module gives backgrounded processes a durable companion: a
 single tail-able log file per pid under
-``<project_dir>/.ember/process_logs/<pid>.log``. The reader task
+``<project_dir>/.igni/process_logs/<pid>.log``. The reader task
 appends each decoded line to the file alongside the in-memory
 buffer; :meth:`~ember_code.core.tools.orphan_process.OrphanProcess.read`
 reads from the file when the in-memory buffer is gone.
@@ -57,6 +57,8 @@ import os
 import tempfile
 from pathlib import Path
 
+from ember_code.core.paths import CONFIG_DIR
+
 logger = logging.getLogger(__name__)
 
 
@@ -90,7 +92,7 @@ class ProcessLogStore:
         self._project_dir = project_dir
 
     def path(self, pid: int) -> Path:
-        """Return ``<project_dir>/.ember/process_logs/<pid>.log``.
+        """Return ``<project_dir>/.igni/process_logs/<pid>.log``.
 
         Falls back to ``$TMPDIR/ember-process-logs/<pid>.log`` when
         no ``project_dir`` was supplied — keeps the writer
@@ -100,7 +102,7 @@ class ProcessLogStore:
         if self._project_dir is None:
             root = Path(tempfile.gettempdir()) / "ember-process-logs"
         else:
-            root = Path(str(self._project_dir)) / ".ember" / "process_logs"
+            root = Path(str(self._project_dir)) / CONFIG_DIR / "process_logs"
         return root / f"{int(pid)}.log"
 
     def open(self, pid: int) -> io.TextIOBase | None:

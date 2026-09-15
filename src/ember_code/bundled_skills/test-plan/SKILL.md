@@ -16,13 +16,13 @@ Generate a structured test plan for `$ARGUMENTS`.
    - A feature description — identify boundaries, inputs, outputs, and dependencies
    - A directory — scan for key modules and their interactions
 
-2. **Read project testing conventions.** Check for `ember.md`, `conftest.py`, `jest.config.*`, `vitest.config.*`, `pytest.ini`, or `pyproject.toml [tool.pytest]`. Understand:
+2. **Read project testing conventions.** Check for `igni.md`, `conftest.py`, `jest.config.*`, `vitest.config.*`, `pytest.ini`, or `pyproject.toml [tool.pytest]`. Understand:
    - Test framework in use
    - Naming conventions (test files, test functions)
    - Fixture/factory patterns
    - Test directory structure
 
-3. **Find existing test patterns.** Use `Glob` to find test files. Read 2-3 to understand the project's test style: assertion style, mocking approach, setup/teardown patterns.
+3. **Find existing test patterns.** Use `rg --files -g` to find test files. Read 2-3 to understand the project's test style: assertion style, mocking approach, setup/teardown patterns.
 
 ## Generate the Test Plan
 

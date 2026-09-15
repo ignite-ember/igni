@@ -400,7 +400,8 @@
       "source_path",
       "system_prompt",
       "tags",
-      "tools"
+      "tools",
+      "unknown_tools"
     ],
     "loop_status": [
       "active",

@@ -30,6 +30,7 @@ from ember_code.core.agents.schemas import (
     LoadError,
     LoadReport,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 if TYPE_CHECKING:
     from ember_code.core.config.settings import Settings
@@ -55,31 +56,44 @@ class AgentDefinitionLoader:
         project_dir: Path,
         codeindex_available: bool,
         restriction_policy: PluginRestrictionPolicy | None = None,
-        group_agents_dir: Path | None = None,
+        group_dir: Path | None = None,
     ) -> None:
         self._settings = settings
         self._project_dir = project_dir
         self._codeindex_available = codeindex_available
         self._policy = restriction_policy
-        self._group_agents_dir = group_agents_dir
+        self._group_dir = group_dir
 
     def load(self) -> LoadReport:
         """Scan the five standard roots and return an aggregated
         :class:`LoadReport`.
 
         Roots are hit in priority order; higher-priority entries
-        upsert lower-priority ones with the same name."""
+        upsert lower-priority ones with the same name.
+
+        A group's agents are a root of their own, read straight from the
+        policy cache and ranked above the user's globals but below
+        anything the project declares. So an org sets the baseline and a
+        repository can override one agent by name without being given a
+        copy of the whole set.
+
+        They used to be copied into ``<project>/.igni/agents`` instead,
+        which is what made "the local one wins" true — there was only
+        one file. Reading the cache directly gets the same outcome from
+        ordering, and leaves nothing of the server's in the repository.
+        """
         settings = self._settings
         project_dir = self._project_dir
 
         dirs: list[tuple[Path, AgentPriority]] = [
-            (Path.home() / ".ember" / "agents", AgentPriority.USER_EMBER),
-            (project_dir / ".ember" / "agents.local", AgentPriority.PROJECT_LOCAL),
-            (project_dir / ".ember" / "agents", AgentPriority.PROJECT_EMBER),
+            (Path.home() / CONFIG_DIR / "agents", AgentPriority.USER_EMBER),
         ]
-
-        if self._group_agents_dir is not None:
-            dirs.append((self._group_agents_dir, AgentPriority.ORG_GROUP))
+        if self._group_dir is not None:
+            dirs.append((self._group_dir, AgentPriority.ORG_GROUP))
+        dirs += [
+            (project_dir / CONFIG_DIR / "agents.local", AgentPriority.PROJECT_LOCAL),
+            (project_dir / CONFIG_DIR / "agents", AgentPriority.PROJECT_EMBER),
+        ]
 
         if settings.agents.cross_tool_support:
             dirs.append((project_dir / ".claude" / "agents", AgentPriority.PROJECT_CLAUDE))

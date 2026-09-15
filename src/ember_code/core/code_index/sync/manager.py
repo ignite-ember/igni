@@ -52,6 +52,7 @@ from ember_code.core.code_index.sync.schemas import (
     SyncProgressSnapshot,
     SyncResult,
 )
+from ember_code.core.config.endpoint import is_configured
 
 if TYPE_CHECKING:
     # ``CodeIndexActivityEntry`` is a wire-name alias for
@@ -254,9 +255,21 @@ class CodeIndexSyncManager:
             self._last_synced_sha = target_sha
             return SyncResult.already_indexed(target_sha)
 
+        # DEC-14: before anything that needs the server. The resolver
+        # would otherwise build a request against an empty base and fail
+        # as a URL parse error, and ``not_authenticated`` below would
+        # send somebody to a login flow with no server to talk to.
+        if not is_configured(self.server_url):
+            return SyncResult.no_server_configured()
+
         resolved = await self.resolver.resolve()
         if resolved is None:
             return SyncResult.resolver_unavailable()
+
+        if resolved.access_denied:
+            return SyncResult.access_denied(
+                resolved.denial_message or "You do not have access to this repository."
+            )
 
         if resolved.needs_install:
             return SyncResult.needs_install(target_sha, resolved.install_url)
@@ -289,7 +302,15 @@ class CodeIndexSyncManager:
             pf=pf, target_sha=target_sha, force_snapshot=force_snapshot
         )
 
-        file_refs = self.code_index.file_reference_service()
+        # When a Neo4j runtime is attached, the file_reference_service needs
+        # the commit_sha to route to the right per-commit client. Prime the
+        # runtime for this commit first (spawns the subprocess if needed),
+        # then construct the reference service scoped to it. Legacy Chroma
+        # path ignores the commit_sha arg — same call works for both backends.
+        runtime = self.code_index._neo4j_runtime  # noqa: SLF001 — internal wiring
+        if runtime is not None:
+            await runtime.start_for_commit(self.code_index.project_id, target_sha)
+        file_refs = self.code_index.file_reference_service(commit_sha=target_sha)
         with self._apply_progress.active_scope():
             try:
                 if use_snapshot:

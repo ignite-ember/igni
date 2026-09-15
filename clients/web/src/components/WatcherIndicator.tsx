@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { EmberClient } from "../protocol/client";
+import type { IgniClient } from "../protocol/client";
 import type { ServerMessage } from "../protocol/messages";
 
 /** Footer pill that mirrors the running-background-process
@@ -25,7 +25,7 @@ export function WatcherIndicator({
   client,
   onOpen,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   onOpen: () => void;
 }) {
   // We track live pids (not just a counter) so increment/decrement

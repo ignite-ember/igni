@@ -1,7 +1,7 @@
 """Typed registry entry for the model registry.
 
 Owns API-key resolution (see :meth:`ModelRegistryEntry.resolve_api_key`)
-and Ember Cloud-gateway detection (see
+and igni cloud-gateway detection (see
 :meth:`ModelRegistryEntry.matches_cloud_gateway`). Both live as Pydantic
 methods on the model — the entry IS the subject, so the behavior rides
 with the data instead of in a free helper taking the entry-as-dict.
@@ -21,6 +21,8 @@ import subprocess
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict
+
+from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +113,38 @@ class ModelRegistryEntry(BaseModel):
         if self.matches_cloud_gateway():
             return cloud_token
         return None
+
+    def why_no_api_key(self) -> str:
+        """One sentence naming what was tried and what to do.
+
+        Exists because the alternative is a provider's own
+        authentication error on the first call, phrased in their terms
+        and arriving nowhere near the cause. This is the sentence that
+        gets logged instead — and it matters more now that a project's
+        config can name a provider whose key is meant to live in the
+        home directory, so a teammate who has not set theirs up hits
+        this rather than a missing model.
+        """
+        tried: list[str] = []
+        if self.api_key_env:
+            tried.append(f"the environment variable {self.api_key_env!r} (unset or empty)")
+        if self.api_key_cmd:
+            tried.append(f"the command {self.api_key_cmd!r} (failed or returned nothing)")
+        if self.matches_cloud_gateway():
+            tried.append("the igni cloud token (not signed in)")
+
+        if tried:
+            return f"No API key for {self.model_id!r}: tried " + ", and ".join(tried) + "."
+        return (
+            f"No API key for {self.model_id!r}, and nothing was configured to find one. "
+            # The ``f`` does not carry across an implicit concatenation, so this
+            # part printed a literal ``{DEFAULT_DATA_DIR}`` to whoever hit it —
+            # an instruction naming a path they cannot find. Same class as the
+            # twelve placeholders the .igni rename left behind.
+            f"Add `api_key` for it in {DEFAULT_DATA_DIR}/config.yaml — or `api_key_env` / "
+            "`api_key_cmd` in the project's config, which name a secret rather "
+            "than containing one and are safe to commit."
+        )
 
     def _api_key_from_env(self) -> str | None:
         if not self.api_key_env:

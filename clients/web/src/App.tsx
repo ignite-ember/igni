@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  lastItemId,
   applyEvent,
   applyOrchestrateEvent,
   assistantItem,
@@ -59,6 +60,7 @@ import { ChatItemView } from "./components/ChatItems";
 import { ChatSearchBar } from "./components/ChatSearchBar";
 import { Composer, type SlashCommand } from "./components/Composer";
 import { CodeIndexIndicator } from "./components/CodeIndexIndicator";
+import { GroupIndicator } from "./components/GroupIndicator";
 import { WatcherIndicator } from "./components/WatcherIndicator";
 import {
   BackendVersionChip,
@@ -84,6 +86,7 @@ import { HooksPanel } from "./components/panels/HooksPanel";
 import { KnowledgePanel } from "./components/panels/KnowledgePanel";
 import { Toasts, type Toast } from "./components/Toasts";
 import { UpdatePrompt } from "./components/UpdatePrompt";
+import { RetryBanner } from "./components/RetryBanner";
 import { host } from "./lib/host";
 import { applyTheme, brandMark, brandName } from "./lib/theme";
 import { PluginsPanel } from "./components/panels/PluginsPanel";
@@ -94,16 +97,9 @@ import { LoopPanel } from "./components/panels/LoopPanel";
 import { McpPanel } from "./components/panels/McpPanel";
 import { WatcherPanel } from "./components/panels/WatcherPanel";
 import { SchedulePanel } from "./components/panels/SchedulePanel";
-import {
-  EmberClient,
-  pickNativeDirectory,
-  type ConnectionState,
-} from "./protocol/client";
-import type {
-  HITLRequest,
-  ServerMessage,
-  StatusUpdate,
-} from "./protocol/messages";
+import { IgniClient, pickNativeDirectory, type ConnectionState } from "./protocol/client";
+import type { HITLRequest, ServerMessage, StatusUpdate } from "./protocol/messages";
+import { countOf } from "./lib/plural";
 
 /**
  * The things that are dialogs.
@@ -217,7 +213,7 @@ function formatPlanName(tier: string): string {
 }
 
 export default function App() {
-  const client = useMemo(() => new EmberClient(), []);
+  const client = useMemo(() => new IgniClient(), []);
   const [conn, setConn] = useState<ConnectionState>("connecting");
   const [items, setItems] = useState<ChatItem[]>([]);
   // Mirror of ``items`` for callbacks whose deps don't include
@@ -918,7 +914,9 @@ export default function App() {
           }
           loaded.push(
             infoItem(
-              `${pending.length} message(s) above were interrupted before completion — the agent knows and can pick up where it left off.`,
+              `${countOf(pending.length, "message")} above ${
+                pending.length === 1 ? "was" : "were"
+              } interrupted before completion — the agent knows and can pick up where it left off.`,
             ),
           );
         }
@@ -1391,6 +1389,22 @@ export default function App() {
               : "Agent entered plan mode.";
             append(infoItem(text));
           }
+        } else if (m.channel === "http_retry_attempt") {
+          // HTTP request is being retried. Dispatch a window event
+          // so the RetryBanner can listen and display progress.
+          const payload = m.payload as { attempt?: number; delay_seconds?: number; url?: string };
+          window.dispatchEvent(
+            new CustomEvent("ember:http_retry_attempt", {
+              detail: {
+                attempt: payload.attempt,
+                delay_seconds: payload.delay_seconds,
+                url: payload.url,
+              },
+            }),
+          );
+        } else if (m.channel === "http_retry_succeeded") {
+          // HTTP request succeeded after retries. Dismiss the banner.
+          window.dispatchEvent(new Event("ember:http_retry_succeeded"));
         } else if (m.channel === "plan_submitted") {
           // Agent called ``exit_plan_mode(plan, tasks=[...])``.
           // Append a ``plan`` ChatItem so the user sees the
@@ -2211,6 +2225,71 @@ export default function App() {
         return;
       }
       if (echo) append(userItem(text));
+      /** Move the composer draft from a retired session id onto its
+       *  replacement.
+       *
+       *  ``/clear`` and ``/fork`` rotate the session id one RPC round
+       *  trip after the click, and the Composer hydrates its draft
+       *  from ``draft:<sessionId>`` whenever that key changes. So
+       *  anything typed in that window was blanked: the user hit
+       *  "+ New chat", typed, and watched the composer empty itself.
+       *
+       *  It read worst with ``@``. Typing ``@`` opens the file picker
+       *  and leaves the ``@`` in the editor for the mention parser to
+       *  find; the rotation removed it, so the menu stayed on screen
+       *  and every keystroke after it went to a parser that could no
+       *  longer see an ``@`` — a picker that lists 42 files, filters
+       *  to none, and sends your query to the model as chat. It looks
+       *  like @-mentions are broken. They are not: the ``@`` was
+       *  taken out from under them.
+       *
+       *  Carrying the draft is the fix rather than not-clearing,
+       *  because a genuine session switch *should* swap the draft —
+       *  that is the feature — and text following you into an
+       *  unrelated conversation is its own hazard. */
+      const carryDraft = (from: string, to: string) => {
+        if (!from || !to || from === to) return;
+        const draft = clientState.get(`draft:${from}`);
+        if (!draft) return;
+        clientState.set(`draft:${to}`, draft);
+        clientState.delete(`draft:${from}`);
+      };
+      // ── The window between issuing a view-clearing command and its
+      // answer coming back ────────────────────────────────────────────
+      //
+      // `/clear` and `/fork` empty the transcript when the *response*
+      // arrives, which is one round trip after the click. A message
+      // the user sent inside that window was destroyed twice over:
+      // `setItems([])` threw away the bubble that had just been
+      // appended, and `viewGenRef.current++` invalidated the run that
+      // had just started, so its reply was dropped too. The composer
+      // emptied — proof the submit ran — and absolutely nothing
+      // appeared. No bubble, no answer, no error. Measured on roughly
+      // one attempt in four; a wait of a few seconds always worked,
+      // which is what made it look like flakiness in the tests rather
+      // than a defect in the app.
+      //
+      // Two fixes, one per half.
+      //
+      // `itemBoundary` is the highest item id at *issue* time.
+      // Everything above it was added afterwards and is not what the
+      // user asked to clear, so the clear filters rather than empties.
+      //
+      // The generation bumps at issue time too, instead of on the
+      // response. That is the correct moment anyway: the view changes
+      // when the user asks for a new one. Runs already streaming
+      // captured the old generation and are still dropped, which is
+      // what the counter is for; a run started after the click
+      // captures the new one and survives.
+      //
+      // Recognised from the text because the action is only known once
+      // the backend answers, and by then the window has closed. The
+      // `case` branches still bump if the text did not say so — a
+      // skill that expands to a clear server-side keeps the old
+      // behaviour rather than none.
+      const clearsTheView = /^\/(clear|fork)\b/.test(text.trim());
+      const itemBoundary = lastItemId();
+      if (clearsTheView) viewGenRef.current++;
       try {
         const result = await client.handleCommand(text);
         if (result.type !== "command_result") {
@@ -2220,18 +2299,21 @@ export default function App() {
         const content = result.display_content || result.content;
         switch (result.action) {
           case "clear": {
-            viewGenRef.current++;
-            setItems([]);
+            if (!clearsTheView) viewGenRef.current++;
+            // Keep whatever the user added while this was in flight.
+            setItems((prev) => prev.filter((it) => it.id > itemBoundary));
             setHistoryIndexToItemIndex([]);
             // The session id rotated and the new conversation has 0
             // context; pull a fresh StatusUpdate so the footer
             // doesn't keep showing the prior session's count.
             void refreshStatus();
             let renewed = "";
+            const retiring = client.sessionId;
             try {
               // /clear renews the runtime's session id — rebind so
               // this view follows the fresh conversation.
               renewed = await client.rpc<string>("get_session_id");
+              carryDraft(retiring, renewed);
               client.sessionId = renewed;
               clientState.set(SESSION_KEY, renewed);
               setSessionId(renewed);
@@ -2273,15 +2355,21 @@ export default function App() {
             // Same dance as ``/clear`` but we also rehydrate the
             // cloned history so the fork opens with the same context
             // the user just left in the source session.
-            viewGenRef.current++;
-            setItems([]);
+            if (!clearsTheView) viewGenRef.current++;
+            // Same window as `/clear`. The survivors are re-appended
+            // after the fork's history loads below, so they sit at the
+            // end of the cloned conversation where they were typed.
+            setItems((prev) => prev.filter((it) => it.id > itemBoundary));
             setHistoryIndexToItemIndex([]);
+            carryDraft(client.sessionId, newId);
             client.sessionId = newId;
             clientState.set(SESSION_KEY, newId);
             setSessionId(newId);
             try {
               const loaded = await fetchHistoryItems(newId);
-              setItems(loaded.items);
+              // `prev` is only the survivors — the filter above ran
+              // before the history fetch minted any ids.
+              setItems((prev) => [...loaded.items, ...prev]);
               setHistoryIndexToItemIndex(loaded.historyMap);
             } catch (e) {
               append(
@@ -2832,6 +2920,10 @@ export default function App() {
           />
         )}
         <div className="conversation-frame">
+          {/* See `.sr-only` in theme.css: the level message content
+              sits under, so a heading the model wrote cannot skip from
+              the page down to an h3. F138. */}
+          <h2 className="sr-only">Conversation</h2>
           {items.length === 0 ? (
             <div className="conversation">
               <div className="col">
@@ -2877,6 +2969,7 @@ export default function App() {
                           "Workflows like /commit and /resolve-issues",
                         ],
                         ["/workflows", "Run a CC-style multi-phase workflow"],
+                        ["/codeindex", "Semantic search across your repo"],
                         ["/schedule", "Background tasks that report back"],
                         ["/loop", "Repeat a prompt across a batch until done"],
                         ["/mcp", "Plug in external tools and data sources"],
@@ -3231,6 +3324,7 @@ export default function App() {
                 client={client}
                 onOpen={() => goPage({ kind: "watcher", label: "Watcher" })}
               />
+              <GroupIndicator client={client} />
             </>
           )}
           {pendingUpdate && (
@@ -3254,6 +3348,7 @@ export default function App() {
         />
       )}
       <Toasts items={toasts} onDismiss={dismissToast} />
+      <RetryBanner />
       {showUpdateModal && pendingUpdate && (
         <UpdatePrompt
           info={pendingUpdate}

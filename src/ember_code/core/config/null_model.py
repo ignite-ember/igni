@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from agno.models.openai.like import OpenAILike
 
+from ember_code.core.paths import DEFAULT_DATA_DIR
+
 
 class NoModelConfigured(OpenAILike):
     """Stand-in model returned when no real model resolves.
@@ -38,7 +40,7 @@ class NoModelConfigured(OpenAILike):
     ERROR_MESSAGE = (
         "No model configured. Run `/login` to discover hosted models from "
         "igni Cloud, or add a model to `models.registry` in "
-        "~/.ember/config.yaml."
+        f"{DEFAULT_DATA_DIR}/config.yaml."
     )
 
     def __init__(self):
@@ -47,6 +49,28 @@ class NoModelConfigured(OpenAILike):
             base_url="https://placeholder.invalid/v1",
             api_key="placeholder",
         )
+
+    STALE_DEFAULT_MESSAGE = (
+        "The configured default model {name!r} is not in `models.registry`. "
+        "Run `/login` to rediscover the models this deployment serves, or "
+        f"pick one with `/model`. Set in {DEFAULT_DATA_DIR}/config.yaml."
+    )
+
+    @classmethod
+    def for_stale_default(cls, name: str) -> NoModelConfigured:
+        """Factory for a default that names a model nobody registers.
+
+        Distinct from :meth:`for_login_required` because the remedy
+        differs and because this one is *reachable in production*: a
+        stored default is written by ``/model`` and by cloud discovery,
+        so removing a model from the deployment strands every developer
+        pinned to it. Until this existed that state raised during
+        ``Session.__init__`` and the backend died before it could say
+        anything at all.
+        """
+        placeholder = cls()
+        placeholder.ERROR_MESSAGE = cls.STALE_DEFAULT_MESSAGE.format(name=name)
+        return placeholder
 
     @classmethod
     def for_login_required(cls) -> NoModelConfigured:

@@ -5,7 +5,7 @@
 system Java (most Macs) that exits non-zero whether the extract is
 perfect or shredded, and a failed probe means "wipe and download
 again". Every backend start. The bug was invisible while
-``EMBER_NEO4J_RUNTIME`` kept the code from running at all; enabling
+``IGNI_NEO4J_RUNTIME`` kept the code from running at all; enabling
 knowledge by default is what put it in everyone's path.
 
 These tests never touch the network: the download is monkeypatched to

@@ -43,6 +43,12 @@ from ember_code.protocol import messages as msg
 
 logger = logging.getLogger(__name__)
 
+#: How long a new dialogue waits for the server before giving up and
+#: using the cached pack. Short on purpose: the point of the on-disk
+#: cache is that a session starts without the portal, and blocking
+#: startup on a slow network would undo it.
+_NEW_DIALOGUE_REVALIDATE_TIMEOUT = 3.0
+
 # Re-exported so ``from ember_code.backend.server_auth import CloudPlan``
 # keeps working (server.py TYPE_CHECKING import) — the canonical
 # definition now lives in ``schemas_rpc``.
@@ -113,7 +119,7 @@ class AuthController:
         # One :class:`CredentialsStore` per controller so the login
         # write + the :class:`CloudCredentials` read below share a
         # single path source (previously two independent free-function
-        # calls both defaulted to ``~/.ember/credentials.json``).
+        # calls both defaulted to ``~/.igni/credentials.json``).
         self._store = CredentialsStore(self._settings.auth.credentials_file)
         # Serializes concurrent :meth:`_hydrate_group_policy` calls so a
         # cold-start hook and a fresh login can't race on the same
@@ -133,13 +139,66 @@ class AuthController:
             existing_token = self._settings.auth.access_token
         except Exception:
             existing_token = None
+        #: The periodic re-check, if one is running.
+        self._poll_task: asyncio.Task | None = None
+
         if existing_token:
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 loop = None
             if loop is not None:
-                loop.create_task(self._hydrate_group_policy(existing_token))
+                loop.create_task(self._hydrate_group_policy(existing_token, force=True))
+                self.start_group_policy_polling()
+
+    def start_group_policy_polling(self) -> None:
+        """Re-check the group on a timer, if the deployment wants one.
+
+        A session used to learn its group once, at start: an admin who
+        moved somebody at nine reached a session opened at eight only
+        when it was restarted. Now it asks again every
+        ``settings.group_policy.poll_seconds``, and the ask is cheap —
+        the server answers 304 with no body when nothing has changed,
+        so the usual cost of a poll is a round trip and a hash
+        comparison.
+
+        Zero turns it off, for a deployment that would rather its
+        machines only check at startup.
+        """
+        interval = getattr(self._settings.group_policy, "poll_seconds", 0)
+        if interval <= 0 or self._poll_task is not None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._poll_task = loop.create_task(self._poll_group_policy(interval))
+
+    def stop_group_policy_polling(self) -> None:
+        """Cancel the timer. Idempotent; safe on a loop that has gone."""
+        if self._poll_task is not None:
+            self._poll_task.cancel()
+            self._poll_task = None
+
+    async def _poll_group_policy(self, interval: int) -> None:
+        """Ask again, forever, until cancelled.
+
+        Every failure mode here is a reason to keep going rather than
+        stop: a server restart, a laptop asleep, a token that expired
+        and will be replaced by the next login. A polling loop that
+        dies on the first error is worse than none, because nothing
+        says it stopped.
+        """
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                token = self._settings.auth.access_token
+                if token:
+                    await self._hydrate_group_policy(token)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — the loop outlives its errors
+                logger.debug("group-policy poll failed: %s", exc)
 
     async def login(self, on_status: StatusCallback = None) -> LoginResult:
         """Run the browser-callback login flow.
@@ -184,9 +243,12 @@ class AuthController:
             # Refresh the on-disk group policy pack with the freshly
             # issued token so admin-side overrides take effect
             # immediately on the next request rather than waiting for
-            # the 5-min TTL. Failures are non-fatal: the cold-start
+            # the 5-min TTL. ``force`` is what makes that true: without
+            # it the stale check returned early and a login inside the
+            # window did nothing, which is what this comment used to
+            # claim it avoided. Failures are non-fatal — the cold-start
             # hook already fires on every backend start-up.
-            await self._hydrate_group_policy(token)
+            await self._hydrate_group_policy(token, force=True)
 
             self.reload_cloud_credentials()
             return LoginResult(ok=True, email=email)
@@ -194,7 +256,7 @@ class AuthController:
         except Exception as exc:
             return LoginResult(ok=False, error=str(exc))
 
-    async def _hydrate_group_policy(self, token: str) -> bool:
+    async def _hydrate_group_policy(self, token: str, *, force: bool = False) -> bool:
         """Refresh the cached group policy pack if stale.
 
         Wraps ``GroupPolicyCache.refresh`` so this controller doesn't
@@ -237,21 +299,30 @@ class AuthController:
                 return False
             try:
                 # Cheap stale check first so we don't surface noise on
-                # every CLI invocation when the cache is fresh.
+                # every CLI invocation when the cache is fresh. Skipped
+                # when ``force`` is set — a login or a new dialogue
+                # should pick up an admin's change now, and the ETag
+                # makes an unchanged pack a 304 rather than a download.
                 from ember_code.core.config.group_policy import GroupPolicyCache
 
                 cache_dir = data_dir / "group-policy"
                 cache = GroupPolicyCache(cache_dir=cache_dir, data_dir=data_dir)
-                if not cache._is_stale():
+                if not force and not cache._is_stale():
                     return False
                 refreshed = await _refresh(
                     token,
                     fetch=self._portal.fetch_group_pack,
                     data_dir=data_dir,
                     installer=installer,
+                    force=force,
                 )
                 if refreshed:
                     await _emit("group policy pack refreshed")
+                    # An admin moving somebody between groups should
+                    # change what they have, not tell them to restart.
+                    with contextlib.suppress(Exception):
+                        if self._session.reload_group_agents():
+                            await _emit("group agents reloaded")
                 return bool(refreshed)
             except Exception as exc:
                 # Network blip, schema drift, or PortalClient bug — at
@@ -261,6 +332,39 @@ class AuthController:
                 with contextlib.suppress(Exception):
                     self._status_provider()
                 return False
+
+    async def revalidate_for_new_dialogue(self) -> bool:
+        """Ask the server whether the group changed, bounded by a timeout.
+
+        A new dialogue is the moment somebody should pick up an admin's
+        change, and it is rare enough to afford a round trip — unlike a
+        CLI invocation, which is what the 5-minute age check exists to
+        keep quiet. The ETag makes an unchanged pack a 304, so the usual
+        cost is one small request.
+
+        **Bounded on purpose.** A session that will not start because
+        the portal is slow is a worse failure than one running a
+        five-minute-old pack: the on-disk cache exists so sessions work
+        offline, and this must not undo that. On timeout the cached pack
+        stands and the background poller catches up.
+        """
+        token = self._settings.auth.access_token
+        if not token:
+            return False
+        try:
+            return await asyncio.wait_for(
+                self._hydrate_group_policy(token, force=True),
+                timeout=_NEW_DIALOGUE_REVALIDATE_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.info(
+                "group-policy revalidation timed out after %ss; using the cached pack",
+                _NEW_DIALOGUE_REVALIDATE_TIMEOUT,
+            )
+            return False
+        except Exception as exc:
+            logger.warning("group-policy revalidation failed: %s", exc)
+            return False
 
     def reload_cloud_credentials(self) -> msg.StatusUpdate:
         """Reload cloud credentials after login."""

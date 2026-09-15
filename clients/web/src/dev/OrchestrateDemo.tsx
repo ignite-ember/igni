@@ -1241,7 +1241,7 @@ const SCENARIOS: Scenario[] = [
           "added 482 packages in 12s",
           "$ npm run dev",
           "",
-          "> @ember-code/web-ui@0.1.0 dev",
+          "> @igni/web-ui@0.1.0 dev",
           "> vite",
           "",
           "  VITE v6.4.3  ready in 129 ms",
@@ -1652,6 +1652,12 @@ export function OrchestrateDemo() {
         <p className="demo-desc">{scenario.description}</p>
       </header>
       <main className="demo-stage">
+        {/* The level message content sits under. An assistant answer
+            can contain any markdown heading — the model writes them —
+            so without this, a `###` in an answer skips from the page's
+            h1 to an h3. Hidden, because the transcript does not need a
+            visible title. F138. */}
+        <h2 className="sr-only">Conversation</h2>
         <div className="col">
           {items.map((item) => (
             <ChatItemView

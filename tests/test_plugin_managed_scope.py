@@ -22,6 +22,7 @@ from unittest.mock import MagicMock
 from ember_code.backend import server as server_mod
 from ember_code.backend.server import BackendServer
 from ember_code.core.config.managed_policy import ManagedPolicySource
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.plugins import state as state_mod
 from ember_code.core.plugins.loader import PluginLoader, _platform_managed_plugins_root
 from ember_code.core.plugins.models import (
@@ -56,20 +57,20 @@ class TestPlatformManagedPluginsRoot:
         monkeypatch.setattr("sys.platform", "darwin")
         path = _platform_managed_plugins_root()
         assert path is not None
-        assert str(path) == "/Library/Application Support/Ember"
+        assert str(path) == "/Library/Application Support/igni"
 
     def test_linux(self, monkeypatch):
         monkeypatch.setattr("sys.platform", "linux")
         path = _platform_managed_plugins_root()
         assert path is not None
-        assert str(path) == "/etc/ember"
+        assert str(path) == "/etc/igni"
 
     def test_win32(self, monkeypatch):
         monkeypatch.setenv("PROGRAMDATA", r"C:\TestProgramData")
         monkeypatch.setattr("sys.platform", "win32")
         path = _platform_managed_plugins_root()
         assert path is not None
-        assert "Ember" in str(path)
+        assert "igni" in str(path)
 
     def test_unknown(self, monkeypatch):
         monkeypatch.setattr("sys.platform", "freebsd")
@@ -94,11 +95,11 @@ class TestPlatformManagedPluginsRoot:
 
 class TestManagedDiscovery:
     def test_managed_root_loaded(self, tmp_path, monkeypatch):
-        """A plugin under ``<managed>/.ember/plugins/`` is
-        discovered with ``source.root == "managed-ember"`` and
+        """A plugin under ``<managed>/.igni/plugins/`` is
+        discovered with ``source.root == "managed-igni"`` and
         ``is_managed == True``."""
         managed = tmp_path / "managed"
-        _make_plugin(managed / ".ember" / "plugins", "org-policy")
+        _make_plugin(managed / CONFIG_DIR / "plugins", "org-policy")
         monkeypatch.setattr(
             "ember_code.core.plugins.loader._platform_managed_plugins_root",
             lambda: managed,
@@ -110,7 +111,7 @@ class TestManagedDiscovery:
 
         plugin = loader.get("org-policy")
         assert plugin is not None
-        assert plugin.source.root == "managed-ember"
+        assert plugin.source.root == "managed-igni"
         assert plugin.is_managed is True
 
     def test_managed_claude_namespace(self, tmp_path, monkeypatch):
@@ -138,8 +139,8 @@ class TestManagedDiscovery:
         plugin SHADOWS a project plugin of the same name."""
         managed = tmp_path / "managed"
         project = tmp_path / "project"
-        _make_plugin(managed / ".ember" / "plugins", "shared", version="9.9.9")
-        _make_plugin(project / ".ember" / "plugins", "shared", version="0.1.0")
+        _make_plugin(managed / CONFIG_DIR / "plugins", "shared", version="9.9.9")
+        _make_plugin(project / CONFIG_DIR / "plugins", "shared", version="0.1.0")
         monkeypatch.setattr(
             "ember_code.core.plugins.loader._platform_managed_plugins_root",
             lambda: managed,
@@ -162,7 +163,7 @@ class TestManagedDiscovery:
         )
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
         (tmp_path / "home").mkdir()
-        _make_plugin(tmp_path / "project" / ".ember" / "plugins", "p")
+        _make_plugin(tmp_path / "project" / CONFIG_DIR / "plugins", "p")
         loader = PluginLoader()
         loader.load_all(project_dir=tmp_path / "project")
         plugin = loader.get("p")
@@ -177,9 +178,9 @@ class TestManagedDiscovery:
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
         (tmp_path / "home").mkdir()
         _make_plugin(tmp_path / "home" / ".claude" / "plugins", "uc")
-        _make_plugin(tmp_path / "home" / ".ember" / "plugins", "ue")
+        _make_plugin(tmp_path / "home" / CONFIG_DIR / "plugins", "ue")
         _make_plugin(tmp_path / "project" / ".claude" / "plugins", "pc")
-        _make_plugin(tmp_path / "project" / ".ember" / "plugins", "pe")
+        _make_plugin(tmp_path / "project" / CONFIG_DIR / "plugins", "pe")
         monkeypatch.setattr(
             "ember_code.core.plugins.loader._platform_managed_plugins_root",
             lambda: None,
@@ -217,8 +218,8 @@ class TestSetPluginEnabledRefusesManaged:
         managed_plugin = PluginDefinition(
             manifest=PluginManifest(name="org-policy"),
             source=PluginSource(
-                root="managed-ember",
-                path=tmp_path / "managed" / ".ember" / "plugins" / "org-policy",
+                root="managed-igni",
+                path=tmp_path / "managed" / CONFIG_DIR / "plugins" / "org-policy",
                 priority=6,
             ),
         )
@@ -244,7 +245,7 @@ class TestSetPluginEnabledRefusesManaged:
         managed_plugin = PluginDefinition(
             manifest=PluginManifest(name="org-policy"),
             source=PluginSource(
-                root="managed-ember",
+                root="managed-igni",
                 path=tmp_path / "managed",
                 priority=6,
             ),

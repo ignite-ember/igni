@@ -27,8 +27,6 @@ from ember_code.core.auth.credentials import (
     EmptyCloudCredentials,
 )
 from ember_code.core.auth.portal_client import (
-    DEFAULT_API_URL,
-    DEFAULT_PORTAL_URL,
     PortalClient,
 )
 from ember_code.core.auth.schemas import (
@@ -40,8 +38,6 @@ from ember_code.core.auth.schemas import (
 )
 
 __all__ = [
-    "DEFAULT_API_URL",
-    "DEFAULT_PORTAL_URL",
     "CallbackServer",
     "CloudCredentials",
     "Credentials",

@@ -29,6 +29,7 @@ from ember_code.core.lsp.schemas import (
     LspConfigFile,
     LspServerConfig,
 )
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.tools.lsp import LspTools
 
 # ── Config parsing ────────────────────────────────────────────
@@ -172,7 +173,7 @@ class TestLoadLspConfig:
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
         self._write_json(
-            home / ".ember" / "lsp.json",
+            home / CONFIG_DIR / "lsp.json",
             {"lspServers": {"shared": {"command": "user-cmd"}}},
         )
         self._write_json(

@@ -7,23 +7,25 @@ from pathlib import Path
 from rich.console import Console
 from rich.prompt import Confirm
 
+from ember_code.core.paths import CONFIG_DIR
+
 logger = logging.getLogger(__name__)
 
 # User-global config path — servers from here are auto-approved.
-_USER_GLOBAL_MCP = str(Path.home() / ".ember" / ".mcp.json")
+_USER_GLOBAL_MCP = str(Path.home() / CONFIG_DIR / ".mcp.json")
 
 
 class MCPApprovalManager:
     """Manages first-use approval for project-scoped MCP servers.
 
-    Approved servers are persisted to ``~/.ember/mcp-approved.json`` so the
+    Approved servers are persisted to ``~/.igni/mcp-approved.json`` so the
     prompt only appears once per (server_name, config_path) pair.  Servers
-    defined in the user-global config (``~/.ember/.mcp.json``) are trusted
+    defined in the user-global config (``~/.igni/.mcp.json``) are trusted
     automatically and never prompt.
     """
 
     def __init__(self, approval_path: Path | None = None) -> None:
-        self._path = approval_path or (Path.home() / ".ember" / "mcp-approved.json")
+        self._path = approval_path or (Path.home() / CONFIG_DIR / "mcp-approved.json")
         self._approved: dict[str, list[str]] = self._load()
 
     # ------------------------------------------------------------------

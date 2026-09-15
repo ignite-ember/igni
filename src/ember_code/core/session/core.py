@@ -53,6 +53,7 @@ import getpass
 import logging
 import threading
 import uuid
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +65,7 @@ from ember_code.backend.schemas_model import ModelSwitchResult
 from ember_code.core.agents import AgentPool
 from ember_code.core.auth.credentials import CloudCredentials
 from ember_code.core.code_index import CodeIndex, CodeIndexSyncManager
+from ember_code.core.code_index.embedder import LiveEmbedder
 from ember_code.core.config.models import ModelRegistry
 from ember_code.core.config.permissions import PermissionGuard
 from ember_code.core.config.settings import Settings
@@ -204,17 +206,29 @@ class Session:
         self._init_loop_state()
         self._init_per_session_scratch()
 
-        # Group-policy on-disk roots — same paths that
-        # :class:`GroupPolicyCache` writes to, so the cached overrides
-        # land where the loaders will read them. ``expanduser`` mirrors
-        # how :class:`PluginLoader` resolves its default ``data_dir``
-        # (``~/.ember``).
+        # Group-policy on-disk roots — the paths :class:`GroupPolicyCache`
+        # writes to. ``expanduser`` mirrors how :class:`PluginLoader`
+        # resolves its default ``data_dir`` (``~/.igni``).
+        #
+        # MCP servers are read from the cache directly. Agents are not:
+        # they are synced into ``<project>/.igni/agents`` so a person
+        # can edit one, which means this directory is the *source* of
+        # that sync rather than a place the loader reads.
         data_dir = Path(settings.storage.data_dir).expanduser()
-        self._group_agents_dir = data_dir / "group-policy" / "agents"
-        self._group_mcps_dir = data_dir / "group-policy" / "mcps"
+        self._group_policy_dir = data_dir / "group-policy"
+        self._group_agents_dir = self._group_policy_dir / "agents"
+        self._group_mcps_dir = self._group_policy_dir / "mcps"
 
-        # ── First-run initialization (agents, skills, hooks, ember.md) ─
-        ProjectInitializer.initialize(self.project_dir)
+        # ── First-run initialization (agents, skills, hooks, igni.md) ─
+        # The bundled agents stand down when the group ships its own —
+        # otherwise this would scaffold back the very agents an admin
+        # removed, and two sources would fight over one checksum file.
+        ProjectInitializer.initialize(
+            self.project_dir,
+            skip_bundled_agents=self._group_ships("agents"),
+            skip_builtin_hook_registration=self._group_ships("hooks"),
+            group_ships_hook_scripts=self._group_ships("scripts"),
+        )
 
         # ── Storage (Agno AsyncBaseDb) ────────────────────────────────
         self.db = StorageManager.build_db(settings, project_dir=self.project_dir)
@@ -293,6 +307,9 @@ class Session:
         self.knowledge_mgr = SessionKnowledgeManager(self.knowledge, settings, self.project_dir)
         # Share knowledge_mgr with the pool so all sub-agents get the toolkit.
         self.pool.attach_knowledge_manager(self.knowledge_mgr if self.knowledge else None)
+        # Late-bound: ``attach_codeindex_neo4j`` swaps ``self.code_index`` when a
+        # Neo4j runtime attaches, which happens after the pool is configured.
+        self.pool.attach_code_index_provider(lambda: self.code_index)
 
         # ── Learning coordinator (owns _learning + inject/extract) ──
         # Composed after ``persistence`` / ``memory_mgr`` so the
@@ -445,6 +462,7 @@ class Session:
         self.rules_index = RulesIndex(
             self.project_dir,
             read_claude_md=settings.rules.cross_tool_support,
+            group_rules_dir=self.group_root("rules"),
         )
 
     def _init_loop_state(self) -> None:
@@ -459,10 +477,33 @@ class Session:
         """Construct :class:`CodeIndex` + :class:`CodeIndexSyncManager`
         eagerly and compute the ``_codeindex_available`` flag.
         """
-        self.code_index = CodeIndex(project=self.project_dir, data_dir=settings.storage.data_dir)
+        # LiveEmbedder rather than the default: the ``chunk_embedding`` vector
+        # index is 384-dim all-MiniLM-L6-v2, and the fallback HashEmbedder makes
+        # every chunk vector a hash of its own text — semantic search then only
+        # matches byte-identical text. The knowledge index next door has always
+        # passed LiveEmbedder; the code index never did.
+        self.code_index = CodeIndex(
+            project=self.project_dir,
+            data_dir=settings.storage.data_dir,
+            embedder=LiveEmbedder(),
+        )
         self.code_index_sync = CodeIndexSyncManager.from_settings(
             settings, project_dir=self.project_dir, code_index=self.code_index
         )
+
+        if not settings.code_index.enabled:
+            # The objects stay — they are cheap, hold no connection, and
+            # a hundred call sites read them without a None guard. What
+            # changes is the flag, and it is the only thing that needs
+            # to: ``_main_tool_names`` gates the CodeIndex tool on it,
+            # ``PromptBuilder`` picks the plain prompt over the
+            # CodeIndex-first one, and the agent pool loads the
+            # non-CodeIndex variant of every definition. Nothing else
+            # has to learn about the switch.
+            self._codeindex_available = False
+            logger.info("CodeIndex: disabled in settings")
+            return
+
         _head_sha = self.code_index_sync.current_sha()
         self._codeindex_available = bool(_head_sha and self.code_index.has_commit(_head_sha))
 
@@ -491,6 +532,7 @@ class Session:
             project=self.project_dir,
             data_dir=self.settings.storage.data_dir,
             runtime=runtime,
+            embedder=LiveEmbedder(),
         )
         new_sync = CodeIndexSyncManager.from_settings(
             self.settings,
@@ -517,7 +559,10 @@ class Session:
         """Construct :class:`MCPClientManager` and merge in
         plugin-bundled MCP configs.
         """
-        self.mcp_manager = MCPClientManager(self.project_dir)
+        self.mcp_manager = MCPClientManager(
+            self.project_dir,
+            group_mcps_dir=self._group_mcps_dir,
+        )
         # Session-scoped ``{server: reason}`` cache. Written by
         # :meth:`record_mcp_result` (called from
         # :class:`~ember_code.core.session.startup.mcp.McpInitPhase`
@@ -529,7 +574,7 @@ class Session:
         # populate at Result time.
         self.mcp_failures: dict[str, str] = {}
         self.plugin_loader.apply_to_mcp(
-            MCPConfigLoader(self.project_dir, group_mcps_dir=self._group_mcps_dir),
+            MCPConfigLoader(self.project_dir),
             self.mcp_manager.configs,
             disabled=self._disabled_plugins,
         )
@@ -592,6 +637,26 @@ class Session:
         # an index at construction pass a ``pre_knowledge`` (or
         # a ``neo4j_client`` via ``pre_knowledge=``).
         self.knowledge = None
+        # Say *why* there is no index, in words a user can act on.
+        #
+        # ``_knowledge_error`` was set to ``None`` here and assigned
+        # nowhere else in the codebase, which made
+        # ``KnowledgeCommand.panel``'s "Knowledge failed to load:
+        # {err}" branch unreachable — a diagnostic that existed, was
+        # documented, and could not fire. Every user hit the fallback
+        # instead: "Knowledge base failed to initialize.", which names
+        # no cause and is not even true. Nothing failed. The index is
+        # deferred by design and this session never got the runtime it
+        # was deferred for.
+        # Annotated, because ``attach_knowledge_neo4j`` clears it back to
+        # ``None`` once the runtime arrives — without this, the first
+        # assignment narrows the attribute to ``str`` and that clear is a
+        # type error.
+        self._knowledge_error: str | None = (
+            "no Neo4j runtime has attached to this session. The knowledge "
+            "index is created when CodeIndex's Neo4j comes up — open "
+            "/codeindex and check that it is running and synced."
+        )
         logger.info(
             "Knowledge: deferred (no neo4j runtime at construction); "
             "call attach_knowledge_neo4j(runtime) to install"
@@ -612,7 +677,6 @@ class Session:
         Idempotent: a second call with the same client is a
         no-op. Switching the runtime rebuilds the index.
         """
-        from ember_code.core.code_index.embedder import LiveEmbedder
         from ember_code.core.code_index.neo4j_client import Neo4jKnowledgeClient
 
         # ``runtime`` may be a real ``Neo4jRuntime`` (production) or
@@ -666,7 +730,131 @@ class Session:
         # the neo4j backend.
         if self.knowledge_mgr is not None:
             self.knowledge_mgr.knowledge = index
+        # The deferred-state explanation set in the constructor is no
+        # longer true. Leaving it would have ``/knowledge`` telling a
+        # working session to go and start the runtime it is already
+        # using.
+        self._knowledge_error = None
         logger.info("Knowledge: switched to neo4j backend (project=%s)", project_id)
+
+    def group_dir_for(self, kind: str) -> Path:
+        """Where the policy cache puts this kind's entries.
+
+        Every loader that has an org tier is handed one of these, so the
+        answer to "where does the group's stuff live" is in one place
+        rather than eight.
+        """
+        return self._group_policy_dir / kind
+
+    def unknown_agent_tools(self) -> dict[str, list[str]]:
+        """Agents naming tools that will not resolve, by agent name.
+
+        Checked once the pools are built, which is the earliest point
+        the answer is trustworthy: custom Python tools register when
+        they are discovered, and asking before that would call somebody's
+        own tool a typo.
+
+        Not fatal — the agent loads and the rest of the session is fine.
+        It simply raises the moment anything calls it, and this is how
+        somebody hears about that at startup rather than mid-task.
+        """
+        return dict(self._unknown_agent_tools)
+
+    def _check_agent_tools(self) -> None:
+        """Fill :meth:`unknown_agent_tools`, and say so in the log."""
+        self._unknown_agent_tools: dict[str, list[str]] = {}
+        try:
+            from ember_code.core.tools.registry import ToolRegistry
+            from ember_code.core.tools.tool_spec import ToolResolutionRequest
+
+            registry = ToolRegistry(base_dir=str(self.project_dir))
+            for defn in self.pool.list_agents():
+                if not defn.tools:
+                    continue
+                result = registry.resolve_typed(ToolResolutionRequest(tool_names=list(defn.tools)))
+                if result.unknown:
+                    self._unknown_agent_tools[defn.name] = list(result.unknown)
+                    logger.warning(
+                        "Agent %r names %s, which igni cannot resolve — it will fail when "
+                        "something calls it. Available: %s",
+                        defn.name,
+                        ", ".join(repr(n) for n in result.unknown),
+                        ", ".join(registry.available_tools),
+                    )
+        except Exception as exc:  # noqa: BLE001 — a diagnostic must not stop a start
+            logger.debug("Could not check agent tools: %s", exc)
+
+    #: Fired when a new dialogue begins — set by the backend, which is
+    #: the only layer that can reach the portal. ``/clear`` rotates the
+    #: session id in-process, so it never passes through the
+    #: session-start RPC and would otherwise keep whatever pack the
+    #: previous conversation had.
+    #:
+    #: A callable rather than a portal client on ``Session``: this class
+    #: has no business knowing how to talk to the server, and one
+    #: injected coroutine keeps it that way.
+    on_new_dialogue: Callable[[], Awaitable[Any]] | None = None
+
+    def reload_group_agents(self) -> bool:
+        """Rebuild the pools so a refreshed pack takes effect.
+
+        Called after the policy cache is refreshed — an admin moving
+        somebody from engineering to legal should change what they have
+        without being told to restart.
+
+        There is nothing to merge any more. The loaders read the pack
+        straight from the cache, so refreshing it is the whole update;
+        this only has to rebuild what was constructed from the old
+        contents. It used to copy every synced kind into the project and
+        reconcile local edits, which is why it could report what moved
+        and ask questions — the cache being authoritative removed both
+        the copying and the questions.
+
+        Returns whether the pools were rebuilt. Never raises: the session
+        that is running matters more than the update that is not.
+        """
+        try:
+            self._init_agent_and_skill_pools(self.settings)
+            self._rebuild_main_team()
+            return True
+        except Exception as exc:  # noqa: BLE001 — a live session outranks an update
+            logger.warning("Could not reload what the group ships: %s", exc)
+            return False
+
+    def group_root(self, kind: str) -> Path | None:
+        """The pack's directory for this kind, or None if it ships none.
+
+        ``None`` rather than a path that may not exist: every loader
+        would silently skip a missing directory, which works but hides
+        the difference between "the group ships nothing" and "we passed
+        the wrong path".
+
+        Public because the loaders needing it are not all inside the
+        session — the markdown-command dispatcher asks for its own.
+        """
+        try:
+            directory = self.group_dir_for(kind)
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.debug("Could not resolve the group %s directory: %s", kind, exc)
+            return None
+        if not directory.is_dir() or not any(directory.iterdir()):
+            return None
+        return directory
+
+    def _group_ships(self, kind: str) -> bool:
+        """Whether the cached pack carries anything of this kind.
+
+        Asked before the bundled equivalents are scaffolded: when the
+        group ships agents, ember-code's own must not be written beside
+        them, and when it ships hooks, the built-in ones must not be
+        registered twice.
+        """
+        try:
+            directory = self.group_dir_for(kind)
+            return directory.is_dir() and any(directory.iterdir())
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.debug("Could not inspect the group %s directory: %s", kind, exc)
+            return False
 
     def _init_agent_and_skill_pools(self, settings: Settings) -> None:
         """Construct :class:`AgentPool` + :class:`SkillPool` from the
@@ -677,7 +865,7 @@ class Session:
             settings,
             self.project_dir,
             codeindex_available=self._codeindex_available,
-            group_agents_dir=self._group_agents_dir,
+            group_dir=self.group_root("agents"),
         )
         self.plugin_loader.apply_to_agents(self.pool, disabled=self._disabled_plugins)
         if settings.orchestration.generate_ephemeral:
@@ -685,9 +873,14 @@ class Session:
                 self.project_dir, settings.orchestration.max_ephemeral_per_session
             )
         self.pool.build_agents()
+        self._check_agent_tools()
 
         self.skill_pool = SkillPool()
-        self.skill_pool.load_all(self.project_dir, settings.skills.cross_tool_support)
+        self.skill_pool.load_all(
+            self.project_dir,
+            settings.skills.cross_tool_support,
+            group_dir=self.group_root("skills"),
+        )
         self.plugin_loader.apply_to_skills(self.skill_pool, disabled=self._disabled_plugins)
 
     def _init_lsp_and_monitors(self) -> None:
@@ -737,6 +930,7 @@ class Session:
             self.project_dir,
             plugin_roots=plugin_style_roots,
             read_claude=settings.rules.cross_tool_support,
+            group_dir=self.group_root("output-styles"),
         )
         if "default" in self.output_styles:
             self._active_output_style = "default"
@@ -745,7 +939,9 @@ class Session:
 
         # ── Hooks ────────────────────────────────────────────────────
         self._hook_loader = HookLoader(
-            self.project_dir, cross_tool_support=settings.hooks.cross_tool_support
+            self.project_dir,
+            cross_tool_support=settings.hooks.cross_tool_support,
+            group_dir=self.group_dir_for("hooks"),
         )
         load_result = self._hook_loader.load()
         self._hook_registry = load_result.registry
@@ -791,8 +987,15 @@ class Session:
         # survives a ``reload_hooks``.
         self._tool_hook_factory = ToolEventHookFactory(
             settings=settings,
+            # The fallback is only reached when this runs before
+            # ``rules_index`` exists; it needs the group's rules too, or
+            # a session taking that branch would silently lose them.
             rules_index=getattr(self, "rules_index", None)
-            or RulesIndex(self.project_dir, read_claude_md=settings.rules.cross_tool_support),
+            or RulesIndex(
+                self.project_dir,
+                read_claude_md=settings.rules.cross_tool_support,
+                group_rules_dir=self.group_root("rules"),
+            ),
             project_dir=self.project_dir,
             hook_executor_ref=lambda: self.hook_executor,
             session_id_ref=lambda: self.session_id,

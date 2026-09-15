@@ -130,9 +130,9 @@ async def _drive(args) -> None:
 
     env = {
         **os.environ,
-        "EMBER_PARENT_PID": str(os.getpid()),
+        "IGNI_PARENT_PID": str(os.getpid()),
         # 1s timeout so each cycle's evict is fast.
-        "EMBER_SESSION_IDLE_TIMEOUT": "1",
+        "IGNI_SESSION_IDLE_TIMEOUT": "1",
     }
     proc = subprocess.Popen(
         [str(PYTHON), "-m", "ember_code.backend",

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { EmberClient } from "../../protocol/client";
+import type { IgniClient } from "../../protocol/client";
 import { Drawer } from "./Drawer";
 import { ChevronIcon } from "../Icons";
 import { Skeleton } from "../Skeleton";
@@ -302,8 +302,8 @@ const ADD_SERVER_PROMPT = `Help me set up a new MCP server.
 
 Ask me which one I want to add (name, transport, command/args/env or URL) and which scope to save it under:
 - **Project · shared** → \`./.mcp.json\` (committed, shared with the team)
-- **Project · local** → \`./.ember/.mcp.json\` (gitignored, just this checkout)
-- **User · global** → \`~/.ember/.mcp.json\` (this machine, all projects)
+- **Project · local** → \`./.igni/.mcp.json\` (gitignored, just this checkout)
+- **User · global** → \`~/.igni/.mcp.json\` (this machine, all projects)
 
 Then merge the entry into the chosen \`.mcp.json\` under the \`mcpServers\` key, creating the file if it doesn't exist. Use this shape:
 
@@ -324,7 +324,7 @@ export function McpPanel({
   onClose,
   onAddServer,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   onClose: () => void;
   onAddServer: (seed: string) => void;
 }) {

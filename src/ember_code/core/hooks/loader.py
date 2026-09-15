@@ -30,6 +30,7 @@ from ember_code.core.hooks.schemas import (
     HookLoadWarning,
     MergeStrategy,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 
 class _SettingsPathDiscovery:
@@ -42,14 +43,23 @@ class _SettingsPathDiscovery:
     local, mirroring the pre-refactor loader.
 
     ``cross_tool_support=True`` splices ``.claude`` siblings in
-    after the ``.ember`` bucket so a user with hooks in both
+    after the ``.igni`` bucket so a user with hooks in both
     ecosystems gets both loaded — the Ember hooks still win last
     since they're spec'd second.
     """
 
-    def __init__(self, project_dir: Path, *, cross_tool_support: bool):
+    def __init__(
+        self,
+        project_dir: Path,
+        *,
+        cross_tool_support: bool,
+        group_dir: Path | None = None,
+    ):
         self._project_dir = project_dir
         self._cross_tool_support = cross_tool_support
+        #: The org's hooks, written as a settings-shaped file by the
+        #: policy cache. Last, so the group's declarations layer on top.
+        self._group_dir = group_dir
 
     def discover(self) -> list[Path]:
         """Return the ordered list of settings-file paths to try.
@@ -59,12 +69,12 @@ class _SettingsPathDiscovery:
         path list stable across runs (useful for logging /
         debugging).
         """
-        home_ember = Path.home() / ".ember"
+        home_ember = Path.home() / CONFIG_DIR
         paths: list[Path] = [
             home_ember / "settings.json",
             home_ember / "settings.local.json",
-            self._project_dir / ".ember" / "settings.json",
-            self._project_dir / ".ember" / "settings.local.json",
+            self._project_dir / CONFIG_DIR / "settings.json",
+            self._project_dir / CONFIG_DIR / "settings.local.json",
         ]
         if self._cross_tool_support:
             home_claude = Path.home() / ".claude"
@@ -76,6 +86,8 @@ class _SettingsPathDiscovery:
                     self._project_dir / ".claude" / "settings.local.json",
                 ]
             )
+        if self._group_dir is not None:
+            paths.append(self._group_dir / "settings.json")
         return paths
 
 
@@ -135,11 +147,18 @@ class HookLoader:
     :class:`HookLoadResult`.
     """
 
-    def __init__(self, project_dir: Path | None = None, cross_tool_support: bool = False):
+    def __init__(
+        self,
+        project_dir: Path | None = None,
+        cross_tool_support: bool = False,
+        group_dir: Path | None = None,
+    ):
         self.project_dir = project_dir or Path.cwd()
         self.cross_tool_support = cross_tool_support
         self._discovery = _SettingsPathDiscovery(
-            self.project_dir, cross_tool_support=cross_tool_support
+            self.project_dir,
+            cross_tool_support=cross_tool_support,
+            group_dir=group_dir,
         )
         self._reader = _SettingsFileReader()
 
@@ -148,16 +167,16 @@ class HookLoader:
 
         Settings locations (merged, later wins):
 
-        1. ``~/.ember/settings.json`` (user global defaults)
-        2. ``~/.ember/settings.local.json`` (user local overrides)
-        3. ``<project>/.ember/settings.json`` (project overrides,
+        1. ``~/.igni/settings.json`` (user global defaults)
+        2. ``~/.igni/settings.local.json`` (user local overrides)
+        3. ``<project>/.igni/settings.json`` (project overrides,
            committed)
-        4. ``<project>/.ember/settings.local.json`` (project local
+        4. ``<project>/.igni/settings.local.json`` (project local
            overrides, gitignored)
 
         With ``cross_tool_support=True`` the ``.claude`` siblings
         of each of the above are also consulted (before the
-        matching ``.ember`` entry in the ordering — see
+        matching ``.igni`` entry in the ordering — see
         :class:`_SettingsPathDiscovery`).
 
         Returns a :class:`HookLoadResult` bundling the populated

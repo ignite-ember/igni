@@ -8,17 +8,34 @@
  * the extension host can't introspect.
  *
  * The real BE bootstrap (uv → Python → ignite-ember, ~30 s) is
- * bypassed by pointing ``emberCode.pythonPath`` at a fake Node
+ * bypassed by pointing ``igni.pythonPath`` at a fake Node
  * script that just prints the ready JSON. The fake doesn't expose
  * a WS port, so the webview falls back to "Connecting…" — fine
  * for these tests.
  */
 
 import * as assert from "assert";
+import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 
-const PUBLISHER_ID = "ignite-ember.ember-code-vscode";
+// Derived from package.json rather than spelled out, because spelling it
+// out is how it went stale: the rename from `ember-code-vscode` to
+// `igni-vscode` changed the extension id, this constant did not, and the
+// whole suite failed in its `before all` hook with "extension
+// ignite-ember.ember-code-vscode not found in test host" — a failure that
+// says nothing about the rename that caused it.
+//
+// Resolved from the compiled file's location rather than by counting
+// `../` levels: this file runs from `out/test/suite/`, not from its source
+// directory, and the first attempt used the source-relative depth and
+// failed with "Cannot find module '../../package.json'".
+const PKG_PATH = path.join(__dirname, "..", "..", "..", "package.json");
+const pkg = JSON.parse(fs.readFileSync(PKG_PATH, "utf8")) as {
+  publisher: string;
+  name: string;
+};
+const PUBLISHER_ID = `${pkg.publisher}.${pkg.name}`;
 
 suite("igni extension", () => {
   suiteSetup(async () => {
@@ -37,13 +54,13 @@ suite("igni extension", () => {
       process.platform === "win32" ? "fake-backend.cmd" : "fake-backend.js";
     const fakeBe = path.join(ext!.extensionPath, "test", fakeBeName);
     await vscode.workspace
-      .getConfiguration("emberCode")
+      .getConfiguration("igni")
       .update("pythonPath", fakeBe, vscode.ConfigurationTarget.Global);
   });
 
   suiteTeardown(async () => {
     await vscode.workspace
-      .getConfiguration("emberCode")
+      .getConfiguration("igni")
       .update("pythonPath", undefined, vscode.ConfigurationTarget.Global);
   });
 
@@ -59,16 +76,16 @@ suite("igni extension", () => {
     await ext!.activate();
     const all = await vscode.commands.getCommands(true);
     const expected = [
-      "emberCode.open",
-      "emberCode.addSelectionToChat",
-      "emberCode.addFileToChat",
-      "emberCode.restart",
-      "emberCode.reinstall",
+      "igni.open",
+      "igni.addSelectionToChat",
+      "igni.addFileToChat",
+      "igni.restart",
+      "igni.reinstall",
     ];
     for (const cmd of expected) {
       assert.ok(
         all.includes(cmd),
-        `command ${cmd} not registered (registered: ${all.filter((c) => c.startsWith("emberCode")).join(", ")})`,
+        `command ${cmd} not registered (registered: ${all.filter((c) => c.startsWith("igni")).join(", ")})`,
       );
     }
   });
@@ -78,7 +95,7 @@ suite("igni extension", () => {
   // tricks: ``spawn`` rejects bare ``.js`` (no shebang support) with
   // ``EFTYPE``, AND rejects ``.cmd`` wrappers since the Node CVE-
   // 2024-27980 mitigation, with ``EINVAL``. The mechanism we'd test
-  // (panel opens via emberCode.open) is platform-independent — only
+  // (panel opens via igni.open) is platform-independent — only
   // the fake-spawn dance is Windows-hostile. Real Windows users
   // install with a real ``python.exe`` where ``spawn`` works fine.
   // Coverage on ubuntu + macos is sufficient.
@@ -87,7 +104,7 @@ suite("igni extension", () => {
       ? { skip: true, reason: "Windows can't fake-spawn the BE (Node CVE-2024-27980)" }
       : { skip: false, reason: "" };
 
-  test("emberCode.open creates the chat panel", async function () {
+  test("igni.open creates the chat panel", async function () {
     if (SKIP_PANEL_OPEN_ON_WIN.skip) {
       this.skip();
     }
@@ -108,7 +125,7 @@ suite("igni extension", () => {
     };
 
     try {
-      await vscode.commands.executeCommand("emberCode.open");
+      await vscode.commands.executeCommand("igni.open");
 
       // Poll for the tab to land in the tab-groups model.
       const deadline = Date.now() + 5_000;
@@ -134,7 +151,7 @@ suite("igni extension", () => {
     // text editor. It just returns silently. We don't have a way to
     // open a text editor easily in this minimal test harness, so we
     // assert the no-active-editor branch is clean.
-    await vscode.commands.executeCommand("emberCode.addSelectionToChat");
+    await vscode.commands.executeCommand("igni.addSelectionToChat");
     // If we get here without throwing, the test passes.
     assert.ok(true);
   });
@@ -172,7 +189,7 @@ suite("igni extension", () => {
       return Promise.resolve(undefined);
     };
     try {
-      await vscode.commands.executeCommand("emberCode.addSelectionToChat");
+      await vscode.commands.executeCommand("igni.addSelectionToChat");
       // pushToComposer opens the panel if not already open; give the
       // tab-groups model a beat to register.
       const deadline = Date.now() + 3_000;
@@ -202,7 +219,7 @@ suite("igni extension", () => {
     // The command is wired to the explorer/context menu, which
     // passes a Uri. When invoked from the command palette (no args),
     // it should bail out cleanly.
-    await vscode.commands.executeCommand("emberCode.addFileToChat");
+    await vscode.commands.executeCommand("igni.addFileToChat");
     assert.ok(true);
   });
 
@@ -229,7 +246,7 @@ suite("igni extension", () => {
       // signature is ``(single, multi)`` so passing just one Uri
       // mirrors the right-click case (no multi-select).
       await vscode.commands.executeCommand(
-        "emberCode.addFileToChat",
+        "igni.addFileToChat",
         fileUri,
       );
       assert.deepStrictEqual(
@@ -264,7 +281,7 @@ suite("igni extension", () => {
       // First arg is the "primary" Uri, second arg is the array —
       // matches what VSCode passes for multi-select context menus.
       await vscode.commands.executeCommand(
-        "emberCode.addFileToChat",
+        "igni.addFileToChat",
         uris[0],
         uris,
       );
@@ -278,13 +295,13 @@ suite("igni extension", () => {
     }
   });
 
-  test("emberCode.open with invalid pythonPath surfaces a clean error", async () => {
+  test("igni.open with invalid pythonPath surfaces a clean error", async () => {
     // Users mistype or move their venv and ``pythonPath`` becomes a
     // dead pointer. The spawn path must fail loud with a readable
     // message via ``showErrorMessage`` — not crash the extension
     // host, not silently leave the panel hung at "Connecting…"
     // forever.
-    const cfg = vscode.workspace.getConfiguration("emberCode");
+    const cfg = vscode.workspace.getConfiguration("igni");
     const saved = cfg.get<string>("pythonPath");
     await cfg.update(
       "pythonPath",
@@ -300,11 +317,11 @@ suite("igni extension", () => {
     };
     try {
       // Force a fresh spawn: kill any existing BE first.
-      await vscode.commands.executeCommand("emberCode.restart").then(
+      await vscode.commands.executeCommand("igni.restart").then(
         () => {},
         () => {},
       );
-      await vscode.commands.executeCommand("emberCode.open");
+      await vscode.commands.executeCommand("igni.open");
 
       // Poll for the error to surface — spawn fails fast on macOS
       // (ENOENT) but reach for a generous deadline so this isn't

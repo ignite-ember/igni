@@ -14,7 +14,7 @@ Consumers:
   ``name_prefix`` is ``"custom"`` for user dirs and
   ``"custom_<plugin>"`` for plugin dirs — the loader appends
   ``_<file.stem>`` so a plugin's tool file can never shadow or be
-  shadowed by a same-named file in the user's own ``.ember/tools/``.
+  shadowed by a same-named file in the user's own ``.igni/tools/``.
 * :class:`LoadedFile` — one successfully loaded ``.py`` file, its
   emitted toolkit name, and the count of ``@tool``-decorated
   functions it contributed. Additive to the existing

@@ -27,6 +27,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.tools.orphan_process import OrphanProcess
 from ember_code.core.tools.process_log import ProcessLogStore
 from ember_code.core.tools.process_supervisor_locator import supervisors
@@ -36,7 +37,7 @@ class TestLogPathResolution:
     def test_path_per_project(self, tmp_path: Path) -> None:
         store = ProcessLogStore(tmp_path)
         p = store.path(42)
-        assert p == tmp_path / ".ember" / "process_logs" / "42.log"
+        assert p == tmp_path / CONFIG_DIR / "process_logs" / "42.log"
 
     def test_path_falls_back_to_tmp_when_no_project(self) -> None:
         # Tests + headless callers without a project root still
@@ -56,15 +57,15 @@ class TestLogPathResolution:
 
 class TestOpenLog:
     def test_creates_parent_dirs(self, tmp_path: Path) -> None:
-        # The project may not have an ``.ember/process_logs/``
+        # The project may not have an ``.igni/process_logs/``
         # subtree yet. The opener creates it as needed.
-        assert not (tmp_path / ".ember").exists()
+        assert not (tmp_path / CONFIG_DIR).exists()
         store = ProcessLogStore(tmp_path)
         f = store.open(123)
         assert f is not None
         f.write("hello\n")
         f.close()
-        assert (tmp_path / ".ember" / "process_logs" / "123.log").exists()
+        assert (tmp_path / CONFIG_DIR / "process_logs" / "123.log").exists()
 
     def test_append_mode_preserves_prior_content(self, tmp_path: Path) -> None:
         # A pid that's gone through eviction + reuse would clobber

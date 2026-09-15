@@ -12,18 +12,20 @@ corporate/hostile network. If an internal endpoint uses a private
 CA, the caller should set ``SSL_CERT_FILE`` / ``REQUESTS_CA_BUNDLE``.
 """
 
+from typing import Any
+
 from agno.tools import Toolkit
 
-from ember_code.core.tools.http_fetcher import HttpFetcher
+from ember_code.core.tools.http_fetcher import BroadcastFn, HttpFetcher
 from ember_code.core.tools.web_schemas import HttpFetcherConfig
 
 
 class WebTools(Toolkit):
     """Fetch and extract content from URLs."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, broadcast: BroadcastFn | None = None, **kwargs: Any) -> None:
         super().__init__(name="ember_web", **kwargs)
-        self._fetcher = HttpFetcher(HttpFetcherConfig())
+        self._fetcher = HttpFetcher(HttpFetcherConfig(), broadcast=broadcast)
         self.register(self.fetch_url)
         self.register(self.fetch_json)
 

@@ -2,7 +2,7 @@
 
 Two layers cooperate:
 
-* :class:`UserConfigStore` — writes to ``~/.ember/config.yaml`` so a
+* :class:`UserConfigStore` — writes to ``~/.igni/config.yaml`` so a
   fresh session opened after restart loads the chosen model.
 * :class:`SessionPreferencesStore` — writes to ``state.db`` keyed by
   ``session_id`` so ``--continue`` restores the model the user was
@@ -22,6 +22,7 @@ from ember_code.backend.server import BackendServer
 from ember_code.core.code_index.paths import state_db_path
 from ember_code.core.config.settings import Settings
 from ember_code.core.config.user_config_store import UserConfigStore
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.session.session_preferences import SessionPreferencesStore
 
 
@@ -35,7 +36,7 @@ def _save_default_model(name: str) -> None:
 
 class TestSaveDefaultModel:
     """``UserConfigStore.set_default_model`` round-trips through
-    ``~/.ember/config.yaml``."""
+    ``~/.igni/config.yaml``."""
 
     def test_writes_default_to_user_config(self, tmp_path, monkeypatch):
         """Setting a default writes a minimal ``models.default`` key
@@ -45,7 +46,7 @@ class TestSaveDefaultModel:
 
         _save_default_model("MiniMax-M2.7")
 
-        cfg_path = tmp_path / ".ember" / "config.yaml"
+        cfg_path = tmp_path / CONFIG_DIR / "config.yaml"
         assert cfg_path.exists()
         cfg = yaml.safe_load(cfg_path.read_text())
         assert cfg == {"models": {"default": "MiniMax-M2.7"}}
@@ -54,7 +55,7 @@ class TestSaveDefaultModel:
         """Writing the default must not clobber other top-level keys
         the user has set (e.g. ``permissions``, ``display``)."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        cfg_dir = tmp_path / ".ember"
+        cfg_dir = tmp_path / CONFIG_DIR
         cfg_dir.mkdir(parents=True)
         (cfg_dir / "config.yaml").write_text(
             yaml.safe_dump(
@@ -82,7 +83,7 @@ class TestSaveDefaultModel:
         _save_default_model("first")
         _save_default_model("second")
 
-        cfg = yaml.safe_load((tmp_path / ".ember" / "config.yaml").read_text())
+        cfg = yaml.safe_load((tmp_path / CONFIG_DIR / "config.yaml").read_text())
         assert cfg["models"]["default"] == "second"
 
     def test_recovers_from_corrupt_models_block(self, tmp_path, monkeypatch):
@@ -91,7 +92,7 @@ class TestSaveDefaultModel:
         crash. The previous bad value is gone, which is acceptable —
         the alternative is the next launch failing to load config."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        cfg_dir = tmp_path / ".ember"
+        cfg_dir = tmp_path / CONFIG_DIR
         cfg_dir.mkdir(parents=True)
         (cfg_dir / "config.yaml").write_text(yaml.safe_dump({"models": ["bogus", "list"]}))
 

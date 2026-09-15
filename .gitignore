@@ -147,6 +147,10 @@ celerybeat.pid
 .env
 .envrc
 .venv
+# Any suffixed variant too (.venv-py312 and friends) — an unignored
+# virtualenv ends up inside the sdist, where its absolute symlinks make
+# `python -m build` fail outright.
+.venv*
 env/
 venv/
 ENV/
@@ -215,6 +219,9 @@ marimo/_lsp/
 __marimo__/
 
 # igni local data (user-specific, not shared)
+.igni/
+# The pre-rename name. Kept so a directory on a machine where the
+# migration has not run yet still does not get committed.
 .ember/
 
 # Eval run artifacts — timestamped JSON dumps from scripts/run_evals_smoke.py
@@ -263,3 +270,6 @@ clients/*/.claude/
 # pnpm artifacts (project uses npm; pnpm files only present when a contributor uses pnpm)
 clients/web/pnpm-lock.yaml
 clients/web/pnpm-workspace.yaml
+
+# A test formatted an object into a filename; the repr became a real file.
+<*object at 0x*>

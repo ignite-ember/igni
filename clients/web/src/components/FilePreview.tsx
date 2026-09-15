@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useState } from "react";
-import type { EmberClient } from "../protocol/client";
+import type { IgniClient } from "../protocol/client";
 
 interface ReadFileResp {
   path: string;
@@ -24,7 +24,7 @@ export function FilePreview({
   path,
   onClose,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   path: string;
   onClose: () => void;
 }) {

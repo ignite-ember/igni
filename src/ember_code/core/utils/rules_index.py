@@ -1,13 +1,13 @@
 """Hierarchical rules discovery — Claude Code-style.
 
-Scans the project tree at session start for ``ember.md`` /
+Scans the project tree at session start for ``igni.md`` /
 ``CLAUDE.md`` files in subdirectories, then surfaces them lazily as
 the agent touches files in those areas. Once a rules file has been
 shown to the agent in a session, it isn't re-shown on subsequent
 tool calls touching the same directory — the model only needs the
 context delivered once.
 
-The root-level ``ember.md`` / ``CLAUDE.md`` are NOT part of this
+The root-level ``igni.md`` / ``CLAUDE.md`` are NOT part of this
 index. Those are already loaded into the system prompt at session
 init via ``load_project_context`` — they form the unconditional
 baseline. This index handles only the subdirectory tier: rules that
@@ -22,6 +22,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ember_code.core.paths import CONFIG_DIR, RULES_FILES, RULES_FILES_CROSS_TOOL
 from ember_code.core.utils.context_frontmatter import parse_frontmatter
 from ember_code.core.utils.context_imports import resolve_imports
 
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class _ScopedRule:
-    """A path-scoped rules file from ``<project>/.ember/rules/`` or
+    """A path-scoped rules file from ``<project>/.igni/rules/`` or
     ``<project>/.claude/rules/``.
 
     ``globs`` is the ``paths:`` list from the file's YAML
@@ -52,7 +53,7 @@ class _ScopedRule:
 # Directories we never walk into when looking for rules files —
 # either they're vendored / generated content (no human-authored
 # instructions live there), or they're tool-config directories that
-# follow their own conventions (``.ember`` / ``.claude`` host
+# follow their own conventions (``.igni`` / ``.claude`` host
 # agents/skills/hooks, not freeform rules markdown).
 _EXCLUDED_DIR_NAMES = frozenset(
     {
@@ -73,19 +74,18 @@ _EXCLUDED_DIR_NAMES = frozenset(
         ".cache",
         ".idea",
         ".vscode",
-        ".ember",
+        CONFIG_DIR,
         ".claude",
     }
 )
 
 
 def _rules_filenames(read_claude_md: bool) -> tuple[str, ...]:
-    # Keep in lockstep with ``context._rules_filenames`` — both
-    # surfaces should see the same set of variants (incl. the
-    # ``.local`` override siblings).
-    if read_claude_md:
-        return ("ember.md", "ember.local.md", "CLAUDE.md", "CLAUDE.local.md")
-    return ("ember.md", "ember.local.md")
+    # Both surfaces see the same variants because both read the same
+    # tuple. This carried a comment asking a human to "keep in lockstep
+    # with ``context._rules_filenames``", which is the arrangement that
+    # drifts.
+    return RULES_FILES_CROSS_TOOL if read_claude_md else RULES_FILES
 
 
 class RulesIndex:
@@ -97,21 +97,36 @@ class RulesIndex:
     agent hasn't seen yet for that path's ancestor chain.
     """
 
-    def __init__(self, project_dir: Path, read_claude_md: bool = True) -> None:
+    def __init__(
+        self,
+        project_dir: Path,
+        read_claude_md: bool = True,
+        group_rules_dir: Path | None = None,
+    ) -> None:
         try:
             self.project_dir = project_dir.resolve()
         except OSError:
             self.project_dir = project_dir
         self._read_claude_md = read_claude_md
+        # The org's, from the group policy cache.
+        #
+        # Scanned **alongside** the project's rather than instead of
+        # them, because a rule is scoped to paths rather than named:
+        # two rules matching ``**/*.py`` from different sources are two
+        # things to say about Python files, not two candidates for one
+        # slot. Every other kind a group ships resolves by name and lets
+        # the project win; forcing rules into that shape would silently
+        # drop one of them.
+        self._group_rules_dir = group_rules_dir
         self._filenames = _rules_filenames(read_claude_md)
         # ``{dir -> list of rules files in load order}``. Multiple
         # files per dir support the override pattern: a subdir that
-        # ships both ``ember.md`` (committed) and ``ember.local.md``
+        # ships both ``igni.md`` (committed) and ``igni.local.md``
         # (gitignored personal) surfaces both, with the local
         # variant appearing AFTER so its directives take precedence
         # in the agent's read order.
         self._index: dict[Path, list[Path]] = {}
-        # Path-scoped rules from ``<project>/.ember/rules/*.md`` and
+        # Path-scoped rules from ``<project>/.igni/rules/*.md`` and
         # ``<project>/.claude/rules/*.md`` whose YAML frontmatter
         # has a ``paths:`` glob list. Loaded lazily by
         # ``consume_path`` only when the agent touches a file whose
@@ -122,7 +137,7 @@ class RulesIndex:
         # when ``working_dir`` is ``None``, which it is at session
         # start).
         self._scoped_rules: list[_ScopedRule] = []
-        # Shared dedup set: both subdir ``ember.md`` files and
+        # Shared dedup set: both subdir ``igni.md`` files and
         # path-scoped rules surface at most once per session.
         self._shown: set[Path] = set()
         self._build()
@@ -165,7 +180,7 @@ class RulesIndex:
                         if matched:
                             self._index[entry.resolve()] = matched
         # Scan the project-level rules dirs explicitly. They live
-        # inside ``.ember`` / ``.claude`` which the main walk above
+        # inside ``.igni`` / ``.claude`` which the main walk above
         # excludes (those are plugin-config dirs).
         self._build_scoped_rules()
         logger.debug(
@@ -176,12 +191,18 @@ class RulesIndex:
         )
 
     def _build_scoped_rules(self) -> None:
-        """Scan ``<project>/.ember/rules/`` and (when enabled)
-        ``<project>/.claude/rules/`` for files carrying a ``paths:``
-        frontmatter, and register them in ``self._scoped_rules``.
+        """Scan the project's rules, the group's when one was given, and
+        (when enabled) ``<project>/.claude/rules/`` for files carrying a
+        ``paths:`` frontmatter, and register them in
+        ``self._scoped_rules``.
+
+        All of them, additively: a rule that matches is a rule that
+        applies, wherever it came from.
         Unscoped files are ignored here — they're picked up by the
         eager ``load_project_rules_dirs`` loader instead."""
-        candidates = [self.project_dir / ".ember" / "rules"]
+        candidates = [self.project_dir / CONFIG_DIR / "rules"]
+        if self._group_rules_dir is not None:
+            candidates.append(self._group_rules_dir)
         if self._read_claude_md:
             candidates.append(self.project_dir / ".claude" / "rules")
         for rules_dir in candidates:
@@ -222,8 +243,8 @@ class RulesIndex:
         reads the more general rules before the more specific ones.
         Paths outside ``project_dir`` produce an empty list.
         """
-        # Both pools (subdir ``ember.md``-style + path-scoped
-        # ``.ember/rules/*.md``) are checked; bail only when both
+        # Both pools (subdir ``igni.md``-style + path-scoped
+        # ``.igni/rules/*.md``) are checked; bail only when both
         # are empty.
         if not self._index and not self._scoped_rules:
             return []

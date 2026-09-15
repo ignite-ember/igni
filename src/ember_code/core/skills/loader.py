@@ -4,12 +4,19 @@ Resolution order (highest priority wins on name collision; integers are
 explicit so the outcome doesn't depend on load order). Within the same
 scope, native Ember sources beat cross-tool Claude sources by +1:
 
-    5  <project>/.ember/skills/          (project, native)
-    4  <project>/.ember/skills.local/    (project personal, gitignored)
-    3  <project>/.claude/skills/         (project, cross-tool)
-    2  ~/.ember/skills/                  (user, native)
+    6  <project>/.igni/skills/          (project, native)
+    5  <project>/.igni/skills.local/    (project personal, gitignored)
+    4  <project>/.claude/skills/         (project, cross-tool)
+    3  <group policy cache>/skills/      (the org's group)
+    2  ~/.igni/skills/                  (user, native)
     1  ~/.claude/skills/                 (user, cross-tool)
     0  core/bundled_skills/              (built-in defaults)
+
+The org's row sits above the user's globals and below everything the
+project declares: a group sets a baseline, and a repository knows things
+about itself that a group-wide skill cannot. It is read from the policy
+cache rather than copied into the project, which is what lets a
+same-named project skill simply outrank it.
 
 Plugins land under their own namespace (``<plugin>:<skill>``) so they
 never collide with the base hierarchy. Two plugins of the same name
@@ -21,6 +28,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.skills.parser import SkillDefinition, SkillParser
 
 
@@ -35,9 +43,21 @@ class SkillPriority:
     BUNDLED = 0
     USER_CLAUDE = 1
     USER_EMBER = 2
-    PROJECT_CLAUDE = 3
-    PROJECT_LOCAL = 4
-    PROJECT_EMBER = 5
+    #: The org's, from the group policy cache.
+    #:
+    #: Above the user's globals — a group is a deliberate decision by an
+    #: organisation and a stray file in ``~`` is not — and **below** the
+    #: project's, so a repository that declares its own version of a
+    #: skill gets that version.
+    #:
+    #: This used to sit at the top, on the reasoning that "a skill the
+    #: group ships is the one that runs". The project now outranks it:
+    #: an org sets a baseline, and a repository knows things about itself
+    #: that a group-wide skill cannot.
+    ORG_GROUP = 3
+    PROJECT_CLAUDE = 4
+    PROJECT_LOCAL = 5
+    PROJECT_EMBER = 6
 
 
 class SkillEntry(BaseModel):
@@ -71,7 +91,7 @@ class SkillPool:
         ``<namespace>:<name>``. Used by the plugin loader so each
         plugin's skills land under their own namespace and can't
         collide with same-named skills from other plugins or from the
-        user's own ``.ember/skills/``.
+        user's own ``.igni/skills/``.
         """
         if not path.exists():
             return
@@ -99,10 +119,18 @@ class SkillPool:
             except Exception as e:
                 print(f"Warning: Failed to load skill from {skill_file}: {e}", file=sys.stderr)
 
-    def load_all(self, project_dir: Path | None = None, cross_tool_support: bool = False):
+    def load_all(
+        self,
+        project_dir: Path | None = None,
+        cross_tool_support: bool = False,
+        group_dir: Path | None = None,
+    ):
         """Load skills from all directories. See module docstring for the
         full resolution table — each source has an explicit integer
         priority so ties never depend on call order here.
+
+        ``group_dir`` is the org's, read straight from the policy cache
+        rather than copied into the project.
         """
         if project_dir is None:
             project_dir = Path.cwd()
@@ -112,15 +140,22 @@ class SkillPool:
         self.load_directory(builtin_dir, priority=SkillPriority.BUNDLED)
 
         # User-level Ember (beats user-level Claude by +1).
-        self.load_directory(Path.home() / ".ember" / "skills", priority=SkillPriority.USER_EMBER)
+        self.load_directory(Path.home() / CONFIG_DIR / "skills", priority=SkillPriority.USER_EMBER)
+
+        # The org's, from the group policy cache — above the user's
+        # globals, below anything the project declares.
+        if group_dir is not None:
+            self.load_directory(group_dir, priority=SkillPriority.ORG_GROUP)
 
         # Project-level personal overrides (gitignored).
         self.load_directory(
-            project_dir / ".ember" / "skills.local", priority=SkillPriority.PROJECT_LOCAL
+            project_dir / CONFIG_DIR / "skills.local", priority=SkillPriority.PROJECT_LOCAL
         )
 
         # Project-level Ember (highest).
-        self.load_directory(project_dir / ".ember" / "skills", priority=SkillPriority.PROJECT_EMBER)
+        self.load_directory(
+            project_dir / CONFIG_DIR / "skills", priority=SkillPriority.PROJECT_EMBER
+        )
 
         # Cross-tool Claude Code directories — explicitly slotted *below*
         # their same-scope Ember equivalents.

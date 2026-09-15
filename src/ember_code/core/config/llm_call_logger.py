@@ -8,7 +8,7 @@ no more global mutable state pretending to be constants.
 
 Preserves the important behavior the original comment called out:
 * propagates to root so ``--debug`` runs land LLM entries in
-  ``~/.ember/debug.log`` alongside diagnostics (cross-referencing
+  ``~/.igni/debug.log`` alongside diagnostics (cross-referencing
   the FE timeline with BE lifecycle traces relies on this).
 * attaches the same handler to the ``httpx`` and ``httpcore``
   loggers so hung-connection lifecycle events land in the same file.
@@ -21,10 +21,11 @@ import os
 from pathlib import Path
 
 from ember_code.core.config.caller_inspector import CallerContextInspector
+from ember_code.core.paths import DEFAULT_DATA_DIR
 
 
 class LlmCallLogger:
-    """Owns the ``~/.ember/llm_calls.log`` handler and the httpx /
+    """Owns the ``~/.igni/llm_calls.log`` handler and the httpx /
     httpcore log-propagation setup.
 
     Instantiated inside :class:`ModelRegistry.__init__`; injected
@@ -42,7 +43,7 @@ class LlmCallLogger:
         self._log_dir = (
             Path(os.path.expanduser(str(log_dir)))
             if log_dir
-            else Path(os.path.expanduser("~/.ember"))
+            else Path(os.path.expanduser(DEFAULT_DATA_DIR))
         )
         self._logger = logging.getLogger("ember_code.llm_calls")
         self._caller_inspector = caller_inspector or CallerContextInspector()
@@ -66,9 +67,17 @@ class LlmCallLogger:
         handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S"))
         self._logger.addHandler(handler)
         self._logger.setLevel(logging.INFO)
-        # Propagate to root so --debug runs also land LLM entries in
-        # ~/.ember/debug.log — see the module docstring for why.
-        self._logger.propagate = True
+        # File only, for the same reason as the transport loggers below — and
+        # more urgently, because this logger writes full request *and* response
+        # bodies (which is why llm_calls.log reaches hundreds of MB). Propagating
+        # put all of that on whatever handler root happened to have; against a
+        # pipe nobody drains, the emit blocks on the event loop and the agent
+        # wedges after the model has already answered.
+        #
+        # ``--debug`` used to get LLM entries via this propagation, so it now
+        # attaches its handler to this logger directly (``DebugLogging.enable``)
+        # rather than relying on the root path.
+        self._logger.propagate = False
 
         # Attach the same handler to httpx/httpcore to capture
         # connection lifecycle. Hung LLM calls are almost always
@@ -82,6 +91,15 @@ class LlmCallLogger:
             transport_logger = logging.getLogger(name)
             transport_logger.addHandler(handler)
             transport_logger.setLevel(logging.DEBUG)
+            # File only. ``callHandlers`` walks to root and checks each
+            # *handler's* level, never the ancestor loggers' — so root's
+            # WARNING does not filter these, and alembic's ``fileConfig``
+            # leaves a NOTSET stderr handler there (see
+            # ``Migrator.upgrade_to_head``). Left propagating, one streaming
+            # call put thousands of DEBUG records on stderr; against a pipe
+            # nobody drains, the emit blocks inside httpcore on the event loop
+            # and the whole agent wedges silently at ~64 KB.
+            transport_logger.propagate = False
 
     def log_call(
         self,

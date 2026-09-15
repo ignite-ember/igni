@@ -121,6 +121,19 @@ def render(schema: dict[str, Any] | None = None) -> str:
 
 def write(path: Path | None = None) -> tuple[Path, dict[str, dict[str, list[str]]]]:
     schema = build_schema()
+    # The failure mode this guards is a silent exit 0 and a three-line file
+    # where the contract was: when ``messages`` became a re-export shim the
+    # selector matched nothing, and anybody who ran the generator destroyed the
+    # snapshot the web suite validates against. Refusing is the half of that fix
+    # that has to live here — a test that runs the generator catches a *stale*
+    # contract, not an *emptied* one, because it regenerates before comparing.
+    if not schema["messages"] or not schema["rpc"]:
+        raise SystemExit(
+            "refusing to write an empty wire contract "
+            f"({len(schema['messages'])} messages, {len(schema['rpc'])} rpc payloads). "
+            "The protocol selector matched nothing — check that "
+            "ember_code.protocol.messages still re-exports the Message subclasses."
+        )
     target = path or SNAPSHOT_PATH
     target.write_text(render(schema))
     return target, schema

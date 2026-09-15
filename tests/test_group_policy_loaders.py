@@ -18,6 +18,7 @@ Three surfaces covered:
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -25,10 +26,11 @@ from ember_code.core.agents.loader import AgentDefinitionLoader
 from ember_code.core.agents.schemas import AgentPriority
 from ember_code.core.config.group_policy import (
     GroupPolicyCache,
-    GroupPolicyOverrideEntry,
+    GroupPolicyEntry,
     GroupPolicyPack,
 )
-from ember_code.core.mcp.config import MCP_PRIORITY_GROUP, MCPConfigLoader
+from ember_code.core.mcp.config import MCPConfigLoader
+from ember_code.core.paths import CONFIG_DIR
 
 # ---------------------------------------------------------------------------
 # Cache → MCP file format
@@ -42,8 +44,8 @@ def test_materialize_wraps_mcps_in_envelope(tmp_path: Path):
         group_id="g-1",
         group_name="Engineering",
         fetched_at=datetime.now(timezone.utc),
-        overrides=[
-            GroupPolicyOverrideEntry(
+        entries=[
+            GroupPolicyEntry(
                 kind="mcps",
                 entry_name="github",
                 content=('{"command": "gh-mcp", "args": ["serve"], "env": {}}'),
@@ -72,8 +74,8 @@ def test_materialize_strips_disabled_mcp(tmp_path: Path):
         group_id="g-1",
         group_name="Engineering",
         fetched_at=datetime.now(timezone.utc),
-        overrides=[
-            GroupPolicyOverrideEntry(
+        entries=[
+            GroupPolicyEntry(
                 kind="mcps",
                 entry_name="off",
                 content='{"command": "off"}',
@@ -108,8 +110,14 @@ def test_mcp_config_loader_scans_group_dir(tmp_path: Path):
     assert servers["github"].source == "group-policy"
 
 
-def test_mcp_config_loader_group_dir_overrides_project(tmp_path: Path):
-    """Group-policy server wins over a same-named project-local one."""
+def test_mcp_config_loader_project_overrides_group_dir(tmp_path: Path):
+    """A same-named project server wins over the group's.
+
+    This asserted the opposite until the group tier was moved below the
+    project's, for consistency with agents, skills, commands, output
+    styles and workflows: an org sets the baseline and a repository can
+    override one server by name.
+    """
     project = tmp_path / "proj"
     project.mkdir()
     (project / ".mcp.json").write_text(
@@ -127,9 +135,9 @@ def test_mcp_config_loader_group_dir_overrides_project(tmp_path: Path):
     loader = MCPConfigLoader(project_dir=project, group_mcps_dir=group)
     servers = loader.load()
 
-    # The later group scan overwrites project because ``load()``
-    # re-assigns in dictionary order.
-    assert servers["github"].command == "group-version"
+    # ``load()`` re-assigns in scan order, and the project's roots are
+    # scanned after the group's.
+    assert servers["github"].command == "project-version"
 
 
 def test_mcp_config_loader_without_group_dir_unchanged(tmp_path: Path):
@@ -153,13 +161,97 @@ def test_mcp_config_loader_without_group_dir_unchanged(tmp_path: Path):
     assert "extra" not in servers
 
 
-def test_mcp_priority_group_constant_matches_agent_priority():
-    """The MCP group tier (5) matches AgentPriority.ORG_GROUP (5)."""
-    assert AgentPriority.ORG_GROUP.value == MCP_PRIORITY_GROUP
+def test_the_project_now_outranks_the_group_for_agents():
+    """The change this half of the work is for.
+
+    ``ORG_GROUP`` used to be the highest tier, on the reasoning that a
+    group's agent is the one that runs. The project outranks it now, so
+    a repository can override one agent by name — which is only
+    meaningful because the group's copy is read from the policy cache
+    rather than written into the project.
+    """
+    assert AgentPriority.ORG_GROUP < AgentPriority.PROJECT_EMBER
+    assert AgentPriority.ORG_GROUP < AgentPriority.PROJECT_LOCAL
+    assert AgentPriority.ORG_GROUP < AgentPriority.PROJECT_CLAUDE
+    # Still above the user's own globals: a group is a deliberate
+    # decision by an organisation, a stray file in ``~`` is not.
+    assert AgentPriority.ORG_GROUP > AgentPriority.USER_EMBER
+
+
+def test_the_project_overrides_a_group_mcp_server(tmp_path: Path):
+    """MCP servers rank like everything else a group ships.
+
+    The group's used to be layered last and win outright; a repository
+    can now override one by name. Asserted by behaviour rather than by a
+    priority constant, because the ordering here is re-assignment order
+    in ``load`` and there is no number to compare.
+    """
+    project = tmp_path / "proj"
+    (project / CONFIG_DIR).mkdir(parents=True)
+    (project / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"gateway": {"command": "project-binary"}}})
+    )
+    group_dir = tmp_path / "group" / "mcps"
+    group_dir.mkdir(parents=True)
+    # Same shape as a project ``.mcp.json`` — the loader reads the
+    # ``mcpServers`` wrapper regardless of which tier the file came from.
+    (group_dir / "gateway.json").write_text(
+        json.dumps({"mcpServers": {"gateway": {"command": "org-approved-binary"}}})
+    )
+
+    servers = MCPConfigLoader(project_dir=project, group_mcps_dir=group_dir).load()
+    assert servers["gateway"].command == "project-binary"
+
+
+def test_a_group_mcp_server_still_loads_when_the_project_is_silent(tmp_path: Path):
+    """Overriding by name must not mean the group is ignored."""
+    project = tmp_path / "proj"
+    (project / CONFIG_DIR).mkdir(parents=True)
+    group_dir = tmp_path / "group" / "mcps"
+    group_dir.mkdir(parents=True)
+    (group_dir / "gateway.json").write_text(
+        json.dumps({"mcpServers": {"gateway": {"command": "org-approved-binary"}}})
+    )
+
+    servers = MCPConfigLoader(project_dir=project, group_mcps_dir=group_dir).load()
+    assert servers["gateway"].command == "org-approved-binary"
+    assert servers["gateway"].source == "group-policy"
+
+
+def test_a_group_mcp_server_beats_the_user_home_config(tmp_path: Path, monkeypatch):
+    """Still above the user's own, as with every other kind."""
+    home = tmp_path / "home"
+    (home / CONFIG_DIR).mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+    (home / CONFIG_DIR / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"gateway": {"command": "my-own-binary"}}})
+    )
+    project = tmp_path / "proj"
+    (project / CONFIG_DIR).mkdir(parents=True)
+    group_dir = tmp_path / "group" / "mcps"
+    group_dir.mkdir(parents=True)
+    (group_dir / "gateway.json").write_text(
+        json.dumps({"mcpServers": {"gateway": {"command": "org-approved-binary"}}})
+    )
+
+    servers = MCPConfigLoader(project_dir=project, group_mcps_dir=group_dir).load()
+    assert servers["gateway"].command == "org-approved-binary"
 
 
 # ---------------------------------------------------------------------------
-# AgentDefinitionLoader — group_agents_dir
+# AgentDefinitionLoader — where a group's agents are read from
+#
+# The policy cache is a root of its own again, ranked above the user's
+# globals and below anything the project declares. Nothing of the
+# server's is written into the project, so "the local one wins" comes
+# out of the ordering rather than out of there being only one file.
+#
+# It was the other way round for a while: the group's agents were copied
+# into ``<project>/.igni/agents`` by a sync so a person could edit one,
+# and reading the cache as well would have shadowed that edit. Reading
+# the cache directly gets the same outcome, leaves the repository holding
+# only what the repository declares, and removed the sync along with the
+# checksums and conflict prompts it needed.
 # ---------------------------------------------------------------------------
 
 
@@ -170,97 +262,124 @@ def _write_agent(path: Path, name: str, body: str) -> Path:
     return md
 
 
-def test_agent_loader_reads_group_agents_dir(tmp_path: Path):
-    """An .md file under group_agents_dir loads with ORG_GROUP priority."""
-    project = tmp_path / "proj"
-    user_dir = tmp_path / "user-agents"
-    user_dir.mkdir()
-    group_dir = tmp_path / "group-agents"
-    group_dir.mkdir()
-
-    _write_agent(
-        user_dir,
-        "shared",
-        "---\nname: shared\ndescription: user version\n---\nUser body.",
-    )
-    _write_agent(
-        group_dir,
-        "shared",
-        "---\nname: shared\ndescription: group version\n---\nGroup body.",
-    )
-
-    # Bare-bones loader — no real Settings needed for this dir-shape test
+def _bare_settings():
     from types import SimpleNamespace
 
-    settings = SimpleNamespace(
-        agents=SimpleNamespace(cross_tool_support=False),
+    return SimpleNamespace(agents=SimpleNamespace(cross_tool_support=False))
+
+
+def test_agent_loader_reads_the_project_dir(tmp_path: Path):
+    """A project's own agents load at the project tier."""
+    project = tmp_path / "proj"
+    _write_agent(
+        project / CONFIG_DIR / "agents",
+        "contract-review",
+        "---\nname: contract-review\ndescription: the group's own\n---\nBody.",
     )
 
-    loader = AgentDefinitionLoader(
-        settings=settings,
+    report = AgentDefinitionLoader(
+        settings=_bare_settings(),
         project_dir=project,
         codeindex_available=False,
-        group_agents_dir=group_dir,
-    )
-    report = loader.load()
-    assert "shared" in report.entries
-    assert report.entries["shared"].priority == AgentPriority.ORG_GROUP
+    ).load()
+
+    assert report.entries["contract-review"].priority == AgentPriority.PROJECT_EMBER
 
 
-def test_agent_loader_group_wins_over_user(tmp_path: Path):
-    """Group-policy entry beats a same-name user entry on priority."""
-    from types import SimpleNamespace
+def test_the_policy_cache_is_an_agent_root(tmp_path: Path):
+    """An agent only the group ships still loads.
 
-    settings = SimpleNamespace(
-        agents=SimpleNamespace(cross_tool_support=False),
-    )
-
-    user_dir = tmp_path / "user"
-    user_dir.mkdir()
-    group_dir = tmp_path / "group"
-    group_dir.mkdir()
-
+    Nothing copies it into the project any more, so if the cache were
+    not a root the group would simply have no agents.
+    """
+    project = tmp_path / "proj"
+    cache = tmp_path / "group-policy" / "agents"
     _write_agent(
-        user_dir,
-        "x",
-        "---\nname: x\ndescription: user\n---\nuser body",
+        cache,
+        "only-in-the-cache",
+        "---\nname: only-in-the-cache\ndescription: d\n---\nBody.",
+    )
+
+    report = AgentDefinitionLoader(
+        settings=_bare_settings(),
+        project_dir=project,
+        codeindex_available=False,
+        group_dir=cache,
+    ).load()
+
+    assert "only-in-the-cache" in report.entries
+    assert report.entries["only-in-the-cache"].priority == AgentPriority.ORG_GROUP
+
+
+def test_the_cache_is_not_read_unless_it_is_passed(tmp_path: Path):
+    """No implicit path — the session decides where the pack lives, and
+    a loader that guessed would read a directory nobody asked for."""
+    project = tmp_path / "proj"
+    cache = tmp_path / "group-policy" / "agents"
+    _write_agent(cache, "unasked", "---\nname: unasked\ndescription: d\n---\nBody.")
+
+    report = AgentDefinitionLoader(
+        settings=_bare_settings(),
+        project_dir=project,
+        codeindex_available=False,
+    ).load()
+
+    assert "unasked" not in report.entries
+
+
+def test_the_project_wins_a_name_collision(tmp_path: Path):
+    """The reason for all of the above.
+
+    Both roots are read, so the outcome is decided by priority rather
+    than by one of them being absent.
+    """
+    project = tmp_path / "proj"
+    cache = tmp_path / "group-policy" / "agents"
+    _write_agent(
+        project / CONFIG_DIR / "agents",
+        "reviewer",
+        "---\nname: reviewer\ndescription: the project version\n---\nBody.",
     )
     _write_agent(
-        group_dir,
-        "x",
-        "---\nname: x\ndescription: group\n---\ngroup body",
+        cache,
+        "reviewer",
+        "---\nname: reviewer\ndescription: the group version\n---\nBody.",
     )
 
-    loader = AgentDefinitionLoader(
-        settings=settings,
-        project_dir=tmp_path,
+    report = AgentDefinitionLoader(
+        settings=_bare_settings(),
+        project_dir=project,
         codeindex_available=False,
-        group_agents_dir=group_dir,
+        group_dir=cache,
+    ).load()
+
+    assert "project version" in report.entries["reviewer"].definition.description
+    assert report.entries["reviewer"].priority == AgentPriority.PROJECT_EMBER
+
+
+def test_the_group_beats_the_user_globals(tmp_path: Path, monkeypatch):
+    """A group is a deliberate decision by an organisation; a file left
+    in ``~`` is not."""
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+    project = tmp_path / "proj"
+    cache = tmp_path / "group-policy" / "agents"
+    _write_agent(
+        home / CONFIG_DIR / "agents",
+        "reviewer",
+        "---\nname: reviewer\ndescription: my personal one\n---\nBody.",
     )
-    report = loader.load()
-    entry = report.entries["x"]
-    assert entry.priority == AgentPriority.ORG_GROUP
-    assert "group" in entry.definition.description.lower()
-
-
-def test_agent_loader_no_group_dir_default(tmp_path: Path):
-    """Back-compat — passing no group_agents_dir keeps prior behavior."""
-    from types import SimpleNamespace
-
-    settings = SimpleNamespace(
-        agents=SimpleNamespace(cross_tool_support=False),
+    _write_agent(
+        cache,
+        "reviewer",
+        "---\nname: reviewer\ndescription: the group version\n---\nBody.",
     )
 
-    # No group_agents_dir passed; the loader scans the same roots it
-    # always did. The user-homed ``~/.ember/agents`` is one of them,
-    # but since we can't write to Path.home() reliably in a test, we
-    # only assert the loader runs without error and the ORG_GROUP
-    # tier is absent.
-    loader = AgentDefinitionLoader(
-        settings=settings,
-        project_dir=tmp_path,
+    report = AgentDefinitionLoader(
+        settings=_bare_settings(),
+        project_dir=project,
         codeindex_available=False,
-    )
-    report = loader.load()
-    # No group dir supplied → no ORG_GROUP entries can appear.
-    assert all(e.priority != AgentPriority.ORG_GROUP for e in report.entries.values())
+        group_dir=cache,
+    ).load()
+
+    assert "group version" in report.entries["reviewer"].definition.description

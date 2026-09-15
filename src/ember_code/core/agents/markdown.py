@@ -16,6 +16,7 @@ from typing import ClassVar
 import yaml
 
 from ember_code.core.agents.schemas import AgentDefinition
+from ember_code.core.prompts import inject_codeindex_schema
 
 
 class AgentMarkdownFile:
@@ -97,7 +98,10 @@ class AgentMarkdownFile:
         assert self._frontmatter is not None  # narrowed by _parse_ok
         assert self._body is not None
         fm = self._frontmatter
-        body = self._body
+        # The CodeIndex-aware variants carry a placeholder where the graph schema
+        # belongs; it is substituted here so there is one description of the
+        # graph rather than one per prompt. See ``prompts.inject_codeindex_schema``.
+        body = inject_codeindex_schema(self._body)
 
         if "name" not in fm:
             raise ValueError(f"Agent definition missing 'name' in {self.path}")

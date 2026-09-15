@@ -2,23 +2,23 @@
 
 Loads rules from several sources, all merged into the session prompt:
 
-0. **Managed policy** — sysadmin-enforced ``ember.md`` / ``CLAUDE.md``
+0. **Managed policy** — sysadmin-enforced ``igni.md`` / ``CLAUDE.md``
    in a platform-specific write-protected directory (e.g.
-   ``/Library/Application Support/Ember/`` on darwin). Prepended
+   ``/Library/Application Support/igni/`` on darwin). Prepended
    first so the model sees org-pinned guidance ahead of everything
    else.
 0.5. **Memory index** — the agent's per-project ``MEMORY.md`` from
-   ``~/.ember/projects/<slug>/memory/`` (or ``~/.claude/projects/
+   ``~/.igni/projects/<slug>/memory/`` (or ``~/.claude/projects/
    <slug>/memory/`` as a cross-tool fallback), capped at 200 lines
    / 25 KB.
-1. **User-level** — ``~/.ember/rules.md`` (legacy),
-   ``~/.ember/rules/*.md`` (dir form), plus ``~/.claude/rules/*.md``
+1. **User-level** — ``~/.igni/rules.md`` (legacy),
+   ``~/.igni/rules/*.md`` (dir form), plus ``~/.claude/rules/*.md``
    when cross-tool support is enabled.
-2. **Project root** — ``ember.md`` / ``CLAUDE.md`` and their
+2. **Project root** — ``igni.md`` / ``CLAUDE.md`` and their
    ``.local.md`` override siblings.
-3. **Project shared rules dirs** — ``<project>/.ember/rules/*.md``
+3. **Project shared rules dirs** — ``<project>/.igni/rules/*.md``
    and (when cross-tool) ``<project>/.claude/rules/*.md``.
-4. **Subdirectory** — ``ember.md`` / ``CLAUDE.md`` in any parent of
+4. **Subdirectory** — ``igni.md`` / ``CLAUDE.md`` in any parent of
    the working file, walking up to the project root.
 
 ## Architecture
@@ -43,6 +43,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+
+# User-rules path constants — same pattern. Tests patch these on
+# THIS module (``monkeypatch.setattr(context, "USER_RULES_PATH", ...)``)
+# and the loader's ``load_user`` method reads them off ``context``
+# at call time.
+from ember_code.core.paths import PROJECT_CONTEXT_FILE
 
 # Frontmatter parsing — kept as the legacy private alias so test
 # monkeypatches against ``context._parse_frontmatter`` still resolve.
@@ -95,11 +101,6 @@ from ember_code.core.utils.context_schemas import (
     RulesSection,
     SubdirectoryRules,
 )
-
-# User-rules path constants — same pattern. Tests patch these on
-# THIS module (``monkeypatch.setattr(context, "USER_RULES_PATH", ...)``)
-# and the loader's ``load_user`` method reads them off ``context``
-# at call time.
 from ember_code.core.utils.context_user import (
     CLAUDE_USER_RULES_DIR,
     USER_RULES_DIR,
@@ -223,7 +224,7 @@ def load_subdirectory_rules(
 
 def load_project_context(
     project_dir: Path,
-    project_file: str = "ember.md",
+    project_file: str = PROJECT_CONTEXT_FILE,
     working_dir: Path | None = None,
     read_claude_md: bool = True,
 ) -> str:
@@ -233,7 +234,7 @@ def load_project_context(
     the class docstring for the six-tier composition order. The
     ``project_file`` argument is retained for config compatibility
     (older callers pass it from settings) but currently unused —
-    the loader picks up ``ember.md`` / ``CLAUDE.md`` by convention.
+    the loader picks up ``igni.md`` / ``CLAUDE.md`` by convention.
     """
     del project_file  # kept for API compatibility
     return (

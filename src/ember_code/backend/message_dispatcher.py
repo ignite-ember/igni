@@ -270,6 +270,29 @@ class MessageDispatcher:
                 await self._transport.send(result)
             else:
                 await self._transport.send(msg.RPCResponse.ok(req_id, _serialize(result)))
+        except KeyError as exc:
+            # A handler reading `args["session_id"]` on a call that
+            # omitted it raises `KeyError('session_id')`, and
+            # `str(exc)` is the bare `"'session_id'"`. That reached the
+            # client as the entire error message: no method, no
+            # indication it was about an argument at all. Sweeping the
+            # API, `check_permission` gave up its three required keys
+            # one refusal at a time — `tool_args`, then `tool_name`,
+            # then `func_name` — with nothing to say they were
+            # arguments rather than a fault.
+            #
+            # Two handlers already did this properly
+            # (`run_workflow: 'name' is required`), so the wording is
+            # theirs; this makes it the default instead of the
+            # exception. Narrowed to `KeyError` on purpose: a
+            # `KeyError` raised *inside* real logic is now slightly
+            # mislabelled, which is the cost of not having to annotate
+            # every handler, and it is a better trade than the caller
+            # being told only `'url'`.
+            logger.error("RPC %s failed: missing argument %s", message.method, exc)
+            await self._transport.send(
+                msg.RPCResponse.fail(req_id, f"{message.method}: {exc} is a required argument")
+            )
         except Exception as exc:
             logger.error("RPC %s failed: %s", message.method, exc, exc_info=True)
             await self._transport.send(msg.RPCResponse.fail(req_id, str(exc)))

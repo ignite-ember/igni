@@ -27,7 +27,11 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from ember_code.backend.knowledge_gate import knowledge_runtime_enabled
+from ember_code.backend.knowledge_gate import (
+    _FALSEY,
+    ENV_OVERRIDE,
+    knowledge_runtime_enabled,
+)
 from ember_code.backend.login_coordinator import LoginCoordinator
 from ember_code.backend.message_dispatcher import MessageDispatcher
 from ember_code.backend.push_bridge import PushNotificationBridge
@@ -41,6 +45,7 @@ from ember_code.backend.schemas_rpc import (
 from ember_code.backend.session_pool import SessionPool, SessionRuntime
 from ember_code.backend.session_stamping_transport import SessionStampingTransport
 from ember_code.backend.subsystem_status import KNOWLEDGE, SubsystemState
+from ember_code.core.paths import DEFAULT_DATA_DIR
 from ember_code.core.session.client_state import ClientStateStore
 from ember_code.core.session.session_directories import SessionDirectoryStore
 from ember_code.protocol import messages as msg
@@ -54,7 +59,7 @@ logger = logging.getLogger(__name__)
 #: this, and a reason without a remedy is only half an answer.
 _KNOWLEDGE_FIX = (
     "Delete ~/.ember/neo4j and reopen the app to reinstall the local database. "
-    "Set EMBER_NEO4J_RUNTIME=0 to run without it."
+    "Set IGNI_NEO4J_RUNTIME=0 to run without it."
 )
 
 
@@ -74,10 +79,9 @@ def _record(
     this registry exists to prevent, so it is logged rather than
     swallowed.
 
-    ``only_if_preparing`` keeps a late, generic failure from
-    overwriting the specific one the attach already recorded: the
-    inner handler knows *which* step broke, this one only knows that
-    something did.
+    ``only_if_preparing`` keeps a late, generic outcome from overwriting a
+    specific one already recorded — a failure the inner handler diagnosed, or a
+    subsystem the user deliberately switched off.
     """
     registry = getattr(session, "subsystems", None)
     if registry is None:
@@ -86,11 +90,49 @@ def _record(
     try:
         if only_if_preparing:
             current = registry.get(KNOWLEDGE)
-            if current is not None and current.state is SubsystemState.FAILED:
+            # FAILED and DISABLED are both deliberate and both specific. The
+            # name says "preparing" and the check only knew about FAILED, so a
+            # DISABLED knowledge panel was overwritten with READY the moment
+            # the sidecar came up for CodeIndex instead.
+            if current is not None and current.state in (
+                SubsystemState.FAILED,
+                SubsystemState.DISABLED,
+            ):
                 return
         registry.set(KNOWLEDGE, state, reason=reason, fix=fix)
     except Exception:  # pragma: no cover — defensive
         logger.exception("knowledge: could not record subsystem state %s", state)
+
+
+def _neo4j_runtime_wanted(settings: Any) -> bool:
+    """Whether to build the Neo4j runtime at all.
+
+    Neo4j backs TWO features. Gating on ``knowledge.enabled`` alone meant
+    ``knowledge.enabled=false`` with ``code_index.enabled=true`` skipped the
+    runtime entirely and left CodeIndex with no backend — ``codeindex_cypher``
+    answering ``no_backend`` for a feature the user had switched on.
+
+    :data:`ENV_OVERRIDE` stays a whole-runtime switch rather than a
+    knowledge-only one: it is the escape hatch for a machine whose sidecar will
+    not start, and a switch named ``NEO4J_RUNTIME`` that still started the
+    runtime for the other feature would not be one.
+    """
+    override = os.environ.get(ENV_OVERRIDE)
+    if override is not None:
+        return override.strip().lower() not in _FALSEY
+    return knowledge_runtime_enabled(settings) or _codeindex_wants_neo4j(settings)
+
+
+def _codeindex_wants_neo4j(settings: Any) -> bool:
+    """Whether CodeIndex needs the Neo4j runtime.
+
+    Deliberately as forgiving about the settings shape as
+    :func:`knowledge_runtime_enabled` — this runs on the boot path, and a
+    config that fails to produce a ``code_index`` section should cost the
+    user their index, not their backend.
+    """
+    code_index = getattr(settings, "code_index", None)
+    return bool(getattr(code_index, "enabled", False))
 
 
 class SessionOrchestrator:
@@ -181,7 +223,7 @@ class SessionOrchestrator:
         self._default_runtime = default_runtime
 
         config = SessionPoolConfig()
-        idle_env = os.environ.get("EMBER_SESSION_IDLE_TIMEOUT", "")
+        idle_env = os.environ.get("IGNI_SESSION_IDLE_TIMEOUT", "")
         try:
             secs = float(idle_env) if idle_env else 0.0
         except ValueError:
@@ -200,7 +242,7 @@ class SessionOrchestrator:
         session's knowledge index.
 
         No-op when :func:`knowledge_runtime_enabled` says no —
-        ``knowledge.enabled`` in config, with ``EMBER_NEO4J_RUNTIME``
+        ``knowledge.enabled`` in config, with ``IGNI_NEO4J_RUNTIME``
         as a process-level override. It used to be the env var alone,
         which meant the config setting the rest of the codebase reads
         was overridden here by a switch a desktop user could not set
@@ -221,13 +263,20 @@ class SessionOrchestrator:
         Idempotent — a second call is a no-op (the runtime
         itself is cached on ``self._neo4j_runtime``).
         """
-        if not knowledge_runtime_enabled(self._settings):
+        if not _neo4j_runtime_wanted(self._settings):
             return None
         if self._neo4j_runtime is not None:
             return self._neo4j_runtime
         from ember_code.backend.neo4j_runtime import Neo4jRuntime
 
-        runtime = Neo4jRuntime(data_dir=self._settings.storage.data_dir)
+        # Missing Java, a full disk, a blocked download. The BE still boots and
+        # the user can still work — with no index, not with a fallback: the
+        # Chroma-backed path went away when the index moved to Neo4j.
+        try:
+            runtime = Neo4jRuntime(data_dir=self._settings.storage.data_dir)
+        except Exception:
+            logger.exception("neo4j: runtime construction failed — continuing without an index")
+            return None
         self._neo4j_runtime = runtime
         # ``self._backend`` is a :class:`BackendServer`; the session
         # is reachable via the bootstrap. Both attach calls are
@@ -255,19 +304,31 @@ class SessionOrchestrator:
         caller can tell "not running" from "running".
         """
         session = getattr(self._backend, "_session", None)
+        # Two questions, and conflating them is what made the knowledge panel
+        # lie. What the KNOWLEDGE subsystem reports depends on
+        # ``knowledge.enabled`` alone — "disabled" and "broken" are the two
+        # states this panel used to run together, and a user who switched
+        # knowledge off should not see "preparing" forever because CodeIndex
+        # happens to want the same sidecar.
         if not knowledge_runtime_enabled(self._settings):
             _record(
                 session,
                 SubsystemState.DISABLED,
                 reason="knowledge.enabled is false in config",
-                fix="Set knowledge.enabled to true in ~/.ember/config.yaml and reopen the app.",
+                fix=f"Set knowledge.enabled to true in {DEFAULT_DATA_DIR}/config.yaml and reopen the app.",
             )
+        else:
+            _record(
+                session,
+                SubsystemState.PREPARING,
+                reason="starting the local database (one-time ~500 MB download on first run)",
+            )
+
+        # Whether the sidecar STARTS is the other question, and CodeIndex gets
+        # a vote: gating it on knowledge alone left ``codeindex_cypher``
+        # answering ``no_backend`` for a feature the user had switched on.
+        if not _neo4j_runtime_wanted(self._settings):
             return None
-        _record(
-            session,
-            SubsystemState.PREPARING,
-            reason="starting the local database (one-time ~500 MB download on first run)",
-        )
 
         async def _run() -> None:
             try:
@@ -287,7 +348,11 @@ class SessionOrchestrator:
                     only_if_preparing=True,
                 )
             else:
-                _record(session, SubsystemState.READY)
+                # Same guard the failure path already uses. The sidecar also
+                # starts for CodeIndex, so this runs with knowledge DISABLED
+                # too — and reporting it READY would tell the panel a feature
+                # the user switched off is switched on.
+                _record(session, SubsystemState.READY, only_if_preparing=True)
 
         task = asyncio.create_task(_run(), name="knowledge-attach")
         self._neo4j_attach_task = task
@@ -354,7 +419,10 @@ class SessionOrchestrator:
                 logger.exception("knowledge: neo4j attach failed; continuing without it")
             else:
                 _record(session, SubsystemState.READY)
-        if getattr(session, "code_index", None) is not None:
+        if (
+            _codeindex_wants_neo4j(self._settings)
+            and getattr(session, "code_index", None) is not None
+        ):
             await session.attach_codeindex_neo4j(runtime)
 
     @property

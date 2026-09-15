@@ -43,7 +43,7 @@ class Message(BaseModel):
     # start of every stream (i.e. after ``stream_end``). The FE
     # dedups by (id, event_seq) so events that arrive twice (e.g.
     # when two WebSocket clients are attached due to a StrictMode
-    # double-mount of EmberClient) are dropped; the monotonic
+    # double-mount of IgniClient) are dropped; the monotonic
     # counter also pins the canonical ordering of events in a
     # stream. Empty on FE→BE messages.
     event_seq: int = 0

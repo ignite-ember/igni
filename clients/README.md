@@ -35,9 +35,9 @@ FE↔BE protocol the TUI uses, over a loopback WebSocket added in
 - **jetbrains/** — tool window with JCEF; per-project BE service.
 
 Each shell does only: spawn `python -m ember_code.backend --ws-port 0
---project-dir <dir>` (interpreter override: `EMBER_PYTHON`), parse the
+--project-dir <dir>` (interpreter override: `IGNI_PYTHON`), parse the
 JSON ready line for `ws_port`, point the web UI at it. Process
-lifecycle: killed by the shell on close + BE's `EMBER_PARENT_PID`
+lifecycle: killed by the shell on close + BE's `IGNI_PARENT_PID`
 watchdog as backstop.
 
 ## Build status

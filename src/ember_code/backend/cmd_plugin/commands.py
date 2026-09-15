@@ -134,7 +134,7 @@ class PluginsCommand(_BaseSlashCommand):
       /plugins enable <name>      — enable a disabled plugin (no panel)
       /plugins disable <name>     — disable an enabled plugin (no panel)
 
-    Enable/disable persist to ``~/.ember/plugins.json`` and take
+    Enable/disable persist to ``~/.igni/plugins.json`` and take
     effect on the next session start (and hot-reload for the current
     one).
     """

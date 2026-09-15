@@ -3026,7 +3026,7 @@ they're literal source-code fixtures, and must stay put.
 
 **Target:** ad-hoc — 11 inline imports. All safe: file is
 guarded by suite-wide `pytestmark.skipif` on
-`EMBER_TEST_LLM_API_KEY`, but the imports themselves resolve
+`IGNI_TEST_LLM_API_KEY`, but the imports themselves resolve
 against always-installed deps (`agno`, `httpx`, `inspect`).
 
 **Changes:**
@@ -5892,7 +5892,7 @@ class.
 
 **Changes:**
 - Created `core/mcp/tool_state.py` — new `MCPToolStateStore`
-  class owning file I/O for `.ember/mcp-tool-state.json`.
+  class owning file I/O for `.igni/mcp-tool-state.json`.
   `path()` / `load()` / `save()`. Handles the "no
   project_dir → no-op" case cleanly (matches manager's prior
   behaviour).
@@ -6239,7 +6239,7 @@ logic; they belong somewhere else.
 **Changes:**
 - New `core/init_templates.py` (~180 LoC of `str` constants):
   `PRE_PR_REVIEW_HOOK`, `POST_COMMIT_TODO_HOOK`,
-  `EMBER_MD_TEMPLATE`, `CONFIG_YAML_HEADER`,
+  `IGNI_MD_TEMPLATE`, `CONFIG_YAML_HEADER`,
   `PROJECT_CONFIG_TEMPLATE`, `_HOME_CONFIG_BOOTSTRAP`. Pure data,
   no imports beyond `__future__.annotations` (needed here just
   for consistency with the rest of the package).
@@ -7222,7 +7222,7 @@ pattern.
   builtin-shadowing dance).
 - New `BuiltInHookSpec(BaseModel)` — one built-in hook shipped by
   the package. Frozen; the `content` string body is written to
-  `.ember/hooks/<filename>` and the `definition` is registered in
+  `.igni/hooks/<filename>` and the `definition` is registered in
   settings.json under `event`.
 - `BUILT_IN_HOOKS` migrated `list[dict[str, Any]]` →
   `tuple[BuiltInHookSpec, ...]`. Tuple because it's a module-level
@@ -7237,7 +7237,7 @@ pattern.
   3. `HookDefinition.model_dump(by_alias=True)` restores wire name `type`.
   4. `background` defaults to False.
   5. `background=True` round-trips.
-  6. E2E: `.ember/settings.json` written by `initialize_project`
+  6. E2E: `.igni/settings.json` written by `initialize_project`
      has `type` (wire name), not `kind` (Python name).
 
 **Results:**

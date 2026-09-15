@@ -8,7 +8,7 @@ touching a process-global.
 Threading + caching invariants:
 
 * Engines are cached by NORMALISED path — two callers passing
-  ``~/.ember/state.db`` and the equivalent absolute path get the
+  ``~/.igni/state.db`` and the equivalent absolute path get the
   SAME engine. Two engines on the same file would create two
   SQLAlchemy pools on a single SQLite file → lock contention.
 * All four cache dicts are guarded by a single ``threading.Lock``.

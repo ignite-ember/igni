@@ -107,9 +107,9 @@ async def _watch_phase(label: str, pid: int, t0: float, seconds: float,
 
 async def _drive(args) -> None:
     project = Path(tempfile.mkdtemp(prefix="ember-release-"))
-    env_overrides = {**os.environ, "EMBER_PARENT_PID": str(os.getpid())}
+    env_overrides = {**os.environ, "IGNI_PARENT_PID": str(os.getpid())}
     if args.idle_timeout > 0:
-        env_overrides["EMBER_SESSION_IDLE_TIMEOUT"] = str(args.idle_timeout)
+        env_overrides["IGNI_SESSION_IDLE_TIMEOUT"] = str(args.idle_timeout)
     # Force INFO-level logging in the spawned BE so the eviction log
     # lines reach us. Default config is WARNING — hides "session pool:
     # evicted …" lines, which is what we want to verify the drop.
@@ -269,7 +269,7 @@ def main() -> int:
         "--idle-timeout",
         type=float,
         default=0,
-        help="Override EMBER_SESSION_IDLE_TIMEOUT in the spawned BE (seconds).",
+        help="Override IGNI_SESSION_IDLE_TIMEOUT in the spawned BE (seconds).",
     )
     args = ap.parse_args()
     asyncio.run(_drive(args))

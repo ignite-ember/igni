@@ -17,12 +17,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ember_code.core.init.hooks_catalog import BUILT_IN_HOOKS
 from ember_code.core.init.schemas import BuiltInHookSpec, SettingsFile
+from ember_code.core.paths import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 
 
 class HookProvisioner(BaseModel):
-    """Provision built-in hooks into a project's ``.ember`` directory.
+    """Provision built-in hooks into a project's ``.igni`` directory.
 
     Constructor takes the project directory and an optional
     iterable of :class:`BuiltInHookSpec` (defaults to
@@ -39,31 +40,56 @@ class HookProvisioner(BaseModel):
 
     project_dir: Path
     hooks: tuple[BuiltInHookSpec, ...] = Field(default_factory=lambda: BUILT_IN_HOOKS)
+    #: Write the scripts but leave them unregistered, because the
+    #: person's group registers them instead.
+    register_in_settings: bool = True
+
+    #: Write nothing at all.
+    #:
+    #: Set when the group ships ``scripts`` entries of its own. igni is
+    #: meant to ship nothing: everything a session runs arrives from the
+    #: server. While a group could only send hook *declarations*, the
+    #: scripts had to be written locally for the declaration's path to
+    #: resolve — so this ran even when the group was in charge. Now a
+    #: group sends the script alongside the hook and reaches it through
+    #: ``{group_scripts}``, and writing local copies would leave two
+    #: versions of the same script with only one of them maintained.
+    skip_entirely: bool = False
 
     def provision(self) -> None:
         """Write every hook script and register each definition.
 
         Steps:
 
-        1. Ensure ``.ember/hooks/`` exists.
-        2. Load ``.ember/settings.json`` via :meth:`SettingsFile.load`
+        1. Ensure ``.igni/hooks/`` exists.
+        2. Load ``.igni/settings.json`` via :meth:`SettingsFile.load`
            (fail-soft — a corrupt file becomes an empty instance).
         3. For each spec, call
            :meth:`BuiltInHookSpec.write_script` (always overwrites —
-           hooks are code, not config) and
-           :meth:`BuiltInHookSpec.register_in` (idempotent).
+           hooks are code, not config) and, unless the person's group
+           registers them instead, :meth:`BuiltInHookSpec.register_in`
+           (idempotent).
+
+        Does nothing at all when :attr:`skip_entirely` is set, which is
+        the case once a group ships the scripts itself.
         4. Save the settings file back — user-added top-level keys
            survive via :attr:`SettingsFile.model_config`'s
            ``extra="allow"``.
         """
-        hooks_dir = self.project_dir / ".ember" / "hooks"
+        if self.skip_entirely:
+            logger.debug("Group ships its own hook scripts; provisioning nothing locally")
+            return
+
+        hooks_dir = self.project_dir / CONFIG_DIR / "hooks"
         hooks_dir.mkdir(parents=True, exist_ok=True)
 
-        settings_path = self.project_dir / ".ember" / "settings.json"
+        settings_path = self.project_dir / CONFIG_DIR / "settings.json"
         settings = SettingsFile.load(settings_path)
 
         for hook in self.hooks:
             hook.write_script(hooks_dir)
-            hook.register_in(settings)
+            if self.register_in_settings:
+                hook.register_in(settings)
 
-        settings.save(settings_path)
+        if self.register_in_settings:
+            settings.save(settings_path)

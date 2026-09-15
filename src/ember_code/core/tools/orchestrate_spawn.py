@@ -445,15 +445,18 @@ class AgentSpawn(SpawnRunner):
         self._emit_agent_started(self._agent_name, self._task)
 
     def format_result(self, *, elapsed: float, result: str, activity: list[str]) -> str:
-        """Compose the four-line header + activity log + response +
+        """Compose the four-line header + response +
         (optional) run-error warning + worktree footer.
 
-        Same layout the legacy ``_format_spawn_result`` produced —
-        moved onto the class because every argument already came
-        from ``self._*``.
+        The orchestrator only needs the sub-agent's INPUT (task, already in
+        the header) and OUTPUT (response). Its internal tool_calls are
+        useless context noise — the orchestrator can neither replay nor
+        debug them, and every token spent replaying activity is a token
+        stolen from real reasoning. Prior versions included an ``Activity:``
+        block; ``activity`` is still surfaced via ``event_appender`` for
+        UI/logging consumers.
         """
         header = self._header(elapsed)
-        activity_log = "\n".join(activity) if activity else "  (no tool calls)"
         run_errors = [line for line in activity if "RUN ERROR" in line]
         error_section = ""
         if run_errors:
@@ -463,13 +466,7 @@ class AgentSpawn(SpawnRunner):
                 "with the partial result if it's sufficient.\n" + "\n".join(run_errors)
             )
         worktree_footer = self._sandbox.finalize() if self._sandbox else ""
-        return (
-            f"{header}\n\n"
-            f"Activity:\n{activity_log}\n\n"
-            f"Response:\n{result}"
-            f"{error_section}"
-            f"{worktree_footer}"
-        )
+        return f"{header}\n\nResponse:\n{result}{error_section}{worktree_footer}"
 
     def _header(self, elapsed: float) -> str:
         return (
@@ -619,9 +616,15 @@ class TeamSpawn(SpawnRunner):
         return self._mode.value
 
     def format_result(self, *, elapsed: float, result: str, activity: list[str]) -> str:
-        activity_log = "\n".join(activity) if activity else "  (no activity)"
+        """Header + Response only — see SpawnAgent.format_result for rationale.
+
+        The orchestrator only consumes (task, response); intermediate activity
+        of team members is noise at that level and lives instead in the
+        UI event stream via ``event_appender``.
+        """
+        del activity  # surfaced via event_appender, not the parent's tool result
         header = self._header(elapsed)
-        return f"{header}\n\nActivity:\n{activity_log}\n\nResponse:\n{result}"
+        return f"{header}\n\nResponse:\n{result}"
 
     def _header(self, elapsed: float) -> str:
         return (

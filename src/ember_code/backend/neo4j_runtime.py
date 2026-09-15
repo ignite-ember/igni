@@ -104,7 +104,17 @@ _DEFAULT_STARTUP_TIMEOUT_SEC = 60.0
 _PROBE_INTERVAL_SEC = 0.25
 
 # Shutdown grace window before SIGKILL.
-_DEFAULT_SHUTDOWN_GRACE_SEC = 10.0
+#
+# Neo4j checkpoints on a clean shutdown and only then. SIGKILL mid-checkpoint
+# leaves the store unusable, so the next session rebuilds the commit from its
+# changeset — which means re-embedding every chunk, and embedding is the whole
+# cost of a load: 16 minutes for celery, 77 for sqlalchemy on an M-series
+# machine. Ten seconds is not enough time for a large store to checkpoint, so the
+# old default silently converted "close the session" into "throw the graph away".
+#
+# Two minutes is generous for the checkpoint and still bounded; a process that
+# has not exited by then is stuck rather than busy.
+_DEFAULT_SHUTDOWN_GRACE_SEC = 120.0
 
 # Discovery file location — lives outside any project so all BEs see it.
 _AUTH_FILE = "neo4j.auth"
@@ -1238,7 +1248,10 @@ class Neo4jRuntime:
                 await asyncio.wait_for(proc.wait(), timeout=self._shutdown_grace)
             except asyncio.TimeoutError:
                 logger.warning(
-                    "neo4j (project=%s commit=%s pid=%d) did not exit within %ds; SIGKILL",
+                    "neo4j (project=%s commit=%s pid=%d) did not exit within %ds; SIGKILL. "
+                    "The checkpoint did not finish, so this commit's store is not reusable "
+                    "and the next session will rebuild it from the changeset, re-embedding "
+                    "every chunk. Raise shutdown_grace_sec if this repeats.",
                     project_hash,
                     commit_sha,
                     pid,

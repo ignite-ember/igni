@@ -51,6 +51,15 @@ def _stub_index():
     # exercise the short-circuit (e.g. ``test_target_already_local…``)
     # override this with their own ``MagicMock``.
     index.has_commit = MagicMock(return_value=False)
+    # ``sync_now`` primes the Neo4j runtime for the target commit before
+    # building the reference service, and it *awaits* that call. On a bare
+    # MagicMock the attribute is truthy and not awaitable, so every routing test
+    # died on ``'MagicMock' object can't be awaited`` — twelve failures that had
+    # nothing to do with what they were testing. AsyncMock rather than ``None``
+    # because the real attribute is awaitable and the priming call is part of the
+    # path under test.
+    index._neo4j_runtime = MagicMock()
+    index._neo4j_runtime.start_for_commit = AsyncMock()
     return index
 
 
@@ -84,6 +93,11 @@ _RESOLVED = ResolvedRepository(
 _NEEDS_INSTALL = ResolvedRepository(
     status=DiscoveryStatus.INSTALL_REQUIRED,
     install_url="https://github.com/apps/ember-codeindex/installations/new?state=...",
+)
+_ACCESS_DENIED = ResolvedRepository(
+    status=DiscoveryStatus.ACCESS_DENIED,
+    denial_reason="no_linked_logins",
+    denial_message="Connect one at https://portal/dashboard, then try again.",
 )
 
 
@@ -133,6 +147,27 @@ class TestSyncSkipPaths:
         assert result.skipped and "unavailable" in result.reason
 
     @pytest.mark.asyncio
+    async def test_access_denial_reports_the_servers_instruction(self, tmp_path):
+        """A denial must not be laundered into "unavailable".
+
+        The two mean opposite things to the user: unavailable is "retry
+        later", denied is "do this specific thing and it will work". The
+        server took the trouble to say which; the manager has to pass it
+        through.
+        """
+        mgr = _make_mgr(
+            project_dir=tmp_path,
+            code_index=_stub_index(),
+            resolver=_stub_resolver(_ACCESS_DENIED),
+            credentials=_stub_credentials(),
+        )
+        result = await mgr.sync_now(sha="abc")
+
+        assert result.skipped
+        assert result.reason == _ACCESS_DENIED.denial_message
+        assert "unavailable" not in result.reason
+
+    @pytest.mark.asyncio
     async def test_skips_when_no_cloud_token(self, tmp_path):
         mgr = _make_mgr(
             project_dir=tmp_path,
@@ -141,7 +176,7 @@ class TestSyncSkipPaths:
             credentials=_stub_credentials(token=None),
         )
         result = await mgr.sync_now(sha="abc")
-        assert result.skipped and "not authenticated" in result.reason
+        assert result.skipped and "not signed in" in result.reason
 
     @pytest.mark.asyncio
     async def test_install_required_surfaces_install_url(self, tmp_path):

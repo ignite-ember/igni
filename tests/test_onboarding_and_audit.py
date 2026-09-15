@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from ember_code.core.config.settings import Settings
 from ember_code.core.init import initialize_project
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.utils.audit import AuditEntry, AuditLogger
 from ember_code.core.utils.context import load_project_context
 from ember_code.core.utils.update_checker import UpdateInfo
@@ -17,21 +18,21 @@ class TestFirstRunOnboarding:
 
     def test_creates_ember_dir(self, tmp_path):
         with patch("pathlib.Path.home", return_value=tmp_path / "home"):
-            (tmp_path / "home" / ".ember").mkdir(parents=True, exist_ok=True)
+            (tmp_path / "home" / CONFIG_DIR).mkdir(parents=True, exist_ok=True)
             initialize_project(tmp_path)
 
-        assert (tmp_path / ".ember").exists()
+        assert (tmp_path / CONFIG_DIR).exists()
 
     def test_creates_marker_file(self, tmp_path):
         with patch("pathlib.Path.home", return_value=tmp_path / "home"):
-            (tmp_path / "home" / ".ember").mkdir(parents=True, exist_ok=True)
+            (tmp_path / "home" / CONFIG_DIR).mkdir(parents=True, exist_ok=True)
             initialize_project(tmp_path)
 
-        assert (tmp_path / ".ember" / ".initialized").exists()
+        assert (tmp_path / CONFIG_DIR / ".initialized").exists()
 
     def test_second_run_no_reinit(self, tmp_path):
         with patch("pathlib.Path.home", return_value=tmp_path / "home"):
-            (tmp_path / "home" / ".ember").mkdir(parents=True, exist_ok=True)
+            (tmp_path / "home" / CONFIG_DIR).mkdir(parents=True, exist_ok=True)
             first = initialize_project(tmp_path)
             second = initialize_project(tmp_path)
 
@@ -40,19 +41,19 @@ class TestFirstRunOnboarding:
 
     def test_copies_agents(self, tmp_path):
         with patch("pathlib.Path.home", return_value=tmp_path / "home"):
-            (tmp_path / "home" / ".ember").mkdir(parents=True, exist_ok=True)
+            (tmp_path / "home" / CONFIG_DIR).mkdir(parents=True, exist_ok=True)
             initialize_project(tmp_path)
 
-        agents_dir = tmp_path / ".ember" / "agents"
+        agents_dir = tmp_path / CONFIG_DIR / "agents"
         if agents_dir.exists():
             assert any(agents_dir.iterdir())
 
     def test_copies_skills(self, tmp_path):
         with patch("pathlib.Path.home", return_value=tmp_path / "home"):
-            (tmp_path / "home" / ".ember").mkdir(parents=True, exist_ok=True)
+            (tmp_path / "home" / CONFIG_DIR).mkdir(parents=True, exist_ok=True)
             initialize_project(tmp_path)
 
-        skills_dir = tmp_path / ".ember" / "skills"
+        skills_dir = tmp_path / CONFIG_DIR / "skills"
         if skills_dir.exists():
             assert any(skills_dir.iterdir())
 

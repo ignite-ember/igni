@@ -284,7 +284,7 @@ class OrchestrateTools(Toolkit):
         name: str,
         description: str,
         system_prompt: str,
-        tools: str = "Read,Write,Edit,Bash,Grep,Glob",
+        tools: str = "Write,Edit,Bash",
     ) -> str:
         """Create a new ephemeral agent with a custom system prompt.
 
@@ -292,9 +292,11 @@ class OrchestrateTools(Toolkit):
             name: Short snake_case name for the agent.
             description: One-line description of what the agent does.
             system_prompt: Full system prompt defining the agent's behavior.
-            tools: Comma-separated tool names (e.g. "Read,Write,Edit,Bash,Grep,Glob").
-                Valid: Read, Write, Edit, Bash, Grep, Glob, LS, WebSearch, WebFetch,
-                Python, Schedule, NotebookEdit.
+            tools: Comma-separated tool names (e.g. "Bash,Edit,Write").
+                Valid: Bash, BashOutput, Edit, NotebookEdit, Schedule,
+                WebFetch, WebSearch, Write. Searching and reading files
+                go through Bash (`rg`, `cat`, `find`) — there are no
+                separate Read/Grep/Glob/LS toolkits.
 
         Returns:
             Confirmation message with the agent name.

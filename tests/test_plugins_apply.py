@@ -21,6 +21,7 @@ from ember_code.core.hooks.loader import HookLoader
 from ember_code.core.hooks.registry import HookRegistry
 from ember_code.core.hooks.schemas import HookDefinition
 from ember_code.core.mcp.config import MCPConfigLoader, MCPServerConfig
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.plugins.loader import PluginLoader
 
 # ── Helpers ─────────────────────────────────────────────────────────
@@ -77,7 +78,7 @@ def test_apply_to_hooks_merges_plugin_event(tmp_path: Path) -> None:
     end up in the shared hooks dict. The parsed entries use the same
     ``HookDefinition`` schema as settings.json hooks — no separate
     plugin type."""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin_with_hooks(
         user_ember,
         "alpha",
@@ -110,7 +111,7 @@ def test_plugin_hooks_prepend_so_project_runs_last(tmp_path: Path) -> None:
     project_hook = HookDefinition(type="command", command="project-cmd")
     registry = HookRegistry({"PostToolUse": [project_hook]})
 
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin_with_hooks(
         user_ember,
         "alpha",
@@ -132,7 +133,7 @@ def test_plugin_hooks_prepend_so_project_runs_last(tmp_path: Path) -> None:
 def test_apply_to_hooks_skips_disabled_plugin(tmp_path: Path) -> None:
     """Disabled plugins don't contribute hooks even though they're
     still discoverable via ``list_plugins``."""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin_with_hooks(
         user_ember,
         "alpha",
@@ -163,7 +164,7 @@ def test_apply_to_hooks_skips_disabled_plugin(tmp_path: Path) -> None:
 def test_load_plugin_hooks_swallows_malformed_json(tmp_path: Path) -> None:
     """A broken ``hooks/hooks.json`` shouldn't take down the whole
     hooks pipeline. Log a warning, skip the plugin's hooks, continue."""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     plugin_dir = user_ember / "broken"
     (plugin_dir / ".claude-plugin").mkdir(parents=True)
     (plugin_dir / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": "broken"}))
@@ -186,7 +187,7 @@ def test_apply_to_mcp_prefixes_server_names(tmp_path: Path) -> None:
     """Plugin-bundled MCP servers land in the configs dict with names
     prefixed ``<plugin>:<server>``. The raw name from the plugin's
     ``.mcp.json`` is never used directly."""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin_with_mcp(
         user_ember,
         "myplugin",
@@ -217,7 +218,7 @@ def test_apply_to_mcp_first_wins_on_collision(tmp_path: Path) -> None:
     the first wins. (In practice this is unreachable since plugin
     names are unique — but the policy makes the collision-resolution
     rule explicit.)"""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin_with_mcp(user_ember, "a", {"mcpServers": {"shared": {"command": "/a"}}})
 
     loader = PluginLoader()
@@ -237,7 +238,7 @@ def test_apply_to_mcp_first_wins_on_collision(tmp_path: Path) -> None:
 def test_apply_to_mcp_supports_fallback_filename(tmp_path: Path) -> None:
     """Claude Code's spec uses ``.mcp.json``; tolerate ``mcp.json``
     (no leading dot) too for plugin authors who forget the convention."""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin_with_mcp(
         user_ember,
         "p",
@@ -255,7 +256,7 @@ def test_apply_to_mcp_supports_fallback_filename(tmp_path: Path) -> None:
 
 
 def test_apply_to_mcp_skips_disabled(tmp_path: Path) -> None:
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin_with_mcp(user_ember, "off", {"mcpServers": {"x": {"command": "/x"}}})
     _write_plugin_with_mcp(user_ember, "on", {"mcpServers": {"y": {"command": "/y"}}})
 
@@ -277,7 +278,7 @@ def test_collect_tool_dirs_returns_only_plugins_with_tools(tmp_path: Path) -> No
     enabled plugins that bundle a ``tools/`` directory. Plugins
     without tools are filtered out so the consumer (custom_loader)
     doesn't have to re-stat."""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin_with_tools(user_ember, "withtools", "demo")
     # A plugin with hooks but no tools should not appear.
     _write_plugin_with_hooks(user_ember, "withouttools", {})
@@ -293,7 +294,7 @@ def test_collect_tool_dirs_returns_only_plugins_with_tools(tmp_path: Path) -> No
 
 
 def test_collect_tool_dirs_skips_disabled(tmp_path: Path) -> None:
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin_with_tools(user_ember, "off", "demo")
     _write_plugin_with_tools(user_ember, "on", "demo")
 
@@ -314,7 +315,7 @@ def test_apply_to_agents_namespaces_loaded_agents(tmp_path: Path) -> None:
     from ember_code.core.plugins.loader import PluginLoader
     from ember_code.core.pool import AgentPool
 
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     plugin_dir = user_ember / "foo"
     (plugin_dir / ".claude-plugin").mkdir(parents=True)
     (plugin_dir / ".claude-plugin" / "plugin.json").write_text(
@@ -348,7 +349,7 @@ def test_apply_to_agents_honors_disabled(tmp_path: Path) -> None:
     from ember_code.core.plugins.loader import PluginLoader
     from ember_code.core.pool import AgentPool
 
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     for plugin_name in ("off", "on"):
         plugin_dir = user_ember / plugin_name
         (plugin_dir / ".claude-plugin").mkdir(parents=True)
@@ -377,10 +378,10 @@ def test_apply_to_agents_honors_disabled(tmp_path: Path) -> None:
 def test_load_custom_tools_namespaces_plugin_toolkits(tmp_path: Path) -> None:
     """End-to-end: a plugin's ``tools/<file>.py`` becomes a toolkit named
     ``custom_<plugin>_<file>``. The prefix prevents collisions with
-    same-named user files in ``~/.ember/tools/``."""
+    same-named user files in ``~/.igni/tools/``."""
     from ember_code.core.tools.custom_loader import load_custom_tools
 
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     _write_plugin_with_tools(user_ember, "mp", "demo")
 
     with patch.object(Path, "home", return_value=tmp_path / "home"):

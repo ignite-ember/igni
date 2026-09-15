@@ -1,17 +1,14 @@
 /**
  * Screenshot of the footer indicator pill rendering when there's
  * at least one running background process. Drives a live BE
- * pre-seeded with an orphan row (via the harness script).
+ * pre-seeded with an orphan row. The seeding is the fixture's job now
+ * (``orphanScenario``), so this runs with no setup — it used to need a
+ * script run by hand, a backend started by hand, and an environment
+ * variable. F129.
  */
-import { test as base, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/live-be";
 
-const test = base.extend<{ liveWsUrl: string }>({
-  liveWsUrl: async ({}, use) => {
-    const url = process.env.EMBER_LIVE_WS;
-    if (!url) test.skip(true, "Set EMBER_LIVE_WS");
-    await use(url as string);
-  },
-});
+test.use({ orphanScenario: "sleep" });
 
 test("footer shows watcher pill when processes are running", async ({
   page,

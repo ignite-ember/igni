@@ -2,7 +2,7 @@
 
 When a client (VSCode extension, JB plugin, Tauri shell) wants a
 backend for a project, it should first check
-``<project>/.ember/backend.lock``:
+``<project>/.igni/backend.lock``:
 
 - If the lockfile exists AND the recorded PID is alive AND the
   recorded port answers a TCP connect AND the wire version matches,
@@ -16,7 +16,7 @@ backend for a project, it should first check
   WebSocket port is bound (see ``BackendSupervisor.write_discovery_lockfile``).
 
 The lockfile is JSON so it's trivial to inspect and debug from a
-shell (``cat .ember/backend.lock | jq``). Atomic write via
+shell (``cat .igni/backend.lock | jq``). Atomic write via
 ``os.replace`` — the file is either the previous BE's or the new
 BE's, never a half-written blend.
 
@@ -51,6 +51,7 @@ from ember_code.backend.schemas_lockfile import (
     VersionMismatch,
     WriteLockfileResult,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ class Lockfile:
         # does before passing project_dir to the BE — the lockfile
         # lives next to ``state.db`` inside the resolved project,
         # not at whatever path the caller happened to pass in.
-        self._dir = Path(project_dir).resolve() / ".ember"
+        self._dir = Path(project_dir).resolve() / CONFIG_DIR
         self._path = self._dir / LOCKFILE_NAME
 
     @property

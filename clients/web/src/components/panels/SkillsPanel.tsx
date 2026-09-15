@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { EmberClient } from "../../protocol/client";
+import type { IgniClient } from "../../protocol/client";
 import { Drawer } from "./Drawer";
 
 interface SkillRow {
@@ -13,7 +13,7 @@ export function SkillsPanel({
   onRun,
   onClose,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   onRun: (command: string) => void;
   onClose: () => void;
 }) {
@@ -31,7 +31,7 @@ export function SkillsPanel({
       {skills === null && <div className="msg-info">Loading…</div>}
       {skills?.length === 0 && (
         <div className="msg-info">
-          No skills installed. Add some via Plugins or .ember/skills/.
+          No skills installed. Add some via Plugins or .igni/skills/.
         </div>
       )}
       {skills?.map((s) => (

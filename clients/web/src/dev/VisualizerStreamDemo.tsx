@@ -25,6 +25,7 @@ import { Component, useCallback, useMemo, useRef, useState, type ReactNode } fro
 import type { ChatItem } from "../chat/model";
 import { applyVisualizationDelta } from "../chat/visualizationStream";
 import { ChatItemView } from "../components/ChatItems";
+import { countOf } from "../lib/plural";
 
 // Simple error boundary so a bad partial spec doesn't blank the
 // entire demo page — if the Renderer throws mid-stream we render a
@@ -201,7 +202,7 @@ export function VisualizerStreamDemo() {
           data-progress={progressPct}
         >
           {status} · {progressPct}% · {cursor}/{TARGET_JSON.length} chars ·{" "}
-          {items.filter((i) => i.kind === "visualization").length} card(s)
+          {countOf(items.filter((i) => i.kind === "visualization").length, "card")}
         </div>
       </header>
 

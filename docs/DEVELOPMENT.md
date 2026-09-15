@@ -61,7 +61,7 @@ ember-code/
 │       ├── auth/
 │       │   ├── __init__.py
 │       │   ├── client.py              # Device-flow authentication (browser login + polling)
-│       │   └── credentials.py         # Credential storage (~/.ember/credentials.json + config)
+│       │   └── credentials.py         # Credential storage (~/.igni/credentials.json + config)
 │       ├── pool.py                    # AgentPool: load/parse .md agent definitions
 │       ├── learn.py                   # LearningMachine integration
 │       ├── init.py                    # Project initialization (copy agents, skills, hooks)
@@ -152,7 +152,7 @@ ember-code/
 │       │   └── store.py               # Task store (SQLite-backed)
 │       └── utils/
 │           ├── __init__.py
-│           ├── context.py             # Project context loading (ember.md)
+│           ├── context.py             # Project context loading (igni.md)
 │           ├── display.py             # Rich terminal formatting
 │           ├── audit.py               # Audit logging (JSON lines)
 │           ├── response.py            # Response formatting utilities
@@ -176,7 +176,7 @@ ember-code/
 │   └── test_tui_handlers.py           # TUI handlers and commands
 ├── Makefile                           # Build commands (see below)
 ├── pyproject.toml                     # Package metadata, deps, tool config
-├── ember.md                           # Project instructions for self-use
+├── igni.md                           # Project instructions for self-use
 ├── README.md
 └── LICENSE
 ```
@@ -256,9 +256,9 @@ class AgentPool:
     def _load_all(self, config: Settings):
         # Load in priority order (highest last, so they overwrite)
         dirs = [
-            (Path.home() / ".ember" / "agents", 0),        # user global
-            (Path(".ember/agents.local"), 1),               # project local
-            (Path(".ember/agents"), 2),                     # project shared
+            (Path.home() / ".igni" / "agents", 0),        # user global
+            (Path(".igni/agents.local"), 1),               # project local
+            (Path(".igni/agents"), 2),                     # project shared
         ]
 ```
 
@@ -268,7 +268,7 @@ The main agent has `OrchestrateTools` which provides `spawn_agent()`, `spawn_tea
 
 ### 3. Knowledge System (knowledge/)
 
-The knowledge system uses a custom `EmberEmbedder` that calls the Ember server's `/v1/embeddings` endpoint (proxying to CodeIndex's text2vec-transformers model, 384 dimensions):
+The knowledge system uses a custom `EmberEmbedder` that calls the igni server's `/v1/embeddings` endpoint (proxying to CodeIndex's text2vec-transformers model, 384 dimensions):
 
 ```python
 class EmberEmbedder(Embedder):
@@ -300,7 +300,7 @@ Agent `.md` files specify models by name. The registry maps names to provider, e
 ```python
 def get_model(name: str, config: Settings) -> Model:
     # 1. User config registry (BYOM)
-    # 2. Built-in registry (Ember hosted)
+    # 2. Built-in registry (server-hosted)
     # 3. provider:model_id syntax (e.g., "openai_like:gpt-4o")
 ```
 
@@ -356,7 +356,7 @@ Built-in commands available in interactive mode:
 | `/loop <prompt>` | Re-fire the same prompt as the next user turn until cap, `/loop stop`, or any non-`/loop` input (default cap 30, hard cap 200). Forms: `/loop` (status), `/loop <N> <prompt>` (explicit cap), `/loop stop` (cancel) |
 | `/plugins` | Open the Textual plugins panel (browse, toggle enable/disable, update/remove, browse marketplaces, install). See [Plugins](PLUGINS.md). |
 | `/plugins enable <name>` / `/plugins disable <name>` | Toggle a plugin without opening the panel — takes effect on next session start. |
-| `/plugin install <git-url\|@marketplace/plugin>` | Install a Claude-Code-compatible plugin into `~/.ember/plugins/`. Optional `--ref <branch\|tag\|sha>`. |
+| `/plugin install <git-url\|@marketplace/plugin>` | Install a Claude-Code-compatible plugin into `~/.igni/plugins/`. Optional `--ref <branch\|tag\|sha>`. |
 | `/plugin update <name>` / `/plugin remove <name>` | Update (fetch + reset to origin's HEAD or `--ref`) or uninstall. |
 | `/plugin marketplace add\|list\|remove\|refresh` | Manage registered marketplaces — Claude-Code-compatible catalogs at the root of any git repo. |
 | `/compact` | Manually compact session history (otherwise triggers at 80% of the context window) |
@@ -364,8 +364,8 @@ Built-in commands available in interactive mode:
 | `/codeindex` | Show CodeIndex sync status for the current project |
 | `/mcp` | List configured MCP servers and their connection status |
 | `/model` | Switch the active model (or show current) |
-| `/whoami` | Show the active Ember Cloud login |
-| `/logout` | Clear cached Ember Cloud credentials |
+| `/whoami` | Show the active your igni server login |
+| `/logout` | Clear cached your igni server credentials |
 | `/<skill-name> [args]` | Invoke a skill (e.g., `/commit`, `/resolve-issues`) |
 
 ## Architecture Decisions
@@ -406,7 +406,7 @@ The TUI is the default interface — `ignite-ember` launches `EmberApp` unless `
 See [GitHub Issues](https://github.com/ignite-ember/ember-code/issues) for the current roadmap.
 
 **Planned features:**
-- [ ] Centralized tracing (OpenTelemetry → Ember server)
+- [ ] Centralized tracing (OpenTelemetry → igni server)
 - [ ] Plugin system (installable agent/tool packages)
 - [ ] Web UI (Agno Playground integration)
 - [ ] Voice mode (speech-to-text input)

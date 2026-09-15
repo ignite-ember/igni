@@ -64,7 +64,7 @@ async def test_knowledge_add_search_list_delete_round_trip(tmp_path, driver, pro
     entries = {
         "auth": "Passwords must be hashed with bcrypt; never store plaintext.",
         "deploy": "Deploy via the GitHub Actions workflow; never push to main directly.",
-        "config": "Configuration is loaded from .ember/config.local.yaml on startup.",
+        "config": "Configuration is loaded from .igni/config.local.yaml on startup.",
     }
     for eid, content in entries.items():
         # One embedding per entry (matches the entry_embedding

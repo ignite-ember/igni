@@ -162,7 +162,7 @@ async def test_refresh_passes_data_dir_through(tmp_path: Path) -> None:
     """The data_dir from ``settings.storage.data_dir`` flows into
     both ``load_registry`` and each ``refresh_marketplace`` call —
     if it weren't forwarded, the refresh would silently read from
-    ``~/.ember`` instead of whatever the session's configured
+    ``~/.igni`` instead of whatever the session's configured
     data dir is (breaking custom XDG-style layouts and tests).
 
     The refresh task also auto-registers the canonical default

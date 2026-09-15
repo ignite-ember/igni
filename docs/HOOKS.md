@@ -42,7 +42,60 @@ Agent calls Edit tool
 | `Stop` | When agent wants to finish | Yes | Completion validation (did tests run?) |
 | `SubagentStart` | When a sub-team spawns | No | Logging, resource tracking |
 | `SubagentStop` | When a sub-team finishes | No | Result validation |
-| `Notification` | *(reserved for future use)* | No | Custom notification handlers |
+| `Notification` | *(reserved for future use — nothing fires it)* | No | Custom notification handlers |
+
+### Permission events
+
+Fired by the permission evaluator, paired. Both carry
+`{session_id, tool_name, tool_args, rule?, reason?}`.
+
+| Event | When It Fires | Can Block? | Use Case |
+|---|---|---|---|
+| `PermissionRequest` | The evaluator returned `ASK` and the request is about to be put to the user | No | Audit who was asked for what; route approvals to Slack |
+| `PermissionDenied` | `DENY` won — a deny rule, a plan-mode block, or headless mode with no matching allow | No | Alerting on blocked tools; explaining refusals in your own words |
+
+`PreToolUse` is the one that can *change* the answer; these two
+observe the decision after it is made.
+
+### Compaction events
+
+Fired around `/compact` and around the automatic trigger when input
+tokens approach the model's context window.
+
+| Event | When It Fires | Can Block? | Payload |
+|---|---|---|---|
+| `PreCompact` | Before context is compacted | No | `{scope: "manual"\|"auto", tokens_before}` |
+| `PostCompact` | After it completes | No | `{scope, tokens_before, tokens_after, summary_chars}` |
+
+Use these for export-before-compact, or to drive your own
+context-budget strategy from a plugin.
+
+### Scheduler events
+
+Fired by `core/tools/schedule.py` around the tasks behind
+`/schedule` — cron and one-shot. Distinct from
+`SubagentStart`/`SubagentStop`, which cover within-turn dispatch;
+these cover the longer-lived scheduled-execution layer.
+
+| Event | When It Fires | Can Block? | Payload |
+|---|---|---|---|
+| `TaskCreated` | A scheduled task is registered | No | `{task_id, description, scheduled_at, recurrence?}` |
+| `TaskCompleted` | It finishes, is cancelled, or errors | No | `{task_id, status, result?, error?, duration_seconds?}` |
+
+### Other
+
+| Event | When It Fires | Can Block? | Payload |
+|---|---|---|---|
+| `StopFailure` | A run ends in an unhandled exception rather than normal completion. Paired with `Stop` | No | `{session_id, error, error_type}` |
+| `InstructionsLoaded` | Project rules resolve — once at session init, and again from `RulesIndex.consume_path` when subdirectory or path-scoped rules surface lazily | No | `{source: "session_init"\|"rules_index", files: [str], bytes}` |
+
+Every event in `HookEvent` is on this page, and
+`tests/test_every_hook_event_is_documented.py` fails if one is added
+without a row. Eight of them were missing when that rule was written
+— `PermissionRequest`, `PermissionDenied`, `PreCompact`,
+`PostCompact`, `TaskCreated`, `TaskCompleted`, `StopFailure` and
+`InstructionsLoaded` — all of them firing in the product and none of
+them findable by anyone reading this page.
 
 ---
 
@@ -54,9 +107,9 @@ Hooks are defined in settings files, with the same format as Claude Code:
 
 | Location | Scope | Shared? |
 |---|---|---|
-| `~/.ember/settings.json` | All projects | No (personal) |
-| `.ember/settings.json` | This project | Yes (commit to repo) |
-| `.ember/settings.local.json` | This project | No (gitignored) |
+| `~/.igni/settings.json` | All projects | No (personal) |
+| `.igni/settings.json` | This project | Yes (commit to repo) |
+| `.igni/settings.local.json` | This project | No (gitignored) |
 
 ### Format
 
@@ -66,7 +119,7 @@ Hooks are defined in settings files, with the same format as Claude Code:
     "PreToolUse": [
       {
         "type": "command",
-        "command": ".ember/hooks/validate.sh",
+        "command": ".igni/hooks/validate.sh",
         "matcher": "run_shell_command|save_file|edit_file",
         "timeout": 10000
       }
@@ -74,20 +127,20 @@ Hooks are defined in settings files, with the same format as Claude Code:
     "PostToolUse": [
       {
         "type": "command",
-        "command": ".ember/hooks/format.sh",
+        "command": ".igni/hooks/format.sh",
         "matcher": "save_file|edit_file|edit_file_replace_all|create_file"
       }
     ],
     "SessionStart": [
       {
         "type": "command",
-        "command": ".ember/hooks/setup-env.sh"
+        "command": ".igni/hooks/setup-env.sh"
       }
     ],
     "Stop": [
       {
         "type": "command",
-        "command": ".ember/hooks/check-tests.sh"
+        "command": ".igni/hooks/check-tests.sh"
       }
     ]
   }
@@ -100,7 +153,7 @@ Hooks are defined in settings files, with the same format as Claude Code:
 ```json
 {
   "type": "command",
-  "command": ".ember/hooks/format.sh",
+  "command": ".igni/hooks/format.sh",
   "matcher": "save_file|edit_file|edit_file_replace_all|create_file",
   "timeout": 10000
 }
@@ -258,7 +311,7 @@ Run Prettier/Black/Ruff after every file write:
 
 ```bash
 #!/bin/bash
-# .ember/hooks/format.sh
+# .igni/hooks/format.sh
 # Hook: PostToolUse, matcher: save_file|edit_file
 
 input=$(cat)
@@ -289,7 +342,7 @@ echo '{"continue": true}'
     "PostToolUse": [
       {
         "type": "command",
-        "command": ".ember/hooks/format.sh",
+        "command": ".igni/hooks/format.sh",
         "matcher": "save_file|edit_file"
       }
     ]
@@ -303,7 +356,7 @@ Prevent destructive operations:
 
 ```bash
 #!/bin/bash
-# .ember/hooks/validate-bash.sh
+# .igni/hooks/validate-bash.sh
 # Hook: PreToolUse, matcher: run_shell_command
 
 input=$(cat)
@@ -324,7 +377,7 @@ Don't let the agent stop without running tests:
 
 ```bash
 #!/bin/bash
-# .ember/hooks/check-tests.sh
+# .igni/hooks/check-tests.sh
 # Hook: Stop
 
 input=$(cat)
@@ -349,7 +402,7 @@ Set up project-specific environment:
 
 ```bash
 #!/bin/bash
-# .ember/hooks/setup-env.sh
+# .igni/hooks/setup-env.sh
 # Hook: SessionStart
 
 # Detect project type and set context
@@ -373,7 +426,7 @@ EOF
 
 ```bash
 #!/bin/bash
-# .ember/hooks/protect-paths.sh
+# .igni/hooks/protect-paths.sh
 # Hook: PreToolUse, matcher: save_file|edit_file
 
 input=$(cat)
@@ -425,7 +478,7 @@ echo '{"continue": true}'
 ## Directory Structure
 
 ```
-.ember/
+.igni/
 ├── settings.json              # Hook definitions
 ├── hooks/
 │   ├── format.sh              # Auto-format after writes
@@ -446,7 +499,7 @@ igni hooks use the **same format** as Claude Code:
 - Same matcher regex patterns
 - Same settings file structure
 
-If you have existing Claude Code hooks in `.claude/settings.json`, copy them to `.ember/settings.json` — they work as-is.
+If you have existing Claude Code hooks in `.claude/settings.json`, copy them to `.igni/settings.json` — they work as-is.
 
 The one addition: igni hooks also fire for **sub-team events** (`SubagentStart`, `SubagentStop`) since igni has multi-agent teams. Claude Code has similar events for its subagents.
 

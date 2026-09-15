@@ -17,7 +17,7 @@
  * the push channel keeps it current.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { EmberClient } from "../../protocol/client";
+import type { IgniClient } from "../../protocol/client";
 import type { ServerMessage } from "../../protocol/messages";
 import { Drawer } from "./Drawer";
 
@@ -43,7 +43,7 @@ export function WatcherPanel({
   client,
   onClose,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   onClose: () => void;
 }) {
   const [rows, setRows] = useState<Map<number, ProcessRow>>(new Map());

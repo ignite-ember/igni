@@ -1,5 +1,5 @@
 """Persistent allowlist storage — reads and writes
-``~/.ember/permissions.yaml`` via a typed Pydantic model.
+``~/.igni/permissions.yaml`` via a typed Pydantic model.
 
 Replaces the raw ``dict[str, list[str]]`` allowlist that lived on
 ``PermissionGuard`` in the pre-refactor module. The store hides the
@@ -28,7 +28,7 @@ class AllowlistStore:
     """Typed persistence layer for the per-category allowlist.
 
     Instance state:
-        * ``_path`` — YAML file on disk (``~/.ember/permissions.yaml``
+        * ``_path`` — YAML file on disk (``~/.igni/permissions.yaml``
           by default).
         * ``_file`` — the Pydantic ``AllowlistFile`` model, loaded
           once at construction and mutated in-place on ``add``.

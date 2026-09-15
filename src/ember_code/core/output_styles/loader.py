@@ -18,6 +18,8 @@ from typing import Any
 
 import yaml
 
+from ember_code.core.paths import CONFIG_DIR
+
 logger = logging.getLogger(__name__)
 
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?(.*)", re.DOTALL)
@@ -80,16 +82,25 @@ def _style_dirs(
     project_dir: Path,
     plugin_roots: list[tuple[Path, str]] | None,
     read_claude: bool,
+    group_dir: Path | None = None,
 ) -> list[Path]:
-    """Roots to scan, in load order (later overrides earlier)."""
+    """Roots to scan, in load order (later overrides earlier).
+
+    The org's root goes above the user's globals and below the
+    project's, so a style the project declares under the same name is
+    the one that applies. Read from the policy cache rather than copied
+    into the project — the ordering is what makes the local one win.
+    """
     home = Path.home()
     roots: list[Path] = []
     if read_claude:
         roots.append(home / ".claude" / "output-styles")
-    roots.append(home / ".ember" / "output-styles")
+    roots.append(home / CONFIG_DIR / "output-styles")
+    if group_dir is not None:
+        roots.append(group_dir)
     if read_claude:
         roots.append(project_dir / ".claude" / "output-styles")
-    roots.append(project_dir / ".ember" / "output-styles")
+    roots.append(project_dir / CONFIG_DIR / "output-styles")
     for plugin_root, _ in plugin_roots or []:
         roots.append(plugin_root / "output-styles")
     return roots
@@ -99,6 +110,7 @@ def discover_output_styles(
     project_dir: Path,
     plugin_roots: list[tuple[Path, str]] | None = None,
     read_claude: bool = True,
+    group_dir: Path | None = None,
 ) -> dict[str, OutputStyle]:
     """Walk every configured root and return ``name → style``.
 
@@ -107,7 +119,7 @@ def discover_output_styles(
     as it does for slash commands / skills.
     """
     out: dict[str, OutputStyle] = {}
-    for root in _style_dirs(project_dir, plugin_roots, read_claude):
+    for root in _style_dirs(project_dir, plugin_roots, read_claude, group_dir):
         if not root.is_dir():
             continue
         for path in sorted(root.glob("*.md")):

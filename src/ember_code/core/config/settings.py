@@ -59,6 +59,7 @@ from ember_code.core.config.schemas import (
     ContextConfig,
     DisplayConfig,
     EvalsConfig,
+    GroupPolicyConfig,
     GuardrailsConfig,
     HooksConfig,
     KnowledgeConfig,
@@ -80,8 +81,51 @@ from ember_code.core.config.settings_loader import SettingsLoader
 class Settings(BaseModel):
     """Complete igni settings."""
 
-    api_url: str = "https://api.ignite-ember.sh"
+    # DEC-14 / DP-5a. Deliberately empty: igni is self-hosted, and a
+    # vendor host baked in here is where the CLI would send the sign-in
+    # code it redeems, the models it lists and the changesets it syncs.
+    #
+    # This named the vendor's API host. Flipping it to empty
+    # naively would turn every call into a relative URL and fail as a
+    # parse error deep in httpx, so the empty default comes with a
+    # refusal: ``core/config/endpoint.py`` raises with the setting name,
+    # the file, and an example. Paths for which no server is a supported
+    # state — local-only models, no CodeIndex — ask ``is_configured``
+    # and skip quietly instead.
+    #
+    # The stated future is that this points at the customer's own cloud
+    # and igni's routing disappears, at which point there is nothing to
+    # default to.
+    api_url: str = ""
+    # Seconds between update checks. ``0`` disables them entirely, and
+    # is what an air-gapped deployment should set. See DP-5 in
+    # ember-server's docs/COMPLIANCE_TRACKER.md.
+    #
+    # This said "the only unconfigured outbound request an ordinary run
+    # makes", and in the desktop app that was untrue: the Tauri
+    # updater's silent startup check contacted github.com on every
+    # launch and never consulted this setting. It does now — the Rust
+    # side reads this same key out of ``~/.igni/config.yaml``, so one
+    # switch covers both the PyPI check here and the release check
+    # there. F126.
     update_check_ttl: int = 86400
+    # DEC-11. Where the desktop app looks for releases. Empty means the
+    # endpoint compiled into `tauri.conf.json`,
+    # `github.com/ignite-ember/igni/releases` — the one outbound host a
+    # default install has, which sits awkwardly beside DP-5 and is
+    # unreachable from an air-gapped network. Set this to your own
+    # mirror and the app asks yours instead.
+    #
+    # Read by the Rust side out of `~/.igni/config.yaml`, the same way
+    # `update_check_ttl` is, because the process that makes the request
+    # is the one that must consult the policy. Declared here so the
+    # setting has one documented home and `igni config` can show it.
+    #
+    # Signature verification is unchanged: the public key stays in
+    # `tauri.conf.json` and is deliberately not configurable, so a
+    # mirror can serve a different version but not a different build.
+    # HTTPS is required — the plugin refuses anything else.
+    update_endpoint: str = ""
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
@@ -100,6 +144,7 @@ class Settings(BaseModel):
     evals: EvalsConfig = Field(default_factory=EvalsConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
+    group_policy: GroupPolicyConfig = Field(default_factory=GroupPolicyConfig)
     code_index: CodeIndexConfig = Field(default_factory=CodeIndexConfig)
     display: DisplayConfig = Field(default_factory=DisplayConfig)
 
@@ -195,9 +240,9 @@ def load_settings(
 
     1. Managed policy (sysadmin-controlled, OS-specific path)
     2. CLI flags
-    3. .ember/config.local.yaml (project, gitignored)
-    4. .ember/config.yaml (project, committed)
-    5. ~/.ember/config.yaml (user global)
+    3. .igni/config.local.yaml (project, gitignored)
+    4. .igni/config.yaml (project, committed)
+    5. ~/.igni/config.yaml (user global)
     6. Built-in defaults (from ``Settings``' Pydantic Field defaults)
 
     Managed sits ABOVE CLI on purpose — the whole point is that a
@@ -218,6 +263,7 @@ def load_settings(
 __all__ = [
     "AgentsConfig",
     "AuthConfig",
+    "GroupPolicyConfig",
     "CodeIndexConfig",
     "ContextConfig",
     "DisplayConfig",

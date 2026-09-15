@@ -96,11 +96,24 @@ class SyncResult(BaseModel):
 
     @classmethod
     def resolver_unavailable(cls) -> SyncResult:
-        """Resolver ran but returned ``None`` — offline / no auth / no access."""
+        """Resolver ran but returned ``None`` — offline, or no auth."""
         return cls(
             skipped=True,
-            reason="codeindex unavailable (offline, no access, or no auth)",
+            reason="codeindex unavailable (offline or not authenticated)",
         )
+
+    @classmethod
+    def access_denied(cls, message: str) -> SyncResult:
+        """The server answered, and the answer was no.
+
+        Distinct from :meth:`resolver_unavailable` because the two ask
+        different things of the user: that one is "wait, or check your
+        connection", this one is a specific instruction the server
+        supplied — most often "link your GitHub account". Reporting a
+        denial as unavailability tells people to retry something that
+        will never start working on its own.
+        """
+        return cls(skipped=True, reason=message)
 
     @classmethod
     def needs_install(cls, commit_sha: str, install_url: str | None) -> SyncResult:
@@ -123,7 +136,26 @@ class SyncResult(BaseModel):
     @classmethod
     def not_authenticated(cls) -> SyncResult:
         """No access token in credentials store."""
-        return cls(skipped=True, reason="not authenticated with Ember Cloud")
+        return cls(skipped=True, reason="not signed in to igni")
+
+    @classmethod
+    def no_server_configured(cls) -> SyncResult:
+        """``api_url`` is unset, so there is nowhere to sync from.
+
+        DEC-14 removed the vendor default, which makes this a state an
+        ordinary first run is in — not an error. It is checked *before*
+        :meth:`not_authenticated` because you cannot be signed in to a
+        server you have not named, and "not signed in to igni" would
+        send somebody to a login flow that has nothing to talk to.
+
+        The reason names the setting, because a bare "codeindex
+        unavailable" is what this used to look like when the default
+        pointed somewhere unreachable.
+        """
+        return cls(
+            skipped=True,
+            reason="no igni server configured — set `api_url` in ~/.igni/config.yaml",
+        )
 
     @classmethod
     def preflight_failed(cls, commit_sha: str, message: str) -> SyncResult:
@@ -203,7 +235,7 @@ class SyncResult(BaseModel):
         if pf.status == PreflightStatus.REPO_NOT_FOUND:
             return cls(
                 skipped=True,
-                reason="repository is not indexed by Ember",
+                reason="repository is not indexed by igni",
                 **common,
             )
         if pf.status == PreflightStatus.CHANGESET_NOT_FOUND:

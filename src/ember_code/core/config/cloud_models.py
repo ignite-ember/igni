@@ -35,6 +35,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from ember_code.core.config.endpoint import is_configured
 from ember_code.core.config.model_entry import ModelRegistryEntry
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,11 @@ class FetchReason(str, enum.Enum):
     """Why a fetch produced no entries — or ``OK`` when it succeeded."""
 
     OK = "ok"
+    #: DEC-14. Distinct from ``NO_TOKEN`` because the two ask different
+    #: things of the user: that one means "sign in", this one means
+    #: "tell me where your server is". Collapsing them would send
+    #: somebody to a login flow with nothing to log in to.
+    NO_SERVER = "no_server"
     NO_TOKEN = "no_token"
     HTTP_ERROR = "http_error"
     DECODE_ERROR = "decode_error"
@@ -148,6 +154,9 @@ class CloudModelCatalogClient:
         Returns a :class:`FetchResult` whose ``reason`` distinguishes
         the four soft-fail modes:
 
+        * :attr:`FetchReason.NO_SERVER` — ``api_url`` is unset, so
+          there is nothing to ask. Checked before the token, because
+          you cannot be signed in to a server you have not named.
         * :attr:`FetchReason.NO_TOKEN` — user isn't logged in.
         * :attr:`FetchReason.HTTP_ERROR` — non-200 status (401/503/…).
         * :attr:`FetchReason.DECODE_ERROR` — transport / JSON parse
@@ -157,6 +166,10 @@ class CloudModelCatalogClient:
         * :attr:`FetchReason.OK` — parsed successfully; entries may
           still be empty if the server has no models to advertise.
         """
+        if not is_configured(self._api_url):
+            logger.debug("cloud_models: no api_url configured, skipping fetch")
+            return FetchResult(ok=False, reason=FetchReason.NO_SERVER)
+
         if not self._cloud_token:
             logger.debug("cloud_models: no token, skipping fetch")
             return FetchResult(ok=False, reason=FetchReason.NO_TOKEN)

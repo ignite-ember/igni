@@ -1,4 +1,4 @@
-"""Bidirectional sync between ``.ember/knowledge.yaml`` and the knowledge index.
+"""Bidirectional sync between ``.igni/knowledge.yaml`` and the knowledge index.
 
 The YAML file is the git-shareable source of truth. The Chroma index
 is the runtime vector store. On startup we add any file entries
@@ -24,6 +24,7 @@ from ember_code.core.knowledge.models import (
     KnowledgeSyncResult,
     KnowledgeYamlFile,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 # Re-export ``KnowledgeEntry`` so ``ember_code.core.knowledge.sync.KnowledgeEntry``
 # still resolves for any deep-import consumer that predates the move
@@ -32,7 +33,7 @@ __all__ = ["KnowledgeSyncer", "KnowledgeEntry", "DEFAULT_KNOWLEDGE_FILE"]
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_KNOWLEDGE_FILE = ".ember/knowledge.yaml"
+DEFAULT_KNOWLEDGE_FILE = f"{CONFIG_DIR}/knowledge.yaml"
 
 
 class KnowledgeSyncer:

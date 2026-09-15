@@ -23,7 +23,7 @@ Run with::
         --prompt "summarize what you see in this directory" \\
         --output /tmp/profile_run.jsonl
 
-The script reuses ``~/.ember/credentials.json`` so the same model the
+The script reuses ``~/.igni/credentials.json`` so the same model the
 user sees in the TUI (MiniMax-M2.7 etc.) is exercised end-to-end.
 """
 

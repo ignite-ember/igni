@@ -20,7 +20,7 @@ import re
 import tempfile
 from pathlib import Path
 
-# Load .env so EMBER_TEST_LLM_* are available (same as the smoke runner)
+# Load .env so IGNI_TEST_LLM_* are available (same as the smoke runner)
 env_path = Path(".env")
 if env_path.exists():
     for line in env_path.read_text().splitlines():
@@ -33,9 +33,9 @@ def build_model():
     from agno.models.openai.like import OpenAILike
 
     return OpenAILike(
-        id=os.environ["EMBER_TEST_LLM_MODEL"],
-        api_key=os.environ["EMBER_TEST_LLM_API_KEY"],
-        base_url=os.environ["EMBER_TEST_LLM_BASE_URL"],
+        id=os.environ["IGNI_TEST_LLM_MODEL"],
+        api_key=os.environ["IGNI_TEST_LLM_API_KEY"],
+        base_url=os.environ["IGNI_TEST_LLM_BASE_URL"],
     )
 
 

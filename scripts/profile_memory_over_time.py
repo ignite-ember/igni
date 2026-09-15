@@ -162,7 +162,7 @@ async def _run(sessions: int, duration: float, interval: float, rate: float) -> 
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         cwd=REPO_ROOT,
-        env={**os.environ, "EMBER_PARENT_PID": str(os.getpid())},
+        env={**os.environ, "IGNI_PARENT_PID": str(os.getpid())},
     )
     # Read ready line.
     ws_url = None

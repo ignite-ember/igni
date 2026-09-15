@@ -24,8 +24,18 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
-  reporter: process.env.CI ? "github" : "list",
+  // ``reporters/skips.ts`` is not optional decoration: without it a run
+  // that skips every integration test still ends in "41 passed". F128.
+  reporter: [
+    [process.env.CI ? "github" : "list"],
+    ["./e2e/reporters/skips.ts"],
+  ],
   timeout: 20_000,
+  // A missing baseline must never write itself. Playwright's default
+  // ('missing') would have a runner *create* the baseline it has none
+  // of and then pass — a visual suite that approves whatever it first
+  // sees. Generating is deliberate: `--update-snapshots`. E5.
+  updateSnapshots: 'none',
   expect: { timeout: 5_000 },
 
   use: {

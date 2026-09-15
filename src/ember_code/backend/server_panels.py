@@ -37,7 +37,9 @@ from ember_code.backend.schemas_panels import (  # noqa: F401 — public re-expo
     PromoteEphemeralResult,
     SlashCommandEntry,
 )
-from ember_code.backend.schemas_rpc import GroupPolicyPackResult
+from ember_code.backend.schemas_rpc import (
+    GroupPolicyPackResult,
+)
 from ember_code.core.agents import AgentInfo
 from ember_code.core.config.group_policy import GroupPolicyCache
 from ember_code.core.skills import SkillPool
@@ -121,26 +123,20 @@ class PanelsController:
         return self._output_styles.snapshot()
 
     def group_policy(self) -> GroupPolicyPackResult:
-        """Read the cached group policy pack metadata and return a result for the FE RPC."""
-        cache = GroupPolicyCache()
-        meta = cache.read_pack_meta()
+        """The group this person is in.
+
+        No longer carries pending conflicts, because there are none to
+        have: the loaders read the pack from the policy cache and a
+        same-named project file simply outranks it, so nothing is copied
+        anywhere and nothing can diverge.
+        """
+        meta = GroupPolicyCache().read_pack_meta()
         if meta is None:
             return GroupPolicyPackResult()
         return GroupPolicyPackResult(
             group_id=meta.get("group_id"),
             group_name=meta.get("group_name"),
             fetched_at=meta.get("fetched_at"),
-            override_count=meta.get("override_count", 0),
+            entry_count=meta.get("entry_count", 0),
+            default_model=meta.get("default_model"),
         )
-
-
-__all__ = [
-    "PanelsController",
-    # Re-exported wire types for legacy imports.
-    "OutputStyleInfo",
-    "OutputStylesResult",
-    "HookEntryView",
-    "SlashCommandEntry",
-    "PromoteEphemeralResult",
-    "DiscardEphemeralResult",
-]

@@ -21,7 +21,7 @@ Cross-tool support is **enabled by default** — igni reads `CLAUDE.md` files, `
 ```bash
 brew install ignite-ember
 # or: pip install ignite-ember
-ignite-ember /login                   # sign up at ignite-ember.sh
+igni                                  # then type /login at the prompt
 ignite-ember                         # start — picks up existing agents, skills, CLAUDE.md automatically
 ```
 
@@ -116,12 +116,12 @@ models:
 
 | Claude Code | igni | Notes |
 |---|---|---|
-| `~/.claude/settings.json` | `~/.ember/settings.json` | Global settings |
-| `.claude/settings.json` | `.ember/settings.json` | Project settings |
-| `.claude/settings.local.json` | `.ember/settings.local.json` | Local overrides (gitignored) |
+| `~/.claude/settings.json` | `~/.igni/settings.json` | Global settings |
+| `.claude/settings.json` | `.igni/settings.json` | Project settings |
+| `.claude/settings.local.json` | `.igni/settings.local.json` | Local overrides (gitignored) |
 | `CLAUDE.md` | `ember.md` | `CLAUDE.md` also read by default (cross-tool support) |
-| `~/.claude/CLAUDE.md` | `~/.ember/rules.md` | User-level global rules |
-| `.claude/agents/*.md` | `.ember/agents/*.md` | Agent definitions (both dirs scanned) |
+| `~/.claude/CLAUDE.md` | `~/.igni/rules.md` | User-level global rules |
+| `.claude/agents/*.md` | `.igni/agents/*.md` | Agent definitions (both dirs scanned) |
 | `.mcp.json` | `.mcp.json` | MCP config (same file, same format) |
 
 ### CLI Flags
@@ -182,7 +182,7 @@ models:
 | Claude Code | igni | Notes |
 |---|---|---|
 | `~/.claude/projects/<id>/memory/` | Agno Memory (DB-backed) | Ember uses Agno's memory system |
-| File-based `MEMORY.md` | `~/.ember/memory.db` (SQLite) | Structured storage, not files |
+| File-based `MEMORY.md` | `~/.igni/memory.db` (SQLite) | Structured storage, not files |
 | Local sessions only | SQLite default, remote backends available | Configure `storage.backend: "postgres"` to sync |
 
 ---
@@ -192,7 +192,7 @@ models:
 ### Minimal (just switch)
 
 - [ ] `brew install ignite-ember` (or `pip install ignite-ember`)
-- [ ] `ignite-ember /login` (sign up at ignite-ember.sh)
+- [ ] `igni`, then `/login` at the prompt
 - [ ] Run `ignite-ember` — it automatically picks up:
   - `.mcp.json` (your MCP servers)
   - `ember.md` and `CLAUDE.md` (project instructions)
@@ -205,7 +205,7 @@ models:
   - `tags` for better Orchestrator routing
   - `reasoning: true` for agents that need chain-of-thought
   - `can_orchestrate: false` for agents that shouldn't spawn sub-teams
-- [ ] Copy hooks from `.claude/settings.json` → `.ember/settings.json`
+- [ ] Copy hooks from `.claude/settings.json` → `.igni/settings.json`
 - [ ] Run `/agents refresh` to reload the agent pool
 
 ### Optional (power features)

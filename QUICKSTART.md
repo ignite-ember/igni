@@ -26,13 +26,19 @@ uv pip install -e ".[dev]"
 
 ## Authenticate
 
-**Option A: igni account (zero-config)**
+**Option A: your igni server**
 
-Sign up for a free API key — all built-in models (MiniMax M2.7) work out of the box:
+Point `api_url` at the server your team runs, start a session, and type the
+slash command inside it:
 
 ```bash
-ignite-ember /login
+igni                    # then, at the prompt:
+/login
 ```
+
+`/login` is a slash command handled inside the session, not a shell
+subcommand — `igni /login` at a shell prompt answers `Error: No such
+command`. This guide used to say to run it that way.
 
 **Option B: Bring your own model**
 
@@ -44,7 +50,7 @@ Use OpenAI, Anthropic, or any OpenAI-compatible API. Two steps:
 export OPENAI_API_KEY=sk-...
 ```
 
-2. Add the model to `.ember/config.yaml`:
+2. Add the model to `.igni/config.yaml`:
 
 ```yaml
 models:
@@ -67,9 +73,9 @@ ignite-ember
 ```
 
 On first launch, igni:
-1. Copies 13 built-in agents to `.ember/agents/`
-2. Copies skills to `.ember/skills/`
-3. Creates `ember.md` template and `.ember/config.yaml`
+1. Copies 13 built-in agents to `.igni/agents/`
+2. Copies skills to `.igni/skills/`
+3. Creates `igni.md` template and `.igni/config.yaml`
 4. You're ready to work
 
 ---
@@ -177,7 +183,7 @@ Supported formats: images (`.png`, `.jpg`, `.avif`, `.heic`, `.webp`, etc.), aud
 Agents are `.md` files with YAML frontmatter. Each agent has a role, tools, and a system prompt:
 
 ```
-.ember/agents/
+.igni/agents/
 ├── architect.md      # plans + designs (always first)
 ├── editor.md         # creates and modifies files; owns git safety
 ├── explorer.md       # reads and searches the codebase
@@ -229,9 +235,9 @@ igni's main team is **shell-first**: `Bash` handles reads, search, and file list
 igni loads config from multiple layers (highest priority first):
 
 1. CLI flags
-2. `.ember/config.local.yaml` (project, gitignored)
-3. `.ember/config.yaml` (project, committed)
-4. `~/.ember/config.yaml` (user global)
+2. `.igni/config.local.yaml` (project, gitignored)
+3. `.igni/config.yaml` (project, committed)
+4. `~/.igni/config.yaml` (user global)
 5. Built-in defaults
 
 ### Minimal Config
@@ -241,7 +247,7 @@ If you're using an igni account, no config is needed — defaults work out of th
 For BYOM, the minimum is a model registry entry (see [Authenticate](#authenticate) above). You can also tune permissions:
 
 ```yaml
-# .ember/config.yaml
+# .igni/config.yaml
 permissions:
   file_write: ask           # ask before writing files (default)
   shell_execute: ask        # ask before running commands (default)
@@ -250,7 +256,7 @@ permissions:
 
 ### Project Instructions
 
-Create an `ember.md` in your project root (like `CLAUDE.md` for Claude Code):
+Create an `igni.md` in your project root (like `CLAUDE.md` for Claude Code):
 
 ```markdown
 # Project: My App
@@ -328,16 +334,16 @@ Or use `/sessions` in interactive mode to browse past sessions.
 Store and search documents via ChromaDB:
 
 ```yaml
-# .ember/config.yaml
+# .igni/config.yaml
 knowledge:
   enabled: true
   collection_name: "my_project"
-  share: true                    # sync to .ember/knowledge.yaml for git sharing
+  share: true                    # sync to .igni/knowledge.yaml for git sharing
 ```
 
 When `share: true`, knowledge is automatically synced to a YAML file that your team can commit to git. On startup, only new entries are embedded — no redundant work. Use `/sync-knowledge` to manually trigger a sync.
 
-The shared knowledge file (`.ember/knowledge.yaml`) uses this format:
+The shared knowledge file (`.igni/knowledge.yaml`) uses this format:
 
 ```yaml
 version: 1
@@ -400,7 +406,7 @@ guardrails:
 
 ## Custom Agents
 
-Create a `.md` file in `.ember/agents/`:
+Create a `.md` file in `.igni/agents/`:
 
 ```markdown
 ---
@@ -444,7 +450,7 @@ All flags at a glance:
 | `--no-color` | Disable color output |
 | `--worktree` | Run in an isolated git worktree |
 | `--add-dir <path>` | Include additional directory (repeatable) |
-| `--debug` | Enable debug logging to ~/.ember/debug.log |
+| `--debug` | Enable debug logging to ~/.igni/debug.log |
 
 ---
 
@@ -452,8 +458,8 @@ All flags at a glance:
 
 On startup, igni shows contextual tips based on your configuration. For example:
 
-- *Create an `ember.md` in your project root to give agents project-specific context.*
-- *Drop a `.md` file in `.ember/agents/` to create a project-specific agent — no code needed.*
+- *Create an `igni.md` in your project root to give agents project-specific context.*
+- *Drop a `.md` file in `.igni/agents/` to create a project-specific agent — no code needed.*
 - *Use `--verbose` to see which agents and team mode the Orchestrator picks.*
 
 Tips adapt to your setup — if you haven't enabled the knowledge base or guardrails, you'll see suggestions for those.

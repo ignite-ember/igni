@@ -41,6 +41,7 @@ import json
 import logging
 import shutil
 from collections import Counter
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -56,12 +57,13 @@ from ember_code.core.code_index.git_branches import GitBranchReader
 from ember_code.core.code_index.manifest import Manifest
 from ember_code.core.code_index.paths import (
     code_index_dir,
-    commit_chroma_path,
+    legacy_commit_index_path,
 )
 from ember_code.core.code_index.project import resolve_project_id
-from ember_code.core.code_index.schema.items import CodeIndexItem, CodeIndexResult
+from ember_code.core.code_index.schema.items import ChunkRow, CodeIndexItem, CodeIndexResult
 from ember_code.core.code_index.schema.stats import HeadStats
 from ember_code.core.code_index.schema.where_filter import ChromaWhereFilter
+from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +83,7 @@ class CodeIndex:
         self,
         *,
         project: str | Path,
-        data_dir: str | Path = "~/.ember",
+        data_dir: str | Path = DEFAULT_DATA_DIR,
         chunker: ChunkingStrategy | None = None,
         neo4j_client: Any | None = None,
         runtime: Any | None = None,
@@ -105,6 +107,19 @@ class CodeIndex:
         # deterministic and offline-safe for tests.
         self._neo4j_client = neo4j_client
         self._neo4j_runtime = runtime
+        if embedder is None:
+            # HashEmbedder is SHA-256 of the text split into 384 coordinates: it
+            # separates *distinct* chunks and carries no meaning, so
+            # ``db.index.vector.queryNodes`` can only match text that is
+            # byte-identical. Defaulting to it silently is how an index ended up
+            # with 1.5M embedded chunks that could not answer a single "find the
+            # code that does X" query. Tests want it; production must not have it
+            # by accident.
+            logger.warning(
+                "CodeIndex built with no embedder — falling back to HashEmbedder. "
+                "Chunk embeddings will carry no meaning and semantic search will "
+                "not work. Pass LiveEmbedder() for real vectors."
+            )
         self._embedder: Embedder = embedder or HashEmbedder()
         self._lock = asyncio.Lock()
         self._branches = GitBranchReader()
@@ -186,7 +201,7 @@ class CodeIndex:
         if self._neo4j_runtime is not None:
             await self._neo4j_runtime.start_for_commit(self.project_id, sha)
         self.manifest.upsert_commit(sha)
-        return commit_chroma_path(self.project, sha, data_dir=self.data_dir)
+        return legacy_commit_index_path(self.project, sha, data_dir=self.data_dir)
 
     async def apply_delta(self, jsonl_path: str | Path):
         """Apply a producer-emitted JSONL changeset to this project.
@@ -314,6 +329,18 @@ class CodeIndex:
 
     # -- Indexing --------------------------------------------------------------
 
+    def embed_query(self, text: str) -> list[float]:
+        """Embed one query string for a vector lookup.
+
+        Exposed because the vector index takes 384 floats and an agent has a
+        sentence: the tool layer passes text and binds the result as
+        ``$query_vector``. Uses the same embedder the chunks were written with,
+        which is the only way the comparison means anything — a graph built with
+        ``HashEmbedder`` and queried with a real model would return noise while
+        looking like it worked.
+        """
+        return self._embedder.embed([text])[0]
+
     async def client_for(self, sha: str | None = None) -> Any | None:
         """Public accessor for the per-commit ``Neo4jClient``.
 
@@ -329,11 +356,56 @@ class CodeIndex:
         through the same per-commit driver as the typed methods.
         Lives here (rather than reaching into the underscored
         ``_client_for``) so the toolkit has a stable surface.
+
+        Raises:
+            ValueError: when ``sha`` names no indexed commit. See
+                :meth:`_resolve_indexed_commit` for why this is louder than
+                returning ``None``.
         """
         target = sha or self.head()
         if target is None:
             return None
+        if sha:
+            # Only for a caller-supplied sha. ``head()`` is authoritative and
+            # the write paths (``_client_for_active_commit``) legitimately open
+            # commits that are not in the manifest yet.
+            target = self._resolve_indexed_commit(sha)
         return await self._client_for(target)
+
+    def _resolve_indexed_commit(self, sha: str) -> str:
+        """Map a caller-supplied ``sha`` onto a commit that is actually indexed.
+
+        Agents pass the abbreviated sha they saw in conversation —
+        ``commit="84a9f3b"`` — and ``(project, commit)`` is a *store identity*,
+        not a lookup. So an abbreviation silently became a different pair:
+        ``start_for_commit`` spawned a second Neo4j on an empty store, the query
+        returned zero rows, and the agent reported the index as empty. A capture
+        run produced two servers for one project, one with the 40-char sha and
+        one with 7 chars, and left ``<project>-<7 chars>`` directories behind —
+        the same shape as the stale ``…-c3f316b`` and empty-sha dirs already on
+        disk.
+
+        Silent wrong answers are the worst outcome here, worse than an error:
+        a training corpus built on them teaches that the index has no data. So
+        resolve an unambiguous prefix, and refuse anything else.
+        """
+        commits = self.manifest.load().commits
+        if sha in commits:
+            return sha
+        matches = [commit for commit in commits if commit.startswith(sha)]
+        if len(matches) == 1:
+            logger.debug("resolved abbreviated commit %s -> %s", sha, matches[0])
+            return matches[0]
+        if len(matches) > 1:
+            raise ValueError(
+                f"commit {sha!r} is ambiguous — it matches {len(matches)} indexed "
+                "commits. Pass the full 40-character sha, or omit `commit` to use HEAD."
+            )
+        known = ", ".join(sorted(commits)[:3]) or "none"
+        raise ValueError(
+            f"commit {sha!r} is not indexed, so there is no graph to query. Omit "
+            f"`commit` to use HEAD. Indexed commits: {known}"
+        )
 
     async def _client_for(self, sha: str) -> Any | None:
         """Return the per-commit ``Neo4jClient`` (or None if no backend).
@@ -356,7 +428,19 @@ class CodeIndex:
                     driver = self._neo4j_runtime.driver_for(self.project_id, sha)
                     from ember_code.core.code_index.neo4j_client import Neo4jClient
 
-                    self._clients[sha] = Neo4jClient(driver, self.project_id, sha)
+                    client = Neo4jClient(driver, self.project_id, sha)
+                    # Apply the per-commit schema (indexes on Item/Chunk +
+                    # vector index on Chunk.embedding + property indexes) on
+                    # first use of this pair's Neo4j. Idempotent — every
+                    # statement carries IF NOT EXISTS. Without this,
+                    # per-commit processes accumulate data on unindexed
+                    # nodes: property lookups do full scans and
+                    # `db.index.vector.queryNodes('chunk_embedding', …)`
+                    # fails with "no such vector schema index".
+                    # `attach_knowledge_neo4j` does the equivalent for the
+                    # knowledge DB; this closes the same gap for code_index.
+                    await client.apply_schema()
+                    self._clients[sha] = client
             return self._clients[sha]
         return None
 
@@ -383,13 +467,57 @@ class CodeIndex:
         client = await self._client_for(sha)
         assert client is not None  # guarded above
 
-        document_text = item.content or ""
         # ``upsert_item`` MERGE-deletes any existing :Chunk for
         # the parent first, so re-upserts are clean.
-        chunk_texts = self._chunk_text(document_text)
+        chunk_texts, spans = self._rows_for(item)
         embeddings = self._embedder.embed(chunk_texts) if chunk_texts else []
-        chunks = list(zip(chunk_texts, embeddings, strict=True))
+        chunks = [
+            ChunkRow(text, embedding, kind, line_from, line_to)
+            for (text, embedding, (kind, line_from, line_to)) in zip(
+                chunk_texts, embeddings, spans, strict=True
+            )
+        ]
         await client.upsert_item(item, chunks)
+        self.manifest.touch(sha)
+
+    async def add_items(self, sha: str, items: Sequence[CodeIndexItem]) -> None:
+        """Insert/replace many items, embedding all their chunks in one call.
+
+        Why bulk: :meth:`add_item` embeds one item's chunks per call, and the
+        applier calls it once per item interleaved with a Neo4j write. Measured on
+        an M-series machine with the model on ``mps``, that pattern runs at
+        1,863 texts/s where a single batched call reaches 4,237 — and the *observed*
+        rate during a real load was 83 chunks/s, roughly 2% of the hardware,
+        because the GPU idles through every database round trip.
+
+        Embedding is the dominant cost of a load (chunks are 93% of the nodes
+        written), so batching across items is the difference between 29 minutes
+        and about a minute of embedding for a repository the size of celery.
+        """
+        if not items:
+            return
+        await self._require_neo4j_backend("add_items")
+        await self.prepare_commit(sha)
+        client = await self._client_for(sha)
+        assert client is not None  # guarded above
+
+        # Chunk everything first, remember each item's slice, then embed once.
+        per_item: list[tuple[CodeIndexItem, int, int, list]] = []
+        all_texts: list[str] = []
+        for item in items:
+            texts, spans = self._rows_for(item)
+            per_item.append((item, len(all_texts), len(all_texts) + len(texts), spans))
+            all_texts.extend(texts)
+
+        embeddings = self._embedder.embed(all_texts) if all_texts else []
+        for item, start, end, spans in per_item:
+            chunks = [
+                ChunkRow(text, embedding, kind, line_from, line_to)
+                for (text, embedding, (kind, line_from, line_to)) in zip(
+                    all_texts[start:end], embeddings[start:end], spans, strict=True
+                )
+            ]
+            await client.upsert_item(item, chunks)
         self.manifest.touch(sha)
 
     async def remove_item(self, sha: str, item_id: str) -> None:
@@ -537,17 +665,48 @@ class CodeIndex:
         state = self.manifest.load()
         cutoff = datetime.now(timezone.utc) - timedelta(days=keep_recent_days)
         to_drop: list[str] = []
+        # Log the *decision*, not only the drop. This method runs at every
+        # session startup, and an indexed graph went empty between two verified
+        # reads with no unclean shutdown in the Neo4j log — so the question
+        # "did retention evict it, and on what grounds?" has to be answerable
+        # from a log rather than by reasoning about the policy.
         for sha, info in state.commits.items():
             if sha == state.head:
+                logger.debug("clean: keeping %s — it is HEAD", sha[:8])
                 continue
             if info.branch_refs:
+                logger.debug(
+                    "clean: keeping %s — pointed to by %s", sha[:8], ", ".join(info.branch_refs)
+                )
                 continue
             try:
                 last_used = datetime.fromisoformat(info.last_used_at)
             except ValueError:
+                # Unparseable timestamps are treated as "just used" so a
+                # malformed manifest entry cannot cause an eviction.
+                logger.warning(
+                    "clean: %s has an unparseable last_used_at (%r); treating as fresh",
+                    sha[:8],
+                    info.last_used_at,
+                )
                 last_used = datetime.now(timezone.utc)
             if last_used < cutoff:
+                logger.info(
+                    "clean: EVICTING %s — no branch ref and idle since %s (cutoff %s)",
+                    sha[:8],
+                    last_used.isoformat(),
+                    cutoff.isoformat(),
+                )
                 to_drop.append(sha)
+            else:
+                logger.debug(
+                    "clean: keeping %s — last used %s, inside the %d-day window",
+                    sha[:8],
+                    last_used.isoformat(),
+                    keep_recent_days,
+                )
+        if not to_drop:
+            logger.debug("clean: nothing to evict from %d tracked commit(s)", len(state.commits))
 
         # On the neo4j path, ``Neo4jClient.drop_database`` removes
         # every :Item / :Chunk / :REL node for the (project, commit)
@@ -570,6 +729,7 @@ class CodeIndex:
                     pass  # drop is handled by runtime's evict path
             except Exception as exc:
                 logger.debug("clean: neo4j drop failed for %s (%s)", sha[:8], exc)
+            logger.info("clean: dropping manifest entry for %s", sha[:8])
             self.manifest.remove_commit(sha)
         return to_drop
 
@@ -687,6 +847,52 @@ class CodeIndex:
             return []
         chunks = self.chunker.chunk(Document(content=content))
         return [c.content for c in chunks if c.content]
+
+    # Code chunk geometry. Lines rather than characters because the whole point
+    # of a code chunk is that it can say *where* — and a prose chunker reports no
+    # offsets, so a hit could only ever name the file. Overlap so a construct
+    # spanning a boundary is intact in one of the two windows.
+    CODE_CHUNK_LINES = 40
+    CODE_CHUNK_OVERLAP = 10
+
+    def _chunk_source(self, source: str, line_from: int | None) -> list[tuple[str, int, int]]:
+        """Split source into overlapping line windows, each with its own span.
+
+        ``line_from`` is the item's first line in the file, so the returned spans
+        are absolute file lines and a caller can go straight to them. Returns
+        ``(text, line_from, line_to)``.
+        """
+        if not source or not source.strip():
+            return []
+        lines = source.splitlines()
+        base = line_from or 1
+        step = max(self.CODE_CHUNK_LINES - self.CODE_CHUNK_OVERLAP, 1)
+        windows: list[tuple[str, int, int]] = []
+        start = 0
+        while start < len(lines):
+            end = min(start + self.CODE_CHUNK_LINES, len(lines))
+            text = "\n".join(lines[start:end])
+            if text.strip():
+                windows.append((text, base + start, base + end - 1))
+            if end >= len(lines):
+                break
+            start += step
+        return windows
+
+    def _rows_for(
+        self, item: CodeIndexItem
+    ) -> tuple[list[str], list[tuple[str, int | None, int | None]]]:
+        """Every text this item contributes, tagged for reassembly after embedding.
+
+        Summary chunks first (they carry no position), then code chunks with
+        their absolute line spans.
+        """
+        summary = self._chunk_text(item.content or "")
+        code = self._chunk_source(getattr(item, "source", None) or "", item.line_from)
+        texts = [*summary, *[text for text, _, _ in code]]
+        spans: list[tuple[str, int | None, int | None]] = [("summary", None, None)] * len(summary)
+        spans.extend(("code", start, end) for _, start, end in code)
+        return texts, spans
 
 
 # Sentinel returned by :meth:`CodeIndex._resolve_chunk_where` when the

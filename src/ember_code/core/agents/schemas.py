@@ -51,19 +51,25 @@ class AgentPriority(IntEnum):
     Claude sources by +1::
 
         10  ephemeral agents created at runtime
-         4  <project>/.ember/agents/          (project, native)
-         3  <project>/.ember/agents.local/    (project personal)
-         2  <project>/.claude/agents/         (project, cross-tool)
-         1  ~/.ember/agents/                  (user, native)
+         5  <project>/.igni/agents/          (project, native)
+         4  <project>/.igni/agents.local/    (project personal)
+         3  <project>/.claude/agents/         (project, cross-tool)
+         2  <group policy cache>/agents/      (the org's group)
+         1  ~/.igni/agents/                  (user, native)
          0  ~/.claude/agents/                 (user, cross-tool)
+
+    The org's row is above the user's globals and below everything the
+    project declares. It used to sit at the top; the project now
+    outranks it, so a repository that ships its own version of an agent
+    gets that version.
     """
 
     USER_CLAUDE = 0
     USER_EMBER = 1
-    PROJECT_CLAUDE = 2
-    PROJECT_LOCAL = 3
-    PROJECT_EMBER = 4
-    ORG_GROUP = 5
+    ORG_GROUP = 2
+    PROJECT_CLAUDE = 3
+    PROJECT_LOCAL = 4
+    PROJECT_EMBER = 5
     EPHEMERAL = 10
 
 
@@ -134,7 +140,7 @@ class AgentDefinition(BaseModel):
         Used by the plugin loader so each plugin's agents land
         under their own namespace and can't collide with same-
         named agents from other plugins or the user's own
-        ``.ember/agents/``.
+        ``.igni/agents/``.
         """
         return self.model_copy(update={"name": f"{prefix}:{self.name}"})
 
@@ -186,6 +192,9 @@ class AgentInfo(BaseModel):
     system_prompt: str = ""
     source_path: str = ""
     is_ephemeral: bool = False
+    #: Tool names igni cannot resolve. Empty for almost every agent;
+    #: when it is not, this one raises the moment something calls it.
+    unknown_tools: list[str] = Field(default_factory=list)
 
 
 class AgentEntry(BaseModel):
@@ -376,6 +385,11 @@ class AgentBuildContext(BaseModel):
     knowledge_mgr: Any | None = None
     db: Any | None = None
     broadcast: Any | None = None
+    #: Resolves the session's ``CodeIndex`` when a specialist first queries it.
+    #: Without this a spawned agent's ``CodeIndexTools`` self-builds an index
+    #: with no Neo4j runtime, so ``codeindex_cypher`` answers ``no_backend`` —
+    #: which is what the ``data-architect`` hit on every delegated query.
+    code_index_provider: Any | None = None
 
 
 __all__ = [

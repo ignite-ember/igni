@@ -24,7 +24,7 @@ def _detach() -> None:
 
 def test_a_log_is_written_with_nothing_set(tmp_path, monkeypatch):
     """No flag, no env var. This is the whole point."""
-    monkeypatch.delenv("EMBER_DEBUG_LOG", raising=False)
+    monkeypatch.delenv("IGNI_DEBUG_LOG", raising=False)
     path = tmp_path / "logs" / "backend.log"
     try:
         assert logging_setup.configure_logging(path=path) == path
@@ -35,19 +35,19 @@ def test_a_log_is_written_with_nothing_set(tmp_path, monkeypatch):
 
 
 def test_the_env_var_now_chooses_the_level_not_whether_to_log(tmp_path, monkeypatch):
-    """``EMBER_DEBUG_LOG`` was an on-switch. It is a dial now, which is
+    """``IGNI_DEBUG_LOG`` was an on-switch. It is a dial now, which is
     the question people meant to ask when they set it."""
-    monkeypatch.delenv("EMBER_DEBUG_LOG", raising=False)
+    monkeypatch.delenv("IGNI_DEBUG_LOG", raising=False)
     assert logging_setup.resolve_level() == logging.INFO
 
-    monkeypatch.setenv("EMBER_DEBUG_LOG", "1")
+    monkeypatch.setenv("IGNI_DEBUG_LOG", "1")
     assert logging_setup.resolve_level() == logging.DEBUG
-    monkeypatch.delenv("EMBER_DEBUG_LOG")
+    monkeypatch.delenv("IGNI_DEBUG_LOG")
     assert logging_setup.resolve_level(debug_flag=True) == logging.DEBUG
 
 
 def test_debug_records_are_kept_out_of_the_default_log(tmp_path, monkeypatch):
-    monkeypatch.delenv("EMBER_DEBUG_LOG", raising=False)
+    monkeypatch.delenv("IGNI_DEBUG_LOG", raising=False)
     path = tmp_path / "backend.log"
     try:
         logging_setup.configure_logging(path=path)
@@ -64,7 +64,7 @@ def test_debug_records_are_kept_out_of_the_default_log(tmp_path, monkeypatch):
 def test_configuring_twice_does_not_double_every_line(tmp_path, monkeypatch):
     """Two handlers means two copies of every record, which makes a log
     read like a stutter and doubles its size on disk."""
-    monkeypatch.delenv("EMBER_DEBUG_LOG", raising=False)
+    monkeypatch.delenv("IGNI_DEBUG_LOG", raising=False)
     path = tmp_path / "backend.log"
     try:
         logging_setup.configure_logging(path=path)
@@ -79,7 +79,7 @@ def test_an_unwritable_location_does_not_take_the_backend_down(tmp_path, monkeyp
     """A backend with no log has a diagnosis problem. A backend that
     exits because it has no log has a much larger one, and read-only or
     full home directories are real."""
-    monkeypatch.delenv("EMBER_DEBUG_LOG", raising=False)
+    monkeypatch.delenv("IGNI_DEBUG_LOG", raising=False)
     blocked = tmp_path / "a-file"
     blocked.write_text("not a directory")
     try:
@@ -90,13 +90,13 @@ def test_an_unwritable_location_does_not_take_the_backend_down(tmp_path, monkeyp
 
 def test_the_path_can_be_pointed_somewhere_specific(tmp_path, monkeypatch):
     """Support requests and tests both want to choose the location."""
-    monkeypatch.setenv("EMBER_DEBUG_LOG_PATH", str(tmp_path / "elsewhere.log"))
+    monkeypatch.setenv("IGNI_DEBUG_LOG_PATH", str(tmp_path / "elsewhere.log"))
 
     assert logging_setup.resolve_log_path() == tmp_path / "elsewhere.log"
 
 
 def test_the_default_location_is_under_the_ember_home(monkeypatch):
-    monkeypatch.delenv("EMBER_DEBUG_LOG_PATH", raising=False)
+    monkeypatch.delenv("IGNI_DEBUG_LOG_PATH", raising=False)
 
     path = logging_setup.resolve_log_path()
 
@@ -106,7 +106,7 @@ def test_the_default_location_is_under_the_ember_home(monkeypatch):
 
 def test_the_log_rotates(tmp_path, monkeypatch):
     """Always-on means unbounded, unless something bounds it."""
-    monkeypatch.delenv("EMBER_DEBUG_LOG", raising=False)
+    monkeypatch.delenv("IGNI_DEBUG_LOG", raising=False)
     path = tmp_path / "backend.log"
     try:
         logging_setup.configure_logging(path=path)

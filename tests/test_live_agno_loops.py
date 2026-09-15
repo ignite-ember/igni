@@ -15,7 +15,7 @@ These exercise flows that unit tests can't realistically prove:
    termination: ``RunCancelledException`` propagates, the iterator
    stops, the model's httpx client closes without leaks.
 
-All skip cleanly when ``EMBER_TEST_LLM_API_KEY`` is unset.
+All skip cleanly when ``IGNI_TEST_LLM_API_KEY`` is unset.
 """
 
 from __future__ import annotations
@@ -34,8 +34,8 @@ from agno.team.team import Team
 # Suite-wide skip — every test here needs a live LLM. Cleaner than
 # decorating each test individually.
 pytestmark = pytest.mark.skipif(
-    not os.getenv("EMBER_TEST_LLM_API_KEY"),
-    reason=("EMBER_TEST_LLM_API_KEY not set (add it to .env or export it to run live LLM tests)"),
+    not os.getenv("IGNI_TEST_LLM_API_KEY"),
+    reason=("IGNI_TEST_LLM_API_KEY not set (add it to .env or export it to run live LLM tests)"),
 )
 
 
@@ -43,9 +43,9 @@ def _model():
     from agno.models.openai.like import OpenAILike
 
     return OpenAILike(
-        id=os.getenv("EMBER_TEST_LLM_MODEL") or "gpt-4o-mini",
-        api_key=os.environ["EMBER_TEST_LLM_API_KEY"],
-        base_url=os.getenv("EMBER_TEST_LLM_BASE_URL") or "https://api.openai.com/v1",
+        id=os.getenv("IGNI_TEST_LLM_MODEL") or "gpt-4o-mini",
+        api_key=os.environ["IGNI_TEST_LLM_API_KEY"],
+        base_url=os.getenv("IGNI_TEST_LLM_BASE_URL") or "https://api.openai.com/v1",
     )
 
 

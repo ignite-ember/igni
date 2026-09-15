@@ -6,7 +6,7 @@ The package layout:
   - :mod:`services` — :class:`CodeIndexServices`, lifecycle owner for
     the shared :class:`CodeIndex` + its two service wrappers
   - :mod:`telemetry` — :class:`TelemetryLog`, best-effort JSON-lines
-    sink for eval telemetry (``EMBER_EVAL_TELEMETRY_PATH``)
+    sink for eval telemetry (``IGNI_EVAL_TELEMETRY_PATH``)
   - :mod:`invocation` — :class:`ToolInvocationRecorder`, timing +
     serialization + telemetry + error-wrap for tool method calls
   - :mod:`query_service` — :class:`QueryService`, owns ``codeindex_query``

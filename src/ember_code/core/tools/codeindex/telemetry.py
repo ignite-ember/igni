@@ -2,7 +2,7 @@
 
 Extracted from :class:`CodeIndexTools` so the file-append side-effect
 lives behind a named class instead of a raw ``open()`` inside a
-staticmethod. Activated by the ``EMBER_EVAL_TELEMETRY_PATH`` env
+staticmethod. Activated by the ``IGNI_EVAL_TELEMETRY_PATH`` env
 var — when unset, :meth:`TelemetryLog.record` is a cheap no-op.
 
 The path is resolved ONCE at construction time. Callers (the eval
@@ -25,13 +25,13 @@ logger = logging.getLogger(__name__)
 class TelemetryLog:
     """Best-effort append-only JSON-lines log of tool invocations.
 
-    One instance per toolkit. Reads ``EMBER_EVAL_TELEMETRY_PATH`` once
+    One instance per toolkit. Reads ``IGNI_EVAL_TELEMETRY_PATH`` once
     at construction; if unset, the class becomes a no-op. Any I/O
     error is logged at debug (never raised) — a failed telemetry write
     must not break a real tool call.
     """
 
-    _ENV_VAR = "EMBER_EVAL_TELEMETRY_PATH"
+    _ENV_VAR = "IGNI_EVAL_TELEMETRY_PATH"
 
     def __init__(self, path: Path | str | None = None) -> None:
         resolved = path if path is not None else os.environ.get(self._ENV_VAR)
@@ -39,7 +39,7 @@ class TelemetryLog:
 
     @property
     def enabled(self) -> bool:
-        """True iff a log path is configured (``EMBER_EVAL_TELEMETRY_PATH`` set)."""
+        """True iff a log path is configured (``IGNI_EVAL_TELEMETRY_PATH`` set)."""
         return self._path is not None
 
     def record(self, entry: TelemetryEntry) -> None:

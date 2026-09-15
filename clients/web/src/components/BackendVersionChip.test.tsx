@@ -112,7 +112,7 @@ describe("BackendVersionChip — tone", () => {
 
   it("renders tone-warn when the dev-override is active", () => {
     // Even if the versions happen to match, running through
-    // ``EMBER_DEV_BACKEND`` is worth flagging — the user opted
+    // ``IGNI_DEV_BACKEND`` is worth flagging — the user opted
     // out of the managed venv and might not remember they did.
     withSearch("?expected_cli=0.8.3&actual_cli=0.8.3&backend_source=dev_override", () => {
       render(<BackendVersionChip />);

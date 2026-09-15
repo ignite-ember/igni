@@ -662,6 +662,17 @@ export interface WorkflowEvent {
 let itemId = 0;
 const nid = () => ++itemId;
 
+/**
+ * The highest id handed out so far.
+ *
+ * Lets a caller mark a point in time — "everything after this was
+ * added later" — without minting an id it has no item for. ``App``
+ * uses it to tell the items a ``/clear`` was meant to remove from the
+ * ones the user added while the command was in flight; see the
+ * ``clear`` case in ``runCommand``.
+ */
+export const lastItemId = (): number => itemId;
+
 export function shellItem(command: string): ChatItem {
   return { kind: "shell", id: nid(), command, output: "", exitCode: null };
 }

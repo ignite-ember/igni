@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.utils.rules_index import RulesIndex
 
 
@@ -179,9 +180,9 @@ def test_local_dedup_across_calls(tmp_path: Path) -> None:
 
 
 def test_path_scoped_rule_fires_on_matching_touch(tmp_path: Path) -> None:
-    """A ``.ember/rules/tauri.md`` with ``paths: [clients/tauri/**]``
+    """A ``.igni/rules/tauri.md`` with ``paths: [clients/tauri/**]``
     should surface when the agent touches a file under that glob."""
-    rules_dir = tmp_path / ".ember" / "rules"
+    rules_dir = tmp_path / CONFIG_DIR / "rules"
     rules_dir.mkdir(parents=True)
     (rules_dir / "tauri.md").write_text(
         "---\npaths:\n  - 'clients/tauri/**'\n---\nTAURI-CONVENTIONS"
@@ -195,7 +196,7 @@ def test_path_scoped_rule_fires_on_matching_touch(tmp_path: Path) -> None:
 
 
 def test_path_scoped_rule_misses_when_glob_does_not_match(tmp_path: Path) -> None:
-    rules_dir = tmp_path / ".ember" / "rules"
+    rules_dir = tmp_path / CONFIG_DIR / "rules"
     rules_dir.mkdir(parents=True)
     (rules_dir / "tauri.md").write_text("---\npaths:\n  - 'clients/tauri/**'\n---\nTAURI-ONLY")
     (tmp_path / "src" / "x.py").parent.mkdir(parents=True)
@@ -207,7 +208,7 @@ def test_path_scoped_rule_misses_when_glob_does_not_match(tmp_path: Path) -> Non
 
 
 def test_path_scoped_rule_dedup_across_calls(tmp_path: Path) -> None:
-    rules_dir = tmp_path / ".ember" / "rules"
+    rules_dir = tmp_path / CONFIG_DIR / "rules"
     rules_dir.mkdir(parents=True)
     (rules_dir / "tauri.md").write_text("---\npaths:\n  - 'clients/tauri/**'\n---\nTAURI")
     (tmp_path / "clients" / "tauri" / "a.ts").parent.mkdir(parents=True)
@@ -222,10 +223,10 @@ def test_path_scoped_rule_dedup_across_calls(tmp_path: Path) -> None:
 
 
 def test_path_scoped_unconditional_rule_skipped_here(tmp_path: Path) -> None:
-    """Files in ``.ember/rules/`` WITHOUT ``paths:`` frontmatter are
+    """Files in ``.igni/rules/`` WITHOUT ``paths:`` frontmatter are
     handled by the eager loader (``load_project_rules_dirs``).
     They must not be surfaced via consume_path or we'd double-load."""
-    rules_dir = tmp_path / ".ember" / "rules"
+    rules_dir = tmp_path / CONFIG_DIR / "rules"
     rules_dir.mkdir(parents=True)
     (rules_dir / "always.md").write_text("ALWAYS-LOADED-EAGERLY")
     (tmp_path / "src" / "x.py").parent.mkdir(parents=True)
@@ -267,7 +268,7 @@ def test_path_scoped_claude_rules_skipped_when_cross_tool_disabled(tmp_path: Pat
 
 
 def test_path_scoped_rule_at_import_resolves(tmp_path: Path) -> None:
-    rules_dir = tmp_path / ".ember" / "rules"
+    rules_dir = tmp_path / CONFIG_DIR / "rules"
     rules_dir.mkdir(parents=True)
     (rules_dir / "main.md").write_text("---\npaths:\n  - 'svc/**'\n---\nROOT @./extra.md")
     (rules_dir / "extra.md").write_text("IMPORTED")
@@ -284,7 +285,7 @@ def test_path_scoped_rule_at_import_resolves(tmp_path: Path) -> None:
 def test_path_scoped_absolute_path_glob(tmp_path: Path) -> None:
     """``paths:`` accepts absolute-path globs too (the file matcher
     tries both project-relative and absolute candidates)."""
-    rules_dir = tmp_path / ".ember" / "rules"
+    rules_dir = tmp_path / CONFIG_DIR / "rules"
     rules_dir.mkdir(parents=True)
     target_dir = tmp_path / "svc"
     target_dir.mkdir()
@@ -297,7 +298,7 @@ def test_path_scoped_absolute_path_glob(tmp_path: Path) -> None:
 
 
 def test_has_pending_counts_scoped_rules(tmp_path: Path) -> None:
-    rules_dir = tmp_path / ".ember" / "rules"
+    rules_dir = tmp_path / CONFIG_DIR / "rules"
     rules_dir.mkdir(parents=True)
     (rules_dir / "a.md").write_text("---\npaths:\n  - 'svc/**'\n---\nA")
     (tmp_path / "svc" / "x.py").parent.mkdir(parents=True)
@@ -333,7 +334,7 @@ def test_path_scoped_rule_body_skips_code_region_imports(tmp_path: Path) -> None
     in the row-15 code-region masking for rules that surface
     through the lazy RulesIndex path (in addition to the
     session-load path tested in ``test_context.py``)."""
-    rules_dir = tmp_path / ".ember" / "rules"
+    rules_dir = tmp_path / CONFIG_DIR / "rules"
     rules_dir.mkdir(parents=True)
     (rules_dir / "guide.md").write_text(
         "---\npaths:\n  - 'svc/**'\n---\nReal: @./inline.md but `@./fake.md` stays literal."
@@ -354,12 +355,12 @@ def test_path_scoped_rule_body_skips_code_region_imports(tmp_path: Path) -> None
 
 def test_dual_namespace_independent_rules_both_fire(tmp_path: Path) -> None:
     """Same logical scope (``svc/**``) declared from BOTH
-    ``.ember/rules/`` AND ``.claude/rules/`` — both rules fire on
+    ``.igni/rules/`` AND ``.claude/rules/`` — both rules fire on
     a matching touch (they're distinct files, not deduped against
     each other). Confirms the "broader namespace" claim on row 16
     isn't just notional: a project can layer ember-native rules
     AND cross-tool Claude rules at the same path scope."""
-    ember_dir = tmp_path / ".ember" / "rules"
+    ember_dir = tmp_path / CONFIG_DIR / "rules"
     claude_dir = tmp_path / ".claude" / "rules"
     ember_dir.mkdir(parents=True)
     claude_dir.mkdir(parents=True)

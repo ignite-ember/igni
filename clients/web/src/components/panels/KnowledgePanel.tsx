@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import type { EmberClient } from "../../protocol/client";
+import type { IgniClient } from "../../protocol/client";
 import { Drawer } from "./Drawer";
 import { Skeleton } from "../Skeleton";
 
@@ -82,7 +82,7 @@ export function KnowledgePanel({
   client,
   onClose,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   onClose: () => void;
 }) {
   const [status, setStatus] = useState<KnowledgeStatus | null>(null);
@@ -369,7 +369,7 @@ export function KnowledgePanel({
 // ── Disabled state ───────────────────────────────────────────────
 
 function DisabledState() {
-  // This used to tell the reader to set `EMBER_NEO4J_RUNTIME=1` "for the
+  // This used to tell the reader to set `IGNI_NEO4J_RUNTIME=1` "for the
   // backend" — a variable a Finder-launched .app cannot inherit, so the
   // instruction could not be carried out by anyone who needed it. The
   // switch is `knowledge.enabled` in config now, which is both settable
@@ -536,7 +536,7 @@ function DocumentDetail({
   client,
   id,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   id: string;
 }) {
   const [doc, setDoc] = useState<KnowledgeDocFull | null>(null);

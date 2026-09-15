@@ -51,16 +51,16 @@ from pathlib import Path
 from ember_code.core.tools.process_store import BackgroundProcessStore
 from ember_code.core.tools.process_store_schemas import BackgroundProcessRow
 
-# Anchor the script to the repo root — the project's .ember/ lives
+# Anchor the script to the repo root — the project's .igni/ lives
 # there. ``scripts/seed_*.py`` always lives one level below root.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 _SCENARIOS = ("sleep", "dev_server")
 
 # Per-pid log path mirrors ``ProcessLogStore.path()``:
-#   ``<project_dir>/.ember/process_logs/<pid>.log``.
+#   ``<project_dir>/.igni/process_logs/<pid>.log``.
 def per_pid_log_path(project_dir: Path, pid: int) -> Path:
-    return project_dir / ".ember" / "process_logs" / f"{pid}.log"
+    return project_dir / ".igni" / "process_logs" / f"{pid}.log"
 
 
 def _spawn_sleep() -> subprocess.Popen[bytes]:
@@ -177,7 +177,7 @@ def _argparser() -> argparse.ArgumentParser:
         "--project-dir",
         type=Path,
         default=REPO_ROOT,
-        help="Project root whose .ember/state.db and process_logs/ are written. "
+        help="Project root whose .igni/state.db and process_logs/ are written. "
         "Default: %(default)s",
     )
     return p

@@ -155,12 +155,12 @@ function App() {
   );
 
   return (
-    <div className="demo-page">
+    <main className="demo-page">
       <header className="demo-page-header">
         <h1>Interrupted-assistant banner</h1>
         <p className="demo-page-lede">
           Surfaces a partial assistant bubble with three recovery
-          actions instead of a hidden "X message(s) interrupted"
+          actions instead of a hidden "N messages interrupted"
           notice. Mounts when an agent run stops mid-stream — Esc,
           Stop, error, or BE crash. Same UX across the three
           reasons (cancelled / errored / abandoned), each tinted
@@ -208,7 +208,7 @@ function App() {
                the edited text.
           The real app uses the actual ``Composer`` component;
           this is a faithful stub so the demo doesn't need a
-          EmberClient or BE connection. */}
+          IgniClient or BE connection. */}
       <section className="demo-page-composer">
         <h3>Composer (faux)</h3>
         <p className="demo-page-composer-subtitle">
@@ -261,7 +261,7 @@ function App() {
           </ul>
         )}
       </section>
-    </div>
+    </main>
   );
 }
 

@@ -43,7 +43,7 @@ from ember_code.core.session.persistence.plan_decisions_store import (
     PlanDecisionsStore,
 )
 from ember_code.core.session.persistence.todos_store import TodoSnapshotStore
-from ember_code.core.session.schemas import SessionTitle
+from ember_code.core.session.schemas import PersistResult, SessionTitle
 from ember_code.core.tools.plan import PlanDecisionsBlob
 from ember_code.core.tools.todo import TodoItemWire
 
@@ -139,10 +139,16 @@ class SessionPersistence:
         failure."""
         return await self._namer.auto_name(executor)
 
-    async def rename(self, new_name: str) -> None:
-        """Manually rename the current session. Best-effort — DB
-        failures log at DEBUG and return silently."""
-        await self._namer.rename(new_name)
+    async def rename(self, new_name: str) -> PersistResult:
+        """Manually rename the current session.
+
+        Returns the namer's :class:`PersistResult` instead of
+        discarding it. Swallowing it here is what let ``/rename``
+        answer "Session renamed to: X" after a failed write — the DB
+        error was logged at DEBUG and the caller had no way to know.
+        Callers that ignore the return value behave exactly as before.
+        """
+        return await self._namer.rename(new_name)
 
     async def get_name(self) -> str:
         """Get the current session's name from the database."""

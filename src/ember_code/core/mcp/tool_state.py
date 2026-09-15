@@ -1,7 +1,7 @@
 """Per-project persistence for the "disabled MCP tools" list.
 
 Extracted from :mod:`ember_code.core.mcp.client` so the on-disk
-representation (``.ember/mcp-tool-state.json``) has a single owner
+representation (``.igni/mcp-tool-state.json``) has a single owner
 and the ``MCPClientManager`` can focus on transport / connection
 lifecycle. The state is a plain ``{server: set[tool_name]}``
 mapping; the file is a JSON blob keyed under ``"disabled"``.
@@ -13,13 +13,15 @@ import json
 import logging
 from pathlib import Path
 
+from ember_code.core.paths import CONFIG_DIR
+
 logger = logging.getLogger(__name__)
 
 
 class MCPToolStateStore:
     """File-backed store for the per-project disabled-tools list.
 
-    Lives at ``<project>/.ember/mcp-tool-state.json``. When
+    Lives at ``<project>/.igni/mcp-tool-state.json``. When
     ``project_dir`` is ``None`` (headless / test) the store is a
     no-op — ``load`` returns an empty dict and ``save`` silently
     drops. That mirrors the manager's behaviour before this class
@@ -32,7 +34,7 @@ class MCPToolStateStore:
     def path(self) -> Path | None:
         if self._project_dir is None:
             return None
-        return self._project_dir / ".ember" / "mcp-tool-state.json"
+        return self._project_dir / CONFIG_DIR / "mcp-tool-state.json"
 
     def load(self) -> dict[str, set[str]]:
         """Return ``{server: set[tool_name]}`` from disk. Empty when

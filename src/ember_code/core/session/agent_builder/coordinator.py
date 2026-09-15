@@ -20,6 +20,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from ember_code.core.paths import MAIN_AGENT_NAME
+
 from .agent_build_spec import AgentBuildSpec
 from .instructions_builder import InstructionsBuilder
 from .prompt_builder import PromptBuilder
@@ -146,7 +148,7 @@ class MainAgentBuilder:
             compress_token_limit=int(context_window * 0.8),
         )
         return AgentBuildSpec(
-            name="ember",
+            name=MAIN_AGENT_NAME,
             model=model,
             tools=tools,
             instructions=instructions,

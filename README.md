@@ -49,9 +49,17 @@ The architectural choices that drive the gap: (1) **CodeIndex queried first, not
 
 ```bash
 brew install ignite-ember/tap/ignite-ember  # or: pip install ignite-ember
-ignite-ember /login              # sign up for hosted models (MiniMax M2.7)
-ignite-ember                     # start coding
+igni                             # start coding
 ```
+
+`igni` is the command; `ignite-ember` is kept as an alias so existing
+shell aliases and scripts keep working. Both are the same entry point.
+
+To point it at your own igni server, set `api_url` in
+`.igni/config.local.yaml` and type `/login` **inside** a session — it is a
+slash command, not a shell subcommand. `igni /login` at a shell prompt
+answers `Error: No such command`, which is what this Quick Start used to
+tell you to run.
 
 Or bring your own model (OpenAI, Anthropic, Groq, Ollama, etc.):
 
@@ -60,7 +68,7 @@ export OPENAI_API_KEY=sk-...
 ```
 
 ```yaml
-# .ember/config.yaml
+# .igni/config.yaml
 models:
   default: gpt-4o
   registry:
@@ -78,8 +86,10 @@ See [Quickstart](QUICKSTART.md) for the full setup guide.
 ### Quickstart (new setup)
 
 1. **Install** — `brew install ignite-ember/tap/ignite-ember` (or `pip install ignite-ember`)
-2. **Authenticate** — `ignite-ember /login` for hosted models, or set `OPENAI_API_KEY` + add model to `.ember/config.yaml` for your own
-3. **Run** — `ignite-ember`
+2. **Configure a model** — set `OPENAI_API_KEY` (or any provider key) and add the
+   model to `.igni/config.yaml`; or point `api_url` at your igni server and run
+   `/login` inside a session
+3. **Run** — `igni`
 
 See [Quickstart](QUICKSTART.md) for the full guide.
 
@@ -99,7 +109,7 @@ See [Quickstart](QUICKSTART.md) for the full guide.
 
 ### GUI clients (v0.6.0 → v0.6.4)
 
-- **Tauri desktop app.** Native window hosting the shared web UI; spawns the Python backend over a Unix socket, kills it on app exit (with `EMBER_PARENT_PID` watchdog for crash safety). macOS / Windows / Linux installers from CI; signed auto-updater backed by minisign.
+- **Tauri desktop app.** Native window hosting the shared web UI; spawns the Python backend over a Unix socket, kills it on app exit (with `IGNI_PARENT_PID` watchdog for crash safety). macOS / Windows / Linux installers from CI; signed auto-updater backed by minisign.
 - **VSCode extension.** WebView hosting the same shared UI; activates on workspace open with one command. Auto-installs `ignite-ember` via `uv` on first run — zero-touch.
 - **JetBrains plugin.** JCEF panel hosting the same UI. Plugin SDK build wired into the release pipeline; published to the JetBrains Marketplace.
 - **Shared web UI.** `clients/web` is the single React+TS surface; the three shells embed it. Single bundle, single React tree, single CSS — visual + behavioral parity across the three hosts.
@@ -135,7 +145,7 @@ See [Quickstart](QUICKSTART.md) for the full guide.
 - **Sub-agent HITL bridge.** Specialist sub-agents (e.g. architect) can now request user confirmation through the same TUI flow as the main agent. Multiplexer was extracted from `run_message` and `resolve_hitl` so parent pauses no longer drop the specialist's pause requirements.
 - **`acontinue_run` "No runs found" fix.** Session DB is now threaded into pool specialists and the `Team(...)` constructor so paused runs are persisted and can be resumed.
 - **Concurrent-spawn race fix.** Per-spawn `copy.copy()` of pool specialists in `spawn_agent` / `spawn_team`. Without this, two concurrent spawns of the same specialist raced on shared `Agent` per-run state and Agno errored with "No runs found for run ID".
-- **BE/TUI cleanup robustness.** Signal handlers, `atexit`, process-group kill, and an `EMBER_PARENT_PID` watchdog. Closes the runaway-BE failure mode where the TUI crash left a zombie backend.
+- **BE/TUI cleanup robustness.** Signal handlers, `atexit`, process-group kill, and an `IGNI_PARENT_PID` watchdog. Closes the runaway-BE failure mode where the TUI crash left a zombie backend.
 - **`httpx` timeout actually applied.** Was previously shadowed by the SDK timeout when an `http_client` was provided.
 - **Eval harness.** Auto-approve HITL drain, `--case-timeout` (default 60 s), `--case-retries` (default 2), `--spawn-timeout`, `retries=0` for determinism, WebSearch stub, ENV vs FAIL output classification, default concurrency 5.
 - **New tests.** `test_subagent_hitl_e2e` (8 cases, bridge in isolation), `test_orchestrate_real_agno` (real Agno Agent + AsyncSqliteDb).
@@ -197,13 +207,15 @@ In the other direction, igni acts as an MCP *client*: configure external MCP ser
 
 ### Knowledge Base
 
-Built-in vector knowledge base powered by ChromaDB and the Ember embeddings API:
+Built-in vector knowledge base powered by ChromaDB and a local embedding model (all-MiniLM-L6-v2 — no API call, nothing leaves the machine):
 
 ```yaml
 knowledge:
   enabled: true
   collection_name: "my_project"
-  embedder: "local"             # local SentenceTransformer (or "ember" for cloud)
+  # Embeddings are local (all-MiniLM-L6-v2) and not configurable — this
+  # line offered a choice between a local model and a cloud one, and
+  # `KnowledgeConfig` has no `embedder` field at all.
 ```
 
 Add content via slash commands: `/knowledge add <url|path|text>`, search with `/knowledge search <query>`. Agents can search the knowledge base automatically during execution.

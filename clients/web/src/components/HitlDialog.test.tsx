@@ -83,7 +83,10 @@ describe("HitlDialog — single requirement", () => {
         onResolve={() => undefined}
       />,
     );
+    // The path is labelled — bare, it read as a stray word under the
+    // heading (F136) — so match the element that holds it.
     expect(screen.getByText("main > planner > test-runner")).toBeTruthy();
+    expect(screen.getByText(/Requested by/)).toBeTruthy();
   });
 
   it("renders the details sub-line when set", () => {

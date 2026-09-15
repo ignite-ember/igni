@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 
 from websockets.asyncio.server import serve
 
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.protocol.messages import Message, Welcome
 from ember_code.protocol.registry import MessageRegistry
 from ember_code.transport._ws_client import MirroredClient, SendResult
@@ -71,15 +72,15 @@ _BROADCAST_SEND_TIMEOUT = 2.0
 # first :meth:`send` call, which silently drops our
 # ``logger.debug`` calls. To make the chunk trace reliable we attach
 # a *dedicated* file handler to this module's logger the first time
-# it's imported, gated on ``EMBER_CHUNK_TRACE=1`` so non-debug runs
+# it's imported, gated on ``IGNI_CHUNK_TRACE=1`` so non-debug runs
 # don't pay the cost. The handler writes to
-# ``~/.ember/chunk_trace.log`` (overridable via EMBER_CHUNK_TRACE_LOG)
+# ``~/.igni/chunk_trace.log`` (overridable via IGNI_CHUNK_TRACE_LOG)
 # and bypasses root propagation entirely — the file is the only sink.
-if os.environ.get("EMBER_CHUNK_TRACE") == "1" and not any(
+if os.environ.get("IGNI_CHUNK_TRACE") == "1" and not any(
     getattr(h, "_ember_chunk_trace", False) for h in logger.handlers
 ):
     _trace_path = Path(
-        os.environ.get("EMBER_CHUNK_TRACE_LOG") or (Path.home() / ".ember" / "chunk_trace.log")
+        os.environ.get("IGNI_CHUNK_TRACE_LOG") or (Path.home() / CONFIG_DIR / "chunk_trace.log")
     )
     _trace_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -202,7 +203,7 @@ class WebSocketServerTransport(ListeningTransport):
         # Stamp a per-stream monotonic ``event_seq`` so the FE can
         # dedup events that arrive twice (e.g. when two WebSocket
         # clients are attached due to a StrictMode double-mount of
-        # EmberClient) AND so the ordering is preserved across
+        # IgniClient) AND so the ordering is preserved across
         # duplicates — the FE keys dedup on (id, event_seq) and the
         # sequence itself is the canonical order of events in the
         # stream. ``stream_end`` resets the counter so a new turn

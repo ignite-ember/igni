@@ -22,16 +22,16 @@ class RestartBackendAction : AnAction() {
         project.service<EmberBackendService>().restart(cleanInstall = false)
             .whenComplete { port, err ->
                 val group = NotificationGroupManager.getInstance()
-                    .getNotificationGroup("EmberCode")
+                    .getNotificationGroup("igni")
                 if (err != null) {
                     group.createNotification(
-                        "Ember backend restart failed",
+                        "igni backend restart failed",
                         err.message ?: "Unknown error",
                         NotificationType.ERROR,
                     ).notify(project)
                 } else {
                     group.createNotification(
-                        "Ember backend restarted",
+                        "igni backend restarted",
                         "Listening on port $port.",
                         NotificationType.INFORMATION,
                     ).notify(project)

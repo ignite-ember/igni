@@ -1,11 +1,9 @@
 """Tests for tool function execution — P0 critical.
 
-Covers: Read (via Agno FileTools), Grep, LS, Bash execution.
+Covers: the Grep/Glob toolkits (still importable, no longer in the
+registry), Agno FileTools, and Bash execution.
 Edit and Glob already have good coverage in test_tools.py.
 """
-
-import subprocess
-from unittest.mock import patch
 
 import pytest
 from agno.tools.file import FileTools
@@ -13,7 +11,6 @@ from agno.tools.shell import ShellTools
 
 from ember_code.core.config.tool_permissions import ToolPermissions
 from ember_code.core.tools.registry import ToolRegistry
-from ember_code.core.tools.search import GrepTools
 
 # ── Read (Agno FileTools) ────────────────────────────────────────
 
@@ -56,78 +53,6 @@ class TestReadTool:
         assert "b.txt" in result
 
 
-# ── Grep ─────────────────────────────────────────────────────────
-
-
-_has_rg = __import__("shutil").which("rg") is not None
-
-
-class TestGrepTool:
-    """Test grep tool functions."""
-
-    @pytest.mark.skipif(not _has_rg, reason="ripgrep not in PATH")
-    def test_grep_finds_pattern(self, tmp_path):
-        (tmp_path / "test.py").write_text("def hello():\n    return 'world'\n")
-        tools = GrepTools(base_dir=str(tmp_path))
-        result = tools.grep("hello", path="")
-        assert "hello" in result
-
-    @pytest.mark.skipif(not _has_rg, reason="ripgrep not in PATH")
-    def test_grep_no_matches(self, tmp_path):
-        (tmp_path / "test.py").write_text("nothing here\n")
-        tools = GrepTools(base_dir=str(tmp_path))
-        result = tools.grep("nonexistent_pattern_xyz")
-        assert "No matches" in result
-
-    @pytest.mark.skipif(not _has_rg, reason="ripgrep not in PATH")
-    def test_grep_with_glob_filter(self, tmp_path):
-        (tmp_path / "a.py").write_text("target\n")
-        (tmp_path / "b.txt").write_text("target\n")
-        tools = GrepTools(base_dir=str(tmp_path))
-        result = tools.grep("target", glob="*.py")
-        assert "a.py" in result
-        # b.txt should be excluded by glob
-        assert "b.txt" not in result
-
-    @pytest.mark.skipif(not _has_rg, reason="ripgrep not in PATH")
-    def test_grep_with_context(self, tmp_path):
-        (tmp_path / "test.py").write_text("line1\nline2\ntarget\nline4\nline5\n")
-        tools = GrepTools(base_dir=str(tmp_path))
-        result = tools.grep("target", context_lines=1)
-        # Should include context lines
-        assert "line2" in result or "line4" in result
-
-    @pytest.mark.skipif(not _has_rg, reason="ripgrep not in PATH")
-    def test_grep_files_returns_paths(self, tmp_path):
-        (tmp_path / "a.py").write_text("match\n")
-        (tmp_path / "b.py").write_text("no\n")
-        tools = GrepTools(base_dir=str(tmp_path))
-        result = tools.grep_files("match")
-        assert "a.py" in result
-        assert "b.py" not in result
-
-    @pytest.mark.skipif(not _has_rg, reason="ripgrep not in PATH")
-    def test_grep_count(self, tmp_path):
-        (tmp_path / "test.py").write_text("match\nmatch\nmatch\n")
-        tools = GrepTools(base_dir=str(tmp_path))
-        result = tools.grep_count("match")
-        assert "3" in result or "test.py" in result
-
-    @pytest.mark.skipif(not _has_rg, reason="ripgrep not in PATH")
-    def test_grep_rg_not_installed(self, tmp_path):
-        tools = GrepTools(base_dir=str(tmp_path))
-        with patch("subprocess.run", side_effect=FileNotFoundError("rg not found")):
-            result = tools.grep("test")
-        assert "not installed" in result or "Error" in result
-
-    @pytest.mark.skipif(not _has_rg, reason="ripgrep not in PATH")
-    def test_grep_timeout(self, tmp_path):
-        tools = GrepTools(base_dir=str(tmp_path))
-        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("rg", 30)):
-            result = tools.grep("test")
-        assert "timed out" in result.lower() or "Error" in result
-
-
 # ── Bash (Shell execution) ───────────────────────────────────────
 
 
@@ -162,28 +87,31 @@ class TestBashTool:
 class TestToolRegistryResolve:
     """Test that all tools resolve correctly."""
 
-    def test_resolve_read(self):
+    def test_resolve_write(self):
         registry = ToolRegistry(
             base_dir=".",
             permissions=ToolPermissions(),
         )
-        tools = registry.resolve(["Read"])
+        tools = registry.resolve(["Write"])
         assert len(tools) == 1
 
-    def test_resolve_grep(self):
+    def test_resolve_bash(self):
         registry = ToolRegistry(
             base_dir=".",
             permissions=ToolPermissions(),
         )
-        tools = registry.resolve(["Grep"])
+        tools = registry.resolve(["Bash"])
         assert len(tools) == 1
 
     def test_resolve_all_standard(self):
+        # ``Read`` / ``Grep`` / ``Glob`` were in this list until they
+        # left the registry — nothing shipped declared them, and
+        # searching and reading go through ``Bash`` (``rg`` / ``cat``).
         registry = ToolRegistry(
             base_dir=".",
             permissions=ToolPermissions(),
         )
-        standard = ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
+        standard = ["Write", "Edit", "Bash", "NotebookEdit", "Schedule"]
         tools = registry.resolve(standard)
         assert len(tools) == len(standard)
 
@@ -200,26 +128,26 @@ class TestToolRegistryResolveEdges:
         )
 
     def test_accepts_comma_separated_string(self):
-        # Agent definitions often carry ``tools: "Read,Write,Edit"``
+        # Agent definitions often carry ``tools: "Bash,Write,Edit"``
         # in YAML. Without the comma-split path, those agents
         # would silently get zero tools.
         registry = self._registry()
-        tools = registry.resolve("Read,Write,Edit")
+        tools = registry.resolve("Bash,Write,Edit")
         assert len(tools) == 3
 
     def test_strips_whitespace_in_comma_split(self):
-        # ``Read, Write , Edit`` is what YAML lists with
+        # ``Bash, Write , Edit`` is what YAML lists with
         # human-friendly spacing produce. The split must
         # strip each segment.
         registry = self._registry()
-        tools = registry.resolve("Read , Write,  Edit")
+        tools = registry.resolve("Bash , Write,  Edit")
         assert len(tools) == 3
 
     def test_filters_empty_segments(self):
         # Trailing commas / double commas shouldn't yield
         # empty tool names that would then raise ValueError.
         registry = self._registry()
-        tools = registry.resolve("Read,,Write,")
+        tools = registry.resolve("Bash,,Write,")
         assert len(tools) == 2
 
     def test_denied_tool_silently_skipped(self):
@@ -231,7 +159,7 @@ class TestToolRegistryResolveEdges:
         # Mark Bash as denied via the internal level map.
         perms._tool_levels["Bash"] = "deny"  # type: ignore[attr-defined]
         registry = self._registry(permissions=perms)
-        tools = registry.resolve(["Read", "Bash", "Write"])
+        tools = registry.resolve(["Edit", "Bash", "Write"])
         assert len(tools) == 2
 
     def test_mcp_prefix_silently_skipped(self):
@@ -239,7 +167,7 @@ class TestToolRegistryResolveEdges:
         # by the MCP manager elsewhere — not a registry-resolved
         # toolkit. Skip silently rather than raise.
         registry = self._registry()
-        tools = registry.resolve(["Read", "MCP:slack:send", "Write"])
+        tools = registry.resolve(["Edit", "MCP:slack:send", "Write"])
         assert len(tools) == 2
 
     def test_orchestrate_and_knowledge_silently_skipped(self):
@@ -247,7 +175,7 @@ class TestToolRegistryResolveEdges:
         # not the registry. Listing them in an agent's tools
         # should be a clean no-op rather than an error.
         registry = self._registry()
-        tools = registry.resolve(["Read", "Orchestrate", "Knowledge", "Write"])
+        tools = registry.resolve(["Edit", "Orchestrate", "Knowledge", "Write"])
         assert len(tools) == 2
 
     def test_unknown_tool_raises_with_helpful_message(self):
@@ -261,7 +189,7 @@ class TestToolRegistryResolveEdges:
         assert "NotARealTool" in msg
         # A known tool name appears in the message so the
         # author has at least one anchor.
-        assert "Read" in msg
+        assert "Write" in msg
 
     def test_bashoutput_aliases_to_bash_for_dedup(self):
         # ``BashOutput`` is a separate tool name (CC convention)
@@ -274,10 +202,10 @@ class TestToolRegistryResolveEdges:
         assert len(tools) == 1
 
     def test_same_tool_listed_twice_deduplicated(self):
-        # Defensive — an agent author listing ``Read`` twice
+        # Defensive — an agent author listing ``Write`` twice
         # should get one instance.
         registry = self._registry()
-        tools = registry.resolve(["Read", "Read", "Read"])
+        tools = registry.resolve(["Write", "Write", "Write"])
         assert len(tools) == 1
 
     def test_available_tools_property_returns_sorted_list(self):
@@ -290,7 +218,7 @@ class TestToolRegistryResolveEdges:
         names = registry.available_tools  # no parens — property
         assert names == sorted(names)
         # Sanity — the standard tools are present.
-        for expected in ("Read", "Write", "Edit", "Bash", "Grep", "Glob"):
+        for expected in ("Write", "Edit", "Bash", "NotebookEdit", "Schedule"):
             assert expected in names
 
     def test_register_adds_custom_factory(self):

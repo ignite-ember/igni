@@ -130,6 +130,10 @@ class ToolsBuilder:
                 cloud_token=self._cloud_token,
                 cloud_server_url=self._cloud_server_url,
                 broadcast=self._broadcast,
+                # Late-bound on purpose: ``attach_codeindex_neo4j`` replaces
+                # ``session.code_index`` after this registry is built, and the
+                # toolkit must see the replacement.
+                code_index_provider=lambda: getattr(self._session, "code_index", None),
             )
         return self._registry
 
@@ -211,7 +215,7 @@ class ToolsBuilder:
         return extras
 
     def custom(self) -> list[Any]:
-        """Custom toolkits loaded from ``.ember/tools/`` (+ plugin dirs)."""
+        """Custom toolkits from ``.igni/tools/``, plugins, and the group."""
         registry = self._build_registry()
         plugin_tool_dirs = self._plugin_loader.collect_tool_dirs(
             disabled=self._disabled_plugins,
@@ -219,6 +223,7 @@ class ToolsBuilder:
         loaded = registry.load_custom_tools(
             self._project_dir,
             plugin_tool_dirs=plugin_tool_dirs,
+            group_tools_dir=self._session.group_dir_for("tools"),
         )
         return list(loaded) if loaded else []
 

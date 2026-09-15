@@ -1,7 +1,7 @@
 """Settings file I/O for tool permissions.
 
-Owns the read/write side of ``.ember/settings.json`` &
-``.ember/settings.local.json`` — split out of the monolithic
+Owns the read/write side of ``.igni/settings.json`` &
+``.igni/settings.local.json`` — split out of the monolithic
 ``tool_permissions.py`` so the store class no longer mixes disk I/O
 with rule evaluation.
 
@@ -12,7 +12,7 @@ Two collaborators, one shared wire model:
   returning a :class:`LoadResult` per file (Pattern 3 typed
   failure).
 * :class:`SettingsFileWriter` — writes back a persisted rule to
-  ``.ember/settings.local.json`` (project-local, falls back to home
+  ``.igni/settings.local.json`` (project-local, falls back to home
   when no project dir is set).
 
 Both use :class:`EmberSettingsPermissionsFile` (from
@@ -34,6 +34,7 @@ from ember_code.core.config.tool_permissions.schemas import (
     LoadResult,
     PermissionLevel,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +45,10 @@ class SettingsFileLoader:
     The four-path priority order (highest priority applied last)
     matches the historical behaviour:
 
-    1. ``~/.ember/settings.json``            — user global defaults
-    2. ``~/.ember/settings.local.json``      — user local overrides
-    3. ``<project>/.ember/settings.json``    — project committed
-    4. ``<project>/.ember/settings.local.json`` — project local
+    1. ``~/.igni/settings.json``            — user global defaults
+    2. ``~/.igni/settings.local.json``      — user local overrides
+    3. ``<project>/.igni/settings.json``    — project committed
+    4. ``<project>/.igni/settings.local.json`` — project local
 
     Errors (missing file, bad JSON, wrong shape) yield a
     :class:`LoadResult` with ``ok=False`` — the caller decides
@@ -61,12 +62,12 @@ class SettingsFileLoader:
         """The ordered list of settings files this loader consults —
         exposed so tests can assert against the exact search order
         without duplicating the constants."""
-        home_ember = Path.home() / ".ember"
+        home_ember = Path.home() / CONFIG_DIR
         return [
             home_ember / "settings.json",
             home_ember / "settings.local.json",
-            self._project_dir / ".ember" / "settings.json",
-            self._project_dir / ".ember" / "settings.local.json",
+            self._project_dir / CONFIG_DIR / "settings.json",
+            self._project_dir / CONFIG_DIR / "settings.local.json",
         ]
 
     def load_all(self) -> list[LoadResult]:
@@ -148,8 +149,8 @@ class SettingsFileWriter:
         assert against in tests.
         """
         if self._project_dir:
-            return self._project_dir / ".ember" / "settings.local.json"
-        return Path.home() / ".ember" / "settings.local.json"
+            return self._project_dir / CONFIG_DIR / "settings.local.json"
+        return Path.home() / CONFIG_DIR / "settings.local.json"
 
     def save_rule(self, rule: str, level: PermissionLevel) -> Path:
         """Persist ``rule`` under the ``permissions.<level>`` list of

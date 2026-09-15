@@ -103,6 +103,10 @@ class Migrator:
             ini_path = self._locate_alembic_ini()
             cfg = Config(str(ini_path))
             cfg.set_main_option("sqlalchemy.url", sync_url(resolved))
+            # In-process upgrade: keep our logging. ``env.py`` reads this and
+            # skips ``fileConfig``, which would otherwise replace the root
+            # handlers on every single startup.
+            cfg.attributes["configure_logging"] = False
             command.upgrade(cfg, "head")
             self._upgraded_paths.add(resolved)
 

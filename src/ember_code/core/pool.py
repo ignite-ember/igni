@@ -24,10 +24,10 @@ collision). Within the same scope, native Ember sources beat
 cross-tool Claude sources by +1::
 
     10  ephemeral agents created at runtime via ``create_ephemeral``
-     4  <project>/.ember/agents/          (project, native)
-     3  <project>/.ember/agents.local/    (project personal, gitignored)
+     4  <project>/.igni/agents/          (project, native)
+     3  <project>/.igni/agents.local/    (project personal, gitignored)
      2  <project>/.claude/agents/         (project, cross-tool)
-     1  ~/.ember/agents/                  (user, native)
+     1  ~/.igni/agents/                  (user, native)
      0  ~/.claude/agents/                 (user, cross-tool)
 """
 

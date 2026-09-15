@@ -1,4 +1,4 @@
-"""``UserConfigStore`` — read/write ``~/.ember/config.yaml``.
+"""``UserConfigStore`` — read/write ``~/.igni/config.yaml``.
 
 Absorbs the ``save_default_model`` free function and
 ``Settings.persist_default_model`` classmethod. Both used to live
@@ -19,6 +19,8 @@ from typing import Any
 
 import yaml
 
+from ember_code.core.paths import CONFIG_DIR
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,7 +34,7 @@ class UserConfigStore:
     """
 
     def __init__(self, path: Path | None = None) -> None:
-        self._path = path if path is not None else Path.home() / ".ember" / "config.yaml"
+        self._path = path if path is not None else Path.home() / CONFIG_DIR / "config.yaml"
 
     @property
     def path(self) -> Path:

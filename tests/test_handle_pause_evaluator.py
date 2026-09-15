@@ -102,11 +102,13 @@ class TestPlanMode:
         assert run_id == "run-1"
 
     def test_read_tool_auto_allowed(self) -> None:
-        # Plan mode auto-allows reads so the agent can investigate
-        # without pestering the user (CC parity).
+        # Plan mode auto-allows non-mutating tools so the agent can
+        # investigate without pestering the user (CC parity). Was
+        # ``read_file``; that toolkit left the registry, so the
+        # surviving member of ``FILE_READ_TOOLS`` stands in.
         ev = PermissionEvaluator.from_strings(mode=PermissionMode.PLAN)
         server = _make_backend(evaluator=ev)
-        req = _req("read_file", {"file_path": "a.py"})
+        req = _req("fetch_url", {"url": "https://example.test"})
 
         _r = server._handle_pause(_pause_event([req]))
 

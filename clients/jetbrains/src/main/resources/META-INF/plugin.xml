@@ -101,7 +101,7 @@
               JetBrains and the VSCode extension side-by-side on the
               same repo — both now talk to the same Python backend
               (via a discovery lockfile at
-              <code>&lt;project&gt;/.ember/backend.lock</code>). What
+              <code>&lt;project&gt;/.igni/backend.lock</code>). What
               you type in one window streams live into the other's
               chat. Also halves memory use vs the old spawn-per-IDE
               behaviour.</li>

@@ -23,7 +23,7 @@ class FixtureSpec(BaseModel):
     """One fixture entry from an eval suite YAML.
 
     ``source`` is resolved relative to the suite's ``fixtures_root``
-    (``evals/fixtures/`` for shipped datasets or ``.ember/evals/`` for
+    (``evals/fixtures/`` for shipped datasets or ``.igni/evals/`` for
     user-authored ones). ``target`` is the path inside the per-suite
     work_dir where the fixture should land.
     """

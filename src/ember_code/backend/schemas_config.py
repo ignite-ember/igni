@@ -38,7 +38,17 @@ class ConfigView(BaseModel):
     auth_status: str
     file_write: str
     shell_execute: str
-    storage_backend: str
+    #: Where session data lives on disk.
+    #:
+    #: This used to be ``storage_backend``, read from
+    #: ``settings.storage.backend`` — a field ``StorageConfig`` no
+    #: longer has. Choosing a storage backend went away with the
+    #: backward-compat cleanup; the ``/config`` renderer did not, so
+    #: every invocation raised ``AttributeError: 'StorageConfig'
+    #: object has no attribute 'backend'`` and the user was shown
+    #: ``session routing failed: …``. There is one storage backend
+    #: now, so the answerable question is *where*, not *which*.
+    storage_dir: str
     learning_enabled: bool
     reasoning_enabled: bool
     guardrail_pii: bool
@@ -75,7 +85,7 @@ class ConfigView(BaseModel):
             auth_status=auth_status,
             file_write=s.permissions.file_write,
             shell_execute=s.permissions.shell_execute,
-            storage_backend=s.storage.backend,
+            storage_dir=s.storage.data_dir,
             learning_enabled=s.learning.enabled,
             reasoning_enabled=s.reasoning.enabled,
             guardrail_pii=s.guardrails.pii_detection,
@@ -103,7 +113,7 @@ class ConfigView(BaseModel):
             f"- **Auth:** {self.auth_status}\n"
             f"- **Permissions:** file_write={self.file_write}, "
             f"shell={self.shell_execute}\n"
-            f"- **Storage:** {self.storage_backend}\n"
+            f"- **Storage:** {self.storage_dir}\n"
             f"- **Learning:** {'enabled' if self.learning_enabled else 'disabled'}\n"
             f"- **Reasoning tools:** {'enabled' if self.reasoning_enabled else 'disabled'}\n"
             f"- **Guardrails:** {guardrails_bits}\n"

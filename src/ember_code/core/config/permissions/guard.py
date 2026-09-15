@@ -19,6 +19,7 @@ from ember_code.core.config.permissions.schemas import (
 )
 from ember_code.core.config.permissions.session_cache import SessionApprovalCache
 from ember_code.core.config.settings import Settings
+from ember_code.core.paths import CONFIG_DIR
 
 
 class PermissionGuard:
@@ -47,7 +48,7 @@ class PermissionGuard:
         console: Console | None = None,
         prompt: ApprovalPrompt | None = None,
     ) -> None:
-        path = permissions_path or (Path.home() / ".ember" / "permissions.yaml")
+        path = permissions_path or (Path.home() / CONFIG_DIR / "permissions.yaml")
         store = AllowlistStore(path)
         self._policy = PermissionPolicy(settings, store)
         self._prompt = prompt or ApprovalPrompt(

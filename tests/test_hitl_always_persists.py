@@ -34,6 +34,7 @@ from unittest.mock import MagicMock
 
 from ember_code.backend.server import BackendServer
 from ember_code.core.config.permission_eval import PermissionDecision, PermissionEvaluator
+from ember_code.core.paths import CONFIG_DIR
 
 
 def _make_server(project_dir: Path, with_evaluator: bool = False) -> BackendServer:
@@ -72,7 +73,7 @@ def _requirement_for(tool_name: str, tool_args: dict) -> MagicMock:
 def _load_saved_rules(project_dir: Path) -> dict[str, list[str]]:
     """Return the ``permissions`` block from settings.local.json,
     or an empty dict if the file wasn't written."""
-    path = project_dir / ".ember" / "settings.local.json"
+    path = project_dir / CONFIG_DIR / "settings.local.json"
     if not path.exists():
         return {}
     return json.loads(path.read_text()).get("permissions", {})
@@ -225,13 +226,17 @@ class TestFuncNameCanonicalization:
     the settings file reads the way a user would write it by
     hand. Pin the mapping through the ``FUNC_TO_TOOL`` alias."""
 
-    def test_file_read_persists_as_read_rule(self, tmp_path: Path) -> None:
+    def test_file_write_persists_as_write_rule(self, tmp_path: Path) -> None:
+        # Was ``read_file`` → ``Read(...)``. ``Read`` left the registry
+        # with the rest of the read/search toolkits, so ``read_file``
+        # no longer canonicalises to anything — ``save_file`` is the
+        # surviving FileTools function and exercises the same mapping.
         server = _make_server(tmp_path)
-        req = _requirement_for("read_file", {"file_path": "src/main.py"})
+        req = _requirement_for("save_file", {"file_name": "src/main.py"})
         server._maybe_persist_choice(SimpleNamespace(choice="always"), req)
 
         saved = _load_saved_rules(tmp_path)
-        assert "Read(src/main.py)" in saved.get("allow", [])
+        assert any(r.startswith("Write(") for r in saved.get("allow", [])), saved
 
     def test_web_fetch_similar_uses_domain(self, tmp_path: Path) -> None:
         # "Allow similar" for a web fetch broadens to the domain.

@@ -4,13 +4,14 @@
 //! waits for its JSON ready line to learn the bound WebSocket port, then
 //! opens the shared web UI (clients/web) pointed at that port via the
 //! `?ws=` query param. The backend self-terminates if this process dies
-//! (EMBER_PARENT_PID watchdog), and we also kill it on window close.
+//! (IGNI_PARENT_PID watchdog), and we also kill it on window close.
 
 mod discovery;
 mod runtime;
 
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -287,11 +288,16 @@ pub struct BackendVersionInfo {
     pub source: &'static str,
 }
 
+/// How much of the backend's stderr to keep for a failure message.
+/// A Python traceback is longer than this; the last lines are the ones
+/// that name the exception, which is the part a user can act on.
+const STDERR_TAIL_LINES: usize = 40;
+
 fn spawn_backend(
     project_dir: &str,
     progress: &(dyn Fn(&str) + Sync),
 ) -> Result<(Child, u16, BackendVersionInfo), String> {
-    progress("Preparing Ember backend…");
+    progress("Preparing the igni backend…");
     let install = runtime::ensure_backend_python(progress)?;
     let version_info = BackendVersionInfo {
         actual: install.actual_cli_version.clone(),
@@ -299,7 +305,7 @@ fn spawn_backend(
         source: install.source.as_str(),
     };
 
-    progress("Starting Ember backend…");
+    progress("Starting the igni backend…");
     let mut cmd = Command::new(&install.python);
     cmd.args([
         "-m",
@@ -309,9 +315,17 @@ fn spawn_backend(
         "--project-dir",
         project_dir,
     ])
-    .env("EMBER_PARENT_PID", std::process::id().to_string())
+    .env("IGNI_PARENT_PID", std::process::id().to_string())
     .stdout(Stdio::piped())
-    .stderr(Stdio::null());
+    // Captured, not discarded. This was ``Stdio::null()``, and when the
+    // backend died during startup the user was told "backend exited
+    // before signalling ready" while the one line explaining why went to
+    // /dev/null. A real case: a stored default model that no longer
+    // resolves — written by ``/model`` or by cloud discovery, so
+    // removing a model from the deployment reaches every developer
+    // pinned to it. The backend no longer dies for that reason, but the
+    // next reason it dies for should not be unknowable either.
+    .stderr(Stdio::piped());
     for (k, v) in &install.env {
         cmd.env(k, v);
     }
@@ -320,6 +334,29 @@ fn spawn_backend(
     })?;
 
     let stdout = child.stdout.take().ok_or("backend stdout unavailable")?;
+    let stderr = child.stderr.take().ok_or("backend stderr unavailable")?;
+
+    // Drained on its own thread from the start. A Python traceback is
+    // several kilobytes and the pipe buffer is not, so reading it only
+    // after the failure risks the backend blocking on a full pipe while
+    // we wait for a ready line that will never come — a deadlock in
+    // place of an error message.
+    let tail: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
+    let tail_writer = Arc::clone(&tail);
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().map_while(Result::ok) {
+            let mut kept = tail_writer.lock().unwrap_or_else(|e| e.into_inner());
+            // The last lines are the ones that matter: a traceback ends
+            // with the exception. Bounded so a chatty backend cannot
+            // grow this without limit.
+            if kept.len() == STDERR_TAIL_LINES {
+                kept.pop_front();
+            }
+            kept.push_back(line);
+        }
+    });
+
     let mut reader = BufReader::new(stdout);
     let mut line = String::new();
     let port = loop {
@@ -328,7 +365,19 @@ fn spawn_backend(
             .read_line(&mut line)
             .map_err(|e| format!("backend stdout read failed: {e}"))?;
         if n == 0 {
-            return Err("backend exited before signalling ready".to_string());
+            // Give the stderr thread a moment to finish draining what
+            // the process wrote before it died.
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let kept = tail.lock().unwrap_or_else(|e| e.into_inner());
+            let reason = kept
+                .iter()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .cloned()
+                .unwrap_or_else(|| "no output on stderr".to_string());
+            return Err(format!(
+                "backend exited before signalling ready: {reason}"
+            ));
         }
         if let Some(p) = parse_ready_line(&line) {
             break p;
@@ -360,7 +409,7 @@ fn project_dir() -> String {
     if let Some(arg) = std::env::args().skip(1).find(|a| !a.starts_with("--")) {
         return arg;
     }
-    if let Ok(env) = std::env::var("EMBER_PROJECT_DIR") {
+    if let Ok(env) = std::env::var("IGNI_PROJECT_DIR") {
         let trimmed = env.trim();
         if !trimmed.is_empty() {
             return trimmed.to_string();
@@ -595,12 +644,173 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 /// Returns ``available=false`` (with empty fields) if no update is
 /// pending or if the check fails — silent best-effort, same
 /// behavior as the BE's existing check.
-#[tauri::command]
-async fn ember_check_update(app: AppHandle) -> Result<serde_json::Value, String> {
+/// Whether the user has turned update checks off.
+///
+/// `update_check_ttl: 0` in `~/.igni/config.yaml` is the documented
+/// off switch, and the setting's own comment calls the PyPI check "the
+/// only unconfigured outbound request an ordinary run makes". That was
+/// not true in the desktop app: this command went straight to the
+/// updater plugin, so an install that had explicitly disabled update
+/// checks still contacted github.com on **every launch** — the silent
+/// startup check in `App.tsx` calls it on connect. F126.
+///
+/// Read here rather than asked of the backend because this is the
+/// command that makes the request. A check that consults a policy one
+/// process away can be reached without consulting it; a check that
+/// reads the file it is about cannot.
+///
+/// Parsed by hand rather than with a YAML crate. One integer at a known
+/// key is not worth a dependency in a binary that ships to customers,
+/// and the failure mode is chosen deliberately: anything unparseable
+/// leaves checks **enabled**, because silently disabling updates on a
+/// malformed config would leave a machine on an old build with nothing
+/// said.
+fn update_checks_disabled() -> bool {
+    let Some(home) = dirs::home_dir() else {
+        return false;
+    };
+    match std::fs::read_to_string(home.join(".igni/config.yaml")) {
+        Ok(text) => update_checks_disabled_in(&text),
+        // No config at all is the default, and the default is on.
+        Err(_) => false,
+    }
+}
+
+/// The decision, over the text — so it is testable without owning
+/// `$HOME`. Mutating the environment in a Rust test is `unsafe` and
+/// races every other thread in the binary, which is a poor trade for
+/// covering one `read_to_string`.
+fn update_checks_disabled_in(text: &str) -> bool {
+    for line in text.lines() {
+        // No trimming: `strip_prefix` on the raw line is what anchors
+        // this to the top level. An indented `update_check_ttl` belongs
+        // to whatever section contains it, and reading it as the
+        // top-level setting would let an unrelated block switch off the
+        // app's updates.
+        //
+        // There was an explicit whitespace guard here as well. A
+        // revert-check removing it still passed, because it could not
+        // fail — `strip_prefix` had already rejected the indented line.
+        // Dead code that reads as defence, which is worse than no code.
+        let Some(value) = line.strip_prefix("update_check_ttl:") else {
+            continue;
+        };
+        let value = value.split('#').next().unwrap_or("").trim();
+        if let Ok(ttl) = value.parse::<i64>() {
+            return ttl <= 0;
+        }
+        // Present but unreadable — see the caller's note: enabled, so a
+        // malformed config never silently strands a machine on an old
+        // build.
+        return false;
+    }
+    false
+}
+
+/// Where this install looks for releases.
+///
+/// DEC-11. `tauri.conf.json` names
+/// `github.com/ignite-ember/igni/releases`, which is the one outbound
+/// host a default install has — and it sits awkwardly beside DP-5's
+/// claim that nothing leaves the customer's cloud. Worse, an air-gapped
+/// customer could not update at all: `update_check_ttl: 0` turns the
+/// check off, and there was nothing to turn it *towards*.
+///
+/// So `update_endpoint` in `~/.igni/config.yaml` replaces the compiled
+/// default. A customer mirrors releases and points the app at their own
+/// host.
+///
+/// **Signature verification is unchanged, and that is the whole reason
+/// this is safe.** The public key lives in `tauri.conf.json` and is not
+/// configurable here, so a mirror can serve a different *version* but
+/// cannot serve a different *build* — an artefact it signed itself
+/// fails `minisign-verify` before anything is installed. Pointing at a
+/// hostile mirror costs you updates, not integrity.
+///
+/// The plugin additionally refuses a non-HTTPS endpoint unless the app
+/// was built with `dangerous_insecure_transport_protocol`, which this
+/// one is not. So `http://` fails, and it fails at the builder rather
+/// than mid-download.
+///
+/// Same hand-parse as `update_checks_disabled_in`, for the same
+/// reasons, with the same top-level anchoring — an indented
+/// `update_endpoint` belongs to whatever contains it, and reading it as
+/// the app's release source would let an unrelated config block choose
+/// where the binary comes from.
+fn configured_update_endpoint() -> Option<String> {
+    let home = dirs::home_dir()?;
+    let text = std::fs::read_to_string(home.join(".igni/config.yaml")).ok()?;
+    configured_update_endpoint_in(&text)
+}
+
+/// The decision, over the text, so it is testable without owning
+/// `$HOME`.
+fn configured_update_endpoint_in(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let Some(value) = line.strip_prefix("update_endpoint:") else {
+            continue;
+        };
+        // No `#` splitting here, unlike the TTL: a URL may legitimately
+        // contain a fragment, and eating everything after the first
+        // `#` would silently truncate one. A trailing YAML comment on
+        // this key is worth losing to keep that true.
+        let value = value.trim().trim_matches('"').trim_matches('\'');
+        if value.is_empty() {
+            // Present and blank means "use the compiled default",
+            // which is a different statement from absent and reads
+            // the same — deliberately, since both are "I have not
+            // chosen a mirror".
+            return None;
+        }
+        return Some(value.to_string());
+    }
+    None
+}
+
+/// An updater pointed at whatever this install is configured to use.
+///
+/// Falls back to the compiled endpoint when nothing is set, so the
+/// default path is unchanged. A configured endpoint that will not parse
+/// as a URL, or that the plugin rejects, is an error rather than a
+/// silent fallback: an operator who set a mirror and got the vendor's
+/// host anyway has been quietly overruled, which is the failure DEC-11
+/// exists to prevent.
+fn updater_for(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
     use tauri_plugin_updater::UpdaterExt;
 
+    let Some(endpoint) = configured_update_endpoint() else {
+        return app.updater().map_err(|e| e.to_string());
+    };
+
+    let url = tauri::Url::parse(&endpoint).map_err(|e| {
+        format!("update_endpoint in ~/.igni/config.yaml is not a valid URL ({endpoint}): {e}")
+    })?;
+
+    app.updater_builder()
+        .endpoints(vec![url])
+        .map_err(|e| {
+            format!("update_endpoint in ~/.igni/config.yaml was refused ({endpoint}): {e}")
+        })?
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn ember_check_update(app: AppHandle) -> Result<serde_json::Value, String> {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
-    let updater = app.updater().map_err(|e| e.to_string())?;
+
+    if update_checks_disabled() {
+        // Not an error: the caller asked whether an update exists and
+        // the honest answer for a deployment that has opted out is
+        // "nothing to install", with no request made.
+        return Ok(serde_json::json!({
+            "available": false,
+            "current_version": current_version,
+            "latest_version": current_version,
+            "checks_disabled": true,
+        }));
+    }
+    let updater = updater_for(&app)?;
     match updater.check().await {
         Ok(Some(update)) => Ok(serde_json::json!({
             "available": true,
@@ -621,9 +831,14 @@ async fn ember_check_update(app: AppHandle) -> Result<serde_json::Value, String>
 /// Called from the FE's "Install" button on the update banner.
 #[tauri::command]
 async fn ember_install_update(app: AppHandle) -> Result<(), String> {
-    use tauri_plugin_updater::UpdaterExt;
+    // The same gate. Installing is a bigger outbound request than
+    // checking, and a caller that reached this without a check — the
+    // banner persisted across a config change, say — must not make it.
+    if update_checks_disabled() {
+        return Err("update checks are disabled in ~/.igni/config.yaml (update_check_ttl: 0)".to_string());
+    }
 
-    let updater = app.updater().map_err(|e| e.to_string())?;
+    let updater = updater_for(&app)?;
     let update = updater
         .check()
         .await
@@ -699,10 +914,10 @@ fn build_diagnostic_report() -> String {
     let expected = env!("CARGO_PKG_VERSION");
     let cache = runtime::cache_root_or_display();
     let venv_python = runtime::venv_python_path(&cache);
-    let marker_path = cache.join("ember-install.json");
+    let marker_path = cache.join("igni-install.json");
 
-    let dev_backend = std::env::var("EMBER_DEV_BACKEND").ok();
-    let ember_python = std::env::var("EMBER_PYTHON").ok();
+    let dev_backend = std::env::var("IGNI_DEV_BACKEND").ok();
+    let ember_python = std::env::var("IGNI_PYTHON").ok();
     let dev_ack = std::env::var("IGNITE_EMBER_DEV").ok();
     let dev_active = dev_ack
         .as_deref()
@@ -749,11 +964,11 @@ fn build_diagnostic_report() -> String {
     ));
     out.push('\n');
     out.push_str(&format!(
-        "EMBER_DEV_BACKEND        : {}\n",
+        "IGNI_DEV_BACKEND        : {}\n",
         dev_backend.as_deref().unwrap_or("<unset>")
     ));
     out.push_str(&format!(
-        "EMBER_PYTHON             : {}\n",
+        "IGNI_PYTHON             : {}\n",
         ember_python.as_deref().unwrap_or("<unset>")
     ));
     out.push_str(&format!(
@@ -1579,6 +1794,92 @@ pub fn run() {
 mod tests {
     use super::*;
 
+    // ── The update-check off switch (F126) ──────────────────────
+    //
+    // `update_check_ttl: 0` is documented as the way to stop igni
+    // making outbound requests, and the desktop app ignored it — the
+    // silent startup check in App.tsx contacted github.com on every
+    // launch regardless.
+
+    #[test]
+    fn zero_disables_checks() {
+        assert!(update_checks_disabled_in("update_check_ttl: 0\n"));
+    }
+
+    #[test]
+    fn a_negative_ttl_disables_too() {
+        // The Python side treats `<= 0` as off; two implementations of
+        // one setting have to agree on the boundary or the app and the
+        // CLI disagree about whether the deployment is air-gapped.
+        assert!(update_checks_disabled_in("update_check_ttl: -1\n"));
+    }
+
+    #[test]
+    fn a_real_ttl_leaves_checks_on() {
+        assert!(!update_checks_disabled_in("update_check_ttl: 86400\n"));
+    }
+
+    #[test]
+    fn an_absent_key_leaves_checks_on() {
+        assert!(!update_checks_disabled_in("models:\n  default: x\n"));
+    }
+
+    #[test]
+    fn a_trailing_comment_is_not_part_of_the_number() {
+        assert!(update_checks_disabled_in("update_check_ttl: 0  # air-gapped\n"));
+    }
+
+    #[test]
+    fn an_indented_key_of_the_same_name_is_ignored() {
+        // A nested `update_check_ttl` belongs to whatever contains it.
+        // The property comes from matching the raw line rather than a
+        // trimmed one — stated here because the guard that used to
+        // *look* like it provided it was unreachable.
+        assert!(!update_checks_disabled_in(
+            "plugins:\n  something:\n    update_check_ttl: 0\n"
+        ));
+    }
+
+    #[test]
+    fn both_update_commands_consult_the_switch() {
+        // A wiring check, by reading this file.
+        //
+        // Everything above tests the decision; none of it proves the
+        // decision is *asked for*. Removing the gate from
+        // `ember_check_update` failed nothing, because a
+        // `#[tauri::command]` takes an `AppHandle` and needs a running
+        // Tauri application to call — there is no unit test that can
+        // reach it.
+        //
+        // So this asserts the shape instead, and says so rather than
+        // pretending the parser tests cover it. If either command ever
+        // stops consulting the switch, an air-gapped install starts
+        // contacting github.com again and nothing else here would
+        // notice.
+        // Each body is read up to the next command, not to the end of
+        // the file. The first version took "everything after
+        // ember_install_update" — which includes *this test*, where the
+        // string appears in the assertion literals, so the rule matched
+        // itself and could not fail. Third time in this review a source
+        // sweep has read its own text as evidence.
+        fn body_of<'a>(source: &'a str, name: &str) -> &'a str {
+            let after = source
+                .split_once(&format!("async fn {name}"))
+                .unwrap_or_else(|| panic!("{name} is gone"))
+                .1;
+            after.split("\n#[tauri::command]").next().unwrap_or(after)
+        }
+
+        let source = include_str!("lib.rs");
+
+        for name in ["ember_check_update", "ember_install_update"] {
+            assert!(
+                body_of(source, name).contains("update_checks_disabled()"),
+                "{name} no longer consults the off switch"
+            );
+        }
+    }
+
     // ── The New Window pick guard ───────────────────────────────
 
     #[test]
@@ -1701,6 +2002,14 @@ mod tests {
             actual_cli: "1.0.3".to_string(),
             source: "managed_venv",
         }
+    }
+
+    #[test]
+    fn a_garbled_value_leaves_checks_on() {
+        // Deliberately not "off". Silently disabling updates on a
+        // malformed config leaves a machine on an old build with
+        // nothing said; leaving them on is visible and recoverable.
+        assert!(!update_checks_disabled_in("update_check_ttl: never\n"));
     }
 
     #[test]
@@ -1985,5 +2294,229 @@ mod tests {
         let got = parse_ready_line(&line);
         assert!(got.is_some(), "huge ws_port currently coerces, not crashes");
     }
-}
 
+    #[test]
+    fn csp_is_set_and_names_no_host_off_this_machine() {
+        // F127. ``csp`` was null, so the webview that renders model
+        // output had no policy at all. mermaid's ``securityLevel:
+        // strict`` and react-markdown escaping HTML were the only
+        // layers; this is the second one. The reasoning lives here
+        // rather than in the config because ``tauri-build`` parses
+        // ``tauri.conf.json`` against a strict schema and rejects a
+        // ``"//"`` comment key outright — it fails the build.
+        //
+        // ``style-src`` has to keep ``'unsafe-inline'``: mermaid and
+        // rehype-highlight inject ``<style>`` at runtime, measured at
+        // 11 tags and 916 violations without it. An injected
+        // stylesheet can restyle a page but cannot invoke a command.
+        //
+        // Two things are being pinned.
+        //
+        // First that a policy exists and that ``script-src`` stays
+        // exactly ``'self'`` — that directive is what stops injected
+        // content reaching ``window.__TAURI__``, which
+        // ``withGlobalTauri`` puts on the page.
+        //
+        // Second, and this is the part a list of directives would
+        // miss: no source anywhere in the policy may name a host off
+        // this machine. The first draft of this CSP ended
+        // ``connect-src ... https:``, which would have let injected
+        // content POST a transcript to any server on the internet.
+        // The rule is written over every directive rather than over
+        // ``connect-src`` alone so the same mistake in ``img-src``
+        // (a tracking pixel) or ``font-src`` fails too.
+        let conf = include_str!("../tauri.conf.json");
+        let v: serde_json::Value =
+            serde_json::from_str(conf).expect("tauri.conf.json must be valid JSON");
+        let csp = v["app"]["security"]["csp"]
+            .as_str()
+            .expect("app.security.csp must be a string, not null");
+
+        let directives: Vec<(&str, Vec<&str>)> = csp
+            .split(';')
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .map(|d| {
+                let mut parts = d.split_whitespace();
+                let name = parts.next().unwrap_or_default();
+                (name, parts.collect())
+            })
+            .collect();
+        let find = |name: &str| {
+            directives
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, s)| s.clone())
+        };
+
+        assert_eq!(
+            find("script-src"),
+            Some(vec!["'self'"]),
+            "script-src must be exactly 'self' — no unsafe-inline, no unsafe-eval"
+        );
+        assert_eq!(find("default-src"), Some(vec!["'self'"]));
+        assert_eq!(find("object-src"), Some(vec!["'none'"]));
+        assert_eq!(find("frame-ancestors"), Some(vec!["'none'"]));
+        assert_eq!(find("base-uri"), Some(vec!["'self'"]));
+
+        // A source is allowed to be a quoted keyword, an inert scheme,
+        // Tauri's IPC scheme, or a loopback origin. Anything else names
+        // a host we cannot reach without leaving the customer's
+        // network, and this product does not do that.
+        for (name, sources) in &directives {
+            for src in sources {
+                let ok = src.starts_with('\'')
+                    || matches!(*src, "data:" | "blob:" | "ipc:")
+                    || src.starts_with("http://ipc.localhost")
+                    || src.starts_with("http://127.0.0.1")
+                    || src.starts_with("http://localhost")
+                    || src.starts_with("ws://127.0.0.1")
+                    || src.starts_with("ws://localhost");
+                assert!(
+                    ok,
+                    "{name} names {src}, which is not on this machine — \
+                     the webview must have no egress off the host"
+                );
+            }
+        }
+
+        // And the policy has to actually cover the sinks: a webview
+        // rendering markdown needs these five named, or a directive
+        // silently falls back to default-src and this test's reach
+        // shrinks without anyone noticing.
+        for required in ["style-src", "img-src", "font-src", "connect-src"] {
+            assert!(
+                find(required).is_some(),
+                "{required} must be stated explicitly, not inherited from default-src"
+            );
+        }
+    }
+
+    // ── DEC-11: where an install looks for releases ─────────────────
+    //
+    // `tauri.conf.json` compiles in `github.com/ignite-ember/igni`,
+    // which is the one outbound host a default install has and cannot
+    // be reached at all from an air-gapped network. `update_endpoint`
+    // in `~/.igni/config.yaml` replaces it.
+    //
+    // The parse is asserted here rather than through the plugin,
+    // because constructing an `AppHandle` in a unit test means running
+    // a Tauri app. What the plugin does with the URL — refuse
+    // non-HTTPS, verify the signature against the compiled pubkey — is
+    // its own tested behaviour, and the pubkey is deliberately not
+    // configurable, so a mirror can serve a different version but not
+    // a different build.
+
+    #[test]
+    fn absent_means_the_compiled_default() {
+        assert_eq!(configured_update_endpoint_in("update_check_ttl: 86400\n"), None);
+    }
+
+    #[test]
+    fn a_configured_endpoint_is_returned() {
+        assert_eq!(
+            configured_update_endpoint_in("update_endpoint: https://releases.acme.example/latest.json\n"),
+            Some("https://releases.acme.example/latest.json".to_string())
+        );
+    }
+
+    #[test]
+    fn quotes_are_stripped() {
+        // YAML lets you quote a URL and people do, especially one with
+        // a `#` in it. Returning the quotes would fail `Url::parse`
+        // with a message about the scheme, which points at the wrong
+        // thing entirely.
+        for line in [
+            "update_endpoint: \"https://releases.acme.example/l.json\"\n",
+            "update_endpoint: 'https://releases.acme.example/l.json'\n",
+        ] {
+            assert_eq!(
+                configured_update_endpoint_in(line),
+                Some("https://releases.acme.example/l.json".to_string()),
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn present_and_blank_means_the_compiled_default() {
+        // Same outcome as absent, deliberately: both are "I have not
+        // chosen a mirror". Returning `Some("")` would reach
+        // `Url::parse` and fail with a message about an empty string.
+        assert_eq!(configured_update_endpoint_in("update_endpoint:\n"), None);
+        assert_eq!(configured_update_endpoint_in("update_endpoint:   \n"), None);
+    }
+
+    #[test]
+    fn a_fragment_survives() {
+        // The TTL parser splits on `#` to drop trailing comments. Doing
+        // that here would silently truncate a URL fragment, so this key
+        // does not — and the cost, a trailing comment on this one line,
+        // is stated in the code.
+        assert_eq!(
+            configured_update_endpoint_in("update_endpoint: https://a.example/l.json#v2\n"),
+            Some("https://a.example/l.json#v2".to_string())
+        );
+    }
+
+    #[test]
+    fn an_indented_key_belongs_to_whatever_contains_it() {
+        // The same anchoring as `update_checks_disabled_in`, and it
+        // matters more here: an unrelated config block choosing where
+        // the binary comes from is a supply-chain question, not a
+        // preference. A nested key must not be read as the app's.
+        assert_eq!(
+            configured_update_endpoint_in(
+                "plugins:\n  something:\n    update_endpoint: https://evil.example/l.json\n"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn the_first_top_level_occurrence_wins() {
+        // Matches the TTL parser's behaviour rather than inventing a
+        // second rule for a duplicated key.
+        assert_eq!(
+            configured_update_endpoint_in(
+                "update_endpoint: https://first.example/l.json\nupdate_endpoint: https://second.example/l.json\n"
+            ),
+            Some("https://first.example/l.json".to_string())
+        );
+    }
+
+    #[test]
+    fn a_configured_endpoint_parses_as_a_url() {
+        // The step between reading the file and handing it to the
+        // plugin. A value that will not parse is an error rather than a
+        // silent fallback to the vendor host — an operator who set a
+        // mirror and got github.com anyway has been quietly overruled.
+        let raw = configured_update_endpoint_in(
+            "update_endpoint: https://releases.acme.example/latest.json\n",
+        )
+        .expect("configured");
+        let url = tauri::Url::parse(&raw).expect("parses");
+
+        assert_eq!(url.scheme(), "https");
+        assert_eq!(url.host_str(), Some("releases.acme.example"));
+    }
+
+    #[test]
+    fn the_compiled_default_is_still_the_vendor_host() {
+        // Not an endorsement — a pin. If somebody changes
+        // `tauri.conf.json`'s endpoint, this fails and they have to
+        // decide deliberately. And it keeps the claim in DEC-11
+        // ("one outbound host a default install has") checkable rather
+        // than remembered.
+        let conf = include_str!("../tauri.conf.json");
+
+        assert!(
+            conf.contains("github.com/ignite-ember/igni/releases"),
+            "the compiled default endpoint changed; DEC-11 and DP-5 both describe it"
+        );
+        assert!(
+            conf.contains("\"pubkey\""),
+            "the updater has no pubkey, so a mirror could serve any build it liked"
+        );
+    }
+}

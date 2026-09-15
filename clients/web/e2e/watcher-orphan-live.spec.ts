@@ -2,7 +2,7 @@
  * Live verification of orphan-process rehydration.
  *
  * Drives a real browser against the running Tauri BE
- * (``EMBER_LIVE_WS``). Assumes the test environment has
+ * (``IGNI_LIVE_WS``). Assumes the test environment has
  * pre-seeded an orphan row in the project's ``state.db`` AND
  * has a real OS process matching that pid still alive (see
  * the harness shell script that calls this spec).
@@ -10,17 +10,10 @@
  * Captures the watcher panel showing the orphan + clicks Kill,
  * verifies the row vanishes after the BE confirms termination.
  */
-import { test as base, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/live-be";
+import { runSlashCommand } from "./fixtures/composer";
 
-type Fixtures = { liveWsUrl: string };
-
-const test = base.extend<Fixtures>({
-  liveWsUrl: async ({}, use) => {
-    const url = process.env.EMBER_LIVE_WS;
-    if (!url) test.skip(true, "Set EMBER_LIVE_WS");
-    await use(url as string);
-  },
-});
+test.use({ orphanScenario: "sleep" });
 
 test("orphan process surfaces after BE restart", async ({ page, liveWsUrl }) => {
   await page.goto(`/?ws=${encodeURIComponent(liveWsUrl)}`);
@@ -33,10 +26,7 @@ test("orphan process surfaces after BE restart", async ({ page, liveWsUrl }) => 
   // Open the watcher panel via the slash command. The real BE
   // handles ``/watcher`` → ``CommandAction.WATCHER`` which
   // App.tsx routes to ``setPanel({kind:"watcher"})``.
-  await page.locator(".composer-editable").click();
-  await page.locator(".composer-editable").type("/watcher");
-  await page.locator(".composer-editable").press("Enter");
-  await expect(page.locator(".page")).toBeVisible({ timeout: 10_000 });
+  await runSlashCommand(page, "/watcher", page.locator(".page"));
 
   // The seeded orphan should render exactly one row.
   await expect(page.locator(".watcher-row")).toHaveCount(1, { timeout: 5_000 });

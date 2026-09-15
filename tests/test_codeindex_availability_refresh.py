@@ -29,6 +29,7 @@ from unittest.mock import MagicMock
 
 from ember_code.core.agents import AgentDefinition, AgentPool, AgentPriority
 from ember_code.core.config.settings import Settings
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.session.core import Session
 
 
@@ -190,12 +191,12 @@ class TestRefreshActuallySwitchesPromptVariants:
         # Two variants of the same agent — only one is loaded at a
         # time, picked by ``codeindex_available``.
         self._write_agent(
-            project / ".ember" / "agents" / "explorer.md",
+            project / CONFIG_DIR / "agents" / "explorer.md",
             "explorer",
             "PLAIN-VARIANT: no codeindex tools available.",
         )
         self._write_agent(
-            project / ".ember" / "agents" / "explorer.codeindex.md",
+            project / CONFIG_DIR / "agents" / "explorer.codeindex.md",
             "explorer",
             "CODEINDEX-VARIANT: codeindex_query and codeindex_tree are available.",
         )
@@ -246,9 +247,9 @@ class TestRefreshActuallySwitchesPromptVariants:
         ``/agents create``) must survive a refresh. The refresh
         clears base-priority entries to force prompt-variant
         re-picking, but ephemerals are higher-priority and live
-        outside the ``.ember/agents/`` reload path."""
+        outside the ``.igni/agents/`` reload path."""
         project = tmp_path / "proj"
-        self._write_agent(project / ".ember" / "agents" / "explorer.md", "explorer", "plain")
+        self._write_agent(project / CONFIG_DIR / "agents" / "explorer.md", "explorer", "plain")
 
         settings = Settings()
         pool = AgentPool()

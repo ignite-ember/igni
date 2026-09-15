@@ -19,6 +19,7 @@ import pytest
 from ember_code.core.hooks.executor import HookExecutor
 from ember_code.core.hooks.loader import HookLoader
 from ember_code.core.hooks.schemas import HookDefinition
+from ember_code.core.paths import CONFIG_DIR
 
 
 async def _settle_background_tasks() -> None:
@@ -153,8 +154,8 @@ async def test_async_rewake_no_callback_degrades_to_background() -> None:
 def test_loader_accepts_asyncRewake_camelcase(tmp_path: Path, monkeypatch: Any) -> None:
     fake_home = tmp_path / "home"
     fake_home.mkdir()
-    (fake_home / ".ember").mkdir()
-    (fake_home / ".ember" / "settings.json").write_text(
+    (fake_home / CONFIG_DIR).mkdir()
+    (fake_home / CONFIG_DIR / "settings.json").write_text(
         json.dumps(
             {
                 "hooks": {
@@ -174,8 +175,8 @@ def test_loader_accepts_asyncRewake_camelcase(tmp_path: Path, monkeypatch: Any) 
 def test_loader_accepts_async_rewake_snakecase(tmp_path: Path, monkeypatch: Any) -> None:
     fake_home = tmp_path / "home"
     fake_home.mkdir()
-    (fake_home / ".ember").mkdir()
-    (fake_home / ".ember" / "settings.json").write_text(
+    (fake_home / CONFIG_DIR).mkdir()
+    (fake_home / CONFIG_DIR / "settings.json").write_text(
         json.dumps(
             {
                 "hooks": {

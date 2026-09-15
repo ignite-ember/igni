@@ -52,7 +52,13 @@ async def test_a_successful_resolution_is_dropped_on_wake(tmp_path, monkeypatch)
     monkeypatch.setattr(
         httpx,
         "AsyncClient",
-        _client(httpx.Response(200, json={"status": "registered", "repository_id": "r1"})),
+        _client(
+            httpx.Response(
+                200,
+                json={"status": "registered", "repository_id": "r1"},
+                request=httpx.Request("GET", "https://cloud.invalid/v1/codeindex/repository"),
+            )
+        ),
     )
     resolver = _resolver(tmp_path)
     assert await resolver.resolve() is not None
@@ -93,7 +99,11 @@ async def test_the_next_call_actually_asks_again(tmp_path, monkeypatch):
         async def get(self, *_args, **_kwargs):
             nonlocal calls
             calls += 1
-            return httpx.Response(200, json={"status": "registered", "repository_id": "r1"})
+            return httpx.Response(
+                200,
+                json={"status": "registered", "repository_id": "r1"},
+                request=httpx.Request("GET", "https://cloud.invalid/v1/codeindex/repository"),
+            )
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **_kw: _Client())
     resolver = _resolver(tmp_path)

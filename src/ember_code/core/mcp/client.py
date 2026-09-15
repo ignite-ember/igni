@@ -77,8 +77,15 @@ class MCPClientManager:
         *,
         policy: MCPPolicy | None = None,
         stdio_binding: StdioMCPBinding | None = None,
+        group_mcps_dir: Path | None = None,
     ):
-        self.configs = MCPConfigLoader(project_dir).load()
+        # ``group_mcps_dir`` is the org's, from the policy cache. It has
+        # to arrive here: this is the loader whose result becomes
+        # ``configs``. The session also hands a loader to
+        # ``PluginLoader.apply_to_mcp``, but that one only ever calls
+        # ``load_plugin_servers`` — a group directory passed there was
+        # read by nothing.
+        self.configs = MCPConfigLoader(project_dir, group_mcps_dir=group_mcps_dir).load()
         self._clients: dict[str, MCPTools] = {}
         self._approval = MCPApprovalManager()
         self._policy: MCPPolicy = (

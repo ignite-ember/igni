@@ -15,7 +15,7 @@ import java.time.Duration
  * Owns the lifecycle of the *managed* Ember backend installation.
  *
  * The plugin's goal is "zero-touch": the user installs the plugin
- * and the chat panel works — no `pip install`, no `EMBER_PYTHON`,
+ * and the chat panel works — no `pip install`, no `IGNI_PYTHON`,
  * no virtualenv juggling. To get there we ship nothing about Python
  * in the plugin itself, but on first launch we:
  *
@@ -32,7 +32,7 @@ import java.time.Duration
  * skip every step above — startup overhead drops to ``uv``'s venv
  * lookup, which is sub-50 ms.
  *
- * **Development override.** If ``EMBER_DEV_BACKEND`` is set, we
+ * **Development override.** If ``IGNI_DEV_BACKEND`` is set, we
  * return that path verbatim and skip the bootstrap entirely. Used
  * during local plugin development to point at an editable install
  * of ``ignite-ember`` (`pip install -e .` in the source tree). Not
@@ -77,7 +77,7 @@ object EmberRuntime {
      *  managed venv. If any of these fields drift from the constants
      *  above we tear the venv down and rebuild — that's the upgrade
      *  path on plugin updates. */
-    private const val INSTALL_MARKER = "ember-install.json"
+    private const val INSTALL_MARKER = "igni-install.json"
 
     /** Result of [ensureBackendPython]: the Python interpreter to
      *  spawn the BE with, plus environment variables the caller
@@ -131,15 +131,15 @@ object EmberRuntime {
 
         // ── Dev override ──
         // Gated on ``IGNITE_EMBER_DEV=1`` in addition to
-        // ``EMBER_DEV_BACKEND`` so an ambient env var left over from
+        // ``IGNI_DEV_BACKEND`` so an ambient env var left over from
         // an old install (via ``~/.zshenv`` or ``launchctl setenv``)
         // can't silently redirect a regular user to a stale CLI.
         // Devs opt in once (``export IGNITE_EMBER_DEV=1``) and both
         // signals travel together intentionally.
-        val devPath = System.getenv("EMBER_DEV_BACKEND")?.takeIf { it.isNotBlank() }
+        val devPath = System.getenv("IGNI_DEV_BACKEND")?.takeIf { it.isNotBlank() }
         val devAck = System.getenv("IGNITE_EMBER_DEV")?.takeIf { it == "1" || it.equals("true", ignoreCase = true) }
         if (devPath != null && devAck != null) {
-            log.info("EMBER_DEV_BACKEND set; bypassing managed venv: $devPath")
+            log.info("IGNI_DEV_BACKEND set; bypassing managed venv: $devPath")
             // Version-check the override before trusting it. If the
             // CLI reachable from that Python doesn't match the pinned
             // version we log a warning and STILL use it — this is
@@ -151,7 +151,7 @@ object EmberRuntime {
             val devActual = probeCliVersion(Path.of(devPath))
             if (devActual != null && devActual != expected) {
                 log.warn(
-                    "EMBER_DEV_BACKEND at $devPath runs ignite-ember $devActual, " +
+                    "IGNI_DEV_BACKEND at $devPath runs ignite-ember $devActual, " +
                         "plugin pinned to $expected. Continuing (dev mode)."
                 )
             }
@@ -164,14 +164,14 @@ object EmberRuntime {
             )
         }
         if (devPath != null && devAck == null) {
-            // ``EMBER_DEV_BACKEND`` is set but the explicit ack env
+            // ``IGNI_DEV_BACKEND`` is set but the explicit ack env
             // var isn't. This is the footgun path — an old shell
             // config or launchd plist quietly hijacking the plugin's
             // interpreter. Log loudly and fall through to the
             // managed venv so the user gets a working chat instead
             // of a silent stale CLI.
             log.warn(
-                "EMBER_DEV_BACKEND=$devPath detected but IGNITE_EMBER_DEV is unset — " +
+                "IGNI_DEV_BACKEND=$devPath detected but IGNITE_EMBER_DEV is unset — " +
                     "ignoring override and using the managed venv. " +
                     "Set IGNITE_EMBER_DEV=1 to opt in to the dev-mode override."
             )
@@ -546,7 +546,7 @@ object EmberRuntime {
         if (free >= minBytes) return
         val freeMb = free / (1024 * 1024)
         val needMb = minBytes / (1024 * 1024)
-        val msg = "Not enough disk space for the Ember backend bootstrap: " +
+        val msg = "Not enough disk space for the igni backend bootstrap: " +
             "${freeMb} MB free at ${cache}, need at least ${needMb} MB. " +
             "Free up space and try again."
         listener("Disk space check failed.")
@@ -568,7 +568,7 @@ object EmberRuntime {
     fun resetCache() {
         val root = cacheRoot()
         if (Files.exists(root)) {
-            log.info("Wiping Ember managed cache: $root")
+            log.info("Wiping the igni managed cache: $root")
             deleteRecursively(root)
         }
     }

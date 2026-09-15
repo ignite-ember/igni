@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from ember_code.backend.server import BackendServer
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.plugins.loader import PluginLoader
 from ember_code.core.plugins.state import PluginsState, load_state, save_state
 from ember_code.core.session.core import PluginReloadCounts
@@ -60,7 +61,7 @@ def _make_backend(
     """Construct a BackendServer over a session whose plugin state
     points at *tmp_path*. Only the slice the plugin methods touch is
     populated — the wider session is a MagicMock."""
-    user_ember = tmp_path / "home" / ".ember" / "plugins"
+    user_ember = tmp_path / "home" / CONFIG_DIR / "plugins"
     for name, kw in plugins or []:
         _write_plugin(user_ember, name, **kw)
 
@@ -109,7 +110,7 @@ def test_get_plugin_details_basic(tmp_path: Path) -> None:
     assert d.version == "1.2.3"
     assert d.description == "A test"
     assert d.enabled is True
-    assert d.source_root == "user-ember"
+    assert d.source_root == "user-igni"
     assert d.pin == ""
     for attr in ("has_skills", "has_agents", "has_hooks", "has_mcp", "has_tools"):
         assert getattr(d, attr) is False

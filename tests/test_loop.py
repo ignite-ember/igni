@@ -735,6 +735,56 @@ async def test_cancel_skips_paused_loop():
     assert sess.loop_paused is True
 
 
+class TestLoopResumeTool:
+    """``loop_resume`` — the one ``LoopTools`` function with no test.
+
+    ``Session.resume_loop`` was covered; the tool the model actually
+    calls was not, and it is a different function with three answers
+    of its own. Each is a different instruction to the model: try
+    something else, do nothing, or wait for the next iteration.
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_loop_at_all_is_an_error(self):
+        result = await LoopTools(_fake_session()).loop_resume()
+
+        assert "ERROR" in result
+        assert "no loop to resume" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_an_already_running_loop_is_a_no_op_not_an_error(self):
+        """The distinction matters. A model told "ERROR" retries or
+        gives up; told "no resume needed" it carries on with the work.
+        """
+        sess = _fake_session()
+        sess.pending_loop_prompt = "keep going"
+        sess.loop_iteration_index = 2
+        sess.loop_iterations_remaining = 5
+        sess.loop_paused = False
+
+        result = await LoopTools(sess).loop_resume()
+
+        assert "ERROR" not in result
+        assert "already running" in result
+
+    @pytest.mark.asyncio
+    async def test_a_paused_loop_is_unpaused_and_says_where_it_got_to(self):
+        sess = _fake_session()
+        sess.pending_loop_prompt = "verify each section"
+        sess.loop_iteration_index = 4
+        sess.loop_iterations_remaining = 6
+        sess.loop_paused = True
+
+        result = await LoopTools(sess).loop_resume()
+
+        assert "unpaused" in result.lower()
+        # The count is in the message because the model has just been
+        # asked to "pick up where we left off" and has no other way to
+        # know where that was.
+        assert "4" in result
+        assert sess.loop_paused is False
+
+
 @pytest.mark.asyncio
 async def test_resume_returns_wrapped_prompt_and_unpauses():
     """``/loop resume`` (and the panel ``R`` key, and the agent's

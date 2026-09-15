@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import type { ChatSearchMatch, EmberClient } from "../protocol/client";
+import type { ChatSearchMatch, IgniClient } from "../protocol/client";
 
 /** Find-in-conversation bar. Search runs on the BE against the Agno
  *  SQLite session (so a 10k-turn dialogue doesn't jank the JS thread),
@@ -13,7 +13,7 @@ import type { ChatSearchMatch, EmberClient } from "../protocol/client";
  *    • Shift+Enter / Up — previous match
  */
 export interface ChatSearchBarProps {
-  client: EmberClient;
+  client: IgniClient;
   sessionId: string;
   /** Maps a BE ``history_index`` to the FE item index (or -1 if the
    *  history turn was filtered out by ``restoredItem``). */

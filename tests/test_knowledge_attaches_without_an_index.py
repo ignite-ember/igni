@@ -73,7 +73,7 @@ class _Session:
 @pytest.fixture
 def stub_runtime(monkeypatch):
     monkeypatch.setattr(neo4j_runtime_mod, "Neo4jRuntime", _StubRuntime)
-    monkeypatch.setenv("EMBER_NEO4J_RUNTIME", "1")
+    monkeypatch.setenv("IGNI_NEO4J_RUNTIME", "1")
 
 
 def _orchestrator(session: _Session, tmp_path, settings: Settings) -> SessionOrchestrator:
@@ -186,21 +186,26 @@ async def test_a_failing_attach_does_not_take_the_backend_down(tmp_path, stub_ru
 async def test_nothing_attaches_when_knowledge_is_disabled(tmp_path, monkeypatch):
     """``knowledge.enabled`` is the opt-out now.
 
-    This test used to assert that an unset ``EMBER_NEO4J_RUNTIME``
+    This test used to assert that an unset ``IGNI_NEO4J_RUNTIME``
     suppressed the attach — true at the time, and the reason the
     feature was unreachable from the desktop app, where that variable
     cannot be set. The env var survives only as a process-level
     override; see :mod:`ember_code.backend.knowledge_gate`.
     """
     monkeypatch.setattr(neo4j_runtime_mod, "Neo4jRuntime", _StubRuntime)
-    monkeypatch.delenv("EMBER_NEO4J_RUNTIME", raising=False)
+    monkeypatch.delenv("IGNI_NEO4J_RUNTIME", raising=False)
     settings = Settings()
     settings.knowledge.enabled = False
     session = _Session()
 
     runtime = await _orchestrator(session, tmp_path, settings).attach_neo4j()
 
-    assert runtime is None
+    # The runtime itself is still built: Neo4j also backs ``code_index``, which
+    # is on by default, and gating the sidecar on ``knowledge.enabled`` alone
+    # left CodeIndex answering ``no_backend`` for a feature the user had
+    # switched on. What ``knowledge.enabled=False`` must guarantee is the thing
+    # this test is named for — that knowledge does not attach.
+    assert runtime is not None
     assert session.knowledge_attach_calls == 0
 
 
@@ -208,7 +213,7 @@ async def test_the_override_still_suppresses_the_attach(tmp_path, monkeypatch):
     """The escape hatch, for a machine whose sidecar will not start:
     the backend must still come up with knowledge forced off."""
     monkeypatch.setattr(neo4j_runtime_mod, "Neo4jRuntime", _StubRuntime)
-    monkeypatch.setenv("EMBER_NEO4J_RUNTIME", "0")
+    monkeypatch.setenv("IGNI_NEO4J_RUNTIME", "0")
     session = _Session()
 
     runtime = await _orchestrator(session, tmp_path, Settings()).attach_neo4j()

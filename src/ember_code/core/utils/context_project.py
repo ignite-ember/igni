@@ -10,15 +10,15 @@ Rule 2 (no inline imports) holds.
 
 ## Sources loaded (in the order the session merges them)
 
-1. **Project root** — ``ember.md`` / ``CLAUDE.md`` at the project
+1. **Project root** — ``igni.md`` / ``CLAUDE.md`` at the project
    root, via :func:`load_project_rules`.
 2. **Project shared rules dirs** — committed shared rules at
-   ``<project>/.ember/rules/*.md`` and (when ``read_claude_md``)
+   ``<project>/.igni/rules/*.md`` and (when ``read_claude_md``)
    ``<project>/.claude/rules/*.md``, via
    :func:`load_project_rules_dirs`. Symmetric to the user-level
    directory form, but versioned with the repo so the whole team
    shares the same rule set.
-3. **Subdirectory chain** — ``ember.md`` / ``CLAUDE.md`` in any
+3. **Subdirectory chain** — ``igni.md`` / ``CLAUDE.md`` in any
    parent of the working file, walking up to (but not including)
    the project root, via :func:`load_subdirectory_rules`. Returns a
    list rather than a single string because the session prompt
@@ -35,6 +35,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+from ember_code.core.paths import CONFIG_DIR
+
 
 def load_project_rules(
     read_rules_dir: Callable[..., str],
@@ -42,7 +44,7 @@ def load_project_rules(
     project_dir: Path,
     read_claude_md: bool = True,
 ) -> str:
-    """Load project root rules (``ember.md`` and/or ``CLAUDE.md``).
+    """Load project root rules (``igni.md`` and/or ``CLAUDE.md``).
 
     Simple one-shot: reads the two canonical files (and their
     ``.local.md`` override siblings, delegated to
@@ -66,9 +68,9 @@ def load_project_rules_dirs(
 ) -> str:
     """Load committed shared rules from project-level rules directories.
 
-    Symmetric to the user-level pattern (``~/.ember/rules/`` /
+    Symmetric to the user-level pattern (``~/.igni/rules/`` /
     ``~/.claude/rules/``), but for a single project: a repo can
-    commit shared rules at ``<project>/.ember/rules/*.md`` and
+    commit shared rules at ``<project>/.igni/rules/*.md`` and
     ``<project>/.claude/rules/*.md``. Each file may carry YAML
     frontmatter with a ``paths:`` glob list — files whose paths
     don't match the session's working directory are skipped, same
@@ -83,7 +85,7 @@ def load_project_rules_dirs(
     """
     sections: list[str] = []
     ember_dir = read_rules_dir_files(
-        project_dir / ".ember" / "rules",
+        project_dir / CONFIG_DIR / "rules",
         working_dir=working_dir,
         project_dir=project_dir,
     )

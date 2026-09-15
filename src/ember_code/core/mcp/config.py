@@ -3,11 +3,12 @@
 import fnmatch
 import json
 import logging
-import platform
 from enum import Enum
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+
+from ember_code.core.paths import CONFIG_DIR, managed_policy_dir
 
 logger = logging.getLogger(__name__)
 
@@ -18,11 +19,6 @@ class MCPTransport(str, Enum):
     stdio = "stdio"
     sse = "sse"
 
-
-# Mirror the agent-side ORG_GROUP tier (5) so org-pushed MCP servers
-# override the user-home / project-local roots, matching what
-# AgentPriority.ORG_GROUP does for agents.
-MCP_PRIORITY_GROUP = 5
 
 # Stored file extension for per-server group policy MCP configs.
 _GROUP_MCP_SUFFIX = ".json"
@@ -41,8 +37,10 @@ class MCPServerConfig(BaseModel):
     """Filesystem path of the .mcp.json file that defined this server."""
     source: str = "user"
     """Loader tier — ``"user"``, ``"project"``, ``"group-policy"``, or ``"plugin"``.
-    Group-policy servers (org Group Policy) beat everything except managed-policy
-    denials; see :data:`MCP_PRIORITY_GROUP`."""
+
+    Group-policy servers sit above the user's home config and below
+    anything the project declares, matching every other kind a group
+    ships. Managed policy still outranks all of them."""
 
 
 class MCPPolicy(BaseModel):
@@ -75,16 +73,14 @@ class MCPPolicy(BaseModel):
         """Load MCP policy from managed settings (admin-controlled).
 
         Checks platform-specific managed settings paths:
-        - macOS: /Library/Application Support/EmberCode/managed-settings.json
-        - Linux: /etc/ignite-ember/managed-settings.json
+        The same directory every other managed tier reads — see
+        :func:`ember_code.core.paths.managed_policy_dir`. It used to be a
+        different one per platform, and no Windows path at all.
         """
-        system = platform.system()
-        if system == "Darwin":
-            path = Path("/Library/Application Support/EmberCode/managed-settings.json")
-        elif system == "Linux":
-            path = Path("/etc/ignite-ember/managed-settings.json")
-        else:
+        root = managed_policy_dir()
+        if root is None:
             return cls()
+        path = root / "managed-settings.json"
 
         if not path.exists():
             return cls()
@@ -108,33 +104,38 @@ class MCPConfigLoader:
     ):
         self.project_dir = project_dir or Path.cwd()
         # Optional: directory of per-server MCP overrides materialised by
-        # :class:`GroupPolicyCache`. When set, each ``<name>.json`` file
-        # is read with priority :data:`MCP_PRIORITY_GROUP` so org-pushed
-        # servers override the user-home / project-local roots.
+        # :class:`GroupPolicyCache`. Read before the project's roots, so
+        # a server the project declares under the same name wins — see
+        # :meth:`load`.
         self.group_mcps_dir = group_mcps_dir
 
     def load(self) -> dict[str, MCPServerConfig]:
         """Load MCP server configurations from all locations.
 
-        Scans the three standard roots first (later writes win by
-        re-assignment: project-local beats user-home), then layers the
-        optional group-policy directory on top so ORG-pushed servers
-        override everything except managed-policy denials.
+        Later writes win by re-assignment, and the order is: the user's
+        home config, then the group's, then the project's. So a server
+        the project declares under the same name overrides the group's,
+        which overrides the user's — the same ranking agents, skills,
+        commands, output styles and workflows use.
+
+        The group's used to be layered last and win outright. It was
+        moved for consistency: an org sets the baseline and a repository
+        can override one server by name. Managed policy is unaffected
+        and still outranks everything here.
         """
         servers: dict[str, MCPServerConfig] = {}
 
-        paths = [
-            Path.home() / ".ember" / ".mcp.json",
-            self.project_dir / ".mcp.json",
-            self.project_dir / ".ember" / ".mcp.json",
-        ]
-
-        for path in paths:
-            self._load_from_file(path, servers)
+        self._load_from_file(Path.home() / CONFIG_DIR / ".mcp.json", servers)
 
         if self.group_mcps_dir is not None and self.group_mcps_dir.is_dir():
             for path in sorted(self.group_mcps_dir.glob(f"*{_GROUP_MCP_SUFFIX}")):
                 self._load_from_file(path, servers, source="group-policy")
+
+        for path in (
+            self.project_dir / ".mcp.json",
+            self.project_dir / CONFIG_DIR / ".mcp.json",
+        ):
+            self._load_from_file(path, servers)
 
         return servers
 

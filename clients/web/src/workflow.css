@@ -37,9 +37,9 @@
   flex-direction: column;
 }
 
-.workflow-run[data-status="running"] { border-left-color: var(--accent-blue); }
-.workflow-run[data-status="completed"] { border-left-color: var(--accent-green, #4caf50); }
-.workflow-run[data-status="failed"] { border-left-color: var(--accent-red, #e54848); }
+.workflow-run[data-status="running"] { border-left-color: var(--accent-blue-text); }
+.workflow-run[data-status="completed"] { border-left-color: var(--accent-green-text, #7cc57f); }
+.workflow-run[data-status="failed"] { border-left-color: var(--accent-red-text, #f09393); }
 .workflow-run[data-status="cancelled"] { border-left-color: var(--ember-orange); }
 
 /* ── Header ────────────────────────────────────────────────────── */
@@ -68,9 +68,9 @@
   box-sizing: border-box;
 }
 
-.workflow-run[data-status="running"] .workflow-run-glyph { color: var(--accent-blue); }
-.workflow-run[data-status="completed"] .workflow-run-glyph { color: var(--accent-green, #4caf50); }
-.workflow-run[data-status="failed"] .workflow-run-glyph { color: var(--accent-red, #e54848); }
+.workflow-run[data-status="running"] .workflow-run-glyph { color: var(--accent-blue-text); }
+.workflow-run[data-status="completed"] .workflow-run-glyph { color: var(--accent-green-text, #7cc57f); }
+.workflow-run[data-status="failed"] .workflow-run-glyph { color: var(--accent-red-text, #f09393); }
 .workflow-run[data-status="cancelled"] .workflow-run-glyph { color: var(--ember-orange); }
 
 .workflow-run-title {
@@ -105,12 +105,12 @@
 }
 
 .workflow-run-pill.tone-running {
-  color: var(--accent-blue);
+  color: var(--accent-blue-text);
   background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
 }
 
 .workflow-run-pill.tone-good {
-  color: var(--accent-green, #4caf50);
+  color: var(--accent-green-text, #7cc57f);
   background: color-mix(in srgb, var(--accent-green, #4caf50) 14%, transparent);
 }
 
@@ -120,7 +120,7 @@
 }
 
 .workflow-run-pill.tone-bad {
-  color: var(--accent-red, #e54848);
+  color: var(--accent-red-text, #f09393);
   background: color-mix(in srgb, var(--accent-red, #e54848) 14%, transparent);
 }
 
@@ -149,12 +149,12 @@
 }
 
 .workflow-run-count.count-running {
-  color: var(--accent-blue);
+  color: var(--accent-blue-text);
   background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
 }
 
 .workflow-run-count.count-done {
-  color: var(--accent-green, #4caf50);
+  color: var(--accent-green-text, #7cc57f);
   background: color-mix(in srgb, var(--accent-green, #4caf50) 14%, transparent);
 }
 
@@ -171,13 +171,13 @@
   padding: 6px 14px;
   background: color-mix(in srgb, var(--accent-red, #e54848) 8%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--accent-red, #e54848) 30%, transparent);
-  color: var(--accent-red, #e54848);
+  color: var(--accent-red-text, #f09393);
   font-size: 11.5px;
   font-family: var(--font-mono);
 }
 
 .workflow-run-error strong {
-  color: var(--accent-red, #e54848);
+  color: var(--accent-red-text, #f09393);
   margin-right: 6px;
 }
 
@@ -211,9 +211,9 @@
   overflow: hidden;
 }
 
-.workflow-phase[data-status="running"] { border-left-color: var(--accent-blue); }
-.workflow-phase[data-status="completed"] { border-left-color: var(--accent-green, #4caf50); }
-.workflow-phase[data-status="failed"] { border-left-color: var(--accent-red, #e54848); }
+.workflow-phase[data-status="running"] { border-left-color: var(--accent-blue-text); }
+.workflow-phase[data-status="completed"] { border-left-color: var(--accent-green-text, #7cc57f); }
+.workflow-phase[data-status="failed"] { border-left-color: var(--accent-red-text, #f09393); }
 .workflow-phase[data-status="cancelled"] { border-left-color: var(--ember-orange); }
 
 .workflow-phase-header {
@@ -258,9 +258,9 @@
   color: var(--fg-faint);
 }
 
-.workflow-phase[data-status="running"] .workflow-phase-node { color: var(--accent-blue); }
-.workflow-phase[data-status="completed"] .workflow-phase-node { color: var(--accent-green, #4caf50); }
-.workflow-phase[data-status="failed"] .workflow-phase-node { color: var(--accent-red, #e54848); }
+.workflow-phase[data-status="running"] .workflow-phase-node { color: var(--accent-blue-text); }
+.workflow-phase[data-status="completed"] .workflow-phase-node { color: var(--accent-green-text, #7cc57f); }
+.workflow-phase[data-status="failed"] .workflow-phase-node { color: var(--accent-red-text, #f09393); }
 .workflow-phase[data-status="cancelled"] .workflow-phase-node { color: var(--ember-orange); }
 
 .workflow-phase[data-status="running"] .workflow-phase-node {
@@ -291,12 +291,12 @@
 }
 
 .workflow-phase-pill.tone-running {
-  color: var(--accent-blue);
+  color: var(--accent-blue-text);
   background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
 }
 
 .workflow-phase-pill.tone-good {
-  color: var(--accent-green, #4caf50);
+  color: var(--accent-green-text, #7cc57f);
   background: color-mix(in srgb, var(--accent-green, #4caf50) 14%, transparent);
 }
 
@@ -306,7 +306,7 @@
 }
 
 .workflow-phase-pill.tone-bad {
-  color: var(--accent-red, #e54848);
+  color: var(--accent-red-text, #f09393);
   background: color-mix(in srgb, var(--accent-red, #e54848) 14%, transparent);
 }
 
@@ -379,9 +379,9 @@
      ``data-status`` attribute. */
 }
 
-.workflow-agent[data-status="running"] .workflow-agent-glyph { color: var(--accent-blue); }
-.workflow-agent[data-status="completed"] .workflow-agent-glyph { color: var(--accent-green, #4caf50); }
-.workflow-agent[data-status="failed"] .workflow-agent-glyph { color: var(--accent-red, #e54848); }
+.workflow-agent[data-status="running"] .workflow-agent-glyph { color: var(--accent-blue-text); }
+.workflow-agent[data-status="completed"] .workflow-agent-glyph { color: var(--accent-green-text, #7cc57f); }
+.workflow-agent[data-status="failed"] .workflow-agent-glyph { color: var(--accent-red-text, #f09393); }
 .workflow-agent[data-status="timeout"] .workflow-agent-glyph { color: var(--ember-orange); }
 
 .workflow-agent-label {
@@ -407,12 +407,12 @@
 }
 
 .workflow-agent-pill.tone-running {
-  color: var(--accent-blue);
+  color: var(--accent-blue-text);
   background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
 }
 
 .workflow-agent-pill.tone-good {
-  color: var(--accent-green, #4caf50);
+  color: var(--accent-green-text, #7cc57f);
   background: color-mix(in srgb, var(--accent-green, #4caf50) 14%, transparent);
 }
 
@@ -422,7 +422,7 @@
 }
 
 .workflow-agent-pill.tone-bad {
-  color: var(--accent-red, #e54848);
+  color: var(--accent-red-text, #f09393);
   background: color-mix(in srgb, var(--accent-red, #e54848) 14%, transparent);
 }
 
@@ -439,7 +439,7 @@
 .workflow-agent-error {
   font-family: var(--font-mono);
   font-size: 10.5px;
-  color: var(--accent-red, #e54848);
+  color: var(--accent-red-text, #f09393);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -471,13 +471,13 @@
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--accent-blue);
+  color: var(--accent-blue-text);
   margin-bottom: 4px;
 }
 
 .workflow-parallel-glyph {
   font-size: 11px;
-  color: var(--accent-blue);
+  color: var(--accent-blue-text);
 }
 
 .workflow-parallel-lanes {
@@ -614,7 +614,7 @@
     var(--accent-red, #e54848) 35%,
     transparent
   );
-  color: var(--accent-red, #e54848);
+  color: var(--accent-red-text, #f09393);
 }
 
 .workflow-run-banner.tone-warn {
@@ -686,7 +686,7 @@
   padding: 1px 6px;
   border-radius: 9999px;
   background: color-mix(in srgb, var(--accent-red, #e54848) 14%, transparent);
-  color: var(--accent-red, #e54848);
+  color: var(--accent-red-text, #f09393);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -726,7 +726,7 @@
 }
 
 .workflow-phase-error-label {
-  color: var(--accent-red, #e54848);
+  color: var(--accent-red-text, #f09393);
   font-weight: 600;
   white-space: nowrap;
   flex-shrink: 0;
@@ -742,7 +742,7 @@
 
 /* Failed-agent count chip in the run header. */
 .workflow-run-count.count-failed {
-  color: var(--accent-red, #e54848);
+  color: var(--accent-red-text, #f09393);
   background: color-mix(in srgb, var(--accent-red, #e54848) 14%, transparent);
 }
 
@@ -782,7 +782,7 @@
   appearance: none;
   background: transparent;
   border: 1px solid color-mix(in srgb, var(--accent-red, #e54848) 40%, transparent);
-  color: var(--accent-red, #e54848);
+  color: var(--accent-red-text, #f09393);
   padding: 3px 10px;
   border-radius: 6px;
   font-family: var(--font-ui);

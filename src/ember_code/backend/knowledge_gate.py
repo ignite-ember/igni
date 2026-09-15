@@ -3,13 +3,13 @@
 There used to be two switches. ``knowledge.enabled`` in config —
 default ``True``, honoured by nine call sites (the knowledge manager,
 the session constructor, ``/knowledge``, the tips, the ops layer) — and
-``EMBER_NEO4J_RUNTIME``, an environment variable checked in exactly one
+``IGNI_NEO4J_RUNTIME``, an environment variable checked in exactly one
 place, which silently overrode all nine. Config said the feature was
 on, every message the user could read said it was on, and it was off.
 
 Worse, the env var could not be set by the people it gated: a
 Finder-launched ``.app`` does not inherit a shell environment, so the
-panel's advice to "set ``EMBER_NEO4J_RUNTIME=1`` for the backend" named
+panel's advice to "set ``IGNI_NEO4J_RUNTIME=1`` for the backend" named
 a switch with no reachable handle. The feature was not opt-in; it was
 unreachable.
 
@@ -31,7 +31,7 @@ from typing import Any
 #: behaviour for ``=1``, which is what existing setups pass.
 _FALSEY = {"0", "false", "no", "off", ""}
 
-ENV_OVERRIDE = "EMBER_NEO4J_RUNTIME"
+ENV_OVERRIDE = "IGNI_NEO4J_RUNTIME"
 
 
 def knowledge_runtime_enabled(settings: Any) -> bool:

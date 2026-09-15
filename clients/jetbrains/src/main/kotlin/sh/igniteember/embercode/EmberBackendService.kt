@@ -12,9 +12,15 @@ import java.io.InputStreamReader
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+
+/** The per-project config directory, and the name it had before the
+ *  rename to igni. Kept in sync with ``ember_code.core.paths``. */
+private const val CONFIG_DIR = ".igni"
+private const val LEGACY_CONFIG_DIR = ".ember"
 
 /**
  * Project-level service owning the Ember backend process.
@@ -23,7 +29,7 @@ import java.util.concurrent.TimeUnit
  * `python -m ember_code.backend --ws-port 0 --project-dir <root>`,
  * parsing the JSON ready line for the bound WebSocket port. The
  * process is killed when the project closes (Disposable), and also
- * self-terminates if the IDE dies (EMBER_PARENT_PID watchdog).
+ * self-terminates if the IDE dies (IGNI_PARENT_PID watchdog).
  *
  * The user is never asked for a Python interpreter — the runtime
  * downloads ``uv`` on first launch and uses it to provision Python
@@ -65,7 +71,7 @@ class EmberBackendService(private val project: Project) : Disposable {
 
         Thread {
             try {
-                progressListener?.invoke("Preparing Ember backend…")
+                progressListener?.invoke("Preparing the igni backend…")
                 val install = EmberRuntime.ensureBackendPython { msg ->
                     progressListener?.invoke(msg)
                 }
@@ -84,7 +90,7 @@ class EmberBackendService(private val project: Project) : Disposable {
                 when (discovered) {
                     is DiscoveryResult.Ok -> {
                         wsPort = discovered.port
-                        progressListener?.invoke("Reusing running Ember backend on port ${discovered.port}")
+                        progressListener?.invoke("Reusing the running igni backend on port ${discovered.port}")
                         future.complete(discovered.port)
                         return@Thread
                     }
@@ -109,14 +115,14 @@ class EmberBackendService(private val project: Project) : Disposable {
                     is DiscoveryResult.Spawn -> { /* fall through */ }
                 }
 
-                progressListener?.invoke("Starting Ember backend…")
+                progressListener?.invoke("Starting the igni backend…")
 
                 val proc = ProcessBuilder(
                     install.python.toString(), "-m", "ember_code.backend",
                     "--ws-port", "0",
                     "--project-dir", projectDir,
                 ).apply {
-                    environment()["EMBER_PARENT_PID"] = ProcessHandle.current().pid().toString()
+                    environment()["IGNI_PARENT_PID"] = ProcessHandle.current().pid().toString()
                     // HF_HOME / any other runtime-managed env from
                     // ``EmberRuntime`` so the BE process sees the
                     // managed cache instead of ~/.cache/huggingface.
@@ -178,11 +184,11 @@ class EmberBackendService(private val project: Project) : Disposable {
                 val detail = if (tail.isNotEmpty()) "\n\nstderr:\n$tail" else ""
                 future.completeExceptionally(
                     IllegalStateException(
-                        "Ember backend exited during startup.$detail"
+                        "The igni backend exited during startup.$detail"
                     )
                 )
             } catch (e: Exception) {
-                log.warn("Ember backend failed to start", e)
+                log.warn("The igni backend failed to start", e)
                 future.completeExceptionally(e)
             }
         }.apply {
@@ -230,13 +236,29 @@ class EmberBackendService(private val project: Project) : Disposable {
         object Spawn : DiscoveryResult()
     }
 
-    /** Read ``<project>/.ember/backend.lock`` and classify. Mirrors
+    /** Locate the lockfile, preferring the current directory name.
+     *
+     *  ``.ember`` was the name before the rename and is checked second.
+     *  Not for tidiness: a missing lock means "spawn", so a backend
+     *  started before the upgrade still holds ``.ember/backend.lock``
+     *  and a client that only looked at the new name would start a
+     *  *second* one on a different port.
+     */
+    private fun lockfilePath(projectDir: String): Path {
+        val current = Paths.get(projectDir, CONFIG_DIR, "backend.lock")
+        if (Files.exists(current)) return current
+        val legacy = Paths.get(projectDir, LEGACY_CONFIG_DIR, "backend.lock")
+        if (Files.exists(legacy)) return legacy
+        return current
+    }
+
+    /** Read ``<project>/.igni/backend.lock`` and classify. Mirrors
      *  the Python side at ``src/ember_code/backend/lockfile.py``. */
     private fun discoverExistingBackend(
         projectDir: String,
         expectedWireVersion: String,
     ): DiscoveryResult {
-        val lockPath = Paths.get(projectDir, ".ember", "backend.lock")
+        val lockPath = lockfilePath(projectDir)
         if (!Files.exists(lockPath)) return DiscoveryResult.Spawn
 
         val raw = try {

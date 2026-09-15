@@ -13,11 +13,11 @@
  *     uv (or uv.exe on Windows)        ← downloaded once
  *     venv/                            ← per-plugin-version
  *       bin/python | Scripts/python.exe
- *     ember-install.json               ← marker recording installed versions
+ *     igni-install.json               ← marker recording installed versions
  *
- * **Dev override.** Setting ``EMBER_DEV_BACKEND=/abs/path/to/python``
+ * **Dev override.** Setting ``IGNI_DEV_BACKEND=/abs/path/to/python``
  * bypasses the bootstrap and returns that path verbatim. The
- * ``emberCode.pythonPath`` user setting is honored the same way —
+ * ``igni.pythonPath`` user setting is honored the same way —
  * for users who want to point at their own venv (e.g. ember-code
  * contributors running an editable install). Both paths skip every
  * download + install step.
@@ -31,7 +31,7 @@ import { IGNITE_EMBER_VERSION } from "./version.generated";
 
 const PYTHON_VERSION = "3.12";
 const UV_VERSION = "0.5.7";
-const INSTALL_MARKER = "ember-install.json";
+const INSTALL_MARKER = "igni-install.json";
 
 /**
  * Conservative free-space requirement before bootstrap starts.
@@ -47,7 +47,7 @@ export type ProgressFn = (msg: string) => void;
 export interface RuntimeOptions {
   /** Where the cache lives. Pass ``context.globalStorageUri.fsPath``. */
   cacheDir: string;
-  /** User-configured python (``emberCode.pythonPath``). Honored if set; bootstrap skipped. */
+  /** User-configured python (``igni.pythonPath``). Honored if set; bootstrap skipped. */
   configuredPython?: string;
   /** Progress hook for the long-running download/install steps. */
   onProgress?: ProgressFn;
@@ -96,7 +96,7 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
   //
   // Two different threat models here:
   //
-  //   * ``EMBER_DEV_BACKEND`` is an ENV VAR. Env vars travel
+  //   * ``IGNI_DEV_BACKEND`` is an ENV VAR. Env vars travel
   //     through ``~/.zshenv`` / ``launchctl setenv`` / macOS
   //     plists — a value set years ago can silently redirect
   //     today's plugin to a stale interpreter, which is
@@ -104,7 +104,7 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
   //     Gate this behind an explicit ``IGNITE_EMBER_DEV=1``
   //     ack so ambient state can't hijack the plugin.
   //
-  //   * ``emberCode.pythonPath`` is a VSCODE SETTING. It only
+  //   * ``igni.pythonPath`` is a VSCODE SETTING. It only
   //     ever comes from ``settings.json`` — user or workspace
   //     — which means the user made an explicit deliberate
   //     edit through the UI or hand-crafted JSON. There's no
@@ -113,7 +113,7 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
   //     interpreter and log any version drift so the reader
   //     sees what they're running.
   const devAck = isDevAcked();
-  const devBackend = process.env.EMBER_DEV_BACKEND?.trim();
+  const devBackend = process.env.IGNI_DEV_BACKEND?.trim();
   const configured = opts.configuredPython?.trim();
 
   if (devBackend) {
@@ -121,7 +121,7 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
       const actual = await probeCliVersion(devBackend);
       if (actual && actual !== expected) {
         console.warn(
-          `EMBER_DEV_BACKEND at ${devBackend} runs ignite-ember ${actual}, ` +
+          `IGNI_DEV_BACKEND at ${devBackend} runs ignite-ember ${actual}, ` +
             `plugin pinned to ${expected}. Continuing (dev mode).`,
         );
       }
@@ -134,7 +134,7 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
       };
     } else {
       console.warn(
-        `EMBER_DEV_BACKEND=${devBackend} detected but IGNITE_EMBER_DEV is unset — ` +
+        `IGNI_DEV_BACKEND=${devBackend} detected but IGNITE_EMBER_DEV is unset — ` +
           "ignoring override and using the managed venv. " +
           "Set IGNITE_EMBER_DEV=1 to opt in to the dev-mode override.",
       );
@@ -148,7 +148,7 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
     const actual = await probeCliVersion(configured);
     if (actual && actual !== expected) {
       console.warn(
-        `emberCode.pythonPath="${configured}" runs ignite-ember ${actual}, ` +
+        `igni.pythonPath="${configured}" runs ignite-ember ${actual}, ` +
           `extension pinned to ${expected}. Continuing.`,
       );
     }
@@ -346,13 +346,13 @@ async function ensureFreeSpace(
   const needMb = Math.round(minBytes / (1024 * 1024));
   log("Disk space check failed.");
   throw new Error(
-    `Not enough disk space for the Ember backend bootstrap: ` +
+    `Not enough disk space for the igni backend bootstrap: ` +
       `${freeMb} MB free at ${dir}, need at least ${needMb} MB. ` +
       `Free up space and try again.`,
   );
 }
 
-/** Wipe the entire managed cache. Used by ``emberCode.reinstall``. */
+/** Wipe the entire managed cache. Used by ``igni.reinstall``. */
 export async function resetCache(cacheDir: string): Promise<void> {
   if (await pathExists(cacheDir)) {
     await fs.promises.rm(cacheDir, { recursive: true, force: true });

@@ -25,6 +25,7 @@ import pytest
 
 from ember_code.backend.rpc_handlers.workflows import WorkflowsRpcHandler
 from ember_code.backend.schemas_workflows import WorkflowMetaEnvelope
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.protocol.rpc import RpcMethod
 
 
@@ -68,7 +69,7 @@ async def test_list_workflows_returns_discovery_output() -> None:
     runner.list_workflows = AsyncMock(
         return_value=[
             _envelope("alpha", ".claude/workflows/alpha.mjs"),
-            _envelope("beta", ".ember/workflows/beta.mjs"),
+            _envelope("beta", f"{CONFIG_DIR}/workflows/beta.mjs"),
         ]
     )
     handler = _make_handler(runner=runner)
@@ -88,7 +89,7 @@ async def test_list_workflows_returns_discovery_output() -> None:
             "description": "smoke beta",
             "whenToUse": "tests",
             "phases": [],
-            "path": ".ember/workflows/beta.mjs",
+            "path": f"{CONFIG_DIR}/workflows/beta.mjs",
         },
     ]
 

@@ -2,7 +2,7 @@
 
 Until now it did not. ``--debug`` is unreachable — the desktop app
 builds the backend's argv and nothing in the UI edits it — and the
-``EMBER_DEBUG_LOG`` env var that replaced it still had to be set by
+``IGNI_DEBUG_LOG`` env var that replaced it still had to be set by
 someone who already suspected a problem and knew the variable's name.
 A user running the ``.app`` can do neither. So the shipped product
 wrote no record of anything, anywhere, and its stdout goes to the app,
@@ -14,8 +14,8 @@ condition that could never be true, a cache probe killed at its own
 deadline that wiped 519 MB. Each one logged something. Nothing was
 listening.
 
-So: INFO to ``~/.ember/logs/backend.log`` always, rotating so it cannot
-grow without bound, and ``EMBER_DEBUG_LOG`` demoted from an on-switch
+So: INFO to ``<config dir>/logs/backend.log`` always, rotating so it cannot
+grow without bound, and ``IGNI_DEBUG_LOG`` demoted from an on-switch
 to a verbosity dial.
 """
 
@@ -25,6 +25,8 @@ import logging
 import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+from ember_code.core.paths import CONFIG_DIR
 
 #: Five files of 2 MB. Enough to hold a long session plus the couple of
 #: restarts either side of it — the reconstruction almost always needs
@@ -38,23 +40,23 @@ _HANDLER_MARK = "_ember_backend_log"
 def resolve_log_path() -> Path:
     """Where the log goes.
 
-    ``EMBER_DEBUG_LOG_PATH`` still wins, because tests and support
+    ``IGNI_DEBUG_LOG_PATH`` still wins, because tests and support
     requests both want to put it somewhere specific.
     """
-    override = os.environ.get("EMBER_DEBUG_LOG_PATH")
+    override = os.environ.get("IGNI_DEBUG_LOG_PATH")
     if override:
         return Path(override)
-    return Path.home() / ".ember" / "logs" / "backend.log"
+    return Path.home() / CONFIG_DIR / "logs" / "backend.log"
 
 
 def resolve_level(*, debug_flag: bool = False) -> int:
     """DEBUG when asked, INFO otherwise.
 
-    ``EMBER_DEBUG_LOG`` used to decide whether logging happened at all.
+    ``IGNI_DEBUG_LOG`` used to decide whether logging happened at all.
     It now decides how much, which is the question people actually
     meant to ask when they set it.
     """
-    if debug_flag or os.environ.get("EMBER_DEBUG_LOG"):
+    if debug_flag or os.environ.get("IGNI_DEBUG_LOG"):
         return logging.DEBUG
     return logging.INFO
 

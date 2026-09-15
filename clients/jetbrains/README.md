@@ -19,7 +19,7 @@ gradle buildPlugin     # or: gradle runIde for a sandbox IDE
 
 The plugin zip lands in `build/distributions/`.
 
-Set `EMBER_PYTHON` if `ignite-ember` lives in a venv.
+Set `IGNI_PYTHON` if `ignite-ember` lives in a venv.
 
 ## Run (development)
 

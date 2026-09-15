@@ -20,12 +20,14 @@ Responsibilities:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from agno.tools import Toolkit
 
 from ember_code.core.code_index.index import CodeIndex
+from ember_code.core.paths import DEFAULT_DATA_DIR
 from ember_code.core.tools.codeindex.cypher_guard import (
     CypherGuardError,
     assert_read_only_cypher,
@@ -45,18 +47,24 @@ class CodeIndexTools(Toolkit):
     Args:
         project_dir: project root used to derive the on-disk path.
             Defaults to ``cwd``.
-        data_dir: ember root, defaults to ``~/.ember``.
+        data_dir: ember root, defaults to ``~/.igni``.
         index: pre-built :class:`CodeIndex` (used by tests / advanced
             callers). When provided, ``project_dir`` and ``data_dir``
             are ignored.
+        index_provider: callable returning the :class:`CodeIndex` to use,
+            resolved on first query rather than at construction. This is how a
+            session hands over its own index — which only acquires a Neo4j
+            runtime *after* the team is built, so anything captured eagerly
+            here has no backend behind it.
     """
 
     def __init__(
         self,
         *,
         project_dir: str | Path | None = None,
-        data_dir: str | Path = "~/.ember",
+        data_dir: str | Path = DEFAULT_DATA_DIR,
         index: CodeIndex | None = None,
+        index_provider: Callable[[], CodeIndex | None] | None = None,
         **kwargs: Any,
     ):
         super().__init__(name="codeindex", **kwargs)
@@ -64,6 +72,7 @@ class CodeIndexTools(Toolkit):
             project_dir=Path(str(project_dir)) if project_dir else Path.cwd(),
             data_dir=data_dir,
             explicit_index=index,
+            index_provider=index_provider,
         )
         self._serializer = JsonSerializer()
         self._recorder = ToolInvocationRecorder(
@@ -101,7 +110,7 @@ class CodeIndexTools(Toolkit):
         """Run a **read-only** raw Cypher query against the CodeIndex.
 
         This is the only agent-facing path to the indexed data
-        store. Specialist agents (the ``codeindex-architect`` agent,
+        store. Specialist agents (the ``data-architect`` agent,
         primarily) author Cypher against the schema documented at
         ``core/code_index/neo4j_schema.GRAPH_SCHEMA_DESCRIPTION``.
 
@@ -113,19 +122,36 @@ class CodeIndexTools(Toolkit):
         2. The Cypher must be read-only — no ``CREATE``, ``MERGE``,
            ``SET``, ``DELETE``, ``DETACH DELETE``, ``REMOVE``,
            ``DROP``, ``ALTER``, ``BEGIN`` / ``COMMIT`` / ``ROLLBACK``,
-           ``SHOW``, ``PROFILE``, ``CALL dbms.*``, ``CALL db.*``,
-           etc. See :func:`cypher_guard.assert_read_only_cypher`.
-        3. The Cypher must reference ``project_hash`` so a
-           hand-typed ``MATCH (i:Item)`` can't double-spend
-           the per-project graph state.
-        4. ``$param`` placeholders must name a key on the
+           ``SHOW``, ``PROFILE``, ``CALL dbms.*``. See
+           :func:`cypher_guard.assert_read_only_cypher`.
+
+           **Two procedures are allowed**, and both are read-only
+           searches you are expected to use:
+           ``CALL db.index.vector.queryNodes`` (find code by
+           describing what it does) and
+           ``CALL db.index.fulltext.queryNodes`` (find a literal
+           string in the stored source — the only search that
+           returns nothing when the term is absent). This
+           docstring previously said ``CALL db.*`` was refused
+           outright, which is why neither was ever attempted.
+        3. ``$param`` placeholders must name a key on the
            allowlist (``proj``, ``commit_sha``, ``ids``,
            ``limit_n``, ``skip_n``, ``kind``, ``type``,
-           ``quality``). The toolkit injects ``proj`` from
+           ``quality``, ``semantic_query``, ``query_vector``).
+           The toolkit injects ``proj`` from
            ``CodeIndex.project_id`` and passes the rest
-           through verbatim.
+           through verbatim. ``semantic_query`` is the ergonomic
+           one: pass a sentence and the service embeds it with the
+           same model the chunks were written with, binding the
+           result as ``$query_vector``.
 
-        The toolkit runs all four checks BEFORE the query
+        Project isolation is enforced by the PROCESS boundary:
+        each ``(project, commit)`` pair runs in its own Neo4j
+        process (see ``neo4j_schema.py``), so no query-time
+        ``project_hash`` predicate is needed — the driver simply
+        can't reach another project's data.
+
+        The toolkit runs both checks BEFORE the query
         reaches the driver, so a rejection is a
         :class:`CypherGuardError` subclass — no DB round
         trip happens.

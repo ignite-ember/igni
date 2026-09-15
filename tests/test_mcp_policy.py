@@ -1,10 +1,12 @@
 """Tests for MCP managed policy — MCPPolicy model and from_managed_settings()."""
 
 import json
-from pathlib import Path
-from unittest.mock import patch
 
+import pytest
+
+from ember_code.core.mcp import config as mcp_config
 from ember_code.core.mcp.config import MCPPolicy
+from ember_code.core.paths import managed_policy_dir
 
 
 class TestMCPPolicy:
@@ -52,24 +54,36 @@ class TestMCPPolicy:
 
 
 class TestFromManagedSettings:
-    """Tests for MCPPolicy.from_managed_settings() classmethod."""
+    """Where MCP policy is read from, and what happens when it is not there.
 
-    def test_returns_empty_policy_when_no_file(self):
-        with (
-            patch("ember_code.core.mcp.config.platform.system", return_value="Darwin"),
-            patch("ember_code.core.mcp.config.Path.exists", return_value=False),
-        ):
-            policy = MCPPolicy.from_managed_settings()
-        assert policy == MCPPolicy()
+    These used to patch ``platform.system`` and then substitute the whole
+    ``Path`` class with a side_effect that matched on the substring
+    ``"EmberCode"``. That machinery existed only because the directory was
+    hardcoded in the function body — and it hid the actual bug: MCP read
+    a *different* directory from every other managed tier, on every
+    platform. A test that fakes the path it expects cannot notice that
+    the path is wrong.
 
-    def test_returns_empty_policy_on_unsupported_platform(self):
-        with patch("ember_code.core.mcp.config.platform.system", return_value="Windows"):
-            policy = MCPPolicy.from_managed_settings()
-        assert policy == MCPPolicy()
+    Now the directory comes from
+    :func:`ember_code.core.paths.managed_policy_dir`, so pointing these
+    at a temp directory is one line, and the shared-directory question is
+    asserted where it belongs (``test_context.py``).
+    """
 
-    def test_loads_policy_from_file(self, tmp_path):
-        settings_file = tmp_path / "managed-settings.json"
-        settings_file.write_text(
+    def test_returns_empty_policy_when_no_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(mcp_config, "managed_policy_dir", lambda: tmp_path)
+        assert MCPPolicy.from_managed_settings() == MCPPolicy()
+
+    def test_returns_empty_policy_on_unsupported_platform(self, monkeypatch):
+        """No managed directory means no policy — not a policy that
+        denies everything, which would lock a user out of their own MCP
+        servers on any platform we do not recognise."""
+        monkeypatch.setattr(mcp_config, "managed_policy_dir", lambda: None)
+        assert MCPPolicy.from_managed_settings() == MCPPolicy()
+
+    def test_loads_policy_from_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(mcp_config, "managed_policy_dir", lambda: tmp_path)
+        (tmp_path / "managed-settings.json").write_text(
             json.dumps(
                 {
                     "mcp": {
@@ -81,93 +95,50 @@ class TestFromManagedSettings:
             )
         )
 
-        def fake_path(path_str):
-            if "EmberCode" in str(path_str):
-                return settings_file
-            return Path(path_str)
-
-        with (
-            patch("ember_code.core.mcp.config.platform.system", return_value="Darwin"),
-            patch("ember_code.core.mcp.config.Path", side_effect=fake_path),
-        ):
-            policy = MCPPolicy.from_managed_settings()
+        policy = MCPPolicy.from_managed_settings()
 
         assert policy.required == ["company-server"]
         assert policy.is_allowed("vscode") is True
         assert policy.is_denied("untrusted-foo") is True
 
-    def test_handles_corrupt_json(self, tmp_path):
-        """Verify from_managed_settings handles corrupt JSON gracefully."""
-        settings_file = tmp_path / "managed-settings.json"
-        settings_file.write_text("not valid json{{{")
+    def test_handles_corrupt_json(self, tmp_path, monkeypatch):
+        """A malformed managed file must not stop a session starting. It
+        yields no policy, which is the same as no file — the alternative
+        is a deployment nobody can use until an admin notices."""
+        monkeypatch.setattr(mcp_config, "managed_policy_dir", lambda: tmp_path)
+        (tmp_path / "managed-settings.json").write_text("not valid json{{{")
 
-        def fake_path(path_str):
-            if "EmberCode" in str(path_str):
-                return settings_file
-            return Path(path_str)
+        assert MCPPolicy.from_managed_settings() == MCPPolicy()
 
-        with (
-            patch("ember_code.core.mcp.config.platform.system", return_value="Darwin"),
-            patch("ember_code.core.mcp.config.Path", side_effect=fake_path),
-        ):
-            policy = MCPPolicy.from_managed_settings()
+    def test_handles_missing_mcp_key(self, tmp_path, monkeypatch):
+        """The file is shared with other managed settings, so an ``mcp``
+        section is optional rather than expected."""
+        monkeypatch.setattr(mcp_config, "managed_policy_dir", lambda: tmp_path)
+        (tmp_path / "managed-settings.json").write_text(json.dumps({"other_setting": True}))
 
-        assert policy == MCPPolicy()
+        assert MCPPolicy.from_managed_settings() == MCPPolicy()
 
-    def test_handles_missing_mcp_key(self, tmp_path):
-        settings_file = tmp_path / "managed-settings.json"
-        settings_file.write_text(json.dumps({"other_setting": True}))
+    @pytest.mark.parametrize(
+        ("platform", "expected"),
+        [
+            ("darwin", "/Library/Application Support/igni"),
+            ("linux", "/etc/igni"),
+        ],
+    )
+    def test_the_real_directory_per_platform(self, platform, expected, monkeypatch):
+        """Asserted against the shared resolver, not against a substring
+        of a faked path."""
+        monkeypatch.setattr("sys.platform", platform)
+        assert str(managed_policy_dir()) == expected
 
-        def fake_path(path_str):
-            if "EmberCode" in str(path_str):
-                return settings_file
-            return Path(path_str)
+    def test_windows_is_supported(self, monkeypatch):
+        """It was not. MCP handled Darwin and Linux and returned an empty
+        policy everywhere else, so a Windows admin could not deploy MCP
+        policy at all while every other managed tier worked."""
+        monkeypatch.setattr("sys.platform", "win32")
+        monkeypatch.setenv("PROGRAMDATA", r"C:\TestProgramData")
 
-        with (
-            patch("ember_code.core.mcp.config.platform.system", return_value="Darwin"),
-            patch("ember_code.core.mcp.config.Path", side_effect=fake_path),
-        ):
-            policy = MCPPolicy.from_managed_settings()
+        root = managed_policy_dir()
 
-        assert policy == MCPPolicy()
-
-
-class TestFromManagedSettingsIntegration:
-    """Integration-style tests that exercise from_managed_settings with real temp files."""
-
-    def test_darwin_path(self, tmp_path):
-        """Test that macOS path is used correctly."""
-        managed = tmp_path / "managed-settings.json"
-        managed.write_text(json.dumps({"mcp": {"denied": ["bad-*"], "required": ["corp"]}}))
-
-        def fake_path_init(path_str):
-            if "EmberCode" in str(path_str):
-                return managed
-            return Path(path_str)
-
-        with (
-            patch("ember_code.core.mcp.config.platform.system", return_value="Darwin"),
-            patch("ember_code.core.mcp.config.Path", side_effect=fake_path_init),
-        ):
-            policy = MCPPolicy.from_managed_settings()
-
-        assert policy.denied == ["bad-*"]
-        assert policy.required == ["corp"]
-
-    def test_linux_path(self, tmp_path):
-        """Test that Linux path is used correctly."""
-        managed = tmp_path / "managed-settings.json"
-        managed.write_text(json.dumps({"mcp": {"allowed": ["approved-only"]}}))
-
-        def fake_path_init(path_str):
-            if "ignite-ember" in str(path_str):
-                return managed
-            return Path(path_str)
-
-        with (
-            patch("ember_code.core.mcp.config.platform.system", return_value="Linux"),
-            patch("ember_code.core.mcp.config.Path", side_effect=fake_path_init),
-        ):
-            policy = MCPPolicy.from_managed_settings()
-
-        assert policy.allowed == ["approved-only"]
+        assert root is not None
+        assert "igni" in str(root)

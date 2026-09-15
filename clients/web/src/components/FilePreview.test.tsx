@@ -25,12 +25,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** Minimal stub of the EmberClient surface that FilePreview uses.
+/** Minimal stub of the IgniClient surface that FilePreview uses.
  *  Only ``rpc`` is exercised. */
 function makeClient(
   rpc: (method: string, args: { path: string }) => Promise<ReadFileResp>,
 ) {
-  return { rpc } as unknown as import("../protocol/client").EmberClient;
+  return { rpc } as unknown as import("../protocol/client").IgniClient;
 }
 
 describe("FilePreview — loading / success / error", () => {

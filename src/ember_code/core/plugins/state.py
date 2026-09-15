@@ -1,4 +1,4 @@
-"""Persisted plugin state at ``~/.ember/plugins.json``.
+"""Persisted plugin state at ``~/.igni/plugins.json``.
 
 Tracks which plugins are user-disabled and which git SHA each plugin
 was pinned to at install time. Read on every session start; written
@@ -17,11 +17,13 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from ember_code.core.paths import DEFAULT_DATA_DIR
+
 logger = logging.getLogger(__name__)
 
 
 class PluginsState(BaseModel):
-    """The shape of ``~/.ember/plugins.json``.
+    """The shape of ``~/.igni/plugins.json``.
 
     ``disabled`` is a flat list of plugin names that should not be
     activated even though they're present on disk. ``pins`` maps each
@@ -40,12 +42,12 @@ class PluginsState(BaseModel):
     group_disabled: list[str] = Field(default_factory=list)
 
 
-def state_path(data_dir: str | Path = "~/.ember") -> Path:
+def state_path(data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
     """Where the plugins state file lives."""
     return Path(str(data_dir)).expanduser() / "plugins.json"
 
 
-def load_state(data_dir: str | Path = "~/.ember") -> PluginsState:
+def load_state(data_dir: str | Path = DEFAULT_DATA_DIR) -> PluginsState:
     """Read the state file, or return an empty state if missing/corrupt.
 
     A corrupt file is logged at WARNING and treated as missing — the
@@ -62,7 +64,7 @@ def load_state(data_dir: str | Path = "~/.ember") -> PluginsState:
         return PluginsState()
 
 
-def save_state(state: PluginsState, data_dir: str | Path = "~/.ember") -> None:
+def save_state(state: PluginsState, data_dir: str | Path = DEFAULT_DATA_DIR) -> None:
     """Atomically write the state file. Creates parent dir if needed."""
     path = state_path(data_dir)
     path.parent.mkdir(parents=True, exist_ok=True)

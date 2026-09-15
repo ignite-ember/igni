@@ -3,7 +3,7 @@
 After the initial ``sync_now``, every session prunes its own stale
 commit chromas via ``CodeIndex.clean()`` (drops anything that isn't
 HEAD, isn't a branch tip, and hasn't been touched in 30 days). This
-keeps long-lived users' ``~/.ember/projects/<id>/code_index/`` from
+keeps long-lived users' ``~/.igni/projects/<id>/code_index/`` from
 growing without bound as branches/checkouts churn.
 
 We construct a Session-like stub by hand (the real

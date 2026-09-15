@@ -92,6 +92,6 @@ class EmberFirstLaunchActivity : ProjectActivity {
         /** Reuse the plugin's existing notification group — one
          *  entry in Preferences → Notifications for everything
          *  igni-emitted. */
-        private const val NOTIFICATION_GROUP = "EmberCode"
+        private const val NOTIFICATION_GROUP = "igni"
     }
 }

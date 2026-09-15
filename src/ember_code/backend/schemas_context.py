@@ -35,12 +35,34 @@ Chat-view models (slash-command output):
   :mod:`ember_code.core.session.schemas` stays presentation-
   free (no ``CommandResult`` import in the domain layer).
 
-``OutputStyle`` (a ``@dataclass``) and ``ContextBreakdown`` (a
-``BaseModel``) are both imported lazily under ``TYPE_CHECKING``
-so this module stays import-cheap. Views that wrap the
-``OutputStyle`` dataclass set ``arbitrary_types_allowed=True``,
-matching the treatment :class:`CodeIndexStatusView` gives to the
+``OutputStyle`` (a ``@dataclass``) is imported lazily under
+``TYPE_CHECKING`` so this module stays import-cheap. Views that
+wrap it set ``arbitrary_types_allowed=True``, matching the
+treatment :class:`CodeIndexStatusView` gives to the
 ``ResolvedRepository`` dataclass.
+
+``ContextBreakdown`` **is not**, and cannot be. It is the
+*annotation of a Pydantic field*, and with
+``from __future__ import annotations`` every annotation in this
+file is a string that Pydantic resolves at class-build time
+against the module's real namespace. Under ``TYPE_CHECKING`` that
+name does not exist at runtime, so the model never finished
+building and every construction raised::
+
+    PydanticUserError: `ContextBreakdownView` is not fully
+    defined; you should define `ContextBreakdown`, then call
+    `ContextBreakdownView.model_rebuild()`.
+
+Which means ``/ctx`` did not work at all — not in an edge case,
+ever — and the error reached the user as ``session routing
+failed: …`` with a Pydantic docs link in it. ``arbitrary_types_
+allowed`` does not help: it permits non-pydantic *types*, it does
+not conjure a *name*.
+
+The field is annotated ``Any`` now — see the comment on it. No
+import of ``ContextBreakdown`` at runtime is possible from this
+module at all; both the top and the foot of the file were tried and
+each only changed which entry point the cycle killed.
 
 The domain :class:`~ember_code.core.session.pending_messages.PendingMessage`
 dataclass — the storage-row type this module's wire model wraps —
@@ -50,12 +72,13 @@ avoid shadowing the wire-model class name at runtime.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from ember_code.backend.command_result import CommandResult
 from ember_code.core.output_styles import OutputStyle
+from ember_code.core.paths import CONFIG_DIR
 
 if TYPE_CHECKING:
     from ember_code.core.session.pending_messages import (
@@ -172,7 +195,7 @@ class OutputStylesListView(BaseModel):
 
     Empty-styles branch renders the "no output styles configured"
     info card (with a one-liner nudge to drop a markdown file
-    into ``.ember/output-styles/``). The populated branch renders
+    into ``.igni/output-styles/``). The populated branch renders
     a sorted bullet list, marking the active style with
     ``(active)`` and falling back to ``_(no description)_`` when
     a style leaves its ``description`` blank.
@@ -194,7 +217,7 @@ class OutputStylesListView(BaseModel):
         if not self.styles:
             return CommandResult.info(
                 "No output styles configured. Drop a markdown file at "
-                "`.ember/output-styles/<name>.md` (frontmatter: `name`, "
+                f"`{CONFIG_DIR}/output-styles/<name>.md` (frontmatter: `name`, "
                 "`description`; body is the system-prompt extension)."
             )
         lines = ["**Output styles**", ""]
@@ -239,7 +262,26 @@ class ContextBreakdownView(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    breakdown: ContextBreakdown
+    #: The domain :class:`ContextBreakdown`, typed ``Any`` on purpose.
+    #:
+    #: It cannot be annotated with the real class. With
+    #: ``from __future__ import annotations`` Pydantic resolves the
+    #: annotation against this module's runtime namespace, so the name
+    #: has to be importable *here* — and importing
+    #: ``core.session.schemas`` runs ``core.session.__init__``, which
+    #: reaches ``interactive → interactive_loop → commands →
+    #: backend.command_handler``, which is what imports this file. A
+    #: genuine cycle, and it does not matter whether the import sits
+    #: at the top of the module or the foot: both were tried, and each
+    #: only moved which entry point died.
+    #:
+    #: ``Any`` always resolves, so the model finishes building. The
+    #: real type still guards the boundary — ``from_domain`` is the
+    #: only constructor and it is annotated, so a wrong argument is a
+    #: type error at the call site rather than a validation error at
+    #: runtime. That is the right trade for an internal view whose
+    #: input comes from one method in this repository.
+    breakdown: Any
 
     @classmethod
     def from_domain(cls, breakdown: ContextBreakdown) -> ContextBreakdownView:
@@ -262,28 +304,6 @@ class ContextBreakdownView(BaseModel):
             "is rebaked into every prompt and cannot be compacted away.",
         ]
         return CommandResult.markdown("\n".join(lines))
-
-
-# Resolve the ``ContextBreakdown`` forward reference. The import above
-# is under ``TYPE_CHECKING``, and with ``from __future__ import
-# annotations`` the field annotation stays a string — so pydantic never
-# had the class and every attempt to build the model raised
-# "`ContextBreakdownView` is not fully defined". Nothing caught it
-# because the failure is at *instantiation*, not at import: the module
-# loaded fine and `/ctx` blew up at the moment somebody asked for a
-# breakdown.
-#
-# Deferred to the bottom, and done with an explicit namespace, for the
-# reason `core/auth/credentials.py` gives about
-# ``LoadCredentialsResult``: the type lives in a module this one should
-# not import at the top.
-def _rebuild_context_breakdown_view() -> None:
-    from ember_code.core.session.schemas import ContextBreakdown
-
-    ContextBreakdownView.model_rebuild(_types_namespace={"ContextBreakdown": ContextBreakdown})
-
-
-_rebuild_context_breakdown_view()
 
 
 __all__ = [

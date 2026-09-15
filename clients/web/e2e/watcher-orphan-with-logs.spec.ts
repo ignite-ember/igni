@@ -7,15 +7,9 @@
  * pre-seeded with real-looking dev-server output — the orphan's
  * ``read()`` should return that content verbatim.
  */
-import { test as base, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/live-be";
 
-const test = base.extend<{ liveWsUrl: string }>({
-  liveWsUrl: async ({}, use) => {
-    const url = process.env.EMBER_LIVE_WS;
-    if (!url) test.skip(true, "Set EMBER_LIVE_WS");
-    await use(url as string);
-  },
-});
+test.use({ orphanScenario: "dev_server" });
 
 test("orphan tail pane shows real stdout from per-pid log", async ({
   page,

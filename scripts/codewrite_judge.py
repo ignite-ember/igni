@@ -237,22 +237,22 @@ async def main() -> int:
     parser.add_argument("--out", type=Path, help="Dump per-case judgements to JSON.")
     args = parser.parse_args()
 
-    api_key = os.environ.get("EMBER_TEST_LLM_API_KEY")
+    api_key = os.environ.get("IGNI_TEST_LLM_API_KEY")
     if not api_key:
         # Fall back to the project .env so the script works without
         # the user manually exporting credentials each session.
         env_path = Path(__file__).resolve().parent.parent / ".env"
         if env_path.exists():
             for line in env_path.read_text().splitlines():
-                if line.startswith("EMBER_TEST_LLM_") and "=" in line:
+                if line.startswith("IGNI_TEST_LLM_") and "=" in line:
                     k, v = line.split("=", 1)
                     os.environ.setdefault(k, v)
-            api_key = os.environ.get("EMBER_TEST_LLM_API_KEY")
+            api_key = os.environ.get("IGNI_TEST_LLM_API_KEY")
     if not api_key:
-        print("EMBER_TEST_LLM_API_KEY not set", file=sys.stderr)
+        print("IGNI_TEST_LLM_API_KEY not set", file=sys.stderr)
         return 2
-    base_url = os.environ.get("EMBER_TEST_LLM_BASE_URL", "https://api.minimax.io/v1").rstrip("/")
-    model_id = os.environ.get("EMBER_TEST_LLM_MODEL", "MiniMax-M2.7")
+    base_url = os.environ.get("IGNI_TEST_LLM_BASE_URL", "https://api.minimax.io/v1").rstrip("/")
+    model_id = os.environ.get("IGNI_TEST_LLM_MODEL", "MiniMax-M2.7")
 
     runs = {
         "WITH": args.with_path,

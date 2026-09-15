@@ -1,18 +1,26 @@
 """``plan_researcher`` agent definition contract.
 
 The agent's prompt body tells it to research the codebase via
-``codeindex_query`` / ``codeindex_tree`` (when CodeIndex is loaded)
-or ``grep`` / ``find`` / ``cat`` / ``list_dir`` (fallback). For
-those instructions to actually work, the agent's frontmatter
-``tools:`` list must INCLUDE the toolkits the prompt asks for —
-otherwise the sub-agent is spawned with only the tools it
-declares (``WebFetch`` / ``WebSearch`` alone, in the original
-shipped version) and every ``grep`` / ``cat`` call returns "tool
-does not exist or is not available."
+``codeindex_cypher`` (when CodeIndex is loaded) or shell — ``rg`` /
+``find`` / ``cat`` through ``run_shell_command`` — in the fallback
+variant. For those instructions to work, the frontmatter ``tools:``
+list must INCLUDE the toolkits the prompt asks for; otherwise the
+sub-agent is spawned with only what it declares (``WebFetch`` /
+``WebSearch`` alone, in the original shipped version) and every call
+returns "tool does not exist or is not available."
 
-This test pins both variants so a future contributor who
-trims the ``tools:`` list doesn't silently re-break plan-mode
-research. Concrete regression: 2026-06-30 row-50 walkthrough
+This file pins what is specific to these two variants: ``Bash`` for
+the fallback, ``CodeIndex`` for the indexed one, and no write tools in
+either.
+
+The general form of the contract — *every* bundled agent declares
+every toolkit its prompt names — lives in
+``tests/test_every_agent_declares_what_its_prompt_uses.py``. It was
+written after the hardcoded pins that used to be here went stale
+twice, first naming ``Read``/``Grep``/``Glob``/``LS`` and then
+``grep_files``/``glob_files``, each time outliving the prompt they
+described. A list of tool names could not survive the prompts being
+rewritten; a rule derived from them can. Concrete regression: 2026-06-30 row-50 walkthrough
 where the user typed ``/plan``, the main agent called
 ``enter_plan_mode(task=...)``, the researcher spawned, and
 then sat there saying *"All tools are returning errors. ...
@@ -28,9 +36,9 @@ import yaml
 # Agent definitions live in ``src/ember_code/bundled_agents/`` —
 # that's the shipped location (pip package includes them, git
 # tracks them). The runtime copies them into a user's
-# ``<project>/.ember/agents/`` on first launch via
+# ``<project>/.igni/agents/`` on first launch via
 # ``core.init.sync_bundled_content``. Tests read from the source
-# so they don't depend on the gitignored ``.ember/`` staging dir.
+# so they don't depend on the gitignored ``.igni/`` staging dir.
 PROJECT_AGENT_DIR = Path(__file__).resolve().parent.parent / "src" / "ember_code" / "bundled_agents"
 
 
@@ -56,8 +64,8 @@ def _declared_tools(path: Path) -> set[str]:
 
 class TestPlanResearcherFallbackVariant:
     """``plan_researcher.md`` — used when CodeIndex is NOT available.
-    The prompt body tells the agent to use grep / find / cat /
-    list_dir, so the toolkit must expose those routes."""
+    The prompt body tells the agent to search with ``rg`` / ``find``
+    / ``cat``, so the toolkit must expose the shell."""
 
     AGENT_FILE = PROJECT_AGENT_DIR / "plan_researcher.md"
 
@@ -78,19 +86,6 @@ class TestPlanResearcherFallbackVariant:
             f"declared tools: {sorted(tools)}"
         )
 
-    def test_declares_read_grep_glob_for_dedicated_routes(self):
-        # The prompt also references the dedicated ``Read`` / ``Grep``
-        # / ``Glob`` / ``LS`` toolkits as the same-purpose options
-        # (some models reach for them by name). Declare them
-        # explicitly so the agent has both shells.
-        tools = _declared_tools(self.AGENT_FILE)
-        for required in ("Read", "Grep", "Glob", "LS"):
-            assert required in tools, (
-                f"plan_researcher (fallback) should declare {required} — "
-                f"prompt mentions read-only file ops. Declared: "
-                f"{sorted(tools)}"
-            )
-
     def test_declares_web_tools_for_external_research(self):
         tools = _declared_tools(self.AGENT_FILE)
         assert "WebFetch" in tools and "WebSearch" in tools
@@ -109,10 +104,10 @@ class TestPlanResearcherFallbackVariant:
 class TestPlanResearcherCodeIndexVariant:
     """``plan_researcher.codeindex.md`` — used when CodeIndex IS
     available. The prompt body tells the agent to use
-    ``codeindex_query`` / ``codeindex_tree`` as the primary search,
-    so the toolkit must include ``CodeIndex``. Read tools stay
-    in the list for ``file_read`` follow-up after CodeIndex finds
-    candidates."""
+    ``codeindex_cypher`` as the primary research seam (the typed
+    ``codeindex_query`` / ``codeindex_tree`` surface was removed
+    from ``CodeIndexTools`` — see ``tests/test_data_architect_agent.py``
+    for the pin), backed by ``Bash`` for shell fallback."""
 
     AGENT_FILE = PROJECT_AGENT_DIR / "plan_researcher.codeindex.md"
 
@@ -121,30 +116,17 @@ class TestPlanResearcherCodeIndexVariant:
 
     def test_declares_codeindex(self):
         # The defining feature of this variant — without ``CodeIndex``
-        # in tools, ``codeindex_query`` / ``codeindex_tree`` resolve
-        # to "tool does not exist" and the agent silently falls
-        # back to nothing.
+        # in tools, ``codeindex_cypher`` resolves to "tool does not
+        # exist" and the agent silently falls back to nothing.
         tools = _declared_tools(self.AGENT_FILE)
         assert "CodeIndex" in tools, (
             f"plan_researcher.codeindex.md MUST declare CodeIndex; declared tools: {sorted(tools)}"
         )
 
-    def test_declares_read_tools_for_follow_up(self):
-        # CodeIndex finds candidate files/symbols; ``Read`` /
-        # ``Grep`` / ``Glob`` / ``LS`` are needed for the
-        # drill-down phase (read the file, find sibling
-        # references, etc).
-        tools = _declared_tools(self.AGENT_FILE)
-        for required in ("Read", "Grep", "Glob", "LS"):
-            assert required in tools, (
-                f"codeindex variant should declare {required} for "
-                f"follow-up reads. Declared: {sorted(tools)}"
-            )
-
     def test_declares_bash_as_fallback(self):
         # CodeIndex may not cover uncommitted recent changes —
         # the prompt explicitly names Bash as the fallback for
-        # those. Declare it.
+        # those (also covers file reads via ``cat`` / ``sed -n``).
         tools = _declared_tools(self.AGENT_FILE)
         assert "Bash" in tools
 

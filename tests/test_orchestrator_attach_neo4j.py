@@ -6,7 +6,7 @@ orchestrator's ``attach_neo4j`` constructs a :class:`Neo4jRuntime`
 and calls the session's :meth:`Session.attach_knowledge_neo4j`;
 when it is disabled, the call is a no-op.
 
-The switch is ``knowledge.enabled`` in config. ``EMBER_NEO4J_RUNTIME``
+The switch is ``knowledge.enabled`` in config. ``IGNI_NEO4J_RUNTIME``
 remains a process-level override (both directions), which is why the
 tests below still set it to pin the answer — see
 :mod:`ember_code.backend.knowledge_gate`.
@@ -95,12 +95,18 @@ async def test_orchestrator_attach_neo4j_no_op_when_knowledge_disabled(tmp_path,
     and no runtime is built.
 
     This used to assert the same thing about an unset
-    ``EMBER_NEO4J_RUNTIME``, back when the env var was the only gate
+    ``IGNI_NEO4J_RUNTIME``, back when the env var was the only gate
     and config was ignored.
     """
-    monkeypatch.delenv("EMBER_NEO4J_RUNTIME", raising=False)
+    monkeypatch.delenv("IGNI_NEO4J_RUNTIME", raising=False)
     orch = _make_orchestrator(tmp_path)
     orch._settings.knowledge.enabled = False
+    # Neo4j backs CodeIndex as well, and it defaults on — so "knowledge is off"
+    # alone no longer means "no sidecar". Both have to be off for the attach to
+    # be the no-op this test is about. Gating the sidecar on knowledge alone
+    # left ``codeindex_cypher`` answering ``no_backend`` for a feature the user
+    # had switched on.
+    orch._settings.code_index.enabled = False
     # The constructor doesn't construct the runtime (it's lazy).
     assert orch._neo4j_runtime is None
 
@@ -116,7 +122,7 @@ async def test_orchestrator_attach_neo4j_swaps_knowledge_when_enabled(
 ):
     """With knowledge enabled, ``attach_neo4j`` builds a runtime and
     calls ``Session.attach_knowledge_neo4j``."""
-    monkeypatch.setenv("EMBER_NEO4J_RUNTIME", "1")
+    monkeypatch.setenv("IGNI_NEO4J_RUNTIME", "1")
 
     # A real Session for the swap target (the stub's MagicMock
     # can't run the real attach path). Use a lightweight stand-in
@@ -181,7 +187,7 @@ async def test_orchestrator_attach_neo4j_swaps_knowledge_when_enabled(
 async def test_orchestrator_attach_neo4j_idempotent(tmp_path, monkeypatch, driver):
     """A second ``attach_neo4j`` call returns the cached runtime
     without rebuilding it."""
-    monkeypatch.setenv("EMBER_NEO4J_RUNTIME", "1")
+    monkeypatch.setenv("IGNI_NEO4J_RUNTIME", "1")
 
     class _Session:
         def __init__(self):

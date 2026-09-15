@@ -24,7 +24,7 @@ Methods:
   prompts + error + policy state).
 * :meth:`McpController.set_tool_enabled` — enable/disable a
   single tool on a server; state persists to
-  ``<project>/.ember/mcp-tool-state.json``.
+  ``<project>/.igni/mcp-tool-state.json``.
 
 Wire shapes live in :mod:`ember_code.backend.schemas_mcp` and
 are re-exported here so existing ``from
@@ -95,7 +95,7 @@ class McpController:
         with ``disabled: true`` so the panel can render them muted,
         but they're removed from the live ``MCPTools.functions``
         dict so the next agent run won't see them. State persists
-        to ``<project>/.ember/mcp-tool-state.json``.
+        to ``<project>/.igni/mcp-tool-state.json``.
         """
         self._session.mcp_manager.set_tool_enabled(server, tool, enabled)
         return MCPToolToggleResult(server=server, tool=tool, enabled=enabled)

@@ -182,8 +182,65 @@ describe("filterSlashCommands", () => {
     // ``active: 0`` to the first match, so reordering the
     // helper's output would silently change which command is
     // highlighted by default.
+    //
+    // One deliberate exception, below: an exact match is promoted to
+    // the front. That is the same principle, not a violation of it —
+    // the first match is what Enter runs, so the command the user
+    // finished typing has to be it.
     const out = filterSlashCommands(pool, "");
     expect(out.map((c) => c.name)).toEqual(pool.map((c) => c.name));
+  });
+
+  describe("an exact match comes first", () => {
+    // `/plugin` and `/plugins` in the real pool, in the order the
+    // real pool lists them: the longer one first.
+    const prefixPair: SlashCommand[] = [
+      { name: "/plugins", description: "Open the plugins panel" },
+      { name: "/plugin", description: "Install / update / remove a plugin" },
+    ];
+
+    it("promotes the exactly-typed command over a longer sibling", () => {
+      // The bug, stated as the user's action. Typing the full name of
+      // `/plugin` left `/plugins` highlighted; Enter compares the
+      // typed text against the *highlighted* entry, so instead of
+      // running the command the user had finished typing it completed
+      // the text to the other one. From the user's side `/plugin` did
+      // nothing — no output, no panel, not even an echoed line.
+      expect(
+        filterSlashCommands(prefixPair, "plugin").map((c) => c.name),
+      ).toEqual(["/plugin", "/plugins"]);
+    });
+
+    it("still offers the longer sibling", () => {
+      // Promotion, not filtering. `/plugins` must stay reachable —
+      // one keystroke of ArrowDown away, and still in the list for
+      // anyone reading rather than typing.
+      expect(filterSlashCommands(prefixPair, "plugin")).toHaveLength(2);
+    });
+
+    it("leaves a partial query in source order", () => {
+      // No exact match, nothing to promote. This is the ordinary case
+      // and it must not change: the pool's order is the product's
+      // opinion about which command is likeliest.
+      expect(
+        filterSlashCommands(prefixPair, "plug").map((c) => c.name),
+      ).toEqual(["/plugins", "/plugin"]);
+    });
+
+    it("matches case-insensitively, like the filter itself", () => {
+      expect(filterSlashCommands(prefixPair, "PLUGIN")[0].name).toBe("/plugin");
+    });
+
+    it("does nothing when the exact match is already first", () => {
+      const out = filterSlashCommands(
+        [
+          { name: "/plugin", description: "a" },
+          { name: "/plugins", description: "b" },
+        ],
+        "plugin",
+      );
+      expect(out.map((c) => c.name)).toEqual(["/plugin", "/plugins"]);
+    });
   });
 
   it("works on a merged pool (built-ins + skills)", () => {

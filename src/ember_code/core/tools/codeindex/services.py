@@ -15,8 +15,10 @@ the composition holds gets closed, regardless of who built it.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
+from ember_code.core.code_index.embedder import LiveEmbedder
 from ember_code.core.code_index.index import CodeIndex
 from ember_code.core.tools.codeindex.cypher_service import CypherService
 from ember_code.core.tools.codeindex.query_service import QueryService
@@ -39,10 +41,17 @@ class CodeIndexServices:
         project_dir: Path,
         data_dir: str | Path,
         explicit_index: CodeIndex | None = None,
+        index_provider: Callable[[], CodeIndex | None] | None = None,
     ) -> None:
         self._project_dir = project_dir
         self._data_dir = data_dir
         self._index: CodeIndex | None = explicit_index
+        # A *callable* rather than the index itself, because the toolkit is
+        # constructed while the team is assembled and the session's index is
+        # replaced later, when a Neo4j runtime attaches. Capturing the object
+        # would pin the runtime-less one built at startup — which is exactly
+        # how ``codeindex_cypher`` came to answer ``no_backend`` forever.
+        self._index_provider = index_provider
         self._query_service: QueryService | None = None
         self._tree_service: TreeService | None = None
         self._cypher_service: CypherService | None = None
@@ -55,8 +64,20 @@ class CodeIndexServices:
         ``_explicit_index`` attribute to tests that monkeypatch
         ``search`` on the underlying index.
         """
+        if self._index is None and self._index_provider is not None:
+            self._index = self._index_provider()
         if self._index is None:
-            self._index = CodeIndex(project=self._project_dir, data_dir=self._data_dir)
+            # Fallback for tests and standalone callers. Note this index has no
+            # ``runtime=``, so ``client_for`` returns None and Cypher reports
+            # ``no_backend`` — fine for the typed/offline paths, useless for
+            # queries. A real session supplies ``index_provider``.
+            #
+            # LiveEmbedder, not the default: all-MiniLM-L6-v2 at 384 dims is
+            # exactly what the ``chunk_embedding`` vector index expects, and
+            # without it the chunks are hashes and semantic search is dead.
+            self._index = CodeIndex(
+                project=self._project_dir, data_dir=self._data_dir, embedder=LiveEmbedder()
+            )
         return self._index
 
     def query(self) -> QueryService:

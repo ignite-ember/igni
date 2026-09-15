@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from agno.tools import Toolkit
 
@@ -74,11 +75,16 @@ class ToolRegistry:
         cloud_server_url: str | None = None,
         broadcast: BroadcastFn | None = None,
         file_edit_notifier: FileEditNotifier | None = None,
+        code_index_provider: Callable[[], Any] | None = None,
     ):
         self.base_dir = Path(base_dir) if base_dir else Path.cwd()
         self.permissions = permissions or ToolPermissions(project_dir=self.base_dir)
         self._cloud_token = cloud_token
-        self._cloud_server_url = cloud_server_url or "https://api.ignite-ember.sh"
+        # DEC-14: no vendor default. An empty string here means the
+        # cloud-routed tools have nowhere to go, which is the correct
+        # state for a run with no server configured — the tools that
+        # need it check it rather than building a request against "".
+        self._cloud_server_url = cloud_server_url or ""
         # Session broadcast — only needed by tools that push structured
         # payloads to attached clients (currently only ``Visualize``).
         # ``None`` in headless / test contexts; those tools then no-op
@@ -90,6 +96,9 @@ class ToolRegistry:
         # the push bridge binds to by default, so the shared-listener
         # invariant holds without explicit wiring at every call site.
         self._file_edit_notifier = file_edit_notifier
+        # Lets ``CodeIndexTools`` reach the session's index — the one that gets
+        # a Neo4j runtime — instead of self-building a backend-less one.
+        self._code_index_provider = code_index_provider
         # Custom factories registered at runtime via :meth:`register`.
         # These don't fit the spec-catalog shape (they're raw callables
         # returning ``Toolkit`` instances) so they live on the instance
@@ -115,6 +124,7 @@ class ToolRegistry:
             cloud_token=self._cloud_token,
             cloud_server_url=self._cloud_server_url,
             file_edit_notifier=self._file_edit_notifier,
+            code_index_provider=self._code_index_provider,
         )
 
     @property
@@ -247,20 +257,22 @@ class ToolRegistry:
         project_dir: Path | None = None,
         *,
         plugin_tool_dirs: list[tuple[str, Path]] | None = None,
+        group_tools_dir: Path | None = None,
     ) -> list[Toolkit]:
-        """Discover custom tools from ``.ember/tools/`` and return as
+        """Discover custom tools from ``.igni/tools/`` and return as
         toolkit list.
 
         Scans directories in priority order:
 
-        1. ``~/.ember/tools/`` (global user tools)
-        2. ``<project>/.ember/tools/`` (project tools)
+        1. ``~/.igni/tools/`` (global user tools)
+        2. ``<project>/.igni/tools/`` (project tools)
         3. Plugin tools (``plugin_tool_dirs``, namespaced
            ``custom_<plugin>_<file>``)
         """
         return _load_custom_tools(
             project_dir or self.base_dir,
             plugin_tool_dirs=plugin_tool_dirs,
+            group_tools_dir=group_tools_dir,
         )
 
     @property

@@ -15,6 +15,7 @@ from ember_code.backend.command_handler import CommandHandler
 from ember_code.backend.server import BackendServer
 from ember_code.core.output_styles import OutputStyle, discover_output_styles
 from ember_code.core.output_styles.loader import _parse_frontmatter
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.session.core import Session
 from ember_code.protocol.rpc import RpcMethod
 
@@ -54,7 +55,7 @@ class TestDiscover:
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
         (tmp_path / "home").mkdir()
         _write(
-            tmp_path / ".ember" / "output-styles" / "tight.md",
+            tmp_path / CONFIG_DIR / "output-styles" / "tight.md",
             "---\ndescription: Tight + minimal\n---\nBe tight.\n",
         )
         out = discover_output_styles(tmp_path)
@@ -66,7 +67,7 @@ class TestDiscover:
         home = tmp_path / "home"
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
-        _write(home / ".ember" / "output-styles" / "g.md", "Globally available.\n")
+        _write(home / CONFIG_DIR / "output-styles" / "g.md", "Globally available.\n")
         out = discover_output_styles(tmp_path)
         assert "g" in out
 
@@ -74,8 +75,8 @@ class TestDiscover:
         home = tmp_path / "home"
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
-        _write(home / ".ember" / "output-styles" / "x.md", "USER VERSION\n")
-        _write(tmp_path / ".ember" / "output-styles" / "x.md", "PROJECT VERSION\n")
+        _write(home / CONFIG_DIR / "output-styles" / "x.md", "USER VERSION\n")
+        _write(tmp_path / CONFIG_DIR / "output-styles" / "x.md", "PROJECT VERSION\n")
         out = discover_output_styles(tmp_path)
         assert "PROJECT VERSION" in out["x"].body
         assert "USER VERSION" not in out["x"].body
@@ -85,7 +86,7 @@ class TestDiscover:
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
         _write(home / ".claude" / "output-styles" / "claudeonly.md", "Should not load")
-        _write(home / ".ember" / "output-styles" / "emberonly.md", "Loads")
+        _write(home / CONFIG_DIR / "output-styles" / "emberonly.md", "Loads")
         out = discover_output_styles(tmp_path, read_claude=False)
         assert "claudeonly" not in out
         assert "emberonly" in out
@@ -96,7 +97,7 @@ class TestDiscover:
         home = tmp_path / "home"
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
-        _write(tmp_path / ".ember" / "output-styles" / "concise.md", "no frontmatter\n")
+        _write(tmp_path / CONFIG_DIR / "output-styles" / "concise.md", "no frontmatter\n")
         out = discover_output_styles(tmp_path)
         assert "concise" in out
 
@@ -105,7 +106,7 @@ class TestDiscover:
         home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: home)
         _write(
-            tmp_path / ".ember" / "output-styles" / "filename.md",
+            tmp_path / CONFIG_DIR / "output-styles" / "filename.md",
             "---\nname: real-name\n---\nbody\n",
         )
         out = discover_output_styles(tmp_path)

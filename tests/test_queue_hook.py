@@ -320,20 +320,20 @@ class TestRealAgnoRun:
     """End-to-end test against a real LLM.
 
     Configure via env vars (loaded from .env at the repo root if present):
-        EMBER_TEST_LLM_API_KEY    — required; OpenAI-compatible API key.
+        IGNI_TEST_LLM_API_KEY    — required; OpenAI-compatible API key.
                                     Test is skipped if not set.
-        EMBER_TEST_LLM_BASE_URL   — optional; defaults to OpenAI's API
-        EMBER_TEST_LLM_MODEL      — optional; defaults to gpt-4o-mini
+        IGNI_TEST_LLM_BASE_URL   — optional; defaults to OpenAI's API
+        IGNI_TEST_LLM_MODEL      — optional; defaults to gpt-4o-mini
     """
 
     @pytest.mark.asyncio
     async def test_queued_message_appears_in_run_output_after_real_run(self):
         """Pre-populate the queue, run a real Agno Agent that calls one tool,
         and verify the queued user message lands in run_output.messages."""
-        api_key = os.getenv("EMBER_TEST_LLM_API_KEY")
+        api_key = os.getenv("IGNI_TEST_LLM_API_KEY")
         if not api_key:
             pytest.skip(
-                "EMBER_TEST_LLM_API_KEY not set (add it to .env or export it to run live tests)"
+                "IGNI_TEST_LLM_API_KEY not set (add it to .env or export it to run live tests)"
             )
 
         queued_text = "PINEAPPLE-MARKER-9821"
@@ -347,8 +347,8 @@ class TestRealAgnoRun:
             widget_calls.append(True)
             return "WIDGET_CODE_99"
 
-        base_url = os.getenv("EMBER_TEST_LLM_BASE_URL") or "https://api.openai.com/v1"
-        model_id = os.getenv("EMBER_TEST_LLM_MODEL") or "gpt-4o-mini"
+        base_url = os.getenv("IGNI_TEST_LLM_BASE_URL") or "https://api.openai.com/v1"
+        model_id = os.getenv("IGNI_TEST_LLM_MODEL") or "gpt-4o-mini"
 
         agent = Agent(
             model=OpenAILike(id=model_id, api_key=api_key, base_url=base_url),

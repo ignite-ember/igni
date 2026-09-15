@@ -2,7 +2,7 @@
 
 Two collaborating classes live here:
 
-* :class:`WorktreeRoot` — owns the shared ``~/.ember/worktrees``
+* :class:`WorktreeRoot` — owns the shared ``~/.igni/worktrees``
   root directory and hosts multi-worktree operations
   (:meth:`prune_stale`). Instances are cheap; construct one per
   subsystem or share the module-level default. Tests inject a
@@ -35,6 +35,8 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from ember_code.core.paths import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -138,17 +140,17 @@ class StalePruneResult(BaseModel):
 
 
 class WorktreeRoot:
-    """Owns the shared ``~/.ember/worktrees`` directory.
+    """Owns the shared ``~/.igni/worktrees`` directory.
 
     Instances are cheap; the default constructor uses
-    ``~/.ember/worktrees`` but tests inject a ``tmpdir`` via
+    ``~/.igni/worktrees`` but tests inject a ``tmpdir`` via
     ``WorktreeRoot(root=tmpdir)``. Multi-worktree operations
     (:meth:`prune_stale`) live here because they span every
     worktree under the root, not just one manager's.
     """
 
     def __init__(self, root: Path | None = None) -> None:
-        self.root = root if root is not None else (Path.home() / ".ember" / "worktrees")
+        self.root = root if root is not None else (Path.home() / CONFIG_DIR / "worktrees")
 
     def ensure_exists(self) -> None:
         """Create the root directory tree if missing (idempotent)."""
@@ -199,7 +201,7 @@ class WorktreeManager:
     """Create, inspect, and clean up a single git worktree.
 
     Worktrees are created under ``WorktreeRoot.root`` (default
-    ``~/.ember/worktrees``) so they don't clutter the project
+    ``~/.igni/worktrees``) so they don't clutter the project
     directory.
 
     Construction is thin: the constructor validates the git repo

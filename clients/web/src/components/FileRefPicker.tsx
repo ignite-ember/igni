@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { EmberClient } from "../protocol/client";
+import type { IgniClient } from "../protocol/client";
 
 /** Picks an existing project file via the BE's complete_files RPC.
  *  Returns a relative path the BE's @-mention handler can resolve;
@@ -9,7 +9,7 @@ export function FileRefPicker({
   onPick,
   onCancel,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   onPick: (path: string) => void;
   onCancel: () => void;
 }) {

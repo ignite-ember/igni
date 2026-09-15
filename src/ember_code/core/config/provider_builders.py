@@ -18,6 +18,7 @@ lack ``google-genai``.
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -26,6 +27,8 @@ import httpx
 from ember_code.core.config.llm_call_logger import LlmCallLogger
 from ember_code.core.config.logging_model import LoggingModel
 from ember_code.core.config.model_entry import ModelRegistryEntry
+
+logger = logging.getLogger(__name__)
 
 
 class ProviderClientBuilder(ABC):
@@ -97,6 +100,14 @@ class OpenAILikeBuilder(ProviderClientBuilder):
         # raise before the first call. When the resolver returns
         # None (missing env var, cmd failure, no cloud token) we
         # use the same "not-set" sentinel the old code used.
+        #
+        # Said out loud, though. The sentinel makes construction
+        # succeed and the *first call* fail with the provider's own
+        # authentication error — phrased in their terms and arriving
+        # nowhere near the cause. This is the only moment we know both
+        # that a key was wanted and that none was found.
+        if not api_key:
+            logger.warning("%s Requests to it will be rejected.", entry.why_no_api_key())
         kwargs["api_key"] = api_key or "not-set"
 
         if entry.temperature is not None:
@@ -183,6 +194,12 @@ class GeminiBuilder(ProviderClientBuilder):
         api_key = entry.resolve_api_key(cloud_token=cloud_token)
         if api_key:
             kwargs["api_key"] = api_key
+        else:
+            # Left absent rather than sentinel-filled here, so this
+            # provider may legitimately have no key (a local endpoint).
+            # Still worth a line: a *wanted* key that did not resolve
+            # looks identical from the outside.
+            logger.debug("%s", entry.why_no_api_key())
         if entry.temperature is not None:
             kwargs["temperature"] = entry.temperature
         if entry.max_tokens is not None:

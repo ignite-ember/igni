@@ -28,15 +28,15 @@ DECLARED_GATES: dict[str, str] = {
         "`test` job in ci.yml), so these DO run on every push; locally "
         "they skip unless you point this at a database."
     ),
-    "EMBER_TEST_LLM_API_KEY": (
+    "IGNI_TEST_LLM_API_KEY": (
         "Live model calls, which cost money per run. Deliberately not "
         "in CI; run locally when touching the model layer."
     ),
-    "EMBER_TEST_LLM_BASE_URL": (
+    "IGNI_TEST_LLM_BASE_URL": (
         "Which endpoint the live model tests call. Read alongside the "
         "key above; absent it, those tests skip with it."
     ),
-    "EMBER_TEST_LLM_MODEL": (
+    "IGNI_TEST_LLM_MODEL": (
         "Which model the live tests use. Read alongside the key above; "
         "absent it, those tests skip with it."
     ),
@@ -48,13 +48,13 @@ DECLARED_GATES: dict[str, str] = {
         "Credentials for NEO4J_TEST_URI. CI sets them with the service "
         "container; locally they default to neo4j/test."
     ),
-    "EMBER_TEST_NEO4J_RUNTIME": (
+    "IGNI_TEST_NEO4J_RUNTIME": (
         "Spawns real Neo4j subprocesses — needs ~4 GB free RAM, which "
         "a standard GitHub runner does not reliably have. The service "
         "container above covers the same code paths against a database "
         "we did not have to start ourselves."
     ),
-    "EMBER_LIVE_WS": (
+    "IGNI_LIVE_WS": (
         "Drives the Playwright specs against a real backend over a "
         "websocket. Lives in the e2e suite rather than here."
     ),
@@ -159,9 +159,9 @@ def test_declared_gates_are_still_in_use():
     """The other direction: a gate nobody uses is a stale note, and a
     stale note is how a file like this stops being trusted."""
     in_use = _gating_variables()
-    # ``EMBER_LIVE_WS`` gates the Playwright suite, which lives under
+    # ``IGNI_LIVE_WS`` gates the Playwright suite, which lives under
     # clients/web/e2e and is not scanned here.
-    stale = {g for g in DECLARED_GATES if g not in in_use} - {"EMBER_LIVE_WS"}
+    stale = {g for g in DECLARED_GATES if g not in in_use} - {"IGNI_LIVE_WS"}
 
     assert not stale, f"declared but no longer gating anything: {sorted(stale)}"
 

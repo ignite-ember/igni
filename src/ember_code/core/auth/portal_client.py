@@ -42,15 +42,19 @@ from ember_code.core.auth.schemas import (
     UserInfo,
     ValidateResult,
 )
+from ember_code.core.config.endpoint import (
+    is_configured,
+    portal_url_for,
+    require_api_url,
+)
 from ember_code.core.config.group_policy import (
-    GroupPolicyOverrideEntry,
+    PACK_UNCHANGED,
+    GroupPolicyEntry,
     GroupPolicyPack,
+    UnchangedPack,
 )
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_API_URL = "https://api.ignite-ember.sh"
-DEFAULT_PORTAL_URL = "https://ignite-ember.sh"
 
 
 class PortalClient:
@@ -59,21 +63,60 @@ class PortalClient:
     Constructed once per caller (typically once per
     :class:`~ember_code.backend.server_auth.AuthController`); no
     mutable state beyond the injected endpoint strings.
+
+    **DEC-14.** This had two module-level defaults,
+    the vendor's API host and the vendor's website, and the second was
+    the worse of the two: ``api_url`` at least came from
+    a setting a customer could change, while ``portal_url`` had no
+    setting anywhere. So a customer who correctly pointed the CLI at
+    their own deployment still had it open the vendor's website to sign
+    in — and being unconfigurable, that was not something they could
+    discover and fix.
+
+    ``api_url`` is now required, and ``portal_url`` is derived from it by
+    :func:`~ember_code.core.config.endpoint.portal_url_for` unless a
+    caller passes one. One value to set, and the pair cannot disagree.
+
+    **Constructing this does not refuse.** The first version checked
+    ``api_url`` in ``__init__``, and it broke the backend server: an
+    ``AuthController`` is built at startup whether or not anybody signs
+    in, so an unconfigured install could not boot at all. Refusing to
+    start because a *future* operation might need a setting is the wrong
+    trade — the refusal belongs at the operation, which is where the
+    message can say what the user was trying to do.
     """
 
     def __init__(
         self,
-        portal_url: str = DEFAULT_PORTAL_URL,
-        api_url: str = DEFAULT_API_URL,
+        api_url: str,
+        portal_url: str | None = None,
         http_timeout: float = 15.0,
     ) -> None:
-        self._portal_url = portal_url
-        self._api_url = api_url
+        # Stored raw. `_base` checks it, per call.
+        self._api_url = api_url.rstrip("/") if api_url else ""
+        self._portal_url = portal_url.rstrip("/") if portal_url else None
         self._http_timeout = http_timeout
+
+    def _base(self, operation: str) -> str:
+        """The API base, or refuse naming ``operation``."""
+        return require_api_url(self._api_url, operation=operation)
+
+    @property
+    def configured(self) -> bool:
+        """Whether a caller can use this without being refused.
+
+        For the callers that offer sign-in as an option in a menu: a
+        greyed-out item with a reason beats one that raises when
+        clicked.
+        """
+        return is_configured(self._api_url)
 
     @property
     def portal_url(self) -> str:
-        return self._portal_url
+        """The human-facing portal, derived unless one was passed."""
+        if self._portal_url:
+            return self._portal_url
+        return portal_url_for(self._base("Opening the portal"))
 
     @property
     def api_url(self) -> str:
@@ -82,9 +125,9 @@ class PortalClient:
     def login_url(self, port: int) -> str:
         """Build the portal CLI-auth URL for ``port``.
 
-        e.g. ``https://ignite-ember.sh/cli-auth?port=53842``.
+        e.g. ``https://acme.example/cli-auth?port=53842``.
         """
-        return f"{self._portal_url.rstrip('/')}/cli-auth?port={port}"
+        return f"{self.portal_url.rstrip('/')}/cli-auth?port={port}"
 
     def start_callback(self) -> CallbackServer:
         """Return a fresh :class:`CallbackServer` bound to a free port.
@@ -92,7 +135,9 @@ class PortalClient:
         Exposed so callers can interleave status callbacks between
         server start (fast) and token wait (blocks on the user).
         """
-        return CallbackServer()
+        # The server needs the API base to redeem the one-time code the
+        # portal now sends in place of the token. F124.
+        return CallbackServer(api_url=self._base("Signing in"), http_timeout=self._http_timeout)
 
     async def validate_token(self, token: str) -> ValidateResult:
         """Validate ``token`` against ``/v1/portal/me``.
@@ -102,7 +147,7 @@ class PortalClient:
         distinguishes network errors, non-200 responses, and JSON /
         schema problems so callers can log or branch precisely.
         """
-        url = f"{self._api_url.rstrip('/')}/v1/portal/me"
+        url = f"{self._base('Validating your session')}/v1/portal/me"
         try:
             async with httpx.AsyncClient(timeout=self._http_timeout) as client:
                 resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
@@ -155,7 +200,9 @@ class PortalClient:
         caller doesn't have to string-match exception messages.
         """
         try:
-            async with CallbackServer() as server:
+            async with CallbackServer(
+                api_url=self._base("Signing in"), http_timeout=self._http_timeout
+            ) as server:
                 login_url = self.login_url(server.port)
                 with contextlib.suppress(Exception):
                     webbrowser.open(login_url)
@@ -184,7 +231,7 @@ class PortalClient:
 
     async def get_my_group_summary(self, token: str) -> dict | None:
         """Fetch /v1/portal/me/group and return the group summary dict or None."""
-        url = f"{self._api_url.rstrip('/')}/v1/portal/me/group"
+        url = f"{self._base('Fetching your group policy')}/v1/portal/me/group"
         try:
             async with httpx.AsyncClient(timeout=self._http_timeout) as client:
                 resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
@@ -205,19 +252,37 @@ class PortalClient:
         except Exception:
             return None
 
-    async def fetch_group_pack(self, token: str) -> GroupPolicyPack | None:
-        """Fetch /v1/portal/me/group/pack and return a GroupPolicyPack or None.
+    async def fetch_group_pack(
+        self,
+        token: str,
+        etag: str | None = None,
+    ) -> GroupPolicyPack | None | UnchangedPack:
+        """Fetch the group pack, or learn that it has not changed.
 
-        Returns None when the user has no group or on any network/parse error.
+        Three answers, and the caller has to tell them apart:
+
+        * a :class:`GroupPolicyPack` — here is the group's configuration
+        * ``None`` — no group, or the request failed; keep what you have
+        * :data:`PACK_UNCHANGED` — the server says your copy is current
+
+        Passing ``etag`` is what makes the third possible. Sessions poll
+        this every few minutes, and the answer is nearly always the
+        third; without it every poll would ship a full set of agent
+        prompts to say nothing had happened.
         """
-        url = f"{self._api_url.rstrip('/')}/v1/portal/me/group/pack"
+        url = f"{self._base('Fetching your group policy')}/v1/portal/me/group/pack"
+        headers = {"Authorization": f"Bearer {token}"}
+        if etag:
+            headers["If-None-Match"] = etag
         try:
             async with httpx.AsyncClient(timeout=self._http_timeout) as client:
-                resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+                resp = await client.get(url, headers=headers)
         except Exception as exc:
             logger.debug("fetch_group_pack network error: %s", exc)
             return None
 
+        if resp.status_code == 304:
+            return PACK_UNCHANGED
         if resp.status_code == 404:
             return None
         if resp.status_code == 204:
@@ -233,12 +298,16 @@ class PortalClient:
             return None
 
         try:
-            overrides = [GroupPolicyOverrideEntry(**o) for o in payload.get("overrides", [])]
+            entries = [GroupPolicyEntry(**o) for o in payload.get("entries", [])]
             return GroupPolicyPack(
                 group_id=payload.get("group_id", ""),
                 group_name=payload.get("group_name", ""),
                 fetched_at=payload.get("fetched_at"),
-                overrides=overrides,
+                # Dropped silently until now: the group's model reached
+                # the CLI as None however it was set on the server.
+                default_model=payload.get("default_model"),
+                entries=entries,
+                etag=resp.headers.get("etag"),
             )
         except Exception as exc:
             logger.debug("fetch_group_pack schema error: %s", exc)

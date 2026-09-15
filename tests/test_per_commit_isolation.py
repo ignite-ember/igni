@@ -22,8 +22,8 @@ from ember_code.core.code_index import CodeIndex
 # Tests use the ``neo4j_runtime`` fixture which auto-installs a JDK when needed.
 # These tests require ~4 GB of free RAM (HF model + 2x Neo4j at 512m/2g heap).
 _needs_subprocess_runtime = pytest.mark.skipif(
-    not os.environ.get("EMBER_TEST_NEO4J_RUNTIME"),
-    reason="EMBER_TEST_NEO4J_RUNTIME not set; subprocess Neo4j tests skipped (requires ~4 GB free RAM)",
+    not os.environ.get("IGNI_TEST_NEO4J_RUNTIME"),
+    reason="IGNI_TEST_NEO4J_RUNTIME not set; subprocess Neo4j tests skipped (requires ~4 GB free RAM)",
 )
 
 PARENT_SHA = "a" * 40

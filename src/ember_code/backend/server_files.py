@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
+from ember_code.core.paths import CONFIG_DIR, DEFAULT_DATA_DIR
+
 if TYPE_CHECKING:
     from ember_code.core.session import Session
 
@@ -107,6 +109,50 @@ class FilesController:
         except ValueError:
             return False
 
+    def _allowed_roots(self) -> list[Path]:
+        """The directories a preview may read from, resolved.
+
+        Asks where the data actually is rather than naming a constant,
+        which is what the constant got wrong twice:
+
+        * ``home_config_dir()`` falls back to the pre-rename ``~/.ember``
+          while that is the directory on disk. Hardcoding ``~/.igni``
+          meant that on a machine which had not migrated, the app read
+          and wrote its config in one place and refused to *preview* it.
+        * ``storage.data_dir`` is configurable, and a deployment that
+          moves it — onto a bigger volume, say — could not preview
+          anything in it.
+
+        ``DEFAULT_DATA_DIR`` stays in the list so this only ever widens
+        from where it was, never narrows.
+
+        Widening is safe here for the reason the sandbox works at all:
+        the requested path is resolved *before* these comparisons, so
+        ``..`` is already collapsed and a symlink has already been
+        followed to wherever it really points.
+        """
+        roots = [Path(self._session.project_dir), Path(expanduser(DEFAULT_DATA_DIR))]
+
+        try:
+            from ember_code.core.paths import home_config_dir
+
+            roots.append(home_config_dir())
+        except Exception:  # noqa: BLE001 — a preview must not fail on this
+            pass
+
+        configured = getattr(getattr(self._session, "settings", None), "storage", None)
+        data_dir = getattr(configured, "data_dir", None)
+        if data_dir:
+            roots.append(Path(expanduser(str(data_dir))))
+
+        resolved: list[Path] = []
+        for root in roots:
+            try:
+                resolved.append(root.resolve())
+            except OSError:
+                continue
+        return resolved
+
     @classmethod
     def _guess_language(cls, suffix: str) -> str:
         """Return the Prism-compatible language string for a file
@@ -118,7 +164,7 @@ class FilesController:
         """Read a small text file for FE preview.
 
         Sandboxed: the resolved path must live under the current
-        project dir OR under ``~/.ember``.
+        project dir OR under ``~/.igni``.
         """
         try:
             requested = Path(path).expanduser()
@@ -132,17 +178,13 @@ class FilesController:
             # inputs surface as ValueError. Anything else should bubble.
             return ReadFileResult(path=path, contents="", size=0, error=f"bad path: {exc}")
 
-        project_root = Path(self._session.project_dir).resolve()
-        ember_root = Path(expanduser("~/.ember")).resolve()
-        if not (
-            self._within_root(requested, project_root) or self._within_root(requested, ember_root)
-        ):
+        if not any(self._within_root(requested, root) for root in self._allowed_roots()):
             return ReadFileResult(
                 path=str(requested),
                 contents="",
                 size=0,
                 error=(
-                    "Refused: path is outside the project and ~/.ember. "
+                    f"Refused: path is outside the project and {DEFAULT_DATA_DIR}. "
                     "Open it in your editor instead."
                 ),
             )
@@ -181,7 +223,7 @@ class FilesController:
         """Persist a FE-uploaded file to a per-session attachments
         dir."""
         safe = _SAFE_NAME_RE.sub("_", filename) or "file"
-        dest_dir = self._session.project_dir / ".ember" / "attachments" / self._session.session_id
+        dest_dir = self._session.project_dir / CONFIG_DIR / "attachments" / self._session.session_id
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / safe
         if dest.exists():

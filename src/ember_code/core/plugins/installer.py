@@ -1,4 +1,4 @@
-"""Plugin installer — clone / update / remove against ``~/.ember/plugins``.
+"""Plugin installer — clone / update / remove against ``~/.igni/plugins``.
 
 Wraps :class:`GitClient` + persisted :class:`PluginsState`. Plugin
 identity comes from the manifest's ``name`` field (not the URL slug)
@@ -16,6 +16,7 @@ import logging
 import shutil
 from pathlib import Path
 
+from ember_code.core.paths import DEFAULT_DATA_DIR
 from ember_code.core.plugins.git import GitClient, GitError
 from ember_code.core.plugins.models import PluginManifest
 from ember_code.core.plugins.state import load_state, save_state
@@ -34,12 +35,12 @@ class PluginError(RuntimeError):
 
 
 class PluginInstaller:
-    """Manages ``~/.ember/plugins/`` and the pin map in plugins.json."""
+    """Manages ``~/.igni/plugins/`` and the pin map in plugins.json."""
 
     def __init__(
         self,
         *,
-        data_dir: str | Path = "~/.ember",
+        data_dir: str | Path = DEFAULT_DATA_DIR,
         git_client: GitClient | None = None,
     ) -> None:
         self._data_dir = Path(str(data_dir)).expanduser()
@@ -68,7 +69,7 @@ class PluginInstaller:
         ref: str | None = None,
         subdir: str | None = None,
     ) -> PluginManifest:
-        """Install a plugin from *url* into ``~/.ember/plugins/<name>/``.
+        """Install a plugin from *url* into ``~/.igni/plugins/<name>/``.
 
         ``ref`` may be a branch, tag, or SHA. Branches and tags are
         passed directly to ``git clone --branch``; SHAs are checked

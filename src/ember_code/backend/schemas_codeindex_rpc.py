@@ -48,13 +48,12 @@ Consumers:
 
 from __future__ import annotations
 
-from urllib.parse import urlparse, urlunparse
-
 from pydantic import BaseModel
 
 from ember_code.core.code_index.sync.schemas import (
     ActivityEntry,
 )
+from ember_code.core.config.endpoint import portal_url_for
 
 
 class CodeIndexSyncResult(BaseModel):
@@ -121,26 +120,13 @@ class CodeIndexInstallResult(BaseModel):
         """Rewrite the api hostname into the portal hostname and
         return the ``/repositories`` page URL.
 
-        Rules (checked in order against the host's leading label):
-
-        * ``api.foo.tld`` → ``foo.tld``
-        * ``xxx-api.foo.tld`` → ``xxx.foo.tld``
-        * ``api-xxx.foo.tld`` → ``xxx.foo.tld``
-        * otherwise the host is used as-is.
+        The host rules live in
+        :func:`~ember_code.core.config.endpoint.portal_url_for` — they
+        were duplicated here and in nothing else until DEC-14 needed the
+        same rewrite to build the sign-in URL, at which point two copies
+        of a hostname-guessing rule was one too many.
         """
-        parsed = urlparse(api_url)
-        host = parsed.netloc
-        first, sep, rest = host.partition(".")
-        if first == "api":
-            new_host = rest or host
-        elif first.endswith("-api"):
-            new_host = f"{first[: -len('-api')]}{sep}{rest}"
-        elif first.startswith("api-"):
-            new_host = f"{first[len('api-') :]}{sep}{rest}"
-        else:
-            new_host = host
-        portal_url = urlunparse((parsed.scheme or "https", new_host, "", "", "", ""))
-        return cls(install_url=f"{portal_url.rstrip('/')}/repositories")
+        return cls(install_url=f"{portal_url_for(api_url)}/repositories")
 
 
 class LastSyncStats(BaseModel):

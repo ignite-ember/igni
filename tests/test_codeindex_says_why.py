@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import httpx
+import pytest
 
 from ember_code.core.code_index.resolver import RepositoryResolver
 
@@ -34,6 +35,24 @@ def _resolver(tmp_path: Path, *, token: str = "t", remote: str | None = "https:/
     )
     resolver.remote_url = lambda: remote  # type: ignore[method-assign]
     return resolver
+
+
+@pytest.fixture(autouse=True)
+def _no_backoff_sleeps(monkeypatch):
+    """Keep the retry schedule, drop the waiting.
+
+    The resolver calls ``raise_for_status`` so ``retry_with_backoff`` can see a
+    429/5xx, and its default schedule is ten attempts doubling from 0.1s to a
+    30s ceiling — 81 seconds of real sleeping for the unreachable-server case.
+    Patching the sleep keeps the retry *behaviour* under test while giving the
+    suite the time back.
+    """
+    from ember_code.core.utils import http_retry
+
+    async def _no_wait(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(http_retry.asyncio, "sleep", _no_wait)
 
 
 async def test_a_folder_with_no_remote_says_so(tmp_path):
@@ -90,7 +109,9 @@ async def test_expired_credentials_are_not_reported_as_a_server_error(tmp_path, 
             return False
 
         async def get(self, *_args, **_kwargs):
-            return httpx.Response(401)
+            return httpx.Response(
+                401, request=httpx.Request("GET", "https://cloud.invalid/v1/codeindex/repository")
+            )
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **_kw: _Client())
 
@@ -110,7 +131,11 @@ async def test_a_reply_it_cannot_read_blames_the_version_gap(tmp_path, monkeypat
             return False
 
         async def get(self, *_args, **_kwargs):
-            return httpx.Response(200, json={"unexpected": "shape"})
+            return httpx.Response(
+                200,
+                json={"unexpected": "shape"},
+                request=httpx.Request("GET", "https://cloud.invalid/v1/codeindex/repository"),
+            )
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **_kw: _Client())
 
@@ -135,7 +160,11 @@ async def test_success_clears_a_previous_failure(tmp_path, monkeypatch):
             return False
 
         async def get(self, *_args, **_kwargs):
-            return httpx.Response(200, json={"status": "registered", "repository_id": "r1"})
+            return httpx.Response(
+                200,
+                json={"status": "registered", "repository_id": "r1"},
+                request=httpx.Request("GET", "https://cloud.invalid/v1/codeindex/repository"),
+            )
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **_kw: _Client())
 

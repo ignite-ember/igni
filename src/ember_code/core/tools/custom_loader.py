@@ -1,9 +1,9 @@
-"""Custom tool loader — discovers @tool-decorated functions from .ember/tools/.
+"""Custom tool loader — discovers @tool-decorated functions from .igni/tools/.
 
 Security model
 --------------
 This module executes arbitrary Python code found in the user's
-``~/.ember/tools/*.py`` and ``<project>/.ember/tools/*.py`` files
+``~/.igni/tools/*.py`` and ``<project>/.igni/tools/*.py`` files
 via ``importlib.util.spec_from_file_location`` + ``exec_module``.
 There is intentionally NO sandboxing: the tool files come from
 directories the user themselves put code in, on the machine they
@@ -41,6 +41,7 @@ from agno.tools import Toolkit
 # the ``isinstance`` sniff below, not just in annotations.
 from agno.tools.function import Function
 
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.tools.custom_loader_schemas import (
     DiscoveryResult,
     FailedFile,
@@ -95,7 +96,7 @@ class CustomToolLoader:
 
     See the module docstring for the security model — this class
     executes arbitrary Python from the user's
-    ``.ember/tools/`` dirs without sandboxing. The trust boundary
+    ``.igni/tools/`` dirs without sandboxing. The trust boundary
     is the file-system permissions on those directories, not this
     loader.
 
@@ -123,16 +124,17 @@ class CustomToolLoader:
         project_dir: Path | None = None,
         *,
         plugin_tool_dirs: list[tuple[str, Path]] | None = None,
+        group_tools_dir: Path | None = None,
     ) -> DiscoveryResult:
-        """Discover custom tools from ``.ember/tools/`` directories.
+        """Discover custom tools from ``.igni/tools/`` directories.
 
         Scans directories in priority order (higher priority wins
         on conflicts — priority is enforced by the *caller* over
         the returned toolkits; this loader emits them in the same
         priority order):
 
-        1. ``~/.ember/tools/`` (global user tools)
-        2. ``<project>/.ember/tools/`` (project tools)
+        1. ``~/.igni/tools/`` (global user tools)
+        2. ``<project>/.igni/tools/`` (project tools)
         3. Plugin-contributed tool dirs (namespaced
            ``custom_<plugin>_<file>``)
 
@@ -149,9 +151,13 @@ class CustomToolLoader:
         # this order — an accidental reshuffle would silently
         # rewire which tool wins on name conflicts.
         sources: list[ToolSource] = [
-            ToolSource(name_prefix="custom", tools_dir=Path.home() / ".ember" / "tools"),
-            ToolSource(name_prefix="custom", tools_dir=project_dir / ".ember" / "tools"),
+            ToolSource(name_prefix="custom", tools_dir=Path.home() / CONFIG_DIR / "tools"),
+            ToolSource(name_prefix="custom", tools_dir=project_dir / CONFIG_DIR / "tools"),
         ]
+        # The org's, from the group policy cache. Last of the non-plugin
+        # sources, so a tool the group ships wins its name.
+        if group_tools_dir is not None:
+            sources.append(ToolSource(name_prefix="custom", tools_dir=group_tools_dir))
         for plugin_name, tools_dir in plugin_tool_dirs or []:
             sources.append(
                 ToolSource(
@@ -219,7 +225,7 @@ class CustomToolLoader:
                 )
             )
             # Preserve the pre-refactor log lines verbatim — user
-            # debugging habits (``grep 'custom tool' ~/.ember/logs``)
+            # debugging habits (``grep 'custom tool' ~/.igni/logs``)
             # depend on the exact message shape. The plugin variant
             # is emitted when the source's name_prefix carries a
             # plugin namespace.
@@ -305,6 +311,7 @@ def load_custom_tools(
     project_dir: Path | None = None,
     *,
     plugin_tool_dirs: list[tuple[str, Path]] | None = None,
+    group_tools_dir: Path | None = None,
 ) -> list[Toolkit]:
     """Back-compat shim — returns a plain ``list[Toolkit]``.
 
@@ -324,7 +331,11 @@ def load_custom_tools(
     shape (loaded / skipped / failed).
     """
     loader = CustomToolLoader()
-    result = loader.discover(project_dir, plugin_tool_dirs=plugin_tool_dirs)
+    result = loader.discover(
+        project_dir,
+        plugin_tool_dirs=plugin_tool_dirs,
+        group_tools_dir=group_tools_dir,
+    )
     # Explicit ``list(...)`` guards the caller contract: if a
     # future refactor changes :attr:`DiscoveryResult.toolkits` to
     # a non-list sequence, the shim still hands back a plain

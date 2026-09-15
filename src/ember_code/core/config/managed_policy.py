@@ -11,7 +11,7 @@ Owns two responsibilities that used to sprawl across the loader:
   — previously a classmethod on ``SettingsLoader``.
 
 Naming caveat: the ``settings.json`` fragment technically lives at
-``~/.ember/settings.json`` (user-tier), not at the managed-tier
+``~/.igni/settings.json`` (user-tier), not at the managed-tier
 location. Both are grouped here because they share the same
 "external file → limited key lift → merged into the settings
 accumulator" shape. The alternative — a second ``JsonFragmentSource``
@@ -23,13 +23,12 @@ from __future__ import annotations
 
 import json as _json
 import logging
-import os
-import sys
 from pathlib import Path
 
 from pydantic import BaseModel
 
 from ember_code.core.config.config_io import YamlSource
+from ember_code.core.paths import managed_policy_dir
 
 logger = logging.getLogger(__name__)
 
@@ -77,14 +76,8 @@ class ManagedPolicySource:
         strict subset of YAML). Returns ``None`` on unknown platforms
         — the loader treats that as "no managed tier."
         """
-        if sys.platform == "darwin":
-            return Path("/Library/Application Support/Ember/managed-settings.yaml")
-        if sys.platform.startswith("linux"):
-            return Path("/etc/ember/managed-settings.yaml")
-        if sys.platform == "win32":
-            program_data = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
-            return Path(program_data) / "Ember" / "managed-settings.yaml"
-        return None
+        root = managed_policy_dir()
+        return root / "managed-settings.yaml" if root else None
 
     @classmethod
     def load(cls) -> dict:

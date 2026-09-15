@@ -17,6 +17,7 @@ from ember_code.backend.schemas_pause import PendingRequirement
 from ember_code.backend.server import BackendServer
 from ember_code.core.config.settings import Settings
 from ember_code.core.config.tool_permissions import ToolPermissions
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.protocol.messages import Error
 
 # ── Permission check levels ──────────────────────────────────────
@@ -38,10 +39,13 @@ class TestPermissionCheckLevels:
         level = perms.check("Bash", "run_shell_command", {"args": ["ls"]})
         assert level in ("ask", "allow")
 
-    def test_read_is_always_allowed(self):
-        """File reads should always be allowed."""
+    def test_web_fetch_is_allowed_by_default(self):
+        """This used to assert ``Read``/``read_file``. Reading is a
+        shell command now — ``Read`` left the registry, so the level it
+        returns is the "ask" fallback, and asserting "allow" for it
+        would be asserting a grant for a tool nothing can call."""
         perms = ToolPermissions()
-        level = perms.check("Read", "read_file", {"file_path": "test.py"})
+        level = perms.check("WebFetch", "fetch_url", {"url": "https://x.test"})
         assert level == "allow"
 
 
@@ -49,15 +53,15 @@ class TestPermissionCheckLevels:
 
 
 class TestPermissionPersistence:
-    """Test that permission rules persist to .ember/settings.local.json."""
+    """Test that permission rules persist to .igni/settings.local.json."""
 
     def test_save_rule_creates_project_settings(self, tmp_path):
-        """save_rule writes to .ember/settings.local.json in the project."""
-        (tmp_path / ".ember").mkdir()
+        """save_rule writes to .igni/settings.local.json in the project."""
+        (tmp_path / CONFIG_DIR).mkdir()
         perms = ToolPermissions(project_dir=tmp_path)
         perms.save_rule("Bash(git push)", "allow")
 
-        settings_path = tmp_path / ".ember" / "settings.local.json"
+        settings_path = tmp_path / CONFIG_DIR / "settings.local.json"
         assert settings_path.exists()
 
         data = json.loads(settings_path.read_text())
@@ -65,7 +69,7 @@ class TestPermissionPersistence:
 
     def test_save_rule_updates_in_memory(self, tmp_path):
         """save_rule updates the in-memory rules immediately."""
-        (tmp_path / ".ember").mkdir()
+        (tmp_path / CONFIG_DIR).mkdir()
         perms = ToolPermissions(project_dir=tmp_path)
         initial_rules = len(perms._rules)
         perms.save_rule("Bash(git push)", "allow")
@@ -73,34 +77,34 @@ class TestPermissionPersistence:
 
     def test_save_deny_rule(self, tmp_path):
         """Deny rules are persisted."""
-        (tmp_path / ".ember").mkdir()
+        (tmp_path / CONFIG_DIR).mkdir()
         perms = ToolPermissions(project_dir=tmp_path)
         perms.save_rule("Bash(rm:*)", "deny")
 
-        data = json.loads((tmp_path / ".ember" / "settings.local.json").read_text())
+        data = json.loads((tmp_path / CONFIG_DIR / "settings.local.json").read_text())
         assert "Bash(rm:*)" in data["permissions"]["deny"]
 
     def test_save_moves_between_lists(self, tmp_path):
         """Saving a rule to 'allow' removes it from 'deny'."""
-        (tmp_path / ".ember").mkdir()
+        (tmp_path / CONFIG_DIR).mkdir()
         perms = ToolPermissions(project_dir=tmp_path)
         perms.save_rule("Bash(git push)", "deny")
         perms.save_rule("Bash(git push)", "allow")
 
-        data = json.loads((tmp_path / ".ember" / "settings.local.json").read_text())
+        data = json.loads((tmp_path / CONFIG_DIR / "settings.local.json").read_text())
         assert "Bash(git push)" in data["permissions"]["allow"]
         assert "Bash(git push)" not in data["permissions"].get("deny", [])
 
     def test_fallback_to_home_without_project(self, tmp_path, monkeypatch):
-        """Without project_dir, saves to ~/.ember/settings.local.json."""
+        """Without project_dir, saves to ~/.igni/settings.local.json."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        (tmp_path / ".ember").mkdir()
+        (tmp_path / CONFIG_DIR).mkdir()
         perms = ToolPermissions(project_dir=tmp_path)
         # Force no project dir to trigger home fallback
         perms._project_dir = None
         perms.save_rule("Read(*)", "allow")
 
-        settings_path = tmp_path / ".ember" / "settings.local.json"
+        settings_path = tmp_path / CONFIG_DIR / "settings.local.json"
         assert settings_path.exists()
 
 

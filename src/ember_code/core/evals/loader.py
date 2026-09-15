@@ -23,6 +23,7 @@ from ember_code.core.evals.schemas import (
     FixtureSpec,
     ToolArgAssertion,
 )
+from ember_code.core.paths import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -182,16 +183,16 @@ def load_all_suites(project_dir: Path) -> list[EvalSuite]:
     Looks in two locations:
       - ``<project_dir>/evals/`` — committed, for built-in agent
         datasets shipped with the repo (e.g. ember-code's own evals).
-      - ``<project_dir>/.ember/evals/`` — local user-authored evals
+      - ``<project_dir>/.igni/evals/`` — local user-authored evals
         (gitignored), for custom agents in the user's project.
 
-    Both are merged. Same-named files in ``.ember/evals/`` win on
+    Both are merged. Same-named files in ``.igni/evals/`` win on
     conflict — the user's local copy overrides the shipped one.
     """
     suites: list[EvalSuite] = []
     seen_files: set[str] = set()
 
-    for evals_dir in (project_dir / ".ember" / "evals", project_dir / "evals"):
+    for evals_dir in (project_dir / CONFIG_DIR / "evals", project_dir / "evals"):
         if not evals_dir.is_dir():
             continue
         for path in sorted(evals_dir.glob("*.yaml")):

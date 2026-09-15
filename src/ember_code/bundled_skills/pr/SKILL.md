@@ -23,7 +23,7 @@ Create a pull request with an AI-generated summary and AI usage checklist.
 
 6. **Get the commit history.** Run `git log $BASE..HEAD --oneline` to understand the logical progression of changes.
 
-7. **Read project guidelines.** Check for `ember.md`, `CONTRIBUTING.md`, or PR template at `.github/pull_request_template.md`. If a template exists, follow its structure.
+7. **Read project guidelines.** Check for `igni.md`, `CONTRIBUTING.md`, or PR template at `.github/pull_request_template.md`. If a template exists, follow its structure.
 
 ## Generate PR Content
 

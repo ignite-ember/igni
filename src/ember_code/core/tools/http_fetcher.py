@@ -25,11 +25,19 @@ free-helper cluster specifically, and this class exists to close
 that finding.
 """
 
+import logging
 import re
+from collections.abc import Callable
+from typing import Any
 
 import httpx
 
 from ember_code.core.tools.web_schemas import FetchResult, HttpFetcherConfig
+from ember_code.core.utils.http_retry import retry_with_backoff
+
+logger = logging.getLogger(__name__)
+
+BroadcastFn = Callable[[str, dict[str, Any]], None]
 
 
 class HttpFetcher:
@@ -44,7 +52,9 @@ class HttpFetcher:
       collapsing the two duplicated ``try`` / ``except`` blocks in
       the previous :mod:`web` module;
     * the four-regex HTML-to-text extraction as a
-      :func:`staticmethod` so its subject is named at class scope.
+      :func:`staticmethod` so its subject is named at class scope;
+    * an optional broadcast callback for emitting retry events to
+      the UI.
 
     Exception handling narrows to :class:`httpx.HTTPError`. Other
     exceptions (``KeyError`` / ``AttributeError`` / ``TypeError``
@@ -52,8 +62,13 @@ class HttpFetcher:
     a bare ``except Exception`` would swallow them.
     """
 
-    def __init__(self, config: HttpFetcherConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: HttpFetcherConfig | None = None,
+        broadcast: BroadcastFn | None = None,
+    ) -> None:
         self._config = config or HttpFetcherConfig()
+        self._broadcast = broadcast
 
     @property
     def config(self) -> HttpFetcherConfig:
@@ -107,19 +122,51 @@ class HttpFetcher:
         return FetchResult.success(response.text[: self._config.max_json_chars])
 
     async def _get(self, url: str, headers: dict[str, str]) -> httpx.Response:
-        """Shared low-level GET.
+        """Shared low-level GET with retry on transient errors.
 
         Constructs :class:`httpx.AsyncClient` from the config's
         derived kwargs, issues a GET, raises on non-2xx, and
         returns the raw response object so callers can inspect
-        headers for content-type branching. Only
-        :class:`httpx.HTTPError` is expected here; callers handle
-        it and convert to :class:`FetchResult.failure`.
+        headers for content-type branching.
+
+        Retries up to 10 times on transient errors (429, 5xx,
+        timeouts, connection errors) with exponential backoff.
+        Emits retry events to the UI via broadcast if available.
+        Only :class:`httpx.HTTPError` is expected here; callers
+        handle it and convert to :class:`FetchResult.failure`.
         """
-        async with httpx.AsyncClient(**self._config.httpx_kwargs()) as client:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            return response
+
+        async def _make_request() -> httpx.Response:
+            async with httpx.AsyncClient(**self._config.httpx_kwargs()) as client:
+                response = await client.get(url, headers=headers)
+                response.raise_for_status()
+                return response
+
+        response, metadata = await retry_with_backoff(
+            _make_request,
+            retry_callback=self._on_retry if self._broadcast else None,
+        )
+        if metadata.retried and self._broadcast:
+            self._broadcast(
+                "http_retry_succeeded",
+                {
+                    "url": url,
+                    "attempt_count": metadata.attempt_count,
+                    "delay_seconds": metadata.final_delay_seconds,
+                },
+            )
+        return response
+
+    def _on_retry(self, attempt: int, delay: float) -> None:
+        """Callback invoked on each retry attempt."""
+        if self._broadcast:
+            self._broadcast(
+                "http_retry_attempt",
+                {
+                    "attempt": attempt,
+                    "delay_seconds": delay,
+                },
+            )
 
     @staticmethod
     def html_to_text(html: str) -> str:

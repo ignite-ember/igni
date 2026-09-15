@@ -27,7 +27,7 @@ data class DoctorReportInputs(
 ) {
     /** ``true`` when the override env var is set AND the ack env var
      *  reads as truthy — the exact rule ``EmberRuntime`` uses to
-     *  decide whether to honour ``EMBER_DEV_BACKEND``. */
+     *  decide whether to honour ``IGNI_DEV_BACKEND``. */
     val devActive: Boolean
         get() = !devPath.isNullOrBlank() &&
             (devAck == "1" || devAck.equals("true", ignoreCase = true))
@@ -48,13 +48,13 @@ object DoctorReport {
             appendLine("                           ↑ MISMATCH — chat may fail")
         }
         appendLine()
-        val source = if (i.devActive) "EMBER_DEV_BACKEND override" else "managed venv"
+        val source = if (i.devActive) "IGNI_DEV_BACKEND override" else "managed venv"
         appendLine("Backend source           : $source")
         appendLine("Interpreter path         : ${i.interpreterPath}")
         appendLine("Managed venv path        : ${i.managedVenvPath}")
         appendLine("Managed venv present     : ${i.managedVenvPresent}")
         appendLine()
-        appendLine("EMBER_DEV_BACKEND        : ${i.devPath ?: "<unset>"}")
+        appendLine("IGNI_DEV_BACKEND        : ${i.devPath ?: "<unset>"}")
         appendLine("IGNITE_EMBER_DEV         : ${i.devAck ?: "<unset>"}")
         // "Override present but ack missing" is the exact
         // footgun the version-gate closes; call it out.

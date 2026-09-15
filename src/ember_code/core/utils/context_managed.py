@@ -1,4 +1,4 @@
-"""Sysadmin-enforced managed policy — ``ember.md`` / ``CLAUDE.md``
+"""Sysadmin-enforced managed policy — ``igni.md`` / ``CLAUDE.md``
 in a platform-specific write-protected directory.
 
 Extracted from :mod:`ember_code.core.utils.context` per
@@ -12,10 +12,13 @@ file next door.
 
 ## Platform-specific directories
 
-- macOS: ``/Library/Application Support/Ember/``
-- Linux: ``/etc/ember/``
-- Windows: ``%PROGRAMDATA%/Ember/`` (defaults to ``C:\\ProgramData/Ember``)
+- macOS: ``/Library/Application Support/igni/``
+- Linux: ``/etc/igni/``
+- Windows: ``%PROGRAMDATA%/igni/`` (defaults to ``C:\\ProgramData/igni``)
 - Anything else: no managed tier.
+
+Resolved by :func:`ember_code.core.paths.managed_policy_dir`, which is
+the single answer for every managed tier.
 
 ## Security note
 
@@ -27,15 +30,15 @@ managed directory itself — a managed policy can't reach into
 
 from __future__ import annotations
 
-import os
-import sys
 from collections.abc import Callable
 from pathlib import Path
+
+from ember_code.core.paths import managed_policy_dir
 
 
 def _platform_managed_rules_dir() -> Path | None:
     """OS-specific directory that may host a sysadmin-enforced
-    instructions file (``ember.md`` and/or ``CLAUDE.md``).
+    instructions file (``igni.md`` and/or ``CLAUDE.md``).
 
     Sibling to the managed-settings file — both live in the same
     write-protected parent so a sysadmin / MDM profile can drop a
@@ -43,13 +46,7 @@ def _platform_managed_rules_dir() -> Path | None:
     Returns ``None`` on unknown platforms; the loader treats that
     as "no managed instructions tier."
     """
-    if sys.platform == "darwin":
-        return Path("/Library/Application Support/Ember")
-    if sys.platform.startswith("linux"):
-        return Path("/etc/ember")
-    if sys.platform == "win32":
-        program_data = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
-        return Path(program_data) / "Ember"
+    return managed_policy_dir()
     return None
 
 
@@ -61,7 +58,7 @@ def load_managed_rules(
 ) -> str:
     """Load the sysadmin-enforced managed-policy instructions file.
 
-    Reads ``ember.md`` (and ``CLAUDE.md`` when ``read_claude_md``)
+    Reads ``igni.md`` (and ``CLAUDE.md`` when ``read_claude_md``)
     from the platform's managed directory. ``@<path>.md`` imports
     inside those files resolve against the managed directory
     itself — a managed policy can't reach into ``/etc/passwd`` or

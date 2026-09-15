@@ -49,6 +49,52 @@ async function waitForAtBottom(page: Page, want: boolean) {
     .toBe(want);
 }
 
+/**
+ * Virtuoso's scroll offset, once it has stopped moving.
+ *
+ * F129. The "does not yank the user down" test used to assert which
+ * rows were mounted — ``row-1`` visible, ``row-61`` not. Under a full
+ * eight-worker run that failed both ways: sometimes ``row-1`` was not
+ * in the DOM yet, sometimes ``row-61`` was. Neither is the contract.
+ * A virtualiser is free to mount and unmount whatever it likes while a
+ * scroll settles; what the user cares about is that their position did
+ * not move, and that is a number.
+ *
+ * Settling is two consecutive equal readings, because a smooth scroll
+ * in flight gives a different answer each frame and a single reading
+ * cannot tell "arrived" from "passing through".
+ */
+async function settledScrollTop(page: Page): Promise<number> {
+  const read = () =>
+    page.evaluate(() => {
+      // Virtuoso marks its own scroller. Named exactly rather than
+      // "the first descendant that overflows", which is what this
+      // helper tried first: that heuristic found the right node here
+      // by luck, and a wrong node reads a constant 0 — which is a
+      // test that passes without measuring anything.
+      const el = document.querySelector<HTMLElement>(
+        "[data-virtuoso-scroller]",
+      );
+      if (!el) throw new Error("no [data-virtuoso-scroller] on the page");
+      if (el.scrollHeight <= el.clientHeight) {
+        throw new Error(
+          `the scroller does not overflow (${el.scrollHeight} <= ` +
+            `${el.clientHeight}); there is no scroll position to read`,
+        );
+      }
+      return el.scrollTop;
+    });
+
+  let previous = await read();
+  for (let i = 0; i < 40; i++) {
+    await page.waitForTimeout(50);
+    const current = await read();
+    if (current === previous) return current;
+    previous = current;
+  }
+  return previous;
+}
+
 test.describe("chat scroll — Virtuoso followOutput contract", () => {
   test("seeds 60 rows and starts NOT at bottom (long list collapsed to top)", async ({
     page,
@@ -112,14 +158,17 @@ test.describe("chat scroll — Virtuoso followOutput contract", () => {
     // intent to read history).
     await scrollToTop(page);
     await waitForAtBottom(page, false);
-    const topRow = page.getByTestId("row-1");
-    await expect(topRow).toBeVisible();
+    // Where the reader is, once the scroll has stopped moving. This is
+    // the thing the contract is about; which rows happen to be mounted
+    // around it is the virtualiser's business.
+    const before = await settledScrollTop(page);
 
     await appendMessage(page);
-    // We're still NOT at bottom, the new row is NOT visible, and
-    // the original top row is still rendered.
     await waitForAtBottom(page, false);
-    await expect(topRow).toBeVisible();
-    await expect(page.getByTestId("row-61")).not.toBeVisible();
+    const after = await settledScrollTop(page);
+    expect(
+      after,
+      `appending moved the reader from ${before}px to ${after}px`,
+    ).toBe(before);
   });
 });

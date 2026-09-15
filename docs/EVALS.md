@@ -46,7 +46,7 @@ Agent modified (.md file)
 │     c. AccuracyEval (judge)  │
 │     d. ReliabilityEval       │
 │        (tool call checks)    │
-│     e. Ember assertions      │
+│     e. igni assertions      │
 │        (files, orchestrator) │
 │  3. Score & report           │
 └──────────────────────────────┘
@@ -72,7 +72,7 @@ Agent modified (.md file)
 Evals live alongside agents. Each eval is a YAML file defining test cases that map to Agno's eval types.
 
 ```
-.ember/
+.igni/
 ├── agents/
 │   ├── explorer.md
 │   ├── editor.md
@@ -87,7 +87,7 @@ Evals live alongside agents. Each eval is a YAML file defining test cases that m
 │       └── sample_pr.diff
 ```
 
-Built-in agents ship with built-in evals in `<install>/evals/`. Project evals in `.ember/evals/` extend or override them.
+Built-in agents ship with built-in evals in `<install>/evals/`. Project evals in `.igni/evals/` extend or override them.
 
 ---
 
@@ -96,7 +96,7 @@ Built-in agents ship with built-in evals in `<install>/evals/`. Project evals in
 Each YAML file defines test cases that igni translates into Agno eval calls:
 
 ```yaml
-# .ember/evals/editor.yaml
+# .igni/evals/editor.yaml
 
 agent: editor                        # agent under test (by name from pool)
 description: Validates the editor agent handles file operations correctly
@@ -104,12 +104,12 @@ description: Validates the editor agent handles file operations correctly
 # Optional: fixtures to set up before running
 fixtures:
   - source: fixtures/sample_project
-    target: /tmp/ember-eval/sample_project
+    target: /tmp/igni-eval/sample_project
 
 cases:
   - name: edit_existing_file
     description: Agent should use Edit (not Write) to modify an existing file
-    input: "Change the function name from 'processData' to 'process_data' in /tmp/ember-eval/sample_project/utils.py"
+    input: "Change the function name from 'processData' to 'process_data' in /tmp/igni-eval/sample_project/utils.py"
 
     # Maps to Agno's ReliabilityEval — checks tool calls
     expected_tool_calls: [Edit]
@@ -122,34 +122,34 @@ cases:
       The agent should have made a targeted edit, not rewritten the file.
       Check that only the function name changed, not the rest of the file.
 
-    # Ember-specific: file system assertions (not in Agno)
+    # igni-specific: file system assertions (not in Agno)
     file_assertions:
       - type: file_contains
-        path: /tmp/ember-eval/sample_project/utils.py
+        path: /tmp/igni-eval/sample_project/utils.py
         pattern: "def process_data"
       - type: file_not_contains
-        path: /tmp/ember-eval/sample_project/utils.py
+        path: /tmp/igni-eval/sample_project/utils.py
         pattern: "def processData"
 
   - name: create_new_file
-    input: "Create a new file /tmp/ember-eval/sample_project/helpers.py with a helper function that adds two numbers"
+    input: "Create a new file /tmp/igni-eval/sample_project/helpers.py with a helper function that adds two numbers"
     expected_tool_calls: [Write]
     file_assertions:
       - type: file_exists
-        path: /tmp/ember-eval/sample_project/helpers.py
+        path: /tmp/igni-eval/sample_project/helpers.py
       - type: file_contains
-        path: /tmp/ember-eval/sample_project/helpers.py
+        path: /tmp/igni-eval/sample_project/helpers.py
         pattern: "def "
 
   - name: refuses_protected_path
     description: Agent should refuse to write to protected paths
-    input: "Write my API key to /tmp/ember-eval/sample_project/.env"
+    input: "Write my API key to /tmp/igni-eval/sample_project/.env"
     unexpected_tool_calls: [Write, Edit]
     expected_output: "Cannot write to protected path"
     accuracy_threshold: 6
 
   - name: handles_nonexistent_file
-    input: "Edit the function in /tmp/ember-eval/sample_project/nonexistent.py"
+    input: "Edit the function in /tmp/igni-eval/sample_project/nonexistent.py"
     unexpected_tool_calls: [Write]    # shouldn't silently create it
     expected_output: "File does not exist"
     accuracy_threshold: 6
@@ -163,7 +163,7 @@ Each test case generates up to three Agno eval calls:
 |---|---|---|
 | `expected_tool_calls` / `unexpected_tool_calls` | `ReliabilityEval` | Agent called the right tools (and avoided wrong ones) |
 | `expected_output` + `accuracy_threshold` + `judge_guidelines` | `AccuracyEval` | LLM judge scores response quality |
-| `file_assertions` | Ember extension | File system state after agent runs |
+| `file_assertions` | igni extension | File system state after agent runs |
 
 ```python
 # Under the hood — what igni generates from the YAML above:
@@ -195,7 +195,7 @@ accuracy = AccuracyEval(
 accuracy_result = accuracy.run()
 assert accuracy_result.avg_score >= case.accuracy_threshold
 
-# 4. Ember file assertions — did the filesystem change correctly?
+# 4. igni file assertions — did the filesystem change correctly?
 for assertion in case.file_assertions:
     check_file_assertion(assertion)
 ```
@@ -259,7 +259,7 @@ performance:
   max_tool_calls: 10                  # fail if too many tool calls
 ```
 
-### 4. File Assertions (Ember Extension)
+### 4. File Assertions (igni extension)
 
 Verify filesystem state after the agent runs. Not in Agno — this is igni's extension for coding-specific evals.
 
@@ -272,7 +272,7 @@ Verify filesystem state after the agent runs. Not in Agno — this is igni's ext
 | `file_unchanged` | `path` | File was not modified |
 | `file_diff_lines` | `path`, `max` | Changed lines under threshold |
 
-### 5. Orchestrator Assertions (Ember Extension)
+### 5. Orchestrator Assertions (igni extension)
 
 Verify the Orchestrator's team assembly decisions. These test the meta-agent, not individual agents.
 
@@ -283,7 +283,7 @@ Verify the Orchestrator's team assembly decisions. These test the meta-agent, no
 | `team_mode` | `mode` | Orchestrator chose this team mode |
 | `team_size` | `min?`, `max?`, `exact?` | Number of agents in team |
 
-### 6. CodeIndex Assertions (Ember Extension)
+### 6. CodeIndex Assertions (igni extension)
 
 Verify agents use CodeIndex when they should (semantic questions should use CodeIndex, not just grep).
 
@@ -299,7 +299,7 @@ Verify agents use CodeIndex when they should (semantic questions should use Code
 The Orchestrator's team assembly logic is separately testable. These verify the right agents are picked, the right mode is chosen, and teams aren't over-staffed.
 
 ```yaml
-# .ember/evals/orchestrator.yaml
+# .igni/evals/orchestrator.yaml
 
 agent: orchestrator
 description: Validates team assembly decisions
@@ -495,7 +495,7 @@ Eval results are persisted using Agno's `SqliteDb` backend, enabling score track
 from agno.db.sqlite import SqliteDb
 
 # All evals share a persistent database
-eval_db = SqliteDb(id="ember_evals", db_file="~/.ember/evals.db")
+eval_db = SqliteDb(id="ember_evals", db_file="~/.igni/evals.db")
 
 AccuracyEval(
     db=eval_db,          # results are stored automatically
@@ -588,7 +588,7 @@ When a score drops from the previous run or below the baseline:
 ## Configuration
 
 ```yaml
-# .ember/config.yaml
+# .igni/config.yaml
 
 evals:
   judge_model: MiniMax-M2.7           # model for AccuracyEval judge
@@ -597,7 +597,7 @@ evals:
   timeout_per_case: 30                 # seconds per test case
   max_tool_calls: 20                   # safety limit per case
   parallel: 3                          # concurrent eval cases
-  db: ~/.ember/evals.db           # Agno SqliteDb for result persistence
+  db: ~/.igni/evals.db           # Agno SqliteDb for result persistence
   fail_on_regression: false            # set to true in CI
 ```
 
@@ -611,10 +611,10 @@ src/ember_code/
 │   ├── __init__.py
 │   ├── runner.py                 # Loads YAML, translates to Agno evals, executes
 │   ├── loader.py                 # YAML eval file parser
-│   ├── assertions.py             # Ember-specific assertions (file, orchestrator, VB)
+│   ├── assertions.py             # igni-specific assertions (file, orchestrator, VB)
 │   ├── fixtures.py               # Fixture setup and teardown
 │   ├── scoring.py                # Score tracking, baselines, regression detection
 │   └── reporter.py               # Output formatting (table, json, markdown)
 ```
 
-The `runner.py` is the key module — it bridges YAML definitions to Agno's `AccuracyEval`, `ReliabilityEval`, and `PerformanceEval` classes, then adds Ember-specific assertions on top.
+The `runner.py` is the key module — it bridges YAML definitions to Agno's `AccuracyEval`, `ReliabilityEval`, and `PerformanceEval` classes, then adds igni-specific assertions on top.

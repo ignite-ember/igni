@@ -2,7 +2,7 @@
 
 Covers two surfaces:
 
-  * :class:`GroupPolicyOverrideEntry` — the wire shape. Pydantic
+  * :class:`GroupPolicyEntry` — the wire shape. Pydantic
     validation rejects half-filled source specs (ref/subdir without
     URL) so the BE catches the mistake before it ever reaches the
     installer.
@@ -14,7 +14,7 @@ Covers two surfaces:
     and swallowed so one bad plugin can't take down the rest of
     the pack.
 
-The plugin loader's new ``group-policy-ember`` root is covered in
+The plugin loader's new ``group-policy-igni`` root is covered in
 ``test_plugins_loader_root_priority.py``.
 """
 
@@ -31,7 +31,7 @@ from pydantic import ValidationError
 from ember_code.core.config import group_policy as gp_mod
 from ember_code.core.config.group_policy import (
     GroupPolicyCache,
-    GroupPolicyOverrideEntry,
+    GroupPolicyEntry,
     GroupPolicyPack,
 )
 from ember_code.core.plugins.loader import PluginLoader
@@ -39,11 +39,11 @@ from ember_code.core.plugins.loader import PluginLoader
 # ── Pydantic surface ──────────────────────────────────────────
 
 
-class TestGroupPolicyOverrideEntrySourceFields:
-    """The cross-field validator on GroupPolicyOverrideEntry."""
+class TestGroupPolicyEntrySourceFields:
+    """The cross-field validator on GroupPolicyEntry."""
 
     def test_empty_source_fields_pass(self):
-        entry = GroupPolicyOverrideEntry(
+        entry = GroupPolicyEntry(
             kind="plugins",
             entry_name="x",
             content="name: x",
@@ -54,7 +54,7 @@ class TestGroupPolicyOverrideEntrySourceFields:
         assert entry.source_subdir is None
 
     def test_full_source_triplet_passes(self):
-        entry = GroupPolicyOverrideEntry(
+        entry = GroupPolicyEntry(
             kind="plugins",
             entry_name="x",
             content="name: x",
@@ -69,7 +69,7 @@ class TestGroupPolicyOverrideEntrySourceFields:
 
     def test_url_only_passes(self):
         """A bare URL is the minimum: no ref or subdir required."""
-        entry = GroupPolicyOverrideEntry(
+        entry = GroupPolicyEntry(
             kind="plugins",
             entry_name="x",
             content="",
@@ -83,7 +83,7 @@ class TestGroupPolicyOverrideEntrySourceFields:
     def test_ref_without_url_is_rejected(self):
         """ref + no url → cross-field validator raises."""
         with pytest.raises(ValidationError) as exc_info:
-            GroupPolicyOverrideEntry(
+            GroupPolicyEntry(
                 kind="plugins",
                 entry_name="x",
                 content="",
@@ -94,7 +94,7 @@ class TestGroupPolicyOverrideEntrySourceFields:
 
     def test_subdir_without_url_is_rejected(self):
         with pytest.raises(ValidationError) as exc_info:
-            GroupPolicyOverrideEntry(
+            GroupPolicyEntry(
                 kind="plugins",
                 entry_name="x",
                 content="",
@@ -105,7 +105,7 @@ class TestGroupPolicyOverrideEntrySourceFields:
 
     def test_ref_and_subdir_without_url_is_rejected(self):
         with pytest.raises(ValidationError):
-            GroupPolicyOverrideEntry(
+            GroupPolicyEntry(
                 kind="plugins",
                 entry_name="x",
                 content="",
@@ -120,7 +120,7 @@ class TestGroupPolicyOverrideEntrySourceFields:
         by setting URL = "".
         """
         with pytest.raises(ValidationError):
-            GroupPolicyOverrideEntry(
+            GroupPolicyEntry(
                 kind="plugins",
                 entry_name="x",
                 content="",
@@ -152,12 +152,12 @@ class _StubInstaller:
             raise self._raises
 
 
-def _pack_with(overrides: list[GroupPolicyOverrideEntry]) -> GroupPolicyPack:
+def _pack_with(overrides: list[GroupPolicyEntry]) -> GroupPolicyPack:
     return GroupPolicyPack(
         group_id="g-1",
         group_name="Test",
         fetched_at=datetime.now(timezone.utc),
-        overrides=overrides,
+        entries=overrides,
     )
 
 
@@ -175,7 +175,7 @@ class TestGroupPolicyCacheMaterializePlugin:
 
         pack = _pack_with(
             [
-                GroupPolicyOverrideEntry(
+                GroupPolicyEntry(
                     kind="plugins",
                     entry_name="remote-plugin",
                     content="",
@@ -209,7 +209,7 @@ class TestGroupPolicyCacheMaterializePlugin:
 
         pack = _pack_with(
             [
-                GroupPolicyOverrideEntry(
+                GroupPolicyEntry(
                     kind="plugins",
                     entry_name="minimal",
                     content="",
@@ -235,7 +235,7 @@ class TestGroupPolicyCacheMaterializePlugin:
 
         pack = _pack_with(
             [
-                GroupPolicyOverrideEntry(
+                GroupPolicyEntry(
                     kind="plugins",
                     entry_name="legacy",
                     content="name: legacy\n",
@@ -265,7 +265,7 @@ class TestGroupPolicyCacheMaterializePlugin:
 
         pack = _pack_with(
             [
-                GroupPolicyOverrideEntry(
+                GroupPolicyEntry(
                     kind="plugins",
                     entry_name="off",
                     content="",
@@ -292,14 +292,14 @@ class TestGroupPolicyCacheMaterializePlugin:
 
         pack = _pack_with(
             [
-                GroupPolicyOverrideEntry(
+                GroupPolicyEntry(
                     kind="plugins",
                     entry_name="bad",
                     content="",
                     content_type="yaml",
                     source_url="https://example.com/bad.git",
                 ),
-                GroupPolicyOverrideEntry(
+                GroupPolicyEntry(
                     kind="plugins",
                     entry_name="good",
                     content="",
@@ -332,7 +332,7 @@ class TestGroupPolicyCacheMaterializePlugin:
 
         pack = _pack_with(
             [
-                GroupPolicyOverrideEntry(
+                GroupPolicyEntry(
                     kind="plugins",
                     entry_name="stranded",
                     content="",
@@ -368,13 +368,13 @@ class TestGroupPolicyCacheMaterializePlugin:
 
         pack = _pack_with(
             [
-                GroupPolicyOverrideEntry(
+                GroupPolicyEntry(
                     kind="agents",
                     entry_name="reviewer",
                     content="---\nname: reviewer\n---\n# body",
                     content_type="markdown",
                 ),
-                GroupPolicyOverrideEntry(
+                GroupPolicyEntry(
                     kind="mcps",
                     entry_name="gh",
                     content='{"mcpServers": {}}',
@@ -394,7 +394,7 @@ class TestGroupPolicyCacheMaterializePlugin:
 
 
 class TestPluginLoaderGroupPolicyRoot:
-    """The new ``group-policy-ember`` root at priority 5."""
+    """The new ``group-policy-igni`` root at priority 5."""
 
     @staticmethod
     def _capture_roots(tmp_path: Path) -> dict[str, tuple[Path, int]]:
@@ -407,8 +407,8 @@ class TestPluginLoaderGroupPolicyRoot:
 
     def test_root_registered_with_data_dir_relative_path(self, tmp_path: Path):
         roots = self._capture_roots(tmp_path)
-        assert "group-policy-ember" in roots
-        path, priority = roots["group-policy-ember"]
+        assert "group-policy-igni" in roots
+        path, priority = roots["group-policy-igni"]
         assert path == tmp_path / "group-policy" / "plugins"
         assert priority == 5
 
@@ -417,17 +417,17 @@ class TestPluginLoaderGroupPolicyRoot:
         prios = {k: v[1] for k, v in roots.items()}
 
         # Outrank user + project
-        assert prios["group-policy-ember"] > prios["user-ember"]
-        assert prios["group-policy-ember"] > prios["project-ember"]
-        assert prios["group-policy-ember"] > prios["project-claude"]
+        assert prios["group-policy-igni"] > prios["user-igni"]
+        assert prios["group-policy-igni"] > prios["project-igni"]
+        assert prios["group-policy-igni"] > prios["project-claude"]
 
     def test_priority_loses_to_managed_tiers(self, tmp_path: Path):
         roots = self._capture_roots(tmp_path)
         prios = {k: v[1] for k, v in roots.items()}
 
         # Submit to the OS-managed tiers
-        assert prios["group-policy-ember"] < prios["managed-claude"]
-        assert prios["group-policy-ember"] < prios["managed-ember"]
+        assert prios["group-policy-igni"] < prios["managed-claude"]
+        assert prios["group-policy-igni"] < prios["managed-igni"]
 
     def test_loader_does_not_flag_group_policy_as_managed(self, tmp_path: Path):
         """Group-policy installs aren't OS-managed — users can still
@@ -454,7 +454,7 @@ class TestPluginLoaderGroupPolicyRoot:
         plugin = loader.get("test-plugin")
         assert plugin is not None
         # Root kind, not priority, drives is_managed — and the
-        # new tier isn't in the managed-claude/managed-ember set.
+        # new tier isn't in the managed-claude/managed-igni set.
         assert plugin.is_managed is False
 
 
@@ -468,8 +468,8 @@ def _make_pack(*, fetched_at: datetime) -> GroupPolicyPack:
         group_id="g-test",
         group_name="Engineering",
         fetched_at=fetched_at,
-        overrides=[
-            GroupPolicyOverrideEntry(
+        entries=[
+            GroupPolicyEntry(
                 kind="agents",
                 entry_name="code-reviewer",
                 content="---\nname: code-reviewer\n---\nA reviewer.",

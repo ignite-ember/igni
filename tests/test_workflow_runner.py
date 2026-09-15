@@ -31,6 +31,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from ember_code.backend.workflow_runner import WorkflowDiscovery, WorkflowRunner, _RunState
+from ember_code.core.paths import CONFIG_DIR
 
 
 def _meta_line(name: str = "smoke", phases: int = 2) -> str:
@@ -165,7 +166,7 @@ async def test_user_layer_shadows_team_layer(tmp_path: Path) -> None:
     user-layer location.
     """
     team_dir = tmp_path / ".claude" / "workflows"
-    user_dir = tmp_path / ".ember" / "workflows"
+    user_dir = tmp_path / CONFIG_DIR / "workflows"
     team_dir.mkdir(parents=True)
     user_dir.mkdir(parents=True)
     (team_dir / "shared.mjs").write_text("export const meta = { name: 'team-version' }\n")
@@ -210,14 +211,14 @@ async def test_user_layer_shadows_team_layer(tmp_path: Path) -> None:
         shared = await disc.resolve("shared")
         assert shared is not None
         assert shared.meta.name == "user-version"
-        assert shared.path == ".ember/workflows/shared.mjs"
+        assert shared.path == f"{CONFIG_DIR}/workflows/shared.mjs"
 
 
 async def test_discovery_scans_both_layers_independently(tmp_path: Path) -> None:
     """The two layers are scanned independently — a project with
     only a user layer (no team layer) still works, and vice versa.
     """
-    user_dir = tmp_path / ".ember" / "workflows"
+    user_dir = tmp_path / CONFIG_DIR / "workflows"
     user_dir.mkdir(parents=True)
     (user_dir / "user-only.mjs").write_text("export const meta = { name: 'user-only' }\n")
 
@@ -247,7 +248,7 @@ async def test_discovery_scans_both_layers_independently(tmp_path: Path) -> None
         disc = WorkflowDiscovery(project_dir=tmp_path)
         result = await disc.list_workflows()
         assert [env.meta.name for env in result] == ["user-only"]
-        assert result[0].path == ".ember/workflows/user-only.mjs"
+        assert result[0].path == f"{CONFIG_DIR}/workflows/user-only.mjs"
 
 
 async def test_event_drain_persists_and_pushes(tmp_path: Path) -> None:
@@ -379,7 +380,7 @@ async def test_agent_request_bridges_to_team(tmp_path: Path) -> None:
 async def test_runner_spawns_user_layer_workflow_with_cwd_relative_path(
     tmp_path: Path,
 ) -> None:
-    """A workflow in ``.ember/workflows/`` is spawned with the
+    """A workflow in ``.igni/workflows/`` is spawned with the
     same ``cwd=project_dir`` as a team-layer workflow, and the
     ``path`` field on the discovery envelope is a project-relative
     path that the runner resolves to an absolute path before
@@ -389,7 +390,7 @@ async def test_runner_spawns_user_layer_workflow_with_cwd_relative_path(
     the user-layer path passes through the same spawn pipeline
     as the team-layer path.
     """
-    user_dir = tmp_path / ".ember" / "workflows"
+    user_dir = tmp_path / CONFIG_DIR / "workflows"
     user_dir.mkdir(parents=True)
     (user_dir / "personal.mjs").write_text("export const meta = { name: 'personal' }\n")
 
@@ -431,10 +432,10 @@ async def test_runner_spawns_user_layer_workflow_with_cwd_relative_path(
         assert captured["cwd"] == str(tmp_path)
         # The path passed to the subprocess is the absolute path to
         # the workflow file (under the project root), not just the
-        # ``.ember/workflows/personal.mjs`` relative string.
+        # ``.igni/workflows/personal.mjs`` relative string.
         path_arg = [a for a in captured["args"] if "personal" in str(a)][0]
         assert Path(path_arg).is_absolute()
-        assert str(path_arg).endswith(".ember/workflows/personal.mjs")
+        assert str(path_arg).endswith(f"{CONFIG_DIR}/workflows/personal.mjs")
 
 
 async def test_runner_cancel_sends_cancel_message_and_sends_sigterm(tmp_path: Path) -> None:
@@ -587,7 +588,7 @@ async def test_runner_passes_args_to_subprocess_as_json_string(
     it back. This is the wire contract for the user-layer
     workflow's args object.
     """
-    user_dir = tmp_path / ".ember" / "workflows"
+    user_dir = tmp_path / CONFIG_DIR / "workflows"
     user_dir.mkdir(parents=True)
     (user_dir / "personal.mjs").write_text("export const meta = { name: 'personal' }\n")
 

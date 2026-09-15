@@ -13,5 +13,20 @@
     "isolatedModules": true,
     "noEmit": true
   },
-  "include": ["src"]
+  /*
+   * ``e2e`` is in here because it was not, and nothing noticed. F128.
+   * Playwright transpiles each spec without type-checking it, so for as
+   * long as this said ``["src"]`` the 48 e2e tests were the only
+   * TypeScript in the repository that no compiler ever read — and three
+   * of them do not run by default, so a type error in one of those was
+   * invisible twice over.
+   *
+   * ``types`` is deliberately left unset: that pulls in every
+   * ``@types/*`` package, which is how the specs get ``node:child_process``
+   * without a second project. It also means app code can reach for
+   * ``process`` — a real cost, and the reason the portal splits its
+   * projects instead. Not worth the restructuring here while this
+   * client's config is one flat project.
+   */
+  "include": ["src", "e2e"]
 }

@@ -112,6 +112,23 @@ class Neo4jRowCodec:
             "token_count": int(item.token_count) if item.token_count is not None else None,
             "line_from": int(item.line_from) if item.line_from is not None else None,
             "line_to": int(item.line_to) if item.line_to is not None else None,
+            "fan_in": int(getattr(item, "fan_in", 0) or 0),
+            "fan_out": int(getattr(item, "fan_out", 0) or 0),
+            "test_refs": int(getattr(item, "test_refs", 0) or 0),
+            "importer_count": int(getattr(item, "importer_count", 0) or 0),
+            "test_importer_count": int(getattr(item, "test_importer_count", 0) or 0),
+            "method_count": int(getattr(item, "method_count", 0) or 0),
+            "subproject": getattr(item, "subproject", None),
+            "sink_hits": int(getattr(item, "sink_hits", 0) or 0),
+            "is_callable": bool(getattr(item, "is_callable", False)),
+            "is_type": bool(getattr(item, "is_type", False)),
+            "sink_kinds": [str(x) for x in (getattr(item, "sink_kinds", None) or [])],
+            "sink_lines": [int(x) for x in (getattr(item, "sink_lines", None) or [])],
+            "member_count": int(getattr(item, "member_count", 0) or 0),
+            "error_handlers": int(getattr(item, "error_handlers", 0) or 0),
+            "empty_handlers": int(getattr(item, "empty_handlers", 0) or 0),
+            "broad_handlers": int(getattr(item, "broad_handlers", 0) or 0),
+            "swallow_lines": [int(n) for n in (getattr(item, "swallow_lines", None) or [])],
             "needs_refactoring": bool(item.needs_refactoring)
             if item.needs_refactoring is not None
             else False,
@@ -133,6 +150,9 @@ class Neo4jRowCodec:
         text: str,
         embedding: list[float],
         item: CodeIndexItem,
+        chunk_kind: str = "summary",
+        line_from: int | None = None,
+        line_to: int | None = None,
     ) -> dict[str, Any]:
         """Build a chunk node's property dict.
 
@@ -147,6 +167,13 @@ class Neo4jRowCodec:
             "chunk_index": chunk_index,
             "text": text,
             "embedding": embedding,
+            # "summary" (prose about the item) or "code" (its source). Filter on
+            # it: a literal-string question wants code chunks, a described-idea
+            # question wants summary chunks.
+            "chunk_kind": chunk_kind,
+            # Absolute file lines, code chunks only.
+            "line_from": line_from,
+            "line_to": line_to,
             "name": item.name,
             "type": item.type.value if hasattr(item.type, "value") else item.type,
             "kind": item.kind,

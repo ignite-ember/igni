@@ -1,11 +1,13 @@
 """Tests for utils/context.py — hierarchical rules loading."""
 
+import json
 import logging
 from pathlib import Path
 
 import pytest
 
 from ember_code.core.config.managed_policy import ManagedPolicySource
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.utils import context as context_module
 from ember_code.core.utils.context import (
     _claude_project_memory_dir,
@@ -294,7 +296,7 @@ class TestLoadUserRules:
 
 
 class TestProjectRulesDirs:
-    """``<project>/.ember/rules/*.md`` and ``<project>/.claude/rules/*.md``
+    """``<project>/.igni/rules/*.md`` and ``<project>/.claude/rules/*.md``
     — committed shared rules, symmetric to the user-level pattern."""
 
     def _load(self, project_dir, working_dir=None, read_claude_md=True):
@@ -303,8 +305,8 @@ class TestProjectRulesDirs:
         )
 
     def test_ember_rules_dir_loaded(self, tmp_path):
-        (tmp_path / ".ember" / "rules").mkdir(parents=True)
-        (tmp_path / ".ember" / "rules" / "style.md").write_text("PROJECT-EMBER-STYLE")
+        (tmp_path / CONFIG_DIR / "rules").mkdir(parents=True)
+        (tmp_path / CONFIG_DIR / "rules" / "style.md").write_text("PROJECT-EMBER-STYLE")
         assert "PROJECT-EMBER-STYLE" in self._load(tmp_path)
 
     def test_claude_rules_dir_loaded(self, tmp_path):
@@ -313,8 +315,8 @@ class TestProjectRulesDirs:
         assert "PROJECT-CLAUDE-API" in self._load(tmp_path)
 
     def test_claude_rules_dir_skipped_when_cross_tool_disabled(self, tmp_path):
-        (tmp_path / ".ember" / "rules").mkdir(parents=True)
-        (tmp_path / ".ember" / "rules" / "ok.md").write_text("EMBER-OK")
+        (tmp_path / CONFIG_DIR / "rules").mkdir(parents=True)
+        (tmp_path / CONFIG_DIR / "rules" / "ok.md").write_text("EMBER-OK")
         (tmp_path / ".claude" / "rules").mkdir(parents=True)
         (tmp_path / ".claude" / "rules" / "skip.md").write_text("CLAUDE-SHOULD-SKIP")
         result = self._load(tmp_path, read_claude_md=False)
@@ -322,8 +324,8 @@ class TestProjectRulesDirs:
         assert "CLAUDE-SHOULD-SKIP" not in result
 
     def test_paths_frontmatter_filters_scoped_rules(self, tmp_path):
-        (tmp_path / ".ember" / "rules").mkdir(parents=True)
-        (tmp_path / ".ember" / "rules" / "tauri.md").write_text(
+        (tmp_path / CONFIG_DIR / "rules").mkdir(parents=True)
+        (tmp_path / CONFIG_DIR / "rules" / "tauri.md").write_text(
             "---\npaths:\n  - 'clients/tauri/**'\n---\nTAURI-ONLY"
         )
         # working_dir doesn't match → file filtered out
@@ -336,7 +338,7 @@ class TestProjectRulesDirs:
         assert "TAURI-ONLY" in with_match
 
     def test_at_imports_resolve_within_rules_dir(self, tmp_path):
-        rules = tmp_path / ".ember" / "rules"
+        rules = tmp_path / CONFIG_DIR / "rules"
         rules.mkdir(parents=True)
         (rules / "main.md").write_text("@./shared.md")
         (rules / "shared.md").write_text("SHARED-CONTENT")
@@ -345,9 +347,9 @@ class TestProjectRulesDirs:
         assert "@./shared.md" not in result
 
     def test_at_import_escaping_rules_dir_left_literal(self, tmp_path):
-        rules = tmp_path / ".ember" / "rules"
+        rules = tmp_path / CONFIG_DIR / "rules"
         rules.mkdir(parents=True)
-        # Try to reach project root from inside .ember/rules — should
+        # Try to reach project root from inside .igni/rules — should
         # be refused (scope = rules dir, matches user-level behavior).
         (tmp_path / "outside.md").write_text("OUTSIDE")
         (rules / "main.md").write_text("@../../outside.md")
@@ -359,8 +361,8 @@ class TestProjectRulesDirs:
 
     def test_load_project_context_includes_shared_rules_section(self, tmp_path):
         (tmp_path / "ember.md").write_text("ROOT")
-        (tmp_path / ".ember" / "rules").mkdir(parents=True)
-        (tmp_path / ".ember" / "rules" / "shared.md").write_text("SHARED")
+        (tmp_path / CONFIG_DIR / "rules").mkdir(parents=True)
+        (tmp_path / CONFIG_DIR / "rules" / "shared.md").write_text("SHARED")
         result = load_project_context(tmp_path)
         # Ordering: root rules before shared rules.
         assert result.index("ROOT") < result.index("SHARED")
@@ -592,20 +594,83 @@ class TestPlatformManagedRulesDir:
         monkeypatch.setattr("sys.platform", "darwin")
         p = _REAL_MANAGED_RULES_DIR()
         assert p is not None
-        assert str(p) == "/Library/Application Support/Ember"
+        assert str(p) == "/Library/Application Support/igni"
 
     def test_linux_dir(self, monkeypatch):
         monkeypatch.setattr("sys.platform", "linux")
         p = _REAL_MANAGED_RULES_DIR()
         assert p is not None
-        assert str(p) == "/etc/ember"
+        assert str(p) == "/etc/igni"
 
     def test_win32_uses_programdata(self, monkeypatch):
         monkeypatch.setenv("PROGRAMDATA", r"C:\TestProgramData")
         monkeypatch.setattr("sys.platform", "win32")
         p = _REAL_MANAGED_RULES_DIR()
         assert p is not None
-        assert "Ember" in str(p)
+        assert "igni" in str(p)
+        # Honours the environment rather than hardcoding C:\ProgramData.
+        assert str(p).startswith(r"C:\TestProgramData")
+
+    @pytest.mark.parametrize("platform", ["darwin", "linux", "win32"])
+    def test_every_managed_tier_reads_the_same_directory(self, platform, monkeypatch):
+        """The regression this class exists for.
+
+        Four modules used to answer "where is managed policy?"
+        separately, and MCP disagreed with the other three on *every*
+        platform — ``EmberCode`` vs ``Ember`` on macOS, ``/etc/ignite-ember``
+        vs ``/etc/ember`` on Linux, and no Windows support at all. So an
+        admin had to populate two directory trees, MCP policy could not
+        be deployed on Windows, and nothing said so.
+
+        Managed policy is the tier a user is not permitted to override,
+        which makes "it was silently not read" the worst failure it has.
+        """
+        monkeypatch.setattr("sys.platform", platform)
+        monkeypatch.setenv("PROGRAMDATA", r"C:\TestProgramData")
+
+        from ember_code.core.config.managed_policy import ManagedPolicySource
+        from ember_code.core.paths import managed_policy_dir
+        from ember_code.core.plugins.loader import _platform_managed_plugins_root
+
+        shared = managed_policy_dir()
+        assert shared is not None
+
+        # The rules directory, the plugin root, and the settings file's
+        # parent all have to be the one directory.
+        assert _REAL_MANAGED_RULES_DIR() == shared
+        assert _platform_managed_plugins_root() == shared
+        settings_path = ManagedPolicySource.platform_path()
+        assert settings_path is not None
+        assert settings_path.parent == shared
+
+    def test_mcp_reads_the_shared_directory(self, tmp_path, monkeypatch):
+        """MCP is the one that drifted, so it gets a behavioural test.
+
+        Asserting that the module *imports* ``managed_policy_dir`` proves
+        nothing — the import survives while the body goes back to a
+        hardcoded path, and a test written that way passes against the
+        exact bug it is named after. So: redirect the shared function and
+        check the policy is actually read from where it now points.
+        """
+        from ember_code.core.mcp import config as mcp_config
+
+        monkeypatch.setattr(mcp_config, "managed_policy_dir", lambda: tmp_path)
+        (tmp_path / "managed-settings.json").write_text(
+            json.dumps({"mcp": {"allowed": ["only-this-one"]}})
+        )
+
+        policy = mcp_config.MCPPolicy.from_managed_settings()
+
+        assert policy.allowed == ["only-this-one"]
+
+    def test_mcp_finds_nothing_when_the_shared_directory_is_empty(self, tmp_path, monkeypatch):
+        """The other half: an empty managed directory must mean "no
+        policy", not a policy that blocks everything."""
+        from ember_code.core.mcp import config as mcp_config
+
+        monkeypatch.setattr(mcp_config, "managed_policy_dir", lambda: tmp_path)
+
+        assert mcp_config.MCPPolicy.from_managed_settings().allowed in (None, [], ())
 
     def test_unknown_platform_returns_none(self, monkeypatch):
         monkeypatch.setattr("sys.platform", "freebsd")
@@ -796,7 +861,7 @@ class TestProjectMemorySlug:
         claude = _claude_project_memory_dir(Path("/Users/x/proj"))
         assert ember.parts[-3:] == ("projects", "-Users-x-proj", "memory")
         assert claude.parts[-3:] == ("projects", "-Users-x-proj", "memory")
-        assert ".ember" in ember.parts
+        assert CONFIG_DIR in ember.parts
         assert ".claude" in claude.parts
 
 
@@ -934,7 +999,7 @@ class TestEnsureMemoryDir:
         monkeypatch.setattr(Path, "home", lambda: home)
         target = ensure_memory_dir(tmp_path / "project")
         assert target.is_dir()
-        assert ".ember/projects/" in str(target)
+        assert f"{CONFIG_DIR}/projects/" in str(target)
 
     def test_idempotent_when_existing(self, tmp_path, monkeypatch):
         home = tmp_path / "home"
@@ -973,7 +1038,7 @@ class TestMemoryWritebackInstructions:
     def test_includes_memory_dir_path(self, tmp_path):
         block = memory_writeback_instructions(tmp_path)
         # Path appears verbatim so the agent knows WHERE to save.
-        assert ".ember/projects/" in block
+        assert f"{CONFIG_DIR}/projects/" in block
         assert "memory" in block
 
     def test_names_all_four_types(self, tmp_path):

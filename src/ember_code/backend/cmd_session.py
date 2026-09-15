@@ -34,6 +34,7 @@ table keeps importing them by name.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from typing import TYPE_CHECKING
@@ -96,11 +97,42 @@ class SessionCommand:
         return CommandResult.for_action(CommandAction.SESSIONS)
 
     async def rename(self, args: str) -> CommandResult:
-        """Set the display name on the current session row."""
+        """Set the display name on the current session row.
+
+        The confirmation used to be unconditional: ``rename`` swallowed
+        its :class:`PersistResult` and this method reported success
+        whatever happened. Two ways that lied.
+
+        A DB error logs at DEBUG inside the namer, so a failed write
+        looked identical to a successful one.
+
+        And a session has no row until its first run. Agno writes it
+        when the first message completes, so a freshly-opened app —
+        every page load, and every "+ New chat" — is renaming a row
+        that does not exist. ``rename_session`` updates nothing, no
+        exception is raised, and the user is told "Session renamed to:
+        X" while the sidebar never shows X. That is the state this was
+        found in.
+
+        So: write, then read back. A name that is not there afterwards
+        was not set, and saying so beats a confirmation the sidebar
+        contradicts.
+        """
         name = args.strip()
         if not name:
             return CommandResult.error("Usage: /rename <new session name>")
-        await self._session.persistence.rename(name)
+        result = await self._session.persistence.rename(name)
+        if not result.ok:
+            return CommandResult.error(f"Rename failed: {result.error}")
+        if not await self._session.persistence.get_name():
+            return CommandResult.error(
+                "Nothing to rename yet — this session is not saved until its "
+                "first message. Send one, then /rename."
+            )
+        # ``session_named`` is documented as "resumed *or has been
+        # renamed*", and only ``/fork`` and ``rebind`` ever set it. A
+        # name the user chose must outrank an auto-generated one.
+        self._session.session_named = True
         return CommandResult.info(f"Session renamed to: {name}")
 
     async def fork(self, args: str) -> CommandResult:
@@ -125,6 +157,20 @@ class SessionCommand:
 
     # ── Private helpers ──────────────────────────────────────────
 
+    async def _revalidate_group(self) -> None:
+        """Ask the server whether the group changed, if anyone wired it.
+
+        ``/clear`` starts a new conversation without going through the
+        session-start RPC, so without this it would keep whatever pack
+        the previous one had. Inside the fire-and-forget task, so the
+        command returns immediately either way.
+        """
+        hook = getattr(self._session, "on_new_dialogue", None)
+        if hook is None:
+            return
+        with contextlib.suppress(Exception):
+            await hook()
+
     async def _sync_then_refresh(self) -> None:
         """Post-``/clear`` fire-and-forget side effect.
 
@@ -133,6 +179,9 @@ class SessionCommand:
         ``session`` collapses to ``self._session`` — mirrors
         :meth:`CodeIndexCommand._refresh_availability_safely`.
         """
+        # Group first: an agent the admin just changed should be the one
+        # the rebuilt system prompt describes.
+        await self._revalidate_group()
         await self._session.code_index_sync.sync_now()
         refresh = self._session.refresh_codeindex_availability()
         if not refresh.ok:

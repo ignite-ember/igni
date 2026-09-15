@@ -184,8 +184,44 @@ class TestResolve:
         assert len(captured) == 2
 
     @pytest.mark.asyncio
-    async def test_403_returns_none(self, tmp_path, monkeypatch):
-        # Access denied still surfaces as None — server already gated us.
+    async def test_403_surfaces_the_reason_and_message(self, tmp_path, monkeypatch):
+        """A denial is an answer, not an outage.
+
+        This used to return ``None``, which the sync manager reported as
+        "codeindex unavailable" — so the commonest case, a user who has
+        simply never linked a GitHub identity, was told to check their
+        connection instead of being handed the two-click fix.
+        """
+        _git_init_with_remote(tmp_path)
+        transport = _mock_transport(
+            status=403,
+            body={
+                "detail": {
+                    "reason": "no_linked_logins",
+                    "message": "Connect one at https://portal/dashboard, then try again.",
+                }
+            },
+        )
+        _patched_async_client(monkeypatch, transport)
+
+        resolver = RepositoryResolver(
+            project_dir=tmp_path,
+            server_url="http://srv",
+            credentials=_stub_credentials(),
+        )
+        resolved = await resolver.resolve()
+
+        assert resolved is not None
+        assert resolved.access_denied
+        assert resolved.denial_reason == "no_linked_logins"
+        assert "/dashboard" in resolved.denial_message
+        # Not cached: the user fixes this in a browser without restarting
+        # igni, and a cached verdict would outlive the problem.
+        assert resolver.cached is None
+
+    @pytest.mark.asyncio
+    async def test_403_with_a_plain_string_detail_still_reports_denial(self, tmp_path, monkeypatch):
+        """An older server, or a proxy that rewrote the body."""
         _git_init_with_remote(tmp_path)
         transport = _mock_transport(status=403, body={"detail": "no access"})
         _patched_async_client(monkeypatch, transport)
@@ -195,8 +231,27 @@ class TestResolve:
             server_url="http://srv",
             credentials=_stub_credentials(),
         )
-        assert await resolver.resolve() is None
-        assert resolver.cached is None  # nothing cached on miss
+        resolved = await resolver.resolve()
+
+        assert resolved is not None and resolved.access_denied
+        assert resolved.denial_reason is None
+        assert resolved.denial_message == "no access"
+
+    @pytest.mark.asyncio
+    async def test_403_with_an_unreadable_body_still_reports_denial(self, tmp_path, monkeypatch):
+        _git_init_with_remote(tmp_path)
+        transport = _mock_transport(status=403, body=b"<html>Forbidden</html>")
+        _patched_async_client(monkeypatch, transport)
+
+        resolver = RepositoryResolver(
+            project_dir=tmp_path,
+            server_url="http://srv",
+            credentials=_stub_credentials(),
+        )
+        resolved = await resolver.resolve()
+
+        assert resolved is not None and resolved.access_denied
+        assert resolved.denial_message  # a sentence, not an empty string
 
     @pytest.mark.asyncio
     async def test_5xx_returns_none(self, tmp_path, monkeypatch):

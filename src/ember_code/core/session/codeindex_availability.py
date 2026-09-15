@@ -81,6 +81,14 @@ class CodeIndexAvailabilityRefresher:
 
     def _locked_refresh(self) -> RefreshAvailabilityResult:
         """Body of :meth:`refresh` without the exception envelope."""
+        if not self._settings.code_index.enabled:
+            # Otherwise this is the way the switch comes undone: the
+            # session starts with the flag off, a later refresh finds an
+            # indexed commit in the manifest, and CodeIndex reappears —
+            # tool, prompt variant and all — for somebody an admin
+            # turned it off for.
+            return RefreshAvailabilityResult(ok=True, changed=False)
+
         head = self._code_index_sync.current_sha()
         new_avail = bool(head and self._code_index.has_commit(head))
         if new_avail == self._get_availability():

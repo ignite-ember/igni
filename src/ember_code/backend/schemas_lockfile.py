@@ -50,7 +50,7 @@ from pydantic import BaseModel, Field
 
 class LockfilePayload(BaseModel):
     """On-disk lockfile contents — the JSON payload stored at
-    ``<project>/.ember/backend.lock``.
+    ``<project>/.igni/backend.lock``.
 
     Field order and names are fixed by the on-disk wire format —
     out-of-tree readers (VSCode extension, JB plugin, Tauri shell,
@@ -187,7 +187,7 @@ class WriteLockfileResult(BaseModel):
 
     Replaces the previous "raise ``OSError`` and hope the caller
     remembered a ``try/except``" contract. Expected write failures
-    (permissions, missing ``.ember`` dir the caller can't create,
+    (permissions, missing ``.igni`` dir the caller can't create,
     read-only filesystem) surface as ``ok=False`` with a
     human-readable :attr:`reason`. Unexpected exceptions still
     propagate — the envelope covers *expected* failures, not

@@ -24,21 +24,19 @@ Result-shape ``NormalizeResult`` is used internally; the legacy
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from functools import cached_property
 from pathlib import Path
 from typing import Any, ClassVar
 
 from agno.tools import Toolkit
 from agno.tools.file import FileTools
-from agno.tools.python import PythonTools
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ember_code.core.tools.codeindex import CodeIndexTools
 from ember_code.core.tools.edit import EmberEditTools, FileEditNotifier
 from ember_code.core.tools.notebook import NotebookTools
 from ember_code.core.tools.schedule import ScheduleTools
-from ember_code.core.tools.search import GlobTools, GrepTools
 from ember_code.core.tools.shell import EmberShellTools
 from ember_code.core.tools.visualize import BroadcastFn, VisualizeTools
 from ember_code.core.tools.web import WebTools
@@ -70,12 +68,18 @@ class ToolBuildContext(BaseModel):
     base_dir: Path
     broadcast: BroadcastFn | None = None
     cloud_token: str | None = None
-    cloud_server_url: str = "https://api.ignite-ember.sh"
+    # DEC-14: no vendor default. Empty means "no server configured",
+    # which a self-hosted first run legitimately is.
+    cloud_server_url: str = ""
     # Shared notifier for the file-edit push channel. ``None`` lets
     # ``EmberEditTools`` fall back to
     # :data:`ember_code.core.tools.edit.default_file_edit_notifier`,
     # the module-level default the backend also wires to by default.
     file_edit_notifier: FileEditNotifier | None = None
+    # Resolves the session's ``CodeIndex`` on first query. A callable, not the
+    # index, because the session swaps in a Neo4j-backed one after the team is
+    # built — see ``CodeIndexTools.index_provider``.
+    code_index_provider: Callable[[], Any] | None = None
 
 
 class NormalizeResult(BaseModel):
@@ -208,31 +212,6 @@ class ToolSpec(BaseModel):
 # subclass overrides, not in a flag-heavy build path.
 
 
-class ReadFileSpec(ToolSpec):
-    """Read-only ``FileTools`` — read/list ops, no writes.
-
-    ``FileTools`` takes a raw ``Path`` for ``base_dir`` (not the
-    stringified form the shell-family toolkits use).
-    """
-
-    name: str = "Read"
-    agno_function_names: tuple[str, ...] = ("read_file", "read_file_chunk", "list_files")
-    confirm_function_names: tuple[str, ...] = ("read_file", "list_files")
-    toolkit_cls: type[Toolkit] = FileTools
-    static_kwargs: dict[str, Any] = Field(
-        default_factory=lambda: dict(
-            enable_read_file=True,
-            enable_save_file=False,
-            enable_list_files=True,
-            enable_search_files=False,
-            enable_read_file_chunk=True,
-            enable_replace_file_chunk=False,
-            enable_search_content=False,
-        )
-    )
-    base_dir_as_str: bool = False
-
-
 class WriteFileSpec(ToolSpec):
     """Write-only ``FileTools`` — the ``save_file`` half of the read
     spec's toolkit."""
@@ -293,42 +272,6 @@ class BashSpec(ToolSpec):
     toolkit_cls: type[Toolkit] = EmberShellTools
 
 
-class LSSpec(ToolSpec):
-    """``LS`` uses the same shell toolkit as :class:`BashSpec` but with
-    no confirmation gating — listing is read-only. A dedicated subclass
-    (rather than sharing BashSpec's confirm list) prevents the shell
-    HITL from firing on directory listings.
-    """
-
-    name: str = "LS"
-    # No ``agno_function_names`` — ``LS`` doesn't add new function
-    # names to the LLM's function-to-registry mapping; the ephemeral
-    # path recognises ``LS`` as a registry name directly.
-    agno_function_names: tuple[str, ...] = ()
-    confirm_function_names: tuple[str, ...] = ()
-    toolkit_cls: type[Toolkit] = EmberShellTools
-
-    def build(self, context: ToolBuildContext, confirm: bool) -> Toolkit:
-        # Force ``confirm=False`` — LS must never gate. Explicit override
-        # so a future bug (e.g. someone flipping the confirm default)
-        # can't silently start prompting on LS calls.
-        return super().build(context, confirm=False)
-
-
-class GrepSpec(ToolSpec):
-    name: str = "Grep"
-    agno_function_names: tuple[str, ...] = ("grep", "grep_files", "grep_count")
-    confirm_function_names: tuple[str, ...] = ("grep", "grep_files", "grep_count")
-    toolkit_cls: type[Toolkit] = GrepTools
-
-
-class GlobSpec(ToolSpec):
-    name: str = "Glob"
-    agno_function_names: tuple[str, ...] = ("glob_files",)
-    confirm_function_names: tuple[str, ...] = ("glob_files",)
-    toolkit_cls: type[Toolkit] = GlobTools
-
-
 class WebSearchSpec(ToolSpec):
     """Web search via the optional ``duckduckgo-search`` extra.
 
@@ -341,11 +284,27 @@ class WebSearchSpec(ToolSpec):
     ``ddgs.text(backend="duckduckgo")`` path (which raises
     ``DDGSException("No results found.")`` in ddgs 9.x regardless of
     query). ``search_news`` is unaffected — it was already working.
+
+    **The gate named functions that do not exist.**
+    ``confirm_function_names`` was ``("duckduckgo_search",
+    "duckduckgo_news")``; ``DuckDuckGoTools`` registers ``web_search``
+    and ``search_news``. agno matches the list against its own
+    registry, found neither, and logged "Requires confirmation
+    tool(s) not present in the toolkit" — so web search ran with no
+    approval prompt while this file asserted it was gated. For a
+    product whose premise is that nothing leaves the customer's
+    network, an ungated outbound search is not a small thing.
+
+    Same shape as ``/config``'s ``storage.backend``: a name that had
+    been renamed upstream, still referenced, failing silently. There
+    is a rule for it now —
+    ``tests/test_every_tool_function_is_reachable.py`` asserts every
+    name in ``confirm_function_names`` exists in the built toolkit.
     """
 
     name: str = "WebSearch"
     agno_function_names: tuple[str, ...] = ("web_search", "search_news")
-    confirm_function_names: tuple[str, ...] = ("duckduckgo_search", "duckduckgo_news")
+    confirm_function_names: tuple[str, ...] = ("web_search", "search_news")
     # ``DuckDuckGoTools`` doesn't accept a base_dir.
     base_dir_kwarg: str | None = None
     # ``toolkit_cls`` is populated at import time; ``None`` sentinel
@@ -356,7 +315,7 @@ class WebSearchSpec(ToolSpec):
     def build(self, context: ToolBuildContext, confirm: bool) -> Toolkit:
         if DuckDuckGoTools is None:
             raise ImportError(
-                "Web search requires duckduckgo-search. Install: pip install ember-code[web]"
+                "Web search requires duckduckgo-search. Install: pip install ignite-ember[web]"
             )
         kwargs: dict[str, Any] = {"backend": "auto"}
         if confirm:
@@ -371,14 +330,11 @@ class WebFetchSpec(ToolSpec):
     toolkit_cls: type[Toolkit] = WebTools
     base_dir_kwarg: str | None = None
 
-
-class PythonSpec(ToolSpec):
-    name: str = "Python"
-    # No LLM-function aliases for Python — the ephemeral path takes the
-    # registry name directly.
-    agno_function_names: tuple[str, ...] = ()
-    confirm_function_names: tuple[str, ...] = ("run_python_code",)
-    toolkit_cls: type[Toolkit] = PythonTools
+    def build(self, context: ToolBuildContext, confirm: bool) -> Toolkit:
+        kwargs = self._build_kwargs(context, confirm)
+        if context.broadcast:
+            kwargs["broadcast"] = context.broadcast
+        return WebTools(**kwargs)
 
 
 class ScheduleSpec(ToolSpec):
@@ -421,14 +377,28 @@ class CodeIndexSpec(ToolSpec):
     # CodeIndex is not exposed to ephemeral agents by function-name
     # aliasing today — it's a registry-level name only.
     agno_function_names: tuple[str, ...] = ()
-    confirm_function_names: tuple[str, ...] = (
-        "codeindex_search",
-        "codeindex_item",
-        "codeindex_references",
-        "codeindex_commits",
-    )
+    # The four search/item/references/commits functions were collapsed into a
+    # single Cypher entry point; these names outlived them. Agno matches
+    # ``requires_confirmation_tools`` against the toolkit's real functions and
+    # warns on a miss, so the gate had been dead — CodeIndex ran unconfirmed
+    # whatever the level said.
+    confirm_function_names: tuple[str, ...] = ("codeindex_cypher",)
     toolkit_cls: type[Toolkit] = CodeIndexTools
     base_dir_kwarg: str | None = "project_dir"
+
+    def _build_kwargs(self, context: ToolBuildContext, confirm: bool) -> dict[str, Any]:
+        """Hand the toolkit the session's index provider.
+
+        Without it the toolkit self-builds a ``CodeIndex`` with no ``runtime=``,
+        so ``client_for`` returns ``None`` and every query answers
+        ``no_backend``. Nothing passed ``index=`` anywhere in the codebase, so
+        that was the behaviour on every path, not just the headless one.
+        """
+        kwargs = super()._build_kwargs(context, confirm)
+        if context.code_index_provider is not None:
+            kwargs["index_provider"] = context.code_index_provider
+        return kwargs
+
     # Not reachable via ephemeral ``tools:`` frontmatter — matches the
     # historical ``VALID_EPHEMERAL_TOOL_NAMES`` which excluded it.
     ephemeral_visible: bool = False
@@ -598,16 +568,11 @@ class ToolSpecCatalog:
         ``_factories`` dict insertion order for stability)."""
         return cls(
             [
-                ReadFileSpec(),
                 WriteFileSpec(),
                 EditSpec(),
                 BashSpec(),
-                GrepSpec(),
-                GlobSpec(),
-                LSSpec(),
                 WebSearchSpec(),
                 WebFetchSpec(),
-                PythonSpec(),
                 ScheduleSpec(),
                 NotebookSpec(),
                 CodeIndexSpec(),

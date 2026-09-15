@@ -3,7 +3,7 @@
 Two facts this file pins down, both of which used to be false:
 
 1. ``knowledge.enabled`` decides whether the Neo4j runtime comes up.
-   It used to be ``EMBER_NEO4J_RUNTIME`` alone — an environment
+   It used to be ``IGNI_NEO4J_RUNTIME`` alone — an environment
    variable that silently overrode the config setting nine other call
    sites honour, and that a Finder-launched ``.app`` cannot be given.
 2. Enabling it does not put a ~500 MB download between the user and a
@@ -30,9 +30,12 @@ from ember_code.backend.subsystem_status import KNOWLEDGE, SubsystemRegistry, Su
 from ember_code.core.config.settings import Settings
 
 
-def _settings(*, enabled: bool) -> Settings:
+def _settings(*, enabled: bool, code_index: bool = False) -> Settings:
     s = Settings()
     s.knowledge.enabled = enabled
+    # Neo4j backs CodeIndex too, so this has to be stated rather than left at
+    # its default: with it on, the sidecar starts even when knowledge is off.
+    s.code_index.enabled = code_index
     return s
 
 
@@ -85,7 +88,9 @@ def _state(orch) -> SubsystemState | None:
     return entry.state if entry else None
 
 
-def _make_orchestrator(tmp_path: Path, *, enabled: bool) -> SessionOrchestrator:
+def _make_orchestrator(
+    tmp_path: Path, *, enabled: bool, code_index: bool = False
+) -> SessionOrchestrator:
     session = MagicMock()
     session.knowledge = None
     session.subsystems = SubsystemRegistry()
@@ -96,7 +101,7 @@ def _make_orchestrator(tmp_path: Path, *, enabled: bool) -> SessionOrchestrator:
     return SessionOrchestrator(
         backend=backend,
         transport=MagicMock(),
-        settings=_settings(enabled=enabled),
+        settings=_settings(enabled=enabled, code_index=code_index),
         project_dir=tmp_path,
         additional_dirs=None,
         rpc_router=MagicMock(),
@@ -156,6 +161,35 @@ async def test_background_attach_does_nothing_when_knowledge_is_disabled(tmp_pat
     assert called is False
     # Off, and the record says who turned it off — "disabled" and
     # "broken" are the two states this panel used to conflate.
+    entry = orch._backend._session.subsystems.get(KNOWLEDGE)
+    assert entry.state is SubsystemState.DISABLED
+    assert "knowledge.enabled" in entry.reason
+
+
+async def test_the_sidecar_still_starts_for_codeindex(tmp_path, monkeypatch):
+    """Knowledge off, CodeIndex on: the panel says disabled, the sidecar runs.
+
+    Gating the sidecar on ``knowledge.enabled`` alone left ``codeindex_cypher``
+    answering ``no_backend`` for a feature the user had switched on. Reporting
+    it as ``PREPARING`` instead would be the opposite error — a knowledge panel
+    that never resolves, for a subsystem the user turned off.
+    """
+    monkeypatch.delenv(ENV_OVERRIDE, raising=False)
+    orch = _make_orchestrator(tmp_path, enabled=False, code_index=True)
+
+    called = False
+
+    async def _attach():
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(orch, "attach_neo4j", _attach)
+
+    task = orch.attach_neo4j_in_background()
+    assert task is not None
+    await task
+    assert called is True
+
     entry = orch._backend._session.subsystems.get(KNOWLEDGE)
     assert entry.state is SubsystemState.DISABLED
     assert "knowledge.enabled" in entry.reason

@@ -14,7 +14,7 @@ project, user tiers). Structured identically to the LSP config:
     }
 
 Precedence (lower → higher, last write wins on collision):
-1. ``~/.ember/monitors.json`` (user)
+1. ``~/.igni/monitors.json`` (user)
 2. ``<project>/.monitors.json`` (project)
 3. Plugin-bundled ``.monitors.json`` (namespaced ``<plugin>:<name>``)
 """
@@ -29,6 +29,8 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from ember_code.core.paths import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +154,7 @@ def load_monitor_config(
     """
     out: dict[str, MonitorConfig] = {}
 
-    user_path = Path.home() / ".ember" / "monitors.json"
+    user_path = Path.home() / CONFIG_DIR / "monitors.json"
     if user_path.is_file() and (data := _read_json(user_path)) is not None:
         out.update(_parse_monitors_dict(data))
 

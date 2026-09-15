@@ -1,6 +1,6 @@
 """On-disk persistence adapter for the code_index manifest.
 
-Stored as JSON at ``~/.ember/projects/<project_id>/code_index/manifest.json``.
+Stored as JSON at ``~/.igni/projects/<project_id>/code_index/manifest.json``.
 Tracks which commits are indexed, when each was last touched (for the
 30-day retention rule), and which branches each one is currently on
 (for the branch-pin retention rule).
@@ -37,6 +37,7 @@ from ember_code.core.code_index.schema.manifest import (
     ManifestWire,
     SystemClock,
 )
+from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ class ManifestStore:
         self,
         *,
         project: str | Path,
-        data_dir: str | Path = "~/.ember",
+        data_dir: str | Path = DEFAULT_DATA_DIR,
         clock: Clock | None = None,
     ):
         self.project = project

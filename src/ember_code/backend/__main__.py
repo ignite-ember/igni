@@ -141,7 +141,7 @@ def main(
     # app spawns (the app builds the argv), and the env var that
     # replaced it still had to be set by someone who already suspected
     # a problem and knew its name — which is nobody, before the fact.
-    # ``--debug`` / ``EMBER_DEBUG_LOG`` now choose the level.
+    # ``--debug`` / ``IGNI_DEBUG_LOG`` now choose the level.
     log_path = configure_logging(debug_flag=debug)
     if log_path is not None:
         logger.info("backend log: %s", log_path)

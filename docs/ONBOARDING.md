@@ -1,6 +1,6 @@
 # First-Run Onboarding
 
-> **Status: Planned — not yet implemented.** This document describes the design for a future release. Currently, first-run setup is handled by `init.py` which copies default agents, skills, and hooks into `.ember/` without an interactive onboarding flow.
+> **Status: Planned — not yet implemented.** This document describes the design for a future release. Currently, first-run setup is handled by `init.py` which copies default agents, skills, and hooks into `.igni/` without an interactive onboarding flow.
 
 When a user starts igni for the first time in a project, it doesn't just drop them into a blank prompt. It runs a guided onboarding flow that sets up agents tailored to their specific project.
 
@@ -12,7 +12,7 @@ First Run Detected
     ▼
 ┌─────────────────────────────────┐
 │  1. Create default agents       │  ← write built-in .md files
-│     in .ember/agents/           │     to the project
+│     in .igni/agents/           │     to the project
 └──────────┬──────────────────────┘
            │
            ▼
@@ -53,10 +53,10 @@ First Run Detected
 
 ## Step 1: Create Default Agents
 
-On first run, igni copies the built-in agent `.md` files into `.ember/agents/`:
+On first run, igni copies the built-in agent `.md` files into `.igni/agents/`:
 
 ```
-.ember/
+.igni/
 └── agents/
     ├── architect.md
     ├── editor.md
@@ -87,7 +87,7 @@ igni introduces itself and explains the agent system:
 ```
  ◆ igni — ignited and ready.
 
-I've sparked 10 agents in .ember/agents/:
+I've sparked 10 agents in .igni/agents/:
 
   architect.md        plans and designs (always first)
   editor.md           creates and modifies files (owns git safety)
@@ -103,7 +103,7 @@ I've sparked 10 agents in .ember/agents/:
 These are Markdown files — open them, read them, change them.
 When you ask me something, I assemble a team on the fly.
 
-Drop new .md files into .ember/agents/ to add your own.
+Drop new .md files into .igni/agents/ to add your own.
 ```
 
 ---
@@ -175,7 +175,7 @@ async def fetch_project_context(project_path: str) -> ProjectContext:
 **Fallback:** If CodeIndex is unavailable or the project isn't indexed yet, igni falls back to local analysis for now:
 - Parse `README.md`, `package.json`, `pyproject.toml`, `Cargo.toml`, etc.
 - Scan directory structure to infer architecture
-- Read `ember.md` / `CLAUDE.md` / `AGENTS.md` if they exist
+- Read `igni.md` / `CLAUDE.md` / `AGENTS.md` if they exist
 - Detect language/framework from file extensions and imports
 
 The CodeIndex fetch is marked as pending and **retried automatically at the start of the next session**. Once CodeIndex data becomes available, igni merges the richer context into the existing agent pool and may suggest agent updates:
@@ -296,7 +296,7 @@ The proposal agent follows these rules:
 ## Step 6: User Reviews & Approves
 
 The user can:
-- **Accept all** — agents are written to `.ember/agents/`
+- **Accept all** — agents are written to `.igni/agents/`
 - **Edit first** — opens proposed agents in their editor for tweaking
 - **Review one by one** — approve/reject/edit each proposal individually
 - **Skip** — onboarding completes with just the default agents
@@ -310,7 +310,7 @@ description: Specializes in FastAPI endpoint development, Pydantic schemas, and 
 tools: Read, Write, Edit, Bash, Grep, Glob
 color: green
 
-# Ember extensions
+# igni extensions
 tags: [api, fastapi, backend, endpoints]
 ---
 
@@ -363,22 +363,27 @@ Use slash commands interactively:
 
 ## Configuration
 
-```yaml
-# .ember/config.yaml
+**There is no `onboarding:` config block, and there never was.** This
+section documented one — `skip`, `auto_create_defaults`,
+`ask_questions`, `codeindex`, `propose_agents`, `max_proposals` — along
+with an `IGNI_SKIP_ONBOARDING` environment variable. None of those
+exist, and because `Settings` is a plain model that drops unknown keys
+in silence, anyone who copied that block got a config file that did
+nothing and no error telling them so.
 
-onboarding:
-  skip: false                    # Skip onboarding entirely
-  auto_create_defaults: true     # Copy default agents on first run
-  ask_questions: true            # Interactive Q&A step
-  codeindex: true                # Fetch context from CodeIndex (uses igni login)
-  propose_agents: true           # Generate project-specific agent proposals
-  max_proposals: 5               # Max number of agents to propose
-```
+What actually decides what initialisation does is `InitConfig` in
+`src/ember_code/core/init/schemas.py`, and it is **not user-facing**:
+its options are set programmatically from the group policy your
+organisation ships.
 
-Environment variables:
-```
-EMBER_SKIP_ONBOARDING=true     # Skip onboarding (CI/CD)
-```
+| Option | Set when |
+|---|---|
+| `skip_bundled_agents` | your group ships agents of its own, so the group becomes the sync source for `.igni/agents` and two writers do not fight over the same checksums |
+| `skip_builtin_hook_registration` | your group declares the hooks; the scripts are still written, but the group's settings file registers them, so registering here too would fire each hook twice |
+| `group_ships_hook_scripts` | your group ships the scripts as well, so igni writes none locally |
+
+If you want to change what a first run does, that is a group-policy
+question on the server, not a key in your config file.
 
 ---
 
