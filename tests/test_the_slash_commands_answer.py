@@ -155,7 +155,13 @@ class TestTheKnowledgeErrorIsAssigned:
         return (_ROOT / "src/ember_code/core/session/core.py").read_text()
 
     def test_something_assigns_it(self):
-        assignments = re.findall(r"^\s*self\._knowledge_error\s*=", self._core(), re.M)
+        # ``(?::[^=]+)?`` so an annotated assignment counts. The attribute
+        # carries ``: str | None`` because it is assigned a message in the
+        # constructor and cleared to ``None`` when a runtime attaches, and
+        # without the annotation mypy narrows it to ``str`` and calls the clear
+        # an error. A guard that stops matching the moment a type is added
+        # fails for a reason that has nothing to do with what it checks.
+        assignments = re.findall(r"^\s*self\._knowledge_error\s*(?::[^=]+)?=", self._core(), re.M)
 
         # Three: the initial None, the deferred explanation, and the
         # clear when a runtime finally attaches.

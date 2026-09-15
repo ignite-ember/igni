@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+import subprocess
 
 import pytest
 
@@ -158,6 +159,28 @@ class TestTheRulesMeasureSomething:
         assert not _EMBER.search(_LEGITIMATE.sub("", "from ember_code.core import x"))
 
 
+def _is_ignored(path: str) -> bool:
+    """Whether git deliberately does not track this path.
+
+    ``git check-ignore`` answers for patterns as well as files that exist, so
+    it works on exactly the case this is for: a path that is absent *because*
+    the repository ignores it.
+    """
+    # Both spellings, one call each: ``dist/`` is a directory-only pattern and
+    # git will not match one against a bare path that is not on disk — which is
+    # exactly this case, since the path is absent *because* it is ignored. And
+    # ``--quiet`` refuses more than one pathname, so this cannot be one call.
+    for candidate in (path, f"{path}/"):
+        result = subprocess.run(  # noqa: S603
+            ["git", "check-ignore", "-q", candidate],
+            cwd=_ROOT,
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            return True
+    return False
+
+
 @pytest.mark.parametrize("doc", _DOCS, ids=lambda d: d.name)
 def test_every_repository_path_it_quotes_exists(doc):
     if doc.name in _HISTORICAL:
@@ -165,7 +188,12 @@ def test_every_repository_path_it_quotes_exists(doc):
 
     quoted = _PATH.findall(doc.read_text())
     concrete = [p for p in quoted if "*" not in p and "{" not in p and "..." not in p]
-    missing = sorted({p for p in concrete if not (_ROOT / p).exists()})
+    absent = sorted({p for p in concrete if not (_ROOT / p).exists()})
+    # A build output is absent from a clean checkout by design, and a document is
+    # entitled to name one — ``clients/web/dist`` is what all four surfaces load.
+    # Without this the test passes only on a machine that has already built, and
+    # fails in CI, which is the opposite of the order you want to find out.
+    missing = [p for p in absent if not _is_ignored(p)]
 
     assert not missing, (
         f"{doc.name} quotes paths that do not exist: {missing}. Either the document "

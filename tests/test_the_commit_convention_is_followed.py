@@ -53,6 +53,28 @@ def _documented_trailer() -> str:
     return found[0].strip("`").strip()
 
 
+def _is_shallow() -> bool:
+    """Whether this checkout has real history behind HEAD.
+
+    ``actions/checkout`` fetches depth 1 by default, so in CI the merge commit
+    arrives with no parents. Every conclusion this file draws is then wrong in
+    the same direction: ``--no-merges`` cannot recognise a merge whose parents
+    are absent, so the window is the merge commit itself, and a rule about
+    trailers ends up reading "Merge 87490b3 into 708e98a".
+
+    Skipped rather than worked around. The alternative is ``fetch-depth: 0`` on
+    the job, which is a CI decision, not something a test should paper over by
+    quietly checking nothing.
+    """
+    result = subprocess.run(  # noqa: S603
+        ["git", "rev-parse", "--is-shallow-repository"],
+        cwd=_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() == "true"
+
+
 def _merge_parents() -> list[str]:
     """Both parents of the most recent merge reachable from HEAD.
 
@@ -89,6 +111,11 @@ def _merge_parents() -> list[str]:
 
 def _history() -> list[tuple[str, str]]:
     """``(sha, body)`` for recent non-merge commits, newest first."""
+    if _is_shallow():
+        pytest.skip(
+            "shallow checkout: HEAD has no parents here, so there is no history "
+            "to hold to the rule. Set fetch-depth: 0 on this job to enforce it in CI."
+        )
     rev = ["HEAD"] + [f"^{p}" for p in _merge_parents()]
     result = subprocess.run(  # noqa: S603
         ["git", "log", f"-{_DEPTH}", "--no-merges", "--format=%H%x00%B%x01", *rev],

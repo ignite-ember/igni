@@ -101,6 +101,12 @@ async def test_orchestrator_attach_neo4j_no_op_when_knowledge_disabled(tmp_path,
     monkeypatch.delenv("IGNI_NEO4J_RUNTIME", raising=False)
     orch = _make_orchestrator(tmp_path)
     orch._settings.knowledge.enabled = False
+    # Neo4j backs CodeIndex as well, and it defaults on — so "knowledge is off"
+    # alone no longer means "no sidecar". Both have to be off for the attach to
+    # be the no-op this test is about. Gating the sidecar on knowledge alone
+    # left ``codeindex_cypher`` answering ``no_backend`` for a feature the user
+    # had switched on.
+    orch._settings.code_index.enabled = False
     # The constructor doesn't construct the runtime (it's lazy).
     assert orch._neo4j_runtime is None
 
