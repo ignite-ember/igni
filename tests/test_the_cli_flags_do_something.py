@@ -203,28 +203,25 @@ class TestFlagsBecomeSettings:
     def _settings(**kwargs: Any):
         return cli_module.load_settings_from_options(CliOptions(**kwargs))
 
-    def test_read_only_denies_writes_but_leaves_the_shell(self):
-        """Read-only denies the write tools and keeps the shell, deliberately.
+    def test_read_only_denies_writes_and_shell(self):
+        """Read-only is a wall, and the cost is stated rather than hidden.
 
-        This used to assert ``shell_execute == "deny"`` as well, and that was
-        safe to assert only because nothing read the field — its consumer,
-        ``PermissionGuard``, was never constructed. Once the categories became
-        real rules the setting took effect, and denying the shell here means
-        denying reads: igni has no read tool, so a file is read with
-        ``run_shell_command "cat <path>"``. The flag would have stopped meaning
-        "no file modifications" and started meaning "no session".
+        Denying ``shell_execute`` denies reading the working tree too — igni has
+        no read tool, so a file is read with ``run_shell_command "cat <path>"``.
+        That is the accepted trade: leaving the shell open means ``>``,
+        ``sed -i`` and ``git checkout`` all still write, which makes
+        ``--read-only`` an honour system rather than the guarantee it exists to
+        be. A flag reached for precisely when a guarantee is wanted should not
+        quietly be the weaker thing.
 
-        The trade is stated rather than hidden: a shell command can still write
-        (``>``, ``sed -i``), so this is not a sandbox, and SECURITY.md says so.
-        The alternative — a blocklist of write-shaped commands — is the kind of
-        guard that looks stronger than it is.
+        Until the per-category levels were honoured this assertion described a
+        setting nothing read, so it passed while the shell ran freely. It bites
+        now, which is the point.
         """
         settings = self._settings(read_only=True)
 
         assert settings.permissions.file_write == "deny"
-        assert settings.permissions.shell_execute != "deny", (
-            "denying the shell denies reading a file, which is the whole use for this flag"
-        )
+        assert settings.permissions.shell_execute == "deny"
 
     def test_auto_approve_allows_them(self):
         settings = self._settings(auto_approve=True)

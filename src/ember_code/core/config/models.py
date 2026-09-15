@@ -145,15 +145,25 @@ class CliOverrides(BaseModel):
         if opts.read_only:
             perms.mode = PermissionMode.PLAN
             perms.file_write = "deny"
-            # Deliberately NOT shell_execute="deny". igni reads a file through
-            # run_shell_command, so denying the shell leaves an agent that
-            # cannot read anything — the flag would stop meaning "no file
-            # modifications" and start meaning "no session". It was set here
-            # while the category was inert, so nothing surfaced the conflict;
-            # now that categories are honoured it would take effect and break
-            # the flag. The write tools are denied, which is what read-only
-            # promises. A shell command can still write, and SECURITY.md says
-            # so rather than implying a sandbox this does not provide.
+            # The shell is denied too, and this is a deliberate trade rather
+            # than an oversight. Until the per-category levels were honoured
+            # this line did nothing; now it bites, and it bites hard: igni reads
+            # a file through ``run_shell_command``, so denying the shell denies
+            # reading the working tree.
+            #
+            # Kept anyway, because the alternative is a flag that cannot keep
+            # its promise. Leaving the shell open means ``>``, ``sed -i`` and
+            # ``git checkout`` all still write, so ``--read-only`` would be an
+            # honour system rather than a guarantee — and the point of the flag
+            # is to be the thing you reach for when you want the guarantee.
+            #
+            # What survives is analysis that does not go through the shell:
+            # ``codeindex_cypher`` over the graph, the notebook readers, and web
+            # search/fetch. That is a real working mode when the index is
+            # populated, and close to nothing when it is not, which is why the
+            # denial message below names the alternatives instead of leaving the
+            # model to discover them by failing.
+            perms.shell_execute = "deny"
         if opts.strict:
             perms.mode = PermissionMode.DONT_ASK
             perms.file_write = "deny"

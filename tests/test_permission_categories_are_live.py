@@ -106,3 +106,62 @@ def test_every_mapped_category_is_a_real_field(category: str):
     """A mapping keyed on a field that no longer exists would silently stop
     governing its tools — the failure the whole file is about."""
     assert category in PermissionsConfig.model_fields
+
+
+class TestReadOnlyIsAWall:
+    """``--read-only`` denies the shell, and the denial explains itself.
+
+    The wall is the chosen trade: igni reads files through
+    ``run_shell_command``, so denying it costs the agent its view of the working
+    tree. Leaving the shell open would leave ``>``, ``sed -i`` and
+    ``git checkout`` able to write, making the flag an honour system rather than
+    the guarantee people reach for it to get.
+
+    The assertions below would both have passed vacuously before the categories
+    were wired — the setting existed and nothing read it — which is why the
+    behavioural check matters more than the config one.
+    """
+
+    def test_the_shell_is_actually_denied(self):
+        from ember_code.cli.options import CliOptions
+        from ember_code.core.config.models import CliOverrides
+        from ember_code.core.config.settings import load_settings
+
+        payload = CliOverrides.from_options(CliOptions(read_only=True)).to_settings_payload()
+        perms = load_settings(cli_overrides=payload).permissions
+
+        assert _decide(perms, "run_shell_command", {"command": "cat setup.py"}) == "DENY"
+        assert _decide(perms, "edit_file", {"file_path": "a.py"}) == "DENY"
+
+    def test_the_graph_stays_reachable(self):
+        """The mode is only useful if something can still read the codebase.
+
+        ``codeindex_cypher`` is read-only by construction — its own guard
+        rejects every write — so it is the intended way to explore in this mode
+        and must not be swept up by the shell deny.
+        """
+        from ember_code.cli.options import CliOptions
+        from ember_code.core.config.models import CliOverrides
+        from ember_code.core.config.settings import load_settings
+
+        payload = CliOverrides.from_options(CliOptions(read_only=True)).to_settings_payload()
+        perms = load_settings(cli_overrides=payload).permissions
+
+        assert _decide(perms, "codeindex_cypher", {"cypher": "MATCH (n) RETURN n"}) != "DENY"
+
+    def test_a_denied_shell_call_names_the_alternative(self):
+        """Otherwise the agent's first move in a read-only session is a refusal
+        with no stated way forward, and a model given no alternative retries the
+        same call in a new costume."""
+        from ember_code.core.hooks.permission_pipeline import _denial_message
+
+        message = _denial_message("run_shell_command")
+
+        assert "codeindex_cypher" in message
+        assert "rather than retrying" in message
+
+    def test_an_ordinary_denial_stays_terse(self):
+        """Only the case that strands the model gets the extra paragraph."""
+        from ember_code.core.hooks.permission_pipeline import _denial_message
+
+        assert _denial_message("edit_file") == "Blocked: permission policy denied 'edit_file'."

@@ -83,21 +83,14 @@ class TestTheRatchetHolds:
 
     def test_a_group_cannot_undo_read_only_either(self):
         """``--read-only`` is the same shape, and a fix for one flag that
-        misses the other is not a fix.
-
-        Only ``file_write`` is checked now. ``--read-only`` no longer sets
-        ``shell_execute`` at all: igni reads files through the shell, so denying
-        it leaves an agent that cannot read, and the setting was only safe to
-        send while nothing consumed it. The ratchet itself is unchanged — what
-        the CLI denies, a group cannot loosen — and this asserts it on the
-        category the flag actually sets.
-        """
+        misses the other is not a fix."""
         permissions, _ = _resolve(
             CliOptions(read_only=True),
             {"permissions": {"file_write": "allow", "shell_execute": "allow"}},
         )
 
         assert permissions["file_write"] == "deny"
+        assert permissions["shell_execute"] == "deny"
 
     def test_the_refusal_is_recorded(self):
         _, group_tier = _resolve(
