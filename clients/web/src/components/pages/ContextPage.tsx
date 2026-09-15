@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Drawer } from "../panels/Drawer";
-import type { EmberClient } from "../../protocol/client";
+import type { IgniClient } from "../../protocol/client";
 
 export interface ContextBreakdown {
   total: number;
@@ -52,7 +52,7 @@ export function ContextPage({
   onCompact,
   onClose,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   /** The model's window, from the status bar. */
   maxContext: number;
   /** Runs `/compact` and returns to the chat to watch it. */

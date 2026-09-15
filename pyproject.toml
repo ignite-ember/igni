@@ -60,7 +60,11 @@ dependencies = [
     "tiktoken~=0.13.0",
     "ripgrep~=15.1.0",
     "beautifulsoup4~=4.15.0",
-    "pypdf~=6.15.0",
+    # ``~=6.16`` not ``~=6.16.1``: the tighter form caps the next patch and
+    # this pin has now capped a security fix twice — PYSEC-2026-3910/3911
+    # need 6.16.1 and 3913 needs 6.16.0, all of them out of reach of
+    # ``~=6.15.0``.
+    "pypdf~=6.16",
     "python-docx~=1.2.0",
     "python-pptx~=1.0.2",
     "openpyxl~=3.1.5",

@@ -27,10 +27,9 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from ember_code.core.paths import DEFAULT_DATA_DIR
 from ember_code.backend.knowledge_gate import (
-    ENV_OVERRIDE,
     _FALSEY,
+    ENV_OVERRIDE,
     knowledge_runtime_enabled,
 )
 from ember_code.backend.login_coordinator import LoginCoordinator
@@ -46,6 +45,7 @@ from ember_code.backend.schemas_rpc import (
 from ember_code.backend.session_pool import SessionPool, SessionRuntime
 from ember_code.backend.session_stamping_transport import SessionStampingTransport
 from ember_code.backend.subsystem_status import KNOWLEDGE, SubsystemState
+from ember_code.core.paths import DEFAULT_DATA_DIR
 from ember_code.core.session.client_state import ClientStateStore
 from ember_code.core.session.session_directories import SessionDirectoryStore
 from ember_code.protocol import messages as msg
@@ -104,7 +104,6 @@ def _record(
         logger.exception("knowledge: could not record subsystem state %s", state)
 
 
-
 def _neo4j_runtime_wanted(settings: Any) -> bool:
     """Whether to build the Neo4j runtime at all.
 
@@ -134,6 +133,7 @@ def _codeindex_wants_neo4j(settings: Any) -> bool:
     """
     code_index = getattr(settings, "code_index", None)
     return bool(getattr(code_index, "enabled", False))
+
 
 class SessionOrchestrator:
     """Pool-level dispatch + runtime factory + shutdown drain.
@@ -419,7 +419,10 @@ class SessionOrchestrator:
                 logger.exception("knowledge: neo4j attach failed; continuing without it")
             else:
                 _record(session, SubsystemState.READY)
-        if _codeindex_wants_neo4j(self._settings) and getattr(session, "code_index", None) is not None:
+        if (
+            _codeindex_wants_neo4j(self._settings)
+            and getattr(session, "code_index", None) is not None
+        ):
             await session.attach_codeindex_neo4j(runtime)
 
     @property

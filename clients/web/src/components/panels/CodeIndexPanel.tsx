@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { EmberClient } from "../../protocol/client";
+import type { IgniClient } from "../../protocol/client";
+import { countOf } from "../../lib/plural";
 import { Drawer } from "./Drawer";
 
 // ── Types ────────────────────────────────────────────────────────
@@ -288,7 +289,7 @@ export function CodeIndexPanel({
   client,
   onClose,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   onClose: () => void;
 }) {
   const [status, setStatus] = useState<CodeIndexStatus | null>(null);
@@ -692,7 +693,7 @@ export function CodeIndexPanel({
       {!needsInstall && status.branches_indexed.length > 0 && (
         <Section
           title="Cached locally"
-          subtitle={`${status.branches_indexed.length} commit(s)`}
+          subtitle={countOf(status.branches_indexed.length, "commit")}
         >
           <div className="codeindex-branches">
             {status.branches_indexed.slice(0, 6).map((b) => (

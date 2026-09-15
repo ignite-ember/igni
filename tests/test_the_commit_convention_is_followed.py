@@ -53,10 +53,33 @@ def _documented_trailer() -> str:
     return found[0].strip("`").strip()
 
 
+def _merged_in_ref() -> str | None:
+    """The other lineage's tip, when HEAD is a merge.
+
+    A merge pulls another branch's commits into the window this rule
+    looks at, and their trailers were written under whatever convention
+    that branch followed. They cannot be corrected from here — the
+    commits are published — so failing on them is precisely the
+    "failure nobody can act on" that :data:`_DEPTH` already exists to
+    avoid. The rule is about what *this* line of work writes.
+    """
+    result = subprocess.run(  # noqa: S603
+        ["git", "rev-parse", "--verify", "--quiet", "HEAD^2"],
+        cwd=_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() or None
+
+
 def _history() -> list[tuple[str, str]]:
     """``(sha, body)`` for recent non-merge commits, newest first."""
+    rev = ["HEAD"]
+    merged_in = _merged_in_ref()
+    if merged_in:
+        rev += [f"^{merged_in}"]
     result = subprocess.run(  # noqa: S603
-        ["git", "log", f"-{_DEPTH}", "--no-merges", "--format=%H%x00%B%x01"],
+        ["git", "log", f"-{_DEPTH}", "--no-merges", "--format=%H%x00%B%x01", *rev],
         cwd=_ROOT,
         capture_output=True,
         text=True,
@@ -97,7 +120,13 @@ class TestTheRuleIsReadable:
 
     def test_there_is_history_to_check(self):
         """A rule over an empty log passes for the wrong reason."""
-        assert len(_history()) > 5, len(_history())
+        history = _history()
+        if _merged_in_ref() and len(history) <= 5:
+            pytest.skip(
+                "HEAD is a merge and this branch has few commits of its own since "
+                "the fork point — there is nothing here for the rule to be about yet."
+            )
+        assert len(history) > 5, len(history)
 
 
 def _address(trailer: str) -> str:

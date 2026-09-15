@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { EmberClient } from "../protocol/client";
+import type { IgniClient } from "../protocol/client";
 import { host } from "../lib/host";
 import {
   codePillLabels,
@@ -131,9 +131,17 @@ export function filterSlashCommands(
   limit: number = 12,
 ): SlashCommand[] {
   const q = query.toLowerCase();
-  return pool
-    .filter((c) => c.name.slice(1).toLowerCase().startsWith(q))
-    .slice(0, limit);
+  const matches = pool.filter((c) =>
+    c.name.slice(1).toLowerCase().startsWith(q),
+  );
+  // An exactly-typed command outranks a longer sibling that merely starts
+  // with it: typing "/plugin" in full and getting "/plugins" first means the
+  // Enter key runs something the user did not type.
+  const exact = matches.findIndex((c) => c.name.slice(1).toLowerCase() === q);
+  if (exact > 0) {
+    matches.unshift(matches.splice(exact, 1)[0]);
+  }
+  return matches.slice(0, limit);
 }
 
 interface MenuState {
@@ -189,7 +197,7 @@ export function Composer({
   onPickMode,
   brandName = "igni",
 }: {
-  client: EmberClient;
+  client: IgniClient;
   connected: boolean;
   processing: boolean;
   skills: SlashCommand[];

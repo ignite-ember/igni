@@ -17,11 +17,10 @@ perfectly good remote.
 from __future__ import annotations
 
 from pathlib import Path
-
-import pytest
 from unittest.mock import MagicMock
 
 import httpx
+import pytest
 
 from ember_code.core.code_index.resolver import RepositoryResolver
 
@@ -54,6 +53,7 @@ def _no_backoff_sleeps(monkeypatch):
         return None
 
     monkeypatch.setattr(http_retry.asyncio, "sleep", _no_wait)
+
 
 async def test_a_folder_with_no_remote_says_so(tmp_path):
     resolver = _resolver(tmp_path, remote=None)
@@ -109,7 +109,9 @@ async def test_expired_credentials_are_not_reported_as_a_server_error(tmp_path, 
             return False
 
         async def get(self, *_args, **_kwargs):
-            return httpx.Response(401, request=httpx.Request("GET", "https://cloud.invalid/v1/codeindex/repository"))
+            return httpx.Response(
+                401, request=httpx.Request("GET", "https://cloud.invalid/v1/codeindex/repository")
+            )
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **_kw: _Client())
 
@@ -129,7 +131,11 @@ async def test_a_reply_it_cannot_read_blames_the_version_gap(tmp_path, monkeypat
             return False
 
         async def get(self, *_args, **_kwargs):
-            return httpx.Response(200, json={"unexpected": "shape"}, request=httpx.Request("GET", "https://cloud.invalid/v1/codeindex/repository"))
+            return httpx.Response(
+                200,
+                json={"unexpected": "shape"},
+                request=httpx.Request("GET", "https://cloud.invalid/v1/codeindex/repository"),
+            )
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **_kw: _Client())
 
@@ -154,7 +160,11 @@ async def test_success_clears_a_previous_failure(tmp_path, monkeypatch):
             return False
 
         async def get(self, *_args, **_kwargs):
-            return httpx.Response(200, json={"status": "registered", "repository_id": "r1"}, request=httpx.Request("GET", "https://cloud.invalid/v1/codeindex/repository"))
+            return httpx.Response(
+                200,
+                json={"status": "registered", "repository_id": "r1"},
+                request=httpx.Request("GET", "https://cloud.invalid/v1/codeindex/repository"),
+            )
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **_kw: _Client())
 

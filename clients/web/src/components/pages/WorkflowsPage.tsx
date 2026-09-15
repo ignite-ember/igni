@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Drawer } from "../panels/Drawer";
-import type { EmberClient } from "../../protocol/client";
+import type { IgniClient } from "../../protocol/client";
 
 export interface WorkflowPhase {
   title?: string;
@@ -37,7 +37,7 @@ export function WorkflowsPage({
   onRun,
   onClose,
 }: {
-  client: EmberClient;
+  client: IgniClient;
   /** Seeds the composer with `/workflows <name>` rather than firing
    *  it. Several take a JSON argument object, and the phase list is
    *  what tells you whether you want this one at all. */
