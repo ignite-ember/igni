@@ -57,6 +57,28 @@ class DiscoveryStatus(StrEnum):
 
 
 @dataclass(frozen=True)
+class ResolveFailure:
+    """Why the resolver could not answer.
+
+    It has four ways of returning ``None`` — no git remote, no cloud
+    token, an unreachable server, a response it could not read — and
+    they used to be indistinguishable to every caller. The controller
+    turned all four into ``install_state="unknown"``, and the pill
+    turned that into **"not indexed — HEAD needs a sync"**: a remedy
+    that cannot work, offered for four situations, three of which a
+    sync would not touch.
+
+    ``reason`` says what happened; ``fix`` says what to do. They are
+    separate because the second is usually actionable when the first
+    is not — see :mod:`ember_code.backend.subsystem_status`, which
+    this feeds.
+    """
+
+    reason: str
+    fix: str = ""
+
+
+@dataclass(frozen=True)
 class ResolvedRepository:
     """Result of resolving a git remote URL against ember-server."""
 
@@ -93,11 +115,38 @@ class RepositoryResolver:
         self.credentials = credentials
         self.timeout = timeout
         self._cached: ResolvedRepository | None = None
+        self._failure: ResolveFailure | None = None
         self._lock = asyncio.Lock()
 
     @property
     def cached(self) -> ResolvedRepository | None:
         return self._cached
+
+    @property
+    def failure(self) -> ResolveFailure | None:
+        """Why the last resolve came back empty, if it did.
+
+        ``None`` when the resolver has not run yet or has succeeded —
+        the two states that are genuinely "nothing to report".
+        """
+        return self._failure
+
+    def invalidate(self) -> None:
+        """Forget the cached resolution, so the next call asks again.
+
+        Called on wake. The resolution is an answer about a remote
+        server, obtained before the machine slept; after a sleep of
+        any length it is a claim about the past. Dropping it costs one
+        request and removes the possibility of showing a stale
+        "connected" (or a stale reason) indefinitely.
+
+        The failure goes with it: a reason from before the sleep
+        explains a situation that may no longer exist, and "not logged
+        in" surviving a wake into a fresh session would be its own
+        small lie.
+        """
+        self._cached = None
+        self._failure = None
 
     def remote_url(self) -> str | None:
         """Return ``git remote get-url origin``, or ``None`` if unavailable."""
@@ -127,13 +176,20 @@ class RepositoryResolver:
 
             url = self.remote_url()
             if not url:
-                logger.debug("skipping codeindex resolve: no git remote")
-                return None
+                return self._fail(
+                    "this folder has no git remote",
+                    "CodeIndex indexes a repository — open a folder with an "
+                    "`origin` remote, or add one.",
+                )
 
             token = self.credentials.access_token
             if not token:
-                logger.debug("skipping codeindex resolve: no cloud auth")
-                return None
+                return self._fail(
+                    "not logged in to igni Cloud",
+                    "Run /login. CodeIndex resolves the repository through the "
+                    "cloud, so it cannot tell what state this repo is in until "
+                    "you are signed in.",
+                )
 
             endpoint = f"{self.server_url}/v1/codeindex/repository"
             try:
@@ -150,18 +206,35 @@ class RepositoryResolver:
 
                 response, metadata = await retry_with_backoff(_fetch_repository)
             except httpx.HTTPStatusError as exc:
-                if exc.response.status_code != 403:
-                    logger.info("codeindex resolver: server refused (%s)", exc)
-                    return None
-                # Deliberately not cached. The commonest denial is "you
-                # have not linked a provider identity", which the user
-                # fixes in a browser without restarting igni — a cached
-                # verdict would keep reporting a problem they just
-                # solved.
-                return self._denial(exc.response)
+                # ``raise_for_status`` is load-bearing: ``retry_with_backoff``
+                # retries on 429/500/502/503/504 and can only see them as
+                # exceptions. So every non-2xx arrives here, and the diagnostics
+                # have to live here too rather than after the call.
+                status = exc.response.status_code
+                if status == 401:
+                    return self._fail(
+                        "igni Cloud rejected the stored credentials",
+                        "Run /login again — the session has probably expired.",
+                    )
+                if status == 403:
+                    # Deliberately not cached, and deliberately not a _fail. The
+                    # commonest denial is "you have not linked a provider
+                    # identity", which the user fixes in a browser without
+                    # restarting igni — a cached verdict would keep reporting a
+                    # problem they just solved, and a _fail would call it
+                    # "CodeIndex is off" rather than "you were refused".
+                    return self._denial(exc.response)
+                return self._fail(
+                    f"igni Cloud answered {status} for this repository",
+                    "If it persists, the repository may not be reachable by the "
+                    "GitHub App. Check it at the portal.",
+                )
             except httpx.HTTPError as exc:
-                logger.info("codeindex resolver: server unreachable (%s)", exc)
-                return None
+                return self._fail(
+                    f"could not reach igni Cloud ({exc.__class__.__name__})",
+                    "Check your connection. Everything else in igni works "
+                    "offline; only CodeIndex needs the server.",
+                )
 
             try:
                 payload = response.json()
@@ -171,10 +244,14 @@ class RepositoryResolver:
                     install_url=payload.get("install_url"),
                 )
             except (KeyError, ValueError) as exc:
-                logger.info("codeindex resolver: malformed payload (%s)", exc)
-                return None
+                return self._fail(
+                    f"igni Cloud sent a reply this client could not read ({exc})",
+                    "This usually means the client and server are different "
+                    "versions. Updating igni is the fix.",
+                )
 
             self._cached = resolved
+            self._failure = None
             return self._cached
 
     @staticmethod
@@ -204,3 +281,16 @@ class RepositoryResolver:
             denial_reason=reason,
             denial_message=message or "You do not have access to this repository.",
         )
+
+    def _fail(self, reason: str, fix: str = "") -> ResolvedRepository | None:
+        """Record why there is no answer, and log it once.
+
+        Logged at INFO rather than DEBUG because, since the backend
+        keeps a log by default, INFO is what someone reconstructing a
+        "why is this off?" report will actually have.
+        """
+        self._failure = ResolveFailure(reason=reason, fix=fix)
+        logger.info("codeindex resolver: %s", reason)
+        # Typed as returning the same thing ``resolve`` does, so its
+        # four early exits can stay one line each.
+        return None

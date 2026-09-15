@@ -1,18 +1,28 @@
 /**
  * One-shot screenshot of the WatcherPanel in action.
  *
- * Drives the FE against a live backend from ``fixtures/live-be``,
- * opens the watcher panel through the ``/watcher`` slash command and
- * captures it.
+ * Drives the FE against a live BE (``IGNI_LIVE_WS``), spawns a
+ * background process by calling the agent's
+ * ``run_shell_command(background=True)`` tool through a direct
+ * RPC, then opens the watcher panel and captures it.
  *
- * It needs no seeded state — the spawn step below is a no-op by its
- * own admission — so it runs by default now. What it actually proves
- * is that the real backend's command dispatch turns ``/watcher`` into
- * a drawer, which no fixture spec covers. It was skipped for years as
- * "show me, not CI" on the strength of the screenshot alone. F128.
+ * Skipped by default — this is "show me," not CI.
  */
-import { test, expect } from "./fixtures/live-be";
-import { runSlashCommand } from "./fixtures/composer";
+import { test as base, expect } from "@playwright/test";
+
+type Fixtures = {
+  liveWsUrl: string;
+};
+
+const test = base.extend<Fixtures>({
+  liveWsUrl: async ({}, use) => {
+    const url = process.env.IGNI_LIVE_WS;
+    if (!url) {
+      test.skip(true, "Set IGNI_LIVE_WS to a running BE's ws URL.");
+    }
+    await use(url as string);
+  },
+});
 
 test("watcher panel shows live background processes", async ({
   page,
@@ -55,9 +65,13 @@ test("watcher panel shows live background processes", async ({
   );
 
   // ── 3. Open the watcher panel via the slash command.
-  await runSlashCommand(page, "/watcher", page.locator(".drawer"));
+  await page.locator(".composer-editable").click();
+  await page.locator(".composer-editable").type("/watcher");
+  await page.locator(".composer-editable").press("Enter");
 
-  // The drawer renders with the title "Watcher".
+  // The watcher is a page now, not a modal — it renders with the
+  // breadcrumb trail ending in "Watcher".
+  await expect(page.locator(".page")).toBeVisible({ timeout: 5_000 });
 
   // Settle a beat so the seed RPC + any in-flight pushes land.
   await page.waitForTimeout(500);

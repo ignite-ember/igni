@@ -164,8 +164,27 @@ class CodeIndexStatus(BaseModel):
     apply_total: int
     apply_step: str
     install_state: str
+    #: Why ``install_state`` is ``unknown``, when it is. The resolver
+    #: has four ways of failing to answer — no git remote, no cloud
+    #: token, an unreachable server, an unreadable reply — and all
+    #: four used to arrive here as the same blank ``unknown``, which
+    #: the pill rendered as "not indexed — HEAD needs a sync". Three
+    #: of the four are not fixed by a sync.
+    #:
+    #: Defaults empty so an older client, which never reads it, keeps
+    #: its previous behaviour.
+    install_reason: str = ""
+    #: What to do about it. Separate from the reason because the
+    #: remedy is usually actionable when the diagnosis is not.
+    install_fix: str = ""
     repository_id: str
     install_url: str
+    #: The portal's repositories page. Unlike ``install_url`` — which
+    #: is only set while the App still needs connecting — this is
+    #: populated whatever the install state, because indexing is
+    #: turned on per repository there and that is where the client
+    #: sends people to do it. Empty when no api url is configured.
+    portal_url: str = ""
     commits_indexed: int
     index_size_bytes: int
     branches_indexed: list[BranchIndexEntry]

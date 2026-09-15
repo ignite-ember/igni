@@ -6,10 +6,6 @@
       "session_id",
       "type"
     ],
-    "RunHeader": [
-      "parent_run_id",
-      "run_id"
-    ],
     "RunScopedMessage": [
       "event_seq",
       "id",
@@ -17,27 +13,6 @@
       "run_id",
       "session_id",
       "type"
-    ],
-    "SessionListEntry": [
-      "agent_name",
-      "created_at",
-      "name",
-      "run_count",
-      "session_id",
-      "summary",
-      "updated_at"
-    ],
-    "TaskSnapshot": [
-      "assignee",
-      "status",
-      "task_id",
-      "title"
-    ],
-    "ToolResultData": [
-      "diff_rows",
-      "full_result",
-      "has_markup",
-      "summary"
     ],
     "cancel": [
       "event_seq",
@@ -290,9 +265,11 @@
       "input_tokens",
       "max_context",
       "model",
+      "model_configured",
       "output_tokens",
       "permission_mode",
       "session_id",
+      "theme",
       "type"
     ],
     "stream_end": [

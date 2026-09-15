@@ -613,7 +613,13 @@ class Session:
         + explicit ``Session(pre_knowledge=...)`` calls) still
         works as before.
         """
-        self._knowledge_error: str | None = None
+        # Which optional subsystems are up, and why the others are not.
+        # One record with a state, a reason and a fix, instead of a
+        # private boolean per subsystem per failure mode — see
+        # :mod:`ember_code.backend.subsystem_status`.
+        from ember_code.backend.subsystem_status import SubsystemRegistry
+
+        self.subsystems = SubsystemRegistry()
         self._knowledge_ready = threading.Event()
         self._knowledge_ready.set()
         if pre_knowledge is not None:
@@ -676,6 +682,22 @@ class Session:
         from ember_code.core.knowledge.index import KnowledgeIndex
 
         project_id = resolve_project_id(self.project_dir)
+        # The per-project process has to exist before a driver can
+        # point at it: ``driver_for_knowledge`` raises rather than
+        # starting one on demand. The call was missing and nobody
+        # noticed, because the orchestrator's guard meant this method
+        # never ran outside tests — and the test runtimes hand back a
+        # driver without needing a process. Duck-typed for exactly that
+        # reason: a stub that only implements ``driver_for_knowledge``
+        # stays valid.
+        starter = getattr(runtime, "start_for_knowledge", None)
+        if starter is not None:
+            # ``start_for_knowledge`` also waits for the bolt port
+            # (``_wait_for_bolt``), so there is no separate readiness
+            # step to compose here — returning means either a spawned
+            # process that answered, or a discovered one that was
+            # probed alive.
+            await starter(project_id)
         driver = runtime.driver_for_knowledge(project_id)
         client = Neo4jKnowledgeClient(driver, project_id)
         await client.apply_schema()
@@ -1286,10 +1308,33 @@ class Session:
 
     @property
     def knowledge_error(self) -> str | None:
-        """Human-readable error string from the last knowledge
-        base initialisation attempt.
+        """Human-readable reason the knowledge base is not up.
+
+        Reads through to :attr:`subsystems`, which is the record. Kept
+        as a property because callers and tests already ask the session
+        this question directly, and because "what went wrong with
+        knowledge" is a fair thing to ask a session.
         """
-        return getattr(self, "_knowledge_error", None)
+        from ember_code.backend.subsystem_status import KNOWLEDGE, SubsystemState
+
+        status = self.subsystems.get(KNOWLEDGE)
+        if status is None or status.state is not SubsystemState.FAILED:
+            return None
+        return status.reason or None
+
+    @property
+    def knowledge_preparing(self) -> bool:
+        """Whether the knowledge backend is still coming up.
+
+        Distinguishes "not ready yet" from "tried and failed", which
+        the panel could not previously tell apart — and so called a
+        healthy first launch a failure for the minutes its one-time
+        download takes.
+        """
+        from ember_code.backend.subsystem_status import KNOWLEDGE, SubsystemState
+
+        status = self.subsystems.get(KNOWLEDGE)
+        return status is not None and status.state is SubsystemState.PREPARING
 
     @property
     def _mcp_initialized(self) -> bool:

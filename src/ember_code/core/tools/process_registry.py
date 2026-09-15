@@ -50,6 +50,7 @@ from ember_code.core.tools.process_log import ProcessLogStore
 from ember_code.core.tools.process_store import (
     BackgroundProcessRow,
 )
+from ember_code.core.tools.sleep_blocker import SleepBlocker
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,7 @@ class ProcessRegistry:
         log_store: ProcessLogStore | None = None,
         persistence: Any | None = None,
         ttl_seconds: float = DEFAULT_FINISHED_PROCESS_TTL_SECONDS,
+        sleep_blocker: SleepBlocker | None = None,
     ) -> None:
         self._processes: dict[int, Any] = {}
         self._eviction_tasks: dict[int, asyncio.Task[Any]] = {}
@@ -91,6 +93,11 @@ class ProcessRegistry:
         self._persistence: Any | None = persistence
         self._ttl_seconds: float = ttl_seconds
         self._scheduler = AsyncFireAndForget()
+        # Held while at least one background process is tracked, so a
+        # long build is not lost to the machine idle-sleeping under it.
+        # See the module docstring for what this cannot do (a closed
+        # lid sleeps the machine regardless).
+        self._sleep_blocker = sleep_blocker if sleep_blocker is not None else SleepBlocker()
 
     # ── Persistence wiring ──────────────────────────────────────
 
@@ -149,6 +156,11 @@ class ProcessRegistry:
         tracking).
         """
         self._persist_add(mp.proc.pid, mp.cmd)
+        # Paired with the release in ``emit_completion``. Taken here
+        # rather than in ``add`` because this is the point at which the
+        # process is something the agent is waiting on, not merely a
+        # pid that exists.
+        self._sleep_blocker.acquire()
         self.bus.emit(
             "start",
             ProcessStartEvent(pid=mp.proc.pid, cmd=mp.cmd, started_at=time.time()),
@@ -168,6 +180,22 @@ class ProcessRegistry:
         if task is not None and not task.done():
             task.cancel()
 
+    def record_finished(self, mp: Any) -> None:
+        """Persist the ending of a process that was never announced.
+
+        ``emit_completion`` is gated on ``was_backgrounded`` — the exit
+        push and its queue notice are for work the agent handed off,
+        not for every ``$ ls``. But history is for every ``$ ls``: the
+        row is the only record that the command ran at all, and without
+        this the quick ones existed in memory until the BE stopped and
+        nowhere afterwards.
+
+        No bus event, deliberately. Nobody is waiting on a foreground
+        command they already have the output of.
+        """
+        self._persist_finish(mp)
+        self.arm_eviction(mp)
+
     def emit_completion(self, mp: Any) -> None:
         """Fire ``exit`` subscribers AND delete the persisted row.
         Called from the reader task once stdout closes.
@@ -177,7 +205,11 @@ class ProcessRegistry:
         seeing the ``process_exited`` push would leave a dead pid
         in the store, surfacing as an orphan that's already gone.
         """
-        self._persist_remove(mp.proc.pid)
+        # Record the ending rather than deleting the row: the table is
+        # a history now, and "what ran here and how did it go" is the
+        # question the watcher asks after a restart.
+        self._persist_finish(mp)
+        self._sleep_blocker.release()
         self.bus.emit(
             "exit",
             ProcessExitEvent(
@@ -213,6 +245,26 @@ class ProcessRegistry:
                 if mp.is_running():
                     result.append((pid, mp.cmd, mp.elapsed()))
             return result
+
+    def all_known(self) -> list[tuple[int, str, float, bool, int | None]]:
+        """``(pid, cmd, elapsed, is_running, exit_code)`` for everything
+        the registry holds — finished processes included.
+
+        :meth:`all_running` answers "what is running now", which is the
+        wrong question for the watcher: a command that failed four
+        seconds ago is exactly what someone opens the panel to read, and
+        filtering it out meant the row vanished at the moment it became
+        interesting. Finished entries stay until their eviction TTL
+        expires, so this is bounded by that rather than unbounded.
+        """
+        with self._lock:
+            rows: list[tuple[int, str, float, bool, int | None]] = []
+            for pid, mp in self._processes.items():
+                running = mp.is_running()
+                rows.append(
+                    (pid, mp.cmd, mp.elapsed(), running, None if running else mp.returncode())
+                )
+            return rows
 
     def clear(self) -> None:
         """Drop every entry + every pending eviction task. Test-
@@ -318,6 +370,52 @@ class ProcessRegistry:
         if store is None:
             return
         self._scheduler.schedule(self._await_remove(store, pid))
+
+    def _persist_finish(self, mp: Any) -> None:
+        """Fire-and-forget "this is how it ended".
+
+        Replaces :meth:`_persist_remove` on the completion path. The
+        row stays; it gains an exit code and a timestamp, which is what
+        makes the table survivable as history rather than a list of
+        what happens to be alive.
+        """
+        store = self._persistence
+        if store is None:
+            return
+        pid = mp.proc.pid
+        finish = getattr(store, "finish", None)
+        if finish is None:
+            # An older store predating history — fall back to the
+            # previous behaviour rather than losing the row's removal.
+            self._persist_remove(pid)
+            return
+        self._scheduler.schedule(self._await_finish(store, mp))
+
+    async def _await_finish(self, store: Any, mp: Any) -> None:
+        """Await ``store.finish`` and log a DEBUG reason on failure.
+
+        Builds the fallback row here, where the command and the start
+        time are still to hand. ``ManagedProcess.started_at`` is
+        monotonic, so it is converted back to wall-clock — the DB is
+        read by a later process for which this process's monotonic
+        clock means nothing.
+        """
+        pid = mp.proc.pid
+        started_monotonic = getattr(mp, "started_at", None)
+        started_epoch = (
+            int(time.time() - (time.monotonic() - started_monotonic))
+            if isinstance(started_monotonic, (int, float))
+            else int(time.time())
+        )
+        row = BackgroundProcessRow(
+            pid=pid,
+            cmd=getattr(mp, "cmd", ""),
+            pgid=None,
+            started_at=started_epoch,
+        )
+        result = await store.finish(pid, mp.proc.returncode, row=row)
+        if not getattr(result, "ok", True):
+            logger.debug("persist_finish pid=%s failed: %s", pid, getattr(result, "reason", ""))
 
     async def _await_upsert(self, store: Any, row: BackgroundProcessRow) -> None:
         """Await ``store.upsert`` and log a DEBUG reason on

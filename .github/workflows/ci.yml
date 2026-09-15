@@ -15,7 +15,10 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          # Read from ``.python-version`` rather than written out here.
+          # The version is one fact; every copy of it is a chance to
+          # drift, and this file held two of them.
+          python-version-file: .python-version
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -32,6 +35,12 @@ jobs:
       - name: Mypy
         run: uv run mypy src/ember_code/
 
+  # No matrix. The product ships one interpreter, so there is one job,
+  # and its name carries no version — which matters because the branch
+  # ruleset requires check names. A matrix made the check ``test (3.11)``
+  # and friends, so every version change silently required a ruleset
+  # edit too; forgetting it blocked every pull request on a check that
+  # could never report. That happened twice in one day.
   # Nothing audited dependencies here either. The first run found 101
   # advisories across 21 packages — 19 in gitpython, which this app uses to
   # run real git operations on a developer's checkout, and 20 in pillow.
@@ -44,7 +53,8 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          # Read from ``.python-version`` rather than written out here.
+          python-version-file: .python-version
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -56,18 +66,47 @@ jobs:
       # on the first new advisory rather than one carrying an exception list.
       - name: pip-audit
         run: uv run --with pip-audit pip-audit
-
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+
+    # Thirty-five tests skipped themselves here for want of a database,
+    # and they were the tests covering the subsystem that broke most
+    # often — the knowledge attach, the per-session index, the
+    # orchestrator's swap to neo4j. A suite that skips a third of its
+    # coverage of the riskiest area, and reports green, is worse than
+    # one that never had the tests: it looks like coverage.
+    #
+    # The version is pinned to the one the product downloads at
+    # runtime (``DEFAULT_NEO4J_VERSION``), so CI exercises what users
+    # actually run rather than whatever ``:latest`` is that week.
+    services:
+      neo4j:
+        image: neo4j:5.26.0-community
+        env:
+          NEO4J_AUTH: neo4j/testtest
+          # A CI container has no business reserving a heap it will
+          # never fill, and the runner has 7 GB total.
+          NEO4J_server_memory_heap_max__size: 512m
+        ports:
+          - 7687:7687
+          - 7474:7474
+        options: >-
+          --health-cmd "wget -q -O /dev/null http://localhost:7474 || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      NEO4J_TEST_URI: bolt://localhost:7687
+      NEO4J_TEST_USER: neo4j
+      NEO4J_TEST_PASSWORD: testtest
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version-file: .python-version
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -76,7 +115,7 @@ jobs:
         run: uv sync --extra dev
 
       - name: Run tests
-        run: uv run pytest tests/ -q
+        run: uv run pytest tests/ -q -rs
 
   # The shared web UI lives under ``clients/web`` and is consumed by
   # the Tauri / VSCode / JetBrains shells. Typecheck + tests run on

@@ -123,19 +123,15 @@ export function AgentsPanel({
 
   return (
     <Drawer
-      title={
-        selected ? (
-          <span className="breadcrumb" style={{ margin: 0 }}>
-            <button className="breadcrumb-link" onClick={() => setSelected(null)}>
-              Agents
-            </button>
-            <span className="breadcrumb-sep">›</span>
-            <strong>{selected.name}</strong>
-          </span>
-        ) : (
-          "Agents"
-        )
-      }
+      // The selected agent is a level on the page's trail, not a
+      // second trail in the title. See the note in WatcherPanel.
+      levels={{
+        // An agent without a name is a malformed definition rather than
+        // an impossible one; label it so the trail still moves.
+        labels: selected ? [selected.name || "Agent"] : [],
+        onTruncate: () => setSelected(null),
+      }}
+      title="Agents"
       onClose={onClose}
     >
       {selected ? (

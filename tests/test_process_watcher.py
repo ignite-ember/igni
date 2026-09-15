@@ -137,22 +137,58 @@ class TestStartSubscriber:
 
 class TestListBackgroundProcesses:
     def test_empty_registry_returns_empty(self, monkeypatch) -> None:
-        monkeypatch.setattr(supervisors.default().registry, "all_running", lambda: [], raising=True)
+        monkeypatch.setattr(supervisors.default().registry, "all_known", lambda: [], raising=True)
         server = BackendServer.__new__(BackendServer)
         assert server.list_background_processes() == []
 
     def test_returns_pid_cmd_elapsed_per_process(self, monkeypatch) -> None:
         monkeypatch.setattr(
             supervisors.default().registry,
-            "all_running",
-            lambda: [(101, "npm run dev", 12.3), (202, "tail -f log", 4.5)],
+            "all_known",
+            lambda: [
+                (101, "npm run dev", 12.3, True, None),
+                (202, "tail -f log", 4.5, True, None),
+            ],
             raising=True,
         )
         server = BackendServer.__new__(BackendServer)
         result = server.list_background_processes()
         assert result == [
-            {"pid": 101, "cmd": "npm run dev", "elapsed_seconds": 12.3},
-            {"pid": 202, "cmd": "tail -f log", "elapsed_seconds": 4.5},
+            {
+                "pid": 101,
+                "cmd": "npm run dev",
+                "elapsed_seconds": 12.3,
+                "is_running": True,
+                "exit_code": None,
+            },
+            {
+                "pid": 202,
+                "cmd": "tail -f log",
+                "elapsed_seconds": 4.5,
+                "is_running": True,
+                "exit_code": None,
+            },
+        ]
+
+    def test_a_finished_process_is_listed_with_its_exit_code(self, monkeypatch) -> None:
+        """The list used to be "what is running", so a command that had
+        just failed was filtered out of the panel someone opens to find
+        out why."""
+        monkeypatch.setattr(
+            supervisors.default().registry,
+            "all_known",
+            lambda: [(303, "pytest -x", 31.0, False, 1)],
+            raising=True,
+        )
+        server = BackendServer.__new__(BackendServer)
+        assert server.list_background_processes() == [
+            {
+                "pid": 303,
+                "cmd": "pytest -x",
+                "elapsed_seconds": 31.0,
+                "is_running": False,
+                "exit_code": 1,
+            }
         ]
 
 

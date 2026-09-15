@@ -279,7 +279,12 @@ class TestTheSidecarIsNotAttached:
         from ember_code.backend import neo4j_runtime as runtime_module
         from ember_code.backend import session_orchestrator as module
 
+        # conftest forces IGNI_NEO4J_RUNTIME=0 suite-wide so nothing pulls
+        # half a gigabyte onto a runner; its docstring says a test that wants
+        # the runtime on sets the variable itself. That switch now gates the
+        # whole sidecar, not knowledge alone.
         monkeypatch.delenv("IGNI_NEO4J_DISABLED", raising=False)
+        monkeypatch.setenv("IGNI_NEO4J_RUNTIME", "1")
 
         attempted: list[bool] = []
 

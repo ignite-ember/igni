@@ -200,6 +200,19 @@ class GroupPolicyPack(BaseModel):
     #: poll so an unchanged pack costs a 304 and no payload.
     etag: str | None = None
 
+    # Brand overrides for this group — accent colours, a wordmark, a
+    # logo. Group-level, not an override entry: entries are
+    # materialised as files for agents to read, and this is UI config
+    # for the frontend.
+    #
+    # Deliberately ``dict`` rather than a typed model. Nothing here
+    # interprets it — the backend hands it to the webview, which
+    # validates every value against its own allowlist before letting
+    # any of it near a stylesheet. A schema here would be a second
+    # place to update each time the server learns a new token, and it
+    # would not be the place doing the checking.
+    theme: dict | None = None
+
     def to_settings_dict(self) -> dict:
         """Convert to a settings dict for the accumulator.
 
@@ -499,6 +512,7 @@ class GroupPolicyCache:
             "entry_count": len(pack.entries),
             "default_model": pack.default_model,
             "etag": pack.etag,
+            "theme": pack.theme,
         }
         (self._cache_dir / "pack_meta.json").write_text(json.dumps(meta), encoding="utf-8")
 

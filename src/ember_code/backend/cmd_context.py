@@ -126,7 +126,13 @@ class ContextCommand:
         compaction.
         """
         breakdown = await self._session.context_breakdown()
-        return ContextBreakdownView.from_domain(breakdown).to_command_result()
+        result = ContextBreakdownView.from_domain(breakdown).to_command_result()
+        # The action opens the page in clients that have one; the
+        # markdown stays on the result so kind-based renderers — the
+        # TUI, which has no entry for this action — print what they
+        # always did. Explicitly the fallback
+        # ``CommandDispatcher._render`` documents.
+        return result.model_copy(update={"action": CommandAction.CTX})
 
     # ── Private helpers ──────────────────────────────────────────
 

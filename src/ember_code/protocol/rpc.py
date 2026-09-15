@@ -246,6 +246,10 @@ class RpcMethod(StrEnum):
 
     # ── Conversation ──────────────────────────────────────────────
     COUNT_CONTEXT_TOKENS = "count_context_tokens"
+    #: The ``/ctx`` page's numbers. ``count_context_tokens`` answers
+    #: "how big", this answers "made of what" — the split ``/compact``
+    #: can shrink versus the floor it cannot.
+    GET_CONTEXT_BREAKDOWN = "get_context_breakdown"
 
     # ── CodeIndex ─────────────────────────────────────────────────
     CODEINDEX_STATUS = "codeindex_status"

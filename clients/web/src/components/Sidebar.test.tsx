@@ -106,6 +106,11 @@ function defaultProps(overrides: Partial<React.ComponentProps<typeof Sidebar>> =
     open: true,
     sessions,
     currentId: "abcd1234ef",
+    links: [
+      { kind: "plugins", label: "Plugins" },
+      { kind: "knowledge", label: "Knowledge" },
+    ],
+    onLink: vi.fn(),
     onNewChat: vi.fn(),
     onPick: vi.fn(),
     onClose: vi.fn(),

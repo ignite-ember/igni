@@ -108,6 +108,7 @@ The core loop: ask, stream, answer. Everything else is in service of this.
 
 | Function | Edge cases | Status |
 |---|---|---|
+| `get_context_breakdown` | The `/ctx` card on a fresh session (nothing to break down); after a compaction, where the run total and the window no longer agree; a session whose history exceeds the window. | `todo` |
 | `get_chat_history` | Empty history on a new session; a session with an interrupted run; history longer than the context window. | `verified` |
 | `search_chat` | No match; match in a tool result rather than a message; regex metacharacters typed literally. Sweep: **answers** (default run). | `answers` |
 | `truncate_history` | Truncating to zero; truncating mid-tool-call so a call has no result. Sweep: **answers** (`--mutating`). | `answers` |

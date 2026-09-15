@@ -1,11 +1,15 @@
 """End-to-end test: SessionOrchestrator.attach_neo4j swaps the
-default session's knowledge + code_index backends to neo4j.
+default session's knowledge backend to neo4j.
 
-Neo4j is the DEFAULT storage — ``attach_neo4j`` fires unconditionally on
-BE boot and constructs a :class:`Neo4jRuntime` that attaches to the
-session's knowledge + code_index. The rare opt-out is
-``IGNI_NEO4J_DISABLED=1``, which turns the attach into a no-op so
-headless CI / test scenarios don't pay the JDK-download cost.
+Verifies the BE-level seam: when knowledge is enabled, the
+orchestrator's ``attach_neo4j`` constructs a :class:`Neo4jRuntime`
+and calls the session's :meth:`Session.attach_knowledge_neo4j`;
+when it is disabled, the call is a no-op.
+
+The switch is ``knowledge.enabled`` in config. ``IGNI_NEO4J_RUNTIME``
+remains a process-level override (both directions), which is why the
+tests below still set it to pin the answer — see
+:mod:`ember_code.backend.knowledge_gate`.
 
 Live integration — requires ``NEO4J_TEST_URI``. Skipped otherwise.
 """
@@ -86,11 +90,17 @@ def _make_orchestrator(tmp_path: Path) -> SessionOrchestrator:
     )
 
 
-async def test_orchestrator_attach_neo4j_no_op_when_disabled(tmp_path, monkeypatch):
-    """With ``IGNI_NEO4J_DISABLED=1``, ``attach_neo4j`` is a no-op
-    and no runtime is built."""
-    monkeypatch.setenv("IGNI_NEO4J_DISABLED", "1")
+async def test_orchestrator_attach_neo4j_no_op_when_knowledge_disabled(tmp_path, monkeypatch):
+    """With ``knowledge.enabled`` false, ``attach_neo4j`` is a no-op
+    and no runtime is built.
+
+    This used to assert the same thing about an unset
+    ``IGNI_NEO4J_RUNTIME``, back when the env var was the only gate
+    and config was ignored.
+    """
+    monkeypatch.delenv("IGNI_NEO4J_RUNTIME", raising=False)
     orch = _make_orchestrator(tmp_path)
+    orch._settings.knowledge.enabled = False
     # The constructor doesn't construct the runtime (it's lazy).
     assert orch._neo4j_runtime is None
 
@@ -101,11 +111,12 @@ async def test_orchestrator_attach_neo4j_no_op_when_disabled(tmp_path, monkeypat
     assert orch._backend._session.knowledge is None
 
 
-async def test_orchestrator_attach_neo4j_swaps_knowledge_by_default(tmp_path, monkeypatch, driver):
-    """Without ``IGNI_NEO4J_DISABLED``, ``attach_neo4j`` builds a
-    runtime by default and calls ``Session.attach_knowledge_neo4j``
-    + ``Session.attach_codeindex_neo4j``."""
-    monkeypatch.delenv("IGNI_NEO4J_DISABLED", raising=False)
+async def test_orchestrator_attach_neo4j_swaps_knowledge_when_enabled(
+    tmp_path, monkeypatch, driver
+):
+    """With knowledge enabled, ``attach_neo4j`` builds a runtime and
+    calls ``Session.attach_knowledge_neo4j``."""
+    monkeypatch.setenv("IGNI_NEO4J_RUNTIME", "1")
 
     # A real Session for the swap target (the stub's MagicMock
     # can't run the real attach path). Use a lightweight stand-in
@@ -113,11 +124,15 @@ async def test_orchestrator_attach_neo4j_swaps_knowledge_by_default(tmp_path, mo
     class _Session:
         def __init__(self, project_id: str):
             self._project_id = project_id
-            # Start with a non-None knowledge + code_index (the
-            # orchestrator only swaps when there's something to
-            # swap; the real Session's constructor installs
-            # chroma-backed defaults).
-            self.knowledge = object()
+            # ``knowledge`` starts as ``None``, which is what the real
+            # constructor leaves behind now that the chroma fallback is
+            # gone — this call is what installs the index. The fake used
+            # to start it as ``object()`` to satisfy an "only swap what
+            # exists" guard, and that assumption was the bug: it kept
+            # the test green while no session could ever get knowledge.
+            # ``code_index`` is still built eagerly by the constructor,
+            # so it starts non-None here for the same reason.
+            self.knowledge = None
             self.code_index = object()
             self.attached_runtimes: list[Any] = []
             self.codeindex_attach_calls = 0
@@ -166,12 +181,12 @@ async def test_orchestrator_attach_neo4j_swaps_knowledge_by_default(tmp_path, mo
 async def test_orchestrator_attach_neo4j_idempotent(tmp_path, monkeypatch, driver):
     """A second ``attach_neo4j`` call returns the cached runtime
     without rebuilding it."""
-    monkeypatch.delenv("IGNI_NEO4J_DISABLED", raising=False)
+    monkeypatch.setenv("IGNI_NEO4J_RUNTIME", "1")
 
     class _Session:
         def __init__(self):
-            # Non-None so the orchestrator's swap-condition is met.
-            self.knowledge = object()
+            # ``None``, as the real constructor leaves it.
+            self.knowledge = None
             self.attach_calls = 0
 
         async def attach_knowledge_neo4j(self, runtime):
@@ -205,28 +220,3 @@ async def test_orchestrator_attach_neo4j_idempotent(tmp_path, monkeypatch, drive
     # The session's attach was called only once (the second call
     # short-circuited before reaching the session).
     assert session.attach_calls == 1
-
-
-async def test_orchestrator_attach_neo4j_degrades_gracefully_on_construction_failure(
-    tmp_path, monkeypatch
-):
-    """Runtime construction failures (missing Java, disk full, blocked
-    download) must NOT crash BE boot — attach_neo4j logs + returns None
-    so the session falls back to legacy Chroma-backed indices."""
-    monkeypatch.delenv("IGNI_NEO4J_DISABLED", raising=False)
-
-    # Patch the import inside attach_neo4j so construction raises.
-    def _boom(**_kwargs):
-        raise RuntimeError("simulated: cannot download Neo4j distribution")
-
-    monkeypatch.setattr(
-        "ember_code.backend.neo4j_runtime.Neo4jRuntime",
-        _boom,
-    )
-
-    orch = _make_orchestrator(tmp_path)
-    result = await orch.attach_neo4j()
-    # Degradation: None, not raise.
-    assert result is None
-    # And nothing got cached — a later retry (with a fixed env) can succeed.
-    assert orch._neo4j_runtime is None

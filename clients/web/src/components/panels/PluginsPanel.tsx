@@ -235,32 +235,27 @@ export function PluginsPanel({
     markets: (markets || []).length,
   };
 
-  // ── Breadcrumb title ───────────────────────────────────────────
-  // Three views share the title slot: list (just "Plugins"), plugin
-  // detail (one crumb back to the list), markets management (one
-  // crumb back to the list).
-  let title: React.ReactNode = "Plugins";
-  if (selected) {
-    title = (
-      <span className="breadcrumb" style={{ margin: 0 }}>
-        <button className="breadcrumb-link" onClick={() => setSelected(null)}>
-          Plugins
-        </button>
-        <span className="breadcrumb-sep">›</span>
-        <strong>{selected.row.name}</strong>
-      </span>
-    );
-  } else if (view === "markets") {
-    title = (
-      <span className="breadcrumb" style={{ margin: 0 }}>
-        <button className="breadcrumb-link" onClick={() => setView("list")}>
-          Plugins
-        </button>
-        <span className="breadcrumb-sep">›</span>
-        <strong>Marketplaces</strong>
-      </span>
-    );
-  }
+  // ── Depth ──────────────────────────────────────────────────────
+  // Three views share the title slot: the list, a plugin's detail, and
+  // marketplace management. The latter two are one level down, and the
+  // page trail draws the way back — this panel used to draw its own
+  // breadcrumb here, which as a page meant two trails stacked.
+  // ``name`` is optional on a marketplace row — a crumb reading
+  // "undefined" is worse than one naming the thing generically.
+  const leaf = selected
+    ? (selected.row.name ?? "Plugin")
+    : view === "markets"
+      ? "Marketplaces"
+      : null;
+  const title = leaf ?? "Plugins";
+  const levels = {
+    labels: leaf ? [leaf] : [],
+    // One level deep, so any truncation is a return to the list.
+    onTruncate: () => {
+      setSelected(null);
+      setView("list");
+    },
+  };
 
   // ── Header extras: tabs only on the list view ─────────────────
   const headerExtras =
@@ -329,6 +324,7 @@ export function PluginsPanel({
   return (
     <Drawer
       title={title}
+      levels={levels}
       onClose={onClose}
       headerExtras={headerExtras}
       toolbar={drawerToolbar}

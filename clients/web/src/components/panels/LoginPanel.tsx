@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { IgniClient } from "../../protocol/client";
+import type { EmberClient } from "../../protocol/client";
 
 /**
  * Browser-callback login. Progress streams in as push notifications:
@@ -9,7 +9,7 @@ export function LoginPanel({
   client,
   onDone,
 }: {
-  client: IgniClient;
+  client: EmberClient;
   onDone: (success: boolean, detail: string) => void;
 }) {
   const [statusText, setStatusText] = useState("Starting login…");
@@ -31,7 +31,7 @@ export function LoginPanel({
   return (
     <div className="overlay">
       <div className="dialog">
-        <div className="dialog-title">Log in to igni</div>
+        <div className="dialog-title">Log in to igni Cloud</div>
         <div className="dialog-sub" style={{ whiteSpace: "pre-wrap" }}>
           {statusText}
         </div>

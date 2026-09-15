@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +28,7 @@ import click
 # Backward-compat re-exports: keep the old import paths working for
 # in-tree tests. New callers should import from the themed modules.
 from ember_code.backend.app import BackendApp
+from ember_code.backend.logging_setup import configure_logging
 from ember_code.backend.login_coordinator import LoginCoordinator
 from ember_code.backend.message_dispatcher import MessageDispatcher, _serialize
 from ember_code.backend.push_bridge import PushNotificationBridge
@@ -47,7 +50,6 @@ from ember_code.backend.schemas_rpc import (
     UpdateAvailable,
     WriteClientStateResult,
 )
-from ember_code.core.paths import CONFIG_DIR
 
 __all__ = [
     "AttachSessionResult",
@@ -73,6 +75,40 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+#: The interpreter this ships on. Kept in step with ``requires-python``
+#: in pyproject.toml and ``PYTHON_VERSION`` in the Tauri runtime, which
+#: is what actually installs it for a user.
+SUPPORTED_PYTHON = (3, 12)
+
+
+def warn_if_unsupported_python(emit: Callable[..., None] = logger.warning) -> bool:
+    """Say so, loudly, when the backend is running off-version.
+
+    The reason this is worth a check rather than a note in a README: the
+    failure is silent. On 3.14 the Neo4j sidecar exits without writing
+    stderr, without a Neo4j log, and without raising through the attach
+    — the knowledge base simply never comes up, and the panel says
+    "disabled" as though someone had configured it that way. Two hours
+    went into that before the interpreter turned out to be the variable.
+
+    A warning rather than a refusal. Contributors run the test suite on
+    whatever they have, and most of the codebase is fine there; the part
+    that is not now announces itself.
+
+    Returns True when the version is the supported one.
+    """
+    actual = sys.version_info[:2]
+    if actual == SUPPORTED_PYTHON:
+        return True
+    emit(
+        "running on Python %d.%d; this backend is supported on %d.%d only. "
+        "Some subsystems fail silently off-version — the Neo4j sidecar behind "
+        "the knowledge base is the known one.",
+        *actual,
+        *SUPPORTED_PYTHON,
+    )
+    return False
 
 
 @click.command()
@@ -101,22 +137,22 @@ def main(
     """Start the Ember Code backend server."""
     if socket_path is None and ws_port is None:
         raise click.UsageError("at least one of --socket or --ws-port is required")
-    if debug:
-        log_path = Path.home() / CONFIG_DIR / "debug.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        logging.basicConfig(
-            filename=str(log_path),
-            level=logging.DEBUG,
-            format="%(asctime)s %(name)s %(levelname)s %(message)s",
-            force=True,
-        )
-        logging.getLogger("ember_code").setLevel(logging.DEBUG)
+    # Always. ``--debug`` is unreachable for the backend the desktop
+    # app spawns (the app builds the argv), and the env var that
+    # replaced it still had to be set by someone who already suspected
+    # a problem and knew its name — which is nobody, before the fact.
+    # ``--debug`` / ``IGNI_DEBUG_LOG`` now choose the level.
+    log_path = configure_logging(debug_flag=debug)
+    if log_path is not None:
+        logger.info("backend log: %s", log_path)
+
+    warn_if_unsupported_python()
 
     extra_dirs = [Path(d) for d in additional_dirs] if additional_dirs else None
     # Canonicalise the project dir so two clients pointing at the
     # "same" folder via slightly different paths (``/tmp`` vs
     # ``/private/tmp`` on macOS, symlink resolution, trailing slash)
-    # both land on the same ``.igni/state.db`` and see identical
+    # both land on the same ``.ember/state.db`` and see identical
     # session lists. ``strict=False`` lets us keep going if the
     # directory doesn't yet exist — startup will create it.
     resolved_project = Path(project_dir).resolve(strict=False)

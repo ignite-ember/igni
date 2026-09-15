@@ -2,19 +2,20 @@
 
 Owns the Neo4j server subprocess for the lifetime of the BE process.
 Multiple BEs (one per open project window) share the same sidecar
-via a refcount published to ``~/.igni/neo4j.runtime.json``.
+via a refcount published to ``~/.ember/neo4j.runtime.json``.
 
 Module contents:
 
 * :class:`Neo4jEndpoints` — value type carrying the running
   sidecar's bolt + HTTP URIs, PID, and auth credentials.
 * :class:`Neo4jBootstrap` — ensures the Neo4j distribution is
-  installed under ``~/.igni/neo4j/<version>/``. Downloads the
+  installed under ``~/.ember/neo4j/<version>/``. Downloads the
   tarball on first launch (httpx + tarfile extract) and writes a
   ``.installed-<version>`` marker so subsequent launches skip the
-  download. Probes ``./bin/neo4j --version`` to verify the
-  extraction is intact; on probe failure the partial install is
-  wiped and one retry is attempted before raising.
+  download. Verifies the extract by its contents (launcher script +
+  a populated ``lib/``) rather than by running it; on failure the
+  partial install is wiped and one retry is attempted before
+  raising.
 * :class:`Neo4jRuntime` — refcounted singleton. :meth:`start`
   increments the refcount (or spawns a fresh server if no
   sidecar is reachable). :meth:`stop` decrements; the sidecar
@@ -57,7 +58,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import fcntl
 import json
 import logging
 import os
@@ -76,6 +76,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from ember_code.backend.jdk_bootstrap import JdkBootstrap, JdkBootstrapError
+from ember_code.backend.process_exit import format_child_failure
 
 if TYPE_CHECKING:
     from neo4j import AsyncDriver
@@ -110,8 +111,6 @@ _PROBE_INTERVAL_SEC = 0.25
 # cost of a load: 16 minutes for celery, 77 for sqlalchemy on an M-series
 # machine. Ten seconds is not enough time for a large store to checkpoint, so the
 # old default silently converted "close the session" into "throw the graph away".
-# Measured: 22 per-commit state directories on this machine, every one of them
-# 16K — config and a password file, no data.
 #
 # Two minutes is generous for the checkpoint and still bounded; a process that
 # has not exited by then is stuck rather than busy.
@@ -199,16 +198,17 @@ class Neo4jBootstrap:
     Download flow (matches Tauri's ``ensure_backend_python``):
 
     1. Read ``<cache_root>/.installed-<version>`` marker.
-    2. If marker present and ``<cache_root>/bin/neo4j`` probes
-       ``--version`` cleanly → return the cached install path.
-    3. Else download the tarball via httpx, extract, probe again.
-    4. On probe failure after extraction → wipe the partial install,
+    2. If marker present and the install still looks whole → return
+       the cached install path.
+    3. Else download the tarball via httpx, extract, check again.
+    4. On a failed check after extraction → wipe the partial install,
        retry once. If the retry also fails → raise
        :class:`Neo4jBootstrapError`.
 
-    The marker file is written only after a successful probe, so a
+    The marker file is written only after a successful check, so a
     crash mid-extract doesn't leave the cache in a "marked-good but
-    actually broken" state.
+    actually broken" state. What that check *is* matters more than it
+    looks — see :meth:`_install_looks_good`.
     """
 
     def __init__(
@@ -241,9 +241,23 @@ class Neo4jBootstrap:
         Idempotent — second and subsequent calls are a marker check +
         a probe. The probe guards against partial extracts that left
         the marker written by a prior run.
+
+        The probe is only trusted when a JDK exists to run it with.
+        ``bin/neo4j --version`` is a shell script that starts a JVM, so
+        on a machine with no Java it exits non-zero whether the extract
+        is perfect or shredded — and this method's response to a failed
+        probe is to wipe the cache and download 159 MB again. Every
+        backend start, on any Mac without a system Java, which is most
+        of them. That went unnoticed because the old env gate meant
+        this code effectively never ran; turning knowledge on by
+        default is what made it matter.
+
+        So: no JDK, no verdict. Fall back to asking the filesystem
+        whether the extract looks whole, and let the start path report
+        Java problems, where the error can say so.
         """
         self._cache_root.mkdir(parents=True, exist_ok=True)
-        if self.marker_path.exists() and await self._probe_version():
+        if self.marker_path.exists() and await self._install_looks_good():
             logger.debug("neo4j %s already installed at %s", self._version, self._install_dir)
             return self.neo4j_bin
 
@@ -251,7 +265,14 @@ class Neo4jBootstrap:
         for attempt in (1, 2):
             try:
                 await self._download_and_extract()
-                await self._probe_version()  # raises if extraction is broken
+                # The comment here read "raises if extraction is
+                # broken". It does not — it returns a bool, and the
+                # result was dropped, so a shredded extract was stamped
+                # good and the retry loop above could never fire.
+                if not await self._install_looks_good():
+                    raise Neo4jBootstrapError(
+                        f"neo4j {self._version} did not verify after extraction"
+                    )
                 self._write_marker()
                 return self.neo4j_bin
             except Exception as exc:
@@ -315,30 +336,36 @@ class Neo4jBootstrap:
             # explicitly avoid since we don't control the upstream.
             tar.extractall(self._cache_root, filter="data")
 
-    async def _probe_version(self) -> bool:
-        """Run ``./bin/neo4j --version``; return True iff exit=0.
+    async def _install_looks_good(self) -> bool:
+        """Whether the extract is intact — asked of the filesystem.
 
-        Used both as a "did extraction succeed?" probe and as a
-        cached-marker validator. The probe is fast (sub-second) so
-        we always run it before trusting the cache.
+        This used to run ``bin/neo4j --version`` and trust its exit
+        code. That command is a shell script that boots a JVM, which
+        made a 159 MB cache's validity depend on two things that have
+        nothing to do with whether the files are there:
+
+        * **A JDK.** Without one the launcher exits non-zero whether
+          the extract is perfect or shredded — and on a Mac with no
+          system Java, that is always.
+        * **Ten seconds.** The probe killed the process after that. A
+          cold JVM starting out of a just-downloaded JDK, while macOS
+          verifies several hundred megabytes of new binaries, does not
+          finish in ten seconds. Observed: ``rc -9``, no output.
+
+        Either one meant "install is broken", whose remedy is to wipe
+        the cache and download it again — and then fail the same way,
+        twice, and delete what was there. That is how a working 519 MB
+        install on this machine was destroyed while this change was
+        being written.
+
+        A partial extract is missing files, so ask about files. The
+        JVM gets its say in :meth:`Neo4jRuntime.start`, which waits for
+        the bolt port with a real timeout and reports what went wrong.
         """
         if not self.neo4j_bin.exists():
             return False
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                str(self.neo4j_bin),
-                "--version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        except (OSError, PermissionError):
-            return False
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=10.0)
-        except asyncio.TimeoutError:
-            proc.kill()
-            return False
-        return proc.returncode == 0
+        lib = self._install_dir / "lib"
+        return lib.is_dir() and any(lib.glob("*.jar"))
 
     def _write_marker(self) -> None:
         """Stamp the install as good-after-probe.
@@ -538,106 +565,47 @@ class Neo4jRuntime:
                 )
                 return state.endpoints
 
-            # Cross-process serialisation starts here. ``self._lock`` is an
-            # asyncio lock: it orders coroutines inside ONE interpreter and says
-            # nothing about the other capture workers, each of which is its own
-            # ``ember_code`` process with its own empty ``_processes`` map.
-            #
-            # A Neo4j store is single-writer. Two processes that both pass the
-            # discover check below will both spawn, and the loser dies on
-            # ``store_lock``:
-            #
-            #   FileLockException: Lock file has been locked by another process:
-            #     .../data/databases/store_lock
-            #
-            # which reaches the agent as ``client_for_failed`` — and worse, a
-            # winner that starts a *second* instance leaves readers talking to
-            # an empty database, which is how a graph verified at 4,845 nodes
-            # came back as 0. The runtime's own notes call cross-process
-            # refcounting out of scope; concurrent workers made it in scope.
-            lock_handle = await asyncio.to_thread(self._acquire_pair_lock, project_hash, commit_sha)
-            try:
-                return await self._start_locked(project_hash, commit_sha, key)
-            finally:
-                await asyncio.to_thread(self._release_pair_lock, lock_handle)
+            existing = self._discover(project_hash, commit_sha)
+            if existing is not None and self._is_alive(existing):
+                # Attach to the existing process. We don't have a
+                # subprocess.Popen handle — the original BE
+                # started it — so we synthesize a minimal handle
+                # wrapper that supports ``.pid`` and the
+                # ``send_signal``/``wait`` shape ``_shutdown_one``
+                # needs. The OS still owns the actual process; we
+                # can signal it but not await its exit reliably.
+                proc = _ExternalProcessHandle(existing.pid)
+                state = _ProjectCommitState(
+                    proc=proc,
+                    endpoints=existing,
+                    refcount=1,
+                    state_dir=self._state_root / _pair_slug(project_hash, commit_sha),
+                    auth_file=self._auth_path(project_hash, commit_sha),
+                    config_file=self._config_path(project_hash, commit_sha),
+                    logs_dir=self._logs_path(project_hash, commit_sha),
+                    data_dir=self._data_path(project_hash, commit_sha),
+                    runtime_file=self._runtime_path(project_hash, commit_sha),
+                )
+                self._processes[key] = state
+                logger.info(
+                    "attached to existing (project=%s commit=%s pid=%d)",
+                    project_hash,
+                    commit_sha,
+                    existing.pid,
+                )
+                return existing
 
-    def _acquire_pair_lock(self, project_hash: str, commit_sha: str) -> Any:
-        """Take an exclusive OS lock for one ``(project, commit)`` pair.
-
-        Blocking on purpose, and taken on a thread so the event loop keeps
-        running: the loser of the race must *wait* and then attach to the
-        winner, not fail. The lock file sits beside the store it guards, so it
-        is scoped exactly to the pair rather than to the whole runtime.
-        """
-        state_dir = self._state_dir(project_hash, commit_sha)
-        state_dir.mkdir(parents=True, exist_ok=True)
-        handle = (state_dir / "start.lock").open("a+")
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        return handle
-
-    @staticmethod
-    def _release_pair_lock(handle: Any) -> None:
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        finally:
-            handle.close()
-
-    async def _start_locked(
-        self, project_hash: str, commit_sha: str, key: tuple[str, str]
-    ) -> Neo4jEndpoints:
-        """Discover-or-spawn, with the pair's cross-process lock held.
-
-        The re-check matters: by the time the lock is granted, the process that
-        held it has usually already started the server and written
-        ``runtime.json``, so the common path here is to attach rather than
-        spawn.
-        """
-        state = self._processes.get(key)
-        if state is not None and state.proc.returncode is None:
-            state.refcount += 1
-            return state.endpoints
-
-        existing = self._discover(project_hash, commit_sha)
-        if existing is not None and self._is_alive(existing):
-            # Attach to the existing process. We don't have a
-            # subprocess.Popen handle — the original BE
-            # started it — so we synthesize a minimal handle
-            # wrapper that supports ``.pid`` and the
-            # ``send_signal``/``wait`` shape ``_shutdown_one``
-            # needs. The OS still owns the actual process; we
-            # can signal it but not await its exit reliably.
-            proc = _ExternalProcessHandle(existing.pid)
-            state = _ProjectCommitState(
-                proc=proc,
-                endpoints=existing,
-                refcount=1,
-                state_dir=self._state_root / _pair_slug(project_hash, commit_sha),
-                auth_file=self._auth_path(project_hash, commit_sha),
-                config_file=self._config_path(project_hash, commit_sha),
-                logs_dir=self._logs_path(project_hash, commit_sha),
-                data_dir=self._data_path(project_hash, commit_sha),
-                runtime_file=self._runtime_path(project_hash, commit_sha),
+            # Cold path: bootstrap (download if needed) + spawn.
+            bootstrap = Neo4jBootstrap(
+                version=self._version,
+                cache_root=self._neo4j_root,
+                tarball_url=self._download_url,
             )
+            neo4j_bin = await bootstrap.ensure()
+            state = await self._spawn_one(project_hash, commit_sha, neo4j_bin)
             self._processes[key] = state
-            logger.info(
-                "attached to existing (project=%s commit=%s pid=%d)",
-                project_hash,
-                commit_sha,
-                existing.pid,
-            )
-            return existing
-
-        # Cold path: bootstrap (download if needed) + spawn.
-        bootstrap = Neo4jBootstrap(
-            version=self._version,
-            cache_root=self._neo4j_root,
-            tarball_url=self._download_url,
-        )
-        neo4j_bin = await bootstrap.ensure()
-        state = await self._spawn_one(project_hash, commit_sha, neo4j_bin)
-        self._processes[key] = state
-        self._save_runtime(state)
-        return state.endpoints
+            self._save_runtime(state)
+            return state.endpoints
 
     async def stop_for_commit(self, project_hash: str, commit_sha: str) -> bool:
         """Decrement refcount; kill the pair's process at zero.
@@ -831,7 +799,12 @@ class Neo4jRuntime:
             "console",
             cwd=str(neo4j_bin.parent.parent),
             env=env,
-            stdout=asyncio.subprocess.DEVNULL,
+            # Both streams into the one file. Neo4j's console mode
+            # reports startup failures on stdout, which went to
+            # DEVNULL — so a sidecar that died before it could open
+            # its own log left a zero-byte stderr file and no other
+            # trace anywhere.
+            stdout=stderr_handle,
             stderr=stderr_handle,
             start_new_session=True,
         )
@@ -982,7 +955,12 @@ class Neo4jRuntime:
             "console",
             cwd=str(neo4j_bin.parent.parent),
             env=env,
-            stdout=asyncio.subprocess.DEVNULL,
+            # Both streams into the one file. Neo4j's console mode
+            # reports startup failures on stdout, which went to
+            # DEVNULL — so a sidecar that died before it could open
+            # its own log left a zero-byte stderr file and no other
+            # trace anywhere.
+            stdout=stderr_handle,
             stderr=stderr_handle,
             # Detach into its own process group so shutdown can signal
             # the whole subtree (Java + helpers) without touching the
@@ -1047,27 +1025,23 @@ class Neo4jRuntime:
     ) -> str:
         """Render the per-pair ``neo4j.conf`` the sidecar boots with.
 
-        ``data_dir`` and ``logs_dir`` must be absolute, and they must be written
-        into the file: this is the only channel that reaches the server. Neo4j is
-        started with ``--home-dir`` pointing at the *shared* install and only
-        ``--config-dir`` per pair, so anything not stated here resolves against
-        the install and is therefore shared by every project.
+        ``data_dir`` and ``logs_dir`` are written in absolutely, and
+        that is the whole point of them being arguments.
 
-        Two things were wrong for as long as this method existed. The keys were
-        the Neo4j 4.x spelling, which 5.x ignores in silence — 5.x renamed the
-        whole family ``dbms.directories.*`` → ``server.directories.*``. And the
-        values were relative, so even under the right key they would have
-        resolved against the install rather than the pair's state dir. The
-        comment they carried said the real values arrive through ``NEO4J_DATA``
-        and ``NEO4J_LOGS``; the 5.x launcher reads neither.
+        They used to be ``./data`` and ``./logs`` with a comment saying
+        the real values arrive as ``NEO4J_DATA`` / ``NEO4J_LOGS`` env
+        vars. Neo4j 5 does not read those env vars, and a relative path
+        in the config resolves against ``NEO4J_HOME`` — so every
+        sidecar, for every project and every commit, quietly shared the
+        one store inside the unpacked distribution. One at a time looks
+        fine. The second one to start finds the store locked, exits,
+        and takes the knowledge attach down with it; the port had
+        already accepted a TCP connection by then, so the logs said
+        "accepting connections" right before the process vanished.
 
-        Measured consequence: every per-commit server stored into
-        ``<install>/data/databases/neo4j``, one store shared by all of them,
-        while each pair's own ``data/`` stayed empty. Each project's load
-        therefore overwrote the previous project's graph, which is why nothing
-        was ever reusable and every evaluation run re-embedded every repository
-        from scratch — two thirds of that harness's wall clock, spent on work
-        that had already been done.
+        The keys are also un-deprecated on the way past
+        (``dbms.directories.*`` → ``server.directories.*``), which is
+        four fewer warnings on every boot.
         """
         return (
             f"# Auto-generated by ember-code — do not edit by hand.\n"
@@ -1076,12 +1050,11 @@ class Neo4jRuntime:
             f"server.http.enabled=true\n"
             f"server.http.listen_address=:{http_port}\n"
             f"dbms.security.auth_enabled=false\n"
-            f"dbms.connector.bolt.enabled=true\n"
-            f"dbms.default_database=neo4j\n"
+            f"initial.dbms.default_database=neo4j\n"
             f"{_HEAP_INITIAL_KEY}={self._heap_initial}\n"
             f"{_HEAP_MAX_KEY}={self._heap_max}\n"
-            f"# Absolute, and under the 5.x key: --home-dir is the shared\n"
-            f"# install, so a relative path here would be shared too.\n"
+            f"# Absolute, and per (project, scope). A relative path here\n"
+            f"# resolves against NEO4J_HOME, which is shared.\n"
             f"server.directories.data={data_dir}\n"
             f"server.directories.logs={logs_dir}\n"
         )
@@ -1141,17 +1114,14 @@ class Neo4jRuntime:
         immediately rather than waiting the full timeout.
 
         ``stderr_handle`` (when provided) is the open file object
-        piped to the subprocess's stderr. The child dup'd the fd at
-        spawn time, so closing the parent's handle after we're done
-        polling doesn't affect the subprocess's stderr redirection.
-
-        Only on the error paths (crash-during-startup, timeout) do
-        we terminate the process — the success path leaves it alive
-        for the caller. This was a bug: an earlier ``finally``-based
-        cleanup would kill EVERY spawned process (including successful
-        ones) on the way out, so ``start_for_commit`` handed back
-        endpoints pointing at a dead PID and downstream drivers saw
-        "connection refused" immediately.
+        piped to the subprocess's stderr. We hold a reference so it
+        doesn't get GC'd while the process is running (which would
+        close the pipe and detach stderr), and ``finally`` close it
+        after the process exits or we terminate it on timeout.
+        On timeout we ``proc.terminate()`` and ``await proc.wait()``
+        so the orphan Neo4j process is reaped before the exception
+        propagates — otherwise a slow startup leaves a running
+        process that no one owns.
         """
         deadline = time.monotonic() + self._startup_timeout
         try:
@@ -1164,27 +1134,33 @@ class Neo4jRuntime:
                             stderr_text = stderr_file.read_text(encoding="utf-8", errors="replace")
                         except Exception:
                             stderr_text = "<could not read stderr file>"
+                    # Spelled out rather than numeric. The code that
+                    # actually turned up here was 137, and reading it
+                    # as "128 + SIGKILL, so the binary would not exec"
+                    # took an hour it did not need to.
                     raise Neo4jBootstrapError(
-                        f"neo4j process exited during startup (code={proc.returncode}): "
-                        f"{stderr_text[:1000]}"
+                        format_child_failure("neo4j", proc.returncode, stderr_text)
                     )
                 if _is_port_open(self._host, port):
                     logger.info("neo4j bolt port %d is accepting connections", port)
-                    # Success path — close the parent's stderr fd (the child
-                    # keeps its own dup'd copy) but LEAVE THE PROCESS ALIVE.
-                    if stderr_handle is not None:
-                        with contextlib.suppress(Exception):
-                            stderr_handle.close()
                     return
                 await asyncio.sleep(_PROBE_INTERVAL_SEC)
             raise Neo4jBootstrapError(
                 f"neo4j did not become reachable on {self._host}:{port} within {self._startup_timeout}s"
             )
         except BaseException:
-            # Error path — reap the orphan Neo4j and close stderr.
-            # `BaseException` catches both Neo4jBootstrapError raised above
-            # and any surprise KeyboardInterrupt / SystemExit that might
-            # otherwise leak a Java process.
+            # Failure paths only — a crash during startup, a timeout,
+            # or cancellation. Reap so we do not leak an orphan.
+            #
+            # This used to be a ``finally``, which also ran on the
+            # success ``return`` above: the sidecar was terminated
+            # immediately after it started serving, and its own log
+            # recorded "Neo4j Server shutdown initiated by request"
+            # 63ms after "Bolt enabled". Every downstream symptom came
+            # from here — the knowledge attach failing to connect, the
+            # respawn on the next attach, and the database appearing to
+            # die on its own. On success the process is not an orphan;
+            # it is the thing we were waiting for.
             if stderr_handle is not None:
                 with contextlib.suppress(Exception):
                     stderr_handle.close()
@@ -1271,8 +1247,6 @@ class Neo4jRuntime:
             try:
                 await asyncio.wait_for(proc.wait(), timeout=self._shutdown_grace)
             except asyncio.TimeoutError:
-                # State the consequence, not just the signal. This is the line
-                # that would have explained why every graph on disk was empty.
                 logger.warning(
                     "neo4j (project=%s commit=%s pid=%d) did not exit within %ds; SIGKILL. "
                     "The checkpoint did not finish, so this commit's store is not reusable "
@@ -1339,33 +1313,10 @@ class _ExternalProcessHandle:
     awaiting. The :class:`Neo4jRuntime` shutdown path only needs
     ``.pid`` and ``.send_signal``/``.terminate``; the ``wait`` path
     is gated on a duck-typed check.
-
-    ``returncode`` is exposed so callers doing the standard
-    ``proc.returncode is None`` liveness check (e.g.
-    ``start_for_commit`` when re-attaching to a cached state) work
-    against both real ``asyncio.subprocess.Process`` and this
-    handle. We check the process group via ``os.kill(pid, 0)`` —
-    which raises when the process is gone, letting us return an
-    exit-code marker instead of ``None``.
     """
 
     def __init__(self, pid: int) -> None:
         self.pid = pid
-
-    @property
-    def returncode(self) -> int | None:
-        """``None`` while the process is alive, ``-1`` once it's gone.
-
-        Poll-only: we don't have a wait channel, so a caller that
-        needs to KNOW the true exit code has to use a different path.
-        Everyone using this for liveness (``.returncode is None``)
-        gets the right answer either way.
-        """
-        try:
-            os.kill(self.pid, 0)
-            return None
-        except (ProcessLookupError, PermissionError, OSError):
-            return -1
 
     def send_signal(self, sig: int) -> None:
         """Send a signal to the process group (Neo4j's children)."""

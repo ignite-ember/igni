@@ -30,7 +30,6 @@ from ember_code.backend.schemas_rpc import BackendReadyLine
 from ember_code.backend.server import BackendServer
 from ember_code.backend.session_orchestrator import SessionOrchestrator
 from ember_code.backend.supervisor import BackendSupervisor
-from ember_code.core.config.group_policy import GroupPolicyCache
 from ember_code.core.config.settings import load_settings
 
 logger = logging.getLogger(__name__)
@@ -113,6 +112,42 @@ class BackendApp:
         self._rpc_router: RpcRouter | None = None
         self._orchestrator: SessionOrchestrator | None = None
         self._queue: list[str] = []
+
+    def _start_wake_detector(self) -> None:
+        """Notice sleep, and drop the cloud state it invalidated.
+
+        Local work survives sleep on its own — see
+        :mod:`ember_code.backend.wake_detector` — but anything with a
+        remote peer does not: the far end closes the socket while we
+        are frozen. Until now nothing knew that had happened, so the
+        codeindex pill served its pre-sleep answer until some later
+        poll happened to fail.
+
+        The only thing to do is forget. Clearing the resolver's cache
+        makes the next poll ask again, which is cheap, and leaves the
+        deciding to the code that already knows how — rather than
+        having a wake handler duplicate it.
+        """
+        from ember_code.backend.wake_detector import WakeDetector
+
+        detector = WakeDetector()
+
+        async def _forget_cloud_state(slept: float) -> None:
+            session = getattr(self._backend, "_session", None)
+            sync = getattr(session, "code_index_sync", None)
+            resolver = getattr(sync, "resolver", None)
+            if resolver is None:
+                return
+            resolver.invalidate()
+            logger.info(
+                "wake: cleared the codeindex resolution after %.0fs asleep; "
+                "the next status poll will resolve again",
+                slept,
+            )
+
+        detector.subscribe(_forget_cloud_state)
+        detector.start()
+        self._wake_detector = detector
 
     async def run(self) -> None:
         """Boot, serve, and tear down. Exceptions in the boot or
@@ -211,16 +246,21 @@ class BackendApp:
             )
         except Exception:
             logger.exception("neo4j cutover failed; will retry on next boot")
-        # Neo4j is the DEFAULT storage backend for the CodeIndex +
-        # knowledge indices — this attach always fires. The first index
-        # op will block while the runtime downloads the Neo4j
-        # distribution + JDK (one-time; cached at ``~/.igni/neo4j``)
-        # and spawns the per-(project, commit) subprocess; subsequent
-        # ops hit the live driver. Set ``IGNI_NEO4J_DISABLED=1`` for
-        # rare headless-CI/test cases where Neo4j should be skipped;
-        # the orchestrator will fall back to legacy Chroma-backed
-        # indices in that mode.
-        await self._orchestrator.attach_neo4j()
+        # Build the :class:`Neo4jRuntime` and switch the default
+        # session's knowledge index to it, when ``knowledge.enabled``
+        # says so (see :mod:`ember_code.backend.knowledge_gate`).
+        #
+        # Deliberately not awaited. On a cold machine the attach
+        # downloads Neo4j and a JDK — ~500 MB — and waits for the bolt
+        # port before returning. Awaiting it here would put that
+        # download between the user and a usable backend: the loading
+        # screen would sit there for minutes on a first launch, and on
+        # a blocked network it would sit there and then fail, with the
+        # knowledge base taking the whole app down with it.
+        #
+        # This was survivable before only because the env gate meant
+        # the call almost never did anything.
+        self._orchestrator.attach_neo4j_in_background()
         # Workflow runner (CC ``/workflows`` parity): the BE runs
         # ``.claude/workflows/*.mjs`` scripts in a Node subprocess
         # and streams live progress on the ``workflow_event`` push
@@ -229,21 +269,12 @@ class BackendApp:
         # it via ``backend.workflow_runner``.
         from ember_code.backend.workflow_runner import WorkflowRunner
 
-        # The group's workflows come from the policy cache, not from the
-        # project. Computed here from settings rather than read off the
-        # session: the runner is built outside the session's ownership,
-        # and reaching into it for a path would be a private-attribute
-        # reach-in for no gain.
-        group_workflows = GroupPolicyCache(
-            data_dir=Path(settings.storage.data_dir).expanduser()
-        ).dir_for("workflows")
-
         self._backend.workflow_runner = WorkflowRunner(
             project_dir=self._project_dir,
             push=self._push_bridge,
-            group_dir=group_workflows if group_workflows.is_dir() else None,
         )
         self._supervisor.start_evictor()
+        self._start_wake_detector()
         self._supervisor.mark_running()
 
         try:
@@ -276,7 +307,7 @@ class BackendApp:
             ready.ws_port = ws_transport.port
             ready.ws_url = f"ws://127.0.0.1:{ws_transport.port}"
             # Publish the port + version at
-            # ``<project>/.igni/backend.lock`` so a second client
+            # ``<project>/.ember/backend.lock`` so a second client
             # opening the same project can discover this BE.
             assert self._supervisor is not None
             self._supervisor.write_discovery_lockfile(ws_transport.port)

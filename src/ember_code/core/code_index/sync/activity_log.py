@@ -27,7 +27,31 @@ class SyncActivityLog:
         self._entries: list[ActivityEntry] = []
 
     def record(self, entry: ActivityEntry) -> None:
-        """Append ``entry`` and trim to :attr:`DEFAULT_LIMIT`."""
+        """Append ``entry`` and trim to :attr:`DEFAULT_LIMIT`.
+
+        A skip that repeats the previous entry's reason replaces it
+        rather than being appended. The HEAD watcher polls at 1Hz, so
+        a standing condition — "no igni server configured", a
+        repository that is not connected — produced one row per
+        second and refilled all twenty slots every twenty seconds.
+        The log could then only ever show the last twenty seconds of
+        the same sentence, and any real sync before it had already
+        been evicted.
+
+        Only consecutive *skips* with an identical reason collapse.
+        Errors and successes always append: twenty failures in a row
+        are twenty separate facts, and the gap between them is
+        information.
+        """
+        previous = self._entries[-1] if self._entries else None
+        if (
+            previous is not None
+            and entry.skipped
+            and previous.skipped
+            and entry.reason == previous.reason
+        ):
+            self._entries[-1] = entry
+            return
         self._entries.append(entry)
         if len(self._entries) > self._limit:
             self._entries = self._entries[-self._limit :]

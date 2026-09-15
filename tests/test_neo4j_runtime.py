@@ -26,6 +26,7 @@ import pytest
 from ember_code.backend.neo4j_runtime import (
     DEFAULT_NEO4J_VERSION,
     Neo4jBootstrap,
+    Neo4jBootstrapError,
     Neo4jDiscovery,
     Neo4jEndpoints,
     Neo4jRuntime,
@@ -88,8 +89,8 @@ def test_config_includes_required_keys(tmp_path: Path) -> None:
         bolt_port=7687,
         http_port=7474,
         password="hunter2",
-        data_dir=tmp_path / "state/p-c/data",
-        logs_dir=tmp_path / "state/p-c/logs",
+        data_dir=tmp_path / "proj-a" / "data",
+        logs_dir=tmp_path / "proj-a" / "logs",
     )
     # Bolt + HTTP listen directives.
     assert "server.bolt.listen_address=:7687" in config
@@ -101,66 +102,44 @@ def test_config_includes_required_keys(tmp_path: Path) -> None:
     assert "server.memory.heap.max_size=2g" in config
 
 
-def test_config_pins_the_store_to_this_pairs_own_directory(tmp_path: Path) -> None:
-    """The data directory must be absolute and under the 5.x key.
+def test_config_points_the_store_at_this_project_only(tmp_path: Path) -> None:
+    """The store directory has to be absolute and per-instance.
 
-    Neo4j is started with ``--home-dir`` pointing at the shared install and only
-    ``--config-dir`` per pair, so this file is the single channel that decides
-    where the store lands. It used to say ``dbms.directories.data=./data``:
-    the 4.x key, which 5.x ignores without complaint, and a relative value that
-    would have resolved against the shared install even under the right key. The
-    result was one store at ``<install>/data/databases/neo4j`` shared by every
-    project, each load overwriting the last, and no graph ever reusable.
+    It was ``./data``, with a comment claiming ``NEO4J_DATA`` carried
+    the real value. Neo4j 5 ignores that env var and resolves a
+    relative path against ``NEO4J_HOME`` — so every project's sidecar
+    opened the one store inside the unpacked distribution. The first
+    instance worked; the second found it locked and died seconds after
+    its port had started accepting connections, which is what made the
+    failure look like a flaky database rather than a config bug.
     """
     rt = Neo4jRuntime(data_dir=tmp_path)
-    data_dir = tmp_path / "state/proj-abc123/data"
-    logs_dir = tmp_path / "state/proj-abc123/logs"
-    config = rt._build_config(
-        bolt_port=7687,
-        http_port=7474,
-        password="hunter2",
-        data_dir=data_dir,
-        logs_dir=logs_dir,
-    )
-
-    assert f"server.directories.data={data_dir}" in config
-    assert f"server.directories.logs={logs_dir}" in config
-    # The 4.x spelling is silently ignored by 5.x, so it must not be what we
-    # rely on — and a relative path is shared whatever the key.
-    assert "dbms.directories.data" not in config
-    assert "dbms.directories.logs" not in config
-    assert "=./data" not in config
-    assert "=./logs" not in config
-
-
-def test_two_commits_of_one_project_get_separate_stores(tmp_path: Path) -> None:
-    """Different commits must not be handed the same data directory.
-
-    This is the property the shared-store bug actually broke: the paths were
-    already distinct, they simply never reached the server.
-    """
-    rt = Neo4jRuntime(data_dir=tmp_path)
-    first = rt._build_config(
-        bolt_port=7687,
-        http_port=7474,
+    a = rt._build_config(
+        bolt_port=1,
+        http_port=2,
         password="x",
-        data_dir=rt._data_path("proj", "aaaaaaa"),
-        logs_dir=rt._logs_path("proj", "aaaaaaa"),
+        data_dir=tmp_path / "proj-a" / "data",
+        logs_dir=tmp_path / "proj-a" / "logs",
     )
-    second = rt._build_config(
-        bolt_port=7688,
-        http_port=7475,
+    b = rt._build_config(
+        bolt_port=3,
+        http_port=4,
         password="x",
-        data_dir=rt._data_path("proj", "bbbbbbb"),
-        logs_dir=rt._logs_path("proj", "bbbbbbb"),
+        data_dir=tmp_path / "proj-b" / "data",
+        logs_dir=tmp_path / "proj-b" / "logs",
     )
 
-    def data_line(config: str) -> str:
-        return next(
-            line for line in config.splitlines() if line.startswith("server.directories.data=")
-        )
-
-    assert data_line(first) != data_line(second)
+    assert f"server.directories.data={tmp_path / 'proj-a' / 'data'}" in a
+    assert f"server.directories.logs={tmp_path / 'proj-a' / 'logs'}" in a
+    # Two projects must not name the same store.
+    assert f"server.directories.data={tmp_path / 'proj-b' / 'data'}" in b
+    # No relative directory survives anywhere.
+    for config in (a, b):
+        assert "=./data" not in config
+        assert "=./logs" not in config
+        # The deprecated spellings warn on every boot and are silently
+        # ignored for the env-var trick that never worked.
+        assert "dbms.directories." not in config
 
 
 # ── Neo4jDiscovery ────────────────────────────────────────────────────
@@ -288,3 +267,71 @@ def test_is_alive_returns_false_for_dead_pid() -> None:
     )
     rt = Neo4jRuntime(data_dir="/tmp")
     assert not rt._is_alive(endpoints)
+
+
+# ── _wait_for_bolt must not kill what it waited for ───────────────
+
+
+class _FakeProc:
+    """Minimal stand-in for the sidecar subprocess."""
+
+    def __init__(self) -> None:
+        self.returncode: int | None = None
+        self.terminated = False
+        self.killed = False
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.returncode = -15
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+
+    async def wait(self) -> int:
+        return self.returncode or 0
+
+
+async def test_a_started_sidecar_is_left_running(tmp_path: Path) -> None:
+    """The success path must not reap the process.
+
+    ``_wait_for_bolt`` cleaned up in a ``finally``, so returning
+    "the port is open" went straight into ``proc.terminate()``. Neo4j
+    logged `Bolt enabled` and then `shutdown initiated by request`
+    63ms later, every time, and the knowledge attach that followed
+    could never connect to it.
+    """
+    import socket as _socket
+
+    listener = _socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    proc = _FakeProc()
+    try:
+        rt = Neo4jRuntime(data_dir=tmp_path)
+        await rt._wait_for_bolt(port, "neo4j", "pw", proc)  # type: ignore[arg-type]
+    finally:
+        listener.close()
+
+    assert not proc.terminated, "the sidecar was killed on the success path"
+    assert not proc.killed
+    assert proc.returncode is None
+
+
+async def test_a_sidecar_that_never_listens_is_reaped(tmp_path: Path) -> None:
+    """The failure path still has to clean up — the fix must not
+    trade a killed-on-success for a leaked-on-timeout."""
+    proc = _FakeProc()
+    rt = Neo4jRuntime(data_dir=tmp_path)
+    rt._startup_timeout = 0.5
+    # A port nothing is listening on.
+    closed = __import__("socket").socket()
+    closed.bind(("127.0.0.1", 0))
+    port = closed.getsockname()[1]
+    closed.close()
+
+    with pytest.raises(Neo4jBootstrapError):
+        await rt._wait_for_bolt(port, "neo4j", "pw", proc)  # type: ignore[arg-type]
+
+    assert proc.terminated, "a sidecar that never came up must be reaped"

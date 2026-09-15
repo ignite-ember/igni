@@ -29,6 +29,21 @@ import {
 } from "./chat/model";
 import { applyVisualizationDelta } from "./chat/visualizationStream";
 import { nextObserverBusyState } from "./chat/observerBusy";
+import { planSessionBinding } from "./chat/sessionBinding";
+import {
+  current as currentPage,
+  openRoot,
+  pop as popPage,
+  restore as restorePages,
+  serialise as serialisePages,
+  truncateTo,
+  type PageKind,
+  type PageRoute,
+} from "./chat/pageStack";
+import { PageContext } from "./components/PageShell";
+import { WorkflowsPage } from "./components/pages/WorkflowsPage";
+import { HelpPage } from "./components/pages/HelpPage";
+import { ContextPage } from "./components/pages/ContextPage";
 import { handleEsc } from "./chat/escHandler";
 import { buildContinuedPrompt } from "./chat/continueInterrupted";
 import {
@@ -43,11 +58,15 @@ import { ClientStateStore, ensureClientId } from "./clientState";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ChatItemView } from "./components/ChatItems";
 import { ChatSearchBar } from "./components/ChatSearchBar";
-import { Composer, BUILTIN_COMMANDS, type SlashCommand } from "./components/Composer";
+import { Composer, type SlashCommand } from "./components/Composer";
 import { CodeIndexIndicator } from "./components/CodeIndexIndicator";
 import { GroupIndicator } from "./components/GroupIndicator";
 import { WatcherIndicator } from "./components/WatcherIndicator";
-import { BackendVersionChip, CtxMeter, SessionChip } from "./components/StatusBits";
+import {
+  BackendVersionChip,
+  CtxMeter,
+  SessionChip,
+} from "./components/StatusBits";
 import { FPSCounterOverlay } from "./components/FPSCounter";
 import { HitlDialog, type HitlDecision } from "./components/HitlDialog";
 import {
@@ -61,18 +80,18 @@ import { ScrollIndicator } from "./components/ScrollIndicator";
 import { Sidebar, type SessionEntry } from "./components/Sidebar";
 import { AgentsPanel } from "./components/panels/AgentsPanel";
 import { CodeIndexPanel } from "./components/panels/CodeIndexPanel";
-import { DetailsPanel } from "./components/panels/DetailsPanel";
 import { FilePreview } from "./components/FilePreview";
+import { FirstRunSetup } from "./components/FirstRunSetup";
 import { HooksPanel } from "./components/panels/HooksPanel";
 import { KnowledgePanel } from "./components/panels/KnowledgePanel";
 import { Toasts, type Toast } from "./components/Toasts";
 import { UpdatePrompt } from "./components/UpdatePrompt";
 import { RetryBanner } from "./components/RetryBanner";
 import { host } from "./lib/host";
+import { applyTheme, brandMark, brandName } from "./lib/theme";
 import { PluginsPanel } from "./components/panels/PluginsPanel";
 import { SkillsPanel } from "./components/panels/SkillsPanel";
 import { DirectoryPicker } from "./components/panels/DirectoryPicker";
-import { InfoPanel } from "./components/panels/InfoPanel";
 import { LoginPanel } from "./components/panels/LoginPanel";
 import { LoopPanel } from "./components/panels/LoopPanel";
 import { McpPanel } from "./components/panels/McpPanel";
@@ -82,22 +101,21 @@ import { IgniClient, pickNativeDirectory, type ConnectionState } from "./protoco
 import type { HITLRequest, ServerMessage, StatusUpdate } from "./protocol/messages";
 import { countOf } from "./lib/plural";
 
-type PanelState =
-  | { kind: "none" }
-  | { kind: "mcp" }
-  | { kind: "codeindex" }
-  | { kind: "loop" }
-  | { kind: "schedule" }
-  | { kind: "login" }
-  | { kind: "info"; title: string; markdown: string }
-  | { kind: "details"; title: string; method: string; fallback: string }
-  | { kind: "agents" }
-  | { kind: "skills" }
-  | { kind: "plugins" }
-  | { kind: "knowledge" }
-  | { kind: "hooks" }
-  | { kind: "watcher" }
-  | { kind: "dir-picker" };
+/**
+ * The things that are dialogs.
+ *
+ * Everything the app could open used to live in this one slot and
+ * render as a centre-screen modal. The destinations moved out to
+ * ``chat/pageStack.ts`` — they are places you browse, and a single
+ * slot cannot hold a trail. What is left is what a dialog actually
+ * is: pick one thing and go (``dir-picker``), get through a flow
+ * (``login``), or glance at a status and act on it (``loop``).
+ *
+ * The HITL prompt is not here either, and never was — it renders as
+ * ``hitlSlot`` inside the Composer, anchored to the run it is asking
+ * about.
+ */
+type PanelState = { kind: "none" } | { kind: "login" } | { kind: "dir-picker" };
 
 interface UpdateInfo {
   available: boolean;
@@ -105,6 +123,18 @@ interface UpdateInfo {
   latest_version: string;
   download_url?: string;
 }
+
+/** The destinations with a permanent seat in the sidebar.
+ *
+ * Above the session list, because that is what they are relative to
+ * it: places, not conversations. Three and not thirteen — the rest
+ * keep their place in `TOOLS_MENU` below, and these are the ones you
+ * go back to while working rather than configure once. */
+const SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
+  { kind: "plugins", label: "Plugins" },
+  { kind: "mcp", label: "MCPs" },
+  { kind: "knowledge", label: "Knowledge" },
+];
 
 /** Entries for the header tools menu — each opens its feature's UI
  * directly (no slash command visible to the user). */
@@ -117,10 +147,31 @@ const TOOLS_MENU: { label: string; command: string; desc: string }[] = [
   { label: "Knowledge", command: "/knowledge", desc: "project knowledge base" },
   { label: "Hooks", command: "/hooks", desc: "pre/post tool hooks" },
   { label: "Loop", command: "/loop", desc: "recurring prompt status" },
-  { label: "Scheduled tasks", command: "/schedule", desc: "background routines" },
-  { label: "Watcher", command: "/watcher", desc: "background processes & live logs" },
-  { label: "Compact context", command: "/compact", desc: "summarize old turns" },
-  { label: "Context breakdown", command: "/ctx", desc: "system vs runs token split" },
+  {
+    label: "Scheduled tasks",
+    command: "/schedule",
+    desc: "background routines",
+  },
+  {
+    label: "Workflows",
+    command: "/workflows",
+    desc: "multi-phase agent scripts",
+  },
+  {
+    label: "Watcher",
+    command: "/watcher",
+    desc: "background processes & live logs",
+  },
+  {
+    label: "Compact context",
+    command: "/compact",
+    desc: "summarize old turns",
+  },
+  {
+    label: "Context breakdown",
+    command: "/ctx",
+    desc: "system vs runs token split",
+  },
   { label: "Help", command: "/help", desc: "all commands" },
 ];
 
@@ -128,7 +179,10 @@ const TOOLS_MENU: { label: string; command: string; desc: string }[] = [
  *  text that closes the same run. The inline copy-response button on
  *  the stats line copies this text. We stop at the previous user
  *  message because every stats item belongs to exactly one turn. */
-function findAssistantTextForStats(items: ChatItem[], idx: number): string | undefined {
+function findAssistantTextForStats(
+  items: ChatItem[],
+  idx: number,
+): string | undefined {
   const stats = items[idx];
   if (!stats || stats.kind !== "stats") return undefined;
   for (let i = idx - 1; i >= 0; i--) {
@@ -191,7 +245,13 @@ export default function App() {
   const [status, setStatus] = useState<StatusUpdate | null>(null);
   const [hitl, setHitl] = useState<HITLRequest[] | null>(null);
   const [panel, setPanel] = useState<PanelState>({ kind: "none" });
-  const [composerSeed, setComposerSeed] = useState<{ text: string; n: number } | null>(null);
+  // Where this window is. Empty means the chat is showing. Persisted
+  // per window under PAGE_KEY — see the hydrate block below.
+  const [pages, setPages] = useState<PageRoute[]>([]);
+  const [composerSeed, setComposerSeed] = useState<{
+    text: string;
+    n: number;
+  } | null>(null);
   // Plain-browser fallback for host.openFile — bridge-equipped hosts
   // (Tauri / VSCode / JetBrains) handle the open themselves and never
   // set this. Tracked at the App level so any panel can call
@@ -209,7 +269,8 @@ export default function App() {
   // gutter, drag region) always match. Idempotent — re-running just
   // sets the same attributes.
   useEffect(() => {
-    const html = typeof document !== "undefined" ? document.documentElement : null;
+    const html =
+      typeof document !== "undefined" ? document.documentElement : null;
     if (!html) return;
     const w = window as unknown as { __TAURI__?: unknown };
     if (!w.__TAURI__) return;
@@ -241,13 +302,17 @@ export default function App() {
         const text = String(payload.text ?? "");
         const path = payload.path ? String(payload.path) : null;
         const line = typeof payload.line === "number" ? payload.line : null;
-        const endLine = typeof payload.end_line === "number" ? payload.end_line : null;
+        const endLine =
+          typeof payload.end_line === "number" ? payload.end_line : null;
         const range =
           line != null
             ? `:${line}${endLine != null && endLine !== line ? `-${endLine}` : ""}`
             : "";
         const ref = path ? `@${path}${range}\n` : "";
-        setComposerSeed({ text: `${ref}\`\`\`\n${text}\n\`\`\``, n: Date.now() });
+        setComposerSeed({
+          text: `${ref}\`\`\`\n${text}\n\`\`\``,
+          n: Date.now(),
+        });
       } else if (type === "ember:attachFile") {
         const path = payload.path ? String(payload.path) : null;
         if (path) setComposerSeed({ text: `@${path}`, n: Date.now() });
@@ -285,7 +350,10 @@ export default function App() {
         // bridge disconnects (web build, no IDE), the attribute is
         // never set and the OS-detected default takes over.
         const dark = Boolean(payload.dark);
-        document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+        document.documentElement.setAttribute(
+          "data-theme",
+          dark ? "dark" : "light",
+        );
         // Match the host's actual panel background so the tool
         // window doesn't paint a differently-shaded patch inside
         // Darcula / High Contrast / custom themes. ``--bg`` is the
@@ -302,12 +370,18 @@ export default function App() {
       }
     };
     const onCustom = (e: Event) => {
-      const ev = e as CustomEvent<{ type: string; payload: Record<string, unknown> }>;
+      const ev = e as CustomEvent<{
+        type: string;
+        payload: Record<string, unknown>;
+      }>;
       const { type, payload } = ev.detail || { type: "", payload: {} };
       dispatch(type, payload || {});
     };
     const onMessage = (e: MessageEvent) => {
-      const data = e.data as { type?: string; payload?: Record<string, unknown> } & Record<string, unknown>;
+      const data = e.data as {
+        type?: string;
+        payload?: Record<string, unknown>;
+      } & Record<string, unknown>;
       if (!data || typeof data.type !== "string") return;
       // ``ember:searchCodeResult`` is correlation-id traffic owned
       // by ``host.searchCode`` — don't dispatch as a normal event.
@@ -371,25 +445,22 @@ export default function App() {
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   // Ref to the latest ``checkForUpdate`` closure so the once-mounted
   // ``ember-host`` listener (deps ``[]``) can call the current version.
-  const checkForUpdateRef = useRef<((silent?: boolean) => Promise<void>) | null>(
-    null,
-  );
-  const announceUpdate = useCallback(
-    (info: UpdateInfo) => {
-      if (info.available) {
-        setPendingUpdate(info);
-        setShowUpdateModal(true);
-        // OS-level alert so the user sees it even if the app is
-        // backgrounded. The modal sheet takes over once they
-        // refocus the window.
-        void host.notify({
-          title: "Update available",
-          body: `igni ${info.latest_version} is ready to install.`,
-        });
-      }
-    },
-    [],
-  );
+  const checkForUpdateRef = useRef<
+    ((silent?: boolean) => Promise<void>) | null
+  >(null);
+  const announceUpdate = useCallback((info: UpdateInfo) => {
+    if (info.available) {
+      setPendingUpdate(info);
+      setShowUpdateModal(true);
+      // OS-level alert so the user sees it even if the app is
+      // backgrounded. The modal sheet takes over once they
+      // refocus the window.
+      void host.notify({
+        title: "Update available",
+        body: `igni ${info.latest_version} is ready to install.`,
+      });
+    }
+  }, []);
   // Re-runnable update check used by the native "Check for Updates…"
   // menu item and the version chip click. ``silent=false`` surfaces
   // an OS notification when there's no update, so the menu click
@@ -397,9 +468,13 @@ export default function App() {
   const checkForUpdate = useCallback(
     async (silent = false) => {
       try {
-        const tauriInvoke = (window as unknown as {
-          __TAURI__?: { core?: { invoke?: (cmd: string) => Promise<unknown> } };
-        }).__TAURI__?.core?.invoke;
+        const tauriInvoke = (
+          window as unknown as {
+            __TAURI__?: {
+              core?: { invoke?: (cmd: string) => Promise<unknown> };
+            };
+          }
+        ).__TAURI__?.core?.invoke;
         const info = tauriInvoke
           ? ((await tauriInvoke("ember_check_update")) as UpdateInfo)
           : await client.rpc<UpdateInfo | null>("check_for_update");
@@ -429,27 +504,47 @@ export default function App() {
   const fakeUpdateDone = useRef(false);
   useEffect(() => {
     if (fakeUpdateDone.current) return;
-    const env = (import.meta as unknown as { env?: Record<string, string> }).env;
+    const env = (import.meta as unknown as { env?: Record<string, string> })
+      .env;
     if (!env?.VITE_EMBER_FAKE_UPDATE) return;
     fakeUpdateDone.current = true;
     announceUpdate({
       available: true,
       current_version: "0.6.0",
       latest_version: "0.7.0",
-      download_url:
-        "https://github.com/ignite-ember/igni/releases/latest",
+      download_url: "https://github.com/ignite-ember/igni/releases/latest",
     });
   }, [announceUpdate]);
   // Per-client UI state — hydrated from the BE on connect. Lives in
   // a memoized store so all three keys (session-id, sidebar, draft)
   // round-trip the same way regardless of host (browser / VSCode /
   // JetBrains). See clientState.ts.
+  //
+  // Keyed by ``host.viewKey`` so two Tauri windows — which share an
+  // origin, and so share localStorage — are two distinct clients
+  // bound to two distinct sessions, rather than one client fighting
+  // itself over the session binding and the composer draft.
   const clientState = useMemo(
-    () => new ClientStateStore(client, ensureClientId()),
+    () => new ClientStateStore(client, ensureClientId(host.viewKey)),
     [client],
   );
   const SESSION_KEY = "session-id";
+  // The folder the stored session belongs to. Stored so a window
+  // label reused across app runs can tell "my session" from "some
+  // other repo's session that had this label last time".
+  const PROJECT_DIR_KEY = "project-dir";
+  // Which page this window is on. Per-window because it is keyed by
+  // client_id like everything else here: two windows on one session
+  // navigate independently, and a reused ``w-2`` label comes back
+  // where it left off.
+  const PAGE_KEY = "page";
   const SIDEBAR_KEY = "sidebar-open";
+  // The folder this window was opened onto, from New Window. Empty
+  // for the first window, which uses the backend's default session.
+  const windowProjectDir = useMemo(
+    () => new URLSearchParams(window.location.search).get("dir") ?? "",
+    [],
+  );
   const [sidebarOpen, setSidebarOpenState] = useState(window.innerWidth > 700);
   const setSidebarOpen = useCallback(
     (next: boolean | ((prev: boolean) => boolean)) => {
@@ -464,7 +559,16 @@ export default function App() {
   const [sessions, setSessions] = useState<SessionEntry[]>([]);
   const [sessionId, setSessionId] = useState("");
   const [skills, setSkills] = useState<SlashCommand[]>([]);
-  const [modelMenuSignal, setModelMenuSignal] = useState<{ n: number } | null>(null);
+  // What the backend says exists. `null` until the RPC answers (or
+  // for a backend too old to have it), which is the signal for the
+  // composer to fall back to its hardcoded list rather than show an
+  // empty menu.
+  const [backendCommands, setBackendCommands] = useState<SlashCommand[] | null>(
+    null,
+  );
+  const [modelMenuSignal, setModelMenuSignal] = useState<{ n: number } | null>(
+    null,
+  );
   const [accountMenu, setAccountMenu] = useState(false);
   // Plan tier (``lite`` / ``pro`` / ``max`` / ``codeindex``) fetched
   // on demand whenever the account popover opens — the BE calls
@@ -484,7 +588,9 @@ export default function App() {
   useEffect(() => {
     const setTitle = (
       window as unknown as {
-        __EMBER_HOST__?: { setAppTitle?: (folder: string, org: string) => void };
+        __EMBER_HOST__?: {
+          setAppTitle?: (folder: string, org: string) => void;
+        };
       }
     ).__EMBER_HOST__?.setAppTitle;
     if (typeof setTitle !== "function") return;
@@ -520,18 +626,28 @@ export default function App() {
   useEffect(() => {
     const el = headerRef.current;
     if (!el) return;
-    const tauri = (window as unknown as {
-      __TAURI__?: {
-        window?: { getCurrentWindow?: () => { startDragging: () => Promise<void> | void } };
-      };
-    }).__TAURI__;
+    const tauri = (
+      window as unknown as {
+        __TAURI__?: {
+          window?: {
+            getCurrentWindow?: () => {
+              startDragging: () => Promise<void> | void;
+            };
+          };
+        };
+      }
+    ).__TAURI__;
     if (!tauri?.window?.getCurrentWindow) return; // not a Tauri host
     const onDown = (e: MouseEvent) => {
       if (e.button !== 0) return;
       const target = e.target as HTMLElement | null;
       if (!target) return;
       // Skip interactive children so they keep their click behaviour.
-      if (target.closest("button, input, textarea, a, .chip, .file-pill, .file-pill-wrap")) {
+      if (
+        target.closest(
+          "button, input, textarea, a, .chip, .file-pill, .file-pill-wrap",
+        )
+      ) {
         return;
       }
       e.preventDefault();
@@ -558,11 +674,18 @@ export default function App() {
    *  not focused, so the user knows to come back. */
   const notifyDone = useCallback(() => {
     // Don't bother if the user is watching the tab.
-    if (typeof document !== "undefined" && document.visibilityState === "visible") return;
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState === "visible"
+    )
+      return;
     try {
       if (typeof Notification === "undefined") return;
       if (Notification.permission === "granted") {
-        new Notification("igni", { body: "Your reply is ready.", silent: true });
+        new Notification("igni", {
+          body: "Your reply is ready.",
+          silent: true,
+        });
       } else if (Notification.permission !== "denied") {
         // Request permission once; subsequent runs honour the choice.
         void Notification.requestPermission();
@@ -707,12 +830,14 @@ export default function App() {
   // or -1 if the turn was filtered out by ``restoredItem``. The chat
   // search bar uses this to translate BE match indices into FE
   // scroll-to positions without re-walking the items array.
-  const [historyIndexToItemIndex, setHistoryIndexToItemIndex] = useState<number[]>(
-    [],
-  );
+  const [historyIndexToItemIndex, setHistoryIndexToItemIndex] = useState<
+    number[]
+  >([]);
 
   const fetchHistoryItems = useCallback(
-    async (id: string): Promise<{ items: ChatItem[]; historyMap: number[] }> => {
+    async (
+      id: string,
+    ): Promise<{ items: ChatItem[]; historyMap: number[] }> => {
       const loaded: ChatItem[] = [];
       const historyMap: number[] = [];
       try {
@@ -729,7 +854,9 @@ export default function App() {
           const runId = typeof turn.run_id === "string" ? turn.run_id : "";
           if (role === "stats") {
             historyMap.push(loaded.length);
-            loaded.push(restoredStatsItem(turn, assistantTextByRun.get(runId) ?? ""));
+            loaded.push(
+              restoredStatsItem(turn, assistantTextByRun.get(runId) ?? ""),
+            );
             continue;
           }
           const item = restoredItem(turn);
@@ -745,7 +872,10 @@ export default function App() {
             }
             if (item.kind === "assistant" && runId) {
               const prev = assistantTextByRun.get(runId) ?? "";
-              assistantTextByRun.set(runId, prev ? `${prev} ${item.text}` : item.text);
+              assistantTextByRun.set(
+                runId,
+                prev ? `${prev} ${item.text}` : item.text,
+              );
             }
             historyMap.push(loaded.length);
             loaded.push(item);
@@ -776,7 +906,10 @@ export default function App() {
             // <attached-files> wrapper). Route through restoredItem
             // so the bubble displays only the user-typed text; the
             // @<path> tokens render as inline pills.
-            const item = restoredItem({ role: "user", content: String(p.content ?? "") });
+            const item = restoredItem({
+              role: "user",
+              content: String(p.content ?? ""),
+            });
             if (item) loaded.push(item);
           }
           loaded.push(
@@ -798,8 +931,12 @@ export default function App() {
   const refreshSessions = useCallback(async () => {
     try {
       // BE wraps the rows: {type: "session_list_result", sessions: [...]}.
-      const res = await client.rpc<{ sessions?: Record<string, unknown>[] }>("list_sessions");
-      const list = Array.isArray(res) ? (res as Record<string, unknown>[]) : (res?.sessions ?? []);
+      const res = await client.rpc<{ sessions?: Record<string, unknown>[] }>(
+        "list_sessions",
+      );
+      const list = Array.isArray(res)
+        ? (res as Record<string, unknown>[])
+        : (res?.sessions ?? []);
       setSessions(
         list.map((s) => {
           const id = String(s.session_id ?? s.id ?? "");
@@ -841,28 +978,54 @@ export default function App() {
             const storedSidebar = clientState.get(SIDEBAR_KEY);
             if (storedSidebar === "true") setSidebarOpenState(true);
             else if (storedSidebar === "false") setSidebarOpenState(false);
-            // Adopt a session for this view. Priority:
-            //   1. Already-bound sessionId on the client (reconnect
-            //      mid-session — don't churn it).
-            //   2. Stored session id from a previous load — re-attach
-            //      so the BE pool resumes that session in its
-            //      registered directory.
-            //   3. BE's default session.
+            // Put the window back on the page it was on. ``restore``
+            // yields an empty stack for anything it cannot read, so a
+            // value written by an older release opens the chat rather
+            // than failing the whole hydrate.
+            setPages(restorePages(clientState.get(PAGE_KEY)));
+            // Adopt a session for this view. An already-bound
+            // sessionId wins outright (reconnect mid-session — don't
+            // churn it); otherwise the plan comes from the window's
+            // ``?dir=`` param and what this client had stored. See
+            // ``chat/sessionBinding.ts`` for why the stored *folder*
+            // is part of the decision and not just the session id.
             if (!client.sessionId) {
-              const stored = clientState.get(SESSION_KEY);
-              if (stored) {
-                try {
-                  const res = await client.rpc<{
-                    session_id: string;
-                    project_dir: string;
-                  }>("attach_session", { session_id: stored });
-                  client.sessionId = res.session_id;
-                  setProjectDir(res.project_dir);
-                } catch {
-                  // Stored id is unusable — fall through to default.
-                  client.sessionId = await client.rpc<string>("get_session_id");
+              const plan = planSessionBinding({
+                wantedDir: windowProjectDir,
+                storedSession: clientState.get(SESSION_KEY) ?? "",
+                storedDir: clientState.get(PROJECT_DIR_KEY) ?? "",
+              });
+              const attach = async (args: Record<string, string>) => {
+                const res = await client.rpc<{
+                  session_id: string;
+                  project_dir: string;
+                }>("attach_session", args);
+                client.sessionId = res.session_id;
+                setProjectDir(res.project_dir);
+                clientState.set(PROJECT_DIR_KEY, res.project_dir);
+              };
+              try {
+                switch (plan.kind) {
+                  case "bind-folder":
+                    await attach({ project_dir: plan.projectDir });
+                    break;
+                  case "resume-in-folder":
+                    await attach({
+                      session_id: plan.sessionId,
+                      project_dir: plan.projectDir,
+                    });
+                    break;
+                  case "resume":
+                    await attach({ session_id: plan.sessionId });
+                    break;
+                  case "default":
+                    client.sessionId =
+                      await client.rpc<string>("get_session_id");
+                    break;
                 }
-              } else {
+              } catch {
+                // Unusable binding — fall through to the default
+                // session rather than leaving the window dead.
                 client.sessionId = await client.rpc<string>("get_session_id");
               }
             }
@@ -899,9 +1062,9 @@ export default function App() {
           void refreshStatus();
           void refreshSessions();
           try {
-            const defs = await client.rpc<{ name: string; description: string }[]>(
-              "get_skill_definitions",
-            );
+            const defs = await client.rpc<
+              { name: string; description: string }[]
+            >("get_skill_definitions");
             setSkills(
               (defs || []).map((d) => ({
                 name: `/${d.name}`,
@@ -910,6 +1073,28 @@ export default function App() {
             );
           } catch {
             /* skills optional */
+          }
+          // The command list the backend actually dispatches. The
+          // composer used to carry its own copy of this, which had
+          // drifted both ways — advertising one command that does not
+          // exist and hiding nine that do.
+          try {
+            const cmds =
+              await client.rpc<{ name: string; description: string }[]>(
+                "get_slash_commands",
+              );
+            if (cmds?.length) {
+              setBackendCommands(
+                cmds.map((c) => ({
+                  // The backend leaves the slash off deliberately —
+                  // adding it is the caller's job.
+                  name: `/${c.name}`,
+                  description: c.description || "",
+                })),
+              );
+            }
+          } catch {
+            /* older backend — the composer's fallback covers it */
           }
           // Silent startup check — populates the version chip and
           // surfaces an OS notification + modal sheet if a newer
@@ -932,7 +1117,8 @@ export default function App() {
         // echo is skipped (we already painted on submit).
         if (m.client_id !== client.clientId) {
           append(userItem(m.text));
-          if (m.queued) append(infoItem("Queued — will run after the current turn."));
+          if (m.queued)
+            append(infoItem("Queued — will run after the current turn."));
         }
         return;
       }
@@ -940,7 +1126,9 @@ export default function App() {
         // Another view answered the permission dialog — drop it here.
         setHitl((prev) => {
           if (!prev) return prev;
-          const left = prev.filter((r) => r.requirement_id !== m.requirement_id);
+          const left = prev.filter(
+            (r) => r.requirement_id !== m.requirement_id,
+          );
           return left.length ? left : null;
         });
         return;
@@ -987,7 +1175,8 @@ export default function App() {
           // conversation switches) and, if the app is backgrounded,
           // additionally fire a native host notification (Tauri /
           // VSCode / JetBrains) so the user notices.
-          const desc = String(m.payload.description ?? "").trim() || "(no description)";
+          const desc =
+            String(m.payload.description ?? "").trim() || "(no description)";
           const result = String(m.payload.result ?? "").trim();
           const title =
             m.channel === "scheduler_started"
@@ -1000,7 +1189,8 @@ export default function App() {
           void notifyHost({
             title,
             body,
-            onClick: () => setPanel({ kind: "schedule" }),
+            onClick: () =>
+              goPage({ kind: "schedule", label: "Scheduled tasks" }),
             data: { channel: m.channel, task_id: m.payload.task_id },
           });
         } else if (m.channel === "file_edited") {
@@ -1082,7 +1272,8 @@ export default function App() {
               // nothing changed (dedupped content_preview). Skip the
               // re-render — fast-streaming teams fire ~20 events/sec
               // and a no-op state replacement freezes the composer.
-              if (agents === target.agents && order === target.order) return prev;
+              if (agents === target.agents && order === target.order)
+                return prev;
               const next = prev.slice();
               next[idx] = { ...target, agents, order };
               return next;
@@ -1109,7 +1300,8 @@ export default function App() {
           // ``workflow_run_id``; a fresh event with an unknown
           // id (e.g. the user opened a new tab on a long run)
           // creates a card on the fly.
-          const ev = m.payload as unknown as import("./chat/model").WorkflowEvent;
+          const ev =
+            m.payload as unknown as import("./chat/model").WorkflowEvent;
           if (ev && typeof ev.workflow_run_id === "string") {
             setItems((prev) => reduceWorkflowEvent(prev, ev));
           }
@@ -1148,7 +1340,8 @@ export default function App() {
                 target.order,
                 ev,
               );
-              if (agents === target.agents && order === target.order) return prev;
+              if (agents === target.agents && order === target.order)
+                return prev;
               const next = prev.slice();
               next[idx] = { ...target, agents, order };
               return next;
@@ -1229,7 +1422,9 @@ export default function App() {
           const planText = String(payload.plan ?? "").trim();
           const runId = String(payload.run_id ?? "");
           if (planText) {
-            append(planItem(planText, normalizePlanTasks(payload.tasks), runId));
+            append(
+              planItem(planText, normalizePlanTasks(payload.tasks), runId),
+            );
           }
         } else if (m.channel === "plan_decided") {
           // Server-of-truth state change. Fired by
@@ -1240,10 +1435,7 @@ export default function App() {
           const payload = m.payload as { run_id?: unknown; decision?: unknown };
           const runId = String(payload.run_id ?? "");
           const decision = String(payload.decision ?? "");
-          if (
-            runId &&
-            (decision === "approved" || decision === "dismissed")
-          ) {
+          if (runId && (decision === "approved" || decision === "dismissed")) {
             setItems((prev) =>
               prev.map((it) =>
                 it.kind === "plan" && it.runId === runId
@@ -1291,7 +1483,9 @@ export default function App() {
               typeof p.spec_id === "string" && p.spec_id ? p.spec_id : "";
             const title = typeof p.title === "string" ? p.title : "";
             const sourceAgent =
-              typeof p.source_agent === "string" ? p.source_agent : "visualizer";
+              typeof p.source_agent === "string"
+                ? p.source_agent
+                : "visualizer";
             setItems((prev) => {
               // Find an existing visualization card with the same
               // spec_id; if present, replace its spec/title in place.
@@ -1309,7 +1503,10 @@ export default function App() {
                 next[idx] = { ...existing, spec, title, sourceAgent };
                 return next;
               }
-              return [...prev, visualizationItem(spec, title, sourceAgent, specId)];
+              return [
+                ...prev,
+                visualizationItem(spec, title, sourceAgent, specId),
+              ];
             });
           }
         }
@@ -1350,6 +1547,47 @@ export default function App() {
     const t = setInterval(refreshStatus, 5_000);
     return () => clearInterval(t);
   }, [conn, refreshStatus]);
+
+  // Navigation. Every mutation goes through these so the persisted
+  // copy cannot drift from the rendered one — the same reason
+  // ``setRunPhase`` exists rather than setting the phase directly.
+  // One writer. The state updater stays pure — StrictMode invokes it
+  // twice in development, and a ``clientState.set`` inside it would
+  // fire twice with it.
+  const navigate = useCallback(
+    (next: PageRoute[]) => {
+      clientState.set(PAGE_KEY, serialisePages(next));
+      setPages(next);
+    },
+    [clientState],
+  );
+
+  const goPage = useCallback(
+    (route: PageRoute) => navigate(openRoot(route)),
+    [navigate],
+  );
+  const goBack = useCallback(() => navigate(popPage(pages)), [navigate, pages]);
+  const goCrumb = useCallback(
+    (index: number) => navigate(truncateTo(pages, index)),
+    [navigate, pages],
+  );
+  const goChat = useCallback(() => navigate([]), [navigate]);
+
+  const page = currentPage(pages);
+
+  // Group branding. Keyed on the serialised theme rather than the
+  // object: status arrives every five seconds and carries a fresh
+  // object each time, so an identity-keyed effect would re-apply the
+  // same values twelve times a minute. ``applyTheme`` clears what it
+  // owns before setting, so losing a theme restores igni's palette
+  // instead of leaving the last one stuck until reload.
+  const themeKey = JSON.stringify(status?.theme ?? null);
+  useEffect(() => {
+    applyTheme(status?.theme, document.documentElement);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [themeKey]);
+  const groupName = brandName(status?.theme);
+  const groupMark = brandMark(status?.theme);
 
   // Esc behavior (single global handler, fires once per keydown):
   //
@@ -1472,7 +1710,9 @@ export default function App() {
   // applies a pulse class to the jumped-to message via the new
   // ChatItemView prop so the user's eye lands on it after the scroll.
   const [searchOpen, setSearchOpen] = useState(false);
-  const [highlightedItemId, setHighlightedItemId] = useState<number | null>(null);
+  const [highlightedItemId, setHighlightedItemId] = useState<number | null>(
+    null,
+  );
   const highlightTimerRef = useRef<number | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1536,10 +1776,10 @@ export default function App() {
                 <span />
                 <span />
               </span>
-              <span className="typing-label">
-                {phaseLabel(runPhase)}
-              </span>
-              {isProcessing(runPhase) && <span className="typing-hint">Esc to cancel</span>}
+              <span className="typing-label">{phaseLabel(runPhase)}</span>
+              {isProcessing(runPhase) && (
+                <span className="typing-hint">Esc to cancel</span>
+              )}
             </div>
           </div>
         ) : null,
@@ -1580,7 +1820,10 @@ export default function App() {
         // If we exited without a run_completed / cancel / error
         // event landing (shouldn't happen but defensive), still
         // transition to done so the spinner clears.
-        if (runPhaseRef.current === "starting" || runPhaseRef.current === "streaming") {
+        if (
+          runPhaseRef.current === "starting" ||
+          runPhaseRef.current === "streaming"
+        ) {
           setRunPhase("done");
         }
       } catch (e) {
@@ -1626,7 +1869,11 @@ export default function App() {
             return false;
           }
         } catch (e) {
-          append(errorItem(`Couldn't edit/delete: ${e instanceof Error ? e.message : String(e)}`));
+          append(
+            errorItem(
+              `Couldn't edit/delete: ${e instanceof Error ? e.message : String(e)}`,
+            ),
+          );
           return false;
         }
       }
@@ -1713,7 +1960,11 @@ export default function App() {
           { force: true },
         );
       } catch (e) {
-        append(errorItem(`Couldn't retry: ${e instanceof Error ? e.message : String(e)}`));
+        append(
+          errorItem(
+            `Couldn't retry: ${e instanceof Error ? e.message : String(e)}`,
+          ),
+        );
       }
     },
     [items, truncateAndTrim, client, append, onStreamEvent],
@@ -1740,10 +1991,9 @@ export default function App() {
         // key if the message_id round-trip is too chatty for the
         // v1 surface.
         try {
-          const runs = await client.rpc<Array<{ message_id: string; content: string }>>(
-            "get_interrupted_runs",
-            { session_id: sessionId },
-          );
+          const runs = await client.rpc<
+            Array<{ message_id: string; content: string }>
+          >("get_interrupted_runs", { session_id: sessionId });
           const match = runs?.find((r) => r.content === precedingUser.text);
           if (match) {
             await client.rpc("discard_interrupted_run", {
@@ -1823,7 +2073,10 @@ export default function App() {
       // Optimistically append a new workflow item so the user
       // sees the result immediately. The RPC result will fold
       // into it via the workflow_event reducer.
-      const newItem = workflowItem(run.name, `wf_${Math.random().toString(36).slice(2, 14)}`);
+      const newItem = workflowItem(
+        run.name,
+        `wf_${Math.random().toString(36).slice(2, 14)}`,
+      );
       setItems((prev) => [...prev, newItem]);
       void client
         .rpc("run_workflow", {
@@ -1886,10 +2139,11 @@ export default function App() {
   const onDispatchVisualizationAction = useCallback(
     async (action: string, params: Record<string, unknown>) => {
       try {
-        return await client.rpc<{ ok: boolean; action: string; params: unknown }>(
-          "dispatch_visualization_action",
-          { action, params },
-        );
+        return await client.rpc<{
+          ok: boolean;
+          action: string;
+          params: unknown;
+        }>("dispatch_visualization_action", { action, params });
       } catch (e) {
         // eslint-disable-next-line no-console
         console.warn("dispatch_visualization_action failed", e);
@@ -1933,23 +2187,16 @@ export default function App() {
       if (wfMatch) {
         const [, name, rawArgs] = wfMatch;
         if (!name) {
-          // No name → list workflows. Discovery through the BE.
-          try {
-            const list = await client.rpc<unknown[]>("list_workflows");
-            const lines = (list ?? []).map((w) => {
-              const wf = w as { name?: string; description?: string; phases?: unknown[] };
-              return `- \`${wf.name ?? "?"}\` — ${wf.description ?? "(no description)"} (${(wf.phases ?? []).length} phases)`;
-            });
-            append(
-              infoItem(
-                lines.length > 0
-                  ? `Available workflows:\n${lines.join("\n")}`
-                  : "No workflows found in .claude/workflows/",
-              ),
-            );
-          } catch (err) {
-            append(errorItem(`/workflows: list failed: ${err}`));
-          }
+          // No name → the listing, which is a place rather than a
+          // message. Appending it here is what used to destroy the
+          // chat's start screen: the welcome renders only while
+          // ``items.length === 0``, so browsing what exists replaced
+          // it permanently — and the start screen's own card was the
+          // only place ``/workflows`` was advertised.
+          //
+          // Running one still streams into the chat below, because a
+          // run belongs in the conversation that asked for it.
+          goPage({ kind: "workflows", label: "Workflows" });
           return;
         }
         let parsedArgs: Record<string, unknown> = {};
@@ -1962,10 +2209,14 @@ export default function App() {
           }
         }
         try {
-          const resp = await client.rpc<{ workflow_run_id: string; name: string }>(
-            "run_workflow",
-            { name, args: parsedArgs, session_id: client.sessionId },
-          );
+          const resp = await client.rpc<{
+            workflow_run_id: string;
+            name: string;
+          }>("run_workflow", {
+            name,
+            args: parsedArgs,
+            session_id: client.sessionId,
+          });
           const item = workflowItem(resp.name, resp.workflow_run_id);
           setItems((prev) => [...prev, item]);
         } catch (err) {
@@ -2121,9 +2372,13 @@ export default function App() {
               setItems((prev) => [...loaded.items, ...prev]);
               setHistoryIndexToItemIndex(loaded.historyMap);
             } catch (e) {
-              append(errorItem(`Loaded fork id but history fetch failed: ${e}`));
+              append(
+                errorItem(`Loaded fork id but history fetch failed: ${e}`),
+              );
             }
-            append(infoItem("Forked to a new session — continuing the dialogue."));
+            append(
+              infoItem("Forked to a new session — continuing the dialogue."),
+            );
             void refreshStatus();
             void refreshSessions();
             return;
@@ -2140,48 +2395,43 @@ export default function App() {
             setPanel({ kind: "login" });
             return;
           case "mcp":
-            setPanel({ kind: "mcp" });
+            goPage({ kind: "mcp", label: "MCP servers" });
             return;
           case "codeindex":
-            setPanel({ kind: "codeindex" });
+            goPage({ kind: "codeindex", label: "CodeIndex" });
             return;
           case "loop":
             if (content && echo) append(assistantItem(content));
-            setPanel({ kind: "loop" });
+            goPage({ kind: "loop", label: "Loop" });
             return;
           case "schedule":
             if (content && echo) append(assistantItem(content));
-            setPanel({ kind: "schedule" });
+            goPage({ kind: "schedule", label: "Scheduled tasks" });
             return;
           case "agents":
-            setPanel({ kind: "agents" });
+            goPage({ kind: "agents", label: "Agents" });
             return;
           case "skills":
-            setPanel({ kind: "skills" });
+            goPage({ kind: "skills", label: "Skills" });
             return;
           case "plugins":
-            setPanel({ kind: "plugins" });
+            goPage({ kind: "plugins", label: "Plugins" });
             return;
           case "knowledge":
-            setPanel({ kind: "knowledge" });
+            goPage({ kind: "knowledge", label: "Knowledge" });
             return;
           case "hooks":
-            setPanel({ kind: "hooks" });
+            goPage({ kind: "hooks", label: "Hooks" });
             return;
           case "watcher":
-            setPanel({ kind: "watcher" });
+            goPage({ kind: "watcher", label: "Watcher" });
             return;
-          case "help": {
-            const lines = [...BUILTIN_COMMANDS, ...skills].map(
-              (c) => `- \`${c.name}\` — ${c.description}`,
-            );
-            setPanel({
-              kind: "info",
-              title: "Help",
-              markdown: `### Commands\n\n${lines.join("\n")}`,
-            });
+          case "help":
+            goPage({ kind: "help", label: "Help" });
             return;
-          }
+          case "ctx":
+            goPage({ kind: "context", label: "Context" });
+            return;
           case "run_prompt":
             // Two sources land here:
             //  - Skills expand to a bare prompt → render nothing extra,
@@ -2283,7 +2533,9 @@ export default function App() {
         // so the same partial isn't prepended twice.
         setItems((prev) =>
           prev.map((it, i) =>
-            i === continued.clearIndex && it.kind === "assistant" && it.interrupted
+            i === continued.clearIndex &&
+            it.kind === "assistant" &&
+            it.interrupted
               ? { ...it, interrupted: undefined }
               : it,
           ),
@@ -2330,10 +2582,10 @@ export default function App() {
         // Pool-level attach: creates a fresh session whose tools and
         // $-shell run in that directory; the binding persists with
         // the session (global session→dir registry on the BE).
-        const res = await client.rpc<{ session_id: string; project_dir: string }>(
-          "attach_session",
-          { project_dir: dir },
-        );
+        const res = await client.rpc<{
+          session_id: string;
+          project_dir: string;
+        }>("attach_session", { project_dir: dir });
         client.sessionId = res.session_id;
         clientState.set(SESSION_KEY, res.session_id);
         setSessionId(res.session_id);
@@ -2397,7 +2649,9 @@ export default function App() {
 
   // ── Render ────────────────────────────────────────────────────────
   const ctxPct = status
-    ? Math.round((status.context_tokens / Math.max(status.max_context, 1)) * 100)
+    ? Math.round(
+        (status.context_tokens / Math.max(status.max_context, 1)) * 100,
+      )
     : 0;
 
   return (
@@ -2414,12 +2668,18 @@ export default function App() {
         open={sidebarOpen}
         sessions={sessions}
         currentId={sessionId}
+        links={SIDEBAR_LINKS}
+        activeLink={page?.kind}
+        onLink={(kind) => {
+          const link = SIDEBAR_LINKS.find((l) => l.kind === kind);
+          if (link) goPage({ kind: link.kind, label: link.label });
+        }}
         onNewChat={() => void runCommand("/clear", false)}
         onPick={(id) => void pickSession(id)}
         onClose={() => setSidebarOpen(false)}
       />
 
-      <div className="main">
+      <div className={`main${page ? " main--paged" : ""}`}>
         {/* Window drag in the Tauri shell. Three layers of fallback —
             we want this to work on every Tauri build / WebKit quirk:
               1. ``data-tauri-drag-region`` attribute (Tauri's preferred
@@ -2436,11 +2696,7 @@ export default function App() {
             attribute is ignored, the CSS is gated by
             ``[data-host="tauri"]``, and the JS branch checks the
             global before calling). */}
-        <header
-          ref={headerRef}
-          className="app-header"
-          data-tauri-drag-region
-        >
+        <header ref={headerRef} className="app-header" data-tauri-drag-region>
           {/* Solid opaque panel painted behind the header content
               (``z-index: -1``) so messages scrolling under the
               header disappear at the bottom edge. Also the Tauri
@@ -2458,8 +2714,21 @@ export default function App() {
               "Sessions" section title, but the app identity belongs
               to the main pane so the user's eye anchors there. */}
           <div className="brand">
-            <FlameIcon size={20} />
-            <span>igni</span>
+            {/* A group's mark renders as an ``img``, never inlined as
+                markup — an SVG document can carry script, the same
+                bytes in an ``img`` cannot. See ``lib/theme.ts``. */}
+            {groupMark ? (
+              <img
+                src={groupMark}
+                alt=""
+                width={20}
+                height={20}
+                style={{ objectFit: "contain" }}
+              />
+            ) : (
+              <FlameIcon size={20} />
+            )}
+            <span>{groupName}</span>
             <span
               className={`dot ${conn === "replaced" ? "disconnected" : conn}`}
               title={`backend ${conn}`}
@@ -2571,7 +2840,9 @@ export default function App() {
                 }
               }}
             >
-              <CloudIcon /> <span className="chip-label">{status.cloud_org}</span> <ChevronIcon size={9} down />
+              <CloudIcon />{" "}
+              <span className="chip-label">{status.cloud_org}</span>{" "}
+              <ChevronIcon size={9} down />
             </button>
           ) : (
             <button
@@ -2649,138 +2920,295 @@ export default function App() {
           />
         )}
         <div className="conversation-frame">
-        {/* See `.sr-only` in theme.css: the level message content
-            sits under, so a heading the model wrote cannot skip from
-            the page down to an h3. F138. */}
-        <h2 className="sr-only">Conversation</h2>
-        {items.length === 0 ? (
-          <div className="conversation">
-            <div className="col">
-              <div className="welcome">
-                <div style={{ display: "flex", justifyContent: "center" }}>
-                  <FlameIcon size={56} />
+          {/* See `.sr-only` in theme.css: the level message content
+              sits under, so a heading the model wrote cannot skip from
+              the page down to an h3. F138. */}
+          <h2 className="sr-only">Conversation</h2>
+          {items.length === 0 ? (
+            <div className="conversation">
+              <div className="col">
+                <div className="welcome">
+                  {/* Branded the same way as the header row — an org
+                    that renames the product in one place and not the
+                    other has it staring back at them on every empty
+                    chat, which is the most-looked-at screen there is. */}
+                  <div style={{ display: "flex", justifyContent: "center" }}>
+                    {groupMark ? (
+                      <img
+                        src={groupMark}
+                        alt=""
+                        width={56}
+                        height={56}
+                        style={{ objectFit: "contain" }}
+                      />
+                    ) : (
+                      <FlameIcon size={56} />
+                    )}
+                  </div>
+                  <h1>{groupName}</h1>
+                  <p>Your AI coding agent, in this project.</p>
+                  {/* Nothing below this line works without a model, so on a
+                    fresh install the screen said "Dispatch to a
+                    specialist" to someone whose every click would come
+                    back "No model configured. Run /login". The one thing
+                    that would help was the only thing not offered. */}
+                  {status && status.model_configured === false ? (
+                    <FirstRunSetup
+                      onLogin={() => setPanel({ kind: "login" })}
+                    />
+                  ) : null}
+                  <div className="welcome-caps">
+                    {(
+                      [
+                        [
+                          "/agents",
+                          "Dispatch to a specialist — architect, debugger, …",
+                        ],
+                        [
+                          "/skills",
+                          "Workflows like /commit and /resolve-issues",
+                        ],
+                        ["/workflows", "Run a CC-style multi-phase workflow"],
+                        ["/schedule", "Background tasks that report back"],
+                        ["/loop", "Repeat a prompt across a batch until done"],
+                        ["/mcp", "Plug in external tools and data sources"],
+                        ["/plugins", "Install skills, agents and hooks"],
+                        ["/knowledge", "A knowledge base carried in git"],
+                      ] as const
+                    ).map(([cmd, desc]) => (
+                      <div
+                        key={cmd}
+                        className="welcome-cap"
+                        onClick={() => void runCommand(cmd, false)}
+                      >
+                        <code>{cmd}</code>
+                        <span>{desc}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p
+                    style={{
+                      color: "var(--fg-faint)",
+                      fontSize: 12.5,
+                      marginTop: 22,
+                    }}
+                  >
+                    Enter to send · Shift+Enter newline · / commands · @ files ·
+                    $ shell
+                  </p>
                 </div>
-                <h1>igni</h1>
-                <p>Your AI coding agent, in this project.</p>
-                <div className="welcome-caps">
-                  {(
-                    [
-                      ["/agents", "Dispatch to a specialist — architect, debugger, …"],
-                      ["/skills", "Workflows like /commit and /resolve-issues"],
-                      ["/workflows", "Run a CC-style multi-phase workflow"],
-                      ["/codeindex", "Semantic search across your repo"],
-                      ["/schedule", "Background tasks that report back"],
-                      ["/loop", "Repeat a prompt across a batch until done"],
-                      ["/mcp", "Plug in external tools and data sources"],
-                      ["/plugins", "Install skills, agents and hooks"],
-                      ["/knowledge", "A knowledge base carried in git"],
-                    ] as const
-                  ).map(([cmd, desc]) => (
-                    <div
-                      key={cmd}
-                      className="welcome-cap"
-                      onClick={() => void runCommand(cmd, false)}
-                    >
-                      <code>{cmd}</code>
-                      <span>{desc}</span>
-                    </div>
-                  ))}
-                </div>
-                <p style={{ color: "var(--fg-faint)", fontSize: 12.5, marginTop: 22 }}>
-                  Enter to send · Shift+Enter newline · / commands · @ files · $ shell
-                </p>
               </div>
             </div>
-          </div>
-        ) : (
-          <Virtuoso
-            ref={virtuosoRef}
-            className="conversation"
-            data={items}
-            // Keys items by id so React reuses DOM across reorders /
-            // edits. Falling back to index would defeat the memo on
-            // ChatItemView.
-            computeItemKey={(_idx, item) => item.id}
-            // Auto-follow the tail only while the user is already
-            // there; ``smooth`` is intentionally not used so streaming
-            // doesn't visibly chase tokens.
-            followOutput="auto"
-            // Virtuoso's default ``atBottomThreshold`` is 4px which
-            // misses the "at bottom" transition by a sub-pixel after
-            // every layout change (composer height grows on Send,
-            // streamed assistant content rewrites the last row, etc).
-            // ``followOutput="auto"`` then bails on the follow because
-            // its sample reads false. 50px is generous enough to
-            // ride out the layout shifts without papering over a real
-            // "I scrolled up to read history" intent — pinned by
-            // ``e2e/chat-scroll.spec.ts``.
-            atBottomThreshold={50}
-            atBottomStateChange={setStickToBottom}
-            scrollerRef={(el) => setScrollEl(el as HTMLElement | null)}
-            increaseViewportBy={{ top: 400, bottom: 800 }}
-            itemContent={(idx, item) => {
-              // ``streaming`` lights the blinking caret CSS on the
-              // live tail assistant row only.
-              const isStreamingTail =
-                processing && idx === items.length - 1 && item.kind === "assistant";
-              const isSearchTarget = item.id === highlightedItemId;
-              return (
-                <div
-                  className={`chat-row${isStreamingTail ? " streaming" : ""}${isSearchTarget ? " search-target" : ""}`}
-                >
-                  <ChatItemView
-                    item={item}
-                    copyResponseText={
-                      item.kind === "stats"
-                        ? findAssistantTextForStats(items, idx)
-                        : undefined
-                    }
-                    onEditUser={onEditUser}
-                    onDeleteUser={onDeleteUser}
-                    onStopTeam={onStopTeam}
-                    onStopAgent={onStopAgent}
-                    onRetryAgent={onRetryAgent}
-                    onApprovePlan={onApprovePlan}
-                    onRejectPlan={onRejectPlan}
-                    onDispatchVisualizationAction={onDispatchVisualizationAction}
-                    onRerunWorkflow={onRerunWorkflow}
-                    onCancelWorkflow={onCancelWorkflow}
-                    onRetryInterrupted={onRetryInterrupted}
-                    onDiscardInterrupted={onDiscardInterrupted}
-                    onEditPromptFromAssistant={onEditPromptFromAssistant}
-                  />
-                </div>
-              );
-            }}
-            components={virtuosoComponents}
-          />
-        )}
-        {items.length > 0 && !stickToBottom && (
-          <button
-            type="button"
-            className="scroll-to-bottom"
-            title="Scroll to latest"
-            aria-label="Scroll to latest"
-            onClick={scrollToBottom}
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
+          ) : (
+            <Virtuoso
+              ref={virtuosoRef}
+              className="conversation"
+              data={items}
+              // Keys items by id so React reuses DOM across reorders /
+              // edits. Falling back to index would defeat the memo on
+              // ChatItemView.
+              computeItemKey={(_idx, item) => item.id}
+              // Auto-follow the tail only while the user is already
+              // there; ``smooth`` is intentionally not used so streaming
+              // doesn't visibly chase tokens.
+              followOutput="auto"
+              // Virtuoso's default ``atBottomThreshold`` is 4px which
+              // misses the "at bottom" transition by a sub-pixel after
+              // every layout change (composer height grows on Send,
+              // streamed assistant content rewrites the last row, etc).
+              // ``followOutput="auto"`` then bails on the follow because
+              // its sample reads false. 50px is generous enough to
+              // ride out the layout shifts without papering over a real
+              // "I scrolled up to read history" intent — pinned by
+              // ``e2e/chat-scroll.spec.ts``.
+              atBottomThreshold={50}
+              atBottomStateChange={setStickToBottom}
+              scrollerRef={(el) => setScrollEl(el as HTMLElement | null)}
+              increaseViewportBy={{ top: 400, bottom: 800 }}
+              itemContent={(idx, item) => {
+                // ``streaming`` lights the blinking caret CSS on the
+                // live tail assistant row only.
+                const isStreamingTail =
+                  processing &&
+                  idx === items.length - 1 &&
+                  item.kind === "assistant";
+                const isSearchTarget = item.id === highlightedItemId;
+                return (
+                  <div
+                    className={`chat-row${isStreamingTail ? " streaming" : ""}${isSearchTarget ? " search-target" : ""}`}
+                  >
+                    <ChatItemView
+                      item={item}
+                      copyResponseText={
+                        item.kind === "stats"
+                          ? findAssistantTextForStats(items, idx)
+                          : undefined
+                      }
+                      onEditUser={onEditUser}
+                      onDeleteUser={onDeleteUser}
+                      onStopTeam={onStopTeam}
+                      onStopAgent={onStopAgent}
+                      onRetryAgent={onRetryAgent}
+                      onApprovePlan={onApprovePlan}
+                      onRejectPlan={onRejectPlan}
+                      onDispatchVisualizationAction={
+                        onDispatchVisualizationAction
+                      }
+                      onRerunWorkflow={onRerunWorkflow}
+                      onCancelWorkflow={onCancelWorkflow}
+                      onRetryInterrupted={onRetryInterrupted}
+                      onDiscardInterrupted={onDiscardInterrupted}
+                      onEditPromptFromAssistant={onEditPromptFromAssistant}
+                    />
+                  </div>
+                );
+              }}
+              components={virtuosoComponents}
+            />
+          )}
+          {items.length > 0 && !stickToBottom && (
+            <button
+              type="button"
+              className="scroll-to-bottom"
+              title="Scroll to latest"
+              aria-label="Scroll to latest"
+              onClick={scrollToBottom}
             >
-              <path d="M8 3v9.5M3.8 8.3L8 12.5l4.2-4.2" />
-            </svg>
-          </button>
-        )}
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M8 3v9.5M3.8 8.3L8 12.5l4.2-4.2" />
+              </svg>
+            </button>
+          )}
         </div>
 
+        {/* The page, when there is one. Rendered inside ``.main`` and
+            positioned over the conversation rather than replacing it
+            in the flow — the transcript keeps its box and its scroll
+            offset, so coming back lands where you left. ``.main--paged``
+            hides what is underneath with ``visibility``, which also
+            takes it out of the tab order.
+
+            Every panel below still renders its own ``Drawer``; the
+            context is what turns that into page chrome. */}
+        {page && (
+          <PageContext.Provider
+            value={{
+              trail: pages,
+              onCrumb: goCrumb,
+              onBack: goBack,
+              onClose: goChat,
+            }}
+          >
+            {page.kind === "plugins" && (
+              <PluginsPanel client={client} onClose={goChat} />
+            )}
+            {page.kind === "knowledge" && (
+              <KnowledgePanel client={client} onClose={goChat} />
+            )}
+            {page.kind === "codeindex" && (
+              <CodeIndexPanel client={client} onClose={goChat} />
+            )}
+            {page.kind === "agents" && (
+              <AgentsPanel client={client} onClose={goChat} />
+            )}
+            {page.kind === "schedule" && (
+              <SchedulePanel client={client} onClose={goChat} />
+            )}
+            {page.kind === "watcher" && (
+              <WatcherPanel client={client} onClose={goChat} />
+            )}
+            {page.kind === "hooks" && (
+              <HooksPanel client={client} onClose={goChat} />
+            )}
+            {page.kind === "workflows" && (
+              <WorkflowsPage
+                client={client}
+                onRun={(command) => {
+                  // Into the composer: several take a JSON argument
+                  // object, and the phase list is what tells you
+                  // whether you want this one at all.
+                  goChat();
+                  setComposerSeed({ text: command, n: Date.now() });
+                }}
+                onClose={goChat}
+              />
+            )}
+            {page.kind === "help" && (
+              <HelpPage
+                skills={skills}
+                onRun={(name) => {
+                  // Into the composer, not straight to the backend:
+                  // reading help is not deciding to run something, and
+                  // several of these take arguments.
+                  goChat();
+                  setComposerSeed({ text: name, n: Date.now() });
+                }}
+                onClose={goChat}
+              />
+            )}
+            {page.kind === "context" && (
+              <ContextPage
+                client={client}
+                maxContext={status?.max_context ?? 0}
+                onCompact={() => {
+                  goChat();
+                  void runCommand("/compact", false);
+                }}
+                onClose={goChat}
+              />
+            )}
+            {page.kind === "loop" && (
+              <LoopPanel
+                client={client}
+                onClose={goChat}
+                onResume={(prompt) => {
+                  // Back to the chat so the user can watch the
+                  // iteration stream — same as the slash-command path
+                  // for /loop resume.
+                  goChat();
+                  append(loopItem(prompt));
+                  void runUserMessage(prompt);
+                }}
+              />
+            )}
+            {page.kind === "mcp" && (
+              <McpPanel
+                client={client}
+                onClose={goChat}
+                onAddServer={(seed) => {
+                  goChat();
+                  setComposerSeed({ text: seed, n: Date.now() });
+                }}
+              />
+            )}
+            {page.kind === "skills" && (
+              <SkillsPanel
+                client={client}
+                onRun={(cmd) => {
+                  // Don't fire the skill — drop it into the composer so
+                  // the user can add arguments and send when ready. No
+                  // trailing space, so the autocomplete menu stays open.
+                  goChat();
+                  setComposerSeed({ text: cmd, n: Date.now() });
+                }}
+                onClose={goChat}
+              />
+            )}
+          </PageContext.Provider>
+        )}
+
         <Composer
+          brandName={groupName}
           hitlSlot={
             hitl ? (
               <HitlDialog
@@ -2807,6 +3235,7 @@ export default function App() {
           connected={conn === "connected"}
           processing={processing}
           skills={skills}
+          backendCommands={backendCommands}
           tools={TOOLS_MENU}
           seed={composerSeed}
           sessionId={sessionId}
@@ -2888,11 +3317,11 @@ export default function App() {
                   without a separate footer chip. */}
               <CodeIndexIndicator
                 client={client}
-                onOpen={() => setPanel({ kind: "codeindex" })}
+                onOpen={() => goPage({ kind: "codeindex", label: "CodeIndex" })}
               />
               <WatcherIndicator
                 client={client}
-                onOpen={() => setPanel({ kind: "watcher" })}
+                onOpen={() => goPage({ kind: "watcher", label: "Watcher" })}
               />
               <GroupIndicator client={client} />
             </>
@@ -2910,81 +3339,6 @@ export default function App() {
         </div>
       </div>
 
-      {panel.kind === "mcp" && (
-        <McpPanel
-          client={client}
-          onClose={() => setPanel({ kind: "none" })}
-          onAddServer={(seed) => {
-            setPanel({ kind: "none" });
-            setComposerSeed({ text: seed, n: Date.now() });
-          }}
-        />
-      )}
-      {panel.kind === "codeindex" && (
-        <CodeIndexPanel client={client} onClose={() => setPanel({ kind: "none" })} />
-      )}
-      {panel.kind === "loop" && (
-        <LoopPanel
-          client={client}
-          onClose={() => setPanel({ kind: "none" })}
-          onResume={(prompt) => {
-            // Close the panel so the user can watch the iteration
-            // stream in the chat — same UX as the slash-command path
-            // for /loop resume.
-            setPanel({ kind: "none" });
-            append(loopItem(prompt));
-            void runUserMessage(prompt);
-          }}
-        />
-      )}
-      {panel.kind === "schedule" && (
-        <SchedulePanel client={client} onClose={() => setPanel({ kind: "none" })} />
-      )}
-      {panel.kind === "watcher" && (
-        <WatcherPanel client={client} onClose={() => setPanel({ kind: "none" })} />
-      )}
-      {panel.kind === "info" && (
-        <InfoPanel
-          title={panel.title}
-          markdown={panel.markdown}
-          onClose={() => setPanel({ kind: "none" })}
-        />
-      )}
-      {panel.kind === "details" && (
-        <DetailsPanel
-          client={client}
-          title={panel.title}
-          method={panel.method}
-          fallbackMarkdown={panel.fallback}
-          onClose={() => setPanel({ kind: "none" })}
-        />
-      )}
-      {panel.kind === "agents" && (
-        <AgentsPanel client={client} onClose={() => setPanel({ kind: "none" })} />
-      )}
-      {panel.kind === "skills" && (
-        <SkillsPanel
-          client={client}
-          onRun={(cmd) => {
-            // Don't fire the skill — drop it into the composer so the
-            // user can add arguments and send when ready.
-            setPanel({ kind: "none" });
-            // No trailing space — keeps the autocomplete menu open so
-            // the user can pick a sub-suggestion or just press Enter.
-            setComposerSeed({ text: cmd, n: Date.now() });
-          }}
-          onClose={() => setPanel({ kind: "none" })}
-        />
-      )}
-      {panel.kind === "plugins" && (
-        <PluginsPanel client={client} onClose={() => setPanel({ kind: "none" })} />
-      )}
-      {panel.kind === "knowledge" && (
-        <KnowledgePanel client={client} onClose={() => setPanel({ kind: "none" })} />
-      )}
-      {panel.kind === "hooks" && (
-        <HooksPanel client={client} onClose={() => setPanel({ kind: "none" })} />
-      )}
       {previewPath && (
         <FilePreview
           client={client}
@@ -3014,7 +3368,11 @@ export default function App() {
           client={client}
           onDone={(ok, detail) => {
             setPanel({ kind: "none" });
-            append(ok ? infoItem(`Logged in as ${detail}`) : errorItem(`Login failed: ${detail}`));
+            append(
+              ok
+                ? infoItem(`Logged in as ${detail}`)
+                : errorItem(`Login failed: ${detail}`),
+            );
             void refreshStatus();
           }}
         />

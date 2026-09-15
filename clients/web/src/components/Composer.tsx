@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { IgniClient } from "../protocol/client";
+import type { EmberClient } from "../protocol/client";
 import { host } from "../lib/host";
 import {
   codePillLabels,
@@ -13,8 +13,19 @@ export interface SlashCommand {
   description: string;
 }
 
-/** Built-in commands mirrored from the TUI's CommandHandler. Skills
- * are appended at runtime via get_skill_definitions. */
+/** Fallback list, and the GUI's wording for the commands it covers.
+ *
+ * This used to BE the list: thirty-two entries maintained by hand
+ * beside a `get_slash_commands` RPC that returns the authoritative
+ * forty. They had drifted, as a copy does — the menu advertised
+ * `/workflows` (a client-side intercept, fine) and hid nine real
+ * commands nobody could discover from here: /commit, /pr, /explain,
+ * /resolve-issues, /watcher, /test-plan, /migration, /gpu-ai, /exit.
+ *
+ * The backend decides what exists now. These descriptions still win
+ * where they overlap — they are written for this UI, and the
+ * backend's are written for `/help` — but a name that only appears
+ * here no longer reaches the menu. */
 export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/help", description: "Show available commands" },
   { name: "/clear", description: "Start a new conversation" },
@@ -26,7 +37,7 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/sessions", description: "List and switch sessions" },
   { name: "/fork", description: "Fork this session — continue in a new id" },
   { name: "/model", description: "Pick a model" },
-  { name: "/login", description: "Log in to your igni server" },
+  { name: "/login", description: "Log in to igni Cloud" },
   { name: "/logout", description: "Log out" },
   { name: "/mcp", description: "MCP servers — status and toggles" },
   { name: "/agents", description: "Agent pool" },
@@ -37,6 +48,10 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/hooks", description: "Configured hooks" },
   { name: "/loop", description: "Repeat a prompt until done" },
   { name: "/schedule", description: "Background scheduled tasks" },
+  {
+    name: "/workflows",
+    description: "Multi-phase workflows this project defines",
+  },
   {
     name: "/plan",
     description: "Toggle plan mode — agent proposes, you approve",
@@ -54,12 +69,54 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/plugin", description: "Install, update, remove plugins" },
   {
     name: "/sync-knowledge",
-    description: "Push project knowledge to your igni server",
+    description: "Push project knowledge to igni Cloud",
   },
   { name: "/evals", description: "Run an evaluation suite" },
   { name: "/bug", description: "Open the bug report form" },
   { name: "/quit", description: "Exit the session" },
 ];
+
+/** Commands that exist only in this client.
+ *
+ *  `/workflows` is intercepted in `App.tsx` and never reaches the
+ *  backend, so it is legitimately absent from `get_slash_commands`.
+ *  Anything else missing from the backend's answer is drift, not a
+ *  feature — which is what `tests/test_slash_commands_agree.py`
+ *  enforces against this exact list. */
+export const CLIENT_ONLY_COMMANDS = ["/workflows"];
+
+/** The pool the slash menu offers.
+ *
+ *  Existence comes from the backend; wording prefers the GUI's own,
+ *  which is written for this menu rather than for `/help`. While the
+ *  RPC is in flight — or against a backend too old to answer it — the
+ *  hardcoded list stands in, so the menu is never empty.
+ */
+export function mergeCommands(
+  backend: SlashCommand[] | null,
+  skills: SlashCommand[],
+): SlashCommand[] {
+  if (!backend || backend.length === 0) {
+    return [...BUILTIN_COMMANDS, ...skills];
+  }
+  const curated = new Map(BUILTIN_COMMANDS.map((c) => [c.name, c.description]));
+  const fromBackend = backend.map((c) => ({
+    name: c.name,
+    description: curated.get(c.name) || c.description,
+  }));
+  // Skills already arrive inside the backend's answer (source:
+  // "skill"); the separate `skills` prop is the older path and is
+  // merged by name so neither route duplicates a row.
+  const seen = new Set(fromBackend.map((c) => c.name));
+  const clientOnly = BUILTIN_COMMANDS.filter(
+    (c) => CLIENT_ONLY_COMMANDS.includes(c.name) && !seen.has(c.name),
+  );
+  return [
+    ...fromBackend,
+    ...clientOnly,
+    ...skills.filter((s) => !seen.has(s.name)),
+  ];
+}
 
 /** Prefix-filter the slash-command pool for the autocomplete menu.
  *  Mirrors what the composer's ``refreshMenu`` does for the slash
@@ -67,35 +124,16 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
  *  (case-insensitive, prefix-only on the name after the leading
  *  '/', capped at 12 results) is testable without driving the
  *  contenteditable surface. Call with the full command pool
- *  (built-ins + skills) and the query text AFTER the ``/``.
- *
- *  **An exact match is always first.** Without that, typing a command
- *  whose name is a prefix of another one ran the *other* one: the
- *  pool lists `/plugins` before `/plugin`, so typing `/plugin` left
- *  `/plugins` highlighted, and ``onKeyDown``'s "Enter on an
- *  already-complete command runs it" test compares against the
- *  highlighted entry — which was not what the user had typed. Enter
- *  completed the text to `/plugins` instead of running `/plugin`, and
- *  the user saw nothing happen at all. `/plugin` was unreachable from
- *  the composer.
- *
- *  Fixing it here rather than in the Enter handler keeps one answer
- *  for both keyboards and mice: whatever runs is also what is
- *  highlighted on screen. */
+ *  (built-ins + skills) and the query text AFTER the ``/``. */
 export function filterSlashCommands(
   pool: SlashCommand[],
   query: string,
   limit: number = 12,
 ): SlashCommand[] {
   const q = query.toLowerCase();
-  const matches = pool.filter((c) =>
-    c.name.slice(1).toLowerCase().startsWith(q),
-  );
-  const exact = matches.findIndex((c) => c.name.slice(1).toLowerCase() === q);
-  if (exact > 0) {
-    matches.unshift(matches.splice(exact, 1)[0]);
-  }
-  return matches.slice(0, limit);
+  return pool
+    .filter((c) => c.name.slice(1).toLowerCase().startsWith(q))
+    .slice(0, limit);
 }
 
 interface MenuState {
@@ -134,6 +172,7 @@ export function Composer({
   connected,
   processing,
   skills,
+  backendCommands,
   tools,
   seed,
   sessionId,
@@ -148,11 +187,17 @@ export function Composer({
   onStop,
   permissionMode,
   onPickMode,
+  brandName = "igni",
 }: {
-  client: IgniClient;
+  client: EmberClient;
   connected: boolean;
   processing: boolean;
   skills: SlashCommand[];
+  /** What the backend says exists, from `get_slash_commands`.
+   *  `null` while it is still being fetched, or when the RPC is not
+   *  there (an older backend) — in which case the hardcoded list
+   *  stands in. */
+  backendCommands: SlashCommand[] | null;
   tools: ToolEntry[];
   /** Pre-fill request (e.g. a skill picked from the panel) — bump
    *  `n` to re-apply the same text. */
@@ -187,6 +232,10 @@ export function Composer({
    *  ``permission_mode`` accordingly; the dropdown is purely a
    *  trigger surface. */
   onPickMode?: (mode: string) => void;
+  /** The product's name in the placeholder — a group can rebrand it.
+   *  Defaults to igni, which is what every caller without a group
+   *  theme gets. See `lib/theme.ts`. */
+  brandName?: string;
 }) {
   const draftKey = sessionId ? `draft:${sessionId}` : "";
   const [text, setText] = useState("");
@@ -209,7 +258,7 @@ export function Composer({
   }, [text, draftKey, clientState]);
   /** Files uploaded from the OS (picker / drag / paste). Each one
    *  is shipped to the BE, which writes it to
-   *  ``<project>/.igni/attachments/<session>/<name>`` and returns
+   *  ``<project>/.ember/attachments/<session>/<name>`` and returns
    *  the path; on submit we prepend ``@<path>`` so the existing
    *  @-mention pipeline resolves it (no inline content). */
   const [attachments, setAttachments] = useState<
@@ -407,7 +456,7 @@ export function Composer({
     if (value.startsWith("/") && !value.slice(0, caret).includes(" ")) {
       const q = value.slice(1, caret);
       const entries = filterSlashCommands(
-        [...BUILTIN_COMMANDS, ...skills],
+        mergeCommands(backendCommands, skills),
         q,
       ).map((c) => ({ key: c.name, label: c.name, desc: c.description }));
       setMenu(
@@ -863,7 +912,7 @@ export function Composer({
                 ? "Command name (Backspace to return to chat)"
                 : shellMode
                   ? "Shell command (Backspace to return to chat)"
-                  : "Message igni — / commands, @ files, $ shell"
+                  : `Message ${brandName} — / commands, @ files, $ shell`
           }
           onValueChange={(value, caret) => {
             setHistIdx(-1);

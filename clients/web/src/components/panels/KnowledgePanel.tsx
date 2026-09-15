@@ -195,34 +195,20 @@ export function KnowledgePanel({
   const selectedDoc = selected && docs ? docs.find((d) => d.id === selected) : null;
 
   // ── Header ──────────────────────────────────────────────────────
-  let title: React.ReactNode = "Knowledge";
-  if (view === "detail" && selectedDoc) {
-    title = (
-      <span className="breadcrumb" style={{ margin: 0 }}>
-        <button
-          className="breadcrumb-link"
-          onClick={() => {
-            setView("list");
-            setSelected(null);
-          }}
-        >
-          Knowledge
-        </button>
-        <span className="breadcrumb-sep">›</span>
-        <strong>{selectedDoc.name}</strong>
-      </span>
-    );
-  } else if (view === "add") {
-    title = (
-      <span className="breadcrumb" style={{ margin: 0 }}>
-        <button className="breadcrumb-link" onClick={() => setView("list")}>
-          Knowledge
-        </button>
-        <span className="breadcrumb-sep">›</span>
-        <strong>Add source</strong>
-      </span>
-    );
-  }
+  // The document and the add-source form are one level below the list.
+  // Reported to the page trail rather than drawn here: this panel's own
+  // breadcrumb used to sit directly under the chrome's, saying half of
+  // the same thing.
+  const leaf = view === "detail" && selectedDoc ? selectedDoc.name : view === "add" ? "Add source" : null;
+  const title: React.ReactNode = leaf ?? "Knowledge";
+  const levels = {
+    labels: leaf ? [leaf] : [],
+    // One level deep, so any truncation returns to the list.
+    onTruncate: () => {
+      setView("list");
+      setSelected(null);
+    },
+  };
 
   // ── Header extras: per-view actions ─────────────────────────────
   let headerExtras: React.ReactNode = null;
@@ -326,6 +312,7 @@ export function KnowledgePanel({
   return (
     <Drawer
       title={title}
+      levels={levels}
       onClose={onClose}
       headerExtras={headerExtras}
       toolbar={drawerToolbar}
@@ -382,12 +369,18 @@ export function KnowledgePanel({
 // ── Disabled state ───────────────────────────────────────────────
 
 function DisabledState() {
+  // This used to tell the reader to set `IGNI_NEO4J_RUNTIME=1` "for the
+  // backend" — a variable a Finder-launched .app cannot inherit, so the
+  // instruction could not be carried out by anyone who needed it. The
+  // switch is `knowledge.enabled` in config now, which is both settable
+  // and the one the rest of the backend already reads.
   return (
     <div className="kb-empty">
       <div className="kb-empty-title">Knowledge base disabled</div>
       <div className="kb-empty-hint">
-        Configure an embedder under <code>knowledge.enabled = true</code> in settings to
-        enable semantic search.
+        Semantic search is off because <code>knowledge.enabled = false</code> in{" "}
+        <code>~/.ember/config.yaml</code>. Set it to <code>true</code> and reopen the app.
+        The first launch after that downloads a local database (~500 MB, one time).
       </div>
     </div>
   );

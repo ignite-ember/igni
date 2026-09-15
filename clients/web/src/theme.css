@@ -21,12 +21,7 @@
   --bg-inset: #1f1f1d;
   --fg: #f0efea;
   --fg-muted: #b8b5ad;
-  /* F138. Computed, not chosen: this was #87857d in dark and #989690 in
-     light, which read at 3.08:1 and 2.57:1 against their own
-     backgrounds where WCAG AA wants 4.5:1 — 65 of the app's 124
-     contrast failures were this one token. It is a text colour: 130 of
-     its 147 uses are `color:`. */
-  --fg-faint: #a5a49e;
+  --fg-faint: #87857d;
   --border: #4a4a45;
   --border-soft: #3d3d39;
   /* Scroll-indicator thumb. Dark mode reuses ``--border`` (#4a4a45,
@@ -38,21 +33,6 @@
   --success: #4cb05c;
   --danger: #ef6a5a;
   --warning: #d9a644;
-
-  /* Accent colours, as *text*.
-   *
-   * F138. The vivid values below are right for a border, a dot or a
-   * fill; as text on the panels they tint, they read at 2.6–4.4:1
-   * where WCAG AA wants 4.5. Each of these is the same hue lightened
-   * until it passes on the darkest panel it appears over, computed
-   * rather than eyeballed. Same split the portal's brand orange
-   * needed in F137: one value for ink, one for paint.
-   */
-  --accent-blue-text: #8eb9f9;
-  --accent-green-text: #7cc57f;
-  --accent-red-text: #f09393;
-  --accent-orange-text: #fb9c5a;
-  --danger-text: #f28376;
 
   --radius-sm: 8px;
   --radius: 12px;
@@ -79,20 +59,13 @@
   --bg-raised: #f1efe9;
   --bg-inset: #f1efe9;
   --fg: #1f1e1c;
-  --fg-muted: #64635d;
-  --fg-faint: #64635f;
+  --fg-muted: #6b6a64;
+  --fg-faint: #989690;
   --border: #dedcd3;
   --border-soft: #e9e7df;
   --accent-blue: #0969da;
   --success: #1a7f37;
   --danger: #cf222e;
-  /* The light theme's accents mostly pass as text already — blue
-   * (4.52) and red (4.66) do; green and orange do not. F138. */
-  --accent-blue-text: #085dc2;
-  --accent-green-text: #177332;
-  --accent-red-text: #be1f2a;
-  --accent-orange-text: #a24a0e;
-  --danger-text: #be1f2a;
   --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.14);
   /* Darker than ``--border`` so the thumb reads clearly against the
      near-white bg — ``--border`` (#dedcd3) looked too washed out on
@@ -111,20 +84,13 @@
     --bg-raised: #f1efe9;
     --bg-inset: #f1efe9;
     --fg: #1f1e1c;
-    --fg-muted: #64635d;
-    --fg-faint: #64635f;
+    --fg-muted: #6b6a64;
+    --fg-faint: #989690;
     --border: #dedcd3;
     --border-soft: #e9e7df;
     --accent-blue: #0969da;
     --success: #1a7f37;
     --danger: #cf222e;
-    /* The light theme's accents mostly pass as text already — blue
-     * (4.52) and red (4.66) do; green and orange do not. F138. */
-    --accent-blue-text: #085dc2;
-    --accent-green-text: #177332;
-    --accent-red-text: #be1f2a;
-    --accent-orange-text: #a24a0e;
-  --danger-text: #be1f2a;
     --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.14);
     --scroll-thumb: #b8b5ad;
   }
@@ -238,6 +204,45 @@ button {
   background: var(--bg-raised);
 }
 
+/* Height of the floating sidebar cluster — the head row and the
+   New-chat button. ``Sidebar`` measures the rendered cluster and
+   overwrites this on the element; what is here is only the value used
+   for the first paint, before the observer runs, so it only has to be
+   close enough not to jump. */
+:root {
+  --sidebar-top-h: 90px;
+}
+
+.sidebar-links {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px 0;
+}
+
+.sidebar-link {
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.sidebar-link:hover {
+  color: var(--fg);
+  background: var(--bg-raised);
+}
+
+.sidebar-link.active {
+  color: var(--fg);
+  background: var(--bg-raised);
+  font-weight: 600;
+}
+
 .sidebar-section {
   padding: 10px 14px 4px;
   font-size: 11px;
@@ -271,8 +276,14 @@ button {
   /* ``padding-top`` matches the cluster's natural height so the
      first item sits crisp directly below the "Sessions" label at
      scroll-top, with no extra blank gap. Items only enter the blur
-     strip once the user actually scrolls. */
-  padding: 118px 8px 12px;
+     strip once the user actually scrolls.
+
+     One variable rather than the number twice: this and
+     ``.sidebar-blur``'s height are the same measurement, and they
+     were two literals that had to be changed together. Adding the
+     section links above the list is exactly the edit that would have
+     changed one and not the other. */
+  padding: var(--sidebar-top-h) 8px 12px;
   position: relative;
   z-index: 1;
   /* Same overscroll guard as ``.conversation`` so the macOS
@@ -292,7 +303,7 @@ button {
   top: 0;
   left: 0;
   right: 0;
-  height: 118px;
+  height: var(--sidebar-top-h);
   z-index: 5;
   pointer-events: none;
   background: var(--bg);
@@ -382,7 +393,7 @@ button {
 }
 
 .update-banner a {
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   font-weight: 600;
 }
 
@@ -453,7 +464,7 @@ button {
   font-size: 11.5px;
   font-weight: 600;
   font-family: var(--font-ui);
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--ember-orange) 50%, transparent);
   cursor: pointer;
@@ -462,7 +473,7 @@ button {
 }
 .brand-update:hover {
   background: color-mix(in srgb, var(--ember-orange) 22%, transparent);
-  border-color: var(--accent-orange-text, #fb9c5a);
+  border-color: var(--ember-orange);
 }
 
 
@@ -855,8 +866,8 @@ button {
 }
 
 .scroll-to-bottom:hover {
-  color: var(--accent-orange-text, #fb9c5a);
-  border-color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
+  border-color: var(--ember-orange);
   transform: translateX(-50%) translateY(-1px);
 }
 
@@ -890,7 +901,7 @@ button {
 .col.streaming > .msg-assistant:last-child::after,
 .chat-row.streaming > .msg-assistant::after {
   content: "▍";
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   animation: caret-blink 1s steps(2) infinite;
   margin-left: 2px;
 }
@@ -1007,7 +1018,7 @@ button {
 .chip-search.active {
   background: color-mix(in srgb, var(--ember-orange) 18%, transparent);
   border-color: color-mix(in srgb, var(--ember-orange) 55%, transparent);
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   box-shadow: 0 0 12px 0 color-mix(in srgb, var(--ember-orange) 35%, transparent);
 }
 
@@ -1226,6 +1237,40 @@ button {
   font-size: 14.5px;
 }
 
+/* ── First run: no model yet ──────────────────────────────────────
+   Sits between the product name and the capability cards, because
+   every one of those cards leads somewhere that cannot run until this
+   is done. Deliberately not a card itself — it is the screen's
+   subject, and a ninth tile in a grid of eight reads as an option. */
+.welcome-setup {
+  margin: 26px auto 0;
+  max-width: 520px;
+  padding: 18px 20px 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+}
+
+.welcome-setup-lead {
+  margin: 0 0 14px;
+  font-size: 14.5px;
+  color: var(--fg);
+}
+
+.welcome-setup-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.welcome-setup-note {
+  margin: 14px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-faint);
+}
+
 .welcome-caps {
   margin: 28px auto 0;
   display: grid;
@@ -1255,7 +1300,7 @@ button {
 .welcome-cap code {
   font-weight: 600;
   font-size: 12.5px;
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
 }
 
 .welcome-cap span {
@@ -1446,7 +1491,7 @@ button {
 .msg-user.mode-command {
   background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-blue) 40%, transparent);
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
   font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 700;
@@ -1456,7 +1501,7 @@ button {
 .msg-user.mode-shell {
   background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--ember-orange) 40%, transparent);
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 700;
@@ -1493,7 +1538,7 @@ button {
 .msg-assistant-body a,
 .plan-card-body a,
 .compact-card-body a {
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
   text-decoration: underline;
   text-underline-offset: 2px;
   text-decoration-thickness: 1px;
@@ -2055,7 +2100,7 @@ button {
 }
 
 .shell-output .prompt-line {
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   font-weight: 600;
 }
 
@@ -2137,7 +2182,7 @@ button {
   padding: 1px 6px;
   border-radius: 9999px;
   background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
   border: 1px solid color-mix(in srgb, var(--accent-blue) 30%, transparent);
   text-transform: lowercase;
   white-space: nowrap;
@@ -2229,7 +2274,7 @@ button {
   height: 10px;
   border-radius: 50%;
   border: 1.5px solid color-mix(in srgb, var(--accent-blue) 35%, transparent);
-  border-top-color: var(--accent-blue-text);
+  border-top-color: var(--accent-blue);
   animation: ember-spin 0.9s linear infinite;
   flex-shrink: 0;
 }
@@ -2274,16 +2319,16 @@ button {
 }
 
 .orch-agent.card.status-running {
-  border-left-color: var(--accent-blue-text);
+  border-left-color: var(--accent-blue);
 }
 .orch-agent.card.status-done {
-  border-left-color: var(--accent-green-text);
+  border-left-color: var(--accent-green, #4caf50);
 }
 .orch-agent.card.status-error {
-  border-left-color: var(--accent-red-text);
+  border-left-color: var(--accent-red, #e54848);
 }
 .orch-agent.card.status-paused {
-  border-left-color: var(--accent-orange-text, #fb9c5a);
+  border-left-color: var(--ember-orange);
 }
 
 .orch-agent-head {
@@ -2388,19 +2433,19 @@ button {
 }
 
 .orch-agent-status.status-running {
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
   background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
 }
 .orch-agent-status.status-done {
-  color: var(--accent-green-text);
+  color: var(--accent-green, #4caf50);
   background: color-mix(in srgb, var(--accent-green, #4caf50) 14%, transparent);
 }
 .orch-agent-status.status-error {
-  color: var(--accent-red-text);
+  color: var(--accent-red, #e54848);
   background: color-mix(in srgb, var(--accent-red, #e54848) 14%, transparent);
 }
 .orch-agent-status.status-paused {
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
 }
 
@@ -2431,18 +2476,18 @@ button {
 }
 
 .orch-count.count-running {
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
   background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
 }
 .orch-count.count-running .orch-count-icon {
   animation: ember-pulse 1.4s ease-in-out infinite;
 }
 .orch-count.count-done {
-  color: var(--accent-green-text);
+  color: var(--accent-green, #4caf50);
   background: color-mix(in srgb, var(--accent-green, #4caf50) 14%, transparent);
 }
 .orch-count.count-error {
-  color: var(--accent-red-text);
+  color: var(--accent-red, #e54848);
   background: color-mix(in srgb, var(--accent-red, #e54848) 14%, transparent);
 }
 .orch-count.count-empty {
@@ -2469,7 +2514,7 @@ button {
 }
 
 .orch-totals-running {
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
 }
 
 .orch-totals-tokens {
@@ -2501,7 +2546,7 @@ button {
   cursor: pointer;
   border: 1px solid color-mix(in srgb, var(--accent-red, #e54848) 40%, transparent);
   background: color-mix(in srgb, var(--accent-red, #e54848) 12%, transparent);
-  color: var(--accent-red-text);
+  color: var(--accent-red, #e54848);
   flex-shrink: 0;
 }
 
@@ -2540,7 +2585,7 @@ button {
   cursor: pointer;
   border: 1px solid color-mix(in srgb, var(--ember-orange) 40%, transparent);
   background: color-mix(in srgb, var(--ember-orange) 12%, transparent);
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   flex-shrink: 0;
 }
 
@@ -2572,7 +2617,7 @@ button {
 }
 
 .orch-retry-label strong {
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   font-family: var(--font-mono);
   font-weight: 600;
 }
@@ -2593,7 +2638,7 @@ button {
 
 .orch-retry-textarea:focus {
   outline: none;
-  border-color: var(--accent-orange-text, #fb9c5a);
+  border-color: var(--ember-orange);
   background: var(--bg-raised);
 }
 
@@ -2676,10 +2721,7 @@ button {
   align-items: baseline;
   font-family: var(--font-ui);
   font-size: 12px;
-  /* Not a mix. At 80% over the light panel this came out #85847f —
-   * 3.25:1 — which is the removed opacity fade in another form. The
-   * token is already the de-emphasised colour. F138. */
-  color: var(--fg-faint);
+  color: color-mix(in srgb, var(--fg-faint) 80%, transparent);
   min-width: 0;
 }
 
@@ -2698,7 +2740,7 @@ button {
 }
 
 .orch-preview-line.latest .orch-preview-glyph {
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
 }
 
 .orch-preview-text {
@@ -2709,18 +2751,12 @@ button {
   flex: 1;
 }
 
-/* The fade is gone. F138.
- *
- * Older lines were stepped 0.45 → 0.85 opacity so the eye lands on
- * `.latest`. That put this text — which is a running tool's actual
- * output — at 2.0:1 to 3.8:1 against the panel, against 4.5 for AA,
- * and no opacity below 1.0 can pass: the colour underneath is 4.71
- * before the fade is applied.
- *
- * `.latest` does not need the help. It already renders at full `--fg`
- * against the others' `--fg-faint`, with a coloured glyph beside it.
- * The fade was a second emphasis paid for in legibility of the four
- * lines above. */
+/* Older preview lines fade slightly so the eye lands on .latest. */
+.orch-agent-preview-window .orch-preview-line:nth-child(1):not(.latest) { opacity: 0.45; }
+.orch-agent-preview-window .orch-preview-line:nth-child(2):not(.latest) { opacity: 0.55; }
+.orch-agent-preview-window .orch-preview-line:nth-child(3):not(.latest) { opacity: 0.65; }
+.orch-agent-preview-window .orch-preview-line:nth-child(4):not(.latest) { opacity: 0.75; }
+.orch-agent-preview-window .orch-preview-line:nth-child(5):not(.latest) { opacity: 0.85; }
 
 .orch-agent-body {
   display: flex;
@@ -2827,8 +2863,8 @@ button {
 
 .demo-nav-btn.active {
   background: color-mix(in srgb, var(--accent-blue) 18%, transparent);
-  border-color: var(--accent-blue-text);
-  color: var(--accent-blue-text);
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
 }
 
 .demo-desc {
@@ -2876,7 +2912,7 @@ button {
   padding: 2px 9px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--ember-orange) 18%, transparent);
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   font-size: 11.5px;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -2916,7 +2952,7 @@ button {
 .loop-iteration-slash {
   font-family: var(--font-mono);
   font-weight: 700;
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
 }
 
 /* ── /compact result card ───────────────────────────────────────── */
@@ -2982,7 +3018,7 @@ button {
   padding: 0 10px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent-orange, #f59e0b) 18%, transparent);
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--accent-orange, #b45309);
   border: 1px solid color-mix(in srgb, var(--accent-orange, #f59e0b) 40%, transparent);
   font-size: 11px;
   font-weight: 700;
@@ -3154,7 +3190,7 @@ button {
   height: 22px;
   border-radius: 6px;
   background: color-mix(in srgb, var(--accent-orange, #f59e0b) 22%, transparent);
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--accent-orange, #b45309);
   font-weight: 700;
   font-size: 13px;
 }
@@ -3164,7 +3200,7 @@ button {
   font-weight: 700;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--accent-orange, #b45309);
 }
 
 .plan-card--approved .plan-card-badge {
@@ -3239,7 +3275,7 @@ button {
 
 .plan-card-task--in_progress .plan-card-task-marker {
   background: color-mix(in srgb, var(--accent-orange, #f59e0b) 22%, transparent);
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--accent-orange, #b45309);
   /* Same pulse cadence as the PlanBadge dot so the two
      in-progress signals visually rhyme — the eye picks up
      a single rhythm across the screen. */
@@ -3331,7 +3367,7 @@ button {
   height: 22px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent-blue) 18%, transparent);
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
   font-weight: 700;
   font-size: 13px;
   font-family: var(--font-mono);
@@ -3342,7 +3378,7 @@ button {
   font-weight: 700;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
 }
 
 .compact-card-status {
@@ -3547,7 +3583,7 @@ button {
 
 .panel-input:focus {
   outline: none;
-  border-color: var(--accent-orange-text, #fb9c5a);
+  border-color: var(--ember-orange);
 }
 
 .panel-results {
@@ -3583,7 +3619,7 @@ button {
 
 .dir-path-input:focus {
   outline: none;
-  border-color: var(--accent-orange-text, #fb9c5a);
+  border-color: var(--ember-orange);
 }
 
 .dir-list {
@@ -3597,7 +3633,7 @@ button {
 }
 
 .dir-icon {
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   font-size: 10px;
   width: 12px;
 }
@@ -3627,7 +3663,7 @@ button {
 }
 
 .remote-draft-pen {
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   font-style: normal;
 }
 
@@ -3636,7 +3672,7 @@ button {
 }
 
 .remote-caret {
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   animation: caret-blink 1s steps(2) infinite;
 }
 
@@ -3661,8 +3697,8 @@ button {
 
 .slash-btn:hover,
 .slash-btn.open {
-  border-color: var(--accent-orange-text, #fb9c5a);
-  color: var(--accent-orange-text, #fb9c5a);
+  border-color: var(--ember-orange);
+  color: var(--ember-orange);
 }
 
 .slash-btn.open {
@@ -3677,14 +3713,14 @@ button {
   border-radius: 9999px;
   background: var(--ember-gradient-soft);
   border: 1px solid color-mix(in srgb, var(--ember-orange) 45%, transparent);
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
 }
 
 /* TUI parity: "/" command mode is lit cyan (the TUI's "/" prompt). */
 .mode-badge.command {
   background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
   border-color: color-mix(in srgb, var(--accent-blue) 45%, transparent);
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
 }
 
 .composer-hint {
@@ -4075,10 +4111,7 @@ button {
 
 .btn-danger {
   border-color: color-mix(in srgb, var(--danger) 55%, transparent);
-  /* --danger is 3.74:1 against the raised panel this button sits on;
-   * --danger-text is the same hue at 4.50. The border keeps the
-   * stronger colour. F138. */
-  color: var(--danger-text, var(--danger));
+  color: var(--danger);
 }
 
 .btn-sm {
@@ -4138,39 +4171,10 @@ button {
   gap: 8px;
 }
 
-/* Present for a screen reader, absent on screen.
- *
- * F138. The transcript needs a heading for message content to sit
- * under — an assistant answer can contain any markdown heading, so
- * without one a `###` in an answer skips from the page's h1 straight
- * to an h3. `display: none` would hide it from assistive technology
- * too, which is the opposite of the point. */
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
 .dialog-sub {
   color: var(--fg-muted);
   font-size: 13px;
   margin-bottom: 12px;
-}
-
-/* The agent path inside that sub-line. Monospace because it is an
-   identifier chain — `main > planner > test-runner` — and it used to
-   be rendered bare, which on a single-agent run put the lone word
-   "main" under the heading with nothing attaching it to anything.
-   F136. */
-.hitl-agent-path {
-  font-family: var(--font-mono);
-  color: var(--fg);
 }
 
 .dialog-pre {
@@ -4196,6 +4200,114 @@ button {
 /* Feature panels: centered modal dialog on wide screens, right
    slide-in drawer only when the viewport is narrow (IDE side
    panels) — a full-height drawer wastes a wide screen. */
+/* ── Pages ───────────────────────────────────────────────────────
+   A destination that takes the pane, instead of a 620px modal
+   floating over it. See ``components/PageShell.tsx``.
+
+   Absolutely positioned rather than being a flex child of ``.main``,
+   so the conversation underneath keeps its box: Virtuoso stays sized
+   and holds its scroll offset, and coming back from a page lands
+   where you left rather than at the bottom of the transcript. The
+   chat and composer are hidden with ``visibility`` and not
+   ``display`` for the same reason — and because ``visibility``
+   also takes them out of the tab order, so Tab from a page cannot
+   land in a composer nobody can see. */
+.page {
+  position: absolute;
+  /* Clears the floating ``.app-header``. 58px is the same header
+     height ``.conversation``'s top padding is derived from — see the
+     comment there. Sits below the header's ``z-index: 10`` so the
+     header keeps working while a page is open. */
+  top: 58px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.main--paged > .conversation-frame,
+.main--paged > .composer-zone {
+  visibility: hidden;
+}
+
+.page-crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 10px 18px 0;
+  font-size: 12.5px;
+}
+
+.page-crumb-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.page-crumb {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  font: inherit;
+  cursor: pointer;
+}
+
+.page-crumb:hover {
+  color: var(--fg);
+  background: var(--bg-raised);
+}
+
+.page-crumb.current {
+  color: var(--fg);
+  font-weight: 600;
+  cursor: default;
+}
+
+.page-crumb-sep {
+  color: var(--fg-faint);
+  opacity: 0.6;
+}
+
+.page-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 18px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.page-title {
+  margin: 0;
+  font-weight: 700;
+  font-size: 17px;
+}
+
+.page-toolbar {
+  flex-shrink: 0;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.page-body {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 18px;
+  font-size: 13.5px;
+  /* Wider than the drawer's 620px, but not the full width of a
+     27-inch display — these are lists and forms, and a line of
+     metadata stretched across a metre reads worse than it did in
+     the modal. */
+  width: min(900px, 100%);
+  margin: 0 auto;
+}
+
 .drawer {
   position: fixed;
   top: 50%;
@@ -4304,7 +4416,11 @@ button {
   font-size: 13.5px;
 }
 
-.drawer-body .row {
+/* Shared with ``.page-body``: the nine panels that became pages kept
+   their bodies unchanged, so the row styling has to answer to either
+   wrapper. One selector rather than a duplicated block, so the two
+   cannot drift apart. */
+:is(.drawer-body, .page-body) .row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -4313,11 +4429,11 @@ button {
   border-bottom: 1px solid var(--border-soft);
 }
 
-.drawer-body .row .name {
+:is(.drawer-body, .page-body) .row .name {
   font-weight: 600;
 }
 
-.drawer-body .row .meta {
+:is(.drawer-body, .page-body) .row .meta {
   color: var(--fg-faint);
   font-size: 12px;
 }
@@ -4439,7 +4555,7 @@ button {
   background: transparent;
   padding: 2px 4px;
   font-size: 14px;
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   cursor: pointer;
   border-radius: 6px;
 }
@@ -4467,7 +4583,7 @@ button {
 }
 
 .mini-tag.ephemeral {
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   border-color: color-mix(in srgb, var(--ember-orange) 40%, transparent);
 }
 
@@ -4589,83 +4705,6 @@ button {
   flex-shrink: 0;
 }
 
-/* ── Group pill + its "yours or theirs" popover ────────────────── */
-
-.group-pill-wrap {
-  position: relative;
-  display: inline-flex;
-}
-
-/* Opens upward: the pill lives in the footer, so there is nothing
-   below it to open into. */
-.group-conflicts {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  right: 0;
-  z-index: 40;
-  width: min(380px, 90vw);
-  max-height: 60vh;
-  overflow-y: auto;
-  padding: 4px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--bg-surface);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
-}
-
-.group-conflict {
-  padding: 9px 10px;
-  border-radius: 7px;
-}
-
-.group-conflict + .group-conflict {
-  border-top: 1px solid var(--border-soft);
-}
-
-.group-conflict-question {
-  font-size: 12px;
-  color: var(--fg);
-  line-height: 1.45;
-}
-
-/* The consequence of each answer, under the question. Nobody should
- * have to guess whether "Take the group's" discards their work. */
-.group-conflict-note {
-  margin-top: 4px;
-  font-size: 11.5px;
-  color: var(--fg-muted);
-  line-height: 1.4;
-}
-
-.group-conflict-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.group-conflict-actions button {
-  appearance: none;
-  height: 24px;
-  padding: 0 10px;
-  border-radius: 6px;
-  border: 1px solid var(--border-soft);
-  background: var(--bg-surface);
-  color: var(--fg-muted);
-  font-size: 11.5px;
-  font-family: var(--font-ui);
-  cursor: pointer;
-}
-
-.group-conflict-actions button:hover:not(:disabled) {
-  border-color: var(--border);
-  color: var(--fg);
-}
-
-.group-conflict-actions button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
 /* ── CodeIndex pill in the footer ──────────────────────────────── */
 
 .codeindex-pill {
@@ -4760,7 +4799,7 @@ button {
 }
 
 .watcher-pill:hover {
-  border-color: var(--accent-orange-text, #fb9c5a);
+  border-color: var(--ember-orange);
   background: color-mix(in srgb, var(--ember-orange) 6%, var(--bg-surface));
 }
 
@@ -5892,7 +5931,7 @@ button {
 }
 
 .task-filter.active .task-filter-count {
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
 }
 
@@ -5912,19 +5951,19 @@ button {
 
 .task-search:focus {
   outline: none;
-  border-color: var(--accent-orange-text, #fb9c5a);
+  border-color: var(--ember-orange);
 }
 
 /* Composer textarea tints to match the rendered mode bubbles. */
 .composer-input.mode-command {
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
   font-family: var(--font-mono);
   font-weight: 700;
   letter-spacing: 0.01em;
 }
 
 .composer-input.mode-shell {
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   font-family: var(--font-mono);
   font-weight: 700;
   letter-spacing: 0.01em;
@@ -5960,7 +5999,7 @@ button {
   border-radius: 9999px;
   background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-blue) 35%, transparent);
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
   font-family: var(--font-mono);
   font-size: 11.5px;
 }
@@ -5979,7 +6018,7 @@ button {
 .file-pill.code-pill {
   background: color-mix(in srgb, var(--ember-orange) 12%, transparent);
   border-color: color-mix(in srgb, var(--ember-orange) 35%, transparent);
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
 }
 
 .file-pill.code-pill:hover {
@@ -6044,7 +6083,7 @@ button {
   appearance: none;
   background: var(--bg-surface);
   border: 1px solid color-mix(in srgb, var(--accent-blue) 30%, transparent);
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
   padding: 2px 8px;
   border-radius: 9999px;
   font-family: var(--font-mono);
@@ -6253,7 +6292,7 @@ button {
 
 /* Composer drag-and-drop highlight + uploading chip. */
 .composer-zone.drag-hot .composer {
-  border-color: var(--accent-orange-text, #fb9c5a);
+  border-color: var(--ember-orange);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ember-orange) 22%, transparent);
 }
 
@@ -6279,7 +6318,7 @@ button {
   border-radius: 9999px;
   border: 1px solid color-mix(in srgb, var(--accent-blue) 55%, transparent);
   background: color-mix(in srgb, var(--accent-blue) 18%, transparent);
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
   font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 600;
@@ -6298,7 +6337,7 @@ button {
   justify-content: center;
   width: 18px;
   height: 18px;
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
   flex-shrink: 0;
 }
 
@@ -6366,19 +6405,19 @@ button {
   line-height: 1.5;
   color: var(--fg);
   outline: none;
-  caret-color: var(--accent-orange-text, #fb9c5a);
+  caret-color: var(--ember-orange);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .composer-editable.mode-command {
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
   font-family: var(--font-mono);
   font-weight: 700;
 }
 
 .composer-editable.mode-shell {
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   font-family: var(--font-mono);
   font-weight: 700;
 }
@@ -6519,7 +6558,7 @@ button {
 }
 
 .hitl-arg-bool {
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
 }
 
 .hitl-arg-tags {
@@ -6537,7 +6576,7 @@ button {
   border-radius: 8px;
   background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-blue) 35%, transparent);
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
   max-width: 100%;
   overflow: hidden;
 }
@@ -6545,7 +6584,7 @@ button {
 .hitl-file-icon {
   display: inline-flex;
   align-items: center;
-  color: var(--accent-blue-text);
+  color: var(--accent-blue);
   flex-shrink: 0;
 }
 
@@ -6576,7 +6615,7 @@ button {
   border-left: 3px solid var(--ember-orange);
   border-radius: 8px;
   padding: 9px 12px;
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
   white-space: pre-wrap;
   word-break: break-word;
   /* Match the pre/diff blocks — cap height so a giant one-liner
@@ -8327,7 +8366,7 @@ button {
 
 .hooks-row-link:hover .hooks-row-ident {
   text-decoration: underline;
-  color: var(--accent-orange-text, #fb9c5a);
+  color: var(--ember-orange);
 }
 
 /* File preview (plain-browser fallback for host.openFile) */
@@ -8408,7 +8447,7 @@ button {
 }
 
 .watcher-row--selected {
-  border-color: var(--accent-orange-text, #fb9c5a);
+  border-color: var(--ember-orange);
   background: color-mix(in srgb, var(--ember-orange) 6%, var(--bg-surface));
 }
 
@@ -8510,7 +8549,7 @@ button {
 
 .watcher-filter:focus {
   outline: none;
-  border-color: var(--accent-orange-text, #fb9c5a);
+  border-color: var(--ember-orange);
 }
 
 .watcher-log {
@@ -8725,7 +8764,7 @@ button {
 /* Faux Composer — used by ``?demo=interrupted`` to show the
    Composer area that fills when Edit prompt fires. Faithful
    stub of the real Composer component so the demo doesn't
-   need an IgniClient or BE connection. */
+   need an EmberClient or BE connection. */
 .demo-page-composer {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
@@ -8808,4 +8847,265 @@ button {
 .demo-page-composer-send:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* ── Help page ───────────────────────────────────────────────────
+   Commands grouped by what you are trying to do. Clicking one seeds
+   the composer rather than firing it — see ``HelpPage``. */
+.help-intro {
+  color: var(--fg-muted);
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 16px;
+}
+
+.help-group {
+  margin-bottom: 22px;
+}
+
+.help-group-title {
+  margin: 0 0 2px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.help-group-blurb {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: var(--fg-faint);
+}
+
+.help-commands {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  gap: 4px;
+}
+
+.help-command {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.help-command:hover {
+  border-color: var(--border-soft);
+  background: var(--bg-surface);
+}
+
+.help-command-name {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent-orange-text, #fb9c5a);
+  white-space: nowrap;
+}
+
+.help-command-desc {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+
+/* ── Context page ────────────────────────────────────────────────
+   The runs-vs-floor split, and why ``/compact`` cannot shrink the
+   second one. */
+.ctx-total {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.ctx-total-n {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.ctx-total-unit {
+  color: var(--fg-muted);
+}
+
+.ctx-total-of {
+  color: var(--fg-faint);
+  font-size: 12.5px;
+}
+
+.ctx-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-inset);
+  margin-bottom: 14px;
+}
+
+.ctx-bar-runs {
+  background: var(--accent, #f97316);
+}
+
+.ctx-bar-floor {
+  background: var(--border);
+}
+
+.ctx-key {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  margin-right: 7px;
+}
+
+.ctx-key-runs {
+  background: var(--accent, #f97316);
+}
+
+.ctx-key-floor {
+  background: var(--border);
+}
+
+.ctx-rows {
+  margin-bottom: 16px;
+}
+
+.ctx-note {
+  color: var(--fg-muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+  margin: 0 0 18px;
+}
+
+.ctx-error {
+  color: var(--danger);
+}
+
+.ctx-empty {
+  color: var(--fg-faint);
+}
+
+/* ── CodeIndex: nothing indexed yet ──────────────────────────────
+   Replaces the zeroed dashboard. See ``NotIndexedYet``. */
+.codeindex-empty {
+  padding: 18px 0 6px;
+}
+
+.codeindex-empty-lead {
+  margin: 0 0 16px;
+  max-width: 60ch;
+  line-height: 1.6;
+  color: var(--fg-muted);
+}
+
+.codeindex-empty-lead strong {
+  color: var(--fg);
+}
+
+.codeindex-empty-langs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.codeindex-empty-lang {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+.codeindex-empty-lang code {
+  font-family: var(--mono, ui-monospace, monospace);
+}
+
+.codeindex-empty-lang-n {
+  color: var(--fg-faint);
+}
+
+.codeindex-empty-where {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--fg-faint);
+}
+
+.codeindex-blocked-since {
+  color: var(--fg-faint);
+  white-space: nowrap;
+}
+
+/* ── Workflows page ──────────────────────────────────────────────
+   One card per workflow: what it is, when to reach for it, and the
+   phases it walks through. Clicking seeds the composer — several take
+   a JSON argument object. See ``WorkflowsPage``. */
+.workflow-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md, 8px);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.workflow-card:hover {
+  border-color: var(--accent, #f97316);
+  background: var(--bg-surface);
+}
+
+.workflow-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.workflow-name {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.workflow-phases {
+  font-size: 11.5px;
+  color: var(--fg-faint);
+}
+
+.workflow-desc {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+
+.workflow-when {
+  font-size: 12px;
+  color: var(--fg-faint);
+  font-style: italic;
+}
+
+.workflow-phase-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.workflow-phase {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--fg-muted);
 }

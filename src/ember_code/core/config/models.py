@@ -383,6 +383,22 @@ class ModelRegistry:
             return next(iter(self.settings.models.registry))
         return ""
 
+    def has_usable_model(self) -> bool:
+        """Whether a run would reach a real model rather than the
+        :class:`NoModelConfigured` placeholder.
+
+        The same question :meth:`get_model` answers by falling through,
+        asked without building anything — the status push wants it on
+        every poll and constructing a model client for a yes/no would
+        be absurd.
+
+        Public because the frontend needs it and the alternative was
+        inferring it: the empty state matched ``status.model`` against
+        the placeholder's id string, which meant the sentinel was a
+        contract between two files that had no idea they shared one.
+        """
+        return bool(self._effective_default())
+
     def _resolve_entry(self, name: str) -> ModelRegistryEntry | None:
         """Resolve a model name to a typed registry entry.
 

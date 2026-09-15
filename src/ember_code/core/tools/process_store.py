@@ -26,10 +26,11 @@ BackgroundProcessRow`` keeps working for downstream callers.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 from pydantic import ValidationError
-from sqlalchemy import Integer, Text, delete, select
+from sqlalchemy import Integer, Text, delete, select, update
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -70,6 +71,10 @@ class BackgroundProcessModel(Base):
     cmd: Mapped[str] = mapped_column(Text, nullable=False)
     pgid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: How it ended, and when. Null while it is still running — or,
+    #: after a BE restart, if we never got to see it end.
+    exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    finished_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 # ── Store ────────────────────────────────────────────────────
@@ -171,6 +176,11 @@ class BackgroundProcessStore:
                         "cmd": row.cmd,
                         "pgid": row.pgid,
                         "started_at": row.started_at,
+                        # A reused pid is a new process, not a
+                        # resurrection: clear any ending recorded
+                        # against the previous occupant of this row.
+                        "exit_code": row.exit_code,
+                        "finished_at": row.finished_at,
                     },
                 )
                 await session.execute(stmt)
@@ -181,6 +191,73 @@ class BackgroundProcessStore:
             logger.debug("upsert pid=%s failed", row.pid, exc_info=exc)
             return UpsertResult(ok=False, reason=f"upsert(pid={row.pid}): {exc}")
         return UpsertResult(ok=True)
+
+    async def finish(
+        self,
+        pid: int,
+        exit_code: int | None,
+        *,
+        now: int | None = None,
+        row: BackgroundProcessRow | None = None,
+    ) -> UpsertResult:
+        """Record how a process ended, keeping its row.
+
+        The counterpart to :meth:`remove`, and the reason the table can
+        answer "what ran here" and not only "what is running". Called
+        where ``_persist_remove`` used to be, on completion.
+
+        A pid with no row is the common case rather than an error: only
+        processes that were *announced* get written on spawn, and a
+        quick `$ ls` is never announced. Pass ``row`` and the ending is
+        inserted whole — command, start, exit code — which is what
+        makes a one-shot survive a restart instead of existing only in
+        memory until the BE stops.
+        """
+        stamp = int(time.time()) if now is None else now
+        try:
+            async with self._db.session() as session:
+                result = await session.execute(
+                    update(BackgroundProcessModel)
+                    .where(BackgroundProcessModel.pid == pid)
+                    .values(exit_code=exit_code, finished_at=stamp)
+                )
+                await session.commit()
+                matched = result.rowcount if result.rowcount is not None else 0
+        except Exception as exc:
+            logger.debug("finish pid=%s failed", pid, exc_info=exc)
+            return UpsertResult(ok=False, reason=f"finish(pid={pid}): {exc}")
+
+        if matched == 0 and row is not None:
+            return await self.upsert(
+                row.model_copy(update={"exit_code": exit_code, "finished_at": stamp})
+            )
+        return UpsertResult(ok=True)
+
+    async def prune_history(self, *, older_than_seconds: float, now: int | None = None) -> int:
+        """Drop finished rows that ended longer ago than the cutoff.
+
+        History has to be bounded or the table grows for the life of
+        the project. Only rows with a ``finished_at`` are eligible:
+        a running process is never old enough to forget, however long
+        it has been up.
+
+        Returns the number of rows removed.
+        """
+        stamp = int(time.time()) if now is None else now
+        cutoff = stamp - int(older_than_seconds)
+        try:
+            async with self._db.session() as session:
+                result = await session.execute(
+                    delete(BackgroundProcessModel).where(
+                        BackgroundProcessModel.finished_at.is_not(None),
+                        BackgroundProcessModel.finished_at < cutoff,
+                    )
+                )
+                await session.commit()
+                return int(result.rowcount or 0)
+        except Exception as exc:
+            logger.debug("prune_history failed", exc_info=exc)
+            return 0
 
     async def remove(self, pid: int) -> RemoveResult:
         """Delete the row for ``pid`` if present. No-op when the

@@ -92,6 +92,17 @@ class MessageRegistry:
             )
         self._by_type[type_field.default] = message_cls
 
+    def known_types(self) -> list[str]:
+        """Every wire ``type`` string this registry will accept.
+
+        The transports' answer to "what can arrive?", which is the
+        thing the generated wire schema has to cover — a message the
+        transport accepts but the schema omits is one the frontend can
+        receive and no test can check. Asserted in
+        ``tests/test_wire_schema_is_current.py``.
+        """
+        return sorted(self._by_type)
+
     def deserialize(self, line: str) -> Message | None:
         """Deserialize a JSON line into a :class:`Message`.
 

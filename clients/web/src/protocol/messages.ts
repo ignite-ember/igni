@@ -136,6 +136,7 @@ export type CommandAction =
   | "schedule"
   | "watcher"
   | "compact"
+  | "ctx"
   | "run_prompt";
 
 export interface CommandResult extends BaseMessage {
@@ -153,6 +154,13 @@ export interface StatusUpdate extends BaseMessage {
   context_tokens: number;
   max_context: number;
   model: string;
+  /** Whether a run would reach a real model rather than the BE's
+   *  ``NoModelConfigured`` placeholder. Read it instead of comparing
+   *  ``model`` against the placeholder's id string — that made a
+   *  sentinel into a contract between two files that did not know they
+   *  shared one. Optional so an older BE still type-checks; treat a
+   *  missing value as configured, which is what it meant before. */
+  model_configured?: boolean;
   cloud_connected: boolean;
   cloud_org: string;
   /** Active permission mode (row 50 — plan-mode badge). One of
@@ -161,6 +169,22 @@ export interface StatusUpdate extends BaseMessage {
    *  Defaults to ``default`` so older BEs that don't send the
    *  field still type-check. */
   permission_mode: string;
+  /** Brand overrides from the signed-in user's group. Absent or null
+   *  means igni's own palette — which is also what an older backend
+   *  that doesn't send the field gets, hence optional. Values are
+   *  untrusted here: `lib/theme.ts` validates each one against its
+   *  allowlist before applying it. */
+  theme?: GroupTheme | null;
+}
+
+/** Brand overrides a group can set. Every field optional; anything
+ *  unset falls back to what igni ships. */
+export interface GroupTheme {
+  accent?: string | null;
+  danger?: string | null;
+  success?: string | null;
+  brand_name?: string | null;
+  brand_mark?: string | null;
 }
 
 export interface Info extends BaseMessage {

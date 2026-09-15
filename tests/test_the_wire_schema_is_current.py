@@ -46,6 +46,7 @@ import sys
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _SCRIPT = _ROOT / "scripts/dump_wire_schema.py"
+_MODULE = _ROOT / "src" / "ember_code" / "protocol" / "wire_schema.py"
 _SNAPSHOT = _ROOT / "clients/web/src/protocol/wire-schema.json"
 
 
@@ -99,7 +100,10 @@ class TestTheGeneratorStillFindsTheProtocol:
         """A generator that can destroy its own output has to check its
         output. Without this, the failure mode is a silent exit 0 and a
         three-line file where the contract was."""
-        source = _SCRIPT.read_text()
+        # The script is a thin wrapper now; the generator moved into
+        # ``ember_code.protocol.wire_schema`` so a test can run it. Read the
+        # module, which is where the refusal has to be.
+        source = (_MODULE if _MODULE.exists() else _SCRIPT).read_text()
 
         assert "refusing to write" in source
         assert "raise SystemExit" in source
