@@ -64,6 +64,7 @@ from ember_code.backend.schemas_codeindex_rpc import RefreshAvailabilityResult
 from ember_code.backend.schemas_model import ModelSwitchResult
 from ember_code.core.agents import AgentPool
 from ember_code.core.auth.credentials import CloudCredentials
+from ember_code.core.broadcast_schema import BroadcastEvent
 from ember_code.core.code_index import CodeIndex, CodeIndexSyncManager
 from ember_code.core.code_index.embedder import LiveEmbedder
 from ember_code.core.config.models import ModelRegistry
@@ -91,7 +92,6 @@ from ember_code.core.session.agent_factory import (
     create_reasoning_tools,
 )
 from ember_code.core.session.broadcast import BroadcastBus
-from ember_code.core.session.broadcast_schema import BroadcastEvent
 from ember_code.core.session.cloud_auth import SessionCloudAuth
 from ember_code.core.session.cloud_catalog import CloudModelCatalog
 from ember_code.core.session.codeindex_availability import (

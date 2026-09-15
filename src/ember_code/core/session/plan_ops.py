@@ -32,7 +32,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ember_code.core.session.broadcast_schema import BroadcastEvent
+from ember_code.core.broadcast_schema import BroadcastEvent
 from ember_code.core.session.schemas import (
     PlanDecidedBroadcast,
     PlanDecisionResult,

@@ -222,7 +222,7 @@ class PushNotificationBridge:
         ``call_soon_threadsafe``.
 
         The payload is already Pydantic-validated at the broadcast
-        source (see :mod:`core.session.broadcast_schema`); we
+        source (see :mod:`core.broadcast_schema`); we
         forward it as-is so downstream views see the exact same
         wire shape the broadcast defined."""
         self._schedule_push(channel, payload)

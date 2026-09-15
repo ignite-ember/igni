@@ -55,7 +55,7 @@ class _StubSession:
         self.broadcast_bus.register(cb)
 
     def broadcast(self, channel: str, payload: dict) -> None:
-        from ember_code.core.session.broadcast_schema import BroadcastEvent
+        from ember_code.core.broadcast_schema import BroadcastEvent
 
         self.broadcast_bus.emit(BroadcastEvent(channel=channel, payload=payload))
 

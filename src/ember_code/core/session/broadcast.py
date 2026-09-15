@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 
-from ember_code.core.session.broadcast_schema import BroadcastCallback, BroadcastEvent
+from ember_code.core.broadcast_schema import BroadcastCallback, BroadcastEvent
 
 logger = logging.getLogger(__name__)
 
