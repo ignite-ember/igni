@@ -90,9 +90,27 @@ Pattern matching uses glob syntax. Exact entries come from "always allow", patte
 |---|---|
 | `ignite-ember` (default) | Asks for writes and shell commands |
 | `ignite-ember --accept-edits` | Auto-approves file edits, asks for shell |
-| `ignite-ember --strict` | Asks for everything including reads |
-| `ignite-ember --read-only` | No file modifications allowed |
+| `ignite-ember --strict` | Denies anything without an explicit allow rule, including reads — it never asks |
+| `ignite-ember --read-only` | Denies the write tools; the shell stays available (see below) |
 | `ignite-ember --auto-approve` | Auto-approves everything (use with caution) |
+
+#### What `--read-only` does and does not cover
+
+It denies the write tools — `save_file`, `create_file`, `edit_file`,
+`edit_file_replace_all` and the notebook mutations. It does **not** deny
+`run_shell_command`, and that is deliberate: igni has no read tool, so a file is
+read with `run_shell_command "cat <path>"`. Denying the shell would leave an
+agent that cannot read anything, which is not a safer session so much as an
+empty one.
+
+The consequence is stated plainly rather than implied away: a shell command can
+still write (`>`, `sed -i`, `git checkout`). `--read-only` removes the agent's
+direct means of editing and keeps it honest about intent; it is not a sandbox.
+If you need a hard guarantee, run igni against a copy or in a container.
+
+In a headless run (`-m` / `--pipe`) the agent submits its plan and the CLI
+prints it before exiting, since there is no plan card to approve and no second
+turn in which an approval could take effect.
 
 ### 2. Protected Paths
 

@@ -145,7 +145,15 @@ class CliOverrides(BaseModel):
         if opts.read_only:
             perms.mode = PermissionMode.PLAN
             perms.file_write = "deny"
-            perms.shell_execute = "deny"
+            # Deliberately NOT shell_execute="deny". igni reads a file through
+            # run_shell_command, so denying the shell leaves an agent that
+            # cannot read anything — the flag would stop meaning "no file
+            # modifications" and start meaning "no session". It was set here
+            # while the category was inert, so nothing surfaced the conflict;
+            # now that categories are honoured it would take effect and break
+            # the flag. The write tools are denied, which is what read-only
+            # promises. A shell command can still write, and SECURITY.md says
+            # so rather than implying a sandbox this does not provide.
         if opts.strict:
             perms.mode = PermissionMode.DONT_ASK
             perms.file_write = "deny"

@@ -1,22 +1,26 @@
-"""Permission system — tool call approval with persistent allowlists.
+"""Permission types shared across the tool-approval path.
 
-Package facade. Re-exports the OOP collaborators so external callers
-(``ember_code.core.session.core``, tests) continue to import from
-``ember_code.core.config.permissions`` unchanged.
+This package used to hold a second, parallel permission system —
+``PermissionGuard`` orchestrating ``PermissionPolicy``, ``ApprovalPrompt``,
+``AllowlistStore`` and ``SessionApprovalCache`` behind ``check_file_write`` /
+``check_shell_execute``. It was never constructed. Not once, in ``src`` or in
+``tests``: its own docstring named ``core/session/core.py`` as the caller and
+that file did not mention it.
 
-Module layout:
-    * :mod:`schemas`         — Pydantic / StrEnum types
-    * :mod:`allowlist_store` — YAML persistence
-    * :mod:`session_cache`   — session-scope one-time approvals
-    * :mod:`policy`          — pure decision pipeline
-    * :mod:`prompt`          — interactive I/O
-    * :mod:`guard`           — slim orchestrator (public API)
+The cost was not the dead code. ``PermissionsConfig.file_write`` and
+``shell_execute`` were documented in SECURITY.md, CONFIGURATION.md and
+QUICKSTART.md as igni's permission model, and the schema said they were
+"interpreted by the older ``PermissionGuard``" — so a config file saying
+``shell_execute: "deny"`` did nothing, and ``--no-web`` denied no web. Twenty-one
+passing tests covered the machinery, which is what made it look maintained.
+
+Those levels are now honoured by the live evaluator, via
+``PermissionsConfig.category_rules``. What remains here is the shared type
+vocabulary — ``PermissionLevel`` and ``PermissionRequest`` are used by the HITL
+controller and the hook events, and ``PermissionCategory`` by
+``tool_permissions.schemas``.
 """
 
-from ember_code.core.config.permissions.allowlist_store import AllowlistStore
-from ember_code.core.config.permissions.guard import PermissionGuard
-from ember_code.core.config.permissions.policy import PermissionPolicy
-from ember_code.core.config.permissions.prompt import ApprovalPrompt
 from ember_code.core.config.permissions.schemas import (
     AllowlistFile,
     AllowlistPattern,
@@ -27,20 +31,14 @@ from ember_code.core.config.permissions.schemas import (
     PermissionLevel,
     PermissionRequest,
 )
-from ember_code.core.config.permissions.session_cache import SessionApprovalCache
 
 __all__ = [
     "AllowlistFile",
     "AllowlistPattern",
-    "AllowlistStore",
     "ApprovalChoice",
-    "ApprovalPrompt",
     "DecisionSource",
     "GuardDecision",
     "PermissionCategory",
-    "PermissionGuard",
     "PermissionLevel",
-    "PermissionPolicy",
     "PermissionRequest",
-    "SessionApprovalCache",
 ]

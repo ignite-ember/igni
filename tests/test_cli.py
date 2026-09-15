@@ -67,7 +67,9 @@ class TestCLIFlags:
             runner.invoke(cli, ["--read-only", "-m", "hi"], catch_exceptions=False)
             overrides = mock_load.call_args[1].get("cli_overrides", {})
             assert overrides["permissions"]["file_write"] == "deny"
-            assert overrides["permissions"]["shell_execute"] == "deny"
+            # shell_execute is deliberately absent — see
+            # test_read_only_denies_writes_but_leaves_the_shell.
+            assert "shell_execute" not in overrides["permissions"]
 
     def test_auto_approve_flag(self):
         runner = CliRunner()

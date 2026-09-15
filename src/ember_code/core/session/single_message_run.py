@@ -99,7 +99,44 @@ class SingleMessageRun(SessionRun):
             await self._run_turn(message)
         finally:
             await self._release_neo4j(runtime)
+        self._emit_pending_plan()
         await self._fire_session_end()
+
+    def _emit_pending_plan(self) -> None:
+        """Print a plan the agent submitted, because nothing else will.
+
+        ``--read-only`` selects plan mode, where a denied edit tells the model
+        to "call ``exit_plan_mode(plan)`` when ready". That writes the plan to
+        :class:`PlanStore`, and the only consumer is the frontend's plan card —
+        ``approve_plan`` is an FE operation and ``/plan`` is an interactive
+        command. Headlessly there is no card and no one to approve, so the run
+        ended having produced a plan nobody could read: the session looked like
+        it had simply declined to do the work.
+
+        Printing it is the whole fix. A headless run is one-shot by definition —
+        there is no second turn for an approval to unblock — so the useful
+        outcome is the plan itself, delivered rather than filed.
+        """
+        store = getattr(self._session, "plan_store", None)
+        plan = getattr(store, "latest", "") if store is not None else ""
+        # Typed check rather than truthiness. ``latest`` is a plain attribute, so
+        # anything holding the session loosely — the test doubles in this suite,
+        # a partially built session — offers a truthy non-string here and turns a
+        # reporting step into a TypeError at the end of an otherwise good run.
+        if not isinstance(plan, str) or not plan.strip():
+            return
+        self._session.display.print_info(
+            "\n".join(
+                [
+                    "",
+                    "Plan (read-only session — nothing was executed):",
+                    "",
+                    plan,
+                    "",
+                    "Re-run without --read-only to carry it out.",
+                ]
+            )
+        )
 
     # ── Neo4j-backed features ─────────────────────────────────────
 

@@ -203,11 +203,28 @@ class TestFlagsBecomeSettings:
     def _settings(**kwargs: Any):
         return cli_module.load_settings_from_options(CliOptions(**kwargs))
 
-    def test_read_only_denies_writes_and_shell(self):
+    def test_read_only_denies_writes_but_leaves_the_shell(self):
+        """Read-only denies the write tools and keeps the shell, deliberately.
+
+        This used to assert ``shell_execute == "deny"`` as well, and that was
+        safe to assert only because nothing read the field — its consumer,
+        ``PermissionGuard``, was never constructed. Once the categories became
+        real rules the setting took effect, and denying the shell here means
+        denying reads: igni has no read tool, so a file is read with
+        ``run_shell_command "cat <path>"``. The flag would have stopped meaning
+        "no file modifications" and started meaning "no session".
+
+        The trade is stated rather than hidden: a shell command can still write
+        (``>``, ``sed -i``), so this is not a sandbox, and SECURITY.md says so.
+        The alternative — a blocklist of write-shaped commands — is the kind of
+        guard that looks stronger than it is.
+        """
         settings = self._settings(read_only=True)
 
         assert settings.permissions.file_write == "deny"
-        assert settings.permissions.shell_execute == "deny"
+        assert settings.permissions.shell_execute != "deny", (
+            "denying the shell denies reading a file, which is the whole use for this flag"
+        )
 
     def test_auto_approve_allows_them(self):
         settings = self._settings(auto_approve=True)
