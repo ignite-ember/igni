@@ -413,7 +413,7 @@ class PermissionEvaluatorStage(PermissionStage):
                 PermissionDeniedPayload.from_call(ctx.name, ctx.args, "permission_evaluator"),
             )
             logger.info("Permission DENY for %s", ctx.name)
-            return Block(f"Blocked: permission policy denied '{ctx.name}'.")
+            return Block(_denial_message(ctx.name))
         if decision is PermissionDecision.ASK:
             await self._firer.fire(
                 HookEvent.PERMISSION_REQUEST,
@@ -425,6 +425,34 @@ class PermissionEvaluatorStage(PermissionStage):
                 ctx.name,
             )
         return Continue()
+
+
+#: What to suggest when a denial would otherwise leave the model with no move.
+#:
+#: ``--read-only`` denies the shell, and igni reads files through the shell — so
+#: the first thing an agent tries in a read-only session is the thing it cannot
+#: do. A bare "permission policy denied 'run_shell_command'" tells it nothing
+#: about whether to stop, rephrase, or try a different tool, and a model with no
+#: stated alternative tends to retry the same call in a new costume.
+#:
+#: Phrased as "if this session has it" on purpose: the same denial arrives under
+#: ``--strict``, where the alternatives are denied too, and promising a tool that
+#: is also blocked would just move the dead end one step later.
+_DENIAL_ALTERNATIVES: dict[str, str] = {
+    "run_shell_command": (
+        " Shell access is off in this session, which also rules out reading "
+        "files with cat/sed. If this session has CodeIndex, `codeindex_cypher` "
+        "queries the code graph without the shell; otherwise say what you would "
+        "have run and why, rather than retrying."
+    ),
+}
+
+
+def _denial_message(tool_name: str) -> str:
+    """The block text the model receives, plus a way forward where one exists."""
+    return f"Blocked: permission policy denied '{tool_name}'." + _DENIAL_ALTERNATIVES.get(
+        tool_name, ""
+    )
 
 
 # ── PermissionPipeline coordinator ─────────────────────────────────

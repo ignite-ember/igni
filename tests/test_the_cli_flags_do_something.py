@@ -204,6 +204,20 @@ class TestFlagsBecomeSettings:
         return cli_module.load_settings_from_options(CliOptions(**kwargs))
 
     def test_read_only_denies_writes_and_shell(self):
+        """Read-only is a wall, and the cost is stated rather than hidden.
+
+        Denying ``shell_execute`` denies reading the working tree too — igni has
+        no read tool, so a file is read with ``run_shell_command "cat <path>"``.
+        That is the accepted trade: leaving the shell open means ``>``,
+        ``sed -i`` and ``git checkout`` all still write, which makes
+        ``--read-only`` an honour system rather than the guarantee it exists to
+        be. A flag reached for precisely when a guarantee is wanted should not
+        quietly be the weaker thing.
+
+        Until the per-category levels were honoured this assertion described a
+        setting nothing read, so it passed while the shell ran freely. It bites
+        now, which is the point.
+        """
         settings = self._settings(read_only=True)
 
         assert settings.permissions.file_write == "deny"

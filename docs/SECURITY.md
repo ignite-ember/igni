@@ -90,9 +90,40 @@ Pattern matching uses glob syntax. Exact entries come from "always allow", patte
 |---|---|
 | `ignite-ember` (default) | Asks for writes and shell commands |
 | `ignite-ember --accept-edits` | Auto-approves file edits, asks for shell |
-| `ignite-ember --strict` | Asks for everything including reads |
-| `ignite-ember --read-only` | No file modifications allowed |
+| `ignite-ember --strict` | Denies anything without an explicit allow rule, including reads — it never asks |
+| `ignite-ember --read-only` | Denies the write tools **and the shell** — a hard wall (see below) |
 | `ignite-ember --auto-approve` | Auto-approves everything (use with caution) |
+
+#### What `--read-only` costs
+
+It denies the write tools — `save_file`, `create_file`, `edit_file`,
+`edit_file_replace_all` and the notebook mutations — **and `run_shell_command`**.
+
+Denying the shell is the deliberate half. igni has no read tool: a file is read
+with `run_shell_command "cat <path>"`. So `--read-only` cannot read your working
+tree, and that is the price of the guarantee. Leaving the shell open would mean
+`>`, `sed -i` and `git checkout` still write, which makes the flag an honour
+system rather than a wall — and a wall is the thing you reach for this flag to
+get.
+
+What still works is analysis that does not route through the shell:
+
+- `codeindex_cypher`, which queries the code graph and is read-only by
+  construction, and is the intended way to explore a codebase in this mode;
+- the notebook readers;
+- `web_search` and `fetch_url`.
+
+The practical consequence: `--read-only` is a strong mode **when CodeIndex is
+populated** and a thin one when it is not. If you want an agent that can read
+files but not edit them, do not use this flag — run without it and answer the
+write prompts, or use `--accept-edits` against a scratch copy.
+
+When a shell call is denied the model is told so explicitly, along with the
+alternatives, rather than receiving a bare refusal it will try to work around.
+
+In a headless run (`-m` / `--pipe`) the agent submits its plan and the CLI
+prints it before exiting, since there is no plan card to approve and no second
+turn in which an approval could take effect.
 
 ### 2. Protected Paths
 
