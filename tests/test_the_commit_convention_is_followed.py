@@ -53,31 +53,43 @@ def _documented_trailer() -> str:
     return found[0].strip("`").strip()
 
 
-def _merged_in_ref() -> str | None:
-    """The other lineage's tip, when HEAD is a merge.
+def _merge_parents() -> list[str]:
+    """Both parents of the most recent merge reachable from HEAD.
 
-    A merge pulls another branch's commits into the window this rule
-    looks at, and their trailers were written under whatever convention
-    that branch followed. They cannot be corrected from here — the
-    commits are published — so failing on them is precisely the
-    "failure nobody can act on" that :data:`_DEPTH` already exists to
-    avoid. The rule is about what *this* line of work writes.
+    A merge pulls another branch's commits into the window this rule looks at,
+    and their trailers were written under whatever convention that branch
+    followed. They cannot be corrected from here — the commits are published —
+    so failing on them is the "failure nobody can act on" that :data:`_DEPTH`
+    already exists to avoid.
+
+    Both parents, deliberately, rather than "the one that is not ours". Which
+    parent is which flips depending on who made the merge: a local ``git merge``
+    puts the current branch first, and the ``refs/pull/N/merge`` ref GitHub
+    builds for a PR puts the *base* first. Keying on ``HEAD^2`` passed locally
+    and then checked main's commits instead of ours in CI. Excluding both sides
+    is the same answer either way, and leaves exactly the commits written since
+    the merge — which is what "what we do now" means.
     """
-    result = subprocess.run(  # noqa: S603
-        ["git", "rev-parse", "--verify", "--quiet", "HEAD^2"],
+    merge = subprocess.run(  # noqa: S603
+        ["git", "rev-list", "--merges", "-n", "1", "HEAD"],
         cwd=_ROOT,
         capture_output=True,
         text=True,
-    )
-    return result.stdout.strip() or None
+    ).stdout.strip()
+    if not merge:
+        return []
+    parents = subprocess.run(  # noqa: S603
+        ["git", "rev-list", "--parents", "-n", "1", merge],
+        cwd=_ROOT,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    return parents[1:]
 
 
 def _history() -> list[tuple[str, str]]:
     """``(sha, body)`` for recent non-merge commits, newest first."""
-    rev = ["HEAD"]
-    merged_in = _merged_in_ref()
-    if merged_in:
-        rev += [f"^{merged_in}"]
+    rev = ["HEAD"] + [f"^{p}" for p in _merge_parents()]
     result = subprocess.run(  # noqa: S603
         ["git", "log", f"-{_DEPTH}", "--no-merges", "--format=%H%x00%B%x01", *rev],
         cwd=_ROOT,
@@ -121,7 +133,7 @@ class TestTheRuleIsReadable:
     def test_there_is_history_to_check(self):
         """A rule over an empty log passes for the wrong reason."""
         history = _history()
-        if _merged_in_ref() and len(history) <= 5:
+        if _merge_parents() and len(history) <= 5:
             pytest.skip(
                 "HEAD is a merge and this branch has few commits of its own since "
                 "the fork point — there is nothing here for the rule to be about yet."

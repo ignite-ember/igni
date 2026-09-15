@@ -648,7 +648,11 @@ class Session:
         # no cause and is not even true. Nothing failed. The index is
         # deferred by design and this session never got the runtime it
         # was deferred for.
-        self._knowledge_error = (
+        # Annotated, because ``attach_knowledge_neo4j`` clears it back to
+        # ``None`` once the runtime arrives — without this, the first
+        # assignment narrows the attribute to ``str`` and that clear is a
+        # type error.
+        self._knowledge_error: str | None = (
             "no Neo4j runtime has attached to this session. The knowledge "
             "index is created when CodeIndex's Neo4j comes up — open "
             "/codeindex and check that it is running and synced."
