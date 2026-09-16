@@ -49,7 +49,7 @@ Consumers:
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -63,15 +63,45 @@ class InterruptedRunSummary(BaseModel):
     semantic value ("what to tell the agent + which pending rows
     to drop after it acknowledges"), so it lives as one type.
 
-    ``summary_text`` is the ``<system-context>`` note the run
-    pipeline splices into the next user prompt.
+    ``recap`` is the factual part of the ``<system-context>`` note
+    the run pipeline splices into the next user prompt: what was
+    interrupted, what had been asked, and why it stopped.
     ``pending_ids_to_drop`` is the list of pending-message row ids
     the ``PendingMessageJournal`` drains once the summary is
     consumed.
+
+    The closing instruction is **not** part of ``recap``, because
+    it is only true in one of the two deliveries. The recap is
+    built at startup, when nobody has spoken yet, but it is handed
+    to the model on the next ``run_message`` — with the user's new
+    message one line below it. Telling the agent "the user has not
+    yet sent a new message" there was false at the only moment it
+    was ever read, and it offered a choice between three options
+    while the actual instruction sat underneath. :meth:`render`
+    picks the ending that matches the delivery.
     """
 
-    summary_text: str
+    recap: str
     pending_ids_to_drop: list[str] = Field(default_factory=list)
+
+    #: Closing line when the recap arrives on its own — a resume with
+    #: no new user text. This is the case the original wording described.
+    AWAITING_USER: ClassVar[str] = (
+        "The user has not yet sent a new message. Decide whether to continue, "
+        "recap what you found, or ask for direction."
+    )
+
+    #: Closing line when the recap rides along with a new user message,
+    #: which is what every delivery through ``RunController`` actually is.
+    WITH_USER_MESSAGE: ClassVar[str] = (
+        "Their message below was sent after that. Answer it, and take the "
+        "interrupted work into account — you cannot see how far it got."
+    )
+
+    def render(self, *, awaiting_user: bool) -> str:
+        """The recap plus the closing line that is true of this delivery."""
+        ending = self.AWAITING_USER if awaiting_user else self.WITH_USER_MESSAGE
+        return f"{self.recap} {ending}"
 
 
 class AgnoRunSnapshot(BaseModel):

@@ -23,17 +23,17 @@
 | `auth/credentials.py` | `test_auth.py` | 22 | `Credentials` model, `save/load/clear_credentials`, `is_token_expired`, `get_access_token`, `decode_jwt_claims`, `get_org_id/get_org_name`, path resolution, file permissions | — |
 | `auth/client.py` | `test_auth_client.py` | 5 | `request_device_code`, correct URL construction, `poll_for_token` (immediate success, 202→200 polling, timeout) | Token refresh logic |
 
-### Session (55 tests) — Good Coverage
+### Session (44 tests) — Good Coverage
 
 | Source Module | Test File | Tests | What's Tested | What's Missing |
 |---|---|---:|---|---|
 | `session/core.py` | `test_session.py` | 11 | Construction with defaults, `resume_session_id`, `additional_dirs`, cloud connection detection, message handling (basic), hook blocking, error handling, compaction thresholds | Tool execution pipeline, multi-turn conversations, system prompt assembly |
-| `session/ide_context.py` | `test_ide_context.py` | 25 | `IDEContext`, `OpenFile`, `parse_system_reminder`, `parse_message`, `update_from_diagnostics` | — |
 | `session/runner.py` | `test_session_runner.py` | 3 | Runs message and prints response, fires session start/end hooks, passes project_dir and additional_dirs | Signal handling, graceful shutdown |
 | `session/persistence.py` | `test_persistence.py` | 12 | `SessionPersistence` construction, `list_sessions` (empty/formatted/tuple/exception), `auto_name`, `rename`, `get_name` | Corrupted file handling |
 | `session/commands.py` | `test_commands.py` | 10 | Dispatch (sync/async/unknown), all commands registered, `/help`, `/agents`, `/clear`, `/config`, `/sync-knowledge` (enabled/disabled) | — |
 | `session/knowledge_ops.py` | `test_knowledge_ops.py` | 10 | `share_enabled` conditions, `add` (no knowledge/no content/success), `search` (empty/results), `status` (disabled/enabled) | — |
 | `session/memory_ops.py` | `test_memory_ops.py` | 6 | `create_manager` (no db), `get_memories` (no db/formatted/exception), `optimize` (no manager/not enough) | — |
+| `session/agent_builder/prompt_builder.py` | `test_the_prompt_only_teaches_tools_it_has.py` | 14 | Capability-conditional spans: the knowledge tools are taught iff the toolkit attaches them, in both prompt variants; markers never reach the model; unbalanced markers raise | Skills / project-map phases |
 | `session/interactive.py` | — | 0 | — | Interactive REPL loop, input handling |
 
 ### Tools (87 tests) — Good Coverage
@@ -56,13 +56,14 @@
 | `skills/loader.py` | `test_skills.py` | (shared) | `SkillPool`, discovery, loading from directories | Hot-reload, duplicate skill names |
 | `skills/executor.py` | `test_skill_executor.py` | 3 | Inline execution, forked execution, argument passing | Error handling in forked agent, model override |
 
-### Scheduler (39 tests) — Well Covered
+### Scheduler (47 tests) — Well Covered
 
 | Source Module | Test File | Tests | What's Tested | What's Missing |
 |---|---|---:|---|---|
 | `scheduler/models.py` | `test_scheduler.py` | 29 | `ScheduledTask`, `TaskStatus`, model validation | — |
 | `scheduler/parser.py` | `test_scheduler.py` | (shared) | `parse_time`, `parse_recurrence`, `next_occurrence_from_recurrence`, natural language | Timezone-aware parsing |
 | `scheduler/store.py` | `test_scheduler.py` | (shared) | `TaskStore` CRUD, query by status/time | Concurrent access |
+| `scheduler/prompt.py` | `test_scheduled_runs_are_framed.py` | 8 | `wrap_scheduled_prompt` shape + content, description preserved verbatim, `SchedulerController.execute` sends the wrapped prompt, runner callback binding | — |
 | `scheduler/runner.py` | `test_scheduler_runner.py` | 6 | Start/stop lifecycle, due task execution, concurrency semaphore, callbacks | Task timeout, failure recovery |
 
 ### Hooks (16 tests) — Good Coverage
@@ -171,10 +172,10 @@ Category            Tests   Modules Tested / Total   Confidence
 ─────────────────── ─────── ────────────────────────  ──────────
 Config               94     5 / 6                     High
 Auth                 27     2 / 2                     High
-Session              55     7 / 8                     Good
+Session              44     7 / 8                     Good
 Tools                87     8 / 8                     High
 Skills               22     3 / 3                     Good
-Scheduler            39     4 / 4                     High
+Scheduler            47     5 / 5                     High
 Hooks                16     4 / 4                     High
 Evals                34     5 / 5                     Good
 Knowledge            93     6 / 6                     High
@@ -183,7 +184,7 @@ TUI                 263     7 / 11+                   Good
 Utils                69     6 / 6                     High
 Top-level            50     7 / 7                     High
 ─────────────────── ─────── ────────────────────────  ──────────
-TOTAL               912     ~72 / ~80 non-init        High
+TOTAL               909     ~73 / ~80 non-init        High
 ```
 
 **Bottom line:** All critical-path modules now have test coverage. The remaining gaps are primarily TUI app-layer modules (which are inherently harder to unit test) and deeper integration-level paths in the session core. The suite is production-ready for the non-TUI backend.

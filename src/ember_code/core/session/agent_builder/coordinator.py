@@ -98,6 +98,10 @@ class MainAgentBuilder:
             project_dir=s.project_dir,
             settings=s.settings,
             codeindex_available=s.codeindex_available,
+            # Same condition ``ToolsBuilder.knowledge()`` attaches on, read off
+            # the same attribute: the prompt teaches those tools exactly when
+            # the session has them.
+            knowledge_available=s.knowledge is not None,
             agent_catalog=s.build_agent_catalog(),
             skill_descriptions=s.skill_pool.describe(),
             prompt_loader=self._prompt_loader,

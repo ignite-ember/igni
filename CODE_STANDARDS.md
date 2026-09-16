@@ -104,9 +104,28 @@ Surface the gap.
 
 `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
 
-A commit written by a person alone carries no such trailer. This is the
-only accepted one: if a commit has a `Co-Authored-By` line at all, it
-must be that.
+A commit written by a person alone carries no such trailer. That is the
+one an author writes.
+
+There is a second accepted trailer, and nobody writes it:
+
+`Co-authored-by: dmytrozezyk <dev@example.com>`
+
+GitHub appends it to every squash merge, naming the author of the
+commits being squashed. It is the forge's record of who wrote the
+branch, not a claim anyone made in a commit message, and it cannot be
+declined without giving up squash merges. So the rule accepts exactly
+these two and nothing else: **if a commit carries a `Co-Authored-By`
+line, its address is one of the two above.**
+
+`dev@example.com` is a placeholder — it is whatever `git config
+user.email` says on the machine the branches are written on, and it has
+never been set to a real address. Setting one is the better fix, and it
+lands here: change the identity, then change the line above, and the
+test reads the new address out of this section. Until then the rule
+names the placeholder rather than pretending the history is clean,
+because a rule that disagrees with every merge commit is the decorative
+kind this one replaced.
 
 **What this rule said before, and why it changed.** It said commits use
 `Co-Authored-By: Ignite Ember <noreply@igniteember.sh>` — "Not Claude."
@@ -127,11 +146,16 @@ searchable when somebody later asks which changes were AI-assisted.
 
 (The old line also used `igniteember.sh`, unhyphenated, which is not a
 domain this project owns — everything else says `ignite-ember.sh`. A
-rule that has never run does not get its typos found.)
+rule that has never run does not get its typos found. Both spellings are
+rejected; the history contains the hyphenated one, so checking only the
+typo would have caught nothing.)
 
-`tests/test_the_commit_convention_is_followed.py` reads the trailer out
-of this section and checks it against the history, so this paragraph and
-the commits cannot drift apart again. It compares the **address**, not
+`tests/test_the_commit_convention_is_followed.py` reads both accepted
+trailers out of this section and checks them against the history, so this
+paragraph and the commits cannot drift apart again. It runs with
+`fetch-depth: 0` on the `test` job — before that it skipped itself on
+every CI run, because a shallow checkout gives the merge commit no
+parents and there is no history to hold to a rule. It compares the **address**, not
 the whole line: the history holds the same model with and without a
 `(1M context)` label, and failing a correct commit over a parenthetical
 nobody can go back and edit is how a rule earns being ignored.

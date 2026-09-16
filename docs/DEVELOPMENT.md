@@ -56,8 +56,7 @@ ember-code/
 │       │   ├── runner.py              # Single-message execution
 │       │   ├── persistence.py         # Session listing, naming, history
 │       │   ├── memory_ops.py          # Memory retrieval and optimization
-│       │   ├── knowledge_ops.py       # Knowledge add/search/sync
-│       │   └── ide_context.py         # IDE context enrichment
+│       │   └── knowledge_ops.py       # Knowledge add/search/sync
 │       ├── auth/
 │       │   ├── __init__.py
 │       │   ├── client.py              # Device-flow authentication (browser login + polling)

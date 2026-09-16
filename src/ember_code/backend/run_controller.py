@@ -170,6 +170,25 @@ class RunController:
         if summary is not None:
             self._pending_journal.queue_drops(summary.pending_ids_to_drop)
 
+    def _consume_interrupted_note(self, text: str | None) -> str | None:
+        """Render the one-shot interrupted-run note for *this* delivery, or
+        ``None`` when the previous shutdown was clean.
+
+        The recap is built at startup, before anyone has spoken; it is read by
+        the model here, where ``text`` is the message the user just sent. Which
+        of those two situations it is decides the closing instruction, so the
+        choice is made at the point that knows — see
+        :meth:`InterruptedRunSummary.render`. It previously always claimed the
+        user had not sent a new message, one line above the message they had.
+
+        Consuming is part of the contract: the summary is one-shot, so it is
+        cleared whether or not a note comes back out.
+        """
+        summary, self._interrupted_summary = self._interrupted_summary, None
+        if summary is None:
+            return None
+        return summary.render(awaiting_user=not (text or "").strip())
+
     # ── State transitions ───────────────────────────────────────────
 
     def _transition_to(self, phase: RunPhase) -> None:
@@ -374,12 +393,7 @@ class RunController:
 
         # Consume the one-shot interrupted-summary + drain any
         # pending-message ids queued during detect_interrupted_run.
-        interrupted_summary_text = (
-            self._interrupted_summary.summary_text
-            if self._interrupted_summary is not None
-            else None
-        )
-        self._interrupted_summary = None
+        interrupted_summary_text = self._consume_interrupted_note(text)
         await self._pending_journal.drain_queued_drops()
 
         # Pre-run prompt assembly: mentions, media, URL, learnings,
