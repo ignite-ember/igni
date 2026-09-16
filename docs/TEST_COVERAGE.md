@@ -133,7 +133,7 @@
 | `utils/response.py` | `test_response.py` | 4 | `extract_response_text` for various input types | Edge cases (nested content) |
 | `utils/display.py` | `test_display.py` | 13 | `print_error`, `print_warning`, `print_info`, `print_response`, `print_tool_call`, `print_run_stats`, `print_welcome`, `print_markdown` | — |
 
-### Top-Level Modules (50 tests)
+### Top-Level Modules (55 tests)
 
 | Source Module | Test File | Tests | What's Tested | What's Missing |
 |---|---|---:|---|---|
@@ -144,6 +144,7 @@
 | `cli.py` | `test_cli.py` | 19 | CLI flags (version, model, verbose, quiet, read-only, auto-approve, strict, no-memory, no-web), message mode, pipe mode (stdin, no-input, combined), no-tui, default TUI, worktree cleanup | `--add-dir` multi-directory |
 | `prompts/` | `test_prompts.py` | 4 | `load_prompt`, missing prompt error, directory existence, result stripping | Template rendering |
 | `queue_hook.py` | `test_queue_hook.py` | 11 | Func passthrough, args forwarding, no func, message injection, previous injection clearing, callbacks, empty queue, reset, factory | — |
+| `backend/supervisor.py` | `test_the_backend_starts_on_windows.py` | 5 | `install_signal_handlers` on a platform without `SIGUSR1`, the terminating signals still attempted, why the `NotImplementedError` suppression could not catch it, POSIX registration unchanged | Watchdog, evictor, lockfile |
 | `memory/manager.py` | `test_memory_manager.py` | 8 | SQLite creation, unknown backend, sqlite/postgres failure, parent dir creation, `setup_db`/`setup_memory` delegation | Schema migration |
 
 ---
@@ -182,9 +183,9 @@ Knowledge            93     6 / 6                     High
 MCP                  95     8 / 10                    Good
 TUI                 263     7 / 11+                   Good
 Utils                69     6 / 6                     High
-Top-level            50     7 / 7                     High
+Top-level            55     8 / 8                     High
 ─────────────────── ─────── ────────────────────────  ──────────
-TOTAL               909     ~73 / ~80 non-init        High
+TOTAL               914     ~74 / ~80 non-init        High
 ```
 
 **Bottom line:** All critical-path modules now have test coverage. The remaining gaps are primarily TUI app-layer modules (which are inherently harder to unit test) and deeper integration-level paths in the session core. The suite is production-ready for the non-TUI backend.

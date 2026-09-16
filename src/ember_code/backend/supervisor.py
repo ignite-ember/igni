@@ -111,12 +111,27 @@ class BackendSupervisor:
         Windows — the asyncio Proactor / Selector loops don't
         implement POSIX signals. On Windows we fall back to Ctrl-C
         propagating out of ``asyncio.run`` + the parent-PID watchdog.
+
+        ``SIGUSR1`` needs a second guard, and the missing one cost the
+        whole platform. It is POSIX-only, so on Windows it does not
+        exist as an attribute at all: ``signal.SIGUSR1`` raises
+        ``AttributeError`` while the *argument* is being evaluated,
+        before ``add_signal_handler`` is ever entered, so the
+        suppression around the call never sees it. The backend died
+        here on every Windows start — ``app.run`` → this line →
+        traceback — and the nightly onboarding smoke had been red on
+        that one job for eight consecutive days. ``SIGTERM`` and
+        ``SIGINT`` exist on Windows, which is why only this line
+        failed and why the bug reads as platform-specific rather than
+        as the one-attribute mistake it is.
         """
         for sig in (signal.SIGTERM, signal.SIGINT):
             with contextlib.suppress(NotImplementedError):
                 self._loop.add_signal_handler(sig, self._on_terminate_signal)
-        with contextlib.suppress(NotImplementedError):
-            self._loop.add_signal_handler(signal.SIGUSR1, self._on_release_signal)
+        release_signal = getattr(signal, "SIGUSR1", None)
+        if release_signal is not None:
+            with contextlib.suppress(NotImplementedError):
+                self._loop.add_signal_handler(release_signal, self._on_release_signal)
 
     def start_parent_watchdog(self) -> None:
         self._parent_watch_task = asyncio.create_task(self._watch_parent_loop())
