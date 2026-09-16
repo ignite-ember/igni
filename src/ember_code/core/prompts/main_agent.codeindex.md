@@ -299,7 +299,7 @@ The root TODO is the map. Subdirectory TODOs are the turn-by-turn directions.
 <!-- knowledge-base:only -->
 ## Knowledge Base — Tool Reference
 
-These tools are available:
+When the knowledge base is enabled, these tools are available:
 
 - **`knowledge_search(query)`** — search stored knowledge. Use a *specific* query (e.g. "migration filename naming"), not a vague one ("conventions").
 - **`knowledge_add(content, source)`** — store new knowledge. See **Persisting What You Learn** above for *when* to call this.

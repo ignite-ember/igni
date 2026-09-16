@@ -523,7 +523,7 @@ Use both when appropriate: Agno task mode for orchestrating the current run's wo
 <!-- knowledge-base:only -->
 ## Knowledge Base — Tool Reference
 
-These tools are available:
+When the knowledge base is enabled, these tools are available:
 
 - **`knowledge_search(query)`** — search for relevant stored knowledge. Use a *specific* query (e.g. "alembic migration naming"), not a vague one ("conventions").
 - **`knowledge_add(content, source)`** — store new knowledge. See **Persisting What You Learn** at the top of this prompt for *when* to call this.
