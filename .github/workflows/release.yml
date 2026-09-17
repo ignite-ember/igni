@@ -968,7 +968,13 @@ jobs:
             homepage "https://ignite-ember.sh"
             url "PLACEHOLDER_URL"
             sha256 "PLACEHOLDER_SHA"
-            license "MIT"
+            # Apache-2.0, matching ``LICENSE`` at the repo root and
+            # ``license = "Apache-2.0"`` in pyproject.toml. This said
+            # "MIT" for every release published so far, which put a
+            # licence the project has never shipped under on the tap
+            # page brew users read before installing. Homebrew validates
+            # this string against its SPDX list, so keep it SPDX-exact.
+            license "Apache-2.0"
 
             depends_on "git"
             depends_on "python@3.12"

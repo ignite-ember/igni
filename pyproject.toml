@@ -172,16 +172,41 @@ disallow_untyped_defs = false
 ignore_missing_imports = true
 disable_error_code = ["union-attr", "annotation-unchecked", "arg-type", "return-value", "attr-defined", "import-untyped", "call-arg", "override"]
 
-# numpy 2.5 writes ``type X = ...`` in its own stubs, which mypy refuses to
-# parse while ``python_version`` is 3.11. It does not report it as one
-# skipped dependency either — it aborts with "errors prevented further
-# checking", so the whole run checked **zero files** and still exited
-# non-zero for a reason that named numpy, not this project.
+# Historical note, corrected: this override was added when
+# ``python_version`` was 3.11. numpy's stubs use PEP 695 ``type X = ...``
+# aliases, 3.12 syntax, which mypy will not parse while targeting 3.11 —
+# and it does not report that as one skipped dependency, it aborts with
+# "errors prevented further checking", so the whole run checked **zero
+# files** and still exited non-zero for a reason that named numpy rather
+# than this project.
 #
-# Skipping numpy's stubs keeps the 3.11 floor above honest. Raising
-# ``python_version`` instead would silently stop checking the 3.11
-# compatibility the package still claims to support.
+# There is no 3.11 floor any more. ``requires-python`` is ">=3.12,<3.13"
+# and ``python_version`` above is 3.12, so mypy parses numpy's stubs
+# fine and the original abort cannot recur. The skip is kept as a
+# deliberate boundary, not a workaround: numpy is a transitive
+# dependency whose stubs move on their own release schedule, and a
+# stub-side breakage there is not a signal about this codebase. Removing
+# it is safe with the currently pinned numpy — dropping it and
+# re-running ``mypy src/ember_code/`` still reports success — so if it
+# ever starts hiding a real error, delete it rather than work around it.
 [[tool.mypy.overrides]]
 module = ["numpy", "numpy.*"]
 follow_imports = "skip"
 follow_imports_for_stubs = true
+
+# ``call-arg`` is globally disabled above, which is why SWU-100 could
+# happen at all: ``DiscoverMarkdownCommands`` declared a ``__call__``
+# without ``group_dir`` while the one call site passed it, and mypy had
+# been told not to report exactly that. The Protocol exists *to* be
+# checked, so the error code is re-enabled here.
+#
+# Scoped rather than global on purpose. Dropping "call-arg" from the
+# list above reports 7 errors across 5 files; 6 of them are unrelated to
+# this module and live in files this change does not own — pydantic
+# models populated by field name (``LspServerConfig``, ``TodoItemWire``)
+# and two ``VisualizationDeltaEvent`` constructions. Those deserve their
+# own pass. The number is recorded here so that pass starts from a known
+# size instead of re-discovering it.
+[[tool.mypy.overrides]]
+module = ["ember_code.backend.markdown_command_dispatcher"]
+enable_error_code = ["call-arg"]

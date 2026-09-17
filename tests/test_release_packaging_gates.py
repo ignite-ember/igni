@@ -58,6 +58,13 @@ def _run_step6(
 
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
+    # Backend logs moved out of CACHE_DIR into their own LOG_DIR so a failing
+    # run can keep them for the release workflow to upload. The harness stands
+    # in for the script's preamble, so it has to supply the variable the
+    # preamble sets — without it step 6 dies on `set -u` before it reaches the
+    # behaviour under test.
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
     # Step 6's ``mktemp -d`` is redirected here so the test can see
     # whether the project dir survived the run. TMPDIR is not enough:
     # BSD mktemp resolves ``-t`` against the system temp dir regardless.
@@ -69,6 +76,7 @@ def _run_step6(
         "set -euo pipefail\n"
         f"KEEP={'true' if keep else 'false'}\n"
         f'CACHE_DIR="{cache_dir}"\n'
+        f'LOG_DIR="{log_dir}"\n'
         f'VENV_PYTHON="{stub}"\n'
         "mktemp() {\n"
         f'    local d="{mktemp_dir}/project-$$-$RANDOM"\n'
@@ -82,6 +90,7 @@ def _run_step6(
         ["bash", str(harness)], capture_output=True, text=True, env=env, timeout=120
     )
     proc.mktemp_dir = mktemp_dir  # type: ignore[attr-defined]
+    proc.log_dir = log_dir  # type: ignore[attr-defined]
     return proc
 
 
@@ -130,6 +139,32 @@ def test_keep_flag_still_reports_after_step_six(tmp_path):
     assert "Keeping cache at" in proc.stdout
     assert (tmp_path / "cache").exists()
     assert len(list(proc.mktemp_dir.iterdir())) == 1
+
+
+def test_a_failing_run_keeps_the_backend_logs(tmp_path):
+    """The failure artifact has to exist when the workflow goes to upload it.
+
+    ``release-readiness.yml`` uploads backend logs on failure, and could never
+    find one: the logs were written inside ``CACHE_DIR`` and the EXIT trap
+    removes that on every exit, failures included. So the one run whose output
+    anyone wanted was the one run that deleted it.
+    """
+    proc = _run_step6(tmp_path, NEVER_READY)
+
+    assert proc.returncode != 0
+    assert proc.log_dir.exists(), "the failing run removed the logs it was meant to keep"
+    assert "booting, no ready line" in (proc.log_dir / "be-stdout.log").read_text()
+    assert "Backend logs kept for diagnosis" in proc.stderr
+    # The cache still goes — keeping logs is not an excuse to leak the
+    # multi-hundred-MB cache dir alongside them.
+    assert not (tmp_path / "cache").exists()
+
+
+def test_a_passing_run_removes_the_backend_logs(tmp_path):
+    proc = _run_step6(tmp_path, READY)
+
+    assert proc.returncode == 0
+    assert not proc.log_dir.exists()
 
 
 # ── Makefile ────────────────────────────────────────────────────────

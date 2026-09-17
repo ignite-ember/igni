@@ -1,4 +1,4 @@
-"""Cloud auth RPCs — login, credential reload/clear, plan fetch.
+"""Cloud auth RPCs — login, credential reload/clear.
 
 Exposes a single class, :class:`AuthController`, constructed with
 ``(session, settings, status_provider)``:
@@ -8,16 +8,12 @@ Exposes a single class, :class:`AuthController`, constructed with
   :class:`CloudCredentials` on the session (post-login) and rebuild
   the main team.
 * :meth:`AuthController.clear_cloud_credentials` — logout inverse.
-* :meth:`AuthController.get_cloud_plan` — hit ``/portal/me`` for
-  the user's tier + org name.
 
-Wire schemas :class:`~ember_code.backend.schemas_rpc.CloudPlan` +
-:class:`~ember_code.backend.schemas_rpc.LoginResult` live in
-``schemas_rpc.py`` beside the sibling :class:`LoginStarted` — every
-backend wire shape belongs in ``schemas_*.py``. They are re-exported
-from this module to preserve the ``from ember_code.backend.server_auth
-import CloudPlan`` import path for the ``server.py`` TYPE_CHECKING
-consumer.
+Wire schema :class:`~ember_code.backend.schemas_rpc.LoginResult` lives
+in ``schemas_rpc.py`` beside the sibling :class:`LoginStarted` — every
+backend wire shape belongs in ``schemas_*.py``. It is re-exported from
+this module to preserve the ``from ember_code.backend.server_auth
+import LoginResult`` import path.
 """
 
 from __future__ import annotations
@@ -31,7 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ember_code.backend.schemas_rpc import CloudPlan, LoginResult
+from ember_code.backend.schemas_rpc import LoginResult
 from ember_code.core.auth.credentials import (
     CloudCredentials,
     Credentials,
@@ -49,10 +45,9 @@ logger = logging.getLogger(__name__)
 #: startup on a slow network would undo it.
 _NEW_DIALOGUE_REVALIDATE_TIMEOUT = 3.0
 
-# Re-exported so ``from ember_code.backend.server_auth import CloudPlan``
-# keeps working (server.py TYPE_CHECKING import) — the canonical
-# definition now lives in ``schemas_rpc``.
-__all__ = ["AuthController", "CloudPlan", "LoginResult"]
+# Re-exported so ``from ember_code.backend.server_auth import LoginResult``
+# keeps working — the canonical definition lives in ``schemas_rpc``.
+__all__ = ["AuthController", "LoginResult"]
 
 
 if TYPE_CHECKING:
@@ -378,16 +373,22 @@ class AuthController:
         self._session.clear_cloud_credentials()
         return self._status_provider()
 
-    async def get_cloud_plan(self) -> CloudPlan | None:
-        """Fetch the current user's plan tier from the cloud.
-
-        Hits ``/portal/me`` with the stored JWT. Returns ``None``
-        when logged out or the call fails.
-        """
-        token = self._session.cloud_access_token
-        if not token:
-            return None
-        result = await self._portal.validate_token(token)
-        if not result.ok or result.user is None:
-            return None
-        return CloudPlan.from_user_info(result.user)
+    # ``get_cloud_plan`` was here, and it answered a question the
+    # product no longer asks. It fetched ``/portal/me`` and returned a
+    # billing tier for the web client's account-popover "Plan" row.
+    #
+    # It was unreachable: ``GET_CLOUD_PLAN`` was never added to
+    # :class:`RpcMethod` and no handler registered it, so the FE's
+    # ``rpc("get_cloud_plan")`` failed on every invocation and the row
+    # never rendered. Removed rather than registered, because wiring it
+    # up would have surfaced nothing:
+    #
+    #   * billing tiers are retired product-wide — there is no
+    #     Lite/Pro/Max ladder to report;
+    #   * ``GET /portal/me`` on ember-server returns ``UserMeResponse``,
+    #     which has no tier field, so the value was structurally always
+    #     ``None``;
+    #   * the org name it also carried is already on the popover, from
+    #     ``status.cloud_org``.
+    #
+    # The FE's row, its state, and its label formatter went with it.

@@ -284,8 +284,10 @@ def load_settings(
     :meth:`SettingsLoader.load` has taken one since the tier was written; this
     facade dropped it, and this facade is what production calls — so an admin
     publishing ``{"code_index": {"enabled": false}}`` could not have it applied
-    even by a caller that wanted to. Passing one is still nobody's job yet:
-    see the note on :class:`~ember_code.core.config.merge_plan.GroupPolicyTier`.
+    even by a caller that wanted to. Production now passes
+    :class:`~ember_code.core.config.group_policy.CachedSettingsFetcher` from
+    ``BackendApp.run`` and ``load_settings_from_options``; callers that want no
+    org policy (tests, tooling) simply leave it ``None``.
     """
     return SettingsLoader.load(
         cli_overrides=cli_overrides,

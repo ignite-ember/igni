@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from ember_code.core.auth.schemas import UserInfo
     from ember_code.core.utils.update_checker_schemas import UpdateInfo
 
 
@@ -112,20 +111,11 @@ class LoginResult(BaseModel):
         return self.error or ""
 
 
-class CloudPlan(BaseModel):
-    """Wire shape for :meth:`AuthController.get_cloud_plan` — tier +
-    org name for the org popover badge. Nullable fields because the
-    token validation response may omit either."""
-
-    tier: str | None
-    org_name: str | None
-
-    @classmethod
-    def from_user_info(cls, info: UserInfo) -> CloudPlan:
-        """Map a :class:`UserInfo` (portal ``/me`` response) into the
-        FE-facing plan payload. Wire-mapping lives on the model so
-        :meth:`AuthController.get_cloud_plan` stays a two-liner."""
-        return cls(tier=info.tier, org_name=info.org_display_name)
+# ``CloudPlan`` was here — the wire shape for a ``get_cloud_plan`` RPC
+# that was never registered and could not have returned anything. Its
+# ``tier`` field had no source (``GET /portal/me`` returns no tier;
+# billing tiers are retired) and its ``org_name`` duplicated
+# ``StatusUpdate.cloud_org``. Removed with the method and the FE row.
 
 
 class GroupPolicyPackResult(BaseModel):

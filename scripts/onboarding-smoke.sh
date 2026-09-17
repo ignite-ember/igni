@@ -27,6 +27,8 @@
 #                                                # (lets you smoke-test BEFORE publishing to PyPI)
 #   scripts/onboarding-smoke.sh --keep           # leave the cache dir on disk for inspection
 #   SMOKE_READY_TIMEOUT=5 scripts/...            # shorten the step-6 ready wait (default 60s)
+#   SMOKE_LOG_DIR=/path scripts/...              # where backend logs go (default: <repo>/.smoke-logs).
+#                                                # Kept on failure, swept on success.
 
 set -euo pipefail
 
@@ -40,7 +42,7 @@ while [[ $# -gt 0 ]]; do
         --keep) KEEP=true; shift ;;
         --version) VERSION="$2"; shift 2 ;;
         -h|--help)
-            sed -n '2,30p' "$0"
+            sed -n '2,32p' "$0"
             exit 0
             ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
@@ -56,18 +58,54 @@ if [[ -z "$VERSION" ]]; then
 fi
 echo "→ Targeting ignite-ember version: $VERSION (local source: $LOCAL)"
 
+# ── Log dir ─────────────────────────────────────────────────────────
+# The backend's stdout/stderr go HERE, deliberately NOT under the temp
+# cache below, and this directory survives a failing run. Two separate
+# things used to make the CI "Upload smoke logs on failure" step upload
+# nothing at all:
+#
+#   1. cleanup() runs on EVERY exit, failures included. Logs written
+#      into $CACHE_DIR were therefore deleted a moment before the
+#      workflow's failure step went looking for them.
+#   2. ``mktemp -d -t`` honours $TMPDIR. On macOS that is
+#      /var/folders/<...>/T, not /tmp — so a workflow globbing
+#      /tmp/ember-onboarding-*/ was wrong on the macOS leg even when a
+#      directory did survive.
+#
+# A fixed, workspace-relative default kills both: the path is identical
+# on every platform, and it is reported (below) instead of guessed.
+# ``*.log`` is already gitignored, so this leaves no untracked noise.
+LOG_DIR="${SMOKE_LOG_DIR:-$REPO_ROOT/.smoke-logs}"
+mkdir -p "$LOG_DIR"
+# Drop logs from an earlier run. Without this, a stale be-stdout.log
+# still containing a ready line would satisfy step 6's poll instantly
+# and the run would "pass" without ever reading this run's backend.
+rm -f "$LOG_DIR"/be-*.log
+# Tell the CI job where the logs actually are rather than making the
+# workflow reconstruct the path. Written before any step that can fail,
+# so the failure-only upload step always has a value to read.
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    echo "log-dir=$LOG_DIR" >> "$GITHUB_OUTPUT"
+fi
+echo "→ Backend logs: $LOG_DIR"
+
 # ── Temp cache ──────────────────────────────────────────────────────
 CACHE_DIR="$(mktemp -d -t ember-onboarding-XXXXXX)"
 echo "→ Using temp cache: $CACHE_DIR"
 # Step 6 makes a second temp dir. It is declared here, empty, so the one
-# EXIT handler below owns both: bash keeps a single handler per signal,
-# so a second ``trap … EXIT`` further down silently unregisters this
-# one. That is what happened — ``--keep`` went inert and the cache dir
-# (uv tarball + binary, the venv, the HF model under $CACHE_DIR/hf, the
-# BE logs — hundreds of MB) was never removed on any run that reached
-# step 6.
+# EXIT handler below owns every path this script creates: bash keeps a
+# single handler per signal, so a second ``trap … EXIT`` further down
+# silently unregisters this one. That is what happened — ``--keep`` went
+# inert and the cache dir (uv tarball + binary, the venv, the HF model
+# under $CACHE_DIR/hf — hundreds of MB) was never removed on any run
+# that reached step 6. Anything needing cleanup goes in this function,
+# never in a second trap.
 PROJECT_DIR=""
 cleanup() {
+    # Must be the first statement: $? here is the script's exit status,
+    # and the branches below need to know whether the run failed.
+    local status=$?
+
     if [[ "$KEEP" == "true" ]]; then
         echo "↳ Keeping cache at $CACHE_DIR (--keep)"
         if [[ -n "$PROJECT_DIR" ]]; then
@@ -79,6 +117,19 @@ cleanup() {
             rm -rf "$PROJECT_DIR"
         fi
     fi
+
+    # Logs outlive a failure — that is the only run where anyone wants
+    # them, and it is the run where this handler fires. A clean pass
+    # sweeps them up unless --keep asked otherwise.
+    if [[ "$status" -ne 0 ]]; then
+        echo "↳ Backend logs kept for diagnosis: $LOG_DIR" >&2
+    elif [[ "$KEEP" == "true" ]]; then
+        echo "↳ Keeping backend logs at $LOG_DIR (--keep)"
+    else
+        rm -rf "$LOG_DIR"
+    fi
+
+    return "$status"
 }
 trap cleanup EXIT
 
@@ -151,12 +202,14 @@ echo "  model warmed (${STEP_TIME}s)"
 STEP_START=$(date +%s)
 echo "→ Step 6: launching backend and waiting for ready line"
 # No ``trap`` here — cleanup() above already removes this dir. Adding a
-# second EXIT trap replaces the first one (see the note there).
+# second EXIT trap would replace the first one (see the note there).
 PROJECT_DIR="$(mktemp -d -t ember-be-test-XXXXXX)"
 
-# Spawn BE in background, capture stdout, wait for ready JSON
-BE_STDOUT="$CACHE_DIR/be-stdout.log"
-BE_STDERR="$CACHE_DIR/be-stderr.log"
+# Spawn BE in background, capture stdout, wait for ready JSON.
+# These live in $LOG_DIR, not $CACHE_DIR, so cleanup() can drop the
+# cache on a failing run while still handing the logs to CI.
+BE_STDOUT="$LOG_DIR/be-stdout.log"
+BE_STDERR="$LOG_DIR/be-stderr.log"
 HF_HOME="$CACHE_DIR/hf" "$VENV_PYTHON" -m ember_code.backend \
     --ws-port 0 \
     --project-dir "$PROJECT_DIR" \

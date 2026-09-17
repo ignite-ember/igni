@@ -81,6 +81,7 @@ suite("igni extension", () => {
       "igni.addFileToChat",
       "igni.restart",
       "igni.reinstall",
+      "igni.doctor",
     ];
     for (const cmd of expected) {
       assert.ok(

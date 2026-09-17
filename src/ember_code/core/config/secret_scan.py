@@ -40,7 +40,7 @@ from typing import Any
 
 import yaml
 
-from ember_code.core.paths import CONFIG_DIR
+from ember_code.core.paths import CONFIG_DIR, LEGACY_CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +77,30 @@ def _secret_models(payload: Any) -> list[str]:
     return found
 
 
+#: Every project config directory name, newest first.
+#:
+#: Both, not just the one :func:`project_config_dir` resolves to. That
+#: helper answers "which directory does the loader read", and it picks
+#: one — the new name when both are present. This question is different:
+#: a key in ``.ember/config.yaml`` is committed and shared whether or not
+#: anything loads it, so the directory being superseded makes the file
+#: *less* likely to be noticed, not less dangerous.
+_PROJECT_CONFIG_DIRS = (CONFIG_DIR, LEGACY_CONFIG_DIR)
+
+
+def _warning_for(names: list[str], label: str) -> str:
+    """The sentence a maintainer can act on, naming no secret."""
+    listed = ", ".join(repr(n) for n in sorted(names))
+    subject = "a literal API key" if len(names) == 1 else "literal API keys"
+    return (
+        f"{label} carries {subject} for {listed}. That file is meant to be "
+        f"shared, so the key would be shared with it. Move the `api_key` line to "
+        f"~/{CONFIG_DIR}/config.yaml — the two are merged field by field, so the "
+        f"definition can stay here — or replace it with `api_key_env`, which names "
+        f"the secret instead of holding it."
+    )
+
+
 def scan_project_config(project_dir: Path) -> list[str]:
     """Warnings about credentials in the project's shareable config.
 
@@ -84,27 +108,32 @@ def scan_project_config(project_dir: Path) -> list[str]:
     is a person's own and gitignored, so a key there is a choice rather
     than a mistake, though it will still have to move when the config
     directory is committed.
+
+    Scans ``.igni/`` **and** the pre-rename ``.ember/``. The settings
+    loader still reads the legacy directory — ``project_config_dir``
+    falls back to it while it is the one on disk, and
+    ``SettingsMergePlan.standard`` builds its project tiers through that
+    helper — so a project that has not migrated is a live install, not an
+    archive, and it was the one install this scanner never looked at.
+    Each hit names its own directory, because "config.yaml has a key in
+    it" is not enough to find the file when there are two of them.
     """
-    path = Path(project_dir) / CONFIG_DIR / "config.yaml"
-    if not path.is_file():
-        return []
+    root = Path(project_dir)
+    warnings: list[str] = []
 
-    try:
-        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        logger.debug("Could not scan %s for credentials: %s", path, exc)
-        return []
+    for config_dir in _PROJECT_CONFIG_DIRS:
+        path = root / config_dir / "config.yaml"
+        if not path.is_file():
+            continue
 
-    names = _secret_models(payload)
-    if not names:
-        return []
+        try:
+            payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            logger.debug("Could not scan %s for credentials: %s", path, exc)
+            continue
 
-    listed = ", ".join(repr(n) for n in sorted(names))
-    subject = "a literal API key" if len(names) == 1 else "literal API keys"
-    return [
-        f"{path.name} carries {subject} for {listed}. That file is meant to be "
-        f"shared, so the key would be shared with it. Move the `api_key` line to "
-        f"~/{CONFIG_DIR}/config.yaml — the two are merged field by field, so the "
-        f"definition can stay here — or replace it with `api_key_env`, which names "
-        f"the secret instead of holding it."
-    ]
+        names = _secret_models(payload)
+        if names:
+            warnings.append(_warning_for(names, f"{config_dir}/{path.name}"))
+
+    return warnings

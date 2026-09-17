@@ -106,7 +106,6 @@ if TYPE_CHECKING:
     )
     from ember_code.backend.schemas_plan import LatestPlanResult
     from ember_code.backend.schemas_rpc import (
-        CloudPlan,
         GroupPolicyPackResult,
         LoginResult,
     )
@@ -839,9 +838,11 @@ class BackendServer:
         """See :meth:`AuthController.clear_cloud_credentials`."""
         return self.auth.clear_cloud_credentials()
 
-    async def get_cloud_plan(self) -> CloudPlan | None:
-        """See :meth:`AuthController.get_cloud_plan`."""
-        return await self.auth.get_cloud_plan()
+    # ``get_cloud_plan`` was here — a passthrough to the
+    # ``AuthController`` method of the same name. Both are gone: billing
+    # tiers are retired, ``/portal/me`` carries no tier, and the RPC was
+    # never registered so nothing could reach it. See the note in
+    # ``server_auth.py``.
 
     # ── Context / status / compaction ─────────────────────────────
 

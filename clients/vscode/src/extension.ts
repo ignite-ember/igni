@@ -27,11 +27,24 @@ import * as fs from "fs";
 import * as net from "net";
 import * as path from "path";
 import * as vscode from "vscode";
-import { ensureBackendPython, probeCliVersion, resetCache } from "./runtime";
+import {
+  ensureBackendPython,
+  InterpreterOrigin,
+  probeCliVersion,
+  resetCache,
+  resolveInterpreter,
+} from "./runtime";
 import { IGNITE_EMBER_VERSION } from "./version.generated";
 
 let backend: ChildProcess | undefined;
 let backendPort: number | undefined;
+/** Port of a backend this window *discovered* through the project
+ *  lockfile and reused instead of spawning. Set only on the reuse
+ *  path; ``backend`` stays undefined there because we have no child
+ *  process — the Python process belongs to whoever spawned it.
+ *  ``igni.restart`` reads both to decide whether it may kill
+ *  anything, so it never claims a kill it can't perform. */
+let reusedBackendPort: number | undefined;
 /** Version info captured at bootstrap so ``buildHtml`` can splice
  *  it into ``<meta>`` tags for the shared ``BackendVersionChip``
  *  in the web bundle. Undefined until the first backend start
@@ -174,6 +187,10 @@ function startBackend(
     const discovered = await discoverExistingBackend(projectDir, install.expectedCliVersion);
     if (discovered.status === "ok") {
       progress(`Reusing the running igni backend on port ${discovered.port}`);
+      // Not ours to kill — record the port so ``igni.restart`` can
+      // say so instead of pretending it stopped something.
+      backend = undefined;
+      reusedBackendPort = discovered.port;
       return discovered.port;
     }
     if (discovered.status === "version_mismatch") {
@@ -229,6 +246,9 @@ function startBackend(
             if (obj.status === "ready" && obj.ws_port) {
               clearTimeout(timer);
               backend = child;
+              // We spawned it, so we own it — clear any ownership
+              // state left over from an earlier reuse.
+              reusedBackendPort = undefined;
               backendPort = obj.ws_port;
               resolve(obj.ws_port);
               return;
@@ -571,6 +591,52 @@ function attachFile(path: string) {
   panel.webview.postMessage({ type: "ember:attachFile", payload: { path } });
 }
 
+/** What ``igni.restart`` can honestly claim it did. */
+export type RestartOutcome = "killed" | "not_owned" | "nothing_running";
+
+export interface RestartPlan {
+  outcome: RestartOutcome;
+  message: string;
+}
+
+/**
+ * Decide what a restart does, given what this window is attached to.
+ *
+ * Only a backend this window *spawned* can be killed — a backend
+ * discovered through ``.igni/backend.lock`` belongs to another IDE
+ * window, and ``ChildProcess.kill`` on ``undefined`` stops nothing.
+ * Reporting "backend killed" in that case is a lie the user acts on,
+ * so each state gets its own message.
+ *
+ * Exported (and pure) so the branch is testable without an extension
+ * host holding a live backend.
+ */
+export function planRestart(state: {
+  ownsBackend: boolean;
+  reusedPort?: number;
+}): RestartPlan {
+  if (state.ownsBackend) {
+    return {
+      outcome: "killed",
+      message: "igni backend killed. Reopening will respawn it.",
+    };
+  }
+  if (state.reusedPort !== undefined) {
+    return {
+      outcome: "not_owned",
+      message:
+        `This window is connected to an igni backend on port ${state.reusedPort} ` +
+        `that it did not start, so it cannot stop it — reconnecting instead. ` +
+        `Restart the backend from the window that launched it, or close every ` +
+        `igni client for this project and reopen.`,
+    };
+  }
+  return {
+    outcome: "nothing_running",
+    message: "No igni backend is running in this window. Opening igni will start one.",
+  };
+}
+
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     // ── Open / show the chat panel ─────────────────────────────
@@ -656,10 +722,24 @@ export function activate(context: vscode.ExtensionContext) {
 
     // ── Restart backend (preserve cache) ──────────────────────
     vscode.commands.registerCommand("igni.restart", async () => {
-      backend?.kill();
+      const plan = planRestart({
+        ownsBackend: backend !== undefined,
+        reusedPort: reusedBackendPort,
+      });
+      if (plan.outcome === "killed") {
+        backend?.kill();
+      }
       backend = undefined;
       backendPort = undefined;
-      vscode.window.showInformationMessage("igni backend killed. Reopening will respawn it.");
+      reusedBackendPort = undefined;
+      if (plan.outcome === "not_owned") {
+        // Reopening below reconnects to that same backend — which is
+        // what the message promises. Warning, not information: the
+        // user asked for a restart and did not get one.
+        vscode.window.showWarningMessage(plan.message);
+      } else {
+        vscode.window.showInformationMessage(plan.message);
+      }
       if (panel) {
         panel.dispose();
       }
@@ -674,9 +754,14 @@ export function activate(context: vscode.ExtensionContext) {
         "Reinstall",
       );
       if (confirm !== "Reinstall") return;
+      // Same ownership caveat as ``igni.restart``: a discovered
+      // backend keeps running, and it will be re-discovered on the
+      // reopen below — the wipe only affects the managed cache this
+      // window would bootstrap from.
       backend?.kill();
       backend = undefined;
       backendPort = undefined;
+      reusedBackendPort = undefined;
       if (panel) panel.dispose();
       await resetCache(context.globalStorageUri.fsPath);
       await vscode.commands.executeCommand("igni.open");
@@ -707,22 +792,26 @@ export function activate(context: vscode.ExtensionContext) {
   );
 }
 
+/** How each precedence winner reads in the diagnostics report. */
+const ORIGIN_LABELS: Record<InterpreterOrigin, string> = {
+  dev_env: "dev override (IGNI_DEV_BACKEND)",
+  configured_setting: "user override (igni.pythonPath)",
+  managed_venv: "managed venv",
+};
+
 let diagnosticsChannel: vscode.OutputChannel | undefined;
 function getDiagnosticsChannel(): vscode.OutputChannel {
   diagnosticsChannel ??= vscode.window.createOutputChannel("igni: Diagnostics");
   return diagnosticsChannel;
 }
 
-async function buildDiagnosticReport(
+/** Exported for the test suite: the report is the user-visible
+ *  answer to "which interpreter runs my backend", and asserting on
+ *  it needs nothing but a context with ``globalStorageUri``. */
+export async function buildDiagnosticReport(
   context: vscode.ExtensionContext,
 ): Promise<string> {
   const cacheDir = context.globalStorageUri.fsPath;
-  const isWin = process.platform === "win32";
-  const venvPython = path.join(
-    cacheDir,
-    "venv",
-    isWin ? "Scripts/python.exe" : "bin/python",
-  );
   const markerPath = path.join(cacheDir, "igni-install.json");
 
   const configured = vscode.workspace
@@ -731,16 +820,19 @@ async function buildDiagnosticReport(
     .trim();
   const devBackend = process.env.IGNI_DEV_BACKEND?.trim();
   const devAck = process.env.IGNITE_EMBER_DEV;
-  const devActive =
-    devAck === "1" ||
-    (typeof devAck === "string" && devAck.toLowerCase() === "true");
 
-  const activePython =
-    devActive && devBackend
-      ? devBackend
-      : devActive && configured
-        ? configured
-        : venvPython;
+  // Ask the runtime which interpreter it *would* launch instead of
+  // re-deriving the precedence here. This report used to own a
+  // second copy of the rule, and the copy was wrong: it demanded the
+  // ``IGNITE_EMBER_DEV`` ack for ``igni.pythonPath`` too, so a set
+  // ``pythonPath`` was reported as the managed venv and labelled
+  // "ignored" while it was in fact what ran the backend.
+  const resolution = resolveInterpreter({
+    cacheDir,
+    configuredPython: configured || undefined,
+  });
+  const venvPython = resolution.managedVenvPython;
+  const activePython = resolution.python;
   const actual = (await probeCliVersion(activePython)) ?? "<probe failed>";
   const expected = IGNITE_EMBER_VERSION;
 
@@ -769,21 +861,18 @@ async function buildDiagnosticReport(
     lines.push("                           ↑ MISMATCH — chat may fail");
   }
   lines.push("");
-  const usedOverride =
-    devActive && (!!devBackend || !!configured);
-  lines.push(
-    `Backend source           : ${usedOverride ? "dev override" : "managed venv"}`,
-  );
+  lines.push(`Backend source           : ${ORIGIN_LABELS[resolution.origin]}`);
   lines.push(`Interpreter path         : ${activePython}`);
   lines.push(`Managed venv path        : ${venvPython}`);
   lines.push(`Managed venv present     : ${venvPresent}`);
   lines.push("");
-  lines.push(`IGNI_DEV_BACKEND        : ${devBackend ?? "<unset>"}`);
-  lines.push(`igni.pythonPath     : ${configured || "<unset>"}`);
+  lines.push(`IGNI_DEV_BACKEND         : ${devBackend ?? "<unset>"}`);
+  lines.push(`igni.pythonPath          : ${configured || "<unset>"}`);
   lines.push(`IGNITE_EMBER_DEV         : ${devAck ?? "<unset>"}`);
-  if ((devBackend || configured) && !devActive) {
+  if (resolution.ignoredDevBackend) {
     lines.push(
-      "                           ↑ override set without ack — ignored",
+      "                           ↑ IGNI_DEV_BACKEND set without the " +
+        "IGNITE_EMBER_DEV ack — ignored",
     );
   }
   lines.push("");
@@ -793,7 +882,10 @@ async function buildDiagnosticReport(
 }
 
 export function deactivate() {
+  // Only ever kills a process this window spawned — ``backend`` is
+  // undefined when we reused someone else's.
   backend?.kill();
   backend = undefined;
   backendPort = undefined;
+  reusedBackendPort = undefined;
 }

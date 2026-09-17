@@ -227,15 +227,19 @@ class EvalSuite(BaseModel):
     cases: list[EvalCase] = Field(default_factory=list)
 
     @classmethod
-    def load_all(cls, project_dir: Path) -> list[EvalSuite]:
+    def load_all(cls, project_dir: Path, defaults: Any | None = None) -> list[EvalSuite]:
         """Discover and load all eval suites.
 
         Delegates to :func:`ember_code.core.evals.loader.load_all_suites`
         to avoid importing YAML parsing code from this pure-schema module.
+        ``defaults`` is an
+        :class:`~ember_code.core.config.schemas.knowledge.EvalsConfig`
+        (typed loosely here for the same import-cycle reason); ``None``
+        means "use the EvalsConfig field defaults".
         """
         from ember_code.core.evals.loader import load_all_suites
 
-        return load_all_suites(project_dir)
+        return load_all_suites(project_dir, defaults)
 
 
 class CaseResult(BaseModel):
