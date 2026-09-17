@@ -17,7 +17,13 @@ from ember_code.core.hooks.matcher import HookMatcher
 if TYPE_CHECKING:
     from pathlib import Path
 
-HookType = Literal["command", "http", "prompt", "mcp_tool", "agent"]
+#: The types that have a handler. ``"agent"`` used to be listed here
+#: because the upstream spec names it; nothing in this package
+#: implements it, so a settings file declaring it validated, loaded,
+#: and was skipped at DEBUG. Keep this list equal to the set
+#: registered in ``handlers/registry.py`` — ``HookExecutor`` warns at
+#: construction about any configured type outside it.
+HookType = Literal["command", "http", "prompt", "mcp_tool"]
 
 
 class PermissionDecision(str, Enum):
@@ -68,9 +74,7 @@ class MergeStrategy(str, Enum):
 class HookDefinition(BaseModel):
     """A single hook definition.
 
-    Five handler types modelled on Claude Code's catalog
-    (``mcp_tool``, ``prompt``, and the ``agent`` type the spec
-    also names):
+    Four handler types, modelled on Claude Code's catalog:
 
     - ``command`` — shell command; the agent's payload goes in on
       stdin, exit codes drive control flow (2 blocks, 0 + JSON is
@@ -88,6 +92,10 @@ class HookDefinition(BaseModel):
     # Kept as ``str`` (not the ``HookType`` Literal) so unknown/misspelt
     # values validate successfully; the handler-registry dispatch then
     # gracefully skips them (see ``tests/test_hook_handler_types.py``).
+    # Tolerated, not silent — ``HookExecutor.__init__`` logs a WARNING
+    # naming the event and the unimplemented type, because a hook that
+    # loads and never runs is otherwise indistinguishable from one that
+    # ran and said nothing.
     # No default: SettingsFile.save uses ``exclude_defaults=True`` and
     # the emitted settings.json must always carry an explicit ``type``.
     type: str

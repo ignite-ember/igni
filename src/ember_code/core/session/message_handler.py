@@ -18,6 +18,15 @@ into :class:`Session`. ``team_ref`` is a **callable**, not the
 live agent — the session rebuilds ``main_team`` under
 compact / plugin-reload / MCP-rebuild / codeindex-refresh, so
 storing a bare reference would go stale.
+
+Same reasoning for ``session_id_ref`` and ``context_window_ref``:
+both were captured by value and both went stale silently. ``/clear``
+and ``/fork`` rotate the session id (``SessionIdentity.rotate``) and
+``/model`` swaps the model's context window, and a handler holding
+the construction-time copies kept stamping hook payloads and audit
+rows with the dead id and thresholding compaction against the
+previous model's window. Anything the session can change under us is
+read through a callable, not copied.
 """
 
 from __future__ import annotations
@@ -75,8 +84,8 @@ class SessionMessageHandler:
         pending_reminders_drain: Callable[[], list[str]],
         compact_hook: Callable[[int, int], Awaitable[bool]],
         ensure_mcp: Callable[[], Awaitable[McpInitResult]],
-        session_id: str,
-        context_window: int,
+        session_id_ref: Callable[[], str],
+        context_window_ref: Callable[[], int],
         latch_input_tokens: Callable[[int], None],
         extract_response_text: Callable[[Any], str] | None = None,
     ) -> None:
@@ -88,8 +97,8 @@ class SessionMessageHandler:
         self._drain_reminders = pending_reminders_drain
         self._compact_hook = compact_hook
         self._ensure_mcp = ensure_mcp
-        self._session_id = session_id
-        self._context_window = context_window
+        self._session_id_ref = session_id_ref
+        self._context_window_ref = context_window_ref
         self._latch_input_tokens = latch_input_tokens
         # Extractor injection — Session passes its own module's
         # ``extract_response_text`` binding so
@@ -120,20 +129,29 @@ class SessionMessageHandler:
 
             self._audit.log(
                 AuditEntry.success(
-                    session_id=self._session_id,
+                    session_id=self._session_id_ref(),
                     agent_name=MAIN_AGENT_NAME,
                     tool_name="main_team",
                 )
             )
 
-            response_text = await self._retry_on_stop_hook_block(response_text)
+            response_text, final_run = await self._retry_on_stop_hook_block(response_text, response)
 
             # Compact history if approaching context limit.
-            metrics = getattr(getattr(team, "run_response", None), "metrics", None)
+            #
+            # Read off the value ``arun`` returned, not off the team. This was
+            # ``getattr(getattr(team, "run_response", None), "metrics", None)``
+            # and agno's ``Team``/``Agent`` have no ``run_response`` attribute
+            # (2.6.12: the name exists only as a keyword parameter), so
+            # ``metrics`` was None on every turn and neither the token latch nor
+            # auto-compaction had ever run on this path. ``final_run`` is the
+            # last RunOutput of the turn — a Stop-hook retry re-runs the agent,
+            # and it is that run's input count the next threshold check needs.
+            metrics = getattr(final_run, "metrics", None)
             if metrics:
                 input_tokens = getattr(metrics, "input_tokens", 0) or 0
                 self._latch_input_tokens(input_tokens)
-                await self._compact_hook(input_tokens, self._context_window)
+                await self._compact_hook(input_tokens, self._context_window_ref())
 
             return response_text
 
@@ -178,7 +196,7 @@ class SessionMessageHandler:
         record of why."""
         payload = UserPromptSubmitHookPayload(
             message=message,
-            session_id=self._session_id,
+            session_id=self._session_id_ref(),
         )
         hook_result = await self._hook_executor.execute(
             event=HookEvent.USER_PROMPT_SUBMIT.value,
@@ -189,7 +207,7 @@ class SessionMessageHandler:
         blocked_msg = hook_result.message or "Blocked by UserPromptSubmit hook."
         self._audit.log(
             AuditEntry.blocked(
-                session_id=self._session_id,
+                session_id=self._session_id_ref(),
                 agent_name="session",
                 tool_name="user_prompt",
                 reason=blocked_msg,
@@ -224,7 +242,9 @@ class SessionMessageHandler:
             effective = guardrail_prefix + effective
         return effective
 
-    async def _retry_on_stop_hook_block(self, response_text: str) -> str:
+    async def _retry_on_stop_hook_block(
+        self, response_text: str, run_output: Any
+    ) -> tuple[str, Any]:
         """Fire the ``Stop`` hook up to 3 times; feed rejection
         messages back to the agent to re-generate the response.
 
@@ -237,10 +257,16 @@ class SessionMessageHandler:
         forever. On the third failure we accept the response
         (the hook can still deny at a later stage if it's a
         hard-block invariant).
+
+        Returns the accepted text *and* the RunOutput that produced it.
+        A retry re-runs the agent with the whole history plus a critique,
+        so its input-token count is the larger one and the only one worth
+        thresholding compaction on; returning text alone left the caller
+        measuring a run that had been superseded.
         """
         for _stop_attempt in range(self._STOP_HOOK_MAX_RETRIES):
             payload = StopHookPayload(
-                session_id=self._session_id,
+                session_id=self._session_id_ref(),
                 response=response_text[: self._STOP_HOOK_RESPONSE_PREVIEW],
             )
             stop_result = await self._hook_executor.execute(
@@ -255,9 +281,9 @@ class SessionMessageHandler:
                 f"{feedback}\nPlease revise your response to address this issue."
             )
             team = self._team_ref()
-            response = await team.arun(system_msg, stream=False)
-            response_text = self._extract_response_text(response)
-        return response_text
+            run_output = await team.arun(system_msg, stream=False)
+            response_text = self._extract_response_text(run_output)
+        return response_text, run_output
 
     async def _handle_run_failure(self, exc: Exception) -> str:
         """Common failure path: audit log, StopFailure hook fire
@@ -273,7 +299,7 @@ class SessionMessageHandler:
 
         self._audit.log(
             AuditEntry.error(
-                session_id=self._session_id,
+                session_id=self._session_id_ref(),
                 agent_name="session",
                 tool_name="main_team",
                 error=str(exc),
@@ -283,7 +309,7 @@ class SessionMessageHandler:
 
         with contextlib.suppress(Exception):
             payload = StopFailureHookPayload(
-                session_id=self._session_id,
+                session_id=self._session_id_ref(),
                 error=str(exc),
                 error_type=type(exc).__name__,
             )

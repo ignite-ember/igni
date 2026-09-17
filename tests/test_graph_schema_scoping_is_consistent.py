@@ -60,6 +60,34 @@ class TestItSaysOneThingAboutProjectScope:
         assert "3 of 12" in GRAPH_SCHEMA_DESCRIPTION
 
 
+class TestItSaysWhereTheProjectFilterDoesNotApply:
+    """:Chunk nodes carry no ``project_hash``.
+
+    ``Neo4jClient`` writes chunk properties without one — they are scoped by
+    the :Item they hang off — so the blanket "scope every query with
+    ``{project_hash: $proj}``" is unsatisfiable for the one node type the
+    document's own search recipes match on. An agent that generalises the
+    rule to a chunk MATCH, or to the WHERE after a ``chunk_text`` call, gets
+    an empty result that reads like "this repository does not do that".
+    """
+
+    def test_the_exception_for_chunks_is_stated(self):
+        section = GRAPH_SCHEMA_DESCRIPTION.split("## Scoping rules")[1]
+        assert "``:Chunk`` nodes carry **no** ``project_hash``" in section
+
+    def test_it_shows_how_to_scope_a_chunk_instead(self):
+        assert "(i:Item {project_hash: $proj})-[:HAS_CHUNK]->(c:Chunk)" in GRAPH_SCHEMA_DESCRIPTION
+
+    def test_no_chunk_recipe_filters_a_chunk_on_project_hash(self):
+        """Matching a chunk *through* its :Item is the taught form; putting the
+        predicate on the chunk itself is the one that silently returns nothing."""
+        offenders = re.findall(
+            r"(?:c:Chunk \{[^}]*project_hash|\b(?:c|ch|node)\.project_hash)",
+            GRAPH_SCHEMA_DESCRIPTION,
+        )
+        assert not offenders, offenders
+
+
 class TestTheAdviceMatchesTheTool:
     def test_proj_is_a_parameter_the_guard_accepts(self):
         assert "proj" in ALLOWED_PARAM_NAMES

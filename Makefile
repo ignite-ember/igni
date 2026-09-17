@@ -6,8 +6,16 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
+# ``uv pip``, not ``$(VENV)/pip``: a uv-made venv (``uv venv`` / ``uv
+# sync``, which is how this repo's own .venv is provisioned) seeds no
+# pip at all, so the old recipe died with "make: ... Error 127" —
+# the documented one-command setup failing on the documented toolchain.
+# ``$(VENV)/python -m pip`` is no fix either; the module isn't there.
+# Extras are the four pyproject actually declares. ``knowledge`` is not
+# one of them and never has been; an unknown extra only warns, so it
+# installed nothing and said so in a line nobody read.
 install: ## Install package in dev mode with all extras
-	$(VENV)/pip install -e ".[dev,mcp,knowledge,web]"
+	uv pip install --python $(VENV)/python -e ".[dev,mcp,gemini,web]"
 
 test: ## Run tests
 	$(VENV)/python -m pytest tests/ -q

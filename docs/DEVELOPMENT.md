@@ -158,21 +158,16 @@ ember-code/
 │           ├── tips.py                # Contextual tips: analyze config/project state,
 │           │                          # suggest features not yet enabled
 │           └── update_checker.py      # Check for newer ignite-ember versions
-├── tests/
-│   ├── conftest.py                    # Shared fixtures
-│   ├── test_pool.py                   # Agent pool and .md parsing
-│   ├── test_backend_server.py          # BackendServer commands, protocol
-│   ├── test_permission_flows.py       # HITL flows, permission persistence
-│   ├── test_tools.py                  # Tool registry, edit, search, glob
-│   ├── test_knowledge.py              # Knowledge, embedder, learning, reasoning, guardrails
-│   ├── test_hooks.py                  # Hook events, loader, executor
-│   ├── test_skills.py                 # Skill parser, loader, pool
-│   ├── test_settings.py               # Config loading and merging
-│   ├── test_permissions.py            # Permission guard
-│   ├── test_models.py                 # Model registry resolution
-│   ├── test_context.py                # Context utilities
-│   ├── test_widgets.py                # TUI widgets
-│   └── test_tui_handlers.py           # TUI handlers and commands
+├── tests/                             # ~300 files, flat, one per behaviour.
+│   │                                  # Not listed here: a hand-kept sample
+│   │                                  # reads as the whole suite and goes
+│   │                                  # stale silently — this one still named
+│   │                                  # test_knowledge.py, test_permissions.py,
+│   │                                  # test_widgets.py and test_tui_handlers.py
+│   │                                  # long after all four were deleted.
+│   │                                  # `ls tests/` is the list.
+│   └── conftest.py                    # Shared fixtures; .env loading; the
+│                                      # `integration` marker and its skip
 ├── Makefile                           # Build commands (see below)
 ├── pyproject.toml                     # Package metadata, deps, tool config
 ├── igni.md                           # Project instructions for self-use
@@ -193,7 +188,11 @@ source .venv/bin/activate
 
 # Install with all extras
 make install
-# or: pip install -e ".[dev,mcp,knowledge,web]"
+# or: pip install -e ".[dev,mcp,web]"
+# The extras are whatever `[project.optional-dependencies]` in
+# pyproject.toml defines. `knowledge` was listed here for a long time
+# after it was removed; pip only warns about an extra that does not
+# exist, so the line kept working and kept installing nothing.
 
 # Verify
 ignite-ember --version
@@ -232,9 +231,10 @@ The `make check` target is the single command to verify everything is clean befo
 - `pydantic` — Settings and data models
 - `httpx` — HTTP client (embeddings, web tools)
 
-**Optional:**
-- `chromadb` — Vector knowledge base (`pip install ember-code[knowledge]`)
+**Optional** — one bullet per extra in `[project.optional-dependencies]`, and no others. There is no `knowledge` extra: the vector knowledge base is core (Neo4j sidecar + a local sentence-transformers model), and `chromadb` has not been a dependency since the vectors moved.
+
 - `mcp` — Model Context Protocol (`pip install ember-code[mcp]`)
+- `google-genai` — Gemini models (`pip install ember-code[gemini]`)
 - `duckduckgo-search` — Web search (`pip install ember-code[web]`)
 
 **Dev:**

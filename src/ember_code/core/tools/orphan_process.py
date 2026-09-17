@@ -2,9 +2,9 @@
 
 Extracted from :mod:`shell_orphan` per the OOP audit. This module
 is the single home of the orphan model — the class owns its
-liveness probe (``os.kill(pid, 0)``), its log-file read, and its
-private ``_finished`` sticky bit, as instance methods rather than
-scattered branches on a coordinator.
+liveness probe, its log-file read, and its private ``_finished``
+sticky bit, as instance methods rather than scattered branches on
+a coordinator.
 
 Public API:
 
@@ -20,10 +20,11 @@ Public API:
   ``__init__`` because it also lets the caller inject a
   :class:`ProcessLogStore` so :meth:`OrphanProcess.read` doesn't
   reach for the module-level supervisor singleton on every call.
-* :meth:`OrphanProcess.probe_alive` — classmethod that owns the
-  ``os.kill(pid, 0)`` branch chain, used both from within
-  :meth:`is_running` and from :class:`OrphanRehydrator` so the
-  liveness policy has one source of truth.
+* :meth:`OrphanProcess.probe_alive` — classmethod that delegates
+  to :class:`~ember_code.backend.supervisor.ParentProcessProbe`,
+  used both from within :meth:`is_running` and from
+  :class:`OrphanRehydrator` so the liveness policy has one source
+  of truth across platforms.
 
 Command / query split: the sticky ``_finished`` flag has a single
 writer (:meth:`_refresh_liveness`) so :meth:`is_running` and
@@ -39,6 +40,13 @@ import signal
 import time
 from typing import TYPE_CHECKING
 
+# Upward import: the per-platform liveness answer already exists on
+# ``ParentProcessProbe`` with a tested Windows branch, and two probes
+# that disagree is how this module got a Ctrl-C-sending "probe" in the
+# first place. ``backend.supervisor`` imports nothing from
+# ``core.tools``, so there is no cycle. Moving the class down into
+# ``core`` is the tidier fix and belongs to whoever owns that file.
+from ember_code.backend.supervisor import ParentProcessProbe
 from ember_code.core.tools.process_supervisor_locator import supervisors
 from ember_code.core.tools.shell_orphan_schemas import (
     OrphanProcStub,
@@ -60,7 +68,7 @@ class OrphanProcess:
     treats both kinds uniformly, but without a live ``proc`` —
     the OS pipes are gone, so stdout can't be reattached.
 
-    What we CAN do: probe liveness via ``os.kill(pid, 0)``, show
+    What we CAN do: probe liveness (see :meth:`probe_alive`), show
     the row + elapsed time, and kill via the saved ``pgid``. The
     log tail returns a placeholder explaining the gap when the
     on-disk log is empty.
@@ -146,25 +154,29 @@ class OrphanProcess:
 
     @classmethod
     def probe_alive(cls, pid: int) -> bool:
-        """Single source of truth for the ``os.kill(pid, 0)``
-        liveness probe.
+        """Single source of truth for the orphan liveness probe.
 
-        Semantics: ``ProcessLookupError`` and ``OSError`` mean
-        dead; ``PermissionError`` means "alive but not ours"
-        (worth surfacing — we can still try SIGTERM via the
-        saved pgid). Called both from :meth:`_refresh_liveness`
-        on an instance and from :class:`OrphanRehydrator.run`
-        where no instance exists yet.
+        Delegates to :class:`ParentProcessProbe`, which already owns
+        the per-platform answer and is tested on both branches.
+
+        On POSIX that is the ``os.kill(pid, 0)`` this used to inline:
+        ``ProcessLookupError`` means dead, ``PermissionError`` means
+        "alive but not ours" (worth surfacing — we can still try
+        SIGTERM via the saved pgid).
+
+        On Windows ``os.kill(pid, 0)`` is not a probe at all. CPython
+        routes signal 0 to ``GenerateConsoleCtrlEvent(CTRL_C_EVENT,
+        pid)``, which normally fails with a plain ``OSError`` — so the
+        inline version reported *every* live process dead, and
+        :meth:`OrphanRehydrator.run` stamped every re-adoptable
+        background process as interrupted — and, when the pid happened
+        to name a console process group, actually delivered a Ctrl-C to
+        a process we were only asking about.
+
+        Called both from :meth:`_refresh_liveness` on an instance and
+        from :class:`OrphanRehydrator.run` where no instance exists yet.
         """
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        except OSError:
-            return False
-        return True
+        return ParentProcessProbe().is_alive(pid)
 
     # ── Command / query split ───────────────────────────────────
 

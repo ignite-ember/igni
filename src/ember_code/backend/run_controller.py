@@ -247,6 +247,21 @@ class RunController:
                 yield msg.Info(text="Run cancelled by user.")
             finally:
                 self._current_run_task = None
+                # A cancelled run reaches none of ``_run_locked``'s
+                # terminal transitions: ``CancelledError`` is a
+                # BaseException, so its ``except Exception`` branch
+                # doesn't fire and its ``finally`` only tears down the
+                # checkpoint task + httpx client. The phase stayed
+                # ``streaming`` forever, which meant ``is_processing()``
+                # stayed True — the FE's ``get_processing`` reported the
+                # session busy for the rest of the process's life and
+                # ``SessionPool.evict_idle`` could never reclaim the
+                # runtime. Mapped here rather than in the ``except``
+                # above so a generator closed without ever resuming
+                # (the consumer breaking out of its ``async for``, or a
+                # re-raised cancel on the ``yield``) lands the same way.
+                if self._phase.is_active():
+                    self._transition_to(RunPhase.done)
 
     async def run_locked(
         self, text: str, media: MediaAttachments | None

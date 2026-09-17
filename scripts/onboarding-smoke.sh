@@ -26,6 +26,7 @@
 #   scripts/onboarding-smoke.sh --local          # use ``pip install -e .`` against the working tree
 #                                                # (lets you smoke-test BEFORE publishing to PyPI)
 #   scripts/onboarding-smoke.sh --keep           # leave the cache dir on disk for inspection
+#   SMOKE_READY_TIMEOUT=5 scripts/...            # shorten the step-6 ready wait (default 60s)
 
 set -euo pipefail
 
@@ -58,11 +59,25 @@ echo "→ Targeting ignite-ember version: $VERSION (local source: $LOCAL)"
 # ── Temp cache ──────────────────────────────────────────────────────
 CACHE_DIR="$(mktemp -d -t ember-onboarding-XXXXXX)"
 echo "→ Using temp cache: $CACHE_DIR"
+# Step 6 makes a second temp dir. It is declared here, empty, so the one
+# EXIT handler below owns both: bash keeps a single handler per signal,
+# so a second ``trap … EXIT`` further down silently unregisters this
+# one. That is what happened — ``--keep`` went inert and the cache dir
+# (uv tarball + binary, the venv, the HF model under $CACHE_DIR/hf, the
+# BE logs — hundreds of MB) was never removed on any run that reached
+# step 6.
+PROJECT_DIR=""
 cleanup() {
     if [[ "$KEEP" == "true" ]]; then
         echo "↳ Keeping cache at $CACHE_DIR (--keep)"
+        if [[ -n "$PROJECT_DIR" ]]; then
+            echo "↳ Keeping project dir at $PROJECT_DIR (--keep)"
+        fi
     else
         rm -rf "$CACHE_DIR"
+        if [[ -n "$PROJECT_DIR" ]]; then
+            rm -rf "$PROJECT_DIR"
+        fi
     fi
 }
 trap cleanup EXIT
@@ -135,8 +150,9 @@ echo "  model warmed (${STEP_TIME}s)"
 # ── Step 6: launch BE, await ready ──────────────────────────────────
 STEP_START=$(date +%s)
 echo "→ Step 6: launching backend and waiting for ready line"
+# No ``trap`` here — cleanup() above already removes this dir. Adding a
+# second EXIT trap replaces the first one (see the note there).
 PROJECT_DIR="$(mktemp -d -t ember-be-test-XXXXXX)"
-trap 'rm -rf "$PROJECT_DIR"' EXIT
 
 # Spawn BE in background, capture stdout, wait for ready JSON
 BE_STDOUT="$CACHE_DIR/be-stdout.log"
@@ -147,12 +163,16 @@ HF_HOME="$CACHE_DIR/hf" "$VENV_PYTHON" -m ember_code.backend \
     >"$BE_STDOUT" 2>"$BE_STDERR" &
 BE_PID=$!
 
-# Poll for the ready line for up to 60s.
-for _ in $(seq 1 60); do
+# Poll for the ready line. 60s by default; SMOKE_READY_TIMEOUT exists so
+# the test harness can run this block without a minute of dead wall time.
+READY_TIMEOUT="${SMOKE_READY_TIMEOUT:-60}"
+READY=false
+for _ in $(seq 1 "$READY_TIMEOUT"); do
     if grep -q '"status":\s*"ready"' "$BE_STDOUT" 2>/dev/null; then
         STEP_TIME=$(($(date +%s) - STEP_START))
         WS_PORT=$(grep -o '"ws_port":\s*[0-9]\+' "$BE_STDOUT" | head -1 | grep -o '[0-9]\+')
         echo "  backend ready on ws://127.0.0.1:$WS_PORT (${STEP_TIME}s)"
+        READY=true
         break
     fi
     if ! kill -0 "$BE_PID" 2>/dev/null; then
@@ -165,6 +185,23 @@ for _ in $(seq 1 60); do
     fi
     sleep 1
 done
+
+# A backend that boots and then hangs never trips the died-before-ready
+# branch above, so without this the loop simply fell through to the
+# "✓ Onboarding smoke passed" line and exit 0 — step 6, the only
+# assertion in the script that a fresh user reaches a *running*
+# backend, could not fail. release-readiness.yml ran this on
+# ubuntu-latest and macos-latest and reported green.
+# onboarding-smoke.ps1 has had this branch all along.
+if [[ "$READY" != true ]]; then
+    echo "✗ backend never signalled ready within ${READY_TIMEOUT}s" >&2
+    echo "--- stdout ---" >&2
+    cat "$BE_STDOUT" >&2
+    echo "--- stderr ---" >&2
+    cat "$BE_STDERR" >&2
+    kill -9 "$BE_PID" 2>/dev/null || true
+    exit 1
+fi
 
 if ! kill -0 "$BE_PID" 2>/dev/null; then
     echo "✗ backend died after ready signal" >&2

@@ -8,7 +8,7 @@ Single source of truth for where state lives on disk:
         state.db                        # PROJECT: scheduler, sessions
         knowledge.chroma/               # LEGACY: pre-Neo4j knowledge
         code_index/
-          manifest.json                 # LEGACY
+          manifest.json                 # LIVE: head sha, commit list, branch pins
           .neo4j_migrated               # the cutover's per-project marker
           <sha>.chroma/                 # LEGACY: pre-Neo4j code vectors
       neo4j/
@@ -24,8 +24,9 @@ Nothing writes them. ``chromadb`` is not imported anywhere and is no
 longer a dependency; vectors live in the Neo4j sidecar. The helpers
 below survive because :mod:`ember_code.core.code_index.cutover` still
 has directories to delete — the cutover is **per-project and lazy**,
-gated on a sentinel under ``neo4j/state/``, so a project nobody has
-opened since it shipped still holds its old ones.
+gated on the sentinel that :func:`neo4j_migrated_marker_path` returns
+(in the project's own ``code_index/``), so a project nobody has opened
+since it shipped still holds its old ones.
 
 They are named ``legacy_`` for that reason: a caller reaching for one
 outside the cutover is almost certainly measuring or reading something

@@ -353,8 +353,13 @@ class _Knowledge:
     def __init__(self, deleted: int = 0, raises: Exception | None = None) -> None:
         self._deleted = deleted
         self._raises = raises
+        self.delete_calls: list[tuple[str, int]] = []
 
-    async def delete_by_query(self, query: str) -> _DeleteResult:
+    async def delete_by_query(self, query: str, *, limit: int = 10) -> _DeleteResult:
+        # ``limit`` is passed explicitly by the tool now — the preview
+        # renders exactly the rows this call will remove, so the two
+        # must agree on how many.
+        self.delete_calls.append((query, limit))
         if self._raises:
             raise self._raises
         return _DeleteResult(self._deleted)
@@ -452,12 +457,18 @@ class TestKnowledgeDelete:
         """``confirm`` defaults to False, and this is the guard that
         stops a model deleting the knowledge base while exploring."""
         knowledge = _Knowledge(deleted=5)
-        tools = KnowledgeTools(_Manager(knowledge=knowledge))  # type: ignore[arg-type]
+        tools = KnowledgeTools(  # type: ignore[arg-type]
+            _Manager(results=[_Result("runbook.md", "restart the worker")], knowledge=knowledge)
+        )
 
         out = await tools.knowledge_delete("everything")
 
         assert "Preview mode" in out
         assert "confirm=True" in out
+        # A preview that lists nothing is not a preview: the model has
+        # to be able to see what it is about to confirm.
+        assert "runbook.md" in out
+        assert knowledge.delete_calls == []
 
     @pytest.mark.asyncio
     async def test_confirming_deletes_and_reports_the_count(self):

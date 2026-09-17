@@ -344,6 +344,83 @@ describe("HitlDialog — acceptEdits shortcut", () => {
       { requirement_id: "r3", action: "confirm", choice: "once" },
     ]);
   });
+
+  it("does NOT auto-confirm non-edit requirements hidden behind the cursor", () => {
+    // The batch the BE sends is heterogeneous — every pending
+    // requirement of the turn arrives in ONE message, so a
+    // ``run_shell_command`` can sit behind an ``edit_file`` in the
+    // queue. Only the requirement at the cursor is ever rendered
+    // (``HitlArgsView`` draws ``req``), so blanket-confirming the
+    // tail meant the user authorised a shell command whose args
+    // were never on screen, under a button labelled "edits".
+    const onResolve = vi.fn();
+    const batch = [
+      req({ requirement_id: "r1", tool_name: "edit_file", friendly_name: "Edit" }),
+      req({
+        requirement_id: "r2",
+        tool_name: "run_shell_command",
+        friendly_name: "Bash",
+        tool_args: { command: "rm -rf build" },
+      }),
+      req({ requirement_id: "r3", tool_name: "edit_file", friendly_name: "Edit" }),
+    ];
+    render(
+      <HitlDialog
+        requirements={batch}
+        onResolve={onResolve}
+        currentMode="default"
+        onAcceptEditsThisRun={() => undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: SHORTCUT_LABEL }));
+
+    // Nothing submitted yet — the shell command still needs an answer.
+    expect(onResolve).not.toHaveBeenCalled();
+    // …and it is now the one on screen, args and all.
+    expect(screen.getByText(/Allow Bash\?/)).toBeTruthy();
+    expect(screen.getByText(/rm -rf build/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+
+    expect(onResolve).toHaveBeenCalledTimes(1);
+    const decided = onResolve.mock.calls[0][0] as Array<{
+      requirement_id: string;
+      action: string;
+    }>;
+    // Exactly one decision per requirement — the tail auto-confirm
+    // must not double-submit r3 when the cursor walks past it.
+    expect(decided.map((d) => d.requirement_id).sort()).toEqual(["r1", "r2", "r3"]);
+    expect(decided.find((d) => d.requirement_id === "r2")?.action).toBe("reject");
+    expect(decided.find((d) => d.requirement_id === "r3")?.action).toBe("confirm");
+  });
+
+  it("steps to the next unanswered non-edit req instead of resolving", () => {
+    // Two shell commands behind the edit: the dialog must present
+    // BOTH, one after the other, before it submits anything.
+    const onResolve = vi.fn();
+    const batch = [
+      req({ requirement_id: "r1", tool_name: "edit_file", friendly_name: "Edit" }),
+      req({ requirement_id: "r2", tool_name: "run_shell_command", friendly_name: "Bash A" }),
+      req({ requirement_id: "r3", tool_name: "run_shell_command", friendly_name: "Bash B" }),
+    ];
+    render(
+      <HitlDialog
+        requirements={batch}
+        onResolve={onResolve}
+        currentMode="default"
+        onAcceptEditsThisRun={() => undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: SHORTCUT_LABEL }));
+    expect(screen.getByText(/Allow Bash A\?/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
+    expect(onResolve).not.toHaveBeenCalled();
+    expect(screen.getByText(/Allow Bash B\?/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
+    expect(onResolve).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("HitlDialog — empty list", () => {

@@ -63,9 +63,11 @@ End-to-end tests that verify the full request path. These are **not** run in CI 
 - Device-flow auth (mocked browser, real token exchange)
 
 **Patterns:**
-- `@pytest.mark.slow` marker (skipped unless `--run-slow`)
-- `@pytest.mark.requires_api_key` marker
+- `@pytest.mark.integration` — the one marker `tests/conftest.py` registers. Its `pytest_collection_modifyitems` hook skips every test carrying it unless `NEO4J_TEST_URI` is set, so a checkout without a live Neo4j gets clean skips rather than fixture errors.
+- An env-var guard checked inside the test (`IGNI_TEST_LLM_API_KEY` below) for anything that needs credentials.
 - Real Agno agents with small models or mocked responses
+
+This used to advertise a `slow` marker, skipped unless you passed a run-slow flag, and a `requires_api_key` marker. Neither marker is registered or applied anywhere in `tests/`, and the flag was never added by a `pytest_addoption` hook — so pytest rejected it outright with `error: unrecognized arguments` and anyone following this page got a suite that would not start at all. If a fast/slow split is wanted, it needs both hooks in `tests/conftest.py` first, and this section updated after.
 
 **Live LLM env vars** (used by `tests/test_queue_hook.py::TestRealAgnoRun`):
 
@@ -97,59 +99,56 @@ overrides.
 
 ## Coverage Targets
 
-| Area | Target | Current |
-|------|--------|---------|
-| **Config** (settings, models, permissions, api_keys, tool_permissions) | 95% | ~70% |
-| **Tools** (registry, edit, search, notebook, web, codeindex, orchestrate, schedule) | 90% | ~50% |
-| **Auth** (credentials, client) | 90% | 0% |
-| **Session** (core, runner, interactive, persistence, memory_ops, knowledge_ops) | 80% | ~10% |
-| **Skills** (loader, executor) | 90% | ~50% |
-| **Scheduler** (parser, store, runner, models) | 90% | ~60% |
-| **Hooks** (loader, executor, events) | 90% | ~80% |
-| **Knowledge** (manager, embedder, sync, vector_store) | 85% | ~70% |
-| **MCP** (client, server, config, IDE detect) | 75% | ~40% |
-| **TUI** (widgets, handlers) | 60% | ~40% |
-| **CLI** (cli.py, __main__.py) | 70% | 0% |
-| **Utils** (audit, context, display, response, tips) | 85% | ~40% |
+A target is a decision and belongs in a document. The *current* number is a
+measurement and does not: the column that used to sit beside these still read
+"Auth 0%" and "CLI 0%" long after `test_auth.py` and `test_cli.py` were
+written, because nothing regenerated it. Measure instead:
 
-## Module → Test File Mapping
+```bash
+uv run pytest tests/ --cov=ember_code --cov-report=term-missing   # or: make test-cov
+```
 
-| Source Module | Test File | Status |
-|---|---|---|
-| `config/settings.py` | `test_settings.py` | ✅ |
-| `config/models.py` | `test_models.py` | ✅ |
-| `config/permissions.py` | `test_permissions.py` | ✅ |
-| `config/api_keys.py` | `test_api_keys.py` | NEW |
-| `config/tool_permissions.py` | `test_tool_permissions.py` | NEW |
-| `auth/credentials.py` | `test_auth.py` | NEW |
-| `auth/client.py` | `test_auth.py` | NEW |
-| `src/ember_code/core/tools/registry.py` | `test_tools.py` | ✅ |
-| `src/ember_code/core/tools/edit.py` | `test_tools.py` | ✅ |
-| `src/ember_code/core/tools/notebook/` | `test_notebook.py` | ✅ |
-| `src/ember_code/core/tools/web.py` | `test_web_tools.py` | NEW |
-| `src/ember_code/core/tools/codeindex/` | `test_codeindex.py` | NEW |
-| `src/ember_code/core/tools/orchestrate.py` | `test_orchestrate.py` | NEW |
-| `src/ember_code/core/tools/schedule.py` | `test_schedule_tools.py` | NEW |
-| `session/core.py` | `test_session.py` | NEW |
-| `skills/loader.py` | `test_skills.py` | ✅ |
-| `skills/executor.py` | `test_skill_executor.py` | NEW |
-| `scheduler/parser.py` | `test_scheduler.py` | ✅ |
-| `scheduler/store.py` | `test_scheduler.py` | ✅ |
-| `scheduler/runner.py` | `test_scheduler_runner.py` | NEW |
-| `hooks/loader.py` | `test_hooks.py` | ✅ |
-| `hooks/executor.py` | `test_hooks.py` | ✅ |
-| `knowledge/manager.py` | `test_knowledge.py` | ✅ |
-| `knowledge/sync.py` | `test_knowledge_sync.py` | ✅ |
-| `mcp/client.py` | `test_mcp_client.py` | NEW |
-| `mcp/server.py` | `test_mcp_server.py` | NEW |
-| `utils/audit.py` | `test_audit.py` | NEW |
-| `utils/context.py` | `test_context.py` | ✅ |
-| `utils/response.py` | `test_response.py` | NEW |
-| `pool.py` | `test_pool.py` | ✅ |
-| `workspace.py` | `test_workspace.py` | ✅ |
-| `worktree.py` | `test_worktree.py` | ✅ |
-| `cli.py` | `test_cli.py` | NEW |
-| `init.py` | `test_init.py` | ✅ |
+| Area | Target |
+|------|--------|
+| **Config** (settings, models, permissions, api_keys, tool_permissions) | 95% |
+| **Tools** (registry, edit, search, notebook, web, codeindex, orchestrate, schedule) | 90% |
+| **Auth** (credentials, client) | 90% |
+| **Session** (core, runner, interactive, persistence, memory_ops, knowledge_ops) | 80% |
+| **Skills** (loader, executor) | 90% |
+| **Scheduler** (parser, store, runner, models) | 90% |
+| **Hooks** (loader, executor, events) | 90% |
+| **Knowledge** (manager, embedder, sync, index) | 85% |
+| **MCP** (client, server, config, IDE detect) | 75% |
+| **CLI** (cli.py, __main__.py) | 70% |
+| **Utils** (audit, context, display, response, tips) | 85% |
+
+No TUI row: there is no `tui/` package under `src/ember_code/` any more. The
+user-facing surface lives in `clients/`, which CI typechecks and tests in its
+own job.
+
+## Finding the Tests for a Module
+
+There is no hand-kept mapping table here any more. The one that was here
+listed 34 rows against a suite of 299 test files, and five of the files it
+named had since been deleted. A reader looking for the permission tests was
+sent to a filename that is not in the repository, and the table gave no sign
+it was only a sample of the suite. See
+[`docs/TEST_COVERAGE.md`](TEST_COVERAGE.md) for the same rot measured at
+larger scale.
+
+Ask the tree instead:
+
+```bash
+ls tests/                                    # the whole list
+uv run pytest tests/ --collect-only -q       # every test, by node id
+grep -rl "tool_permissions" tests/           # who exercises a given module
+```
+
+Tests are flat in `tests/`, and most are named for the behaviour they pin
+rather than the module they import — `test_a_denial_says_what_would_lift_it.py`
+covers permission denials, and no filename would tell you that. So `grep -rl`
+on the import or the symbol is the reliable lookup; the filename is a hint at
+best.
 
 ## Test Conventions
 
@@ -177,8 +176,9 @@ uv run pytest tests/test_auth.py -v
 # Stop on first failure
 uv run pytest tests/ -v -x
 
-# Run only fast tests (skip slow/integration)
-uv run pytest tests/ -v -m "not slow"
+# Skip the tests that want a live Neo4j (they already self-skip
+# when NEO4J_TEST_URI is unset; this deselects them outright)
+uv run pytest tests/ -v -m "not integration"
 
 # Parallel execution
 uv run pytest tests/ -v -n auto  # requires pytest-xdist
@@ -187,6 +187,6 @@ uv run pytest tests/ -v -n auto  # requires pytest-xdist
 ## CI Integration
 
 Tests run on every PR and push to main via `.github/workflows/ci.yml`:
-- Python 3.10, 3.11, 3.12, 3.13
-- `uv run pytest tests/ -v`
+- Python 3.12, one job, no matrix — the version comes from `.python-version`, and `pyproject.toml` pins `requires-python` to exactly that one release. This page used to claim a four-version matrix spanning two releases below the floor and one above the ceiling; `ci.yml` carries a comment explaining why the matrix was deliberately removed (a per-version check name silently broke the branch ruleset, twice in one day).
+- `uv run pytest tests/ -q -rs` — `-rs` so the skip reasons are in the log, which is how you tell "Neo4j absent" from "nothing ran"
 - Must pass before merge

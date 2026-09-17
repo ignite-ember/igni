@@ -205,9 +205,7 @@ class SpawnRunner:
                     result_preview=result[:500],
                 )
             )
-            rendered = self.format_result(elapsed=elapsed, result=result, activity=activity)
-            self._on_finally()
-            return rendered
+            return self.format_result(elapsed=elapsed, result=result, activity=activity)
         except asyncio.TimeoutError:
             envelope = SpawnResult(ok=False, message=self._timeout_message())
             await self._fire_stop_once(
@@ -217,8 +215,26 @@ class SpawnRunner:
                     error=envelope.message,
                 )
             )
-            self._on_finally()
             return self._render_error(envelope)
+        except asyncio.CancelledError:
+            # ``CancelledError`` is a ``BaseException``, so the
+            # ``except Exception`` below never saw it and there was no
+            # ``finally``: a cancelled isolated spawn — session teardown,
+            # a client disconnect, an outer ``wait_for`` — left its git
+            # worktree and branch on disk with nothing left holding a
+            # reference to them, and SubagentStop never fired so the FE
+            # card stayed open forever. Announce the stop, let the
+            # ``finally`` clean up, and re-raise so the cancellation
+            # still propagates to whoever asked for it.
+            with contextlib.suppress(Exception):
+                await self._fire_stop_once(
+                    SubagentStopPayload(
+                        session_id=self._session_id,
+                        agent_name=label,
+                        error="Sub-spawn was cancelled.",
+                    )
+                )
+            raise
         except Exception as exc:
             envelope = SpawnResult(ok=False, message=self._exception_message(exc))
             await self._fire_stop_once(
@@ -228,8 +244,12 @@ class SpawnRunner:
                     error=envelope.message,
                 )
             )
-            self._on_finally()
             return self._render_error(envelope)
+        finally:
+            # One call site instead of one per exit branch — the three
+            # explicit calls this replaces covered every branch that
+            # existed and none of the ones that did not (cancellation).
+            self._on_finally()
 
     # ── Extension points ─────────────────────────────────────────
 
@@ -491,12 +511,15 @@ class AgentSpawn(SpawnRunner):
         )
 
     def _on_finally(self) -> None:
-        # ``_render_error`` doesn't call this — but the template's
-        # ``_on_finally`` fires from every exit path. The sandbox's
-        # ``finalize()`` is idempotent, so a second call after a
-        # success path's ``format_result`` already finalized is safe.
-        # For the error paths, this is the only finalize.
-        pass
+        # The template's ``finally`` fires this from every exit path,
+        # including cancellation — which is the only path where nothing
+        # else finalizes, and so the one that used to leak the worktree
+        # and its branch. ``format_result`` (success) and
+        # ``_render_error`` (timeout / exception) have already finalized
+        # by the time we get here; ``finalize()`` is documented
+        # idempotent and exception-safe, so the second call is a no-op.
+        if self._sandbox is not None:
+            self._sandbox.finalize()
 
     def _timeout_message(self) -> str:
         return (

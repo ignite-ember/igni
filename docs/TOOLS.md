@@ -293,7 +293,7 @@ Git operations are handled via `EmberShellTools` with git/gh commands. The Git A
 
 ### Knowledge (KnowledgeManager)
 
-Built-in vector knowledge base powered by ChromaDB and a local embedding model (all-MiniLM-L6-v2 — no API call, nothing leaves the machine). Unlike CodeIndex (which provides pre-processed semantic code intelligence), the Knowledge system is a general-purpose document store that users can populate with any content.
+Built-in vector knowledge base backed by the Neo4j sidecar and a local embedding model (all-MiniLM-L6-v2 — no API call, nothing leaves the machine). Unlike CodeIndex (which provides pre-processed semantic code intelligence), the Knowledge system is a general-purpose document store that users can populate with any content.
 
 ```yaml
 knowledge:
@@ -310,13 +310,13 @@ knowledge:
 - `/knowledge search <query>` — search the knowledge base
 
 **How it works:**
-1. `EmberEmbedder` calls the igni server's `/v1/embeddings` endpoint (proxying to text2vec-transformers, 384 dimensions)
-2. Documents are chunked and stored in ChromaDB with vector embeddings
+1. `Embedder` (`src/ember_code/core/embeddings.py`) loads `sentence-transformers/all-MiniLM-L6-v2` in-process and embeds locally — 384 dimensions, no network call
+2. Documents are chunked by `NewlinePreservingChunker` and stored, with their vectors, in the Neo4j sidecar via `Neo4jKnowledgeClient`
 3. Agents can search the knowledge base automatically during execution via Agno's `Knowledge` integration
 
-**Data models (Pydantic):** `KnowledgeAddResult`, `KnowledgeSearchResponse`, `KnowledgeFilter`, `KnowledgeStatus`
+**Data models (Pydantic):** `KnowledgeAddResult`, `KnowledgeSearchResult`, `KnowledgeSearchResponse`, `KnowledgeStatus`
 
-**Requires:** `pip install ember-code[knowledge]` (installs `chromadb`)
+**Requires:** nothing extra. The embedder and the Neo4j client are core dependencies. This line used to send readers off to install a `knowledge` extra that pulls in `chromadb`. There is no such extra in `pyproject.toml`, and `chromadb` has not been a dependency since the vectors moved to Neo4j — pip only *warns* about an extra that does not exist, so the instruction appeared to work while installing nothing.
 
 ---
 

@@ -41,12 +41,13 @@ class _Settings:
         data_dir = Path("/nonexistent")
 
 
-def _build(*, knowledge: bool, codeindex: bool = False) -> str:
+def _build(*, knowledge: bool, codeindex: bool = False, user_memory: bool = True) -> str:
     return PromptBuilder(
         project_dir=Path("/nonexistent"),
         settings=_Settings,
         codeindex_available=codeindex,
         knowledge_available=knowledge,
+        user_memory_available=user_memory,
         agent_catalog="- researcher: reads things",
         skill_descriptions="",
         prompt_loader=load_prompt,
@@ -103,12 +104,13 @@ class TestTheTwoConditionsAgree:
 
 
 class TestTheResolverFailsLoudly:
-    def _builder(self, *, knowledge: bool) -> PromptBuilder:
+    def _builder(self, *, knowledge: bool, user_memory: bool = True) -> PromptBuilder:
         return PromptBuilder(
             project_dir=Path("/nonexistent"),
             settings=_Settings,
             codeindex_available=False,
             knowledge_available=knowledge,
+            user_memory_available=user_memory,
             agent_catalog="",
             skill_descriptions="",
             prompt_loader=load_prompt,

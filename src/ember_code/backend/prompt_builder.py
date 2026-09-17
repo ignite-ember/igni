@@ -138,6 +138,13 @@ class PromptBuilder:
         models. Non-vision models get a text-only "Resolved" line.
         Returns a :class:`_FileAttachStep` bundle — the caller
         merges ``info_messages`` into its running list.
+
+        The resolved files are *merged* into whatever the caller
+        already had, never substituted for it: ``media`` here is the
+        bundle the FE sent with the message (a pasted image), and
+        returning only the filename-resolved bundle dropped it on the
+        floor whenever the same message also named a resolvable file.
+        Same rule as :meth:`_attach_url_media` one method below.
         """
         resolved = self._resolver.resolve_text_references(text)
         text = resolved.text
@@ -147,9 +154,13 @@ class PromptBuilder:
         if model_cfg.vision:
             parsed_media = self._resolver.attach_local_paths(resolved_files)
             if parsed_media is not None:
+                if media is None:
+                    media = parsed_media
+                else:
+                    media.merge(parsed_media)
                 return _FileAttachStep(
                     text=text,
-                    media=parsed_media,
+                    media=media,
                     info_messages=[msg.Info(text=f"Attached: {len(resolved_files)} file(s)")],
                 )
         return _FileAttachStep(

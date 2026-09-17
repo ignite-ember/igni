@@ -39,7 +39,7 @@ class PromptBuilder:
     #: Conditional spans in the prompt markdown. ``only`` survives when the
     #: capability is present, ``absent`` when it is not; the markers themselves
     #: never reach the model.
-    _CONDITIONALS: ClassVar[tuple[str, ...]] = ("knowledge-base",)
+    _CONDITIONALS: ClassVar[tuple[str, ...]] = ("knowledge-base", "user-memory")
 
     def __init__(
         self,
@@ -48,6 +48,7 @@ class PromptBuilder:
         settings: Any,
         codeindex_available: bool,
         knowledge_available: bool,
+        user_memory_available: bool,
         agent_catalog: str,
         skill_descriptions: str,
         prompt_loader: Callable[[str], str],
@@ -56,6 +57,7 @@ class PromptBuilder:
         self._settings = settings
         self._codeindex_available = codeindex_available
         self._knowledge_available = knowledge_available
+        self._user_memory_available = user_memory_available
         self._agent_catalog = agent_catalog
         self._skill_descriptions = skill_descriptions
         self._prompt_loader = prompt_loader
@@ -92,10 +94,23 @@ class PromptBuilder:
         there is nowhere to file one, which is the part that keeps the prompt
         coherent instead of merely shorter.
 
+        ``user-memory`` is the same defect one tool over: the prompt teaches
+        ``update_user_memory`` in six places, and agno attaches that tool only
+        when the session has a LearningMachine *and* ``learning.user_memory``
+        is on — so ``learning.enabled=false``, ``user_memory=false`` and any
+        session built without a db all get a prompt insisting on a tool that
+        is not in their manifest.
+
         Unbalanced markers raise. A prompt that silently loses a section is the
-        failure this method exists to prevent.
+        failure this method exists to prevent. A capability with no markers in
+        the markdown is a no-op rather than an error — the spans are marked per
+        template, and a template that does not mention the tool has nothing to
+        gate.
         """
-        available = {"knowledge-base": self._knowledge_available}
+        available = {
+            "knowledge-base": self._knowledge_available,
+            "user-memory": self._user_memory_available,
+        }
         for name in self._CONDITIONALS:
             keep, drop = ("only", "absent") if available[name] else ("absent", "only")
             for branch in (keep, drop):

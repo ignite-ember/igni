@@ -22,7 +22,6 @@ import {
   shouldSkipTruncateRpc,
   shellItem,
   userItem,
-  visualizationItem,
   workflowItem,
   type ChatItem,
   type OrchestrateEvent,
@@ -1456,59 +1455,6 @@ export default function App() {
                 : it,
             ),
           );
-        } else if (m.channel === "visualization") {
-          // Visualizer sub-agent emitted a json-render spec via
-          // ``VisualizeTools.visualize``. Payload shape:
-          // ``{ spec: {...}, spec_id: str, title?: string, source_agent?: string }``.
-          //
-          // Dedup by ``spec_id``: the visualizer's toolkit generates a
-          // stable id per sub-agent run, so repeated calls within a
-          // single run UPDATE the same card instead of appending a
-          // new one. That's the on-ramp for streaming — one card per
-          // stream, updated in place as data arrives.
-          const p = m.payload as {
-            spec?: unknown;
-            spec_id?: unknown;
-            title?: unknown;
-            source_agent?: unknown;
-          };
-          const spec = p.spec;
-          if (
-            spec &&
-            typeof spec === "object" &&
-            "root" in (spec as Record<string, unknown>) &&
-            "elements" in (spec as Record<string, unknown>)
-          ) {
-            const specId =
-              typeof p.spec_id === "string" && p.spec_id ? p.spec_id : "";
-            const title = typeof p.title === "string" ? p.title : "";
-            const sourceAgent =
-              typeof p.source_agent === "string"
-                ? p.source_agent
-                : "visualizer";
-            setItems((prev) => {
-              // Find an existing visualization card with the same
-              // spec_id; if present, replace its spec/title in place.
-              const idx = specId
-                ? prev.findIndex(
-                    (it) => it.kind === "visualization" && it.specId === specId,
-                  )
-                : -1;
-              if (idx >= 0) {
-                const next = prev.slice();
-                const existing = next[idx] as Extract<
-                  ChatItem,
-                  { kind: "visualization" }
-                >;
-                next[idx] = { ...existing, spec, title, sourceAgent };
-                return next;
-              }
-              return [
-                ...prev,
-                visualizationItem(spec, title, sourceAgent, specId),
-              ];
-            });
-          }
         }
       } else {
         // Cross-view busy-indicator update. The state machine —

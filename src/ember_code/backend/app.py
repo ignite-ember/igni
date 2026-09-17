@@ -313,7 +313,7 @@ class BackendApp:
             ready.ws_port = ws_transport.port
             ready.ws_url = f"ws://127.0.0.1:{ws_transport.port}"
             # Publish the port + version at
-            # ``<project>/.ember/backend.lock`` so a second client
+            # ``<project>/.igni/backend.lock`` so a second client
             # opening the same project can discover this BE.
             assert self._supervisor is not None
             self._supervisor.write_discovery_lockfile(ws_transport.port)

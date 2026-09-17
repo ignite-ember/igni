@@ -252,10 +252,7 @@ class Session:
         self._init_agent_and_skill_pools(settings)
 
         # ── Context window (for compaction threshold, capped by setting) ──
-        self._context_window = min(
-            ModelRegistry(settings).get_context_window(),
-            settings.models.max_context_window,
-        )
+        self._context_window = self._resolve_context_window()
 
         # ── Cloud auth coordinator (owns creds + rebuild-team invariant) ─
         # Composed BEFORE ``main_team`` so the first agent build can
@@ -404,8 +401,12 @@ class Session:
             pending_reminders_drain=self._reminder_queue.drain,
             compact_hook=self.compact_if_needed,
             ensure_mcp=self.ensure_mcp,
-            session_id=self.session_id,
-            context_window=self._context_window,
+            # Both by-reference, not by-value: ``/clear`` and ``/fork``
+            # rotate the session id and ``/model`` changes the context
+            # window, and the handler outlives both (it is built once here
+            # and never rebuilt).
+            session_id_ref=lambda: self.session_id,
+            context_window_ref=lambda: self._context_window,
             latch_input_tokens=self.latch_input_tokens,
             extract_response_text=lambda resp: extract_response_text(resp),
         )
@@ -632,7 +633,11 @@ class Session:
         # One record with a state, a reason and a fix, instead of a
         # private boolean per subsystem per failure mode — see
         # :mod:`ember_code.backend.subsystem_status`.
-        from ember_code.backend.subsystem_status import SubsystemRegistry
+        from ember_code.backend.subsystem_status import (
+            KNOWLEDGE,
+            SubsystemRegistry,
+            SubsystemState,
+        )
 
         self.subsystems = SubsystemRegistry()
         self._knowledge_ready = threading.Event()
@@ -652,25 +657,31 @@ class Session:
         # an index at construction pass a ``pre_knowledge`` (or
         # a ``neo4j_client`` via ``pre_knowledge=``).
         self.knowledge = None
-        # Say *why* there is no index, in words a user can act on.
+        # Say *why* there is no index, in words a user can act on, and say
+        # it where the readers look.
         #
-        # ``_knowledge_error`` was set to ``None`` here and assigned
-        # nowhere else in the codebase, which made
-        # ``KnowledgeCommand.panel``'s "Knowledge failed to load:
-        # {err}" branch unreachable — a diagnostic that existed, was
-        # documented, and could not fire. Every user hit the fallback
-        # instead: "Knowledge base failed to initialize.", which names
-        # no cause and is not even true. Nothing failed. The index is
-        # deferred by design and this session never got the runtime it
-        # was deferred for.
-        # Annotated, because ``attach_knowledge_neo4j`` clears it back to
-        # ``None`` once the runtime arrives — without this, the first
-        # assignment narrows the attribute to ``str`` and that clear is a
-        # type error.
-        self._knowledge_error: str | None = (
-            "no Neo4j runtime has attached to this session. The knowledge "
-            "index is created when CodeIndex's Neo4j comes up — open "
-            "/codeindex and check that it is running and synced."
+        # The reason used to be written to a private ``_knowledge_error``
+        # attribute, which nothing read: ``KnowledgeCommand.panel`` and
+        # ``Session.knowledge_error`` both go through
+        # :attr:`subsystems`, and the registry rewrite landed after the
+        # assignment was added. So every deferred session still fell
+        # through to "Knowledge base failed to initialize." — a sentence
+        # that names no cause and is not even true. Nothing failed; the
+        # index is deferred by design and this session never got the
+        # runtime it was deferred for.
+        #
+        # PREPARING, not FAILED: waiting on a runtime that has not
+        # attached yet is the ordinary startup case, and the orchestrator
+        # overwrites PREPARING freely once it knows better (it only
+        # declines to overwrite FAILED / DISABLED).
+        self.subsystems.set(
+            KNOWLEDGE,
+            SubsystemState.PREPARING,
+            reason=(
+                "no Neo4j runtime has attached to this session yet. The "
+                "knowledge index is created when CodeIndex's Neo4j comes up"
+            ),
+            fix="Open /codeindex and check that it is running and synced.",
         )
         logger.info(
             "Knowledge: deferred (no neo4j runtime at construction); "
@@ -745,11 +756,14 @@ class Session:
         # the neo4j backend.
         if self.knowledge_mgr is not None:
             self.knowledge_mgr.knowledge = index
-        # The deferred-state explanation set in the constructor is no
+        # The deferred-state explanation recorded in the constructor is no
         # longer true. Leaving it would have ``/knowledge`` telling a
-        # working session to go and start the runtime it is already
-        # using.
-        self._knowledge_error = None
+        # working session to go and start the runtime it is already using.
+        # (The backend's orchestrator also records READY; this covers the
+        # embedded / test callers that attach a runtime directly.)
+        from ember_code.backend.subsystem_status import KNOWLEDGE, SubsystemState
+
+        self.subsystems.set(KNOWLEDGE, SubsystemState.READY)
         # Installing the index is not the same as making it reachable.
         # In the backend path ``self.knowledge`` is ``None`` at
         # construction, so the pool was handed ``None`` and the main
@@ -1103,11 +1117,33 @@ class Session:
         """Delegate to :meth:`SessionCloudAuth.refresh_models`."""
         return self.cloud_auth.refresh_models()
 
+    def _resolve_context_window(self) -> int:
+        """Effective context window for the *current* default model,
+        capped by ``models.max_context_window``.
+
+        Same expression the agent builder uses for the compression
+        threshold — kept as one method because it is read twice (once
+        at construction, once per rebuild) and the two drifting apart
+        would mean compacting against a window the model does not have.
+        """
+        return min(
+            ModelRegistry(self.settings).get_context_window(),
+            self.settings.models.max_context_window,
+        )
+
     # ── Plugin hot-reload ──────────────────────────────────────
 
     def _rebuild_main_team(self) -> None:
-        """Assign a freshly-built main team to ``self.main_team``."""
+        """Assign a freshly-built main team to ``self.main_team``.
+
+        Re-resolves the context window too: ``/model`` swaps the default
+        model and comes through here, and the compaction threshold was
+        computed once in ``__init__`` and never again — switching from a
+        200k model to a 32k one left auto-compaction waiting for a limit
+        the new model blows past six times over.
+        """
         self.main_team = self._build_main_agent()
+        self._context_window = self._resolve_context_window()
 
     def rebuild_main_team(self) -> None:
         """Public wrapper over :meth:`_rebuild_main_team`."""

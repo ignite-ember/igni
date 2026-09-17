@@ -34,6 +34,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The release has two version universes and nothing used to make
+      # them agree. Tag-derived: latest.json's ``version`` field and the
+      # ``pip install 'ignite-ember==…'`` line in the release body.
+      # Commit-derived: pyproject.toml, which hatchling stamps onto the
+      # wheel and sync-version.mjs copies into tauri.conf.json /
+      # Cargo.toml (``CARGO_PKG_VERSION``, what the updater plugin
+      # compares latest.json against). Tag ``v1.0.4`` on a tree still at
+      # 1.0.3 shipped a release whose own page contradicted itself, and
+      # an installed desktop app that stays "out of date" forever: the
+      # updater downloads the bundle, the bundle reports 1.0.3, the
+      # feed still says 1.0.4, so it offers the same update on every
+      # launch. This is the first step of publish-pypi and every other
+      # job needs it transitively, so the whole release stops here.
+      - name: Verify tag matches pyproject version
+        run: |
+          set -euo pipefail
+          TAG_V="${GITHUB_REF#refs/tags/v}"
+          PY_V="$(grep -m1 -E '^version[[:space:]]*=' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [ "$TAG_V" != "$PY_V" ]; then
+            echo "::error::tag v$TAG_V does not match pyproject.toml version $PY_V — bump pyproject (and run scripts/sync-version.mjs) or retag"
+            exit 1
+          fi
+          echo "tag and pyproject agree on $PY_V"
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -53,6 +77,22 @@ jobs:
 
       - name: Sync version across all clients
         run: node scripts/sync-version.mjs
+
+      # …and then fail if it had anything to do. The fixup above only
+      # helps THIS job: build-tauri checks the tag out fresh and never
+      # runs the syncer, so a stale ``clients/tauri/src-tauri/Cargo.toml``
+      # is what the shipped bundle reports as CARGO_PKG_VERSION — the
+      # value the updater plugin compares against latest.json's
+      # tag-derived ``version``. Mismatched, the app re-offers the same
+      # update on every launch, forever.
+      - name: Fail if the committed client versions were out of sync
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet; then
+            echo "::error::client version files were not in sync with pyproject.toml — run 'node scripts/sync-version.mjs' and commit before tagging"
+            git diff --stat
+            exit 1
+          fi
 
       - name: Build package
         run: uv build
@@ -939,7 +979,15 @@ jobs:
             def install
               venv = virtualenv_create(libexec, "python3.12")
               system libexec/"bin/python3.12", "-m", "pip", "install", "--prefer-binary", "ignite-ember==PLACEHOLDER_VERSION"
+              # Both console scripts from pyproject's [project.scripts].
+              # ``igni`` is the canonical command and the one README and
+              # QUICKSTART tell brew users to type; for every release up
+              # to now only ``ignite-ember`` was linked, so the
+              # documented install path shipped without the documented
+              # command. The test below runs ``igni`` for that reason —
+              # dropping this line again fails the formula's own test.
               bin.install_symlink libexec/"bin/ignite-ember"
+              bin.install_symlink libexec/"bin/igni"
 
               # Clear dylib IDs from Rust-built Python extensions so Homebrew's
               # install_name_tool fixup doesn't fail on them.
@@ -949,6 +997,10 @@ jobs:
             end
 
             test do
+              # Run the canonical name first: ``brew test`` is the only
+              # thing that would have caught the missing symlink, and it
+              # was pointed at the other binary.
+              assert_match "igni", shell_output("#{bin}/igni --version")
               assert_match "igni", shell_output("#{bin}/ignite-ember --version")
             end
           end
