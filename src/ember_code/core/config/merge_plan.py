@@ -212,6 +212,27 @@ class GroupPolicyTier(Tier):
     Everything else a group sets still wins over the CLI. This is a
     ratchet on ``permissions`` denies specifically, not a general
     reversal of precedence.
+
+    ## Nothing constructs this in production yet
+
+    :meth:`SettingsMergePlan.default` only appends the tier when it is handed
+    a ``group_policy_fetcher``, and no production caller passes one:
+    ``backend/app.py`` reaches ``load_settings(project_dir=...)``. So a pack's
+    ``settings`` entries — the shape ``GroupPolicyPack.to_settings_dict``
+    exists to produce — reach nothing, and nothing logs that they were
+    dropped. An admin publishing ``{"code_index": {"enabled": false}}`` or a
+    permissions tightening believes it is enforced and it is not.
+
+    Two things are missing and only one of them is here. The tier needs a
+    pack, and the on-disk cache never keeps one: ``GroupPolicyCache.materialize``
+    writes every *file*-shaped entry plus ``pack_meta.json``, and lets
+    ``kind == "settings"`` fall off the end of its if/elif — so there is
+    nothing on disk for a fetcher to read between one process and the next.
+    Persisting them, and then choosing where the fetcher is built (settings
+    load happens before the backend has a token, so it cannot be the live
+    portal call), is a change in ``core/config/group_policy.py`` and
+    ``backend/``. Until that lands, the honest reading of this tier is that
+    it is written and unreached.
     """
 
     def __init__(

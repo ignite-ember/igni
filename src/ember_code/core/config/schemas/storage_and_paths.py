@@ -7,19 +7,41 @@ modules without buying navigability.
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from ember_code.core.paths import DEFAULT_DATA_DIR
+from ember_code.core.paths import home_config_dir
+
+
+def _home_config_path(*parts: str) -> str:
+    """The home config directory *this machine actually uses*, plus ``parts``.
+
+    These three defaults used to be built from ``DEFAULT_DATA_DIR``, which is
+    unconditionally the post-rename ``~/.igni``. The settings loader, by
+    contrast, reads config through ``home_config_dir()``, which falls back to
+    the pre-rename ``~/.ember`` while that is the directory on disk. So an
+    install that has not been migrated read its config from one directory and
+    looked for ``credentials.json`` and ``client_state.db`` in another that
+    does not exist — it came up signed out with no history, which is exactly
+    the outcome ``dir_migration``'s docstring says must not happen ("a rename
+    that half happens signs somebody out").
+
+    Resolved through a ``default_factory`` rather than a module constant
+    because the answer depends on what is on the filesystem, and a constant
+    evaluated at import time would freeze whichever answer was true then —
+    the reason ``paths.DEFAULT_DATA_DIR`` deliberately does *not* consult the
+    filesystem and so cannot be used here.
+    """
+    return str(home_config_dir().joinpath(*parts))
 
 
 class StorageConfig(BaseModel):
-    data_dir: str = DEFAULT_DATA_DIR
-    audit_log: str = f"{DEFAULT_DATA_DIR}/audit.log"
+    data_dir: str = Field(default_factory=_home_config_path)
+    audit_log: str = Field(default_factory=lambda: _home_config_path("audit.log"))
     max_history_runs: int = 10000
 
 
 class AuthConfig(BaseModel):
-    credentials_file: str = f"{DEFAULT_DATA_DIR}/credentials.json"
+    credentials_file: str = Field(default_factory=lambda: _home_config_path("credentials.json"))
 
 
 class GroupPolicyConfig(BaseModel):
@@ -56,11 +78,19 @@ class CodeIndexConfig(BaseModel):
     #: part is the point: the index is backed by Neo4j, and somebody who
     #: is not reading code should not pay for a graph database.
     #:
-    #: Server-settable. A group's ``settings`` entry is deep-merged into
-    #: config above both CLI flags and project files, so an admin can
-    #: turn this off for a group and nobody can turn it back on locally::
+    #: Meant to be server-settable: a group's ``settings`` entry is designed
+    #: to deep-merge into config above both CLI flags and project files, so an
+    #: admin could turn this off for a group and nobody could turn it back on
+    #: locally::
     #:
     #:     {"code_index": {"enabled": false}}
+    #:
+    #: **That path does not run today.** ``GroupPolicyTier`` is never
+    #: constructed in production and the pack's ``settings`` entries are never
+    #: written to the on-disk cache, so an admin publishing the block above
+    #: changes nothing on the client and nothing says so. See the "Nothing
+    #: constructs this in production yet" note on
+    #: :class:`~ember_code.core.config.merge_plan.GroupPolicyTier`.
     #:
     #: **This alone does not remove Neo4j.** ``knowledge.enabled`` is
     #: backed by the same sidecar, and the sidecar is only skipped when

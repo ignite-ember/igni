@@ -229,6 +229,12 @@ class BackendApp:
         )
         pool = self._orchestrator.setup_pool()
         self._supervisor.set_pool(pool)
+        # The push bridge subscribes to the process-wide shell bus and
+        # narrates background-process completions into ITS session's
+        # conversation. Once the pool holds more than the boot
+        # runtime that narration is addressed to the wrong window, so
+        # the bridge needs to know how many sessions are live.
+        self._push_bridge.set_live_session_count(lambda: len(pool.runtimes))
         # Idempotent chroma → neo4j cutover for the active project:
         # wipes the per-commit ``<sha>.chroma/`` dirs, the
         # ``knowledge.chroma`` dir, the legacy ``manifest.json``,

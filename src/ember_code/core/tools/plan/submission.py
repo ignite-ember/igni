@@ -212,7 +212,10 @@ class PlanTransactionCoordinator:
                 f"{researcher_report}"
             )
         return (
-            f"{header} Gather context (CodeIndex queries first, then file_read), "
+            # See validator.py: `file_read` is a permission category, and PRD-12's
+            # fix reached the plan prompts but not these two tool results.
+            f"{header} Gather context (CodeIndex queries first, then "
+            'run_shell_command "cat <path>"), '
             "then call exit_plan_mode(plan, tasks=[...]) with a concrete proposal. "
             "Tip: pass the user's request as `task=` next time and this tool will "
             "spawn the plan_researcher sub-agent for you automatically."

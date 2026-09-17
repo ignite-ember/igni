@@ -18,10 +18,21 @@ We detect:
 * ``"Error: ..."`` prefix — used by ``edit_file``,
   ``edit_file_replace_all``, ``create_file``, notebook tools,
   knowledge tools, codeindex tools.
-* Shell-tool non-zero exit shapes:
-  ``"Background process exited immediately (code N)"`` and
-  ``"[Exited with code N after Ts]"``. Code 0 is success and
-  must not flag.
+* Shell-tool non-zero exit shapes, one per emitter:
+  ``"Command exited with code N:"`` (foreground
+  ``run_shell_command``), ``"Background process exited with code
+  N:"`` (the background startup-window crash), and ``"[Exited with
+  code N after Ts]"`` (``await_process`` / ``watch_process``).
+  Code 0 is success and must not flag.
+
+These strings are copied from ``core/tools/process_supervisor.py``
+and ``core/tools/shell.py``; the first two drifted once already
+(the detector still matched a wording — "exited immediately (code
+N)" — that no tool had emitted since the supervisor extraction, so
+every failed shell command rendered as a green ✓).
+``tests/test_tool_error_conventions_match_shell.py`` pins each
+pattern against the emitter's own literal so the next rewording
+fails a test instead of a user's feedback loop.
 
 Strict prefix / regex anchors keep this from misfiring on body
 content (e.g. a Read of a file that legitimately contains
@@ -35,15 +46,32 @@ from collections.abc import Sequence
 
 # ── Default patterns ──────────────────────────────────────────────
 
-# Shell tool's failure conventions — non-zero exit code in either
-# of its two output shapes. We keep these as explicit patterns
-# instead of a generic "contains 'exit'" heuristic to avoid false
-# positives on a Read of a log file or a grep result.
-_DEFAULT_SHELL_BG_FAIL_RE = re.compile(r"^Background process exited immediately \(code (\d+)\)")
+# Shell tool's failure conventions — non-zero exit code in each of
+# its output shapes. We keep these as explicit patterns instead of a
+# generic "contains 'exit'" heuristic to avoid false positives on a
+# Read of a log file or a grep result.
+#
+# One pattern per emitting call site. Each must stay literal-for-
+# literal with the f-string it mirrors; the module docstring names
+# the drift that motivated the pinning test.
+
+# ``ProcessSupervisor.run_foregrounded`` — the foreground path of
+# run_shell_command, the highest-traffic tool in the product. Every
+# non-zero exit arrives in this shape.
+_DEFAULT_SHELL_EXEC_FAIL_RE = re.compile(r"^Command exited with code (\d+)")
+
+# ``ProcessSupervisor.run_backgrounded`` — the spawned process died
+# inside the 3 s startup window. The sibling "finished during startup
+# window (code 0)" wording is a success and deliberately unmatched.
+_DEFAULT_SHELL_BG_FAIL_RE = re.compile(r"^Background process exited with code (\d+)")
+
+# ``ShellTools.await_process`` / ``watch_process`` — a background
+# process the agent was waiting on has ended.
 _DEFAULT_SHELL_EXIT_FAIL_RE = re.compile(r"^\[Exited with code (\d+)")
 
 _DEFAULT_ERROR_PREFIXES: tuple[str, ...] = ("Error:",)
 _DEFAULT_FAILURE_REGEXES: tuple[re.Pattern[str], ...] = (
+    _DEFAULT_SHELL_EXEC_FAIL_RE,
     _DEFAULT_SHELL_BG_FAIL_RE,
     _DEFAULT_SHELL_EXIT_FAIL_RE,
 )

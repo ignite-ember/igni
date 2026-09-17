@@ -39,7 +39,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
+import sys
 from collections import Counter
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
@@ -56,8 +58,10 @@ from ember_code.core.code_index.embedder import Embedder, HashEmbedder
 from ember_code.core.code_index.git_branches import GitBranchReader
 from ember_code.core.code_index.manifest import Manifest
 from ember_code.core.code_index.paths import (
+    NEO4J_KNOWLEDGE_SLUG,
     code_index_dir,
     legacy_commit_index_path,
+    neo4j_state_root,
 )
 from ember_code.core.code_index.project import resolve_project_id
 from ember_code.core.code_index.schema.items import ChunkRow, CodeIndexItem, CodeIndexResult
@@ -66,6 +70,44 @@ from ember_code.core.code_index.schema.where_filter import ChromaWhereFilter
 from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = logging.getLogger(__name__)
+
+
+def _neo4j_state_dir_is_live(state_dir: Path) -> bool:
+    """Whether a Neo4j process is still using this per-commit state directory.
+
+    The directory carries the ``runtime.json`` the process that owns it wrote —
+    pid, bolt uri, auth — and another backend may have re-attached to that
+    process by refcount (``Neo4jRuntime.start_for_commit``). Deleting the store
+    underneath a running Neo4j corrupts it, so the sweep skips a directory whose
+    pid still answers and gets it on a later pass instead.
+
+    Defaults to **live** on anything unreadable. A sweep that cannot tell should
+    not delete: the cost of skipping is one more pass, the cost of guessing
+    wrong is a corrupted store. The probe itself mirrors
+    ``Lockfile.is_pid_alive`` — ``PermissionError`` means the process exists and
+    belongs to someone else, which is still alive; any other ``OSError`` is not
+    a liveness answer, and on Windows ``os.kill(pid, 0)`` is not a probe at all.
+    """
+    runtime = state_dir / "runtime.json"
+    if not runtime.is_file():
+        return False
+    try:
+        pid = int(json.loads(runtime.read_text()).get("pid") or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return True
+    if pid <= 0:
+        return False
+    if not hasattr(os, "kill") or sys.platform == "win32":
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+    return True
 
 
 class CommitNotFoundError(Exception):
@@ -722,11 +764,20 @@ class CodeIndex:
                         self._neo4j_client._driver, self.project_id, sha
                     )
                 elif self._neo4j_runtime is not None:
-                    # The runtime is the source of truth for per-
-                    # commit processes; ask it to drop the commit's
-                    # data. This is a no-op if the process is already
-                    # gone.
-                    pass  # drop is handled by runtime's evict path
+                    # The runtime is the source of truth for per-commit
+                    # processes; ask it to stop this one so its store can be
+                    # reclaimed. ``stop_for_commit`` is idempotent and returns
+                    # False when the process is already gone — same call
+                    # ``forget_commit`` makes.
+                    #
+                    # This branch used to be a bare ``pass``, which is the
+                    # production path: with a runtime attached and no shared
+                    # client, eviction dropped the manifest entry and left the
+                    # process and its data dir behind. Nothing else removed
+                    # them, so a developer switching branches accumulated one
+                    # complete Neo4j store per indexed commit under
+                    # ``~/.igni/neo4j/state/`` with no bound.
+                    await self._neo4j_runtime.stop_for_commit(self.project_id, sha)
             except Exception as exc:
                 logger.debug("clean: neo4j drop failed for %s (%s)", sha[:8], exc)
             logger.info("clean: dropping manifest entry for %s", sha[:8])
@@ -744,7 +795,16 @@ class CodeIndex:
         session startup, before any :class:`Neo4jRuntime.start_for_commit`
         call. Typical placement: at session startup, before the
         initial ``sync_now``.
+
+        Two layouts are swept. ``code_index/<sha>.chroma`` is the legacy
+        one and nothing has written it since the Neo4j cutover; the bytes
+        that actually grow are ``neo4j/state/<project>-<sha>/``, a whole
+        Neo4j store per indexed commit. Sweeping only the first is why
+        retention reclaimed nothing on the shipped path.
         """
+        return self._sweep_legacy_chroma_dirs() + self._sweep_neo4j_state_dirs()
+
+    def _sweep_legacy_chroma_dirs(self) -> list[str]:
         base = code_index_dir(self.project, data_dir=self.data_dir)
         if not base.is_dir():
             return []
@@ -759,6 +819,37 @@ class CodeIndex:
             try:
                 shutil.rmtree(str(child), ignore_errors=True)
                 removed.append(sha)
+            except OSError as exc:
+                logger.debug("sweep_stale_dirs: failed to remove %s (%s)", child, exc)
+        return removed
+
+    def _sweep_neo4j_state_dirs(self) -> list[str]:
+        """Remove ``neo4j/state/<project>-<sha>/`` for untracked shas."""
+        base = neo4j_state_root(data_dir=self.data_dir)
+        if not base.is_dir():
+            return []
+        tracked = set(self.manifest.load().commits.keys())
+        removed: list[str] = []
+        prefix = f"{self.project_id}-"
+        for child in base.iterdir():
+            if not child.is_dir() or not child.name.startswith(prefix):
+                continue
+            sha = child.name[len(prefix) :]
+            # ``<project>-knowledge`` is the per-project knowledge store, not
+            # a commit; it survives every commit switch and is never in the
+            # commit manifest.
+            if sha == NEO4J_KNOWLEDGE_SLUG or sha in tracked:
+                continue
+            if _neo4j_state_dir_is_live(child):
+                # Another BE re-attached to this commit's process. Deleting
+                # the store underneath a running Neo4j corrupts it; the next
+                # sweep gets it once that process is gone.
+                logger.debug("sweep_stale_dirs: %s still has a live process", child.name)
+                continue
+            try:
+                shutil.rmtree(str(child), ignore_errors=True)
+                removed.append(sha)
+                logger.info("sweep_stale_dirs: reclaimed neo4j state for %s", sha[:8])
             except OSError as exc:
                 logger.debug("sweep_stale_dirs: failed to remove %s (%s)", child, exc)
         return removed

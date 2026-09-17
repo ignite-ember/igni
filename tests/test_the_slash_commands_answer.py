@@ -113,10 +113,21 @@ class TestConfigRenders:
         assert "backend" not in StorageConfig.model_fields
 
     def test_the_card_names_where_data_lives(self):
-        text = ConfigView.from_session(_Session(), store=_NoCreds()).to_command_result().content
+        """Against the session's own settings, not a fresh ``StorageConfig()``.
+
+        The default is resolved per instance — it reads the filesystem to
+        decide between the pre- and post-rename home (see
+        ``storage_and_paths._home_config_path``) — so a config built inside the
+        test and one built when this module was imported can legitimately name
+        different directories. Comparing the card to a fresh default therefore
+        tests the clock, not the card. What the card owes the user is the
+        directory *this session* is using.
+        """
+        session = _Session()
+        text = ConfigView.from_session(session, store=_NoCreds()).to_command_result().content
 
         assert "**Storage:**" in text
-        assert StorageConfig().data_dir in text
+        assert session.settings.storage.data_dir in text
 
     def test_the_card_is_not_an_error(self):
         """How the user met it: a red line beginning "session routing

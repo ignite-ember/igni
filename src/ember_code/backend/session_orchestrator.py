@@ -475,7 +475,10 @@ class SessionOrchestrator:
         rt_queue: list[str] = []
         rt_backend.wire_queue_hook(rt_queue)
         stamped = SessionStampingTransport(self._transport, rt_backend)
-        rt_bridge = self._push_bridge.for_transport(stamped)
+        # The runtime's own queue, not the boot bridge's — anything a
+        # bridge appends is injected as a synthetic user message in
+        # the session it belongs to.
+        rt_bridge = self._push_bridge.for_transport(stamped, queue=rt_queue)
         # Per-runtime RPC router. Login is anchored to the boot
         # bridge (there is one login flow per BE process), but the
         # rest of the router hangs off this runtime's backend +

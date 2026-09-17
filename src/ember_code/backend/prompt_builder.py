@@ -106,6 +106,7 @@ class PromptBuilder:
         if interrupted_summary:
             info.append(msg.Info(text="(continuing from an interrupted previous run)"))
         message = self._compose_message(text, interrupted_summary)
+        message = self._prepend_reminders(message)
 
         return PromptBuildResult(message=message, media=media, info_messages=info)
 
@@ -181,6 +182,27 @@ class PromptBuilder:
             media=media,
             info_messages=[msg.Info(text=f"Attached {url_media.total()} URL(s)")],
         )
+
+    def _prepend_reminders(self, message: str) -> str:
+        """Drain the session's queued ``asyncRewake`` reminders and
+        prepend them as a ``<system-reminder>`` block.
+
+        An ``asyncRewake`` hook (exit code 2) pushes its stderr onto
+        :class:`~ember_code.core.session.reminders.PendingReminderQueue`
+        expecting the next turn to show it to the model. The only
+        drain site was ``SessionMessageHandler._build_effective_message``
+        — the CLI path. The portal/BE path is ``RunController`` →
+        this builder → ``team.arun``, which never touched the queue:
+        every reminder fired on the live path accumulated in memory
+        and was never seen by anyone. Same block shape and same
+        position (ahead of ``<system-context>``) as the CLI so the
+        two paths compose an identical prompt.
+        """
+        reminders = self._session._drain_pending_reminders()
+        if not reminders:
+            return message
+        joined = "\n".join(reminders)
+        return f"<system-reminder>{joined}</system-reminder>\n{message}"
 
     @staticmethod
     def _compose_message(text: str, interrupted_summary: str | None) -> str:

@@ -56,9 +56,13 @@ _TERMINAL_ICONS: dict["TaskStatus", str] = {
 class ScheduledTask(BaseModel):
     """A task scheduled for deferred execution.
 
-    For recurring tasks, ``recurrence`` holds the repeat pattern (e.g.
-    "every 1 hours", "daily", "weekly"). After completion, the runner
-    creates the next occurrence automatically.
+    For recurring tasks, ``recurrence`` holds the repeat pattern in the
+    canonical ``every N <minutes|hours|days|weeks>`` form ("every 1
+    hours", "every 1 days", "every 7 days") — that is the only form the
+    field validator below accepts. User-facing phrases ("daily",
+    "weekly") are not valid here; run them through
+    :meth:`Recurrence.parse` and persist ``.canonical()``. After
+    completion, the runner creates the next occurrence automatically.
     """
 
     id: str

@@ -199,12 +199,13 @@ commit-scoping properties on items or edges, no
 
 ### :Item
 - ``item_id`` (str, NODE KEY) — stable across commits
-- ``project_hash`` (str) — 16-char SHA-256 prefix of the project. **Do not
-  filter on it.** It is an opaque hash, not the repository's name, and the
-  per-(project, commit) process already scopes every query — a
-  ``WHERE i.project_hash STARTS WITH 'myrepo'`` matches nothing and returns an
-  empty result that looks like a real answer. Measured: agents wasted queries on
-  exactly this in 3 of 12 evaluation runs.
+- ``project_hash`` (str) — 16-char SHA-256 prefix identifying the project.
+  **Filter on it only as ``{project_hash: $proj}``.** ``$proj`` is injected for
+  you on every query (see "Scoping rules" below), and that is the one form that
+  works. **Never write a literal for it**: it is an opaque hash, not the
+  repository's name, so ``WHERE i.project_hash STARTS WITH 'myrepo'`` matches
+  nothing and returns an empty result that looks like a real answer. Measured:
+  agents wasted queries on exactly this in 3 of 12 evaluation runs.
 - ``name``, ``type``, ``kind``, ``entity_type``, ``parent_id``,
   ``file_extension``, ``repository_id``, ``path``, ``archived``,
   ``timestamp``, ``token_count``, ``line_from``, ``line_to``
@@ -507,9 +508,12 @@ per-commit.
 
 ## Scoping rules
 
-**Project scope:** always pass ``project_hash`` on every query
-to scope to one project. (Multi-tenant queries without this
-filter would leak across projects.)
+**Project scope:** scope every query with
+``{project_hash: $proj}`` (or ``WHERE i.project_hash = $proj``).
+``$proj`` is bound for you by the tool — you never supply its
+value, and you must never substitute a literal for it. One
+physical DB can hold several projects' nodes, so a query without
+this filter can return another project's rows.
 
 **Commit scope:** handled by the process. You don't need to
 filter by ``commit_sha`` in queries — the process only has
@@ -551,7 +555,8 @@ Example::
     for record in result:
         print(record['i'])
 
-Always pass ``project_hash`` to scope to one project. Use the
+Always scope with ``{project_hash: $proj}`` — ``$proj`` is
+bound for you; a literal there matches nothing. Use the
 indexes for performance (filter on indexed properties first).
 Do NOT try to scope by ``commit_sha`` — the process IS the
 scope, and there's no commit-scoping property on items.

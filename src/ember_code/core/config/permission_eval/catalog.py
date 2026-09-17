@@ -33,9 +33,19 @@ from pydantic import BaseModel, Field
 
 #: Tools that mutate the filesystem — used by ``acceptEdits``
 #: (auto-approve) and ``plan`` (block). Names match Claude Code's
-#: Edit/Write/NotebookEdit set, plus ember-code's ``edit_file_*`` /
+#: Edit/Write/NotebookEdit set, plus igni's ``edit_file_*`` /
 #: ``save_file`` / ``create_file`` variants. Bash is handled by
 #: :class:`BashCommand` because shell commands may or may not mutate.
+#
+# The three ``notebook_*`` writers are here because the evaluator is
+# handed the Agno *function* name, not the catalog name. ``NotebookEdit``
+# alone matched nothing the hook ever sees: the registry attaches
+# ``notebook_edit_cell`` / ``notebook_add_cell`` / ``notebook_remove_cell``,
+# so in plan mode all three fell through to DEFER — a default main-team
+# toolkit writing to disk under the banner that says plan mode does not.
+# (``NotebookEdit`` stays for rules written by friendly name, which resolve
+# through ``FriendlyToolNameResolver``; this set is a raw membership test
+# and does not.)
 FILE_EDIT_TOOLS: frozenset[str] = frozenset(
     {
         "Edit",
@@ -45,6 +55,9 @@ FILE_EDIT_TOOLS: frozenset[str] = frozenset(
         "edit_file",
         "edit_file_replace_all",
         "create_file",
+        "notebook_edit_cell",
+        "notebook_add_cell",
+        "notebook_remove_cell",
     }
 )
 

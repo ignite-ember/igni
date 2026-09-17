@@ -541,6 +541,12 @@ class Session:
             self.settings,
             project_dir=self.project_dir,
             code_index=new_index,
+            # Same callback the constructor wires (see ``_init_code_index``).
+            # Dropping it here was how the neo4j path lost its only
+            # mid-session signal: the sync that finally populates the graph
+            # would finish and nothing would tell the session, so the agent
+            # kept the prompt and toolset it booted with.
+            on_sync_complete=lambda: self.refresh_codeindex_availability(),
         )
 
         existing_runtime = getattr(self.code_index, "_neo4j_runtime", None)
@@ -551,11 +557,17 @@ class Session:
         self.code_index_sync = new_sync
 
         if self._codeindex_refresher is not None:
-            self._codeindex_refresher._code_index = new_index
-            self._codeindex_refresher._code_index_sync = new_sync
+            self._codeindex_refresher.retarget(code_index=new_index, code_index_sync=new_sync)
 
-        new_head = new_sync.current_sha()
-        self._codeindex_available = bool(new_head and new_index.has_commit(new_head))
+        # Go through the refresher rather than writing the flag. Availability
+        # is not just a boolean: ``_resolve_main_tool_names`` appends the
+        # CodeIndex tool at build time and ``PromptBuilder`` picks
+        # ``main_agent.codeindex.md`` at build time, so a bare write left the
+        # session claiming CodeIndex was available while the running agent
+        # held the plain prompt and a tool list without it. ``refresh`` flips
+        # the flag AND rebuilds the pool + main team, and it also honours the
+        # ``code_index.enabled`` kill-switch the bare write ignored.
+        self.refresh_codeindex_availability()
         logger.info("CodeIndex: switched to neo4j backend (project=%s)", self.project_dir)
 
     def _init_mcp_client_manager(self) -> None:
@@ -738,6 +750,16 @@ class Session:
         # working session to go and start the runtime it is already
         # using.
         self._knowledge_error = None
+        # Installing the index is not the same as making it reachable.
+        # In the backend path ``self.knowledge`` is ``None`` at
+        # construction, so the pool was handed ``None`` and the main
+        # team was built with no ``KnowledgeTools`` and — since PRD-22
+        # made the prompt block conditional on ``s.knowledge is not
+        # None`` — no mention of the tools either. Both are decided at
+        # build time, so the index has to be re-attached and the team
+        # rebuilt here or it is attached to nothing.
+        self.pool.attach_knowledge_manager(self.knowledge_mgr)
+        self._rebuild_main_team()
         logger.info("Knowledge: switched to neo4j backend (project=%s)", project_id)
 
     def group_dir_for(self, kind: str) -> Path:
@@ -935,10 +957,23 @@ class Session:
             read_claude=settings.rules.cross_tool_support,
             group_dir=self.group_root("output-styles"),
         )
-        if "default" in self.output_styles:
-            self._active_output_style = "default"
-        elif self.output_styles:
-            self._active_output_style = sorted(self.output_styles)[0]
+        # Keep the style the user chose if the rediscovered set still
+        # has it. This method also runs on plugin hot-reload, and an
+        # unconditional reset meant installing a plugin silently put
+        # the session back on ``default`` — the style is a live user
+        # choice, not a boot-time default, once ``set_output_style``
+        # has been called.
+        current = getattr(self, "_active_output_style", "")
+        if current not in self.output_styles:
+            if "default" in self.output_styles:
+                self._active_output_style = "default"
+            elif self.output_styles:
+                self._active_output_style = sorted(self.output_styles)[0]
+            else:
+                # The style is gone and there is nothing to fall back
+                # to — better an empty name than one that names a file
+                # this reload just found missing.
+                self._active_output_style = ""
 
         # ── Hooks ────────────────────────────────────────────────────
         self._hook_loader = HookLoader(
@@ -985,9 +1020,17 @@ class Session:
             rewake_callback=self._reminder_queue.queue,
         )
         # Rebuild the tool-hook factory so it points at the new
-        # executor. The factory caches the ``PermissionEvaluator``
-        # so a mode flip performed via :class:`RuntimeModeCoordinator`
-        # survives a ``reload_hooks``.
+        # executor, carrying the live ``PermissionEvaluator`` across.
+        # The factory caches the evaluator so a mode flip performed via
+        # :class:`RuntimeModeCoordinator` survives a ``reload_hooks``
+        # — but this method REPLACES the factory, and a replacement
+        # with an empty cache rebuilds the evaluator from
+        # ``settings.permissions.mode``. That is how ``/plugin install``
+        # used to take a session out of plan mode with no message: the
+        # next ``_build_main_agent`` asked the new factory for an
+        # evaluator, got a default-mode one, and the FE badge (which
+        # reads the same object) flipped with it.
+        _prev_hook_factory = getattr(self, "_tool_hook_factory", None)
         self._tool_hook_factory = ToolEventHookFactory(
             settings=settings,
             # The fallback is only reached when this runs before
@@ -1002,6 +1045,9 @@ class Session:
             project_dir=self.project_dir,
             hook_executor_ref=lambda: self.hook_executor,
             session_id_ref=lambda: self.session_id,
+            permission_evaluator=(
+                _prev_hook_factory.permission_evaluator if _prev_hook_factory is not None else None
+            ),
         )
 
     # ── Cloud auth accessors (forward to SessionCloudAuth) ─────

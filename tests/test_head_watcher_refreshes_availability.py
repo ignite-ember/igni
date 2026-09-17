@@ -30,7 +30,7 @@ class _Result:
 
 def _watcher(*, run_sync, on_sync_complete, head="abc123"):
     return HeadWatcher(
-        get_head=lambda: head,
+        get_head=head if callable(head) else (lambda: head),
         run_sync=run_sync,
         retry_ledger=InProgressRetryLedger(),
         last_synced_sha_getter=lambda: None,
@@ -89,7 +89,13 @@ class TestTheRefreshFires:
 
     async def test_a_raising_refresh_does_not_kill_the_poll_loop(self):
         """The watcher is the only thing keeping the index current. A refresh
-        that throws must not silently end polling for the rest of the session."""
+        that throws must not silently end polling for the rest of the session.
+
+        HEAD moves on every tick here. It has to: a sha that has already been
+        attempted and has not landed is now held in the ledger's failure
+        backoff, so a *fixed* HEAD legitimately syncs once and then waits —
+        which is the bug this file's sibling test pins, not a dead poll loop.
+        """
         syncs: list[int] = []
 
         def boom():
@@ -98,6 +104,7 @@ class TestTheRefreshFires:
         watcher = _watcher(
             run_sync=lambda sha: _completed(syncs),
             on_sync_complete=boom,
+            head=lambda: f"sha{len(syncs)}",
         )
         await watcher.start()
         await asyncio.sleep(0.1)

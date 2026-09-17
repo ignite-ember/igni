@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from ember_code.backend.schemas_push import (
@@ -69,20 +70,48 @@ class PushNotificationBridge:
         # preserves the shared-instance invariant (both sides
         # observe the same listener) with zero call-site churn.
         self._file_edit_notifier = file_edit_notifier or default_file_edit_notifier
+        # How many runtimes the BE is hosting right now. Default
+        # ``1`` = "this bridge's session is the only one", which is
+        # true for every bridge built before the pool exists and for
+        # the whole single-window life of the process. See
+        # :meth:`set_live_session_count` for why the count is the
+        # thing that gates conversation injection.
+        self._live_session_count: Callable[[], int] = lambda: 1
 
     # ── Runtime binding ─────────────────────────────────────────
 
-    def for_transport(self, transport: Any) -> PushNotificationBridge:
+    def set_live_session_count(self, probe: Callable[[], int]) -> None:
+        """Wire the "how many sessions is this BE hosting" probe.
+
+        Called by :class:`BackendApp` once the pool exists. Only
+        :meth:`_on_process_done` reads it — see the comment there for
+        what it protects.
+        """
+        self._live_session_count = probe
+
+    def for_transport(
+        self, transport: Any, *, queue: list[str] | None = None
+    ) -> PushNotificationBridge:
         """Sub-bridge bound to a different transport (typically a
         :class:`SessionStampingTransport` for a pooled runtime). The
-        loop + queue + file-edit notifier references are shared with
-        the parent bridge."""
-        return PushNotificationBridge(
+        loop + file-edit notifier references are shared with the
+        parent bridge.
+
+        ``queue`` is NOT shared by default any more. The queue is a
+        conversation — whatever is appended to it is injected as a
+        synthetic user message on the owning session's next turn — so
+        a sub-bridge that kept the parent's list would speak into the
+        boot session no matter which window it belongs to. Callers
+        pass the runtime's own queue; the parent's is the fallback
+        only for callers that have none."""
+        sub = PushNotificationBridge(
             transport=transport,
             loop=self._loop,
-            queue=self._queue,
+            queue=self._queue if queue is None else queue,
             file_edit_notifier=self._file_edit_notifier,
         )
+        sub.set_live_session_count(self._live_session_count)
+        return sub
 
     # ── Login channel ────────────────────────────────────────────
 
@@ -192,7 +221,28 @@ class PushNotificationBridge:
                 f"PID {event.pid}: {event.cmd}\n"
                 f"Status: {status}  ·  Duration: {event.duration_seconds:.1f}s\n\n{hint}"
             )
-        self._queue.append(msg_text)
+        # The FE push below is addressed to a pid, so it is always
+        # safe. The queue append is not: it becomes a synthetic user
+        # message in THIS bridge's conversation, and the process bus
+        # is process-wide (one ``supervisors.default()`` for every
+        # session in the BE — see ``bind_to_process_supervisor``).
+        # Only the boot bridge subscribes, so with a pool live, a
+        # build finishing in one window was narrated into the boot
+        # session's conversation — a different window, potentially a
+        # different repository (a pooled runtime can be attached to
+        # its own ``project_dir``). There is no owner on the event to
+        # check against, so the only sound rule left is: inject only
+        # when there is exactly one conversation it could belong to.
+        # The watcher panel still gets the completion either way.
+        if self._live_session_count() <= 1:
+            self._queue.append(msg_text)
+        else:
+            logger.debug(
+                "pid %s completed while %d sessions are live; "
+                "skipping conversation injection (no owner on the event)",
+                event.pid,
+                self._live_session_count(),
+            )
         payload = BackgroundProcessDonePayload(
             pid=event.pid,
             cmd=event.cmd,

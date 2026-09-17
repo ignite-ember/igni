@@ -165,11 +165,18 @@ class SpawnRunner:
         if err := self._preflight():
             return err
 
-        if limit_err := self._budget.try_reserve(self._reserve_count()):
+        reserved = self._reserve_count()
+        if limit_err := self._budget.try_reserve(reserved):
             return limit_err
 
         build_err = self._build()
         if build_err is not None:
+            # Nothing was spawned — an unknown agent name, a worktree
+            # that could not be created. The slots were reserved a
+            # moment ago only because the cap must be enforced before
+            # work starts; holding them now would charge the session
+            # for an agent that never ran. See ``SpawnBudget.release``.
+            self._budget.release(reserved)
             return build_err
 
         label = self._agent_label()

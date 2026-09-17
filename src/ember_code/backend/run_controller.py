@@ -271,8 +271,7 @@ class RunController:
         ``RunStatus.running`` heuristic. The stamp is fire-and-
         forget so the cancel response doesn't wait on the disk.
         """
-        if supervisors.default().cancel_foreground():
-            logger.info("Killed foreground process on cancel")
+        self._cancel_own_foreground()
 
         try:
             team = self._session.main_team
@@ -288,6 +287,35 @@ class RunController:
         if task and not task.done():
             logger.info("Cancelling run task %s", task.get_name())
             task.cancel()
+
+    def _cancel_own_foreground(self) -> None:
+        """Kill the foreground shell — but only if this session
+        could plausibly own it.
+
+        ``supervisors.default()`` is process-wide and one BE process
+        hosts N sessions (see :mod:`session_pool`), so the foreground
+        slot is shared by every window. Cancelling an *idle* session
+        used to reach into that shared slot and kill whatever another
+        window was running in the foreground — someone's ``pytest``,
+        ``npm run build`` or ``alembic upgrade``, in a different
+        repository, with no indication why.
+
+        A foreground shell only exists while the run that spawned it
+        is blocked on it, so a session that is not streaming cannot
+        be the owner and must not touch the slot. That closes the
+        idle-window case; the both-sessions-streaming case still
+        mis-attributes, and cannot be fixed from here — the
+        supervisor would have to stamp an owning session id on the
+        foreground slot (``core/tools/process_supervisor.py``).
+        """
+        if self._phase is not RunPhase.streaming:
+            logger.debug(
+                "cancel: session is %s, not streaming — leaving the shared foreground slot alone",
+                self._phase,
+            )
+            return
+        if supervisors.default().cancel_foreground():
+            logger.info("Killed foreground process on cancel")
 
     def _stamp_interrupted(
         self,
@@ -374,6 +402,32 @@ class RunController:
         """
         await ModelHttpClientManager().close_and_replace(team)
 
+    # ── Stream outcome ──────────────────────────────────────────────
+
+    @staticmethod
+    def _failure_text(proto: msg.Message) -> str | None:
+        """The failure this streamed message reports, or ``None``.
+
+        The ``except Exception`` branch of :meth:`_run_locked` used to
+        be the only thing that stamped a run interrupted, and nothing
+        ever reached it: ``HITLStreamMultiplexer.stream`` catches every
+        stream exception and *yields* an :class:`~msg.Error` instead of
+        propagating it, and an Agno ``RunErrorEvent`` is serialized to
+        :class:`~msg.RunError` on the ordinary event path. Both end the
+        run as a failure, both left the loop above falling through to
+        ``mark_completed`` — so the "stamp it interrupted so the FE can
+        offer Retry/Discard" story only ever fired for user cancels.
+
+        These two message types are the stream's typed failure
+        contract; reading them here is what makes a failed run
+        recoverable.
+        """
+        if isinstance(proto, msg.Error):
+            return proto.text or "run failed"
+        if isinstance(proto, msg.RunError):
+            return proto.error or "run failed"
+        return None
+
     # ── The locked body ─────────────────────────────────────────────
 
     async def _run_locked(
@@ -445,11 +499,25 @@ class RunController:
         media_kwargs = media.to_kwargs() if media is not None else {}
         self._transition_to(RunPhase.streaming)
         try:
+            stream_failure: str | None = None
             async for proto in self._stream_via_backend(
                 team.arun(message, stream=True, **media_kwargs)
             ):
                 yield proto
                 await self._dispatcher.handle(proto, team)
+                stream_failure = self._failure_text(proto) or stream_failure
+            if stream_failure is not None:
+                # The stream reported a failure instead of raising —
+                # see :meth:`_failure_text`. Same bookkeeping as the
+                # ``except`` branch below, minus the re-raise: the
+                # FE has already been handed the error message, so
+                # raising here would only cost it its ``StreamEnd``.
+                self._pending_id_for_cancel = None
+                await self._pending_journal.mark_interrupted(
+                    pending_id, "errored", last_error=stream_failure
+                )
+                self._transition_to(RunPhase.errored)
+                return
             # Natural end-of-run — mark the pre-persisted user
             # message as completed.
             await self._pending_journal.mark_completed(pending_id)
