@@ -53,6 +53,34 @@ class TestTheShippedCopyIsTheOneTested:
             "the bundled one is what ships"
         )
 
+    def test_no_editing_copy_has_drifted(self):
+        """Pinning one file left the other sixteen free to rot, and they did.
+
+        Every ``agents/*.md`` with a bundled counterpart had drifted: all of
+        them still said ``grep_files`` / ``glob_files`` — retired in
+        ``0bdfc28`` — and ``ember.md`` / ``ember-code``, from before the rename.
+        Nothing is loaded from this directory (the loader reads
+        ``project_dir/.igni/agents``), so none of it reached a session; but
+        ``scripts/run_evals_smoke.py`` and
+        ``scripts/_repro_explorer_no_tool_calls.py`` read ``agents/editor.md``
+        and ``agents/explorer.md`` directly, and were measuring prompts that
+        teach tools the registry raises on.
+
+        Files that exist only in ``bundled_agents/`` are not required here —
+        the editing copy is allowed to be a subset. It is not allowed to
+        disagree.
+        """
+        drifted = [
+            shipped.name
+            for shipped in sorted(AGENTS_DIR.glob("*.md"))
+            if (REPO_AGENTS_DIR / shipped.name).is_file()
+            and (REPO_AGENTS_DIR / shipped.name).read_text() != shipped.read_text()
+        ]
+        assert not drifted, (
+            f"{len(drifted)} editing copies differ from what ships: {drifted}. "
+            "The bundled tree is authoritative — copy it over, don't edit here."
+        )
+
 
 class TestDataArchitectParsing:
     def test_agent_file_exists(self):

@@ -547,12 +547,20 @@ per-commit.
 
 ## Scoping rules
 
-**Project scope:** scope every query with
-``{project_hash: $proj}`` (or ``WHERE i.project_hash = $proj``).
-``$proj`` is bound for you by the tool — you never supply its
-value, and you must never substitute a literal for it. One
-physical DB can hold several projects' nodes, so a query without
-this filter can return another project's rows.
+**Project scope: you do not need it.** One process holds exactly
+one ``(project, commit)``, so the process boundary is what
+isolates you — the graph you are querying contains no other
+project's nodes, and a bare ``MATCH (i:Item)`` cannot reach one.
+Omitting the predicate is correct, not sloppy, and
+``cypher_guard`` does not check for it.
+
+Writing it is harmless, and ``$proj`` is bound for you. If you do,
+the only forms that work are ``{project_hash: $proj}`` and
+``WHERE i.project_hash = $proj``. **Never substitute a literal.**
+It is an opaque 16-char hash, not the repository's name, so
+``WHERE i.project_hash STARTS WITH 'myrepo'`` matches nothing and
+returns an empty result that reads like a real answer. Measured:
+agents lost queries to exactly that in 3 of 12 evaluation runs.
 
 **The project filter applies to ``:Item``, ``:Entry``, ``:Commit``
 and ``:Meta``.** ``:Chunk`` nodes carry **no** ``project_hash``
