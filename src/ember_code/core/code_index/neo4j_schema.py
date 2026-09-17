@@ -239,12 +239,13 @@ commit-scoping properties on items or edges, no
 ### :Item
 - ``item_id`` (str, indexed) — stable across commits
 - ``project_hash`` (str) — 16-char SHA-256 prefix identifying the project.
-  **Filter on it only as ``{project_hash: $proj}``.** ``$proj`` is injected for
-  you on every query (see "Scoping rules" below), and that is the one form that
-  works. **Never write a literal for it**: it is an opaque hash, not the
-  repository's name, so ``WHERE i.project_hash STARTS WITH 'myrepo'`` matches
-  nothing and returns an empty result that looks like a real answer. Measured:
-  agents wasted queries on exactly this in 3 of 12 evaluation runs.
+  **You do not need to filter on it** (see "Scoping rules"). If you do, the only
+  forms that work are ``{project_hash: $proj}`` and ``WHERE i.project_hash =
+  $proj``, and ``$proj`` is injected for you. **Never write a literal for it**:
+  it is an opaque hash, not the repository's name, so ``WHERE i.project_hash
+  STARTS WITH 'myrepo'`` matches nothing and returns an empty result that looks
+  like a real answer. Measured: agents wasted queries on exactly this in 3 of 12
+  evaluation runs.
 - ``name``, ``type``, ``kind``, ``entity_type``, ``parent_id``,
   ``file_extension``, ``repository_id``, ``path``, ``archived``,
   ``timestamp``, ``token_count``, ``line_from``, ``line_to``
@@ -600,11 +601,12 @@ Example::
     for record in result:
         print(record['i'])
 
-Always scope with ``{project_hash: $proj}`` — ``$proj`` is
-bound for you; a literal there matches nothing. Use the
-indexes for performance (filter on indexed properties first).
-Do NOT try to scope by ``commit_sha`` — the process IS the
-scope, and there's no commit-scoping property on items.
+Scoping is the process, not a predicate: one process holds one
+``(project, commit)``, so neither ``project_hash`` nor
+``commit_sha`` needs to appear in your query. If you do write
+``project_hash``, ``$proj`` is bound for you and a literal
+matches nothing. Use the indexes for performance (filter on
+indexed properties first).
 """
 
 

@@ -31,13 +31,45 @@ _REFUSALS = re.compile(
 )
 
 
+#: An instruction that the agent *must* scope. Paired with a refusal, these are
+#: the two halves the agent cannot satisfy at once.
+_REQUIREMENTS = re.compile(
+    r"(always|every query|must)[^.]{0,60}(?:scope|pass|filter)[^.]{0,40}project_hash"
+    r"|scope every query[^.]{0,40}project_hash",
+    re.IGNORECASE,
+)
+
+
 class TestItSaysOneThingAboutProjectScope:
-    def test_it_never_tells_the_agent_not_to_filter_on_project_hash(self):
-        found = _REFUSALS.findall(GRAPH_SCHEMA_DESCRIPTION)
-        assert not found, (
-            f"the schema forbids filtering on project_hash ({found}) while also "
-            "requiring it for scoping — the agent cannot satisfy both"
+    def test_it_does_not_both_require_and_refuse_the_project_filter(self):
+        """The contradiction, not either half of it.
+
+        This test used to assert the schema never says "do not filter on it",
+        which was right only while the document also said "always scope every
+        query". The tenancy model settled the question the other way — one
+        process holds one ``(project, commit)``, so the predicate is
+        unnecessary and ``cypher_guard`` deleted its check for it — and the
+        schema now says so in three places. Under the old assertion, telling
+        the truth failed the test.
+
+        What must never come back is the *pair*.
+        """
+        refusals = _REFUSALS.findall(GRAPH_SCHEMA_DESCRIPTION)
+        requirements = _REQUIREMENTS.findall(GRAPH_SCHEMA_DESCRIPTION)
+        assert not (refusals and requirements), (
+            f"the schema refuses the project filter ({refusals}) and requires it "
+            f"({requirements}) — the agent cannot satisfy both"
         )
+
+    def test_it_states_the_filter_is_unnecessary(self):
+        """The current doctrine, pinned so a revert is visible.
+
+        22,801 of 22,802 recorded Cypher calls omit the predicate, so the
+        demonstrations and the instruction now agree. If this fails, check
+        ``cypher_guard`` — the two move together.
+        """
+        assert "you do not need it" in GRAPH_SCHEMA_DESCRIPTION.lower()
+        assert "process boundary is what" in GRAPH_SCHEMA_DESCRIPTION
 
     def test_every_scoping_instruction_names_the_bound_parameter(self):
         """``$proj`` is injected by the service; the agent never supplies it.
