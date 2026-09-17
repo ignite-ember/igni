@@ -75,6 +75,14 @@ FILE_EDIT_TOOLS: frozenset[str] = frozenset(
 FILE_READ_TOOLS: frozenset[str] = frozenset(
     {
         "WebSearch",
+        # The function names the toolkit registers. Until these were here the
+        # set named only the pre-rename ``duckduckgo_*`` spellings, so plan
+        # mode auto-allowed two functions that do not exist and prompted for
+        # the two that do — while reading as though web search were allowed.
+        # The WebFetch rows below were correct, which is why only half of this
+        # block was wrong and none of it looked it.
+        "web_search",
+        "search_news",
         "duckduckgo_search",
         "duckduckgo_news",
         "WebFetch",

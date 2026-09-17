@@ -503,6 +503,7 @@ class GroupPolicyCache:
                 active["plugins"].add(o.entry_name)
 
         self._write_hooks(hooks)
+        self._write_settings(pack)
         self._prune(active)
 
         meta = {
@@ -515,6 +516,49 @@ class GroupPolicyCache:
             "theme": pack.theme,
         }
         (self._cache_dir / "pack_meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    #: Where the pack's ``settings`` entries are persisted, merged.
+    SETTINGS_FILE = "group_settings.json"
+
+    def _write_settings(self, pack: GroupPolicyPack) -> None:
+        """Persist the pack's merged ``settings`` entries.
+
+        Every other kind owns files and is written above; ``settings`` fell off
+        the end of that if/elif and was never written anywhere. The docstring
+        said they are "merged as config rather than materialised at all", which
+        is true of the live pack and false across a restart — settings are
+        loaded before the backend holds a token, so the only pack a fetcher can
+        consult at that moment is one on disk. With nothing on disk there was
+        nothing to consult, which is half of why ``GroupPolicyTier`` has never
+        run in production.
+
+        Written even when empty, and removed when the pack carries no settings,
+        so a group that *withdraws* a policy does not leave the last one in
+        force forever.
+        """
+        path = self._cache_dir / self.SETTINGS_FILE
+        merged = pack.to_settings_dict()
+        if not merged:
+            path.unlink(missing_ok=True)
+            return
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(merged, indent=2, sort_keys=True), encoding="utf-8")
+
+    def cached_settings(self) -> dict:
+        """The last persisted ``settings`` policy, or ``{}``.
+
+        This is the disk-backed half a ``group_policy_fetcher`` needs: settings
+        load runs before any network call is possible, so a fetcher that hits
+        the portal cannot answer in time. Unreadable or malformed cache reads
+        as no policy — a settings load must not fail because a cache file was
+        truncated by a crash.
+        """
+        path = self._cache_dir / self.SETTINGS_FILE
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return loaded if isinstance(loaded, dict) else {}
 
     def _write_plain(self, o: GroupPolicyEntry) -> None:
         """One entry, one file, at the path its loader looks in."""

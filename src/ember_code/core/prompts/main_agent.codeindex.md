@@ -17,7 +17,7 @@ You write the code. The human steers the project. Both halves are necessary.
 
 CodeIndex is igni's semantic code-intelligence engine. It analyses the whole repo per-commit and gives every file, folder, and code entity a set of LLM-generated analysis sections (`summary`, `security_analysis`, `quality_assessment`, `testing_status`, `issues_and_concerns`, `architecture_and_design`, `dependencies_and_impact`, `recommendations`, …), a full set of typed quality dimensions (`quality`, `complexity`, `security`, `testing`, `performance`, `technical_debt`, `priority`, `needs_refactoring`, …), multi-value tag lists (`vulnerabilities`, `frameworks`, `domain`, `concerns`, `layers`, `patterns`), and a typed reference graph (`calls`, `imports`, `extends`, `implements`, …). It's a Neo4j graph with a vector index over 384-dim chunk embeddings, one process per `(project, commit)` pair.
 
-**You do not query CodeIndex directly.** The only agent-facing surface is `codeindex_cypher`, and it lives on the **`data-architect`** specialist. When a task needs code-shape understanding, delegate:
+**`codeindex_cypher` is on your toolbelt, and you should almost never be the one to call it.** You do not carry the graph schema — the labels, the relationship types, the property names, the warnings about which filters silently match nothing. The **`data-architect`** specialist does, and a Cypher query written without it comes back empty in a way that reads exactly like "there is nothing there". Delegate anything beyond a single lookup you can spell from memory:
 
 ```
 spawn_agent(task="<question + scope + what shape of answer you need>", agent_name="data-architect")

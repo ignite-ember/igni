@@ -26,8 +26,32 @@ from ember_code.core.agents.schemas import AgentDefinition
 from ember_code.core.code_index.index import CodeIndex
 from ember_code.core.tools.codeindex.tool import CodeIndexTools
 
-AGENTS_DIR = Path(__file__).resolve().parent.parent / "agents"
+#: What ships — ``src/ember_code/bundled_agents/`` is what the wheel carries and
+#: what a user's session loads. The repo-root ``agents/`` directory is the
+#: editing copy, and this file used to pin that one: SWP-13 found the graph-
+#: schema placeholder present in ``agents/`` and absent from all eight bundled
+#: files, with a passing test over the copy nobody runs. Pinned to the shipped
+#: tree, with the two asserted identical so the drift cannot open again.
+AGENTS_DIR = Path(__file__).resolve().parent.parent / "src" / "ember_code" / "bundled_agents"
+REPO_AGENTS_DIR = Path(__file__).resolve().parent.parent / "agents"
 DATA_ARCH = AGENTS_DIR / "data-architect.codeindex.md"
+
+
+class TestTheShippedCopyIsTheOneTested:
+    def test_the_bundled_file_is_what_exists(self):
+        assert DATA_ARCH.is_file(), f"{DATA_ARCH} is what a session loads and it is missing"
+
+    def test_the_editing_copy_has_not_drifted_from_it(self):
+        """The two are maintained by hand. A test over only one of them is how
+        the schema placeholder came to be in the repo copy and in none of the
+        shipped ones."""
+        repo_copy = REPO_AGENTS_DIR / "data-architect.codeindex.md"
+        if not repo_copy.is_file():
+            return
+        assert repo_copy.read_text() == DATA_ARCH.read_text(), (
+            "agents/data-architect.codeindex.md and the bundled copy differ — "
+            "the bundled one is what ships"
+        )
 
 
 class TestDataArchitectParsing:
