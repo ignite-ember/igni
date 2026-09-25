@@ -6,7 +6,7 @@ import { PageContext, PageShell, type PanelLevels } from "../PageShell";
  * The frame a panel renders in — a modal, or a page.
  *
  * Which one is not the panel's business. Nine of the thirteen panels
- * that use this are destinations you browse (plugins, knowledge,
+ * that use this are destinations you browse (plugins, artifacts,
  * codeindex, …) and now render as pages with a breadcrumb trail; the
  * rest are dialogs and still render as this modal. The panels
  * themselves did not change: each one passes the same `title`,

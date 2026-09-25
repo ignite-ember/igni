@@ -152,8 +152,8 @@ guardrails:
   # prompt_injection: false       # Warn on prompt injection patterns
 
 knowledge:
-  enabled: true                   # Weaviate-backed knowledge base
-  collection_name: ember_knowledge
+  enabled: true                   # Weaviate-backed artifact store
+  collection_name: igni_artifacts
 
 learning:
   enabled: true                   # Learn user preferences, project context, entities across sessions

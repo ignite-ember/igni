@@ -20,11 +20,11 @@ neo4j scaffolding.
    leak fix, `start_new_session` consistency).
 5. `38891fc` — `CodeIndex(runtime=...)` derives a per-commit client
    from the runtime.
-6. `7c2233a` — `KnowledgeIndex` is backend-pluggable (chroma |
+6. `7c2233a` — `ArtifactIndex` is backend-pluggable (chroma |
    neo4j).
-7. `bd7a804` — `Neo4jKnowledgeClient` (per-project knowledge store
+7. `bd7a804` — `Neo4jArtifactClient` (per-project knowledge store
    on neo4j, with e2e round-trip test).
-8. `f1cf157` — `Session.attach_knowledge_neo4j(runtime)`.
+8. `f1cf157` — `Session.attach_artifacts_neo4j(runtime)`.
 9. `2e686ee` — `SessionOrchestrator.attach_neo4j()` wires the
    runtime at BE boot. Initially gated on `IGNI_NEO4J_RUNTIME`;
    later flipped to default-on (see `latest` — the gate is now
@@ -59,18 +59,18 @@ neo4j scaffolding.
       is configured; raise `NotImplementedError` otherwise.
     - `core/knowledge/index.py` rewritten to require
       `neo4j_client=` (chroma branch deleted). Public methods all
-      route through `Neo4jKnowledgeClient`. Added
+      route through `Neo4jArtifactClient`. Added
       `_require_embedder()` helper.
     - `core/embedder.py` (new) — `Embedder` protocol + `ZeroEmbedder`
       / `HashEmbedder` / `LiveEmbedder` (wraps `core.embeddings`).
     - `backend/session_orchestrator.py` — `attach_neo4j()` constructs
-      the `Neo4jRuntime` and calls both `Session.attach_knowledge_neo4j`
+      the `Neo4jRuntime` and calls both `Session.attach_artifacts_neo4j`
       and `Session.attach_codeindex_neo4j`.
     - `backend/app.py` — calls `await orchestrator.attach_neo4j()`
       after `setup_pool()`.
     - `core/session/core.py` — `Session._init_knowledge` defers the
       default chroma path (which is gone); production installs neo4j
-      later via `attach_knowledge_neo4j`. New `attach_codeindex_neo4j`
+      later via `attach_artifacts_neo4j`. New `attach_codeindex_neo4j`
       mirrors the knowledge attach.
     - `migrations/versions/d4e5f6a7b8c9_drop_code_index_tables.py`
       — re-enabled (was `.py.disabled`).
@@ -98,8 +98,8 @@ neo4j scaffolding.
 
 **Knowledge chroma tests:**
 - `tests/test_knowledge.py`
-- `tests/test_knowledge_index.py`
-- `tests/test_knowledge_ops.py`
+- `tests/test_artifact_index.py`
+- `tests/test_artifact_ops.py`
 - `tests/test_knowledge_ingest_helpers.py`
 - `tests/test_knowledge_tools.py`
 
@@ -115,14 +115,14 @@ neo4j scaffolding.
   path is gone; the test was converted to a docstring explaining
   why.
 
-**Replaced in `test_knowledge_index_neo4j_seam.py`:**
-- `test_knowledge_index_without_neo4j_falls_back_to_chroma` — the
+**Replaced in `test_artifact_index_neo4j_seam.py`:**
+- `test_artifact_index_without_neo4j_falls_back_to_chroma` — the
   chroma path is gone; replaced with
-  `test_knowledge_index_without_neo4j_raises` (asserts `TypeError`
+  `test_artifact_index_without_neo4j_raises` (asserts `TypeError`
   on the now-required `neo4j_client=` kwarg).
 
 **Updated in `test_session_neo4j_knowledge.py`:**
-- `test_session_attach_knowledge_neo4j_routes_through_neo4j` —
+- `test_session_attach_artifacts_neo4j_routes_through_neo4j` —
   constructor now leaves `session.knowledge = None` (deferred
   attach) instead of the chroma-backed default.
 
@@ -154,7 +154,7 @@ until now.
 
 - **`SiblingProjectSearcher` for neo4j** — the cross-project
   knowledge search was chroma-specific. The current
-  `KnowledgeIndex.search` ignores `cross_project=True` with a
+  `ArtifactIndex.search` ignores `cross_project=True` with a
   vestigial parameter.
 - **`embeddings.py` comment cleanup** — the docstring still
   references the deleted `chroma_client_factory.py`; one

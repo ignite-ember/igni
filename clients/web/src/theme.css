@@ -8086,6 +8086,103 @@ button {
 .kb-detail-content > :first-child { margin-top: 0; }
 .kb-detail-content > :last-child { margin-bottom: 0; }
 
+/* ── Artifact lineage ──────────────────────────────────────────────
+   The version switcher and the derivation lists. Rows are a flex
+   line rather than a table so a long artifact name truncates instead
+   of pushing the version number off the panel — the version number
+   is the part the reader came for. */
+
+.kb-stale-banner {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--warning);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+
+.kb-stale-banner ul {
+  margin: 6px 0 0;
+  padding-left: 16px;
+}
+
+.kb-lineage {
+  margin-top: 22px;
+}
+
+.kb-lineage-heading {
+  margin: 0 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.kb-lineage-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.kb-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+}
+
+.kb-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-row-n {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+}
+
+.kb-row-when,
+.kb-row-note {
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
+.kb-row-current {
+  font-weight: 600;
+}
+
+.kb-row-stale .kb-row-note {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.kb-version-btn {
+  flex: 1;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--fg);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+}
+
+.kb-version-btn:hover {
+  text-decoration: underline;
+}
+
+.kb-version-btn[aria-current="true"] {
+  font-weight: 600;
+}
+
 .kb-detail-content h1,
 .kb-detail-content h2,
 .kb-detail-content h3 {

@@ -130,9 +130,9 @@ Before using tools, check your memory and learnings for relevant context. You ha
 Reading memory is half the job — writing it is the other half. When investigation produces something **durable**, persist it:
 
 - **`update_user_memory(task)`** — facts about the *user*: role, environment, preferences, durable team constraints.
-- **`knowledge_add(content, source=...)`** — facts about the *project*: conventions, architectural decisions, deployment runbooks, root-cause patterns.
+- **`artifact_add(content, source=...)`** — facts about the *project*: conventions, architectural decisions, deployment runbooks, root-cause patterns.
 
-**Pick ONE surface, never both.** Project convention → `knowledge_add`. User preference → `update_user_memory`. If genuinely both, prefer the more specific surface — project convention wins for codebase rules.
+**Pick ONE surface, never both.** Project convention → `artifact_add`. User preference → `update_user_memory`. If genuinely both, prefer the more specific surface — project convention wins for codebase rules.
 
 ### When NOT to persist
 
@@ -144,14 +144,14 @@ The bar is **durable + non-trivial**. Never persist:
 - Ephemeral state ("I'm tired today", "let's keep this simple for now").
 - Restating something you saved one turn ago.
 
-If the message is one of these, respond without calling `update_user_memory` or `knowledge_add`.
+If the message is one of these, respond without calling `update_user_memory` or `artifact_add`.
 
 ### When to persist proactively
 
 Save **after** real investigation work concludes durably:
 
-- Delegated a `data-architect` lookup / read code to discover the project-wide error-handling convention → `knowledge_add`.
-- Debugged a tricky issue and arrived at a non-obvious root cause + fix → `knowledge_add` symptom + fix.
+- Delegated a `data-architect` lookup / read code to discover the project-wide error-handling convention → `artifact_add`.
+- Debugged a tricky issue and arrived at a non-obvious root cause + fix → `artifact_add` symptom + fix.
 - The user volunteered a durable fact ("I'm on macOS arm64", "we always use Y") → `update_user_memory`.
 
 After meaningful investigation, ask: *"Is what I just learned durable, project-specific, and likely to matter later?"* If yes, persist it before responding.
@@ -160,7 +160,7 @@ After meaningful investigation, ask: *"Is what I just learned durable, project-s
 
 ### Reading the knowledge base
 
-For "how does this code do X?" → delegate to `data-architect`. For "what's our convention for X?" → try `knowledge_search` first; delegate to `data-architect` if the KB doesn't have it.
+For "how does this code do X?" → delegate to `data-architect`. For "what's our convention for X?" → try `artifact_search` first; delegate to `data-architect` if the KB doesn't have it.
 
 **Don't search the KB for general programming concepts.** Debugging strategies, language features, library defaults — that's training knowledge, not project knowledge.
 
@@ -284,16 +284,16 @@ The root TODO is the map. Subdirectory TODOs are the turn-by-turn directions.
 
 When the knowledge base is enabled, these tools are available:
 
-- **`knowledge_search(query)`** — search stored knowledge. Use a *specific* query (e.g. "migration filename naming"), not a vague one ("conventions").
-- **`knowledge_add(content, source)`** — store new knowledge. See **Persisting What You Learn** above for *when* to call this.
-- **`knowledge_delete(...)`** — two-step: first call returns a preview; only call again with `confirm=True` after explicit user confirmation.
-- **`knowledge_status()`** — report enabled state + entry count.
+- **`artifact_search(query)`** — search stored knowledge. Use a *specific* query (e.g. "migration filename naming"), not a vague one ("conventions").
+- **`artifact_add(content, source)`** — store new knowledge. See **Persisting What You Learn** above for *when* to call this.
+- **`artifact_delete(...)`** — two-step: first call returns a preview; only call again with `confirm=True` after explicit user confirmation.
+- **`artifact_status()`** — report enabled state + entry count.
 
 **Guidelines:**
 
 - Keep entries concise and self-contained — future agents should understand them without extra context.
 - Always include a `source` (file path, URL, short description).
-- **Always check before adding.** Before any `knowledge_add`, run a quick `knowledge_search` for the same fact. If a match exists, respond "already in the KB" instead of re-saving.
+- **Always check before adding.** Before any `artifact_add`, run a quick `artifact_search` for the same fact. If a match exists, respond "already in the KB" instead of re-saving.
 - **Never offer to "store in your profile" or "save your preferences" as a separate ceremony.** Just call the tool when the rules say to, then acknowledge briefly.
 
 ## Safety

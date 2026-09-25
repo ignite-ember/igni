@@ -218,14 +218,14 @@ describe("applyEvent", () => {
   });
 
   it("info event appends an info item", () => {
-    // Info events surface BE-side notifications (e.g. "Knowledge
+    // Info events surface BE-side notifications (e.g. "Artifacts
     // sync loaded 5 entries"). Distinct from error styling.
     const items = play([
-      { type: "info", text: "knowledge sync complete" } as ServerMessage,
+      { type: "info", text: "artifacts sync complete" } as ServerMessage,
     ]);
     expect(items).toHaveLength(1);
     expect(items[0].kind).toBe("info");
-    expect((items[0] as { text: string }).text).toBe("knowledge sync complete");
+    expect((items[0] as { text: string }).text).toBe("artifacts sync complete");
   });
 
   it("unknown event types fall through (default branch — no-op)", () => {

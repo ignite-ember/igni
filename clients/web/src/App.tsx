@@ -83,7 +83,7 @@ import { CodeIndexPanel } from "./components/panels/CodeIndexPanel";
 import { FilePreview } from "./components/FilePreview";
 import { FirstRunSetup } from "./components/FirstRunSetup";
 import { HooksPanel } from "./components/panels/HooksPanel";
-import { KnowledgePanel } from "./components/panels/KnowledgePanel";
+import { ArtifactPanel } from "./components/panels/ArtifactPanel";
 import { Toasts, type Toast } from "./components/Toasts";
 import { UpdatePrompt } from "./components/UpdatePrompt";
 import { RetryBanner } from "./components/RetryBanner";
@@ -133,7 +133,7 @@ interface UpdateInfo {
 const SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
   { kind: "plugins", label: "Plugins" },
   { kind: "mcp", label: "MCPs" },
-  { kind: "knowledge", label: "Knowledge" },
+  { kind: "artifacts", label: "Artifacts" },
 ];
 
 /** Entries for the header tools menu — each opens its feature's UI
@@ -144,7 +144,7 @@ const TOOLS_MENU: { label: string; command: string; desc: string }[] = [
   { label: "Agents", command: "/agents", desc: "agent pool" },
   { label: "Skills", command: "/skills", desc: "slash-command workflows" },
   { label: "Plugins", command: "/plugins", desc: "marketplaces & installs" },
-  { label: "Knowledge", command: "/knowledge", desc: "project knowledge base" },
+  { label: "Artifacts", command: "/artifacts", desc: "project artifacts" },
   { label: "Hooks", command: "/hooks", desc: "pre/post tool hooks" },
   { label: "Loop", command: "/loop", desc: "recurring prompt status" },
   {
@@ -2417,8 +2417,8 @@ export default function App() {
           case "plugins":
             goPage({ kind: "plugins", label: "Plugins" });
             return;
-          case "knowledge":
-            goPage({ kind: "knowledge", label: "Knowledge" });
+          case "artifacts":
+            goPage({ kind: "artifacts", label: "Artifacts" });
             return;
           case "hooks":
             goPage({ kind: "hooks", label: "Hooks" });
@@ -2974,7 +2974,7 @@ export default function App() {
                         ["/loop", "Repeat a prompt across a batch until done"],
                         ["/mcp", "Plug in external tools and data sources"],
                         ["/plugins", "Install skills, agents and hooks"],
-                        ["/knowledge", "A knowledge base carried in git"],
+                        ["/artifacts", "A artifacts carried in git"],
                       ] as const
                     ).map(([cmd, desc]) => (
                       <div
@@ -3113,8 +3113,8 @@ export default function App() {
             {page.kind === "plugins" && (
               <PluginsPanel client={client} onClose={goChat} />
             )}
-            {page.kind === "knowledge" && (
-              <KnowledgePanel client={client} onClose={goChat} />
+            {page.kind === "artifacts" && (
+              <ArtifactPanel client={client} onClose={goChat} />
             )}
             {page.kind === "codeindex" && (
               <CodeIndexPanel client={client} onClose={goChat} />

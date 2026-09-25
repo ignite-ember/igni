@@ -32,7 +32,7 @@
 | `session/runner.py` | `test_session_runner.py` | 3 | Runs message and prints response, fires session start/end hooks, passes project_dir and additional_dirs | Signal handling, graceful shutdown |
 | `session/persistence.py` | `test_persistence.py` | 12 | `SessionPersistence` construction, `list_sessions` (empty/formatted/tuple/exception), `auto_name`, `rename`, `get_name` | Corrupted file handling |
 | `session/commands.py` | `test_commands.py` | 10 | Dispatch (sync/async/unknown), all commands registered, `/help`, `/agents`, `/clear`, `/config`, `/sync-knowledge` (enabled/disabled) | — |
-| `session/knowledge_ops.py` | `test_knowledge_ops.py` | 10 | `share_enabled` conditions, `add` (no knowledge/no content/success), `search` (empty/results), `status` (disabled/enabled) | — |
+| `session/artifact_ops.py` | `test_artifact_ops.py` | 10 | `share_enabled` conditions, `add` (no knowledge/no content/success), `search` (empty/results), `status` (disabled/enabled) | — |
 | `session/memory_ops.py` | `test_memory_ops.py` | 6 | `create_manager` (no db), `get_memories` (no db/formatted/exception), `optimize` (no manager/not enough) | — |
 | `session/interactive.py` | — | 0 | — | Interactive REPL loop, input handling |
 
@@ -80,9 +80,9 @@
 |---|---|---:|---|---|
 | `knowledge/embedder.py` | `test_knowledge.py` | 59 | `EmberEmbedder`, sync/async embedding, error handling, batch processing | — |
 | `knowledge/embedder_registry.py` | `test_knowledge.py` | (shared) | Registry for embedder types | — |
-| `knowledge/manager.py` | `test_knowledge.py` | (shared) | `KnowledgeManager`, embedder creation, disabled knowledge mode | — |
+| `knowledge/manager.py` | `test_knowledge.py` | (shared) | `ArtifactManager`, embedder creation, disabled knowledge mode | — |
 | `knowledge/models.py` | `test_knowledge.py` | (shared) | All data models, results, filters | — |
-| `knowledge/sync.py` | `test_knowledge_sync.py` | 34 | `KnowledgeSyncer`, bidirectional YAML/DB sync, entry creation, deletion | Conflict resolution, large file sets |
+| `knowledge/sync.py` | `test_knowledge_sync.py` | 34 | `ArtifactSyncer`, bidirectional YAML/DB sync, entry creation, deletion | Conflict resolution, large file sets |
 | `knowledge/vector_store.py` | `test_knowledge_sync.py` | (shared) | `VectorStoreAdapter`, ChromaDB integration | — |
 
 ### MCP (95 tests) — Well Covered

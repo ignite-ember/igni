@@ -62,7 +62,7 @@ class CodeIndexConfig(BaseModel):
     #:
     #:     {"code_index": {"enabled": false}}
     #:
-    #: **This alone does not remove Neo4j.** ``knowledge.enabled`` is
+    #: **This alone does not remove Neo4j.** ``artifacts.enabled`` is
     #: backed by the same sidecar, and the sidecar is only skipped when
     #: neither feature wants it. A deployment that wants no graph
     #: database at all turns off both.

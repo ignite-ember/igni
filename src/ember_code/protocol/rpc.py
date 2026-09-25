@@ -166,7 +166,7 @@ class RpcMethod(StrEnum):
     GET_OUTPUT_STYLES = "get_output_styles"
 
     # ── Knowledge ─────────────────────────────────────────────────
-    AUTO_SYNC_KNOWLEDGE = "auto_sync_knowledge"
+    AUTO_SYNC_ARTIFACTS = "auto_sync_artifacts"
 
     # ── Attachments (drag/drop, paste, OS picker) ────────────────
     UPLOAD_ATTACHMENT = "upload_attachment"
@@ -231,13 +231,27 @@ class RpcMethod(StrEnum):
     # ── Skills ────────────────────────────────────────────────────
     GET_SKILL_DETAILS = "get_skill_details"
 
-    # ── Knowledge ─────────────────────────────────────────────────
-    GET_KNOWLEDGE_STATUS = "get_knowledge_status"
-    KNOWLEDGE_SEARCH = "knowledge_search"
-    KNOWLEDGE_ADD = "knowledge_add"
-    KNOWLEDGE_LIST = "knowledge_list"
-    KNOWLEDGE_GET = "knowledge_get"
-    KNOWLEDGE_REMOVE = "knowledge_remove"
+    # ── Artifacts ─────────────────────────────────────────────────
+    GET_ARTIFACT_STATUS = "get_artifact_status"
+    ARTIFACT_SEARCH = "artifact_search"
+    ARTIFACT_ADD = "artifact_add"
+    ARTIFACT_LIST = "artifact_list"
+    ARTIFACT_GET = "artifact_get"
+    ARTIFACT_REMOVE = "artifact_remove"
+    # Versioning + lineage. Separate RPCs rather than fields on
+    # ``artifact_get`` because the panel fetches them on different
+    # interactions — opening a document, opening its history — and
+    # folding them together would make every document open pay for a
+    # lineage walk nobody asked for.
+    ARTIFACT_VERSIONS = "artifact_versions"
+    ARTIFACT_LINEAGE = "artifact_lineage"
+    ARTIFACT_STALE = "artifact_stale"
+    ARTIFACT_CONFIRM_SOURCE = "artifact_confirm_source"
+    ARTIFACT_DISMISS_SOURCE = "artifact_dismiss_source"
+    ARTIFACT_RECONCILE_DIFF = "artifact_reconcile_diff"
+    ARTIFACT_PREVIEW = "artifact_preview"
+    ARTIFACT_EXPORT = "artifact_export"
+    ARTIFACT_SHARE = "artifact_share"
 
     # ── File access (sandboxed to project/.igni) ────────────────
     READ_FILE = "read_file"

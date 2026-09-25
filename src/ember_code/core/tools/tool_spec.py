@@ -471,7 +471,7 @@ class ToolSpecCatalog:
 
     # Registry names the resolver skips silently — they're pseudo-tools
     # handled elsewhere in the agent builder (Orchestrate ->
-    # ``OrchestrateTools``, Knowledge -> ``KnowledgeTools``) rather than
+    # ``OrchestrateTools``, Knowledge -> ``ArtifactTools``) rather than
     # by the built-in registry. Kept on the catalog so ``resolve``
     # doesn't need a magic-string check.
     RESERVED_NON_TOOL_NAMES: ClassVar[frozenset[str]] = frozenset({"Orchestrate", "Knowledge"})

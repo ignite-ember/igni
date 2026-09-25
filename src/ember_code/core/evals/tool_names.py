@@ -60,14 +60,14 @@ class ToolNameCatalog:
             "list_scheduled_tasks",
             "cancel_scheduled_task",
         ],
-        # KnowledgeTools — pass through individual function names. Listed
+        # ArtifactTools — pass through individual function names. Listed
         # here so eval YAMLs can also use the umbrella name "Knowledge"
         # if a case wants to allow any of the three operations.
         "Knowledge": [
-            "knowledge_search",
-            "knowledge_add",
-            "knowledge_delete",
-            "knowledge_status",
+            "artifact_search",
+            "artifact_add",
+            "artifact_delete",
+            "artifact_status",
         ],
     }
 
@@ -80,9 +80,9 @@ class ToolNameCatalog:
     #: spawn_*, etc.) — those should be explicit in the case YAML.
     DEFAULT_ALWAYS_ALLOWED_SYSTEM_TOOLS: ClassVar[tuple[str, ...]] = (
         "update_user_memory",
-        "knowledge_add",
-        "knowledge_search",
-        "knowledge_status",
+        "artifact_add",
+        "artifact_search",
+        "artifact_status",
     )
 
     def __init__(

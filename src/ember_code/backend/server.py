@@ -53,12 +53,12 @@ from ember_code.backend.schemas_hitl import ToolCallArgs
 from ember_code.backend.schemas_pause import PauseHandleResult
 from ember_code.backend.schemas_run import CancelAgentRunResult, MediaAttachments
 from ember_code.backend.schemas_sessions import AutoNameResult
+from ember_code.backend.server_artifacts import ArtifactController
 from ember_code.backend.server_auth import AuthController
 from ember_code.backend.server_codeindex import CodeIndexController
 from ember_code.backend.server_context import ContextController
 from ember_code.backend.server_files import FilesController
 from ember_code.backend.server_history import ChatHistoryRebuilder
-from ember_code.backend.server_knowledge import KnowledgeController
 from ember_code.backend.server_lifecycle import LifecycleController
 from ember_code.backend.server_loop import LoopController
 from ember_code.backend.server_mcp import McpController
@@ -73,6 +73,14 @@ from ember_code.core.config.user_config_store import UserConfigStore
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
+    from ember_code.backend.schemas_artifacts import (
+        ArtifactExportResult,
+        ArtifactLineageView,
+        ArtifactShareResult,
+        ArtifactStaleRow,
+        ArtifactStatus,
+        ArtifactVersionRow,
+    )
     from ember_code.backend.schemas_codeindex_rpc import (
         CodeIndexActivityEntry,
         CodeIndexCleanResult,
@@ -89,7 +97,6 @@ if TYPE_CHECKING:
     )
     from ember_code.backend.schemas_history import ChatSearchHit
     from ember_code.backend.schemas_hitl import RunRequirement
-    from ember_code.backend.schemas_knowledge import KnowledgeStatus
     from ember_code.backend.schemas_lifecycle import RehydrateOutcome
     from ember_code.backend.schemas_loop import LoopStatusSnapshot
     from ember_code.backend.schemas_mcp import (
@@ -112,15 +119,15 @@ if TYPE_CHECKING:
     )
     from ember_code.backend.schemas_search import SearchCodeResult
     from ember_code.backend.schemas_visualization import VisualizationActionResult
+    from ember_code.backend.server_artifacts import (
+        ArtifactGetResult,
+        ArtifactHit,
+        ArtifactListEntry,
+        ArtifactRemoveResult,
+    )
     from ember_code.backend.server_files import (
         ReadFileResult,
         UploadAttachmentResult,
-    )
-    from ember_code.backend.server_knowledge import (
-        KnowledgeGetResult,
-        KnowledgeHit,
-        KnowledgeListEntry,
-        KnowledgeRemoveResult,
     )
     from ember_code.core.agents import AgentInfo
     from ember_code.core.config.settings import Settings
@@ -308,15 +315,15 @@ class BackendServer:
         return cached
 
     @property
-    def knowledge(self) -> KnowledgeController:
-        """Knowledge-base controller."""
+    def artifacts(self) -> ArtifactController:
+        """Artifact controller."""
         ctrl = self._controllers_or_partial()
         if ctrl is not None:
-            return ctrl.knowledge
-        cached = getattr(self, "_knowledge_ctrl", None)
+            return ctrl.artifacts
+        cached = getattr(self, "_artifacts_ctrl", None)
         if cached is None:
-            cached = KnowledgeController(self._session)
-            self._knowledge_ctrl = cached
+            cached = ArtifactController(self._session)
+            self._artifacts_ctrl = cached
         return cached
 
     @property
@@ -940,33 +947,78 @@ class BackendServer:
         """See :meth:`SearchController.search_code`."""
         return self.search.search_code(snippet, max_results)
 
-    async def get_knowledge_status(self) -> KnowledgeStatus:
-        """See :meth:`KnowledgeController.status`."""
-        return await self.knowledge.status()
+    async def get_artifact_status(self) -> ArtifactStatus:
+        """See :meth:`ArtifactController.status`."""
+        return await self.artifacts.status()
 
-    async def knowledge_search(self, query: str) -> list[KnowledgeHit]:
-        """See :meth:`KnowledgeController.search`."""
-        return await self.knowledge.search(query)
+    async def artifact_search(self, query: str) -> list[ArtifactHit]:
+        """See :meth:`ArtifactController.search`."""
+        return await self.artifacts.search(query)
 
-    async def knowledge_add(self, source: str) -> msg.Info:
-        """See :meth:`KnowledgeController.add`."""
-        return await self.knowledge.add(source)
+    async def artifact_add(self, source: str) -> msg.Info:
+        """See :meth:`ArtifactController.add`."""
+        return await self.artifacts.add(source)
 
-    async def knowledge_list(self) -> list[KnowledgeListEntry]:
-        """See :meth:`KnowledgeController.list`."""
-        return await self.knowledge.list()
+    async def artifact_list(self) -> list[ArtifactListEntry]:
+        """See :meth:`ArtifactController.list`."""
+        return await self.artifacts.list()
 
-    async def knowledge_get(self, entry_id: str) -> KnowledgeGetResult:
-        """See :meth:`KnowledgeController.get`."""
-        return await self.knowledge.get(entry_id)
+    async def artifact_get(self, entry_id: str, version: int = 0) -> ArtifactGetResult:
+        """See :meth:`ArtifactController.get`."""
+        return await self.artifacts.get(entry_id, version)
 
-    async def knowledge_remove(self, entry_id: str) -> KnowledgeRemoveResult:
-        """See :meth:`KnowledgeController.remove`."""
-        return await self.knowledge.remove(entry_id)
+    async def artifact_versions(self, entry_id: str) -> list[ArtifactVersionRow]:
+        """See :meth:`ArtifactController.versions`."""
+        return await self.artifacts.versions(entry_id)
 
-    async def auto_sync_knowledge(self) -> str | None:
-        """See :meth:`KnowledgeController.auto_sync`."""
-        return await self.knowledge.auto_sync()
+    async def artifact_lineage(self, entry_id: str, version: int = 0) -> ArtifactLineageView:
+        """See :meth:`ArtifactController.lineage`."""
+        return await self.artifacts.lineage(entry_id, version)
+
+    async def artifact_stale(self) -> list[ArtifactStaleRow]:
+        """See :meth:`ArtifactController.stale`."""
+        return await self.artifacts.stale()
+
+    async def artifact_confirm_source(self, entry_id: str, source_id: str) -> bool:
+        """See :meth:`ArtifactController.confirm_source`."""
+        return await self.artifacts.confirm_source(entry_id, source_id)
+
+    async def artifact_dismiss_source(self, entry_id: str, source_id: str) -> bool:
+        """See :meth:`ArtifactController.dismiss_source`."""
+        return await self.artifacts.dismiss_source(entry_id, source_id)
+
+    async def artifact_reconcile_diff(self, entry_id: str, source_id: str) -> str:
+        """See :meth:`ArtifactController.reconcile_diff`."""
+        return await self.artifacts.reconcile_diff(entry_id, source_id)
+
+    async def artifact_preview(self, entry_id: str, version: int = 0) -> str:
+        """See :meth:`ArtifactController.preview`."""
+        return await self.artifacts.preview(entry_id, version)
+
+    async def artifact_export(
+        self, entry_id: str, version: int = 0, destination: str = ""
+    ) -> ArtifactExportResult:
+        """See :meth:`ArtifactController.export`."""
+        return await self.artifacts.export(entry_id, version, destination)
+
+    async def artifact_share(
+        self,
+        entry_id: str,
+        version: int = 0,
+        visibility: str = "private",
+        audience: list[str] | None = None,
+        together_with: list[str] | None = None,
+    ) -> ArtifactShareResult:
+        """See :meth:`ArtifactController.share`."""
+        return await self.artifacts.share(entry_id, version, visibility, audience, together_with)
+
+    async def artifact_remove(self, entry_id: str) -> ArtifactRemoveResult:
+        """See :meth:`ArtifactController.remove`."""
+        return await self.artifacts.remove(entry_id)
+
+    async def auto_sync_artifacts(self) -> str | None:
+        """See :meth:`ArtifactController.auto_sync`."""
+        return await self.artifacts.auto_sync()
 
     # ── Chat history ──────────────────────────────────────────────
 

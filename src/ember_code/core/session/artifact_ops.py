@@ -1,0 +1,359 @@
+"""Session artifact operations — wraps :class:`ArtifactIndex` for the session.
+
+Folds in YAML mirroring on write, returns the higher-level result
+models the tools and CLI consume, and exposes the URL/path ingestion
+path.
+
+The one policy that lives here rather than in the index:
+**a write must declare what it was built on.** The index will happily
+store an artifact with no sources; the session refuses to let an agent
+do it silently, because an uncited derivation is invisible forever and
+the moment to ask is while the agent still knows the answer.
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+from ember_code.core.artifacts.errors import SourcesRequired
+from ember_code.core.artifacts.index import ArtifactIndex
+from ember_code.core.artifacts.ingest import Ingester
+from ember_code.core.artifacts.models import (
+    ArtifactLineage,
+    ArtifactSearchHit,
+    ArtifactSearchResponse,
+    ArtifactStatus,
+    ArtifactSummary,
+    ArtifactSyncResult,
+    ArtifactVersion,
+    ArtifactWriteResult,
+    ReconcilePlan,
+    SourceDeclaration,
+    StaleDependent,
+)
+from ember_code.core.artifacts.sync import ArtifactSyncer
+from ember_code.core.config.settings import Settings
+
+# ``SourcesRequired`` is re-exported because callers reach for it from
+# the manager that raises it, not from the package that defines it.
+__all__ = ["SessionArtifactManager", "SourcesRequired"]
+
+logger = logging.getLogger(__name__)
+
+
+class SessionArtifactManager:
+    """Per-session artifact manager backed by :class:`ArtifactIndex`."""
+
+    def __init__(
+        self,
+        artifacts: ArtifactIndex | None,
+        settings: Settings,
+        project_dir: Path,
+        *,
+        session_id: str = "",
+        author: str = "",
+    ):
+        self.artifacts = artifacts
+        self.settings = settings
+        self.project_dir = project_dir
+        self.session_id = session_id
+        self.author = author
+
+    # ── Config surface ────────────────────────────────────────────────
+
+    def share_enabled(self) -> bool:
+        return (
+            self.settings.artifacts.enabled
+            and self.settings.artifacts.share
+            and self.artifacts is not None
+        )
+
+    def file_path(self) -> Path:
+        return self.project_dir / self.settings.artifacts.share_file
+
+    @property
+    def disabled_message(self) -> str:
+        return "Artifacts are not enabled. Set artifacts.enabled=true in config."
+
+    # ── Writes ────────────────────────────────────────────────────────
+
+    async def create(
+        self,
+        *,
+        name: str,
+        content: str,
+        sources: list[str] | None,
+        kind: str = "note",
+        no_sources_reason: str = "",
+        metadata: dict[str, str] | None = None,
+    ) -> ArtifactWriteResult:
+        """Create v1 of an artifact, declaring its sources."""
+        if self.artifacts is None:
+            return ArtifactWriteResult.fail(self.disabled_message)
+        declaration = self._declare(sources, no_sources_reason=no_sources_reason)
+        result = await self.artifacts.create(
+            name=name,
+            content=content,
+            sources=declaration,
+            kind=kind,
+            author=self.author,
+            session_id=self.session_id,
+            metadata=metadata,
+        )
+        if result.success and self.share_enabled():
+            await self._mirror_to_yaml()
+        return result
+
+    async def revise(
+        self,
+        *,
+        ref: str,
+        content: str,
+        sources: list[str] | None,
+        no_sources_reason: str = "",
+        metadata: dict[str, str] | None = None,
+    ) -> ArtifactWriteResult:
+        """Append a version, declaring what this revision was built on."""
+        if self.artifacts is None:
+            return ArtifactWriteResult.fail(self.disabled_message)
+        declaration = self._declare(sources, no_sources_reason=no_sources_reason)
+        result = await self.artifacts.revise(
+            ref=ref,
+            content=content,
+            sources=declaration,
+            author=self.author,
+            session_id=self.session_id,
+            metadata=metadata,
+        )
+        if result.success and self.share_enabled():
+            await self._mirror_to_yaml()
+        return result
+
+    def _declare(
+        self,
+        sources: list[str] | None,
+        *,
+        no_sources_reason: str,
+    ) -> SourceDeclaration:
+        """Turn the raw ``sources`` argument into a typed declaration.
+
+        An empty list is allowed **only** with a stated reason. Some
+        artifacts genuinely have no antecedent — a first observation,
+        a meeting note — and forcing a fake citation would poison the
+        graph worse than an honest empty one. What is not allowed is
+        omitting the question.
+        """
+        declared = [s for s in (sources or []) if (s or "").strip()]
+        if not declared and not no_sources_reason.strip():
+            raise SourcesRequired(
+                "This write needs a source declaration.",
+                candidates=self.pending_sources(),
+            )
+        return SourceDeclaration.from_raw(declared)
+
+    def pending_sources(self) -> list[str]:
+        """What this session has read, as ``artifact_id@n`` refs."""
+        if self.artifacts is None:
+            return []
+        return [pin.ref for pin in self.artifacts.ledger.candidates()]
+
+    # ── Ingestion ─────────────────────────────────────────────────────
+
+    async def add_url(
+        self,
+        url: str,
+        *,
+        metadata: dict[str, str] | None = None,
+    ) -> ArtifactWriteResult:
+        """Fetch a URL, chunk via the right Agno reader, store it.
+
+        Ingestion is the one write that never asks for sources: the
+        URL *is* the source, and it is recorded as a citation.
+        """
+        if self.artifacts is None:
+            return ArtifactWriteResult.fail(self.disabled_message)
+        result = await Ingester(self.artifacts).add_url(url, metadata=metadata)
+        return ArtifactWriteResult.from_ingest(result, source_label=url)
+
+    async def add_path(
+        self,
+        path: str,
+        *,
+        metadata: dict[str, str] | None = None,
+    ) -> ArtifactWriteResult:
+        """Read a file or directory and store each document."""
+        if self.artifacts is None:
+            return ArtifactWriteResult.fail(self.disabled_message)
+        result = await Ingester(self.artifacts).add_path(path, metadata=metadata)
+        return ArtifactWriteResult.from_ingest(result, source_label=path)
+
+    # ── Reads ─────────────────────────────────────────────────────────
+
+    async def search(
+        self,
+        query: str,
+        limit: int = 5,
+        *,
+        record: bool = True,
+    ) -> ArtifactSearchResponse:
+        if self.artifacts is None:
+            return ArtifactSearchResponse(query=query)
+        try:
+            hits = await self.artifacts.search(query=query, limit=limit, record=record)
+        except Exception as exc:
+            logger.debug("Artifact search failed: %s", exc)
+            return ArtifactSearchResponse(query=query)
+        results = [self._coerce_hit(h) for h in hits]
+        return ArtifactSearchResponse(query=query, results=results, total=len(results))
+
+    @staticmethod
+    def _coerce_hit(hit: object) -> ArtifactSearchHit:
+        """Normalize hits into :class:`ArtifactSearchHit`.
+
+        The index returns typed hits already, but tests stub the
+        facade with dict payloads — accept both.
+        """
+        if isinstance(hit, ArtifactSearchHit):
+            return hit
+        if isinstance(hit, dict):
+            return ArtifactSearchHit(
+                artifact_id=hit.get("artifact_id", ""),
+                name=hit.get("name", ""),
+                kind=hit.get("kind", ""),
+                n=int(hit.get("n", 0) or 0),
+                content=hit.get("content", ""),
+                score=hit.get("score"),
+                project=hit.get("project", ""),
+                metadata={k: str(v) for k, v in (hit.get("metadata") or {}).items()},
+            )
+        return ArtifactSearchHit(artifact_id="")
+
+    async def list_artifacts(self, *, limit: int = 1000) -> list[ArtifactSummary]:
+        if self.artifacts is None:
+            return []
+        return await self.artifacts.list_artifacts(limit=limit)
+
+    async def versions(self, ref: str) -> list[ArtifactVersion]:
+        if self.artifacts is None:
+            return []
+        return await self.artifacts.versions(ref)
+
+    async def version(self, ref: str, n: int = 0) -> ArtifactVersion | None:
+        if self.artifacts is None:
+            return None
+        return await self.artifacts.version(ref, n)
+
+    async def lineage(self, ref: str, n: int = 0) -> ArtifactLineage | None:
+        if self.artifacts is None:
+            return None
+        return await self.artifacts.lineage(ref, n)
+
+    async def stale(self, *, limit: int = 100) -> list[StaleDependent]:
+        if self.artifacts is None:
+            return []
+        return await self.artifacts.stale(limit=limit)
+
+    async def reconcile_plan(self, stale: StaleDependent) -> ReconcilePlan | None:
+        if self.artifacts is None:
+            return None
+        return await self.artifacts.reconcile_plan(stale)
+
+    async def accept_reconcile(
+        self,
+        *,
+        plan: ReconcilePlan,
+        content: str | None = None,
+    ) -> ArtifactWriteResult:
+        if self.artifacts is None:
+            return ArtifactWriteResult.fail(self.disabled_message)
+        result = await self.artifacts.accept_reconcile(
+            plan=plan,
+            content=content,
+            author=self.author,
+            session_id=self.session_id,
+        )
+        if result.success and content and self.share_enabled():
+            await self._mirror_to_yaml()
+        return result
+
+    async def confirm_source(self, *, ref: str, source_ref: str) -> bool:
+        if self.artifacts is None:
+            return False
+        return await self.artifacts.confirm_source(ref=ref, source_ref=source_ref)
+
+    async def dismiss_source(self, *, ref: str, source_ref: str) -> bool:
+        if self.artifacts is None:
+            return False
+        return await self.artifacts.dismiss_source(ref=ref, source_ref=source_ref)
+
+    async def delete(self, ref: str) -> bool:
+        if self.artifacts is None:
+            return False
+        deleted = await self.artifacts.delete(ref)
+        if deleted and self.share_enabled():
+            await self._mirror_to_yaml()
+        return deleted
+
+    async def status(self) -> ArtifactStatus:
+        cfg = self.settings.artifacts
+        if self.artifacts is None:
+            return ArtifactStatus(enabled=False)
+        try:
+            count = await self.artifacts.count()
+            versions = await self.artifacts.version_count()
+            stale = len(await self.artifacts.stale(limit=500))
+            candidates = await self.artifacts.candidate_count()
+        except Exception as exc:
+            logger.warning("Artifact status failed: %s", exc)
+            count = versions = stale = candidates = 0
+        return ArtifactStatus(
+            enabled=True,
+            collection_name=cfg.collection_name,
+            document_count=count,
+            version_count=versions,
+            stale_count=stale,
+            pending_candidates=candidates,
+            embedder="sentence-transformers:all-MiniLM-L6-v2",
+        )
+
+    # ── YAML sync ─────────────────────────────────────────────────────
+
+    async def sync_from_file(self) -> ArtifactSyncResult:
+        if not self.share_enabled():
+            return ArtifactSyncResult(
+                direction="file_to_db", message="Artifact sharing is not enabled."
+            )
+        try:
+            return await ArtifactSyncer(
+                file_path=self.file_path(), artifacts=self.artifacts
+            ).sync_file_to_db()
+        except Exception as exc:
+            return ArtifactSyncResult(direction="file_to_db", error=str(exc))
+
+    async def sync_to_file(self) -> ArtifactSyncResult:
+        if not self.share_enabled():
+            return ArtifactSyncResult(
+                direction="db_to_file", message="Artifact sharing is not enabled."
+            )
+        try:
+            return await ArtifactSyncer(
+                file_path=self.file_path(), artifacts=self.artifacts
+            ).sync_db_to_file()
+        except Exception as exc:
+            return ArtifactSyncResult(direction="db_to_file", error=str(exc))
+
+    async def sync_bidirectional(self) -> list[ArtifactSyncResult]:
+        return [await self.sync_from_file(), await self.sync_to_file()]
+
+    async def _mirror_to_yaml(self) -> None:
+        """Rewrite the shared file from the store's heads.
+
+        A full rewrite rather than an append: the file carries head
+        content only, so after a revision the row that is already
+        there is the *stale* one, and appending would leave both.
+        """
+        try:
+            await self.sync_to_file()
+        except Exception as exc:
+            logger.warning("Artifact YAML mirror failed: %s", exc)

@@ -630,7 +630,7 @@ class Neo4jRuntime:
             popped = self._processes.pop(key)
         return await self._shutdown_one(popped, project_hash, commit_sha)
 
-    async def start_for_knowledge(self, project_hash: str) -> Neo4jEndpoints:
+    async def start_for_artifacts(self, project_hash: str) -> Neo4jEndpoints:
         """Ensure a Neo4j process exists for ``(project, knowledge)``.
 
         Knowledge is per-project (not per-commit) — the process
@@ -638,7 +638,7 @@ class Neo4jRuntime:
         commit switches. Refcount bumps on every call; the
         process dies only when no BE is using it.
         """
-        key = (project_hash, "knowledge")
+        key = (project_hash, "artifacts")
         async with self._lock:
             state = self._processes.get(key)
             if state is not None and state.proc.returncode is None:
@@ -684,13 +684,13 @@ class Neo4jRuntime:
             self._save_runtime(state)
             return state.endpoints
 
-    def driver_for_knowledge(self, project_hash: str) -> AsyncDriver:
+    def driver_for_artifacts(self, project_hash: str) -> AsyncDriver:
         """Return the per-``(project, knowledge)`` driver."""
-        state = self._processes.get((project_hash, "knowledge"))
+        state = self._processes.get((project_hash, "artifacts"))
         if state is None:
             raise RuntimeError(
-                f"Neo4jRuntime.start_for_knowledge({project_hash!r}) must be "
-                f"called before driver_for_knowledge(...)"
+                f"Neo4jRuntime.start_for_artifacts({project_hash!r}) must be "
+                f"called before driver_for_artifacts(...)"
             )
         if state.driver is None:
             password = state.auth_file.read_text(encoding="utf-8").strip()
@@ -710,7 +710,7 @@ class Neo4jRuntime:
         Knowledge processes are per-project, so the
         refcount-to-zero typically only happens at BE shutdown.
         """
-        key = (project_hash, "knowledge")
+        key = (project_hash, "artifacts")
         async with self._lock:
             state = self._processes.get(key)
             if state is None:
@@ -719,10 +719,10 @@ class Neo4jRuntime:
             if state.refcount > 0:
                 return False
             popped = self._processes.pop(key)
-        return await self._shutdown_one(popped, project_hash, "knowledge")
+        return await self._shutdown_one(popped, project_hash, "artifacts")
 
     def endpoints_for_knowledge(self, project_hash: str) -> Neo4jEndpoints | None:
-        state = self._processes.get((project_hash, "knowledge"))
+        state = self._processes.get((project_hash, "artifacts"))
         return state.endpoints if state is not None else None
 
     def _discover_knowledge(self, project_hash: str) -> Neo4jEndpoints | None:

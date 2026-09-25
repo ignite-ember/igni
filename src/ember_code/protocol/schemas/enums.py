@@ -81,7 +81,7 @@ class CommandAction(StrEnum):
     PLUGINS = "plugins"
     AGENTS = "agents"
     SKILLS = "skills"
-    KNOWLEDGE = "knowledge"
+    ARTIFACTS = "artifacts"
     CODEINDEX = "codeindex"
     HOOKS = "hooks"
     LOOP = "loop"

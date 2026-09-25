@@ -291,7 +291,7 @@ Git operations are handled via `EmberShellTools` with git/gh commands. The Git A
 
 ## Knowledge Base
 
-### Knowledge (KnowledgeManager)
+### Knowledge (ArtifactManager)
 
 Built-in vector knowledge base powered by ChromaDB and a local embedding model (all-MiniLM-L6-v2 — no API call, nothing leaves the machine). Unlike CodeIndex (which provides pre-processed semantic code intelligence), the Knowledge system is a general-purpose document store that users can populate with any content.
 
@@ -314,7 +314,7 @@ knowledge:
 2. Documents are chunked and stored in ChromaDB with vector embeddings
 3. Agents can search the knowledge base automatically during execution via Agno's `Knowledge` integration
 
-**Data models (Pydantic):** `KnowledgeAddResult`, `KnowledgeSearchResponse`, `KnowledgeFilter`, `KnowledgeStatus`
+**Data models (Pydantic):** `ArtifactWriteResult`, `ArtifactSearchResponse`, `KnowledgeFilter`, `ArtifactStatus`
 
 **Requires:** `pip install ember-code[knowledge]` (installs `chromadb`)
 

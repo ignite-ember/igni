@@ -11,7 +11,7 @@ already call.
 Coverage:
 
 * :class:`KnowledgeWarmupPhase` — open the ChromaDB client for
-  the knowledge index (heavy transitive deps).
+  the artifact store (heavy transitive deps).
 * :class:`CodeIndexWarmupPhase` — sweep stale chroma dirs, kick
   the resolver, run an initial sync, evict idle commit chromas,
   start the HEAD watcher.
@@ -30,10 +30,10 @@ is up. All failures are logged at WARNING / DEBUG and swallowed
 dependency.
 """
 
+from ember_code.core.session.startup.artifacts import KnowledgeWarmupPhase
 from ember_code.core.session.startup.base import SessionStartupPhase
 from ember_code.core.session.startup.codeindex import CodeIndexWarmupPhase
 from ember_code.core.session.startup.coordinator import SessionStartupCoordinator
-from ember_code.core.session.startup.knowledge import KnowledgeWarmupPhase
 from ember_code.core.session.startup.marketplace import MarketplaceWarmupPhase
 from ember_code.core.session.startup.mcp import McpInitPhase
 

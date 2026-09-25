@@ -322,7 +322,7 @@ export function WatcherPanel({
       // ``.breadcrumb`` in the title, which put `Chat / Watcher` above
       // `Watcher › PID 8201` — the word "Watcher" twice, on two lines,
       // describing one position. `levels` is the seam the page shell
-      // already exposes for exactly this; Plugins and Knowledge use it.
+      // already exposes for exactly this; Plugins and Artifacts use it.
       levels={{
         labels: selectedRow ? [`PID ${selectedRow.pid}`] : [],
         // One level deep, so any truncation returns to the list.

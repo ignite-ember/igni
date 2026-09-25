@@ -9,7 +9,7 @@ coroutine:
   :class:`Session`, the pre-built
   :class:`InteractiveCommandDispatcher`, and the ordered
   :class:`PromptHandler` chain. Each of the seven audit-flagged
-  concerns (startup, shutdown, prompt read, knowledge in / out,
+  concerns (startup, shutdown, prompt read, artifacts in / out,
   banner, update check, turn) is a named method rather than an
   inline stanza.
 * :class:`PromptHandler` — abstract base for the input-dispatch
@@ -195,7 +195,7 @@ class InteractiveSessionLoop(SessionRun):
     Replaces the ex-``run_session_interactive`` coroutine's
     seven-concern monolith with named async methods
     (:meth:`_startup`, :meth:`_shutdown`, :meth:`_read_prompt`,
-    :meth:`_sync_knowledge_in`, :meth:`_sync_knowledge_out`,
+    :meth:`_sync_artifacts_in`, :meth:`_sync_artifacts_out`,
     :meth:`_print_banner`, :meth:`_check_update`) so each stanza
     has one job and the outer :meth:`run` reads top-to-bottom.
 
@@ -249,19 +249,19 @@ class InteractiveSessionLoop(SessionRun):
     # ── Lifecycle ─────────────────────────────────────────────────
 
     async def _startup(self) -> None:
-        """Emit SessionStart, load shared knowledge, print banner."""
+        """Emit SessionStart, load shared artifacts, print banner."""
         await self._fire_session_start()
-        await self._sync_knowledge_in()
+        await self._sync_artifacts_in()
         await self._print_banner()
 
     async def _shutdown(self) -> None:
-        """Cleanup ephemeral agents, export knowledge, emit SessionEnd."""
+        """Cleanup ephemeral agents, export artifacts, emit SessionEnd."""
         session = self._session
         if session.settings.orchestration.auto_cleanup:
             removed = session.pool.cleanup_ephemeral()
             if removed:
                 session.display.print_info(f"Cleaned up {removed} ephemeral agent(s).")
-        await self._sync_knowledge_out()
+        await self._sync_artifacts_out()
         await self._fire_session_end()
 
     # ── REPL body ─────────────────────────────────────────────────
@@ -310,15 +310,15 @@ class InteractiveSessionLoop(SessionRun):
     @property
     def _knowledge_sync_enabled(self) -> bool:
         """Shared guard for the two sync directions."""
-        knowledge = self._session.settings.knowledge
+        knowledge = self._session.settings.artifacts
         return knowledge.share and knowledge.auto_sync
 
-    async def _sync_knowledge_in(self) -> None:
-        """Pull shared knowledge from disk into the DB at startup."""
+    async def _sync_artifacts_in(self) -> None:
+        """Pull shared artifacts from disk into the DB at startup."""
         if not self._knowledge_sync_enabled:
             return
         session = self._session
-        sync_result = await session.knowledge_mgr.sync_from_file()
+        sync_result = await session.artifact_mgr.sync_from_file()
         if sync_result.new_entries > 0:
             session.display.print_info(
                 f"Knowledge sync: loaded {sync_result.new_entries} new entries from git"
@@ -326,16 +326,16 @@ class InteractiveSessionLoop(SessionRun):
         elif sync_result.error:
             session.display.print_error(f"Knowledge sync error: {sync_result.error}")
 
-    async def _sync_knowledge_out(self) -> None:
+    async def _sync_artifacts_out(self) -> None:
         """Push new DB entries back out to the shared file at shutdown."""
         if not self._knowledge_sync_enabled:
             return
         session = self._session
-        sync_result = await session.knowledge_mgr.sync_to_file()
+        sync_result = await session.artifact_mgr.sync_to_file()
         if sync_result.new_entries > 0:
             session.display.print_info(
                 f"Knowledge sync: exported {sync_result.new_entries} "
-                f"new entries to {session.settings.knowledge.share_file}"
+                f"new entries to {session.settings.artifacts.share_file}"
             )
 
     # ── Banner + update check ─────────────────────────────────────

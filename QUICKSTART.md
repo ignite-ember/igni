@@ -335,15 +335,15 @@ Store and search documents via ChromaDB:
 
 ```yaml
 # .igni/config.yaml
-knowledge:
+artifacts:
   enabled: true
   collection_name: "my_project"
-  share: true                    # sync to .igni/knowledge.yaml for git sharing
+  share: true                    # sync to .igni/artifacts.yaml for git sharing
 ```
 
 When `share: true`, knowledge is automatically synced to a YAML file that your team can commit to git. On startup, only new entries are embedded — no redundant work. Use `/sync-knowledge` to manually trigger a sync.
 
-The shared knowledge file (`.igni/knowledge.yaml`) uses this format:
+The shared knowledge file (`.igni/artifacts.yaml`) uses this format:
 
 ```yaml
 version: 1

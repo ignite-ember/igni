@@ -270,13 +270,22 @@ What the agent is told to remember.
 
 | Function | Edge cases | Status |
 |---|---|---|
-| `knowledge_add` | Adding a duplicate; adding an empty document. Sweep: **answers** (`--mutating`). | `answers` |
-| `knowledge_get` | A missing id. Sweep: **answers** (default run). | `answers` |
-| `knowledge_list` | Empty. Sweep: **answers** (default run). | `answers` |
-| `knowledge_remove` | Removing while a search is in flight. Sweep: **answers** (`--mutating`). | `answers` |
-| `knowledge_search` | No results; a query longer than the embedding limit. Sweep: **answers** (default run). | `answers` |
-| `get_knowledge_status` | Never synced. Sweep: **answers** (default run). | `answers` |
-| `auto_sync_knowledge` | Sync with no source configured. Sweep: **answers** (`--mutating`). | `answers` |
+| `artifact_add` | Adding a duplicate; adding an empty document. Sweep: **answers** (`--mutating`). | `answers` |
+| `artifact_get` | A missing id. Sweep: **answers** (default run). | `answers` |
+| `artifact_list` | Empty. Sweep: **answers** (default run). | `answers` |
+| `artifact_remove` | Removing while a search is in flight. Sweep: **answers** (`--mutating`). | `answers` |
+| `artifact_search` | No results; a query longer than the embedding limit. Sweep: **answers** (default run). | `answers` |
+| `artifact_versions` | A single-version artifact; an id that does not exist. Sweep: **answers** (default run). | `answers` |
+| `artifact_lineage` | No sources declared; a source deleted after the edge was written. Sweep: **answers** (default run). | `answers` |
+| `artifact_stale` | Nothing out of date; a dependent pinned to a source that was deleted. Sweep: **answers** (default run). | `answers` |
+| `artifact_confirm_source` | Confirming a link that was never captured. Sweep: **answers** (`--mutating`). | `answers` |
+| `artifact_dismiss_source` | Dismissing an already-confirmed source. Sweep: **answers** (`--mutating`). | `answers` |
+| `artifact_reconcile_diff` | A source whose change is whitespace only; a diff past the truncation limit. Sweep: **answers** (default run). | `answers` |
+| `artifact_preview` | An artifact whose content is not markdown. Sweep: **answers** (default run). | `answers` |
+| `artifact_export` | A destination that is not writable; a version that does not exist. Sweep: **answers** (`--mutating`). | `answers` |
+| `artifact_share` | Logged out; an edge pointing outside the shared set. Sweep: **answers** (`--mutating`). | `answers` |
+| `get_artifact_status` | Never synced. Sweep: **answers** (default run). | `answers` |
+| `auto_sync_artifacts` | Sync with no source configured. Sweep: **answers** (`--mutating`). | `answers` |
 | `extract_learnings` | A session with nothing worth extracting. Sweep: **answers** (`--mutating`). | `answers` |
 
 ## Files, dirs & attachments
@@ -319,7 +328,7 @@ Each was reproduced, and each is recorded on its own row above.
 | `/rename` confirmed renames it had not made. A session has no row until its first run, so on every page load and every "+ New chat" `rename_session` updated nothing, raised nothing, and the user was told "Session renamed to: X" while the sidebar never showed X. A DB error was swallowed at DEBUG and reported the same way | `backend/cmd_session.py`, `persistence/facade.py` | **fixed** — writes, reads back, and says so when nothing was stored; also sets `session_named`, which its own docstring already claimed |
 | `/plugin` did nothing at all — no output, no panel, not even the echoed command. The picker lists `/plugins` before `/plugin`, and Enter's "already-complete command runs it" test compares against the *highlighted* entry | `components/Composer.tsx` | **fixed** — `filterSlashCommands` puts an exact match first, so what runs is what is highlighted |
 | `@` file mentions stopped working after "+ New chat". The session id rotates one RPC round trip later, the Composer re-hydrates its draft from `draft:<sessionId>`, and the `@` the parser needs was blanked out of the editor. The picker stayed open, filtered to nothing, and the query went to the model as chat | `App.tsx` | **fixed** — `carryDraft` moves the draft onto the new id across `/clear` and `/fork` |
-| `/knowledge` said "Knowledge base failed to initialize." — no cause, and untrue. The index is *deferred* until CodeIndex's Neo4j attaches. `Session._knowledge_error` was initialised to `None` and assigned nowhere, so the branch that exists to explain the failure could not run | `core/session/core.py`, `backend/cmd_knowledge.py` | **fixed** — the deferred state explains itself and points at `/codeindex` |
+| `/knowledge` said "Knowledge base failed to initialize." — no cause, and untrue. The index is *deferred* until CodeIndex's Neo4j attaches. `Session._knowledge_error` was initialised to `None` and assigned nowhere, so the branch that exists to explain the failure could not run | `core/session/core.py`, `backend/cmd_artifacts.py` | **fixed** — the deferred state explains itself and points at `/codeindex` |
 | **Web search ran with no approval prompt.** `WebSearchSpec.confirm_function_names` was `("duckduckgo_search", "duckduckgo_news")`; `DuckDuckGoTools` registers `web_search` and `search_news`. agno matched the list against its registry, found neither, and logged "Requires confirmation tool(s) not present in the toolkit". `test_web_search.py` asserted the two strings were *in the list* and passed throughout | `core/tools/tool_spec.py` | **fixed** — gates the real names; a rule now asserts every gated name exists in the built toolkit |
 | `PythonSpec` gated one of `PythonTools`' seven functions. `save_to_file_and_run`, `run_python_file_return_variable`, `pip_install_package` and `uv_pip_install_package` ran ungated — two of them install from the internet. Partial gating is worse than none: the prompt on `run_python_code` reads as "this toolkit is supervised" | `core/tools/tool_spec.py` | **fixed, then superseded** — all seven were gated, and the spec has since been removed from the registry entirely along with `Read` / `Grep` / `Glob` / `LS`. A toolkit that cannot be attached cannot be mis-gated |
 | Eight of eighteen hook events were undocumented — `PermissionRequest`, `PermissionDenied`, `PreCompact`, `PostCompact`, `TaskCreated`, `TaskCompleted`, `StopFailure`, `InstructionsLoaded`. All eight fire. `docs/HOOKS.md` listed ten and read as complete, and hooks are how a self-hosted deployment extends the product | `docs/HOOKS.md` | **fixed** — documented with payloads; `test_every_hook_event_is_documented.py` requires a table row per event |
@@ -407,7 +416,7 @@ was actually there.
 | Surface | Size | State |
 |---|---|---|
 | Slash commands | 31 in `Composer.tsx`, 34 registered backend-side | **31 driven**, each asserted inside the surface it opens or against text from its own output. Not run, and why: `/login` and `/logout` (real credentials), `/bug` (opens a browser on the host). `/plan`, `/accept` and `/bypass` are driven *and toggled back*, so the suite cannot leave a session auto-approving tools |
-| Model-callable tools | 66 statically-named functions across 24 toolkits, of which ~11 became unreachable when `Read` / `Grep` / `Glob` / `LS` / `Python` left the registry | 13 of igni's own had **no direct test**; all 13 now have one (`stop_process`, `watch_process`, `list_processes`, all of `LoopProgressTool`, all of `KnowledgeTools`, `loop_resume`). `test_every_tool_function_is_reachable.py` fails when a registered function has none. Still not driven *through the app* — these are unit tests of the functions, not of the model choosing to call them |
+| Model-callable tools | 66 statically-named functions across 24 toolkits, of which ~11 became unreachable when `Read` / `Grep` / `Glob` / `LS` / `Python` left the registry | 13 of igni's own had **no direct test**; all 13 now have one (`stop_process`, `watch_process`, `list_processes`, all of `LoopProgressTool`, all of `ArtifactTools`, `loop_resume`). `test_every_tool_function_is_reachable.py` fails when a registered function has none. Still not driven *through the app* — these are unit tests of the functions, not of the model choosing to call them |
 | UI panels | 15 under `components/panels/` | 7 opened live via their commands — plugins, codeindex, hooks, loop, schedule, watcher, mcp — asserted on content, not merely on the drawer existing. Opening is not driving: nothing inside any of them is clicked |
 | Header tools menu | 13 entries, documented in-code as "no slash command visible to the user" | all 13 clicked, each asserted on the surface it opens, plus that the list is exactly what `App.tsx` defines |
 | Welcome cards | 9 clickable | all 9 clicked. One, `/workflows`, is a client-side regex intercept and never appears in the slash picker at all |

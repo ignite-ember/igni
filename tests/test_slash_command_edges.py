@@ -39,14 +39,14 @@ def _make_session():
     session.settings.guardrails.pii_detection = False
     session.settings.guardrails.prompt_injection = False
     session.settings.guardrails.moderation = False
-    session.settings.knowledge.enabled = False
+    session.settings.artifacts.enabled = False
     session.settings.orchestration.max_total_agents = 20
     session.settings.orchestration.max_nesting_depth = 3
-    session.knowledge_mgr.share_enabled.return_value = False
+    session.artifact_mgr.share_enabled.return_value = False
     # status() is async — give the mock a proper AsyncMock for it.
-    from ember_code.core.knowledge.models import KnowledgeStatus
+    from ember_code.core.artifacts.models import ArtifactStatus
 
-    session.knowledge_mgr.status = AsyncMock(return_value=KnowledgeStatus(enabled=False))
+    session.artifact_mgr.status = AsyncMock(return_value=ArtifactStatus(enabled=False))
     session.memory_mgr.get_memories = AsyncMock(return_value=[])
     session.mcp_manager.list_servers.return_value = []
     session.mcp_manager.list_connected.return_value = []
@@ -146,7 +146,7 @@ class TestAgentsEdgeCases:
 
 class TestKnowledgeEdgeCases:
     @pytest.mark.asyncio
-    async def test_knowledge_add_no_args(self):
+    async def test_artifact_add_no_args(self):
         """'/knowledge add' with no argument should show status or error."""
         session = _make_session()
         handler = CommandHandler(session)
@@ -155,7 +155,7 @@ class TestKnowledgeEdgeCases:
         # Should not crash
 
     @pytest.mark.asyncio
-    async def test_knowledge_search_no_query(self):
+    async def test_artifact_search_no_query(self):
         """'/knowledge search' with no query should show error."""
         session = _make_session()
         handler = CommandHandler(session)

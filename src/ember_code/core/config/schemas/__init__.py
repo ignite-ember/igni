@@ -8,10 +8,10 @@ regardless of which grouped file a schema physically lives in.
 from __future__ import annotations
 
 from ember_code.core.config.schemas.display import DisplayConfig
-from ember_code.core.config.schemas.knowledge import (
+from ember_code.core.config.schemas.llm_behavior import (
+    ArtifactsConfig,
     EvalsConfig,
     GuardrailsConfig,
-    KnowledgeConfig,
     LearningConfig,
     MemoryConfig,
     ReasoningConfig,
@@ -45,7 +45,7 @@ __all__ = [
     "EvalsConfig",
     "GuardrailsConfig",
     "HooksConfig",
-    "KnowledgeConfig",
+    "ArtifactsConfig",
     "LearningConfig",
     "MemoryConfig",
     "ModelsConfig",

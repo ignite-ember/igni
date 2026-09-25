@@ -167,7 +167,7 @@ describe("Toasts — auto-dismiss TTL", () => {
   });
 
   it("auto-dismisses after default 8000ms + 200ms animation tail", () => {
-    // The default-TTL contract — silent acknowledgement that
+    // The default-TTL contract — silent acartifactsment that
     // most toasts shouldn't need a manual close. 8s gives a
     // user enough time to read but doesn't pile up notifications.
     const onDismiss = vi.fn();

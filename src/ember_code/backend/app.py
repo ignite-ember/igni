@@ -247,8 +247,8 @@ class BackendApp:
         except Exception:
             logger.exception("neo4j cutover failed; will retry on next boot")
         # Build the :class:`Neo4jRuntime` and switch the default
-        # session's knowledge index to it, when ``knowledge.enabled``
-        # says so (see :mod:`ember_code.backend.knowledge_gate`).
+        # session's artifact store to it, when ``knowledge.enabled``
+        # says so (see :mod:`ember_code.backend.artifact_gate`).
         #
         # Deliberately not awaited. On a cold machine the attach
         # downloads Neo4j and a JDK — ~500 MB — and waits for the bolt
@@ -256,7 +256,7 @@ class BackendApp:
         # download between the user and a usable backend: the loading
         # screen would sit there for minutes on a first launch, and on
         # a blocked network it would sit there and then fail, with the
-        # knowledge base taking the whole app down with it.
+        # artifact store taking the whole app down with it.
         #
         # This was survivable before only because the env gate meant
         # the call almost never did anything.

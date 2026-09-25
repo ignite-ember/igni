@@ -55,7 +55,7 @@ def state_db_path(project: str | Path, *, data_dir: str | Path = DEFAULT_DATA_DI
     return project_dir(project, data_dir=data_dir) / "state.db"
 
 
-def legacy_knowledge_index_path(
+def legacy_artifact_index_path(
     project: str | Path, *, data_dir: str | Path = DEFAULT_DATA_DIR
 ) -> Path:
     return project_dir(project, data_dir=data_dir) / "knowledge.chroma"

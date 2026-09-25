@@ -1,0 +1,973 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
+import type { IgniClient } from "../../protocol/client";
+import { Drawer } from "./Drawer";
+import { Skeleton } from "../Skeleton";
+
+// ── Types ────────────────────────────────────────────────────────
+
+interface ArtifactStatus {
+  enabled: boolean;
+  collection_name: string;
+  document_count: number;
+  version_count?: number;
+  stale_count?: number;
+  pending_candidates?: number;
+  embedder: string;
+}
+
+interface ArtifactsDoc {
+  id: string;
+  name: string;
+  source: string;
+  kind: string;
+  n?: number;
+  version_count?: number;
+  size: number;
+  preview: string;
+  added_at: string;
+  metadata: Record<string, string>;
+}
+
+interface ArtifactsDocFull {
+  id: string;
+  name: string;
+  source: string;
+  kind?: string;
+  n?: number;
+  head_n?: number;
+  is_head?: boolean;
+  content: string;
+  created_at?: string;
+  author?: string;
+  metadata: Record<string, string>;
+  error?: string;
+}
+
+interface ArtifactsSearchHit {
+  artifact_id?: string;
+  name?: string;
+  n?: number;
+  content?: string;
+  source?: string;
+  score?: number;
+  metadata?: Record<string, string>;
+}
+
+interface ArtifactVersionRow {
+  n: number;
+  created_at: string;
+  author: string;
+  size: number;
+  is_head: boolean;
+}
+
+/**
+ * One derivation edge. `pinned_n` and `head_n` both arrive so the row
+ * can say "pinned to v1, now at v3" without a second request — that
+ * comparison is the only question a reader has about a source.
+ */
+interface ArtifactLineageRow {
+  artifact_id: string;
+  name: string;
+  n: number;
+  pinned_n: number;
+  head_n: number;
+  state: string;
+  is_stale: boolean;
+}
+
+interface ArtifactLineageView {
+  artifact_id: string;
+  n: number;
+  sources: ArtifactLineageRow[];
+  dependents: ArtifactLineageRow[];
+  citations: string[];
+}
+
+type View = "list" | "detail" | "add";
+type AddMode = "url" | "path" | "text";
+
+// ── Helpers ──────────────────────────────────────────────────────
+
+function formatBytes(n: number): string {
+  if (!n) return "0 B";
+  const units = ["B", "KB", "MB"];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function formatRelative(iso: string): string {
+  if (!iso) return "";
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return iso;
+  const secs = Math.floor((Date.now() - t) / 1000);
+  if (secs < 60) return "just now";
+  const m = Math.floor(secs / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d ago`;
+  const mo = Math.floor(d / 30);
+  return `${mo}mo ago`;
+}
+
+// ── Main panel ───────────────────────────────────────────────────
+
+export function ArtifactPanel({
+  client,
+  onClose,
+}: {
+  client: IgniClient;
+  onClose: () => void;
+}) {
+  const [status, setStatus] = useState<ArtifactStatus | null>(null);
+  const [docs, setDocs] = useState<ArtifactsDoc[] | null>(null);
+  const [view, setView] = useState<View>("list");
+  const [selected, setSelected] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [searched, setSearched] = useState<{ q: string; results: ArtifactsSearchHit[] } | null>(null);
+  const [busy, setBusy] = useState("");
+  const [addError, setAddError] = useState("");
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      setStatus(await client.rpc<ArtifactStatus>("get_artifact_status"));
+    } catch (e) {
+      console.error(e);
+    }
+    try {
+      setDocs((await client.rpc<ArtifactsDoc[]>("artifact_list")) || []);
+    } catch (e) {
+      console.error(e);
+      setDocs([]);
+    }
+  }, [client]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    if (view !== "detail") setConfirmingRemove(false);
+  }, [view, selected]);
+
+  // Empty query = filtered list, Enter = semantic search
+  const filteredDocs = useMemo(() => {
+    if (!docs) return [];
+    const q = query.trim().toLowerCase();
+    if (!q) return docs;
+    return docs.filter(
+      (d) =>
+        d.name.toLowerCase().includes(q) ||
+        (d.source || "").toLowerCase().includes(q) ||
+        (d.preview || "").toLowerCase().includes(q),
+    );
+  }, [docs, query]);
+
+  const runSearch = async () => {
+    const q = query.trim();
+    if (!q) return;
+    setBusy("search");
+    try {
+      const results =
+        (await client.rpc<ArtifactsSearchHit[]>("artifact_search", { query: q })) || [];
+      setSearched({ q, results });
+    } catch (e) {
+      setSearched({ q, results: [{ content: String(e) }] });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const clearSearch = () => {
+    setSearched(null);
+    setQuery("");
+  };
+
+  const sync = async () => {
+    setBusy("sync");
+    try {
+      await client.rpc("auto_sync_artifacts");
+      void refresh();
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const remove = async (id: string) => {
+    setBusy("remove");
+    try {
+      const r = await client.rpc<{ removed: boolean }>("artifact_remove", { id });
+      if (r.removed) {
+        setSelected(null);
+        setConfirmingRemove(false);
+        setView("list");
+        void refresh();
+      }
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const tryAdd = async (source: string): Promise<boolean> => {
+    if (!source.trim()) return false;
+    setBusy("add");
+    setAddError("");
+    try {
+      await client.rpc("artifact_add", { source: source.trim() });
+      void refresh();
+      setView("list");
+      return true;
+    } catch (e) {
+      setAddError(e instanceof Error ? e.message : String(e));
+      return false;
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const selectedDoc = selected && docs ? docs.find((d) => d.id === selected) : null;
+
+  // ── Header ──────────────────────────────────────────────────────
+  // The document and the add-source form are one level below the list.
+  // Reported to the page trail rather than drawn here: this panel's own
+  // breadcrumb used to sit directly under the chrome's, saying half of
+  // the same thing.
+  const leaf = view === "detail" && selectedDoc ? selectedDoc.name : view === "add" ? "Add source" : null;
+  const title: React.ReactNode = leaf ?? "Artifacts";
+  const levels = {
+    labels: leaf ? [leaf] : [],
+    // One level deep, so any truncation returns to the list.
+    onTruncate: () => {
+      setView("list");
+      setSelected(null);
+    },
+  };
+
+  // ── Header extras: per-view actions ─────────────────────────────
+  let headerExtras: React.ReactNode = null;
+  if (view === "list" && status) {
+    headerExtras = (
+      <div className="kb-head-actions">
+        <button
+          className="kb-icon-btn"
+          title={busy === "sync" ? "Syncing…" : "Sync git-shared artifacts"}
+          disabled={busy === "sync" || !status.enabled}
+          onClick={() => void sync()}
+        >
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
+            <path
+              d="M2.5 8a5.5 5.5 0 0 1 9.4-3.9M13.5 8a5.5 5.5 0 0 1-9.4 3.9"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              strokeLinecap="round"
+            />
+            <path
+              d="M12 1.5V5h-3.5M4 14.5V11h3.5"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+        <button
+          className="btn btn-sm btn-primary"
+          disabled={!status.enabled}
+          onClick={() => {
+            setAddError("");
+            setView("add");
+          }}
+        >
+          + Add
+        </button>
+      </div>
+    );
+  } else if (view === "detail" && selected) {
+    headerExtras = (
+      <div className="kb-head-actions">
+        {confirmingRemove ? (
+          <>
+            <span className="kb-hint">Remove this document?</span>
+            <button
+              className="btn btn-sm"
+              onClick={() => setConfirmingRemove(false)}
+              disabled={busy === "remove"}
+            >
+              Cancel
+            </button>
+            <button
+              className="btn btn-sm btn-danger"
+              disabled={busy === "remove"}
+              onClick={() => void remove(selected)}
+            >
+              {busy === "remove" ? "…" : "Confirm"}
+            </button>
+          </>
+        ) : (
+          <button
+            className="btn btn-sm btn-danger"
+            onClick={() => setConfirmingRemove(true)}
+          >
+            Remove
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // ── Toolbar: combined filter + search ───────────────────────────
+  const drawerToolbar =
+    view === "list" && status && status.enabled ? (
+      <div className="kb-toolbar">
+        {searched ? (
+          <div className="kb-search-chip">
+            <span className="kb-search-chip-q">"{searched.q}"</span>
+            <button className="kb-chip-close" onClick={clearSearch} title="Clear search">
+              ×
+            </button>
+          </div>
+        ) : (
+          <input
+            className="panel-input"
+            placeholder="Filter documents, or press Enter to search content…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void runSearch();
+              if (e.key === "Escape") clearSearch();
+            }}
+            autoFocus
+          />
+        )}
+      </div>
+    ) : null;
+
+  return (
+    <Drawer
+      title={title}
+      levels={levels}
+      onClose={onClose}
+      headerExtras={headerExtras}
+      toolbar={drawerToolbar}
+    >
+      {status === null ? (
+        <ArtifactsSkeleton />
+      ) : view === "add" ? (
+        <AddSource
+          busy={busy === "add"}
+          error={addError}
+          onAdd={tryAdd}
+          onCancel={() => setView("list")}
+        />
+      ) : view === "detail" && selected ? (
+        <DocumentDetail client={client} id={selected} />
+      ) : !status.enabled ? (
+        <DisabledState />
+      ) : searched ? (
+        <SearchResults
+          query={searched.q}
+          results={searched.results}
+          docs={docs || []}
+          onOpen={(hit) => {
+            if (!docs) return;
+            const match = docs.find(
+              (d) => d.source === (hit.source || hit.name) || d.id === hit.name,
+            );
+            if (match) {
+              setSelected(match.id);
+              setView("detail");
+            }
+          }}
+        />
+      ) : docs && docs.length === 0 ? (
+        <EmptyHero
+          onAdd={() => setView("add")}
+          embedder={status.embedder}
+        />
+      ) : (
+        <DocumentList
+          docs={filteredDocs}
+          totalDocs={docs?.length || 0}
+          query={query}
+          onOpen={(d) => {
+            setSelected(d.id);
+            setView("detail");
+          }}
+        />
+      )}
+    </Drawer>
+  );
+}
+
+// ── Disabled state ───────────────────────────────────────────────
+
+function DisabledState() {
+  // This used to tell the reader to set `IGNI_NEO4J_RUNTIME=1` "for the
+  // backend" — a variable a Finder-launched .app cannot inherit, so the
+  // instruction could not be carried out by anyone who needed it. The
+  // switch is `artifacts.enabled` in config now, which is both settable
+  // and the one the rest of the backend already reads.
+  return (
+    <div className="kb-empty">
+      <div className="kb-empty-title">Artifacts disabled</div>
+      <div className="kb-empty-hint">
+        Semantic search is off because <code>artifacts.enabled = false</code> in{" "}
+        <code>~/.ember/config.yaml</code>. Set it to <code>true</code> and reopen the app.
+        The first launch after that downloads a local database (~500 MB, one time).
+      </div>
+    </div>
+  );
+}
+
+// ── Empty hero ───────────────────────────────────────────────────
+
+function EmptyHero({
+  onAdd,
+  embedder,
+}: {
+  onAdd: () => void;
+  embedder: string;
+}) {
+  return (
+    <div className="kb-empty">
+      <div className="kb-empty-icon">
+        <svg viewBox="0 0 48 48" width="48" height="48" fill="none">
+          <path
+            d="M10 14h28v22a4 4 0 0 1-4 4H14a4 4 0 0 1-4-4V14z"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            opacity="0.6"
+          />
+          <path
+            d="M14 8h20l4 6H10z"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            opacity="0.4"
+          />
+          <path
+            d="M24 22v12M18 28h12"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+          />
+        </svg>
+      </div>
+      <div className="kb-empty-title">Nothing in the artifacts yet</div>
+      <div className="kb-empty-hint">
+        Add a URL, file, or paste text — the agent will use it when answering questions.
+      </div>
+      <button className="btn btn-primary kb-empty-cta" onClick={onAdd}>
+        + Add source
+      </button>
+      {embedder && (
+        <div className="kb-empty-foot">Indexed with <code>{embedder}</code></div>
+      )}
+    </div>
+  );
+}
+
+// ── Document list ────────────────────────────────────────────────
+
+function DocumentList({
+  docs,
+  totalDocs,
+  query,
+  onOpen,
+}: {
+  docs: ArtifactsDoc[];
+  totalDocs: number;
+  query: string;
+  onOpen: (d: ArtifactsDoc) => void;
+}) {
+  if (totalDocs > 0 && docs.length === 0) {
+    return <div className="kb-empty-hint kb-empty-inline">No documents match "{query}".</div>;
+  }
+  return (
+    <div className="kb-list">
+      {docs.map((d) => (
+        <div className="kb-row plugins-card-clickable" key={d.id} onClick={() => onOpen(d)}>
+          <div className="kb-row-main">
+            <div className="kb-row-name" title={d.source || d.name}>
+              {d.name}
+            </div>
+            {d.preview && <div className="kb-row-preview">{d.preview}</div>}
+          </div>
+          <div className="kb-row-meta">
+            <span>{formatBytes(d.size)}</span>
+            {d.added_at && <span>{formatRelative(d.added_at)}</span>}
+            {d.kind && <span className="kb-kind">{d.kind}</span>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Search results ───────────────────────────────────────────────
+
+function SearchResults({
+  query,
+  results,
+  docs,
+  onOpen,
+}: {
+  query: string;
+  results: ArtifactsSearchHit[];
+  docs: ArtifactsDoc[];
+  onOpen: (hit: ArtifactsSearchHit) => void;
+}) {
+  if (results.length === 0) {
+    return (
+      <div className="kb-empty kb-empty-inline">
+        <div className="kb-empty-title">No matches for "{query}"</div>
+        <div className="kb-empty-hint">
+          Try different phrasing, or add more sources to broaden the index.
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="kb-list">
+      {results.map((r, i) => {
+        const docMatch = docs.find(
+          (d) => d.source === (r.source || r.name) || d.id === r.name,
+        );
+        const score = typeof r.score === "number" ? r.score : null;
+        const name = r.name || r.source || "untitled";
+        const preview = (r.content || "").slice(0, 240);
+        return (
+          <div
+            key={i}
+            className={`kb-row ${docMatch ? "plugins-card-clickable" : ""}`}
+            onClick={() => docMatch && onOpen(r)}
+          >
+            <div className="kb-row-main">
+              <div className="kb-row-name">{name}</div>
+              {preview && <div className="kb-row-preview">{preview}</div>}
+            </div>
+            <div className="kb-row-meta">
+              {score != null && (
+                <span
+                  className={`kb-score ${
+                    score >= 0.6 ? "tone-good" : score >= 0.3 ? "tone-warn" : "tone-muted"
+                  }`}
+                >
+                  {(score * 100).toFixed(0)}%
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Document detail page ─────────────────────────────────────────
+
+function DocumentDetail({
+  client,
+  id,
+}: {
+  client: IgniClient;
+  id: string;
+}) {
+  const [doc, setDoc] = useState<ArtifactsDocFull | null>(null);
+  const [loading, setLoading] = useState(true);
+  // 0 means "whatever head is", so opening a document after it was
+  // revised elsewhere shows the current text rather than a version
+  // number this component happened to remember.
+  const [version, setVersion] = useState(0);
+  const [versions, setVersions] = useState<ArtifactVersionRow[]>([]);
+  const [lineage, setLineage] = useState<ArtifactLineageView | null>(null);
+
+  // Reset the pinned version when the selected document changes —
+  // otherwise v3 of one artifact silently requests v3 of the next.
+  useEffect(() => {
+    setVersion(0);
+  }, [id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setDoc(null);
+    void client
+      .rpc<ArtifactsDocFull>("artifact_get", { id, version })
+      .then((r) => {
+        if (!cancelled) setDoc(r);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setDoc({
+            id,
+            name: id,
+            source: "",
+            content: "",
+            metadata: {},
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, id, version]);
+
+  // History and lineage load alongside the document rather than
+  // inside it: a failure to walk the graph should leave the document
+  // readable, not replace it with an error.
+  useEffect(() => {
+    let cancelled = false;
+    void client
+      .rpc<ArtifactVersionRow[]>("artifact_versions", { id })
+      .then((r) => {
+        if (!cancelled) setVersions(r ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setVersions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void client
+      .rpc<ArtifactLineageView>("artifact_lineage", { id, version })
+      .then((r) => {
+        if (!cancelled) setLineage(r ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setLineage(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, id, version]);
+
+  if (loading || !doc) {
+    return (
+      <div style={{ marginTop: 12 }}>
+        <Skeleton.Line width="40%" height={20} />
+        <Skeleton.Line width="60%" height={11} style={{ marginTop: 8 }} />
+        <Skeleton.Rows count={6} style={{ marginTop: 18 }} />
+      </div>
+    );
+  }
+  if (doc.error) {
+    return <div className="msg-error">{doc.error}</div>;
+  }
+
+  const staleSources = (lineage?.sources ?? []).filter(
+    (s) => s.state === "confirmed" && s.is_stale,
+  );
+
+  return (
+    <div className="kb-detail">
+      <div className="kb-detail-hero">
+        <h2 className="kb-detail-title">{doc.name}</h2>
+        <div className="kb-detail-meta">
+          {doc.n ? <span className="kb-meta-chip">v{doc.n}</span> : null}
+          {doc.n && doc.is_head === false ? (
+            <span className="kb-meta-chip">superseded by v{doc.head_n}</span>
+          ) : null}
+          {doc.author ? <span className="kb-meta-chip">{doc.author}</span> : null}
+        </div>
+        {doc.source && doc.source !== doc.name && (
+          <div className="kb-detail-source">
+            {/^https?:\/\//.test(doc.source) ? (
+              <a href={doc.source} target="_blank" rel="noreferrer">
+                {doc.source}
+              </a>
+            ) : (
+              <code>{doc.source}</code>
+            )}
+          </div>
+        )}
+      </div>
+
+      {Object.keys(doc.metadata).length > 0 && (
+        <div className="kb-detail-meta">
+          {Object.entries(doc.metadata).map(([k, v]) => (
+            <span key={k} className="kb-meta-chip">
+              <span className="kb-meta-key">{k}</span>
+              <span className="kb-meta-val">{v}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {staleSources.length > 0 && (
+        <div className="kb-stale-banner" role="status">
+          <strong>Sources have changed since this was written.</strong>
+          <ul>
+            {staleSources.map((s) => (
+              <li key={s.artifact_id}>
+                {s.name || s.artifact_id} moved from v{s.pinned_n} to v{s.head_n}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="kb-detail-content markdown-body">
+        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+          {doc.content || "_(empty)_"}
+        </ReactMarkdown>
+      </div>
+
+      <VersionSwitcher
+        versions={versions}
+        current={doc.n ?? 0}
+        onPick={(n) => setVersion(n)}
+      />
+      <LineageSection lineage={lineage} />
+    </div>
+  );
+}
+
+/**
+ * The version switcher. Hidden for a single-version artifact — a
+ * picker with one option is chrome that teaches nothing.
+ */
+function VersionSwitcher({
+  versions,
+  current,
+  onPick,
+}: {
+  versions: ArtifactVersionRow[];
+  current: number;
+  onPick: (n: number) => void;
+}) {
+  if (versions.length < 2) return null;
+  return (
+    <section className="kb-lineage">
+      <h3 className="kb-lineage-heading">Versions</h3>
+      <ul className="kb-lineage-rows">
+        {versions.map((v) => (
+          <li key={v.n} className={v.n === current ? "kb-row kb-row-current" : "kb-row"}>
+            <button
+              type="button"
+              className="kb-version-btn"
+              onClick={() => onPick(v.n)}
+              aria-current={v.n === current}
+            >
+              v{v.n}
+            </button>
+            <span className="kb-row-when">{formatRelative(v.created_at)}</span>
+            <span className="kb-row-note">
+              {formatBytes(v.size)}
+              {v.is_head ? " · current" : ""}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * What this was built on, and what sits on top of it.
+ *
+ * Confirmed sources and captured candidates are rendered as separate
+ * groups rather than one list with a badge: they mean different
+ * things — one is an assertion, the other a guess nobody has
+ * reviewed — and only the first raises a staleness warning.
+ */
+function LineageSection({ lineage }: { lineage: ArtifactLineageView | null }) {
+  if (!lineage) return null;
+  const confirmed = lineage.sources.filter((s) => s.state === "confirmed");
+  const candidates = lineage.sources.filter((s) => s.state === "candidate");
+  if (
+    confirmed.length === 0 &&
+    candidates.length === 0 &&
+    lineage.citations.length === 0 &&
+    lineage.dependents.length === 0
+  ) {
+    return null;
+  }
+  return (
+    <>
+      {confirmed.length > 0 && (
+        <section className="kb-lineage">
+          <h3 className="kb-lineage-heading">Built on</h3>
+          <ul className="kb-lineage-rows">
+            {confirmed.map((s) => (
+              <li
+                key={s.artifact_id}
+                className={s.is_stale ? "kb-row kb-row-stale" : "kb-row"}
+              >
+                <span className="kb-row-name">{s.name || s.artifact_id}</span>
+                <span className="kb-row-n">v{s.pinned_n}</span>
+                <span className="kb-row-note">
+                  {s.is_stale ? `source now at v${s.head_n}` : "up to date"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {lineage.citations.length > 0 && (
+        <section className="kb-lineage">
+          <h3 className="kb-lineage-heading">External sources</h3>
+          <ul className="kb-lineage-rows">
+            {lineage.citations.map((url) => (
+              <li key={url} className="kb-row">
+                <a href={url} target="_blank" rel="noreferrer">
+                  {url}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {candidates.length > 0 && (
+        <section className="kb-lineage">
+          <h3 className="kb-lineage-heading">Captured, not confirmed</h3>
+          <ul className="kb-lineage-rows">
+            {candidates.map((s) => (
+              <li key={s.artifact_id} className="kb-row">
+                <span className="kb-row-name">{s.name || s.artifact_id}</span>
+                <span className="kb-row-n">v{s.pinned_n}</span>
+                <span className="kb-row-note">read while this was written</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {lineage.dependents.length > 0 && (
+        <section className="kb-lineage">
+          <h3 className="kb-lineage-heading">Depended on by</h3>
+          <ul className="kb-lineage-rows">
+            {lineage.dependents.map((d) => (
+              <li
+                key={d.artifact_id}
+                className={d.is_stale ? "kb-row kb-row-stale" : "kb-row"}
+              >
+                <span className="kb-row-name">{d.name || d.artifact_id}</span>
+                <span className="kb-row-n">v{d.n}</span>
+                <span className="kb-row-note">
+                  {d.is_stale ? `pinned to v${d.pinned_n}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </>
+  );
+}
+
+// ── Add source page ──────────────────────────────────────────────
+
+function AddSource({
+  busy,
+  error,
+  onAdd,
+  onCancel,
+}: {
+  busy: boolean;
+  error: string;
+  onAdd: (s: string) => Promise<boolean>;
+  onCancel: () => void;
+}) {
+  const [mode, setMode] = useState<AddMode>("url");
+  const [value, setValue] = useState("");
+
+  const submit = async () => {
+    if (!value.trim()) return;
+    await onAdd(value.trim());
+  };
+
+  return (
+    <div className="kb-add-page">
+      <div className="kb-add-modes">
+        {(["url", "path", "text"] as AddMode[]).map((m) => (
+          <button
+            key={m}
+            type="button"
+            className={`kb-mode ${mode === m ? "active" : ""}`}
+            onClick={() => setMode(m)}
+          >
+            {m === "url" ? "URL" : m === "path" ? "File / path" : "Text"}
+          </button>
+        ))}
+      </div>
+      <div className="kb-add-hint">
+        {mode === "url" && "Fetch and ingest a web page. Markdown, blog posts, docs."}
+        {mode === "path" && "Read a local file or recursively walk a directory."}
+        {mode === "text" && "Paste any text — notes, snippets, conversation excerpts."}
+      </div>
+      {mode === "text" ? (
+        <textarea
+          className="panel-input kb-add-textarea"
+          placeholder="Paste here…"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          rows={8}
+          autoFocus
+        />
+      ) : (
+        <input
+          className="panel-input"
+          placeholder={
+            mode === "url"
+              ? "https://example.com/docs/page"
+              : "./docs/architecture.md or /abs/path"
+          }
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && void submit()}
+          autoFocus
+        />
+      )}
+      {error && <div className="msg-error" style={{ marginTop: 10 }}>{error}</div>}
+      <div className="kb-add-bottom">
+        <button className="btn btn-sm" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          className="btn btn-sm btn-primary"
+          disabled={busy || !value.trim()}
+          onClick={() => void submit()}
+        >
+          {busy ? "Adding…" : "Add to artifacts"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ArtifactsSkeleton() {
+  return (
+    <div className="kb-list">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <div key={i} className="kb-row">
+          <div className="kb-row-main">
+            <Skeleton.Line width="40%" height={13} />
+            <Skeleton.Line width="80%" height={11} style={{ marginTop: 6 }} />
+          </div>
+          <Skeleton.Line width={36} height={11} />
+        </div>
+      ))}
+    </div>
+  );
+}

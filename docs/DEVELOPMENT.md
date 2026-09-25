@@ -56,7 +56,7 @@ ember-code/
 │       │   ├── runner.py              # Single-message execution
 │       │   ├── persistence.py         # Session listing, naming, history
 │       │   ├── memory_ops.py          # Memory retrieval and optimization
-│       │   ├── knowledge_ops.py       # Knowledge add/search/sync
+│       │   ├── artifact_ops.py       # Knowledge add/search/sync
 │       │   └── ide_context.py         # IDE context enrichment
 │       ├── auth/
 │       │   ├── __init__.py
@@ -67,7 +67,7 @@ ember-code/
 │       ├── init.py                    # Project initialization (copy agents, skills, hooks)
 │       ├── config/
 │       │   ├── __init__.py
-│       │   ├── settings.py            # Settings (Pydantic), KnowledgeConfig,
+│       │   ├── settings.py            # Settings (Pydantic), ArtifactsConfig,
 │       │   │                          # LearningConfig, ReasoningConfig, GuardrailsConfig,
 │       │   │                          # SchedulerConfig
 │       │   ├── models.py              # ModelRegistry, BYOM resolution
@@ -84,12 +84,12 @@ ember-code/
 │       │   └── orchestrate.py         # OrchestrateTools (sub-team spawning)
 │       ├── knowledge/
 │       │   ├── __init__.py
-│       │   ├── manager.py             # KnowledgeManager, ChromaDB + Agno Knowledge
+│       │   ├── manager.py             # ArtifactManager, ChromaDB + Agno Knowledge
 │       │   ├── embedder.py            # EmberEmbedder (custom Agno Embedder, 384-dim)
 │       │   ├── embedder_registry.py   # EmbedderRegistry (BYOM for embeddings)
-│       │   ├── models.py              # Pydantic: KnowledgeAddResult, KnowledgeFilter,
-│       │   │                          # KnowledgeSearchResponse, KnowledgeStatus,
-│       │   │                          # KnowledgeSyncResult
+│       │   ├── models.py              # Pydantic: ArtifactWriteResult, KnowledgeFilter,
+│       │   │                          # ArtifactSearchResponse, ArtifactStatus,
+│       │   │                          # ArtifactSyncResult
 │       │   └── sync.py               # Git-shared knowledge sync (YAML ↔ ChromaDB)
 │       ├── memory/
 │       │   ├── __init__.py
@@ -277,7 +277,7 @@ class EmberEmbedder(Embedder):
     dimensions: int = 384
 ```
 
-`KnowledgeManager` creates an Agno `Knowledge` with ChromaDB as the vector store. All data models are Pydantic: `KnowledgeAddResult`, `KnowledgeSearchResponse`, `KnowledgeFilter`, `KnowledgeStatus`.
+`ArtifactManager` creates an Agno `Knowledge` with ChromaDB as the vector store. All data models are Pydantic: `ArtifactWriteResult`, `ArtifactSearchResponse`, `KnowledgeFilter`, `ArtifactStatus`.
 
 ### 5. TUI Architecture (tui/)
 

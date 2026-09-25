@@ -102,7 +102,7 @@ overrides.
 | **Config** (settings, models, permissions, api_keys, tool_permissions) | 95% | ~70% |
 | **Tools** (registry, edit, search, notebook, web, codeindex, orchestrate, schedule) | 90% | ~50% |
 | **Auth** (credentials, client) | 90% | 0% |
-| **Session** (core, runner, interactive, persistence, memory_ops, knowledge_ops) | 80% | ~10% |
+| **Session** (core, runner, interactive, persistence, memory_ops, artifact_ops) | 80% | ~10% |
 | **Skills** (loader, executor) | 90% | ~50% |
 | **Scheduler** (parser, store, runner, models) | 90% | ~60% |
 | **Hooks** (loader, executor, events) | 90% | ~80% |

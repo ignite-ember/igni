@@ -79,8 +79,8 @@ class MainAgentBuilder:
             mcp_manager=s.mcp_manager,
             lsp_manager=s.lsp_manager,
             monitor_manager=s.monitor_manager,
-            knowledge=s.knowledge,
-            knowledge_mgr=s.knowledge_mgr,
+            artifacts=s.artifacts,
+            artifact_mgr=s.artifact_mgr,
             skill_pool=s.skill_pool,
             pool=s.pool,
             hook_executor=s.hook_executor,
@@ -176,7 +176,7 @@ class MainAgentBuilder:
             add_session_summary_to_context=True,
             stream=True,
             stream_events=True,
-            # Agents reach the index via ``KnowledgeTools``, not
+            # Agents reach the index via ``ArtifactTools``, not
             # Agno's built-in ``search_knowledge`` — pass nothing.
             knowledge=None,
             search_knowledge=False,

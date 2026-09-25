@@ -40,7 +40,7 @@ from sqlalchemy import text
 
 from ember_code.core.code_index.paths import (
     code_index_dir,
-    legacy_knowledge_index_path,
+    legacy_artifact_index_path,
     manifest_path,
     neo4j_migrated_marker_path,
 )
@@ -145,7 +145,7 @@ def _rmtree_chroma_dirs(project: Path, data_dir: str | Path) -> None:
 
 def _rmtree_knowledge_chroma(project: Path, data_dir: str | Path) -> None:
     """``rmtree`` the project's knowledge.chroma directory."""
-    path = legacy_knowledge_index_path(project, data_dir=data_dir)
+    path = legacy_artifact_index_path(project, data_dir=data_dir)
     if not path.exists():
         logger.debug("no knowledge.chroma at %s; skipping", path)
         return

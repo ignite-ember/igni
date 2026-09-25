@@ -246,7 +246,7 @@ class TestBackendServerRealConstruction:
         # off settings flags.
         settings = settings.model_copy(
             update={
-                "knowledge": settings.knowledge.model_copy(update={"enabled": False}),
+                "knowledge": settings.artifacts.model_copy(update={"enabled": False}),
             }
         )
 
@@ -284,7 +284,7 @@ class TestBackendServerRealConstruction:
         settings = load_settings(project_dir=tmp_path)
         settings = settings.model_copy(
             update={
-                "knowledge": settings.knowledge.model_copy(update={"enabled": False}),
+                "knowledge": settings.artifacts.model_copy(update={"enabled": False}),
             }
         )
         backend = BackendServer(settings, project_dir=tmp_path)
@@ -309,8 +309,8 @@ class TestBackendServerRealConstruction:
         assert not session.broadcast_bus.has_callbacks
         assert session.broadcast_bus.pending_count == 0
 
-        # _init_knowledge — KB disabled path yields None + ready flag set.
-        assert session.knowledge is None
+        # _init_artifacts — disabled path yields None + ready flag set.
+        assert session.artifacts is None
         assert session._knowledge_ready.is_set()
 
         # _init_codeindex — CodeIndex + sync manager + availability flag.

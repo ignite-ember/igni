@@ -12,7 +12,7 @@ each of the 31 commands into a live app and reading what came back.
   attribute error from a view model, surfaced through the message
   dispatcher's generic catch as a routing failure.
 
-* ``/knowledge`` said "Knowledge base failed to initialize." — no
+* ``/artifacts`` said "Artifacts base failed to initialize." — no
   cause, and not true. Nothing failed. The index is *deferred* until a
   Neo4j runtime attaches, and this session never got one.
   ``Session._knowledge_error`` was initialised to ``None`` and
@@ -67,7 +67,7 @@ class _Settings:
         prompt_injection = False
         moderation = False
 
-    class knowledge:
+    class artifacts:
         enabled = True
 
     class orchestration:
@@ -141,12 +141,12 @@ class TestConfigRenders:
         assert f"**{field}:**" in text
 
 
-class TestTheKnowledgeErrorIsAssigned:
+class TestTheArtifactsErrorIsAssigned:
     """``_knowledge_error`` had exactly two mentions: the ``= None``
     that created it and the property that read it.
 
     That is a whole diagnostic path — a documented one, with its own
-    branch in ``KnowledgeCommand.panel`` — that could not execute. A
+    branch in ``ArtifactsCommand.panel`` — that could not execute. A
     grep is the honest test for it: the point is not that some
     particular call site sets the field, it is that *something* does.
     """
@@ -167,7 +167,7 @@ class TestTheKnowledgeErrorIsAssigned:
         # clear when a runtime finally attaches.
         assert len(assignments) >= 2, (
             "_knowledge_error is initialised and never set, so "
-            "KnowledgeCommand.panel's error branch cannot run and every "
+            "ArtifactsCommand.panel's error branch cannot run and every "
             "failure reports the causeless fallback."
         )
 
@@ -180,7 +180,7 @@ class TestTheKnowledgeErrorIsAssigned:
         """
         core = self._core()
         deferred = core[
-            core.index("Knowledge: deferred") - 1200 : core.index("Knowledge: deferred")
+            core.index("Artifacts: deferred") - 1200 : core.index("Artifacts: deferred")
         ]
 
         assert "Neo4j runtime" in deferred
@@ -190,6 +190,6 @@ class TestTheKnowledgeErrorIsAssigned:
         """Otherwise a working session keeps being told to go and start
         the runtime it is already using."""
         core = self._core()
-        attach = core[core.index("Knowledge: switched to neo4j backend") - 900 :]
+        attach = core[core.index("Artifacts: switched to neo4j backend") - 900 :]
 
         assert "self._knowledge_error = None" in attach.split("logger.info")[0]
