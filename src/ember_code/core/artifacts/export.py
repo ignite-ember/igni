@@ -213,7 +213,7 @@ class ArtifactPublisher:
         if not self.is_configured:
             raise RuntimeError("Sharing needs a signed-in igni account — run `igni login` first.")
         payload = bundle.to_payload(visibility=visibility, audience=audience or [])
-        url = f"{self._server_url}/api/v1/artifacts/shared"
+        url = f"{self._server_url}/v1/artifacts/shared"
         headers = {"Authorization": f"Bearer {self._access_token}"}
         client = self._client
         owns_client = client is None

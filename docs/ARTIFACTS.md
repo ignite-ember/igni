@@ -1,19 +1,49 @@
 # Design: versioned artifacts with derivation lineage
 
-> **STATUS — PROPOSED.** Nothing below is built. This is the design record for
-> replacing the knowledge index with a versioned artifact store that tracks
-> which version of which artifact each artifact was built on, detects when a
-> source has moved underneath its dependents, and renders/shares the result.
+> **STATUS — IMPLEMENTED.** Shipped on `feat/artifacts-lineage` in `ember-code`
+> and alongside it in `ember-server`. This document is kept as the design
+> record explaining *why* the store ended up this shape. Where the build
+> diverged from the proposal, the divergence is noted inline.
 
-Spans three repos: the store and renderer live in `ember-code`, the shared-doc
-resource lives in `ember-server`, the group-entry copy lives in the portal.
+Spans two repos: the store, renderer and exporter live in `ember-code`; the
+shared-document resource and the page that opens one live in `ember-server`
+(API + portal).
+
+**Where it lives now**
+
+| Concern | Module |
+| --- | --- |
+| Cypher, schema, staleness query | `core/artifacts/neo4j_client.py`, `core/code_index/neo4j_schema.py` |
+| Coordinator (resolve, chunk, capture, reconcile) | `core/artifacts/index.py` |
+| Retrieval capture | `core/artifacts/capture.py` |
+| Pinned→head diff | `core/artifacts/reconcile.py` |
+| Self-contained HTML + export projection | `core/artifacts/render.py`, `core/artifacts/export.py` |
+| Agent tools | `core/tools/artifacts.py` |
+| Session policy (sources are required) | `core/session/artifact_ops.py` |
+| BE/panel surface | `backend/server_artifacts.py`, `clients/web/.../ArtifactPanel.tsx` |
+| Publish / read / revoke | ember-server `/v1/artifacts/shared`, portal `/a/:slug` |
+
+**Two things changed during the build.**
+
+*Ids hash the name, not the content.* The proposal did not say, and the
+knowledge store's content-hash ids were the actual reason it could not
+version anything: an edit produced a new id, so nothing could point at "that
+document" across revisions. `ArtifactMetadataCodec.artifact_id` hashes the
+normalised name instead, and `version_id` is `artifact_id::n` so a version is
+addressable without a lookup.
+
+*The store got its own DDL.* The per-project database was applying
+`COMMIT_SCHEMA_STATEMENTS` — the code index's schema, in a database with no
+`:Item` and no `:Commit` — building four dead indexes and dropping three
+constraints that were never there, on every attach. `ARTIFACT_SCHEMA_STATEMENTS`
+replaces it.
 
 ---
 
 ## The gap
 
-The knowledge index today is two node types and one edge
-(`core/code_index/neo4j_client.py:1161`):
+The knowledge index was two node types and one edge, in what was then
+`core/code_index/neo4j_client.py`:
 
 ```
 (:Entry {entry_id, project_hash, name, source, content, kind, embedding, meta})
@@ -22,8 +52,8 @@ The knowledge index today is two node types and one edge
 
 Entries never point at each other. `add_entry` is idempotent on `entry_id`, so
 re-writing an entry replaces content, embedding and chunks — the previous
-state is gone. `ArtifactProvenance` (`core/knowledge/models.py:505`) carries a
-single `added_at` timestamp. `source` is a free-text string.
+state is gone. Its provenance model carried a single `added_at` timestamp, and
+`source` was a free-text string.
 
 Three consequences:
 
@@ -87,10 +117,12 @@ every retrieval query adds `WHERE v.head`. Old versions stay addressable by
 `(artifact_id, n)` but never surface in search — otherwise the agent retrieves
 superseded text and the whole point is lost.
 
-Chunks hang off the version, not the artifact, so `ChunkResultRollup`
-(`core/knowledge/rollup.py`) rolls chunk hits up to the head version rather
-than to a parent document. Its shape is unchanged; the parent lookup changes
-target.
+Chunks hang off the version, not the artifact.
+
+*Divergence:* the proposal kept `ChunkResultRollup` and re-pointed it at head
+versions. It was deleted instead — it was already dead on the Neo4j path,
+which searches entries directly and skips the roll-up, and the module's own
+docstring said so. Rolling chunk hits up to a parent is a Chroma-era shape.
 
 ### Edge lifecycle: capture then confirm
 
@@ -240,42 +272,48 @@ works, and it is the single riskiest item in the sharing cut.
 
 ## Work list
 
-**1 — Schema and store** (`ember-code`)
+**1 — Schema and store** (`ember-code`) — **done**
 `neo4j_schema.py` gets its own artifact schema statements; the knowledge DB
-currently re-applies `COMMIT_SCHEMA_STATEMENTS`, which is wrong and gets fixed
-here. `Neo4jArtifactClient` → `Neo4jArtifactClient`: `add_entry` becomes
+re-applied `COMMIT_SCHEMA_STATEMENTS`, which was wrong and is fixed
+here. `Neo4jKnowledgeClient` → `Neo4jArtifactClient`: `add_entry` becomes
 `append_version`, `search` gains `WHERE v.head`, `list_entries` returns heads,
 plus `versions(artifact_id)`, `version(artifact_id, n)`, `stale_dependents()`.
 One-way migration from `:Entry` (each existing entry becomes an artifact with a
 single `n=1` head version).
 
-**2 — Capture and confirm** (`ember-code`)
+**2 — Capture and confirm** (`ember-code`) — **done**
 Retrieval records candidate edges against the session; the write path attaches
 them to the new version with `pinned_n`. Citation in a write promotes to
 `confirmed`. Candidate pruning on the retention path.
 
-**3 — Reconcile** (`ember-code`)
+**3 — Reconcile** (`ember-code`) — **done**
 `stale_dependents()` surfaced as a tool and a panel action; pinned→head diff of
 the source; proposed patch per dependent; accept appends a version and re-pins.
 
-**4 — Rename + config** (`ember-code`, `ember-server`)
+**4 — Rename + config** (`ember-code`, `ember-server`) — **done**
 Module/label/settings-key rename, `.igni/artifacts.yaml` with a read fallback,
 portal copy. Lands with step 1's migration.
 
-**5 — View and export** (`ember-code/clients/web`)
+**5 — View and export** (`ember-code/clients/web`) — **done**
 Artifact view, version switcher, lineage timeline, dependents list, candidate
 review. Self-contained HTML export.
 
-**6 — Share** (`ember-server`, `portal`)
-Export projection, document resource + ACL, public read route, portal UI. The
-domain-membership question gets answered here or the cut ships with
-org/named-user ACLs only.
+**6 — Share** (`ember-server`, `portal`) — **done**
+Export projection, document resource + ACL, public read route, portal UI.
+
+The domain-membership question was answered by **not** shipping it. Org
+membership comes from the GitHub App collaborator check against a linked
+`github_login` and email-domain matching is enforced nowhere, so a `domain`
+visibility would have been a permission this deployment cannot verify. The cut
+ships `private | org | users`, and publishing with `org` is refused outright
+when the author has no active membership rather than stored with no audience.
 
 ---
 
 ## Open items
 
-- The artifact/artifact-name collision, above.
+- The artifact/artifact-name collision, above. Shipped as `artifact` anyway;
+  rename remains cheap while nothing external depends on the noun.
 - Whether a confirmed edge should survive its dependent being re-written from
   scratch, or be re-captured each version. Current design: re-captured per
   version, since the edge lives on `:Version`, not `:Artifact`.

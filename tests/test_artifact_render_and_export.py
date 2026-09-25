@@ -10,7 +10,13 @@ work to whoever opens the page.
 
 from __future__ import annotations
 
-from ember_code.core.artifacts.export import ExportBundle, _slug
+import pytest
+
+from ember_code.core.artifacts.export import (
+    ArtifactPublisher,
+    ExportBundle,
+    _slug,
+)
 from ember_code.core.artifacts.models import (
     ArtifactLineage,
     ArtifactSummary,
@@ -281,3 +287,97 @@ class TestFilenameSlugs:
 
     def test_an_unusable_title_yields_an_empty_slug(self):
         assert _slug("???") == ""
+
+
+class TestPublishing:
+    """The seam between the client and the igni server.
+
+    Sharing is the one artifact operation that leaves the machine, so
+    the two things pinned here are that it refuses to run without an
+    account and that what it sends is the projected bundle rather than
+    anything richer.
+    """
+
+    def _bundle(self) -> ExportBundle:
+        return ExportBundle(
+            artifact_id="a1",
+            title="Auth Design",
+            kind="design",
+            n=2,
+            html="<html></html>",
+            exported_at="2026-09-25T10:30:12+00:00",
+        )
+
+    def test_it_is_not_configured_when_logged_out(self):
+        """A local-only user is a supported configuration, not an
+        error path — callers check rather than catching, so there is no
+        stack trace per share attempt."""
+        publisher = ArtifactPublisher(server_url="https://igni.test", access_token=None)
+        assert publisher.is_configured is False
+
+    def test_it_is_not_configured_without_a_server(self):
+        publisher = ArtifactPublisher(server_url="", access_token="t")
+        assert publisher.is_configured is False
+
+    async def test_publishing_logged_out_raises_with_the_fix(self):
+        publisher = ArtifactPublisher(server_url="https://igni.test", access_token=None)
+        with pytest.raises(RuntimeError, match="igni login"):
+            await publisher.publish(self._bundle())
+
+    async def test_it_posts_the_projected_payload(self):
+        sent: dict = {}
+
+        class _Response:
+            status_code = 200
+
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict:
+                return {"url": "https://igni.test/a/abc123"}
+
+        class _Client:
+            async def post(self, url, *, json, headers):
+                sent["url"] = url
+                sent["json"] = json
+                sent["headers"] = headers
+                return _Response()
+
+            async def aclose(self) -> None:
+                return None
+
+        publisher = ArtifactPublisher(
+            server_url="https://igni.test/", access_token="tok", client=_Client()
+        )
+        url = await publisher.publish(self._bundle(), visibility="users", audience=["a@b.test"])
+
+        assert url == "https://igni.test/a/abc123"
+        assert sent["url"] == "https://igni.test/v1/artifacts/shared"
+        assert sent["headers"]["Authorization"] == "Bearer tok"
+        assert sent["json"]["visibility"] == "users"
+        assert sent["json"]["audience"] == ["a@b.test"]
+        assert "project_hash" not in sent["json"]
+
+    async def test_a_server_that_returns_no_url_is_an_error(self):
+        """A 200 with no URL means the caller has nothing to hand
+        anyone, which is a failure however the server spells it."""
+
+        class _Response:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict:
+                return {}
+
+        class _Client:
+            async def post(self, url, *, json, headers):
+                return _Response()
+
+            async def aclose(self) -> None:
+                return None
+
+        publisher = ArtifactPublisher(
+            server_url="https://igni.test", access_token="tok", client=_Client()
+        )
+        with pytest.raises(RuntimeError, match="no URL"):
+            await publisher.publish(self._bundle())
