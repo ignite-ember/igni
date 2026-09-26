@@ -9,6 +9,7 @@ inventing a plausible one.
 
 from __future__ import annotations
 
+from ember_code.core.artifacts.cypher import CypherResult
 from ember_code.core.artifacts.errors import SourcesRequired
 from ember_code.core.artifacts.models import (
     ArtifactLineage,
@@ -50,6 +51,7 @@ class FakeManager:
             "write_result", ArtifactWriteResult.ok("stored", artifact_id="a1", n=1)
         )
         self.graph_answer = overrides.get("graph_answer", "2 row(s):")
+        self.cypher_result = overrides.get("cypher_result")
         self.confirm_result = overrides.get("confirm_result", True)
         self.delete_result = overrides.get("delete_result", True)
 
@@ -84,9 +86,13 @@ class FakeManager:
     async def list_artifacts(self, *, limit=1000):
         return self.artifacts_list
 
-    async def version(self, ref, n=0):
-        self.calls.append(("version", ref, n))
+    async def version(self, ref, n=0, *, record=False):
+        self.calls.append(("version", ref, n, record))
         return self.version_result
+
+    async def run_cypher(self, cypher, *, semantic_query=""):
+        self.calls.append(("run_cypher", cypher, semantic_query))
+        return self.cypher_result
 
     async def versions(self, ref):
         return self.versions_result
@@ -445,3 +451,93 @@ class TestAdmin:
         assert "Versions: 11" in out
         assert "Out of date: 2" in out
         assert "Unconfirmed captured sources: 5" in out
+
+
+class TestOnlyTheArchivistWrites:
+    """The capability split.
+
+    Every agent can read; one can write. Keyed on the agent's name in
+    code rather than on a frontmatter flag, because an agent that
+    could grant itself the capability is the same as no rule.
+
+    The reason is provenance, not safety. A write has to declare what
+    it was built on, and an agent midway through a refactor asked to
+    "note that down" will write something true and cite nothing —
+    because citing is not the task it is doing.
+    """
+
+    WRITES = {
+        "artifact_create",
+        "artifact_revise",
+        "artifact_delete",
+        "artifact_confirm_source",
+        "artifact_dismiss_source",
+        "artifact_reconcile",
+        "artifact_repin",
+    }
+
+    def test_the_default_toolkit_cannot_write(self):
+        kit = ArtifactTools(FakeManager())
+        assert self.WRITES & set(kit.async_functions) == set()
+
+    def test_the_default_toolkit_can_still_read(self):
+        """A read-only agent that cannot look things up writes worse
+        code. The restriction is on changing, not on knowing."""
+        kit = ArtifactTools(FakeManager())
+        for name in ("artifact_search", "artifact_read", "artifact_lineage"):
+            assert name in kit.async_functions
+
+    def test_the_archivist_gets_the_write_tools(self):
+        kit = ArtifactTools(FakeManager(), writable=True)
+        assert set(kit.async_functions) >= self.WRITES
+
+    def test_raw_cypher_belongs_to_the_archivist(self):
+        """Not for safety — the guard refuses writes either way — but
+        because a hand-written query needs the schema, and only the
+        archivist's definition carries it."""
+        assert "artifact_cypher" not in ArtifactTools(FakeManager()).async_functions
+        assert "artifact_cypher" in ArtifactTools(FakeManager(), writable=True).async_functions
+
+
+class TestArtifactCypher:
+    def _kit(self, result):
+        mgr = FakeManager(cypher_result=result)
+        return ArtifactTools(mgr, writable=True), mgr
+
+    async def test_it_forwards_the_query_verbatim(self):
+        kit, mgr = self._kit(
+            CypherResult(
+                cypher="MATCH (a:Artifact) RETURN a.name AS name LIMIT 5",
+                rows=[{"name": "Auth model"}],
+            )
+        )
+        out = await kit.artifact_cypher("MATCH (a:Artifact) RETURN a.name AS name LIMIT 5")
+
+        assert ("run_cypher", "MATCH (a:Artifact) RETURN a.name AS name LIMIT 5", "") in mgr.calls
+        assert "Auth model" in out
+
+    async def test_a_refused_query_says_why(self):
+        kit, _ = self._kit(
+            CypherResult(error="Cypher token 'DELETE' is forbidden: this tool is read-only.")
+        )
+        out = await kit.artifact_cypher("MATCH (a) DELETE a")
+        assert "read-only" in out
+
+    async def test_no_rows_is_distinguished_from_a_failure(self):
+        """ "Nothing matched" and "the query was wrong" are different
+        answers and lead to different next steps."""
+        kit, _ = self._kit(CypherResult(cypher="…", rows=[]))
+        out = await kit.artifact_cypher("MATCH (a:Artifact) WHERE false RETURN a.name LIMIT 1")
+        assert "No rows" in out
+        assert "refused" not in out
+
+    async def test_semantic_text_is_passed_through_for_the_vector_index(self):
+        kit, mgr = self._kit(CypherResult(cypher="…", rows=[{"name": "x"}]))
+        await kit.artifact_cypher("CALL db.index.vector.queryNodes(...)", semantic_query="jwt")
+        assert ("run_cypher", "CALL db.index.vector.queryNodes(...)", "jwt") in mgr.calls
+
+    async def test_a_long_result_is_capped_with_the_remainder_named(self):
+        rows = [{"name": f"doc-{i}"} for i in range(60)]
+        kit, _ = self._kit(CypherResult(cypher="…", rows=rows))
+        out = await kit.artifact_cypher("MATCH (a:Artifact) RETURN a.name AS name LIMIT 60")
+        assert "and 20 more" in out

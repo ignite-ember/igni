@@ -163,10 +163,18 @@ class ToolsBuilder:
         return [rt] if rt else []
 
     def artifacts(self) -> list[Any]:
-        """Versioned-artifact tools when the store is configured."""
+        """Versioned-artifact tools when the store is configured.
+
+        Read-only. The main agent searches, reads and follows lineage;
+        it cannot write, and neither can any sub-agent except the
+        archivist — see :mod:`ember_code.core.tools.artifacts`. A write
+        has to declare what it was built on, and an agent midway
+        through a refactor will write something true and cite nothing,
+        because citing is not what it is doing.
+        """
         if self._artifacts is None:
             return []
-        return [ArtifactTools(self._artifact_mgr)]
+        return [ArtifactTools(self._artifact_mgr, writable=False)]
 
     def loop(self) -> list[Any]:
         """/loop-driven iteration control + per-iter scratchpad."""

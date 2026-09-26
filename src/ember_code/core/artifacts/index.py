@@ -332,12 +332,22 @@ class ArtifactIndex:
             return []
         return await self._client.versions(summary.artifact_id, limit=limit)
 
-    async def version(self, ref: str, n: int = 0) -> ArtifactVersion | None:
+    async def version(
+        self, ref: str, n: int = 0, *, record: bool = False
+    ) -> ArtifactVersion | None:
         """Fetch one revision. ``n <= 0`` means head.
 
         An explicit ``ref`` of the form ``id@n`` wins over the ``n``
         argument only when ``n`` was left at its default, so a caller
         that passes both does not get a silent surprise.
+
+        ``record`` marks the read in the capture ledger. Off by
+        default because most callers here are machinery — the sync,
+        the exporter, the reconcile loop — and a document the
+        exporter touched is not a document anybody read. The agent's
+        read tool passes it, and reading something in full is a
+        stronger signal of having built on it than seeing it in a
+        search snippet, which was the only read being captured.
         """
         summary = await self.resolve(ref)
         if summary is None:
@@ -346,7 +356,10 @@ class ArtifactIndex:
         _, _, suffix = (ref or "").partition("@")
         if wanted <= 0 and suffix.isdigit():
             wanted = int(suffix)
-        return await self._client.version(summary.artifact_id, wanted)
+        found = await self._client.version(summary.artifact_id, wanted)
+        if record and found is not None:
+            self._ledger.record([VersionPin(artifact_id=found.artifact_id, n=found.n)])
+        return found
 
     async def lineage(self, ref: str, n: int = 0) -> ArtifactLineage | None:
         summary = await self.resolve(ref)

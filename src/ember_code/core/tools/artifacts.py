@@ -13,6 +13,25 @@ which documents it drew on, and a parameter it can skip is a parameter
 it will skip. When the declaration is missing, the error names the
 exact refs this session read so the agent confirms a real list rather
 than inventing one.
+
+**Only one agent may write.** The toolkit is read-only unless built
+with ``writable=True``, which only the archivist gets — see
+:data:`ARCHIVIST`. Every other agent can search, read and follow
+lineage, and has no tool that changes anything.
+
+The reason is not safety, it is provenance. A write has to declare
+what it was built on, and a declaration is only worth having if
+somebody weighed it. An agent midway through a refactor, asked to
+"note that down", will write something true and cite nothing —
+because citing is not what it is doing. Routing writes through an
+agent whose whole job is the document makes that judgement the
+foreground task rather than an interruption to one.
+
+This costs a delegation round-trip on every write, and that is the
+trade being made. It is affordable because the capture ledger is
+per-session and shared: whatever the main agent read is still offered
+to the archivist as candidate sources, so delegating does not lose
+the provenance that made the write worth recording.
 """
 
 from __future__ import annotations
@@ -35,20 +54,45 @@ logger = logging.getLogger(__name__)
 PREVIEW_CHARS: int = 1200
 
 
-class ArtifactTools(Toolkit):
-    """Agent-facing tools for the project's versioned artifacts."""
+#: The one agent allowed to change anything.
+#:
+#: Named here rather than read from a config file, because "who may
+#: write" is not a preference. A frontmatter key would let any agent
+#: definition grant itself the capability, which is the same as not
+#: having the rule.
+ARCHIVIST: str = "archivist"
 
-    def __init__(self, artifact_mgr: SessionArtifactManager):
+
+class ArtifactTools(Toolkit):
+    """Agent-facing tools for the project's versioned artifacts.
+
+    Read-only by default. ``writable=True`` adds the tools that
+    change something — writing, reviewing captured sources,
+    reconciling, publishing, deleting — and only the archivist is
+    built that way.
+    """
+
+    def __init__(self, artifact_mgr: SessionArtifactManager, *, writable: bool = False):
         super().__init__(name="igni_artifacts")
         self._mgr = artifact_mgr
+        self.writable = writable
+
+        # Reading is for everyone. An agent that cannot look things up
+        # writes worse code, and none of this can change a document.
         self.register(self.artifact_search)
-        self.register(self.artifact_create)
-        self.register(self.artifact_revise)
         self.register(self.artifact_read)
         self.register(self.artifact_list)
         self.register(self.artifact_versions)
         self.register(self.artifact_lineage)
         self.register(self.artifact_ask)
+        self.register(self.artifact_status)
+
+        if not writable:
+            return
+
+        self.register(self.artifact_cypher)
+        self.register(self.artifact_create)
+        self.register(self.artifact_revise)
         self.register(self.artifact_pending_sources)
         self.register(self.artifact_confirm_source)
         self.register(self.artifact_dismiss_source)
@@ -56,7 +100,6 @@ class ArtifactTools(Toolkit):
         self.register(self.artifact_reconcile)
         self.register(self.artifact_repin)
         self.register(self.artifact_delete)
-        self.register(self.artifact_status)
 
     # ── Reads ─────────────────────────────────────────────────────────
 
@@ -87,7 +130,7 @@ class ArtifactTools(Toolkit):
             ref: Artifact id, ``id@n``, or name.
             version: Version number; 0 (default) reads the current one.
         """
-        found = await self._mgr.version(ref, version)
+        found = await self._mgr.version(ref, version, record=True)
         if found is None:
             return f"No artifact matches '{ref}'."
         header = f"{found.ref} (v{found.n}{'  — current' if found.head else ''})"
@@ -179,6 +222,39 @@ class ArtifactTools(Toolkit):
                 sources nobody confirmed".
         """
         return await self._mgr.ask_graph(question)
+
+    async def artifact_cypher(self, cypher: str, semantic_query: str = "") -> str:
+        """Run a Cypher query you wrote yourself against the graph.
+
+        Use this when you know the shape of the answer and
+        artifact_ask's paraphrase keeps missing it. The query runs
+        read-only; a write is refused before it reaches the database.
+
+        The graph schema is in your instructions. Two rules that
+        account for most wrong answers: filter `v.head` unless the
+        question is about history, and return named columns rather
+        than whole nodes.
+
+        Args:
+            cypher: The query. Must include a LIMIT.
+            semantic_query: Text to embed and bind as `$query_vector`,
+                for queries that call the vector index. You cannot
+                write a 384-dimension literal, so this is how that
+                index is reached.
+        """
+        result = await self._mgr.run_cypher(cypher, semantic_query=semantic_query)
+        if not result.ok:
+            return f"Query refused or failed: {result.error}"
+        if not result.rows:
+            return "No rows. The query ran; nothing matched."
+        lines = [f"{len(result.rows)} row(s):"]
+        for row in result.rows[:40]:
+            lines.append("  " + ", ".join(f"{k}={v}" for k, v in row.items()))
+        if len(result.rows) > 40:
+            lines.append(f"  … and {len(result.rows) - 40} more")
+        if result.truncated:
+            lines.append("  (result was capped)")
+        return "\n".join(lines)
 
     async def artifact_pending_sources(self) -> str:
         """List the artifacts you have read this session.

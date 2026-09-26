@@ -61,9 +61,9 @@ class ToolNameCatalog:
             "cancel_scheduled_task",
         ],
         # ArtifactTools — pass through individual function names. Listed
-        # here so eval YAMLs can also use the umbrella name "Knowledge"
+        # here so eval YAMLs can also use the umbrella name "Artifacts"
         # if a case wants to allow any of the three operations.
-        "Knowledge": [
+        "Artifacts": [
             "artifact_search",
             "artifact_add",
             "artifact_delete",

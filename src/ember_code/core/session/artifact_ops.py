@@ -239,10 +239,12 @@ class SessionArtifactManager:
             return []
         return await self.artifacts.versions(ref)
 
-    async def version(self, ref: str, n: int = 0) -> ArtifactVersion | None:
+    async def version(
+        self, ref: str, n: int = 0, *, record: bool = False
+    ) -> ArtifactVersion | None:
         if self.artifacts is None:
             return None
-        return await self.artifacts.version(ref, n)
+        return await self.artifacts.version(ref, n, record=record)
 
     async def lineage(self, ref: str, n: int = 0) -> ArtifactLineage | None:
         if self.artifacts is None:
@@ -276,6 +278,20 @@ class SessionArtifactManager:
             lines.append(f"  … and {len(result.rows) - 40} more")
         lines.append(f"\nQuery used:\n{result.cypher}")
         return "\n".join(lines)
+
+    async def run_cypher(self, cypher: str, *, semantic_query: str = ""):
+        """Run a hand-written query, with no planning and no retry.
+
+        The author can read the error and fix it, and rewriting their
+        query underneath them would be worse than showing them what
+        the database said.
+        """
+        from ember_code.core.artifacts.cypher import CypherResult
+
+        planner = self._planner()
+        if planner is None:
+            return CypherResult(cypher=cypher, error=self.disabled_message)
+        return await planner.run_raw(cypher, semantic_query=semantic_query)
 
     def _planner(self):
         """Build a planner over this session's store, or None.

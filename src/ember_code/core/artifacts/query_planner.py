@@ -133,14 +133,15 @@ class ArtifactQueryPlanner:
         plan.error = plan.result.error if plan.result else "Query failed."
         return plan
 
-    async def run_raw(self, cypher: str) -> CypherResult:
-        """Run a query the user edited by hand.
+    async def run_raw(self, cypher: str, *, semantic_query: str = "") -> CypherResult:
+        """Run a query somebody wrote by hand.
 
-        No planning and no retry: the author is a person who can see
-        the error and fix it, and silently rewriting their query would
-        be worse than showing them what the database said.
+        No planning and no retry: the author can see the error and fix
+        it, and silently rewriting their query would be worse than
+        showing them what the database said. Used by the panel's
+        editable query box and by the archivist's ``artifact_cypher``.
         """
-        return await self._service.run(cypher)
+        return await self._service.run(cypher, semantic_query=semantic_query)
 
     # ── The model call ────────────────────────────────────────────────
 

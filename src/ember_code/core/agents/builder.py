@@ -20,7 +20,7 @@ from ember_code.core.agents.schemas import (
 )
 from ember_code.core.config.models import ModelRegistry
 from ember_code.core.config.tool_permissions import ToolPermissions
-from ember_code.core.tools.artifacts import ArtifactTools
+from ember_code.core.tools.artifacts import ARCHIVIST, ArtifactTools
 from ember_code.core.tools.registry import ToolRegistry
 from ember_code.core.tools.schedule import ScheduleTools
 
@@ -193,7 +193,10 @@ class AgentBuilder:
         if tools:
             tools.append(ScheduleTools(project_dir=ctx.base_dir))
         if tools and ctx.artifact_mgr is not None:
-            tools.append(ArtifactTools(ctx.artifact_mgr))
+            # One agent writes. Keyed on the definition's name rather
+            # than a frontmatter flag, because an agent that could
+            # grant itself the capability is the same as no rule.
+            tools.append(ArtifactTools(ctx.artifact_mgr, writable=definition.name == ARCHIVIST))
 
         agent_mcp: dict[str, Any] = {}
         if tools and ctx.mcp_clients:
