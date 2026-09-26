@@ -67,7 +67,6 @@ class SessionArtifactManager:
         # only for what changed. Not persisted: starting from the
         # beginning is idempotent, and a stale cursor on disk would be
         # the one way to *miss* something.
-        self._comment_cursor: str | None = None
 
     # ── Config surface ────────────────────────────────────────────────
 
@@ -330,21 +329,6 @@ class SessionArtifactManager:
 
     # ── Comments ──────────────────────────────────────────────────────
 
-    def _sync(self) -> CollaborationSync | None:
-        """The sync client, or ``None`` when this machine is signed out.
-
-        Built per call rather than held: the account token can change
-        under a long session, and a cached client would keep using the
-        one it was constructed with.
-        """
-        if self.artifacts is None:
-            return None
-        server = str(getattr(self.settings, "server_url", "") or "")
-        token = str(getattr(self.settings, "access_token", "") or "")
-        if not (server and token):
-            return None
-        return CollaborationSync(self.artifacts, server_url=server, access_token=token)
-
     async def comments(
         self, *, artifact_id: str | None = None, open_only: bool = True
     ) -> list[Comment]:
@@ -358,15 +342,8 @@ class SessionArtifactManager:
             return []
         return await self.artifacts.client.comments(artifact_id=artifact_id, open_only=open_only)
 
-    async def sync_comments(self) -> int:
-        sync = self._sync()
-        if sync is None:
-            return 0
-        projected, _ = await sync.pull_comments(cursor=self._comment_cursor)
-        return projected
-
     async def resolve_comment(
-        self, *, comment_id: str, status: str, content: str = ""
+        self, *, comment_id: str, status: str, content: str = "", sync: CollaborationSync
     ) -> ArtifactCommentResolved:
         """Adjudicate one comment, appending a version when accepting.
 
@@ -379,12 +356,6 @@ class SessionArtifactManager:
         """
         if self.artifacts is None:
             return ArtifactCommentResolved(ok=False, message=self.disabled_message)
-        sync = self._sync()
-        if sync is None:
-            return ArtifactCommentResolved(
-                ok=False,
-                message="Resolving a comment needs a signed-in igni account — run `igni login`.",
-            )
         try:
             state = CommentStatus(status)
         except ValueError:
@@ -399,7 +370,17 @@ class SessionArtifactManager:
             written = await self.revise(
                 ref=target.artifact_id,
                 content=content,
-                sources=SourceDeclaration(),
+                # No new sources are declared, and that is not the
+                # same as having none: a revision inherits the
+                # previous version's confirmed edges, so the document
+                # keeps standing on exactly what it stood on before.
+                # What changed is the wording somebody asked about,
+                # and the reason records who asked.
+                sources=None,
+                no_sources_reason=(
+                    f"Applied comment {comment_id} from "
+                    f"{target.author or 'a collaborator'}; sources unchanged."
+                ),
             )
             if not written.ok:
                 return ArtifactCommentResolved(ok=False, message=written.message)

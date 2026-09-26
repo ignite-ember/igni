@@ -1313,10 +1313,40 @@ class _ExternalProcessHandle:
     awaiting. The :class:`Neo4jRuntime` shutdown path only needs
     ``.pid`` and ``.send_signal``/``.terminate``; the ``wait`` path
     is gated on a duck-typed check.
+
+    It also needs ``returncode``, which this used not to have. Three
+    liveness checks read ``state.proc.returncode`` — including the one
+    in :meth:`Neo4jRuntime.start_for_artifacts` — so adopting a
+    process rather than spawning it raised ``AttributeError`` there
+    and the caller logged "neo4j attach failed; continuing without
+    it". The visible symptom was a session whose artifacts were
+    silently disabled: the store was running and reachable, every
+    artifact RPC answered "Artifacts are disabled", and nothing said
+    why. Reproduced by starting a Neo4j for a project and then
+    opening the app on it.
     """
 
     def __init__(self, pid: int) -> None:
         self.pid = pid
+
+    @property
+    def returncode(self) -> int | None:
+        """``None`` while the process lives, mirroring ``Popen``.
+
+        A real exit code is not recoverable for a process we did not
+        spawn — only the kernel's parent gets that — so a dead process
+        reports ``-1``. Every caller asks the same question, ``is
+        returncode None``, and that answer is exact.
+        """
+        try:
+            os.kill(self.pid, 0)
+        except ProcessLookupError:
+            return -1
+        except PermissionError:
+            # Alive, but owned by another user. Still running, which
+            # is what the liveness checks are asking.
+            return None
+        return None
 
     def send_signal(self, sig: int) -> None:
         """Send a signal to the process group (Neo4j's children)."""

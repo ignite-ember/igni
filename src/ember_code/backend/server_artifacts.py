@@ -37,6 +37,7 @@ from ember_code.backend.schemas_artifacts import (
     ArtifactStatus,
     ArtifactVersionRow,
 )
+from ember_code.core.artifacts.collaboration import CollaborationSync
 from ember_code.core.artifacts.cypher import ArtifactCypherService, CypherResult
 from ember_code.core.artifacts.export import ArtifactExporter, ArtifactPublisher
 from ember_code.core.artifacts.models import ArtifactSummary, EdgeState
@@ -63,6 +64,11 @@ class ArtifactController:
 
     def __init__(self, session: Session) -> None:
         self._session = session
+        # Advanced by each pull so a second one asks only for what
+        # changed. Not persisted: starting from the beginning is
+        # idempotent, and a stale cursor on disk is the one way to
+        # *miss* something.
+        self._comment_cursor: str | None = None
 
     # ── Overview ──────────────────────────────────────────────────────
 
@@ -264,16 +270,18 @@ class ArtifactController:
         """
         mgr = self._session.artifact_mgr
         rows = await mgr.comments(artifact_id=artifact_id or None, open_only=open_only)
-        names: dict[str, tuple[str, int]] = {}
+        # One listing rather than a lookup per comment: the queue is
+        # cross-document but a person's documents number in the tens,
+        # and a resolve per row would be a query per comment.
+        known = {
+            s.artifact_id: ((s.name or ""), int(s.head_n or 0)) for s in await mgr.list_artifacts()
+        }
         out: list[ArtifactCommentRow] = []
         for c in rows:
-            if c.artifact_id not in names:
-                summary = await mgr.resolve(c.artifact_id)
-                names[c.artifact_id] = (
-                    (getattr(summary, "name", "") or ""),
-                    int(getattr(summary, "head_n", 0) or 0),
-                )
-            name, head_n = names[c.artifact_id]
+            # A comment can outlive the document it was left on —
+            # the row stays on the server after a local delete. Fall
+            # back to the id rather than dropping it.
+            name, head_n = known.get(c.artifact_id, (c.artifact_id, 0))
             out.append(
                 ArtifactCommentRow(
                     comment_id=c.comment_id,
@@ -308,13 +316,47 @@ class ArtifactController:
         writing afterwards leaves a closed thread pointing at nothing
         whenever the write fails.
         """
+        sync = self._collaboration()
+        if sync is None:
+            return ArtifactCommentResolved(
+                ok=False,
+                message="Resolving a comment needs a signed-in igni account — run `igni login`.",
+            )
         return await self._session.artifact_mgr.resolve_comment(
-            comment_id=comment_id, status=status, content=content
+            comment_id=comment_id, status=status, content=content, sync=sync
         )
+
+    def _collaboration(self) -> CollaborationSync | None:
+        """The sync client, built from the session's cloud credentials.
+
+        Built here rather than in ``SessionArtifactManager`` because
+        this is where the credentials are: the manager holds settings
+        and a project directory, and ``Settings`` carries neither a
+        server URL nor a token — those live on
+        ``session.cloud_auth``, which is also where ``share`` reads
+        them. The first cut asked the settings object and silently got
+        nothing, so every sync reported zero and every resolve claimed
+        the account was signed out.
+        """
+        artifacts = self._session.artifacts
+        if artifacts is None:
+            return None
+        auth = getattr(self._session, "cloud_auth", None)
+        sync = CollaborationSync(
+            artifacts,
+            server_url=getattr(auth, "server_url", "") or "",
+            access_token=getattr(auth, "access_token", None) or "",
+        )
+        return sync if sync.is_configured else None
 
     async def sync_comments(self) -> int:
         """Pull comment activity and project it. Returns how many landed."""
-        return await self._session.artifact_mgr.sync_comments()
+        sync = self._collaboration()
+        if sync is None:
+            return 0
+        projected, cursor = await sync.pull_comments(cursor=self._comment_cursor)
+        self._comment_cursor = cursor
+        return projected
 
     async def confirm_source(self, entry_id: str, source_id: str) -> bool:
         return await self._session.artifact_mgr.confirm_source(ref=entry_id, source_ref=source_id)
