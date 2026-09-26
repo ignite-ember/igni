@@ -19,6 +19,7 @@ socket is replaced.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -355,3 +356,131 @@ class TestConfiguration:
         assert not sync.is_configured
         with pytest.raises(RuntimeError, match="igni login"):
             await sync.pull(slug="s1", ref="Auth model")
+
+
+class TestTheLiveChannel:
+    """The stream only decides *how soon*, never *whether*.
+
+    Every assertion here is about latency or about not falling over.
+    The correctness property — that missing a notification costs
+    nothing — is defended by the cursor tests above, because it is a
+    property of the pull rather than of the stream.
+    """
+
+    @staticmethod
+    def sse(*lines: str) -> bytes:
+        return ("\n".join(lines) + "\n\n").encode()
+
+    def streaming_server(self, frames: bytes, comments: list[dict] | None = None):
+        """A server whose stream emits ``frames`` then ends."""
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if request.url.path.endswith("/comments/stream"):
+                return httpx.Response(200, content=frames)
+            if request.url.path == "/v1/artifacts/comments/sync":
+                rows = comments or []
+                return httpx.Response(
+                    200,
+                    json={
+                        "comments": rows,
+                        "cursor": rows[-1]["updated_at"] if rows else None,
+                    },
+                )
+            return httpx.Response(404, json={"detail": "Not found"})
+
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler)), seen
+
+    async def test_a_sync_event_triggers_a_pull(self, index):
+        from ember_code.core.artifacts.collaboration import CommentStream
+
+        client, seen = self.streaming_server(
+            self.sse("id: 2026-09-26T12:00:00+00:00", "event: sync", 'data: {"cursor": ""}'),
+            comments=[comment_payload()],
+        )
+        sync = CollaborationSync(index, server_url=SERVER, access_token=TOKEN, client=client)
+        await CommentStream(sync).follow_once()
+
+        assert any(r.url.path == "/v1/artifacts/comments/sync" for r in seen)
+        assert [c.body for c in await index.client.comments()] == [
+            "This contradicts the JWT decision."
+        ]
+
+    async def test_a_keepalive_triggers_nothing(self, index):
+        """An idle stream must not cost a request per heartbeat."""
+        from ember_code.core.artifacts.collaboration import CommentStream
+
+        client, seen = self.streaming_server(b": keepalive\n\n: keepalive\n\n")
+        sync = CollaborationSync(index, server_url=SERVER, access_token=TOKEN, client=client)
+        await CommentStream(sync).follow_once()
+
+        assert not any(r.url.path == "/v1/artifacts/comments/sync" for r in seen)
+
+    async def test_the_cursor_is_remembered_for_the_reconnect(self, index):
+        from ember_code.core.artifacts.collaboration import CommentStream
+
+        client, _ = self.streaming_server(
+            self.sse("id: 2026-09-26T12:00:00+00:00", "event: sync", 'data: {"cursor": ""}'),
+            comments=[comment_payload(updated_at="2026-09-26T13:00:00+00:00")],
+        )
+        sync = CollaborationSync(index, server_url=SERVER, access_token=TOKEN, client=client)
+        stream = CommentStream(sync)
+        await stream.follow_once()
+
+        assert stream.cursor == "2026-09-26T13:00:00+00:00"
+
+    async def test_it_sends_the_cursor_as_last_event_id(self, index):
+        """The same mechanism a browser's EventSource uses, arriving at
+        the same server parameter as ``since``."""
+        from ember_code.core.artifacts.collaboration import CommentStream
+
+        client, seen = self.streaming_server(b": keepalive\n\n")
+        sync = CollaborationSync(index, server_url=SERVER, access_token=TOKEN, client=client)
+        stream = CommentStream(sync)
+        stream._cursor = "2026-09-26T09:00:00+00:00"
+        await stream.follow_once()
+
+        opened = next(r for r in seen if r.url.path.endswith("/comments/stream"))
+        assert opened.headers["Last-Event-ID"] == "2026-09-26T09:00:00+00:00"
+
+    async def test_on_change_is_called_with_what_landed(self, index):
+        from ember_code.core.artifacts.collaboration import CommentStream
+
+        client, _ = self.streaming_server(
+            self.sse("event: sync", 'data: {"cursor": ""}'),
+            comments=[comment_payload()],
+        )
+        sync = CollaborationSync(index, server_url=SERVER, access_token=TOKEN, client=client)
+        seen: list[int] = []
+        await CommentStream(sync).follow_once(on_change=seen.append)
+        assert seen == [1]
+
+    async def test_a_failing_stream_does_not_raise(self, index):
+        """A laptop waking to a dead deployment retries; it does not
+        crash the session that started the stream."""
+        from ember_code.core.artifacts.collaboration import CommentStream
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(503, json={"detail": "down"})
+
+        sync = CollaborationSync(
+            index,
+            server_url=SERVER,
+            access_token=TOKEN,
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        stream = CommentStream(sync)
+        stream.stop()
+        await stream.run()  # must simply return
+
+    async def test_stop_ends_the_loop(self, index):
+        from ember_code.core.artifacts.collaboration import CommentStream
+
+        client, _ = self.streaming_server(b": keepalive\n\n")
+        sync = CollaborationSync(index, server_url=SERVER, access_token=TOKEN, client=client)
+        stream = CommentStream(sync)
+        task = asyncio.create_task(stream.run())
+        await asyncio.sleep(0.05)
+        stream.stop()
+        await asyncio.wait_for(task, timeout=5)

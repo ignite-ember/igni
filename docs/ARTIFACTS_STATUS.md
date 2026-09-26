@@ -140,7 +140,9 @@ in front of it, comes back as Cypher, runs read-only against the
 local Neo4j sidecar, and returns rows plus a drawable projection.
 **All of it on this machine.** There is no server-side counterpart
 and there is not meant to be: the graph does not exist anywhere but
-here.
+here. Co-authoring does not change that — the server holds version
+*content* and comments as ordinary rows, never edges, and cannot
+answer a structural question about either.
 
 - The query is **shown and editable** — that is the control, not a
   debugging affordance. A query that is nearly right is far more
@@ -260,45 +262,103 @@ the judge for what only reads as wrong in prose.
 
 ---
 
-## Decided, not built: comments and rights
+## Co-authoring, comments and rights
 
-Decisions taken; no code written.
+Built, except the UI. This section replaced a set of decisions that
+said the opposite, and the reversal is worth recording rather than
+quietly overwriting.
 
-**An "edit" right is a suggestion, not an edit.** The version chain
-lives on the author's machine and the server holds a rendered
-snapshot, so a server-side edit has no way to enter the chain — the
-local store cannot ingest a change made to a rendering. An editor
-selects text and proposes replacement wording; the owner accepts or
-rejects it locally, and accepting appends a version and republishes.
-One author, lineage intact.
+**What was decided first.** One author owns the chain; the server
+holds a rendered snapshot; an "edit" right is a *suggestion* the
+owner accepts locally, because a server-side edit has no way to enter
+a version chain that lives on somebody's laptop.
 
-**Anyone who can view can comment.** The difference between viewer
-and editor is that an editor's comment may carry proposed text. A
-viewer who spots an error and has no way to say so is the failure
-this avoids.
+**What changed it.** A request to actually co-work on documents, with
+two-way sync. The old reasoning was sound given its premise and the
+premise no longer holds: if two people are to append to one chain,
+neither can see the other's head, so something has to decide what
+order the appends happened in. The only participant both can reach is
+the server.
 
-**The server pushes comments over a live connection.** Chosen over
-polling. This is the largest piece of new infrastructure in the plan:
-a per-author connection on the server, and reconnect/backoff on the
-client. Worth flagging as the main risk in this cut — the author's
-laptop sleeps, and a push channel has to survive that without either
-losing comments or duplicating them.
+### The server orders; it does not merge
 
-### Shape of the work
+An append names the version it was written from. If that is still the
+head it lands as `head + 1`. If it is not, it is refused with **the
+versions the caller is missing**, so they can rebase in one round
+trip — the same bargain a rejected `git push --force-with-lease`
+offers. No merge is invented: two people editing the same paragraph
+is a decision, and a document nobody wrote is the worst way to settle
+it. A unique constraint on `(document, n)` makes a genuine race safe;
+one retry distinguishes a race from a stale writer.
 
-1. **Server** — a comments table (anchor to a version + selected
-   text, body, optional suggested text, status, thread), an
-   `audience` that carries a role rather than a bare identity, and
-   endpoints to post, list and resolve. The anchor records *which
-   version* it was made against; a comment on v2 must be legible when
-   the document is at v3.
-2. **Push** — per-author channel, reconnect, replay-on-reconnect so a
-   sleeping laptop does not miss anything.
-3. **Portal** — text selection → comment box, comment thread beside
-   the document, suggested-text UI for editors.
-4. **igni, locally** — a review screen listing open comments across
-   your published documents, with the agent drafting resolutions;
-   accepting writes a new version and republishes.
+Derivation edges stay client-side facts. `sources` travels through
+the server as opaque JSON for each collaborator to rebuild locally.
+This server has no artifact graph and cannot answer a staleness
+question about one.
+
+### Reading and writing are separate grants
+
+Visibility widens who can *read*. `writers` names who may append, and
+is always an explicit list of people. A document shared with a whole
+company does not become writable by it — the link is the thing that
+travels, and nobody re-reads permissions before forwarding one.
+
+Anyone who can read can comment. The difference a writer gets is that
+their comment may carry replacement text, which is what makes
+accepting it an ordinary append with an author and a reason.
+
+### Comments are nodes in the local graph
+
+`(:Comment)-[:ON]->(:Version)`. Captured on the server, where the
+reader is, and projected down on sync — so the whole history is
+local. "Which documents drew comments after their source moved" is
+one query alongside staleness and lineage, and it answers with the
+network down.
+
+Anchored to a version, not a document: a remark about v2 means
+nothing beside a paragraph rewritten in v3. The quoted passage is the
+anchor that survives; the offsets are a highlighting hint that rots
+on the first edit.
+
+### The live channel is an optimisation, not a delivery mechanism
+
+SSE, at `GET /v1/artifacts/comments/stream`. **It carries a cursor
+and never a comment.** The client answers a nudge by running the sync
+pull it already has.
+
+That is what makes a bad network harmless. Correctness lives in the
+cursor: the pull is ordered on `updated_at`, projection is a MERGE on
+the comment id, and a row naming a version the client has not fetched
+is skipped *without consuming the cursor*. A laptop that sleeps
+through fifty notifications wakes, pulls once, and is exactly as
+correct as one that received every one. The stream decides only how
+soon.
+
+Each event's `id` is the cursor, so `EventSource`'s `Last-Event-ID`
+resumption is the same mechanism as the `since` parameter arriving
+through a different door — the sleeping-laptop case that was flagged
+as this cut's main risk stops being special.
+
+SSE rather than socket.io because writes already go over POST, so
+only one direction is needed; socket.io would add a protocol layer, a
+client library and sticky sessions for bidirectionality nothing uses.
+Long polling stays available as a fallback if a customer's proxy eats
+SSE, and buys nothing otherwise.
+
+**One operational limit, stated rather than guarded.** The notifier
+is in-process. A deployment running several workers will have
+listeners on a process that does not see a given write; those
+listeners miss the nudge and fall back to their reconnect interval.
+Worth knowing before adding a second worker, not worth a message
+broker until there is one. Nothing is lost either way — see the
+cursor, above.
+
+### Still to build
+
+The UI, and only the UI: text selection → comment box in the portal,
+and the local review screen where the agent drafts resolutions and
+accepting appends a version.
+
 
 ---
 

@@ -27,9 +27,11 @@ worst possible answer to it.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -50,6 +52,16 @@ SYNC_TIMEOUT_SECONDS: float = 30.0
 #: cap — a client behind by thousands catches up over several pulls
 #: instead of asking for all of them in one request that times out.
 COMMENT_PAGE: int = 500
+
+#: Backoff bounds for the live channel, in seconds.
+#:
+#: The stream ends itself roughly every fifteen minutes, so a normal
+#: reconnect is not a failure and must not be punished with a long
+#: wait — hence the small floor. The ceiling is what stops a client
+#: hammering a server that is down: a laptop that wakes to a dead
+#: deployment retries every couple of minutes, not every second.
+RECONNECT_MIN_SECONDS: float = 1.0
+RECONNECT_MAX_SECONDS: float = 120.0
 
 
 @dataclass(frozen=True)
@@ -117,6 +129,21 @@ class CollaborationSync:
     @property
     def is_configured(self) -> bool:
         return bool(self._server_url and self._access_token)
+
+    # Read-only views for :class:`CommentStream`, which opens its own
+    # long-lived connection rather than borrowing ``_request`` — a
+    # stream and a request want opposite timeouts.
+    @property
+    def server_url(self) -> str:
+        return self._server_url
+
+    @property
+    def access_token(self) -> str:
+        return self._access_token
+
+    @property
+    def http(self) -> httpx.AsyncClient | None:
+        return self._client
 
     # ── Transport ────────────────────────────────────────────────────
 
@@ -333,3 +360,118 @@ def _to_comment(row: dict[str, Any]) -> Comment:
         author=str(row.get("author_email") or ""),
         at=str(row.get("updated_at") or row.get("created_at") or ""),
     )
+
+
+class CommentStream:
+    """Follow the server's live channel, pulling when it says to.
+
+    **The stream is a latency optimisation, not a delivery
+    mechanism.** It carries a cursor and never a comment, and the only
+    thing it does is bring forward a pull that would have happened
+    anyway. Correctness lives in :meth:`CollaborationSync.pull_comments`
+    — ordered on ``updated_at``, projected with a MERGE on the comment
+    id, skipping rows whose version is not here yet. A client that
+    misses every notification for a week pulls once and is exactly as
+    correct as one that received them all.
+
+    That is what licenses everything below to be casual about
+    failure. A dropped connection reconnects. A reconnect that fails
+    backs off. A cursor that goes missing means a pull from the
+    beginning, which is idempotent. None of it can lose a comment,
+    so none of it needs to be careful.
+
+    The cursor is sent as ``Last-Event-ID`` on reconnect, which is the
+    same mechanism a browser's ``EventSource`` uses, arriving at the
+    same server parameter as ``since``.
+    """
+
+    def __init__(self, sync: CollaborationSync) -> None:
+        self._sync = sync
+        self._cursor: str | None = None
+        self._stop = asyncio.Event()
+
+    @property
+    def cursor(self) -> str | None:
+        return self._cursor
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    async def run(self, *, on_change: Callable[[int], Any] | None = None) -> None:
+        """Follow the stream until :meth:`stop`, pulling as told.
+
+        ``on_change`` is called with the number of comments projected,
+        whenever that is non-zero — enough for a badge or a refresh
+        without this class knowing what a screen is.
+        """
+        delay = RECONNECT_MIN_SECONDS
+        while not self._stop.is_set():
+            try:
+                await self.follow_once(on_change)
+                # A clean end is the server asking for a reconnect,
+                # which it does on a timer. Reset the backoff: this is
+                # the expected path, not a failure.
+                delay = RECONNECT_MIN_SECONDS
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.info("comment stream dropped (%s); retrying in %.0fs", exc, delay)
+                delay = min(delay * 2, RECONNECT_MAX_SECONDS)
+            if self._stop.is_set():
+                return
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=delay)
+                return  # stop() was called during the wait
+            except asyncio.TimeoutError:
+                continue
+
+    async def follow_once(self, on_change: Callable[[int], Any] | None = None) -> None:
+        """One connection: follow it until the server ends it.
+
+        Public because it is the useful unit on its own — "connect,
+        catch up, come back" is what a foreground *sync now* wants,
+        and it is the piece worth testing directly. :meth:`run` is
+        this in a loop with backoff.
+        """
+        if not self._sync.is_configured:
+            raise RuntimeError("Collaboration needs a signed-in igni account — run `igni login`.")
+        headers = {"Authorization": f"Bearer {self._sync.access_token}"}
+        if self._cursor:
+            headers["Last-Event-ID"] = self._cursor
+
+        client = self._sync.http
+        owns = client is None
+        if client is None:
+            # No read timeout: an idle stream is the normal state, and
+            # the server's keepalives are what prove it is alive.
+            client = httpx.AsyncClient(
+                timeout=httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0)
+            )
+        try:
+            async with client.stream(
+                "GET", f"{self._sync.server_url}/v1/artifacts/comments/stream", headers=headers
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if self._stop.is_set():
+                        return
+                    # Keepalives are SSE comments and carry nothing.
+                    if not line or line.startswith(":"):
+                        continue
+                    if line.startswith("id:"):
+                        self._cursor = line[3:].strip() or self._cursor
+                        continue
+                    if line.startswith("event:") and line[6:].strip() == "reconnect":
+                        return
+                    if not line.startswith("data:"):
+                        continue
+                    projected, cursor = await self._sync.pull_comments(cursor=self._cursor)
+                    if cursor:
+                        self._cursor = cursor
+                    if projected and on_change is not None:
+                        result = on_change(projected)
+                        if inspect.isawaitable(result):
+                            await result
+        finally:
+            if owns:
+                await client.aclose()
