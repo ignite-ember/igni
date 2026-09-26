@@ -1,5 +1,9 @@
 agent: archivist
 setup_module: evals.archivist.setup
+# expected_tool_calls means "must call", not "may only call" —
+# reading around before acting is what this agent is supposed to
+# do. What it must NOT do lives in unexpected_tool_calls.
+allow_additional_tool_calls: true
 description: |
   The archivist is the only agent that can touch the document store,
   so its judgement is the only thing standing between the store and a

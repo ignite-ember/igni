@@ -68,6 +68,7 @@ class _EvalYamlParser:
                 description=data.get("description", ""),
                 fixtures=fixtures,
                 setup_module=data.get("setup_module"),
+                allow_additional_tool_calls=bool(data.get("allow_additional_tool_calls", False)),
                 cases=cases,
             )
         except ValidationError as exc:

@@ -63,6 +63,7 @@ class AssertionContext(BaseModel):
     judge_model: Any | None
     work_dir: Path | None
     catalog: ToolNameCatalog
+    allow_additional_tool_calls: bool = False
 
 
 class AssertionDriver:
@@ -104,7 +105,18 @@ class ReliabilityDriver(AssertionDriver):
         return bool(case.expected_tool_calls)
 
     async def run(self, ctx: AssertionContext) -> CheckResult:
-        expanded = ctx.catalog.expand_expected(ctx.case.expected_tool_calls or [])
+        # ``expand_expected`` appends the always-allowed system tools,
+        # which only makes sense under the strict reading, where the
+        # list is also the allowlist. Agno treats every entry as
+        # required too, so appending them there says "the agent must
+        # call update_user_memory" — the opposite of excusing it. When
+        # extra calls are already allowed, plain ``expand`` is correct
+        # and the append is not just redundant but wrong.
+        expanded = (
+            ctx.catalog.expand(ctx.case.expected_tool_calls or [])
+            if ctx.allow_additional_tool_calls
+            else ctx.catalog.expand_expected(ctx.case.expected_tool_calls or [])
+        )
         response = ctx.adapter.response
         if not ctx.adapter.has_messages():
             return CheckResult(
@@ -115,6 +127,7 @@ class ReliabilityDriver(AssertionDriver):
             rel = ReliabilityEval(
                 agent_response=response,
                 expected_tool_calls=expanded,
+                allow_additional_tool_calls=ctx.allow_additional_tool_calls,
                 print_results=False,
                 telemetry=False,
             )
@@ -138,6 +151,9 @@ class ReliabilityDriver(AssertionDriver):
                     ok=False,
                     detail=f"agent called no tools (expected at least one of: {sample}{suffix})",
                 )
+            if result.missing_tool_calls:
+                missing = ", ".join(result.missing_tool_calls)
+                return CheckResult(ok=False, detail=f"expected tools never called: {missing}")
             failed = ", ".join(result.failed_tool_calls) if result.failed_tool_calls else "unknown"
             return CheckResult(
                 ok=False,

@@ -34,16 +34,26 @@ AGENT_FILE = REPO_ROOT / "src" / "ember_code" / "bundled_agents" / "archivist.md
 SETUP_MODULE = "evals.archivist.setup"
 
 
-def build_settings():
-    """The user's real model registry, with sampling pinned off."""
+def build_settings(model: str | None = None):
+    """The user's real model registry, with sampling pinned off.
+
+    ``model`` overrides ``models.default`` for this run only. The
+    registry holds several entries for the same model — a direct one
+    and one routed through the capture proxy — and which of them has
+    live credit is a fact about today, not about the product. So it is
+    a flag rather than an edit to ``~/.igni/config.yaml``, which must
+    keep its own default.
+    """
     from ember_code.core.config.settings import load_settings
 
     settings = load_settings()
+    if model:
+        settings.models.default = model
     entry = settings.models.registry.get(settings.models.default)
     if entry is None:
         sys.exit(
-            f"models.default is {settings.models.default!r}, which is not in "
-            "models.registry — run /login or fix ~/.igni/config.yaml"
+            f"model {settings.models.default!r} is not in models.registry "
+            f"— known: {', '.join(sorted(settings.models.registry))}"
         )
     entry.temperature = 0.0
     return settings
@@ -70,7 +80,7 @@ async def build_agent(settings):
     return AgentBuilder(context).build(definition), index
 
 
-async def run_one_case(agent, settings, case):
+async def run_one_case(agent, settings, case, allow_additional: bool = False):
     from ember_code.core.agents.pool import AgentPool
     from ember_code.core.evals.runner import SuiteRunner
     from ember_code.core.evals.schemas import EvalSuite
@@ -79,39 +89,56 @@ async def run_one_case(agent, settings, case):
         agent=AGENT_NAME,
         description=f"live one-case: {case.name}",
         setup_module=SETUP_MODULE,
+        allow_additional_tool_calls=allow_additional,
         cases=[case],
     )
     pool = AgentPool()
     pool._agents[AGENT_NAME] = agent  # type: ignore[attr-defined]
 
-    runner = SuiteRunner(
-        suite=suite, pool=pool, settings=settings, project_dir=REPO_ROOT
-    )
-    result = (await runner.run()).case_results[0]
+    runner = SuiteRunner(suite=suite, pool=pool, settings=settings, project_dir=REPO_ROOT)
+    r = (await runner.run()).case_results[0]
+
+    # Which dimension failed is the whole value of a red case: "the
+    # agent reasoned wrongly" and "the agent never called the tool"
+    # are different bugs and a bare FAIL does not separate them.
+    dims = {
+        "accuracy": (r.accuracy_passed, r.accuracy_reason),
+        "expected_tools": (r.reliability_passed, r.reliability_detail),
+        "unexpected_tools": (r.unexpected_passed, r.unexpected_detail),
+        "tool_args": (r.tool_arg_passed, r.tool_arg_detail),
+        "cypher": (r.cypher_passed, r.cypher_detail),
+    }
     return {
         "name": case.name,
-        "passed": result.passed,
-        "tools": [c.get("name", "?") for c in result.tool_trace],
-        "elapsed": result.elapsed,
-        "error": result.error,
-        "judge": getattr(result, "judge_reasoning", "") or "",
+        "passed": r.passed,
+        "tools": [c.name for c in r.tool_trace],
+        "elapsed": r.elapsed,
+        "error": r.error,
+        "failed_dims": {k: (detail or "") for k, (ok, detail) in dims.items() if ok is False},
+        "response": r.response_text or "",
     }
 
 
 async def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--case", help="run one case by name")
+    parser.add_argument("--case", action="append", help="run one case by name (repeatable)")
+    parser.add_argument("--show-response", action="store_true", help="print the agent's answer")
     parser.add_argument("--limit", type=int, help="run only the first N cases")
+    parser.add_argument(
+        "--model", help="override models.default for this run (e.g. MiniMax-M2.7-proxied)"
+    )
     args = parser.parse_args()
 
-    settings = build_settings()
+    settings = build_settings(args.model)
     suite = load_eval_file(EVAL_FILE)
 
     cases = suite.cases
     if args.case:
-        cases = [c for c in cases if c.name == args.case]
-        if not cases:
-            sys.exit(f"no case named {args.case!r}")
+        wanted = set(args.case)
+        cases = [c for c in cases if c.name in wanted]
+        missing = wanted - {c.name for c in cases}
+        if missing:
+            sys.exit(f"no case named: {', '.join(sorted(missing))}")
     if args.limit:
         cases = cases[: args.limit]
 
@@ -121,7 +148,7 @@ async def main() -> int:
     for case in cases:
         agent, _ = await build_agent(settings)
         try:
-            result = await run_one_case(agent, settings, case)
+            result = await run_one_case(agent, settings, case, suite.allow_additional_tool_calls)
         except Exception as exc:  # a driver failure is not a case failure
             result = {
                 "name": case.name,
@@ -129,7 +156,8 @@ async def main() -> int:
                 "tools": [],
                 "elapsed": 0.0,
                 "error": f"driver: {exc}",
-                "judge": "",
+                "failed_dims": {},
+                "response": "",
             }
         results.append(result)
         mark = "PASS" if result["passed"] else "FAIL"
@@ -138,8 +166,11 @@ async def main() -> int:
             print(f"        tools: {', '.join(result['tools'])}")
         if result["error"]:
             print(f"        error: {result['error'][:300]}")
-        elif not result["passed"] and result["judge"]:
-            print(f"        judge: {result['judge'][:400]}")
+        for dim, detail in result["failed_dims"].items():
+            print(f"        {dim}: {detail[:400]}")
+        if args.show_response and result["response"]:
+            body = "\n".join("        | " + ln for ln in result["response"].splitlines())
+            print(body[:2500])
 
     passed = sum(1 for r in results if r["passed"])
     print(f"\n{passed}/{len(results)} passed")

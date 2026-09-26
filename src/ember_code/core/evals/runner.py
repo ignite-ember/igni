@@ -85,6 +85,7 @@ class CaseRunner:
         work_dir: Path | None = None,
         catalog: ToolNameCatalog | None = None,
         assertion_runner: CaseAssertionRunner | None = None,
+        allow_additional_tool_calls: bool = False,
     ) -> None:
         self._case = case
         self._agent = agent
@@ -93,6 +94,7 @@ class CaseRunner:
         self._work_dir = work_dir
         self._catalog = catalog or DEFAULT_CATALOG
         self._assertion_runner = assertion_runner or CaseAssertionRunner()
+        self._allow_additional_tool_calls = allow_additional_tool_calls
 
     async def run(self) -> CaseResult:
         """Execute the case end-to-end and return the populated result."""
@@ -119,6 +121,7 @@ class CaseRunner:
                 judge_model=self._judge_model,
                 work_dir=self._work_dir,
                 catalog=self._catalog,
+                allow_additional_tool_calls=self._allow_additional_tool_calls,
             )
             await self._assertion_runner.run(ctx, result)
 
@@ -241,6 +244,7 @@ class SuiteRunner:
                 judge_model=judge_model,
                 work_dir=work_dir,
                 catalog=self._catalog,
+                allow_additional_tool_calls=self._suite.allow_additional_tool_calls,
             )
             case_result = await case_runner.run()
             elapsed = time.monotonic() - t0
