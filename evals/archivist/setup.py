@@ -77,18 +77,36 @@ RATE_LIMITS = """Rate limiting is per-IP at the edge and per-account at
 the API. Neither is aware of the other."""
 
 
-async def setup(work_dir: Path, project_dir: Path) -> None:
-    """Build the seeded store and hand it to every session built here."""
+def build_index(work_dir: Path) -> ArtifactIndex:
+    """An unseeded index over a fresh fake store.
+
+    Split out so the live driver can build one before the runner's
+    hook fires — it needs a manager to construct the agent with, and
+    the agent is built before any case runs.
+    """
     store = FakeArtifactStore()
     index = ArtifactIndex(
         project=work_dir,
         neo4j_client=store,  # type: ignore[arg-type]
         embedder=EvalEmbedder(),
     )
+    _patch_cypher_driver(store)
+    return index
+
+
+async def build_seeded_index(work_dir: Path) -> ArtifactIndex:
+    """A seeded index, for callers that build the agent themselves."""
+    index = build_index(work_dir)
+    await _seed(index)
+    return index
+
+
+async def setup(work_dir: Path, project_dir: Path) -> None:
+    """Build the seeded store and hand it to every session built here."""
+    index = build_index(work_dir)
     await _seed(index)
     _patch_session(index)
-    _patch_cypher_driver(store)
-    logger.info("archivist eval: seeded %d artifacts", await store.count())
+    logger.info("archivist eval: seeded %d artifacts", await index.count())
 
 
 async def _seed(index: ArtifactIndex) -> None:
