@@ -32,7 +32,6 @@ from ember_code.core.plugins import PluginLoader
 from ember_code.core.session.artifact_ops import SessionArtifactManager
 from ember_code.core.skills.loader import SkillPool
 from ember_code.core.sub_agent_hitl import SubAgentHITLCoordinator
-from ember_code.core.tools.artifacts import ArtifactTools
 from ember_code.core.tools.loop import LoopTools
 from ember_code.core.tools.loop_progress import LoopProgressTool
 from ember_code.core.tools.lsp import LspTools
@@ -162,20 +161,6 @@ class ToolsBuilder:
         rt = self._reasoning_factory(self._settings)
         return [rt] if rt else []
 
-    def artifacts(self) -> list[Any]:
-        """Versioned-artifact tools when the store is configured.
-
-        Read-only. The main agent searches, reads and follows lineage;
-        it cannot write, and neither can any sub-agent except the
-        archivist — see :mod:`ember_code.core.tools.artifacts`. A write
-        has to declare what it was built on, and an agent midway
-        through a refactor will write something true and cite nothing,
-        because citing is not what it is doing.
-        """
-        if self._artifacts is None:
-            return []
-        return [ArtifactTools(self._artifact_mgr, writable=False)]
-
     def loop(self) -> list[Any]:
         """/loop-driven iteration control + per-iter scratchpad."""
         return [
@@ -246,7 +231,6 @@ class ToolsBuilder:
         tools.extend(self.core_tools())
         tools.extend(self.orchestrate())
         tools.extend(self.reasoning())
-        tools.extend(self.artifacts())
         tools.extend(self.loop())
         tools.extend(self.todo())
         tools.extend(self.plan())

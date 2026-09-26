@@ -453,56 +453,42 @@ class TestAdmin:
         assert "Unconfirmed captured sources: 5" in out
 
 
-class TestOnlyTheArchivistWrites:
-    """The capability split.
+class TestOneToolkitOneAgent:
+    """The whole toolkit belongs to the archivist — reads included.
 
-    Every agent can read; one can write. Keyed on the agent's name in
-    code rather than on a frontmatter flag, because an agent that
-    could grant itself the capability is the same as no rule.
-
-    The reason is provenance, not safety. A write has to declare what
-    it was built on, and an agent midway through a refactor asked to
-    "note that down" will write something true and cite nothing —
-    because citing is not the task it is doing.
+    Two reasons, and the second decided it. Provenance: reading and
+    writing share one model, and an agent that can follow lineage but
+    not act on it holds half of it. Attribution: a capability spread
+    across every agent makes every agent's manifest claim it, and the
+    corpus already carries 1,370 specialist traces whose manifests had
+    to be rebuilt over exactly that.
     """
 
-    WRITES = {
-        "artifact_create",
-        "artifact_revise",
-        "artifact_delete",
-        "artifact_confirm_source",
-        "artifact_dismiss_source",
-        "artifact_reconcile",
-        "artifact_repin",
-    }
+    def test_the_toolkit_carries_reads_and_writes_together(self):
+        names = set(ArtifactTools(FakeManager()).async_functions)
+        assert {"artifact_search", "artifact_read"} <= names
+        assert {"artifact_create", "artifact_revise", "artifact_delete"} <= names
 
-    def test_the_default_toolkit_cannot_write(self):
-        kit = ArtifactTools(FakeManager())
-        assert self.WRITES & set(kit.async_functions) == set()
+    def test_it_takes_no_capability_flag(self):
+        """A flag with one value is a flag nobody can use and somebody
+        will eventually set wrong."""
+        import inspect
 
-    def test_the_default_toolkit_can_still_read(self):
-        """A read-only agent that cannot look things up writes worse
-        code. The restriction is on changing, not on knowing."""
-        kit = ArtifactTools(FakeManager())
-        for name in ("artifact_search", "artifact_read", "artifact_lineage"):
-            assert name in kit.async_functions
+        params = inspect.signature(ArtifactTools.__init__).parameters
+        assert set(params) == {"self", "artifact_mgr"}
 
-    def test_the_archivist_gets_the_write_tools(self):
-        kit = ArtifactTools(FakeManager(), writable=True)
-        assert set(kit.async_functions) >= self.WRITES
+    def test_the_archivist_is_named_in_code(self):
+        """Not read from frontmatter: an agent that could grant itself
+        the capability is the same as having no rule."""
+        from ember_code.core.tools.artifacts import ARCHIVIST
 
-    def test_raw_cypher_belongs_to_the_archivist(self):
-        """Not for safety — the guard refuses writes either way — but
-        because a hand-written query needs the schema, and only the
-        archivist's definition carries it."""
-        assert "artifact_cypher" not in ArtifactTools(FakeManager()).async_functions
-        assert "artifact_cypher" in ArtifactTools(FakeManager(), writable=True).async_functions
+        assert ARCHIVIST == "archivist"
 
 
 class TestArtifactCypher:
     def _kit(self, result):
         mgr = FakeManager(cypher_result=result)
-        return ArtifactTools(mgr, writable=True), mgr
+        return ArtifactTools(mgr), mgr
 
     async def test_it_forwards_the_query_verbatim(self):
         kit, mgr = self._kit(

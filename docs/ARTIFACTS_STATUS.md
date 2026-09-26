@@ -53,7 +53,7 @@ hand *that* to the agent, rather than asking it to re-derive blind.
 | Retrieval capture | `core/artifacts/capture.py` |
 | Pinned→head diff | `core/artifacts/reconcile.py` |
 | Self-contained HTML + export projection | `core/artifacts/render.py`, `export.py` |
-| Agent tools | `core/tools/artifacts.py` |
+| Agent tools | `core/tools/artifacts.py` — **archivist only** |
 | Session policy (sources are required) | `core/session/artifact_ops.py` |
 
 **Sources are required.** `artifact_create` and `artifact_revise`
@@ -263,6 +263,30 @@ twice, and a simulation would be a dependency in an offline app. If
 results grow past ~50 nodes it will need revisiting.
 
 ---
+
+## Who can touch the store
+
+One agent: the **archivist** (`bundled_agents/archivist.md`), reading
+as well as writing. No other agent has an artifact tool.
+
+Two reasons. *Provenance*: a write must declare what it was built on,
+and an agent midway through a refactor writes something true and
+cites nothing — not carelessly, but because citing is not its task.
+Reading belongs with writing because they share one model.
+
+*Attributable traces*: a capability spread across every agent makes
+every agent's manifest claim it, and a trace calling the tool could
+belong to any of them. The fine-tuning corpus already carries 1,370
+specialist traces whose manifests had to be rebuilt and 823 that had
+to be relabelled over exactly this. `CodeIndexTools` is the shape
+that works — one function, one agent, one grant.
+
+The cost is real and worth naming: a lookup is now a delegation
+round-trip, so the main agent will consult documents less often than
+if it held `artifact_search` itself. If that turns out to suppress
+reads, the fix is not to hand the tool back but to surface relevant
+documents as *context* rather than as a tool call — no trace to
+attribute, no manifest to widen.
 
 ## Suggested order
 

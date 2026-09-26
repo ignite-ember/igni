@@ -14,24 +14,31 @@ it will skip. When the declaration is missing, the error names the
 exact refs this session read so the agent confirms a real list rather
 than inventing one.
 
-**Only one agent may write.** The toolkit is read-only unless built
-with ``writable=True``, which only the archivist gets — see
-:data:`ARCHIVIST`. Every other agent can search, read and follow
-lineage, and has no tool that changes anything.
+**One agent holds this toolkit**, reads included — the archivist, see
+:data:`ARCHIVIST`. No other agent has any artifact tool at all.
 
-The reason is not safety, it is provenance. A write has to declare
-what it was built on, and a declaration is only worth having if
-somebody weighed it. An agent midway through a refactor, asked to
-"note that down", will write something true and cite nothing —
-because citing is not what it is doing. Routing writes through an
-agent whose whole job is the document makes that judgement the
-foreground task rather than an interruption to one.
+Two reasons, and the second is the one that decided it.
 
-This costs a delegation round-trip on every write, and that is the
-trade being made. It is affordable because the capture ledger is
-per-session and shared: whatever the main agent read is still offered
-to the archivist as candidate sources, so delegating does not lose
-the provenance that made the write worth recording.
+*Provenance.* A write has to declare what it was built on, and a
+declaration is only worth having if somebody weighed it. An agent
+midway through a refactor, asked to "note that down", writes
+something true and cites nothing — not carelessly, but because citing
+is not the task it is doing. Reading belongs with writing because
+they share one model: versions, pins, what "head" means, why a
+captured source is not a confirmed one.
+
+*Attributable traces.* A capability spread across every agent makes
+every agent's manifest claim it, and a trace that calls the tool can
+then belong to any of them. That is not hypothetical: the corpus
+already carries 1,370 specialist traces whose manifests had to be
+rebuilt, and 823 that had to be relabelled to the one role that
+really held the tool they called. ``CodeIndexTools`` is the shape
+that works — one function, one agent, one grant. This matches it.
+
+The cost is a delegation round-trip on every lookup, and it is real.
+What makes it affordable is that the ledger and the reads now live in
+the same agent: the archivist cites what the archivist read, with no
+cross-agent hand-off to get right.
 """
 
 from __future__ import annotations
@@ -66,19 +73,16 @@ ARCHIVIST: str = "archivist"
 class ArtifactTools(Toolkit):
     """Agent-facing tools for the project's versioned artifacts.
 
-    Read-only by default. ``writable=True`` adds the tools that
-    change something — writing, reviewing captured sources,
-    reconciling, publishing, deleting — and only the archivist is
-    built that way.
+    Built for the archivist and nobody else, so there is no
+    read-only variant: an agent that can follow lineage but cannot act
+    on it is half-informed, and the split put the two halves of one
+    model in two places.
     """
 
-    def __init__(self, artifact_mgr: SessionArtifactManager, *, writable: bool = False):
+    def __init__(self, artifact_mgr: SessionArtifactManager):
         super().__init__(name="igni_artifacts")
         self._mgr = artifact_mgr
-        self.writable = writable
 
-        # Reading is for everyone. An agent that cannot look things up
-        # writes worse code, and none of this can change a document.
         self.register(self.artifact_search)
         self.register(self.artifact_read)
         self.register(self.artifact_list)
@@ -86,10 +90,6 @@ class ArtifactTools(Toolkit):
         self.register(self.artifact_lineage)
         self.register(self.artifact_ask)
         self.register(self.artifact_status)
-
-        if not writable:
-            return
-
         self.register(self.artifact_cypher)
         self.register(self.artifact_create)
         self.register(self.artifact_revise)

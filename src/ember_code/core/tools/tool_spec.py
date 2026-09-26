@@ -563,9 +563,20 @@ class ToolSpecCatalog:
 
     @property
     def registry_names_with_aliases(self) -> list[str]:
-        """Sorted registry names including every alias — matches the
-        old ``sorted(_factories.keys())`` behaviour."""
-        return sorted(self.by_name.keys())
+        """Every name an agent definition may legitimately declare.
+
+        Specs, their aliases, and the pseudo-tool names in
+        :data:`RESERVED_NON_TOOL_NAMES`. The pseudo-tools are attached
+        by the agent builder rather than resolved here, but declaring
+        one is still correct and worth doing: a definition's ``tools:``
+        list is the manifest its traces are attributed by, and a grant
+        the manifest does not mention is exactly the drift that had to
+        be repaired across 1,370 captured specialist traces.
+
+        Declaring does not grant. The builder decides what an agent
+        gets; this list decides what it may honestly claim.
+        """
+        return sorted(set(self.by_name) | self.RESERVED_NON_TOOL_NAMES)
 
     def register(self, spec: ToolSpec) -> None:
         """Add a spec at runtime. Invalidates derived caches."""

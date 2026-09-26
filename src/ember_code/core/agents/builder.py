@@ -192,11 +192,17 @@ class AgentBuilder:
 
         if tools:
             tools.append(ScheduleTools(project_dir=ctx.base_dir))
-        if tools and ctx.artifact_mgr is not None:
-            # One agent writes. Keyed on the definition's name rather
-            # than a frontmatter flag, because an agent that could
-            # grant itself the capability is the same as no rule.
-            tools.append(ArtifactTools(ctx.artifact_mgr, writable=definition.name == ARCHIVIST))
+        if tools and ctx.artifact_mgr is not None and definition.name == ARCHIVIST:
+            # One toolkit, one agent — reads included. Not a safety
+            # rule: a specialist that holds exactly the toolkit it was
+            # granted is the only shape whose traces can be attributed
+            # to it afterwards, and a capability spread across every
+            # agent makes every agent's manifest wrong.
+            #
+            # Keyed on the definition's name rather than a frontmatter
+            # flag, because an agent that could grant itself the
+            # capability is the same as having no rule.
+            tools.append(ArtifactTools(ctx.artifact_mgr))
 
         agent_mcp: dict[str, Any] = {}
         if tools and ctx.mcp_clients:
