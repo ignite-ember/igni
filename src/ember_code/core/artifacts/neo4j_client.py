@@ -47,6 +47,8 @@ from ember_code.core.artifacts.models import (
     ArtifactSummary,
     ArtifactVersion,
     Citation,
+    Comment,
+    CommentStatus,
     EdgeState,
     LineageEdge,
     StaleDependent,
@@ -360,6 +362,144 @@ class Neo4jArtifactClient:
             )
             record = await result.single()
         return int(record["n"]) if record else 0
+
+    async def project_comments(self, comments: list[Comment]) -> int:
+        """Mirror server-side comments into the local graph.
+
+        Comments are captured where the reader is — on the server —
+        and pulled down on sync. Writing them into the graph rather
+        than holding them in a cache is what makes the history
+        *local*: once projected, "which documents drew comments after
+        their source moved" is one query alongside staleness and
+        lineage, and it still answers with the network down.
+
+        Idempotent by ``comment_id``, because sync pulls on
+        ``updated_at`` and a comment that changed status arrives again
+        with the same id. The ``SET`` is unconditional for the same
+        reason: the server is the authority on a comment's status, so
+        a local copy that refused to move would quietly show a
+        resolved thread as open forever.
+
+        A comment whose version is not here yet is **skipped, not
+        dropped** — ``MATCH`` simply fails to bind. That happens
+        whenever a collaborator comments on a version this machine has
+        not pulled, and the next sync after the chain catches up
+        projects it, because the cursor is the server's and does not
+        advance past rows this side failed to place.
+        """
+        if not comments:
+            return 0
+        rows = [
+            {
+                "comment_id": c.comment_id,
+                "artifact_id": c.artifact_id,
+                "n": c.n,
+                "thread_id": c.thread_id,
+                "parent_id": c.parent_id,
+                "quote": c.quote,
+                "quote_start": c.quote_start,
+                "quote_end": c.quote_end,
+                "body": c.body,
+                "suggested_text": c.suggested_text,
+                "status": c.status.value,
+                "resolved_in_n": c.resolved_in_n,
+                "author": c.author,
+                "at": c.at,
+            }
+            for c in comments
+        ]
+        async with self.session() as session:
+            result = await session.run(
+                "UNWIND $rows AS row "
+                "MATCH (a:Artifact {artifact_id: row.artifact_id, project_hash: $proj}) "
+                "MATCH (a)-[:HAS_VERSION]->(v:Version {n: row.n}) "
+                "MERGE (c:Comment {comment_id: row.comment_id, project_hash: $proj}) "
+                "SET c.artifact_id = row.artifact_id, c.n = row.n, "
+                "    c.thread_id = row.thread_id, c.parent_id = row.parent_id, "
+                "    c.quote = row.quote, c.quote_start = row.quote_start, "
+                "    c.quote_end = row.quote_end, c.body = row.body, "
+                "    c.suggested_text = row.suggested_text, c.status = row.status, "
+                "    c.resolved_in_n = row.resolved_in_n, c.author = row.author, "
+                "    c.at = row.at "
+                "MERGE (c)-[:ON]->(v) "
+                "RETURN count(c) AS n",
+                proj=self._project_id,
+                rows=rows,
+            )
+            record = await result.single()
+        return int(record["n"]) if record else 0
+
+    async def comments(
+        self,
+        *,
+        artifact_id: str | None = None,
+        n: int | None = None,
+        open_only: bool = False,
+        limit: int = 500,
+    ) -> list[Comment]:
+        """Read projected comments, newest last.
+
+        Every filter is optional so one method serves both the
+        document view ("comments on this version") and the review
+        queue ("everything still open, anywhere").
+        """
+        clauses = ["c.project_hash = $proj"]
+        params: dict[str, Any] = {"proj": self._project_id, "limit": limit}
+        if artifact_id is not None:
+            clauses.append("c.artifact_id = $aid")
+            params["aid"] = artifact_id
+        if n is not None:
+            clauses.append("c.n = $n")
+            params["n"] = n
+        if open_only:
+            clauses.append("c.status = $open")
+            params["open"] = CommentStatus.OPEN.value
+        async with self.session() as session:
+            result = await session.run(
+                "MATCH (c:Comment) WHERE "
+                + " AND ".join(clauses)
+                + " RETURN c ORDER BY c.at LIMIT $limit",
+                **params,
+            )
+            return [self._to_comment(record["c"]) async for record in result]
+
+    async def open_comment_count(self) -> int:
+        async with self.session() as session:
+            result = await session.run(
+                "MATCH (c:Comment {project_hash: $proj, status: $open}) RETURN count(c) AS n",
+                proj=self._project_id,
+                open=CommentStatus.OPEN.value,
+            )
+            record = await result.single()
+        return int(record["n"]) if record else 0
+
+    @staticmethod
+    def _to_comment(node: Any) -> Comment:
+        raw = str(node.get("status") or CommentStatus.OPEN.value)
+        try:
+            status = CommentStatus(raw)
+        except ValueError:
+            # A status this build does not know about must not widen
+            # anything. Treating it as open puts it in front of a
+            # person instead of hiding it.
+            logger.warning("unknown comment status %r; treating as open", raw)
+            status = CommentStatus.OPEN
+        return Comment(
+            comment_id=str(node.get("comment_id") or ""),
+            artifact_id=str(node.get("artifact_id") or ""),
+            n=int(node.get("n") or 0),
+            thread_id=str(node.get("thread_id") or ""),
+            parent_id=node.get("parent_id"),
+            quote=str(node.get("quote") or ""),
+            quote_start=node.get("quote_start"),
+            quote_end=node.get("quote_end"),
+            body=str(node.get("body") or ""),
+            suggested_text=node.get("suggested_text"),
+            status=status,
+            resolved_in_n=node.get("resolved_in_n"),
+            author=str(node.get("author") or ""),
+            at=str(node.get("at") or ""),
+        )
 
     async def set_edge_state(
         self,

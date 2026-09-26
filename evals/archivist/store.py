@@ -36,6 +36,8 @@ from ember_code.core.artifacts.models import (
     ArtifactSummary,
     ArtifactVersion,
     Citation,
+    Comment,
+    CommentStatus,
     EdgeState,
     LineageEdge,
     StaleDependent,
@@ -89,6 +91,7 @@ class FakeArtifactStore:
     def __init__(self, project_id: str = "eval-project") -> None:
         self._project_id = project_id
         self._artifacts: dict[str, _Artifact] = {}
+        self._comments: dict[str, Comment] = {}
         self._codec = ArtifactMetadataCodec()
         # The cypher service reaches for this; a sentinel is enough
         # because ``_execute`` is stubbed above it.
@@ -172,6 +175,43 @@ class FakeArtifactStore:
             edges_written=written,
             unresolved_pins=unresolved,
         )
+
+    async def project_comments(self, comments: list[Comment]) -> int:
+        """Mirror the real client, including the part that skips.
+
+        A comment naming a version this store does not hold is not
+        placed — the real projection binds with ``MATCH`` and simply
+        fails to. A fake that accepted it anyway would let a test pass
+        against behaviour the product does not have.
+        """
+        placed = 0
+        for comment in comments:
+            artifact = self._artifacts.get(comment.artifact_id)
+            if artifact is None or not any(v.n == comment.n for v in artifact.versions):
+                continue
+            self._comments[comment.comment_id] = comment
+            placed += 1
+        return placed
+
+    async def comments(
+        self,
+        *,
+        artifact_id: str | None = None,
+        n: int | None = None,
+        open_only: bool = False,
+        limit: int = 500,
+    ) -> list[Comment]:
+        rows = [
+            c
+            for c in self._comments.values()
+            if (artifact_id is None or c.artifact_id == artifact_id)
+            and (n is None or c.n == n)
+            and (not open_only or c.status is CommentStatus.OPEN)
+        ]
+        return sorted(rows, key=lambda c: c.at)[:limit]
+
+    async def open_comment_count(self) -> int:
+        return sum(1 for c in self._comments.values() if c.status is CommentStatus.OPEN)
 
     async def record_candidates(self, *, version_id: str, pins: list[VersionPin]) -> int:
         version = self._version_by_id(version_id)

@@ -209,6 +209,19 @@ ARTIFACT_SCHEMA_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX artifact_chunk_parent IF NOT EXISTS FOR (c:Chunk) ON (c.parent_id)",
     "CREATE INDEX source_idx IF NOT EXISTS FOR (s:Source) ON (s.source_id)",
     "CREATE INDEX source_project IF NOT EXISTS FOR (s:Source) ON (s.project_hash)",
+    # ── Comments ────────────────────────────────────────────────
+    # Comments are captured on the server, where the reader is, and
+    # projected down here on sync. They live in the graph rather than
+    # being fetched over the API each time so the whole history is
+    # local: "which documents drew comments after their source moved"
+    # is then one query alongside everything else, and it still
+    # answers on a plane.
+    "CREATE INDEX comment_idx IF NOT EXISTS FOR (c:Comment) ON (c.comment_id)",
+    "CREATE INDEX comment_project IF NOT EXISTS FOR (c:Comment) ON (c.project_hash)",
+    # The review queue is "what is still open", and it is the query
+    # the local screen runs on every refresh.
+    "CREATE INDEX comment_status IF NOT EXISTS FOR (c:Comment) ON (c.status)",
+    "CREATE INDEX comment_thread IF NOT EXISTS FOR (c:Comment) ON (c.thread_id)",
     # ── Edge properties ─────────────────────────────────────────
     # The staleness query filters candidates out by state and
     # compares pinned_n, so both are read on every sweep.

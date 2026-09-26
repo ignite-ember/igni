@@ -51,9 +51,7 @@ async def stale_names(index: ArtifactIndex) -> list[str]:
 
 class TestForgettingASourceDoesNotDropIt:
     async def test_confirmed_sources_survive_an_empty_declaration(self, index):
-        await index.revise(
-            ref="Login flow", content="Auth is a JWT.", sources=SourceDeclaration()
-        )
+        await index.revise(ref="Login flow", content="Auth is a JWT.", sources=SourceDeclaration())
         assert sources_of(await index.lineage("Login flow")) == [
             ("Auth model", 1, "confirmed"),
             ("Error taxonomy", 1, "confirmed"),
@@ -62,9 +60,7 @@ class TestForgettingASourceDoesNotDropIt:
     async def test_and_so_the_document_is_still_reported_stale(self, index):
         """The regression that matters. Before the fix this returned
         only Release checklist, and Login flow looked healthy."""
-        await index.revise(
-            ref="Login flow", content="Auth is a JWT.", sources=SourceDeclaration()
-        )
+        await index.revise(ref="Login flow", content="Auth is a JWT.", sources=SourceDeclaration())
         assert "Login flow" in await stale_names(index)
 
     async def test_an_inherited_pin_keeps_the_version_it_was_on(self, index):
@@ -108,7 +104,9 @@ class TestRemovingASourceIsStillPossible:
     async def test_a_dismissed_source_is_not_inherited(self, index):
         await index.dismiss_source(ref="Login flow", source_ref="Error taxonomy")
         await index.revise(ref="Login flow", content="x", sources=SourceDeclaration())
-        assert "Error taxonomy" not in [n for n, _, _ in sources_of(await index.lineage("Login flow"))]
+        assert "Error taxonomy" not in [
+            n for n, _, _ in sources_of(await index.lineage("Login flow"))
+        ]
 
     async def test_an_unadjudicated_candidate_is_not_inherited(self, index):
         """A candidate records that a version was read, which is not a

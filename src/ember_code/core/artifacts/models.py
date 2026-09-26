@@ -284,6 +284,65 @@ class ArtifactLineage(BaseModel):
         return [e for e in self.sources if e.state is EdgeState.CANDIDATE]
 
 
+class CommentStatus(str, Enum):
+    """Where a comment stands. Mirrors the server's vocabulary exactly.
+
+    Two names rather than one for "dealt with", because they mean
+    different things to the person who raised it: ``ACCEPTED`` says
+    the document changed and ``resolved_in_n`` says where, while
+    ``REJECTED`` says it was considered and declined. Collapsing them
+    into "closed" loses the only part a commenter cares about.
+    """
+
+    OPEN = "open"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    RESOLVED = "resolved"
+
+
+class Comment(BaseModel):
+    """A comment on one version of a document, projected into the graph.
+
+    Anchored to a version, not to a document. A comment made on v2 is
+    a statement about the text of v2, and "this paragraph is wrong"
+    means nothing beside a paragraph that has since been rewritten.
+    ``quote`` is what makes it survive anyway — offsets point at the
+    wrong words the moment anything above them changes, so they are a
+    hint for highlighting and never the anchor itself.
+    """
+
+    comment_id: str
+    artifact_id: str
+    #: The version this was written against.
+    n: int
+    thread_id: str = ""
+    parent_id: str | None = None
+
+    quote: str = ""
+    quote_start: int | None = None
+    quote_end: int | None = None
+
+    body: str = ""
+    #: Replacement wording proposed by a collaborator. An "edit" right
+    #: is a comment that carries text: accepting it is a normal append
+    #: with an author and a reason, not a mutation from outside.
+    suggested_text: str | None = None
+
+    status: CommentStatus = CommentStatus.OPEN
+    #: The version that applied it, when one did.
+    resolved_in_n: int | None = None
+    author: str = ""
+    at: str = ""
+
+    @property
+    def needs_attention(self) -> bool:
+        return self.status is CommentStatus.OPEN
+
+    @property
+    def is_suggestion(self) -> bool:
+        return bool(self.suggested_text)
+
+
 class StaleDependent(BaseModel):
     """A confirmed derivation whose source has moved since it was pinned."""
 
