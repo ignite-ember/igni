@@ -13,8 +13,23 @@ whole queries:
   A query that does not filter returns the same document five times,
   four of them superseded, and the newest is not necessarily first.
 * Filtering on ``project_hash``. It is an opaque hash, not a project
-  name, and the per-project process already scopes every query. A
-  ``WHERE a.project_hash = 'my-repo'`` matches nothing.
+  name, so ``WHERE a.project_hash = 'my-repo'`` matches nothing and
+  returns an empty result that looks like a real answer.
+
+The rule that scoping is unnecessary rests on a fact worth writing
+down, because it is the difference between a safe escape hatch and a
+cross-project leak: :meth:`Neo4jRuntime.driver_for_artifacts` keys its
+processes on ``(project_hash, "artifacts")`` and spawns one Neo4j
+**process per project**. The database a query reaches contains that
+project's documents and nothing else, so a bare ``MATCH (a:Artifact)``
+is already scoped.
+
+:class:`Neo4jArtifactClient` filters on ``project_hash`` anyway. That
+is belt-and-braces over the process boundary, not the boundary itself
+— and the asymmetry is worth knowing about: point two projects at one
+database, as the test harness does, and every method on the client
+stays scoped while a hand-written query here quietly returns the
+other project's documents. Nothing in a deployment does that today.
 """
 
 from __future__ import annotations
@@ -155,7 +170,10 @@ bound as `$query_vector` before the query runs:
    one document appears once per revision it has ever had.
 4. **Return named columns**, not whole nodes: `RETURN a.name AS name`
    rather than `RETURN a`. The panel renders columns.
-5. **Never filter on `project_hash`.**
+5. **Never filter on `project_hash`.** One Neo4j process serves one
+   project, so the database you are querying holds only this
+   project's documents. The property is an opaque hash, and a filter
+   on it returns nothing.
 6. Return `artifact_id` alongside a name whenever the row is about a
    document — the panel turns it into a link to that document.
 """
