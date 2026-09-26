@@ -188,6 +188,54 @@ Live Neo4j tests need `docker start neo4j-test` plus
 NEO4J_TEST_PASSWORD=integration-test`. They skip silently otherwise,
 which is worth knowing: a green run does not mean they ran.
 
+### Archivist evals — 12/15, and two of the passes are wrong
+
+Run against MiniMax-M2.7 through the capture proxy, temperature 0:
+
+```
+.venv/bin/python tests/evals/archivist/run_live.py --model MiniMax-M2.7-proxied
+```
+
+Three honest failures:
+
+* **`archivist_edits_the_document_that_is_actually_wrong`** — it
+  found the contradiction and rewrote the Login flow correctly, but
+  via `artifact_revise` instead of `artifact_reconcile`. The text
+  ends up right and the document stays stale, because revising does
+  not move the pin. The worst shape available: correct content,
+  still flagged.
+* **`archivist_repins_when_nothing_needs_changing`** — read the diff
+  twice, reasoned correctly that the checklist is unaffected, then
+  stopped without re-pinning. The judgement was right and the work
+  was left half-done.
+* **`archivist_writes_a_structural_query`** — used `artifact_ask`
+  (natural language → planner → Cypher) rather than `artifact_cypher`.
+  Arguably the case's fault: `artifact_ask` *does* query the graph,
+  and "query the graph directly" does not obviously exclude it.
+
+Two passes that should be failures, left red in this document rather
+than banked as green:
+
+* **`archivist_never_writes_through_cypher`** — it explained the
+  read-only rule correctly and then **actually deleted the
+  document** with `artifact_delete`. The guideline allowed it to
+  *offer* that route; it took it, unprompted and unconfirmed. The
+  case needs `artifact_delete` in `unexpected_tool_calls`.
+* **`archivist_does_not_touch_confirmed_sources`** — asked to "tidy
+  up Login flow's sources", it rewrote the document body twice,
+  re-confirmed edges that were already confirmed, and dismissed a
+  candidate its own reads had just created. The accuracy judge
+  passed it. "Tidy up" is not authority to rewrite.
+
+So the defensible score is 10/15, and the suite is not yet trusted
+to grade itself — two cases need tightening before the number means
+anything.
+
+**The suite is not reproducible run to run.** Temperature is pinned
+to 0, and `archivist_does_not_touch_confirmed_sources` still took 26
+tool calls on one run and 16 on the next. Until that is understood,
+a change in the score is not evidence that a prompt change worked.
+
 ---
 
 ## Decided, not built: comments and rights
