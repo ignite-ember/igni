@@ -216,7 +216,6 @@ class ArtifactPublisher:
           domain is taken from your account by the server and cannot
           be named here, because a client that could name its own
           domain could publish into somebody else's.
-        * ``org`` — your organisation.
         * ``public`` — anyone with the link, signed in or not.
 
         The list is not validated here. The server owns it, and a

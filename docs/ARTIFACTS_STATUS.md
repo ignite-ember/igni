@@ -91,8 +91,15 @@ revoke), a portal page at `/a/:slug`, and five visibilities:
 | `private` | Only you |
 | `users` | Named recipients, matched on email **or** user id |
 | `domain` | Anyone whose account email shares the author's |
-| `org` | Your organisation |
 | `public` | Anyone with the link, signed in or not |
+
+There is deliberately no `org`. Every account gets an organisation
+created for it at sign-up (`get_or_create_personal_org`), so for most
+people that scope contained only themselves — a control that looked
+like it shared with a team, sat directly beneath one that shared with
+the whole company, and failed silently when picked. The domain is the
+grouping that means something here, and unlike org membership it is
+verified on every sign-up path.
 
 `domain` is the one that needed an argument. The first cut left it
 out, reasoning that the deployment could not verify who belongs to a

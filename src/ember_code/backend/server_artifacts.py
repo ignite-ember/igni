@@ -373,12 +373,14 @@ class ArtifactController:
     ) -> ArtifactShareResult:
         """Publish a projected snapshot and return its URL.
 
-        ``visibility`` is ``private``, ``users``, ``domain``, ``org``
-        or ``public``. ``domain`` means everyone whose account email
-        shares the author's — the deployment serves one customer whose
-        people may sit in several orgs, so "my colleagues" is the
-        domain rather than the org, and the server derives it from the
+        ``visibility`` is ``private``, ``users``, ``domain`` or
+        ``public``. ``domain`` means everyone whose account email
+        shares the author's, and the server derives it from the
         signed-in account rather than taking it from here.
+
+        There is no ``org``: every account gets an organisation
+        created for it at sign-up, so that scope usually contained
+        only its author.
         """
         artifacts = self._session.artifacts
         if artifacts is None:

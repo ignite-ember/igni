@@ -13,6 +13,12 @@ import type { IgniClient } from "../../protocol/client";
  * left to the label. "Domain" tells you nothing; "anyone with an
  * @acme.co address" tells you what you are about to do, and this is a
  * one-click action that can put a document in front of a company.
+ *
+ * There is no "my organisation" option. Every account gets an org
+ * created for it at sign-up, so for most people that option shared
+ * with nobody — while sitting directly beneath one that shared with
+ * the whole company. A control whose failure mode is silent is worse
+ * than a missing one.
  */
 
 interface ShareResult {
@@ -21,13 +27,16 @@ interface ShareResult {
   error: string;
 }
 
-type Visibility = "private" | "users" | "domain" | "org" | "public";
+type Visibility = "private" | "users" | "domain" | "public";
 
 const OPTIONS: { value: Visibility; label: string; reach: string }[] = [
   { value: "private", label: "Only me", reach: "Published, but nobody else can open it" },
   { value: "users", label: "Specific people", reach: "Only the addresses you list" },
-  { value: "domain", label: "Everyone at my company", reach: "Anyone whose account email shares yours" },
-  { value: "org", label: "My organisation", reach: "Members of your org on this deployment" },
+  {
+    value: "domain",
+    label: "Everyone at my company",
+    reach: "Anyone whose account email shares yours",
+  },
   { value: "public", label: "Anyone with the link", reach: "No sign-in required — treat as published to the world" },
 ];
 
