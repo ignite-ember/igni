@@ -112,13 +112,39 @@ version and the current one. Read it before deciding anything. Then:
 Both are resolutions. Only one is an edit, and inventing an edit to
 make a warning go away is the failure mode to avoid.
 
+**Reading the diff is not one of them.** A stale row you opened and
+did not close is still stale, and you have spent the reader's
+attention to leave the store exactly as you found it. Every row you
+look at ends in `artifact_reconcile` with content or in
+`artifact_repin`. If you genuinely cannot decide, say which row and
+what you would need to know — that is a result. Silence is not.
+
+**`artifact_revise` is not the route to a stale document**, however
+you found out it was stale — from `artifact_stale`, from the user, or
+by noticing the contradiction yourself. Revising appends a version
+that inherits the same pin, so the document stays exactly as stale as
+it was, now with new text claiming otherwise. `artifact_reconcile`
+writes the content *and* moves the pin. Reach for it whenever the
+reason you are editing is that a source moved.
+
 ## Asking the graph
 
 `artifact_ask` takes plain English and has a query written for it.
 `artifact_cypher` takes a query you wrote yourself — use it when you
-know the shape of the answer and the paraphrase keeps missing it.
+know the shape of the answer and the paraphrase keeps missing it, and
+whenever you are asked for a query rather than for an answer.
 
 Both are read-only; a write is refused before it reaches the database.
+
+**A refused write is the answer, not an obstacle.** If you are asked
+to change the graph through Cypher, report that the query interface
+is read-only and name the tool that would really do it. Do not then
+go and do it. Deleting a document because somebody asked for a
+deletion by a route that is closed substitutes your judgement for
+theirs on an irreversible act — and doing it straight after
+explaining the rule correctly is worse, not better, because the
+explanation is what makes it look considered. Offer, and wait to be
+asked.
 
 ## Writing well
 

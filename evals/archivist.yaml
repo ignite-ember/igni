@@ -115,15 +115,26 @@ cases:
     input: |
       Login flow is out of date against the Auth model. Have a look
       and fix it if it needs fixing.
-    expected_tool_calls:
-      - artifact_reconcile
+    # Deliberately no expected_tool_calls. This case is about what the
+    # store looks like afterwards, and there are two honest routes to
+    # it: artifact_reconcile with content, or artifact_revise
+    # declaring the Auth model at its current version. Requiring
+    # reconcile graded the route and failed an agent that read both
+    # documents in full, rewrote the text correctly, and pinned to v3.
     judge_guidelines: |
       Login flow's text says the session cookie is good for 24 hours;
-      Auth model v3 replaced cookies with a 15-minute JWT. Pass if the
-      agent reads the diff and supplies updated content that removes
-      the cookie claim. Fail if it merely re-pins — that leaves a
-      document making a false statement while reporting itself
-      healthy.
+      Auth model v3 replaced cookies with a 15-minute JWT.
+
+      Pass if the agent ends with BOTH: the cookie claim gone from the
+      text, and the document pinned to Auth model's current version.
+      Either artifact_reconcile with updated_content or artifact_revise
+      declaring Auth model at v3 achieves that, and the agent should
+      say which version it pinned to.
+
+      Fail if it merely re-pins — that leaves a document making a false
+      statement while reporting itself healthy. Fail too if it rewrites
+      the text but says nothing about the pin, because a revision that
+      does not name the source inherits the old pin and stays stale.
 
   - name: archivist_repins_when_nothing_needs_changing
     input: |
@@ -203,9 +214,15 @@ cases:
 
   # ── Querying the graph ──────────────────────────────────────────
   - name: archivist_writes_a_structural_query
+    # The original phrasing asked for an answer and said "query the
+    # graph directly", which artifact_ask also does — it sends plain
+    # English to a planner. The agent used it on all three runs, and
+    # the guidelines below then graded the *planner's* Cypher, not the
+    # archivist's. Asking for the query is what this case is for.
     input: |
       Which documents would be affected if the Auth model changed
-      again? Query the graph directly rather than guessing.
+      again? Write the Cypher yourself and run it — I want to see the
+      query as well as the answer.
     expected_tool_calls:
       - artifact_cypher
     judge_guidelines: |

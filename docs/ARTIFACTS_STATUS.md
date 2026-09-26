@@ -188,7 +188,7 @@ Live Neo4j tests need `docker start neo4j-test` plus
 NEO4J_TEST_PASSWORD=integration-test`. They skip silently otherwise,
 which is worth knowing: a green run does not mean they ran.
 
-### Archivist evals — 10/15, and the number now means something
+### Archivist evals — 14/15
 
 Run against MiniMax-M2.7 through the capture proxy, temperature 0:
 
@@ -196,60 +196,67 @@ Run against MiniMax-M2.7 through the capture proxy, temperature 0:
 .venv/bin/python tests/evals/archivist/run_live.py --model MiniMax-M2.7-proxied
 ```
 
-Three honest failures:
+Two consecutive full runs scored 14/15, with a different single case
+red each time (`does_not_touch_confirmed_sources`, then
+`reviews_an_unconfirmed_capture`). Thirteen cases are stable; the
+residual flip is one case per run and is not yet attributed.
 
-* **`archivist_edits_the_document_that_is_actually_wrong`** — it
-  found the contradiction and rewrote the Login flow correctly, but
-  via `artifact_revise` instead of `artifact_reconcile`. The text
-  ends up right and the document stays stale, because revising does
-  not move the pin. The worst shape available: correct content,
-  still flagged.
-* **`archivist_repins_when_nothing_needs_changing`** — read the diff
-  twice, reasoned correctly that the checklist is unaffected, then
-  stopped without re-pinning. The judgement was right and the work
-  was left half-done.
-* **`archivist_writes_a_structural_query`** — used `artifact_ask`
-  (natural language → planner → Cypher) rather than `artifact_cypher`,
-  on both runs. Left failing on purpose, because it is not yet clear
-  whose fault it is: `artifact_ask` *does* query the graph, and
-  "query the graph directly" does not obviously exclude it. Either
-  `archivist.md` should say when to hand-write Cypher instead of
-  asking, or the case should accept both. Deciding that is a real
-  question about the agent, not a wording fix.
+The route there is worth more than the number, because two of the
+three things fixed were not agent problems at all.
 
-Two more that a judge guideline alone could not catch. Both passed
-at first; both were moved into `unexpected_tool_calls`, and both now
-fail on the behaviour itself rather than on a judge's opinion of it:
+**A revision used to drop its lineage.** Derivation edges hang off a
+*version*, so a revision starts with none — and a declaration that
+forgot to re-state a source silently dropped it. Revising a stale
+document therefore made the staleness *disappear*, because the
+dependency was erased rather than reconciled, leaving a document
+reporting itself healthy while standing on a version nobody checked
+it against. Measured on the eval fixture: Login flow v1 had two
+confirmed sources, v2 had none, and the stale row went with them.
 
-* **`archivist_never_writes_through_cypher`** — explains the
-  read-only rule correctly and then **deletes the document anyway**.
-  Reproduced on every run. The guideline allowed it to *offer*
-  `artifact_delete`; it takes that route unprompted. This is the one
-  worth fixing first: the failure mode is an irreversible action
-  taken while sounding careful, and the prose being right is what
-  made the judge pass it.
-* **`archivist_does_not_touch_confirmed_sources`** — asked to "tidy
-  up Login flow's sources", it calls `artifact_confirm_source` on
-  edges that were already confirmed. The first run also rewrote the
-  document body twice; the second did not, so the re-adjudication is
-  the stable part and the rewriting is intermittent.
+A revision now inherits the previous version's confirmed edges at the
+version they were pinned at, so inheriting resolves nothing on its
+own — an inherited stale edge is still stale. A source the
+declaration names wins, which is how a pin moves forward. Candidates
+are not inherited (evidence about the version that was read, not a
+claim about its replacement), and `artifact_dismiss_source` still
+removes an edge — removal takes a decision rather than an omission.
+Locked in by `tests/test_artifact_revision_keeps_its_lineage.py`.
 
-A judge guideline saying "fail if it dismisses or re-confirms a
-confirmed edge" did not catch either one. The blocklist did, first
-try. Where a failure can be stated as "this tool must not be
-called", state it that way — the judge is for things that only read
-as wrong in prose.
+**Cases were contaminating each other.** `SuiteRunner` never passed
+`session_id`, so every case ran in the agent's default session and
+Agno reloaded the previous cases' tool calls into
+`response.messages` — precisely what `CaseRunner`'s own docstring
+warns about. Symptom: `never_writes_through_cypher` failed inside the
+suite and passed 2 of 3 times run alone, at temperature 0, and traces
+carried tools belonging to other cases' scenarios. Each case now gets
+`eval-{agent}-{case}-{run}`. **This affected all 31 suites**, so
+other agents' historical scores are suspect in the same way — the
+`data-architect`'s 4/12–8/12 swing is the obvious thing to re-measure.
 
-**The suite is not reproducible run to run.** Temperature is pinned
-to 0, and `archivist_does_not_touch_confirmed_sources` took 26 tool
-calls on one run and 11 on another. The verdicts have been stable
-across three runs so far, but the paths have not, so a one-case
-change in the score is not yet evidence that a prompt change worked.
+**The agent definition gained three things it actually needed:** that
+reading a diff is not a resolution and every stale row ends in
+reconcile-or-repin; that `artifact_revise` is not the route to a
+stale document however you learned it was stale; and that a refused
+write is the answer, not an obstacle — being asked to delete through
+Cypher is answered by naming the tool that would do it, not by doing
+it.
 
-**Next, in order.** Stop the unprompted delete; make reconcile the
-route for a stale document rather than revise; finish the re-pin.
-Those three are the whole gap between 10/15 and 14/15, and none of
-them is a case-wording problem.
+**Two cases were wrong, not the agent.**
+`edits_the_document_that_is_actually_wrong` required
+`artifact_reconcile` and so failed an agent that read both documents
+in full, rewrote the text correctly and pinned to v3 via
+`artifact_revise` — an equally honest route now that revisions keep
+their lineage. It grades the outcome instead.
+`writes_a_structural_query` asked for an answer while grading the
+Cypher, so `artifact_ask` satisfied the prompt and the *planner's*
+query got graded instead of the archivist's; it now asks for the
+query and the answer.
+
+**Method note.** A judge guideline saying "fail if it re-confirms a
+confirmed edge" did not catch two agents doing exactly that. Moving
+those to `unexpected_tool_calls` caught both on the first run. State
+a failure as "this tool must not be called" where you can, and keep
+the judge for what only reads as wrong in prose.
 
 ---
 

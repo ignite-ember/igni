@@ -174,12 +174,54 @@ class ArtifactIndex:
             artifact_id=summary.artifact_id,
             name=summary.name or ref,
             content=content,
-            sources=sources,
+            sources=await self._inherit_confirmed(summary.artifact_id, sources),
             kind=None,
             author=author,
             session_id=session_id,
             metadata=metadata,
         )
+
+    async def _inherit_confirmed(
+        self, artifact_id: str, sources: SourceDeclaration
+    ) -> SourceDeclaration:
+        """Carry the previous version's confirmed sources into this one.
+
+        Edges belong to a *version*, so without this a revision starts
+        with none, and a declaration that simply forgets to re-state a
+        source drops it. The effect is the one thing this subsystem
+        exists to prevent: revising a stale document makes the
+        staleness go away, not because anything was reconciled but
+        because the dependency was erased. Measured on the eval
+        fixture — Login flow v1 had two confirmed sources and a
+        candidate, v2 had none, and the stale row vanished with them.
+
+        Inherited pins keep the version they were pinned at, so this
+        resolves nothing on its own: an inherited stale edge stays
+        stale and still needs reconcile or repin. A source the
+        declaration *does* name wins, which is how a revision moves a
+        pin forward.
+
+        Only ``confirmed`` edges are inherited. A candidate is evidence
+        that a version was read, not a claim about this one, and it is
+        re-captured anyway if the agent read it again. Dropping a
+        confirmed edge stays possible, but it now takes
+        ``artifact_dismiss_source`` — a decision somebody made, rather
+        than an omission.
+        """
+        try:
+            lineage = await self.lineage(artifact_id)
+        except Exception:  # lineage is an optimisation here, never the point
+            logger.warning("could not read lineage for %s; not inheriting", artifact_id)
+            return sources
+        declared = {p.artifact_id for p in sources.pins}
+        inherited = [
+            VersionPin(artifact_id=e.to_artifact_id, n=e.pinned_n, state=EdgeState.CONFIRMED)
+            for e in lineage.sources
+            if e.state is EdgeState.CONFIRMED and e.to_artifact_id not in declared
+        ]
+        if not inherited:
+            return sources
+        return sources.model_copy(update={"pins": [*sources.pins, *inherited]})
 
     async def _write(
         self,

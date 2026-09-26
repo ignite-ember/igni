@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -235,6 +236,14 @@ class SuiteRunner:
         at a time.
         """
         total = len(self._suite.cases)
+        # One session per case. Agno reloads prior history from the
+        # session DB on every ``arun()``, so without this every case
+        # after the first sees the previous cases' tool calls in
+        # ``response.messages`` — CaseRunner's own docstring warns
+        # about it, and nothing was passing the argument. Measured:
+        # ``never_writes_through_cypher`` failed inside the suite and
+        # passed 2 of 3 times run alone, at temperature 0.
+        run_tag = uuid.uuid4().hex[:8]
         for idx, case in enumerate(self._suite.cases, start=1):
             print(f"  [case {idx}/{total}] {case.name} starting...", flush=True)
             t0 = time.monotonic()
@@ -245,6 +254,7 @@ class SuiteRunner:
                 work_dir=work_dir,
                 catalog=self._catalog,
                 allow_additional_tool_calls=self._suite.allow_additional_tool_calls,
+                session_id=f"eval-{self._suite.agent}-{case.name}-{run_tag}",
             )
             case_result = await case_runner.run()
             elapsed = time.monotonic() - t0
