@@ -16,8 +16,10 @@
     "coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^3.1.1",
     "@json-render/core": "^0.19.0",
     "@json-render/react": "^0.19.0",
+    "@xyflow/react": "^12.12.0",
     "highlight.js": "^11.11.1",
     "mermaid": "^11.15.0",
     "partial-json": "^0.1.7",

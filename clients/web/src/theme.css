@@ -8144,7 +8144,7 @@ button {
 }
 
 .kb-row-n {
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
 }
 
@@ -8171,7 +8171,7 @@ button {
   padding: 0;
   cursor: pointer;
   color: var(--fg);
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
 }
 
@@ -9388,7 +9388,7 @@ button {
   font-size: 13px;
   line-height: 1.45;
   color: var(--fg);
-  background: var(--bg-input, var(--bg-elevated));
+  background: var(--bg-inset);
   border: 1px solid var(--border);
   border-radius: 6px;
 }
@@ -9404,7 +9404,7 @@ button {
   font-weight: 500;
   white-space: nowrap;
   color: var(--fg);
-  background: var(--bg-elevated);
+  background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 6px;
   cursor: pointer;
@@ -9473,11 +9473,11 @@ button {
   width: 100%;
   resize: vertical;
   padding: 8px 10px;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11.5px;
   line-height: 1.5;
   color: var(--fg);
-  background: var(--bg-code, var(--bg-elevated));
+  background: var(--bg-inset);
   border: 1px solid var(--border-soft);
   border-radius: 6px;
 }
@@ -9501,57 +9501,149 @@ button {
   color: var(--fg-muted);
 }
 
-.ag-canvas {
+/* ── Lineage graph (React Flow) ────────────────────────────────────
+   Nodes are components rather than circles, so a node carries its
+   name, its version and a stale badge. The canvas keeps the panel's
+   own surface colours — React Flow's defaults are built for a white
+   editor and read as a foreign window inside a dark panel. */
+
+.lin-canvas {
   width: 100%;
-  height: auto;
-  background: var(--bg-elevated);
+  background: var(--bg-surface);
   border: 1px solid var(--border-soft);
   border-radius: 6px;
+  overflow: hidden;
 }
 
-.ag-edge line {
+.lin-canvas .react-flow__background {
+  background: var(--bg-surface);
+}
+
+.lin-canvas .react-flow__background-pattern {
+  color: var(--border-soft);
+}
+
+.lin-node {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  box-sizing: border-box;
+  width: 188px;
+  height: 46px;
+  padding: 0 12px;
+  align-content: center;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.lin-node:hover {
+  border-color: var(--accent-blue);
+}
+
+.lin-node:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 1px;
+}
+
+/* A source is the thing being depended on. Quieter, because the
+   dependents are what the reader came to count. */
+.lin-node-source {
+  background: var(--bg-surface);
+  border-style: dashed;
+}
+
+/* Something pinned to an old version of this. The stripe rather than
+   a colour wash: the node still has to be readable. */
+.lin-node-stale {
+  border-left: 3px solid var(--warning);
+}
+
+.lin-node-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lin-node-version {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--fg-muted);
+}
+
+/* React Flow draws handles as visible dots by default. Connections
+   are disabled here, so a dot would advertise an affordance that is
+   not there. */
+.lin-canvas .react-flow__handle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.lin-canvas .react-flow__edge-path {
   stroke: var(--border);
-  stroke-width: 1.2;
+  stroke-width: 1.4;
 }
 
-.ag-edge-stale line {
+.lin-canvas .lin-edge-stale .react-flow__edge-path {
   stroke: var(--warning);
   stroke-width: 2;
 }
 
-.ag-edge-label {
-  font-size: 9px;
-  fill: var(--fg-faint);
-  text-anchor: middle;
+.lin-canvas .react-flow__arrowhead polyline,
+.lin-canvas .react-flow__arrowhead path {
+  fill: var(--border);
+  stroke: var(--border);
 }
 
-.ag-edge-stale .ag-edge-label {
+.lin-canvas .lin-edge-stale .react-flow__arrowhead polyline,
+.lin-canvas .lin-edge-stale .react-flow__arrowhead path {
   fill: var(--warning);
+  stroke: var(--warning);
 }
 
-.ag-node {
-  cursor: pointer;
-}
-
-.ag-node circle {
-  fill: var(--accent-blue);
-  stroke: var(--bg-elevated);
-  stroke-width: 2;
-}
-
-.ag-node-source circle {
+.lin-canvas .react-flow__edge-text {
+  font-size: 9.5px;
   fill: var(--fg-muted);
 }
 
-.ag-node:hover circle,
-.ag-node:focus circle {
-  fill: var(--accent-orange-text, var(--accent-blue));
-  outline: none;
+.lin-canvas .react-flow__edge-textbg {
+  fill: var(--bg-surface);
 }
 
-.ag-node-label {
-  font-size: 10px;
-  fill: var(--fg);
+.lin-canvas .lin-edge-stale .react-flow__edge-text {
+  fill: var(--warning);
+}
+
+.lin-canvas .react-flow__controls {
+  box-shadow: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.lin-canvas .react-flow__controls-button {
+  background: var(--bg);
+  border-bottom: 1px solid var(--border-soft);
+  fill: var(--fg-muted);
+}
+
+.lin-canvas .react-flow__controls-button:hover {
+  background: var(--bg-surface);
+}
+
+.lin-canvas .react-flow__attribution {
+  background: transparent;
+  font-size: 9px;
+}
+
+.lin-canvas .react-flow__attribution a {
+  color: var(--fg-faint);
 }
 
 .ag-table-wrap {
@@ -9571,7 +9663,7 @@ button {
   text-align: left;
   font-weight: 600;
   color: var(--fg-muted);
-  background: var(--bg-elevated);
+  background: var(--bg-surface);
   border-bottom: 1px solid var(--border-soft);
   white-space: nowrap;
 }
@@ -9592,7 +9684,7 @@ button {
 }
 
 .ag-row-open:hover td {
-  background: var(--bg-elevated);
+  background: var(--bg-surface);
 }
 
 .ag-empty {
@@ -9615,7 +9707,7 @@ button {
   padding: 7px 10px;
   font-size: 11.5px;
   color: var(--fg);
-  background: var(--bg-elevated);
+  background: var(--bg-surface);
   border: 1px solid var(--border-soft);
   border-radius: 6px;
   cursor: pointer;
@@ -9631,7 +9723,7 @@ button {
   font-size: 10.5px;
   line-height: 1.5;
   color: var(--fg);
-  background: var(--bg-elevated);
+  background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 5px;
   cursor: pointer;
@@ -9693,7 +9785,7 @@ button {
 
 .kb-share-opt-on {
   border-color: var(--accent-blue);
-  background: var(--bg-elevated);
+  background: var(--bg-surface);
 }
 
 .kb-share-opt input {
@@ -9727,7 +9819,7 @@ button {
   font: inherit;
   font-size: 12px;
   color: var(--fg);
-  background: var(--bg-input, var(--bg-elevated));
+  background: var(--bg-inset);
   border: 1px solid var(--border);
   border-radius: 6px;
   resize: vertical;
@@ -9735,7 +9827,7 @@ button {
 
 .kb-share-link {
   padding: 9px 10px;
-  background: var(--bg-elevated);
+  background: var(--bg-surface);
   border: 1px solid var(--border-soft);
   border-radius: 6px;
 }
@@ -9757,10 +9849,10 @@ button {
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
   color: var(--fg);
-  background: var(--bg-code, var(--bg));
+  background: var(--bg-inset);
   border: 1px solid var(--border-soft);
   border-radius: 5px;
 }
@@ -9830,10 +9922,10 @@ button {
   padding: 10px;
   max-height: 300px;
   overflow: auto;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
   line-height: 1.5;
-  background: var(--bg-code, var(--bg-elevated));
+  background: var(--bg-inset);
   border-top: 1px solid var(--border-soft);
 }
 
@@ -9847,4 +9939,199 @@ button {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* ── Artifacts demo sandbox (?demo=artifacts) ──────────────────────
+   Scoped under .demo-page like the other sandboxes, so nothing here
+   reaches the real app. */
+
+.demo-title {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+
+.demo-sub {
+  margin: 0 0 28px;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+
+.demo-block {
+  margin-bottom: 34px;
+}
+
+.demo-h2 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+.demo-note {
+  margin: 0 0 12px;
+  max-width: 46rem;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--fg-muted);
+}
+
+.demo-frame {
+  padding: 18px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+
+.demo-log {
+  margin: 0;
+  padding: 12px;
+  max-height: 200px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--fg-muted);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+
+/* ── Artifact document view ────────────────────────────────────────
+   Measured against Claude's artifact viewer rather than invented.
+   Three things carry that look and none of them is decoration:
+
+   • A reading column, not the panel's full width. Long measure is
+     what makes a document feel like a form.
+   • Muted section headings. A black H2 competes with the prose it is
+     introducing; a grey one steps back and lets the body lead.
+   • Air instead of boxes. Code is the only filled surface — every
+     bordered card was a divider doing a job whitespace does better.
+
+   The lineage rows keep their hairlines: those are a table of
+   relationships, not prose, and the rules line the columns up. */
+
+.kb-doc {
+  max-width: 45rem;
+  margin: 0 auto;
+  padding: 8px 0 48px;
+}
+
+.kb-doc-head {
+  margin-bottom: 28px;
+}
+
+.kb-doc-title {
+  margin: 0 0 6px;
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-wrap: balance;
+  color: var(--fg);
+}
+
+.kb-doc-attribution {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+.kb-doc-origin {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+.kb-doc-origin code {
+  font-size: 11px;
+}
+
+.kb-doc-body {
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--fg);
+}
+
+.kb-doc-body > :first-child {
+  margin-top: 0;
+}
+
+.kb-doc-body > :last-child {
+  margin-bottom: 0;
+}
+
+.kb-doc-body h1,
+.kb-doc-body h2,
+.kb-doc-body h3,
+.kb-doc-body h4 {
+  margin: 1.9em 0 0.5em;
+  font-weight: 600;
+  line-height: 1.35;
+  text-wrap: balance;
+  /* Muted, not black. The heading announces the prose; it should not
+     outweigh it. */
+  color: var(--fg-muted);
+}
+
+.kb-doc-body h1 { font-size: 1.12em; }
+.kb-doc-body h2 { font-size: 1.06em; }
+.kb-doc-body h3,
+.kb-doc-body h4 { font-size: 1em; }
+
+.kb-doc-body p,
+.kb-doc-body ul,
+.kb-doc-body ol {
+  margin: 0 0 1em;
+}
+
+.kb-doc-body li {
+  margin-bottom: 0.3em;
+}
+
+.kb-doc-body pre {
+  margin: 0 0 1.2em;
+  padding: 12px 14px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.55;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+.kb-doc-body :not(pre) > code {
+  padding: 0.1em 0.32em;
+  font-size: 0.87em;
+  background: var(--bg-inset);
+  border-radius: 4px;
+}
+
+.kb-doc-body blockquote {
+  margin: 0 0 1em;
+  padding-left: 0.9em;
+  border-left: 2px solid var(--border);
+  color: var(--fg-muted);
+}
+
+.kb-doc-body table {
+  width: 100%;
+  margin: 0 0 1.2em;
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+
+.kb-doc-body th,
+.kb-doc-body td {
+  padding: 5px 9px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.kb-doc-body th {
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
+/* The stale banner is the one thing allowed to interrupt the column:
+   it reports that the ground moved under what you are reading. */
+.kb-doc .kb-stale-banner {
+  margin: 0 0 24px;
 }

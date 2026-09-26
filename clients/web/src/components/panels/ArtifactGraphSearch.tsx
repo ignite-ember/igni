@@ -1,5 +1,6 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import type { IgniClient } from "../../protocol/client";
+import { ArtifactLineageGraph } from "./ArtifactLineageGraph";
 
 /**
  * Ask the artifact graph a question in English.
@@ -186,11 +187,10 @@ export function ArtifactGraphSearch({
 /**
  * The shape of the answer, beside the answer itself.
  *
- * Laid out by hand rather than with a force simulation: the results
- * are tens of nodes, not thousands, and a deterministic layout means
- * the same query draws the same picture twice — which matters when
- * somebody is comparing two runs. A simulation would also be a
- * dependency, and this panel ships inside an offline app.
+ * Delegated to :component:`ArtifactLineageGraph`, which lays the
+ * result out as the directed graph it is rather than as the ring the
+ * hand-rolled version drew. Direction is the information here —
+ * "these were built on that" reads in the arrows or not at all.
  */
 function ResultGraph({
   graph,
@@ -199,58 +199,15 @@ function ResultGraph({
   graph: { nodes: GraphNode[]; edges: GraphEdge[] };
   onOpen: (id: string) => void;
 }) {
-  const layout = useMemo(() => layOut(graph), [graph]);
-  if (!layout) return null;
-
-  const { positions, width, height } = layout;
+  if (graph.nodes.length === 0) return null;
   return (
     <section className="ag-graph">
       <h3 className="ag-heading">Shape of the answer</h3>
-      <svg
-        className="ag-canvas"
-        viewBox={`0 0 ${width} ${height}`}
-        role="img"
-        aria-label={`${graph.nodes.length} documents, ${graph.edges.length} relationships`}
-      >
-        {graph.edges.map((edge, i) => {
-          const a = positions.get(edge.source);
-          const b = positions.get(edge.target);
-          if (!a || !b) return null;
-          return (
-            <g key={`${edge.source}-${edge.target}-${i}`} className={edge.stale ? "ag-edge ag-edge-stale" : "ag-edge"}>
-              <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} />
-              {edge.label && (
-                <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 4} className="ag-edge-label">
-                  {edge.label}
-                </text>
-              )}
-            </g>
-          );
-        })}
-        {graph.nodes.map((node) => {
-          const at = positions.get(node.id);
-          if (!at) return null;
-          return (
-            <g
-              key={node.id}
-              className={`ag-node ag-node-${node.kind}`}
-              transform={`translate(${at.x} ${at.y})`}
-              onClick={() => onOpen(node.id)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") onOpen(node.id);
-              }}
-            >
-              <circle r={7} />
-              <text y={20} textAnchor="middle" className="ag-node-label">
-                {truncate(node.label, 22)}
-                {node.version ? ` v${node.version}` : ""}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
+      <ArtifactLineageGraph
+        nodes={graph.nodes}
+        edges={graph.edges}
+        onOpen={onOpen}
+      />
     </section>
   );
 }
@@ -307,59 +264,7 @@ function ResultTable({
   );
 }
 
-// ── Layout + formatting ──────────────────────────────────────────
-
-/**
- * Place nodes on a circle, or on two rows when the result is a
- * relation.
- *
- * A circle reads badly for "these three depend on that one" — the
- * direction is the information, and a ring hides it. When every edge
- * runs from one group to another, the two groups become two rows and
- * the arrows all point the same way.
- */
-function layOut(graph: { nodes: GraphNode[]; edges: GraphEdge[] }) {
-  if (graph.nodes.length === 0) return null;
-  const positions = new Map<string, { x: number; y: number }>();
-  const width = 640;
-
-  const subjects = graph.nodes.filter((n) => n.kind === "artifact");
-  const objects = graph.nodes.filter((n) => n.kind !== "artifact");
-
-  if (objects.length > 0 && subjects.length > 0) {
-    const height = 200;
-    place(subjects, 52, width, positions);
-    place(objects, height - 52, width, positions);
-    return { positions, width, height };
-  }
-
-  const only = graph.nodes;
-  if (only.length <= 2) {
-    const height = 110;
-    place(only, height / 2, width, positions);
-    return { positions, width, height };
-  }
-  const height = 320;
-  const radius = Math.min(width, height) / 2 - 46;
-  only.forEach((node, i) => {
-    const angle = (i / only.length) * Math.PI * 2 - Math.PI / 2;
-    positions.set(node.id, {
-      x: width / 2 + radius * Math.cos(angle),
-      y: height / 2 + radius * Math.sin(angle),
-    });
-  });
-  return { positions, width, height };
-}
-
-function place(
-  nodes: GraphNode[],
-  y: number,
-  width: number,
-  into: Map<string, { x: number; y: number }>,
-) {
-  const step = width / (nodes.length + 1);
-  nodes.forEach((node, i) => into.set(node.id, { x: step * (i + 1), y }));
-}
+// ── Formatting ───────────────────────────────────────────────────
 
 function rowArtifactId(row: Record<string, unknown>): string | null {
   const value = row["artifact_id"] ?? row["id"];
@@ -371,8 +276,4 @@ function renderCell(value: unknown): string {
   if (typeof value === "boolean") return value ? "yes" : "no";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
-}
-
-function truncate(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }

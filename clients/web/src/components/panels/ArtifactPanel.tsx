@@ -770,19 +770,25 @@ function DocumentDetail({
     (s) => s.state === "confirmed" && s.is_stale,
   );
 
+  // Attribution as a sentence, the way an artifact header reads:
+  // who wrote it, which version, when. A row of chips makes three
+  // facts look like three filters.
+  const attribution = [
+    doc.author || null,
+    doc.n ? `v${doc.n}` : null,
+    doc.is_head === false ? `superseded by v${doc.head_n}` : null,
+    doc.created_at ? formatRelative(doc.created_at) : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
-    <div className="kb-detail">
-      <div className="kb-detail-hero">
-        <h2 className="kb-detail-title">{doc.name}</h2>
-        <div className="kb-detail-meta">
-          {doc.n ? <span className="kb-meta-chip">v{doc.n}</span> : null}
-          {doc.n && doc.is_head === false ? (
-            <span className="kb-meta-chip">superseded by v{doc.head_n}</span>
-          ) : null}
-          {doc.author ? <span className="kb-meta-chip">{doc.author}</span> : null}
-        </div>
+    <article className="kb-doc">
+      <header className="kb-doc-head">
+        <h2 className="kb-doc-title">{doc.name}</h2>
+        {attribution && <p className="kb-doc-attribution">{attribution}</p>}
         {doc.source && doc.source !== doc.name && (
-          <div className="kb-detail-source">
+          <p className="kb-doc-origin">
             {/^https?:\/\//.test(doc.source) ? (
               <a href={doc.source} target="_blank" rel="noreferrer">
                 {doc.source}
@@ -790,20 +796,9 @@ function DocumentDetail({
             ) : (
               <code>{doc.source}</code>
             )}
-          </div>
+          </p>
         )}
-      </div>
-
-      {Object.keys(doc.metadata).length > 0 && (
-        <div className="kb-detail-meta">
-          {Object.entries(doc.metadata).map(([k, v]) => (
-            <span key={k} className="kb-meta-chip">
-              <span className="kb-meta-key">{k}</span>
-              <span className="kb-meta-val">{v}</span>
-            </span>
-          ))}
-        </div>
-      )}
+      </header>
 
       {staleSources.length > 0 && (
         <div className="kb-stale-banner" role="status">
@@ -818,7 +813,7 @@ function DocumentDetail({
         </div>
       )}
 
-      <div className="kb-detail-content markdown-body">
+      <div className="kb-doc-body markdown-body">
         <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
           {doc.content || "_(empty)_"}
         </ReactMarkdown>
@@ -835,7 +830,7 @@ function DocumentDetail({
         lineage={lineage}
         onReviewed={() => setLineageNonce((n) => n + 1)}
       />
-    </div>
+    </article>
   );
 }
 
