@@ -207,8 +207,23 @@ class ArtifactPublisher:
     ) -> str:
         """Upload and return the shareable URL.
 
-        ``visibility`` is ``private``, ``org`` or ``users``; ``audience``
-        carries the identities for ``users``.
+        ``visibility`` is one of:
+
+        * ``private`` — only you.
+        * ``users`` — the identities in ``audience``, given as email
+          addresses or user ids.
+        * ``domain`` — anyone whose account email shares yours. The
+          domain is taken from your account by the server and cannot
+          be named here, because a client that could name its own
+          domain could publish into somebody else's.
+        * ``org`` — your organisation.
+        * ``public`` — anyone with the link, signed in or not.
+
+        The list is not validated here. The server owns it, and a
+        second copy of the enum in the client is a second place to
+        forget to update — the failure mode of getting it wrong is a
+        422 naming the allowed values, which is a better error than
+        anything this side could invent.
         """
         if not self.is_configured:
             raise RuntimeError("Sharing needs a signed-in igni account — run `igni login` first.")

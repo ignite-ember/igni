@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import type { IgniClient } from "../../protocol/client";
+import { ArtifactGraphSearch } from "./ArtifactGraphSearch";
 import { Drawer } from "./Drawer";
 import { Skeleton } from "../Skeleton";
 
@@ -87,7 +88,7 @@ interface ArtifactLineageView {
   citations: string[];
 }
 
-type View = "list" | "detail" | "add";
+type View = "list" | "detail" | "add" | "ask";
 type AddMode = "url" | "path" | "text";
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -243,7 +244,14 @@ export function ArtifactPanel({
   // Reported to the page trail rather than drawn here: this panel's own
   // breadcrumb used to sit directly under the chrome's, saying half of
   // the same thing.
-  const leaf = view === "detail" && selectedDoc ? selectedDoc.name : view === "add" ? "Add source" : null;
+  const leaf =
+    view === "detail" && selectedDoc
+      ? selectedDoc.name
+      : view === "add"
+        ? "Add source"
+        : view === "ask"
+          ? "Ask the graph"
+          : null;
   const title: React.ReactNode = leaf ?? "Artifacts";
   const levels = {
     labels: leaf ? [leaf] : [],
@@ -280,6 +288,14 @@ export function ArtifactPanel({
               strokeLinejoin="round"
             />
           </svg>
+        </button>
+        <button
+          className="btn btn-sm"
+          disabled={!status.enabled}
+          title="Ask a question about how these documents relate"
+          onClick={() => setView("ask")}
+        >
+          Ask
         </button>
         <button
           className="btn btn-sm btn-primary"
@@ -363,6 +379,14 @@ export function ArtifactPanel({
     >
       {status === null ? (
         <ArtifactsSkeleton />
+      ) : view === "ask" ? (
+        <ArtifactGraphSearch
+          client={client}
+          onOpenArtifact={(id) => {
+            setSelected(id);
+            setView("detail");
+          }}
+        />
       ) : view === "add" ? (
         <AddSource
           busy={busy === "add"}

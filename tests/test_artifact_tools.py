@@ -49,11 +49,16 @@ class FakeManager:
         self.write_result = overrides.get(
             "write_result", ArtifactWriteResult.ok("stored", artifact_id="a1", n=1)
         )
+        self.graph_answer = overrides.get("graph_answer", "2 row(s):")
         self.confirm_result = overrides.get("confirm_result", True)
         self.delete_result = overrides.get("delete_result", True)
 
     def pending_sources(self):
         return self.pending
+
+    async def ask_graph(self, question):
+        self.calls.append(("ask_graph", question))
+        return self.graph_answer
 
     def _maybe_require(self, sources, no_sources_reason):
         declared = [s for s in (sources or []) if s.strip()]
@@ -221,6 +226,16 @@ class TestReads:
         )
         out = await kit.artifact_versions("a1")
         assert "v2 (current)" in out and "v1" in out
+
+    async def test_artifact_ask_forwards_the_question(self):
+        """The structural counterpart to artifact_search: search finds
+        documents *about* a topic, ask answers questions *about the
+        documents*."""
+        kit, mgr = tools(graph_answer="1 row(s):\n  dependent=Login")
+        out = await kit.artifact_ask("what depends on the auth model")
+
+        assert ("ask_graph", "what depends on the auth model") in mgr.calls
+        assert "Login" in out
 
     async def test_artifact_pending_sources_lists_the_session_reads(self):
         kit, _ = tools(pending=["auth@2"])

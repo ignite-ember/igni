@@ -48,6 +48,7 @@ class ArtifactTools(Toolkit):
         self.register(self.artifact_list)
         self.register(self.artifact_versions)
         self.register(self.artifact_lineage)
+        self.register(self.artifact_ask)
         self.register(self.artifact_pending_sources)
         self.register(self.artifact_confirm_source)
         self.register(self.artifact_dismiss_source)
@@ -158,6 +159,26 @@ class ArtifactTools(Toolkit):
                 f"  - {e.from_name or e.from_artifact_id}@{e.from_n}" for e in lineage.dependents
             )
         return "\n".join(lines)
+
+    async def artifact_ask(self, question: str) -> str:
+        """Ask a structural question about the artifact graph.
+
+        Use this when the question is about how documents relate
+        rather than what they say — artifact_search finds documents
+        *about* a topic, this answers questions *about the documents*:
+        what was built on what, what would be affected by a change,
+        what nobody has reviewed, which version said what.
+
+        A query is written for the question and run read-only against
+        the local graph. The answer includes the query, so a wrong
+        result can be diagnosed rather than just disbelieved.
+
+        Args:
+            question: Plain English, e.g. "what would be affected if
+                the auth model changed" or "which documents have
+                sources nobody confirmed".
+        """
+        return await self._mgr.ask_graph(question)
 
     async def artifact_pending_sources(self) -> str:
         """List the artifacts you have read this session.

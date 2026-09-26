@@ -76,6 +76,7 @@ if TYPE_CHECKING:
     from ember_code.backend.schemas_artifacts import (
         ArtifactExportResult,
         ArtifactLineageView,
+        ArtifactQueryResult,
         ArtifactShareResult,
         ArtifactStaleRow,
         ArtifactStatus,
@@ -1011,6 +1012,14 @@ class BackendServer:
     ) -> ArtifactShareResult:
         """See :meth:`ArtifactController.share`."""
         return await self.artifacts.share(entry_id, version, visibility, audience, together_with)
+
+    async def artifact_ask(self, question: str) -> ArtifactQueryResult:
+        """See :meth:`ArtifactController.ask`."""
+        return await self.artifacts.ask(question)
+
+    async def artifact_run_cypher(self, cypher: str) -> ArtifactQueryResult:
+        """See :meth:`ArtifactController.run_cypher`."""
+        return await self.artifacts.run_cypher(cypher)
 
     async def artifact_remove(self, entry_id: str) -> ArtifactRemoveResult:
         """See :meth:`ArtifactController.remove`."""

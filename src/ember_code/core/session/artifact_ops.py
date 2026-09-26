@@ -249,6 +249,60 @@ class SessionArtifactManager:
             return None
         return await self.artifacts.lineage(ref, n)
 
+    async def ask_graph(self, question: str) -> str:
+        """Answer a question about the graph, as text for the agent.
+
+        The agent already has ``artifact_search`` for "find me a
+        document about X". This is for the questions search cannot
+        answer because they are about *structure*: what was built on
+        what, what would break, what nobody has reviewed.
+        """
+        if self.artifacts is None:
+            return self.disabled_message
+        planner = self._planner()
+        if planner is None:
+            return "The artifact graph is not reachable in this session."
+        plan = await planner.ask(question)
+        if not plan.ok:
+            return f"Could not answer that: {plan.error}"
+        result = plan.result
+        assert result is not None  # plan.ok implies a result
+        if not result.rows:
+            return f"No rows.\n\nQuery used:\n{result.cypher}"
+        lines = [f"{len(result.rows)} row(s):"]
+        for row in result.rows[:40]:
+            lines.append("  " + ", ".join(f"{k}={v}" for k, v in row.items()))
+        if len(result.rows) > 40:
+            lines.append(f"  … and {len(result.rows) - 40} more")
+        lines.append(f"\nQuery used:\n{result.cypher}")
+        return "\n".join(lines)
+
+    def _planner(self):
+        """Build a planner over this session's store, or None.
+
+        Lives here rather than on the index because it needs the
+        session's *model*, which the index has no business knowing
+        about — the index stores documents; choosing who writes a
+        query is a session concern.
+        """
+        from ember_code.core.artifacts.cypher import ArtifactCypherService
+        from ember_code.core.artifacts.query_planner import ArtifactQueryPlanner
+        from ember_code.core.config.models import ModelRegistry
+
+        client = getattr(self.artifacts, "client", None)
+        driver = getattr(client, "_driver", None)
+        if driver is None:
+            return None
+        service = ArtifactCypherService(
+            driver,
+            client.project_id,
+            embedder=getattr(self.artifacts, "_embedder", None),
+        )
+        return ArtifactQueryPlanner(
+            service,
+            model_factory=lambda: ModelRegistry(self.settings).get_model(),
+        )
+
     async def stale(self, *, limit: int = 100) -> list[StaleDependent]:
         if self.artifacts is None:
             return []

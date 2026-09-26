@@ -9358,3 +9358,248 @@ button {
   background: var(--bg-raised);
   color: var(--fg-muted);
 }
+
+/* ── Ask the artifact graph ────────────────────────────────────────
+   A question box, the query it produced (editable), the shape of the
+   answer, and the answer. The query sits between the question and the
+   result on purpose: it is the thing to correct when the answer is
+   wrong, and burying it below the table makes it look like debug
+   output rather than the control it is. */
+
+.ag-search {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 4px;
+}
+
+.ag-ask {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.ag-question {
+  flex: 1;
+  resize: vertical;
+  min-height: 46px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--fg);
+  background: var(--bg-input, var(--bg-elevated));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.ag-question:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+.ag-btn {
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--fg);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.ag-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ag-btn-quiet {
+  padding: 3px 9px;
+  font-size: 11px;
+}
+
+.ag-examples {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ag-example {
+  padding: 4px 9px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.ag-example:hover {
+  color: var(--fg);
+  border-style: solid;
+}
+
+.ag-cypher-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.ag-cypher-head .ag-btn-quiet {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.ag-note {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--fg-faint);
+}
+
+.ag-cypher-box {
+  width: 100%;
+  resize: vertical;
+  padding: 8px 10px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--fg);
+  background: var(--bg-code, var(--bg-elevated));
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+.ag-cypher-box:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+.ag-error .ag-note {
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.ag-heading {
+  margin: 0 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.ag-canvas {
+  width: 100%;
+  height: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+.ag-edge line {
+  stroke: var(--border);
+  stroke-width: 1.2;
+}
+
+.ag-edge-stale line {
+  stroke: var(--warning);
+  stroke-width: 2;
+}
+
+.ag-edge-label {
+  font-size: 9px;
+  fill: var(--fg-faint);
+  text-anchor: middle;
+}
+
+.ag-edge-stale .ag-edge-label {
+  fill: var(--warning);
+}
+
+.ag-node {
+  cursor: pointer;
+}
+
+.ag-node circle {
+  fill: var(--accent-blue);
+  stroke: var(--bg-elevated);
+  stroke-width: 2;
+}
+
+.ag-node-source circle {
+  fill: var(--fg-muted);
+}
+
+.ag-node:hover circle,
+.ag-node:focus circle {
+  fill: var(--accent-orange-text, var(--accent-blue));
+  outline: none;
+}
+
+.ag-node-label {
+  font-size: 10px;
+  fill: var(--fg);
+}
+
+.ag-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+.ag-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.ag-table th {
+  padding: 6px 9px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--fg-muted);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-soft);
+  white-space: nowrap;
+}
+
+.ag-table td {
+  padding: 6px 9px;
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: top;
+  max-width: 340px;
+}
+
+.ag-table tr:last-child td {
+  border-bottom: none;
+}
+
+.ag-row-open {
+  cursor: pointer;
+}
+
+.ag-row-open:hover td {
+  background: var(--bg-elevated);
+}
+
+.ag-empty {
+  padding: 14px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}

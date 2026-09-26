@@ -13,6 +13,8 @@ until someone decides it should.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -149,4 +151,44 @@ class ArtifactRemoveResult(BaseModel):
     "disabled" (``error`` differentiates)."""
 
     removed: bool
+    error: str = ""
+
+
+class ArtifactGraphNode(BaseModel):
+    """One node in the picture drawn beside a result."""
+
+    id: str
+    label: str
+    kind: str = "artifact"
+    version: int | None = None
+
+
+class ArtifactGraphEdge(BaseModel):
+    source: str
+    target: str
+    label: str = ""
+    stale: bool = False
+
+
+class ArtifactGraphView(BaseModel):
+    nodes: list[ArtifactGraphNode] = Field(default_factory=list)
+    edges: list[ArtifactGraphEdge] = Field(default_factory=list)
+
+
+class ArtifactQueryResult(BaseModel):
+    """A question, the Cypher written for it, and what came back.
+
+    ``cypher`` is returned even when the run failed — the panel puts
+    it in an editable box, so a query that was nearly right is one
+    correction away rather than a dead end.
+    """
+
+    question: str = ""
+    cypher: str = ""
+    columns: list[str] = Field(default_factory=list)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    graph: ArtifactGraphView = Field(default_factory=ArtifactGraphView)
+    truncated: bool = False
+    attempts: int = 0
+    unanswerable: bool = False
     error: str = ""

@@ -77,6 +77,14 @@ class ArtifactRpcHandler(RpcHandler):
             args.get("together_with") or [],
         )
 
+    @rpc(RpcMethod.ARTIFACT_ASK)
+    def artifact_ask(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_ask(args["question"])
+
+    @rpc(RpcMethod.ARTIFACT_RUN_CYPHER)
+    def artifact_run_cypher(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_run_cypher(args["cypher"])
+
     @rpc(RpcMethod.ARTIFACT_REMOVE)
     def artifact_remove(self, args: dict) -> Any:
         return self._ctx.backend.artifact_remove(args["id"])

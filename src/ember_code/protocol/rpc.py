@@ -252,6 +252,13 @@ class RpcMethod(StrEnum):
     ARTIFACT_PREVIEW = "artifact_preview"
     ARTIFACT_EXPORT = "artifact_export"
     ARTIFACT_SHARE = "artifact_share"
+    # Plain-English question -> Cypher -> rows + graph. Two methods
+    # rather than one with an optional flag: the panel calls the first
+    # when somebody types a question and the second when they edit the
+    # query it produced, and those are different enough actions that
+    # one endpoint would branch on a mode argument.
+    ARTIFACT_ASK = "artifact_ask"
+    ARTIFACT_RUN_CYPHER = "artifact_run_cypher"
 
     # ── File access (sandboxed to project/.igni) ────────────────
     READ_FILE = "read_file"

@@ -16,23 +16,29 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ember_code.backend.schemas_artifacts import (
     ArtifactExportResult,
     ArtifactGetResult,
+    ArtifactGraphEdge,
+    ArtifactGraphNode,
+    ArtifactGraphView,
     ArtifactHit,
     ArtifactLineageRow,
     ArtifactLineageView,
     ArtifactListEntry,
+    ArtifactQueryResult,
     ArtifactRemoveResult,
     ArtifactShareResult,
     ArtifactStaleRow,
     ArtifactStatus,
     ArtifactVersionRow,
 )
+from ember_code.core.artifacts.cypher import ArtifactCypherService, CypherResult
 from ember_code.core.artifacts.export import ArtifactExporter, ArtifactPublisher
 from ember_code.core.artifacts.models import ArtifactSummary, EdgeState
+from ember_code.core.artifacts.query_planner import ArtifactQueryPlanner
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
@@ -265,6 +271,68 @@ class ArtifactController:
         plan = await self._session.artifact_mgr.reconcile_plan(target)
         return plan.source_diff if plan else ""
 
+    # ── Ask ───────────────────────────────────────────────────────────
+
+    async def ask(self, question: str) -> ArtifactQueryResult:
+        """Answer a plain-English question about the artifact graph.
+
+        Runs entirely on this machine: the question goes to the
+        session's own configured model, the Cypher runs against the
+        local Neo4j sidecar, and nothing leaves the host. There is no
+        server-side counterpart and there is not meant to be — the
+        graph this reads does not exist anywhere but here.
+        """
+        planner = self._planner()
+        if planner is None:
+            return ArtifactQueryResult(question=question, error="Artifacts are disabled.")
+        plan = await planner.ask(question)
+        return _query_result(
+            question=plan.question,
+            cypher=plan.cypher,
+            result=plan.result,
+            attempts=plan.attempts,
+            unanswerable=plan.unanswerable,
+            error=plan.error,
+        )
+
+    async def run_cypher(self, cypher: str) -> ArtifactQueryResult:
+        """Run a query the user edited by hand.
+
+        No planning and no retry. The author can see the error and fix
+        it, and rewriting their query underneath them would be worse
+        than showing them what the database said.
+        """
+        planner = self._planner()
+        if planner is None:
+            return ArtifactQueryResult(cypher=cypher, error="Artifacts are disabled.")
+        result = await planner.run_raw(cypher)
+        return _query_result(question="", cypher=result.cypher or cypher, result=result)
+
+    def _planner(self) -> ArtifactQueryPlanner | None:
+        """Build the planner against this session's store and model.
+
+        Constructed per call rather than cached: the model can change
+        under a session (``/model``), and a planner holding the old
+        one would keep writing queries with a model the user switched
+        away from.
+        """
+        artifacts = self._session.artifacts
+        client = getattr(artifacts, "client", None)
+        driver = getattr(client, "_driver", None)
+        if artifacts is None or driver is None:
+            return None
+        service = ArtifactCypherService(
+            driver,
+            client.project_id,
+            embedder=getattr(artifacts, "_embedder", None),
+        )
+        return ArtifactQueryPlanner(service, model_factory=self._model_for_planning)
+
+    def _model_for_planning(self) -> Any:
+        from ember_code.core.config.models import ModelRegistry
+
+        return ModelRegistry(self._session.settings).get_model()
+
     # ── Export and share ──────────────────────────────────────────────
 
     async def export(
@@ -303,7 +371,15 @@ class ArtifactController:
         audience: list[str] | None = None,
         together_with: list[str] | None = None,
     ) -> ArtifactShareResult:
-        """Publish a projected snapshot and return its URL."""
+        """Publish a projected snapshot and return its URL.
+
+        ``visibility`` is ``private``, ``users``, ``domain``, ``org``
+        or ``public``. ``domain`` means everyone whose account email
+        shares the author's — the deployment serves one customer whose
+        people may sit in several orgs, so "my colleagues" is the
+        domain rather than the org, and the server derives it from the
+        signed-in account rather than taking it from here.
+        """
         artifacts = self._session.artifacts
         if artifacts is None:
             return ArtifactShareResult(error="Artifacts are disabled.")
@@ -372,3 +448,43 @@ class ArtifactController:
                 return origin
             return PurePosixPath(origin).name or origin
         return summary.artifact_id
+
+
+def _query_result(
+    *,
+    question: str,
+    cypher: str,
+    result: CypherResult | None,
+    attempts: int = 0,
+    unanswerable: bool = False,
+    error: str = "",
+) -> ArtifactQueryResult:
+    """One mapping from the service's result to the wire shape.
+
+    Shared by the planned and the hand-edited path so the panel cannot
+    tell them apart — it renders a table and a graph either way, and
+    the only difference is whether a model wrote the query.
+    """
+    graph = ArtifactGraphView()
+    if result is not None:
+        graph = ArtifactGraphView(
+            nodes=[
+                ArtifactGraphNode(id=n.id, label=n.label, kind=n.kind, version=n.version)
+                for n in result.graph.nodes
+            ],
+            edges=[
+                ArtifactGraphEdge(source=e.source, target=e.target, label=e.label, stale=e.stale)
+                for e in result.graph.edges
+            ],
+        )
+    return ArtifactQueryResult(
+        question=question,
+        cypher=cypher,
+        columns=list(result.columns) if result else [],
+        rows=list(result.rows) if result else [],
+        graph=graph,
+        truncated=bool(result and result.truncated),
+        attempts=attempts,
+        unanswerable=unanswerable,
+        error=error or (result.error if result else ""),
+    )
