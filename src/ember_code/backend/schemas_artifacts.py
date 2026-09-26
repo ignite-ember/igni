@@ -37,6 +37,7 @@ class ArtifactHit(BaseModel):
 
     artifact_id: str = ""
     name: str = ""
+    kind: str = ""
     n: int = 0
     content: str = ""
     score: float | None = None

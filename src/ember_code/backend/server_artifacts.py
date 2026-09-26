@@ -90,6 +90,7 @@ class ArtifactController:
             ArtifactHit(
                 artifact_id=r.artifact_id,
                 name=r.name,
+                kind=r.kind,
                 n=r.n,
                 content=r.content,
                 score=r.score,

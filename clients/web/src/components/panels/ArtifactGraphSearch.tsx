@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { IgniClient } from "../../protocol/client";
 import { ArtifactLineageGraph } from "./ArtifactLineageGraph";
 
@@ -52,11 +52,16 @@ const EXAMPLES = [
 export function ArtifactGraphSearch({
   client,
   onOpenArtifact,
+  initialQuestion = "",
+  onConsumeInitial,
 }: {
   client: IgniClient;
   onOpenArtifact: (id: string) => void;
+  /** A query handed over from a search that found nothing. */
+  initialQuestion?: string;
+  onConsumeInitial?: () => void;
 }) {
-  const [question, setQuestion] = useState("");
+  const [question, setQuestion] = useState(initialQuestion);
   const [cypher, setCypher] = useState("");
   const [result, setResult] = useState<QueryResult | null>(null);
   const [busy, setBusy] = useState<"" | "asking" | "running">("");
@@ -93,6 +98,12 @@ export function ArtifactGraphSearch({
   const ask = useCallback(() => {
     if (question.trim()) void run("artifact_ask", { question });
   }, [question, run]);
+
+  // Consumed once. Left in place, returning to the list and back
+  // would silently re-run a query the user had moved on from.
+  useEffect(() => {
+    if (initialQuestion) onConsumeInitial?.();
+  }, [initialQuestion, onConsumeInitial]);
 
   const rerun = useCallback(() => {
     if (cypher.trim()) void run("artifact_run_cypher", { cypher });

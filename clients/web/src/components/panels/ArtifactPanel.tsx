@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import type { IgniClient } from "../../protocol/client";
 import { ArtifactGraphSearch } from "./ArtifactGraphSearch";
+import { ArtifactSearch } from "./ArtifactSearch";
 import { ArtifactShareDialog } from "./ArtifactShareDialog";
 import { ArtifactStaleReview } from "./ArtifactStaleReview";
 import { Drawer } from "./Drawer";
@@ -47,16 +48,6 @@ interface ArtifactsDocFull {
   author?: string;
   metadata: Record<string, string>;
   error?: string;
-}
-
-interface ArtifactsSearchHit {
-  artifact_id?: string;
-  name?: string;
-  n?: number;
-  content?: string;
-  source?: string;
-  score?: number;
-  metadata?: Record<string, string>;
 }
 
 interface ArtifactVersionRow {
@@ -136,12 +127,17 @@ export function ArtifactPanel({
   const [docs, setDocs] = useState<ArtifactsDoc[] | null>(null);
   const [view, setView] = useState<View>("list");
   const [selected, setSelected] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
-  const [searched, setSearched] = useState<{ q: string; results: ArtifactsSearchHit[] } | null>(null);
   const [busy, setBusy] = useState("");
   const [addError, setAddError] = useState("");
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   const [notice, setNotice] = useState("");
+  // Which documents have a source that moved. Fetched once with the
+  // list so a search result can say "out of date" without a request
+  // per row.
+  const [staleIds, setStaleIds] = useState<Set<string>>(new Set());
+  // A question handed over from a search that found nothing. The ask
+  // view reads it once, so going back does not re-run it.
+  const [pendingQuestion, setPendingQuestion] = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -155,6 +151,13 @@ export function ArtifactPanel({
       console.error(e);
       setDocs([]);
     }
+    try {
+      const rows = (await client.rpc<{ artifact_id: string }[]>("artifact_stale")) || [];
+      setStaleIds(new Set(rows.map((r) => r.artifact_id)));
+    } catch {
+      // A failed staleness sweep costs a badge, not the list.
+      setStaleIds(new Set());
+    }
   }, [client]);
 
   useEffect(() => {
@@ -164,39 +167,6 @@ export function ArtifactPanel({
   useEffect(() => {
     if (view !== "detail") setConfirmingRemove(false);
   }, [view, selected]);
-
-  // Empty query = filtered list, Enter = semantic search
-  const filteredDocs = useMemo(() => {
-    if (!docs) return [];
-    const q = query.trim().toLowerCase();
-    if (!q) return docs;
-    return docs.filter(
-      (d) =>
-        d.name.toLowerCase().includes(q) ||
-        (d.source || "").toLowerCase().includes(q) ||
-        (d.preview || "").toLowerCase().includes(q),
-    );
-  }, [docs, query]);
-
-  const runSearch = async () => {
-    const q = query.trim();
-    if (!q) return;
-    setBusy("search");
-    try {
-      const results =
-        (await client.rpc<ArtifactsSearchHit[]>("artifact_search", { query: q })) || [];
-      setSearched({ q, results });
-    } catch (e) {
-      setSearched({ q, results: [{ content: String(e) }] });
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const clearSearch = () => {
-    setSearched(null);
-    setQuery("");
-  };
 
   const sync = async () => {
     setBusy("sync");
@@ -387,40 +357,12 @@ export function ArtifactPanel({
     );
   }
 
-  // ── Toolbar: combined filter + search ───────────────────────────
-  const drawerToolbar =
-    view === "list" && status && status.enabled ? (
-      <div className="kb-toolbar">
-        {searched ? (
-          <div className="kb-search-chip">
-            <span className="kb-search-chip-q">"{searched.q}"</span>
-            <button className="kb-chip-close" onClick={clearSearch} title="Clear search">
-              ×
-            </button>
-          </div>
-        ) : (
-          <input
-            className="panel-input"
-            placeholder="Filter documents, or press Enter to search content…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void runSearch();
-              if (e.key === "Escape") clearSearch();
-            }}
-            autoFocus
-          />
-        )}
-      </div>
-    ) : null;
-
   return (
     <Drawer
       title={title}
       levels={levels}
       onClose={onClose}
       headerExtras={headerExtras}
-      toolbar={drawerToolbar}
     >
       {notice && (
         <div className="kb-notice" role="status" onClick={() => setNotice("")}>
@@ -447,6 +389,8 @@ export function ArtifactPanel({
       ) : view === "ask" ? (
         <ArtifactGraphSearch
           client={client}
+          initialQuestion={pendingQuestion}
+          onConsumeInitial={() => setPendingQuestion("")}
           onOpenArtifact={(id) => {
             setSelected(id);
             setView("detail");
@@ -463,35 +407,28 @@ export function ArtifactPanel({
         <DocumentDetail client={client} id={selected} />
       ) : !status.enabled ? (
         <DisabledState />
-      ) : searched ? (
-        <SearchResults
-          query={searched.q}
-          results={searched.results}
-          docs={docs || []}
-          onOpen={(hit) => {
-            if (!docs) return;
-            const match = docs.find(
-              (d) => d.source === (hit.source || hit.name) || d.id === hit.name,
-            );
-            if (match) {
-              setSelected(match.id);
-              setView("detail");
-            }
-          }}
-        />
       ) : docs && docs.length === 0 ? (
-        <EmptyHero
-          onAdd={() => setView("add")}
-          embedder={status.embedder}
-        />
+        <EmptyHero onAdd={() => setView("add")} embedder={status.embedder} />
       ) : (
-        <DocumentList
-          docs={filteredDocs}
-          totalDocs={docs?.length || 0}
-          query={query}
-          onOpen={(d) => {
-            setSelected(d.id);
+        <ArtifactSearch
+          client={client}
+          docs={(docs || []).map((d) => ({
+            id: d.id,
+            name: d.name,
+            kind: d.kind,
+            n: d.n,
+            preview: d.preview,
+            added_at: d.added_at,
+            size: d.size,
+          }))}
+          staleIds={staleIds}
+          onOpen={(id) => {
+            setSelected(id);
             setView("detail");
+          }}
+          onAsk={(q) => {
+            setPendingQuestion(q);
+            setView("ask");
           }}
         />
       )}
@@ -566,102 +503,7 @@ function EmptyHero({
   );
 }
 
-// ── Document list ────────────────────────────────────────────────
 
-function DocumentList({
-  docs,
-  totalDocs,
-  query,
-  onOpen,
-}: {
-  docs: ArtifactsDoc[];
-  totalDocs: number;
-  query: string;
-  onOpen: (d: ArtifactsDoc) => void;
-}) {
-  if (totalDocs > 0 && docs.length === 0) {
-    return <div className="kb-empty-hint kb-empty-inline">No documents match "{query}".</div>;
-  }
-  return (
-    <div className="kb-list">
-      {docs.map((d) => (
-        <div className="kb-row plugins-card-clickable" key={d.id} onClick={() => onOpen(d)}>
-          <div className="kb-row-main">
-            <div className="kb-row-name" title={d.source || d.name}>
-              {d.name}
-            </div>
-            {d.preview && <div className="kb-row-preview">{d.preview}</div>}
-          </div>
-          <div className="kb-row-meta">
-            <span>{formatBytes(d.size)}</span>
-            {d.added_at && <span>{formatRelative(d.added_at)}</span>}
-            {d.kind && <span className="kb-kind">{d.kind}</span>}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── Search results ───────────────────────────────────────────────
-
-function SearchResults({
-  query,
-  results,
-  docs,
-  onOpen,
-}: {
-  query: string;
-  results: ArtifactsSearchHit[];
-  docs: ArtifactsDoc[];
-  onOpen: (hit: ArtifactsSearchHit) => void;
-}) {
-  if (results.length === 0) {
-    return (
-      <div className="kb-empty kb-empty-inline">
-        <div className="kb-empty-title">No matches for "{query}"</div>
-        <div className="kb-empty-hint">
-          Try different phrasing, or add more sources to broaden the index.
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="kb-list">
-      {results.map((r, i) => {
-        const docMatch = docs.find(
-          (d) => d.source === (r.source || r.name) || d.id === r.name,
-        );
-        const score = typeof r.score === "number" ? r.score : null;
-        const name = r.name || r.source || "untitled";
-        const preview = (r.content || "").slice(0, 240);
-        return (
-          <div
-            key={i}
-            className={`kb-row ${docMatch ? "plugins-card-clickable" : ""}`}
-            onClick={() => docMatch && onOpen(r)}
-          >
-            <div className="kb-row-main">
-              <div className="kb-row-name">{name}</div>
-              {preview && <div className="kb-row-preview">{preview}</div>}
-            </div>
-            <div className="kb-row-meta">
-              {score != null && (
-                <span
-                  className={`kb-score ${
-                    score >= 0.6 ? "tone-good" : score >= 0.3 ? "tone-warn" : "tone-muted"
-                  }`}
-                >
-                  {(score * 100).toFixed(0)}%
-                </span>
-              )}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 // ── Document detail page ─────────────────────────────────────────
 
