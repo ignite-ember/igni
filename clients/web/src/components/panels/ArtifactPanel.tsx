@@ -4,6 +4,8 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import type { IgniClient } from "../../protocol/client";
 import { ArtifactGraphSearch } from "./ArtifactGraphSearch";
+import { ArtifactShareDialog } from "./ArtifactShareDialog";
+import { ArtifactStaleReview } from "./ArtifactStaleReview";
 import { Drawer } from "./Drawer";
 import { Skeleton } from "../Skeleton";
 
@@ -88,7 +90,7 @@ interface ArtifactLineageView {
   citations: string[];
 }
 
-type View = "list" | "detail" | "add" | "ask";
+type View = "list" | "detail" | "add" | "ask" | "stale" | "share";
 type AddMode = "url" | "path" | "text";
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -139,6 +141,7 @@ export function ArtifactPanel({
   const [busy, setBusy] = useState("");
   const [addError, setAddError] = useState("");
   const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const [notice, setNotice] = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -220,6 +223,22 @@ export function ArtifactPanel({
     }
   };
 
+  const exportDoc = async (id: string) => {
+    setBusy("export");
+    try {
+      const r = await client.rpc<{ path: string; error: string }>("artifact_export", {
+        id,
+      });
+      // Where the file landed is the whole result of the action, and
+      // a silent success leaves the user hunting for it.
+      setNotice(r.error ? r.error : `Exported to ${r.path}`);
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  };
+
   const tryAdd = async (source: string): Promise<boolean> => {
     if (!source.trim()) return false;
     setBusy("add");
@@ -251,7 +270,11 @@ export function ArtifactPanel({
         ? "Add source"
         : view === "ask"
           ? "Ask the graph"
-          : null;
+          : view === "stale"
+            ? "Needs attention"
+            : view === "share" && selectedDoc
+              ? `Share ${selectedDoc.name}`
+              : null;
   const title: React.ReactNode = leaf ?? "Artifacts";
   const levels = {
     labels: leaf ? [leaf] : [],
@@ -289,6 +312,15 @@ export function ArtifactPanel({
             />
           </svg>
         </button>
+        {!!status.stale_count && (
+          <button
+            className="btn btn-sm btn-warn"
+            title="Documents whose sources have changed since they were written"
+            onClick={() => setView("stale")}
+          >
+            {status.stale_count} out of date
+          </button>
+        )}
         <button
           className="btn btn-sm"
           disabled={!status.enabled}
@@ -331,12 +363,25 @@ export function ArtifactPanel({
             </button>
           </>
         ) : (
-          <button
-            className="btn btn-sm btn-danger"
-            onClick={() => setConfirmingRemove(true)}
-          >
-            Remove
-          </button>
+          <>
+            <button
+              className="btn btn-sm"
+              title="Write a self-contained HTML file next to the project"
+              disabled={busy === "export"}
+              onClick={() => void exportDoc(selected)}
+            >
+              {busy === "export" ? "Exporting…" : "Export"}
+            </button>
+            <button className="btn btn-sm" onClick={() => setView("share")}>
+              Share
+            </button>
+            <button
+              className="btn btn-sm btn-danger"
+              onClick={() => setConfirmingRemove(true)}
+            >
+              Remove
+            </button>
+          </>
         )}
       </div>
     );
@@ -377,8 +422,28 @@ export function ArtifactPanel({
       headerExtras={headerExtras}
       toolbar={drawerToolbar}
     >
+      {notice && (
+        <div className="kb-notice" role="status" onClick={() => setNotice("")}>
+          {notice}
+        </div>
+      )}
       {status === null ? (
         <ArtifactsSkeleton />
+      ) : view === "stale" ? (
+        <ArtifactStaleReview
+          client={client}
+          onOpenArtifact={(id) => {
+            setSelected(id);
+            setView("detail");
+          }}
+        />
+      ) : view === "share" && selected ? (
+        <ArtifactShareDialog
+          client={client}
+          artifactId={selected}
+          name={selectedDoc?.name ?? selected}
+          onClose={() => setView("detail")}
+        />
       ) : view === "ask" ? (
         <ArtifactGraphSearch
           client={client}
@@ -615,6 +680,10 @@ function DocumentDetail({
   const [version, setVersion] = useState(0);
   const [versions, setVersions] = useState<ArtifactVersionRow[]>([]);
   const [lineage, setLineage] = useState<ArtifactLineageView | null>(null);
+  // Bumped after a confirm/dismiss so the lineage refetches. A local
+  // edit of the list would drift from the store the moment anything
+  // else wrote an edge.
+  const [lineageNonce, setLineageNonce] = useState(0);
 
   // Reset the pinned version when the selected document changes —
   // otherwise v3 of one artifact silently requests v3 of the next.
@@ -682,7 +751,7 @@ function DocumentDetail({
     return () => {
       cancelled = true;
     };
-  }, [client, id, version]);
+  }, [client, id, version, lineageNonce]);
 
   if (loading || !doc) {
     return (
@@ -760,7 +829,12 @@ function DocumentDetail({
         current={doc.n ?? 0}
         onPick={(n) => setVersion(n)}
       />
-      <LineageSection lineage={lineage} />
+      <LineageSection
+        client={client}
+        artifactId={doc.id}
+        lineage={lineage}
+        onReviewed={() => setLineageNonce((n) => n + 1)}
+      />
     </div>
   );
 }
@@ -813,7 +887,17 @@ function VersionSwitcher({
  * things — one is an assertion, the other a guess nobody has
  * reviewed — and only the first raises a staleness warning.
  */
-function LineageSection({ lineage }: { lineage: ArtifactLineageView | null }) {
+function LineageSection({
+  client,
+  artifactId,
+  lineage,
+  onReviewed,
+}: {
+  client: IgniClient;
+  artifactId: string;
+  lineage: ArtifactLineageView | null;
+  onReviewed: () => void;
+}) {
   if (!lineage) return null;
   const confirmed = lineage.sources.filter((s) => s.state === "confirmed");
   const candidates = lineage.sources.filter((s) => s.state === "candidate");
@@ -867,11 +951,13 @@ function LineageSection({ lineage }: { lineage: ArtifactLineageView | null }) {
           <h3 className="kb-lineage-heading">Captured, not confirmed</h3>
           <ul className="kb-lineage-rows">
             {candidates.map((s) => (
-              <li key={s.artifact_id} className="kb-row">
-                <span className="kb-row-name">{s.name || s.artifact_id}</span>
-                <span className="kb-row-n">v{s.pinned_n}</span>
-                <span className="kb-row-note">read while this was written</span>
-              </li>
+              <CandidateRow
+                key={s.artifact_id}
+                client={client}
+                artifactId={artifactId}
+                row={s}
+                onReviewed={onReviewed}
+              />
             ))}
           </ul>
         </section>
@@ -897,6 +983,68 @@ function LineageSection({ lineage }: { lineage: ArtifactLineageView | null }) {
         </section>
       )}
     </>
+  );
+}
+
+/**
+ * One captured source, with the verdict that decides whether it
+ * counts.
+ *
+ * Confirming is what turns a captured read into a real dependency —
+ * only confirmed edges raise a staleness warning. Dismissing records
+ * that somebody looked and said no, which is why it is not a delete:
+ * re-reading the same source would otherwise re-capture it, and the
+ * same judgement would be asked for again every session.
+ */
+function CandidateRow({
+  client,
+  artifactId,
+  row,
+  onReviewed,
+}: {
+  client: IgniClient;
+  artifactId: string;
+  row: ArtifactLineageRow;
+  onReviewed: () => void;
+}) {
+  const [busy, setBusy] = useState("");
+
+  const verdict = async (
+    method: "artifact_confirm_source" | "artifact_dismiss_source",
+  ) => {
+    setBusy(method);
+    try {
+      await client.rpc<boolean>(method, {
+        id: artifactId,
+        source_id: row.artifact_id,
+      });
+      onReviewed();
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <li className="kb-row kb-row-candidate">
+      <span className="kb-row-name">{row.name || row.artifact_id}</span>
+      <span className="kb-row-n">v{row.pinned_n}</span>
+      <button
+        className="btn btn-xs"
+        disabled={!!busy}
+        title="This document really was built on that one"
+        onClick={() => void verdict("artifact_confirm_source")}
+      >
+        {busy === "artifact_confirm_source" ? "…" : "Confirm"}
+      </button>
+      <button
+        className="btn btn-xs btn-quiet"
+        disabled={!!busy}
+        title="Read at the time, but not a source"
+        onClick={() => void verdict("artifact_dismiss_source")}
+      >
+        {busy === "artifact_dismiss_source" ? "…" : "Not a source"}
+      </button>
+    </li>
   );
 }
 

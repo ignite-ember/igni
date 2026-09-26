@@ -167,10 +167,10 @@ now at @2 (1 version behind)" → diff pinned→head → fix
 
 | Suite | Result |
 | --- | --- |
-| `ember-code` | 4563 passed |
+| `ember-code` | 4570 passed |
 | `ember-server` | 2483 passed |
 | portal | 653 passed |
-| web client | 829 passed |
+| web client | 842 passed |
 
 One pre-existing `ember-code` failure remains
 (`test_the_commit_convention_is_followed`) — it is about commits
@@ -242,17 +242,13 @@ Small, specific, and worth having written down.
 A declared flag that does nothing is worse than a missing one: it
 reads as a setting somebody can rely on.
 
-**Six BE methods have no UI.** `artifact_confirm_source`,
-`artifact_dismiss_source`, `artifact_reconcile_diff`,
-`artifact_stale`, `artifact_export` and `artifact_share` are all
-reachable from the agent and over RPC, and none has a control in the
-artifacts panel. The panel shows candidates read-only and has no
-stale list, no export button and no share dialog.
-
-So today: the agent can do everything, a person can only do it by
-asking the agent. That is a real gap, not a cosmetic one — the share
-dialog is where `domain` and `public` would be *chosen*, and right
-now they can only be set by a tool call.
+~~**Six BE methods have no UI.**~~ **Closed.** Confirm and dismiss
+sit on each captured source in the lineage list; the stale count in
+the header opens a review screen where each row can fetch its
+pinned→head diff on demand; export and share sit beside Remove on a
+document. The share dialog spells out who each option reaches in
+full, because "Domain" is not a description and this is one click
+that can put a document in front of a company.
 
 **The graph view is deliberately simple.** Deterministic layout, tens
 of nodes, no force simulation — the same query draws the same picture
@@ -263,8 +259,7 @@ results grow past ~50 nodes it will need revisiting.
 
 ## Suggested order
 
-1. Wire the six panel controls (small, and it is what makes the
-   feature usable without the agent).
+1. ~~Wire the six panel controls.~~ **Done.**
 2. Comments + rights, server first, push second.
 3. The local review screen.
 4. The three config flags — cheap, and each is a promise currently

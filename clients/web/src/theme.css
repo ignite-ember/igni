@@ -9603,3 +9603,248 @@ button {
   border: 1px dashed var(--border);
   border-radius: 6px;
 }
+
+/* ── Artifact panel controls ───────────────────────────────────────
+   Share, the stale review, and the confirm/dismiss verdict on a
+   captured source. These are the controls that used to exist only as
+   tool calls — the share dialog in particular, which is where the
+   widest two audiences in the product get chosen. */
+
+.kb-notice {
+  margin-bottom: 12px;
+  padding: 7px 10px;
+  font-size: 11.5px;
+  color: var(--fg);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn-warn {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
+.btn-xs {
+  padding: 2px 7px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--fg);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.btn-xs:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn-quiet {
+  color: var(--fg-muted);
+  border-color: var(--border-soft);
+}
+
+.kb-row-candidate {
+  gap: 8px;
+}
+
+/* ── Share dialog ── */
+
+.kb-share {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 34rem;
+}
+
+.kb-share-title {
+  margin: 0;
+  font-size: 15px;
+}
+
+.kb-share-sub {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
+.kb-share-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.kb-share-opt {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.kb-share-opt-on {
+  border-color: var(--accent-blue);
+  background: var(--bg-elevated);
+}
+
+.kb-share-opt input {
+  margin-top: 2px;
+}
+
+.kb-share-opt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.kb-share-opt-label {
+  font-size: 12.5px;
+}
+
+.kb-share-opt-reach {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.kb-share-audience {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+}
+
+.kb-share-audience textarea {
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg-input, var(--bg-elevated));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.kb-share-link {
+  padding: 9px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+.kb-share-link-label {
+  margin-bottom: 5px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.kb-share-link-row {
+  display: flex;
+  gap: 6px;
+}
+
+.kb-share-link-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  color: var(--fg);
+  background: var(--bg-code, var(--bg));
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+}
+
+.kb-share-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ── Stale review ── */
+
+.kb-stale-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.kb-stale-row {
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.kb-stale-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.kb-stale-name {
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--fg);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.kb-stale-name:hover {
+  text-decoration: underline;
+}
+
+.kb-stale-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+
+.kb-stale-behind {
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.kb-stale-diff {
+  margin: 0;
+  padding: 10px;
+  max-height: 300px;
+  overflow: auto;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  background: var(--bg-code, var(--bg-elevated));
+  border-top: 1px solid var(--border-soft);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
