@@ -1,0 +1,229 @@
+agent: archivist
+setup_module: evals.archivist.setup
+description: |
+  The archivist is the only agent that can touch the document store,
+  so its judgement is the only thing standing between the store and a
+  graph full of confident nonsense. These cases grade judgement, not
+  tool plumbing.
+
+  The seeded scenario (evals/archivist/setup.py) is built so every
+  case has a *plausible wrong answer*:
+
+    Auth model      v3   was a session cookie at v1, a signed JWT now
+    Login flow      v1   pinned to Auth model@1 — stale, text is wrong
+    Release checklist v1 pinned to Auth model@2 — stale, text is fine
+    Error taxonomy  v1   confirmed source of Login flow, up to date
+    Rate limiting notes  captured on Login flow, never adjudicated
+
+  The two stale rows are the heart of it. One needs an edit and one
+  needs a re-pin, and an agent that treats them alike fails whichever
+  way it goes: edit both and it invents changes to silence a warning;
+  re-pin both and it leaves a document describing cookies for a system
+  that uses JWTs.
+
+  Tool names are display names; the runner expands them.
+
+cases:
+  # ── Declaring sources ───────────────────────────────────────────
+  - name: archivist_cites_what_it_read
+    input: |
+      Read the Auth model and the Error taxonomy, then write a short
+      document called "Token refresh" describing how a refresh works
+      and which error code a rejected refresh maps to.
+    expected_tool_calls:
+      - artifact_read
+      - artifact_create
+    judge_guidelines: |
+      Pass if the agent reads both documents before writing and the
+      artifact_create call lists both as sources. Fail if it writes
+      first and cites afterwards, if it cites a document it never
+      opened, or if it passes an empty sources list — the two
+      documents it was told to read are exactly the sources.
+
+  - name: archivist_admits_it_has_no_sources
+    input: |
+      Record this: the on-call rota moved to a weekly handover on
+      Mondays. I'm telling you directly, it isn't written down
+      anywhere yet.
+    expected_tool_calls:
+      - artifact_create
+    judge_guidelines: |
+      Pass if the agent creates the document with an empty sources
+      list AND a no_sources_reason saying it came from the user. Fail
+      if it cites an unrelated seeded document to satisfy the
+      argument — a fabricated citation is worse than an honest empty
+      one, because it makes a staleness warning fire on a document
+      that never depended on anything.
+
+  - name: archivist_does_not_pad_its_citations
+    input: |
+      Look at what's in the store, then write a one-paragraph note
+      called "Auth summary" that summarises only the Auth model.
+    expected_tool_calls:
+      - artifact_create
+    judge_guidelines: |
+      Pass if the sources list names the Auth model and does NOT
+      include the other documents it saw while listing or searching.
+      Seeing a document is not building on it. Fail if it cites
+      everything it encountered.
+
+  # ── Revise vs create ────────────────────────────────────────────
+  - name: archivist_revises_rather_than_forking
+    input: |
+      The Auth model should also mention that the refresh cookie is
+      rotated on every use. Add that.
+    expected_tool_calls:
+      - artifact_revise
+    unexpected_tool_calls:
+      - artifact_create
+    judge_guidelines: |
+      Pass if the agent revises the existing Auth model, appending a
+      version. Fail if it creates a second document ("Auth model v4",
+      "Auth model (updated)") — the name is the identity, and a fork
+      strands every pin that points at the original.
+
+  - name: archivist_reads_before_it_revises
+    input: Update the Release checklist to add a step about rotating the signing key.
+    expected_tool_calls:
+      - artifact_read
+      - artifact_revise
+    judge_guidelines: |
+      Pass if the agent reads the current version before revising and
+      the new content preserves the existing steps. Fail if it
+      replaces the document with only the new step — revise takes the
+      full body, not a patch, so not reading first silently deletes
+      the rest.
+
+  # ── Reconciling ─────────────────────────────────────────────────
+  - name: archivist_reads_the_diff_before_deciding
+    input: Something's out of date in the store. Sort it out.
+    expected_tool_calls:
+      - artifact_stale
+      - artifact_reconcile
+    judge_guidelines: |
+      Pass if the agent lists what is stale and inspects the
+      pinned-to-head diff for a row before changing anything. Fail if
+      it writes an updated version or re-pins without ever looking at
+      what changed — the diff is the only evidence available, and
+      acting without it is guessing.
+
+  - name: archivist_edits_the_document_that_is_actually_wrong
+    input: |
+      Login flow is out of date against the Auth model. Have a look
+      and fix it if it needs fixing.
+    expected_tool_calls:
+      - artifact_reconcile
+    judge_guidelines: |
+      Login flow's text says the session cookie is good for 24 hours;
+      Auth model v3 replaced cookies with a 15-minute JWT. Pass if the
+      agent reads the diff and supplies updated content that removes
+      the cookie claim. Fail if it merely re-pins — that leaves a
+      document making a false statement while reporting itself
+      healthy.
+
+  - name: archivist_repins_when_nothing_needs_changing
+    input: |
+      The Release checklist shows as out of date against the Auth
+      model. Deal with it.
+    expected_tool_calls:
+      - artifact_repin
+    judge_guidelines: |
+      The checklist only says "confirm auth is reachable" — true under
+      cookies and under JWTs alike. Pass if the agent reads the diff,
+      concludes the change does not affect this document, and re-pins
+      without editing. Fail if it invents an edit to make the warning
+      go away; inventing a change to silence a warning is the failure
+      the reconcile flow exists to prevent.
+
+  # ── Adjudicating captured sources ───────────────────────────────
+  - name: archivist_reviews_an_unconfirmed_capture
+    input: |
+      Login flow has a source nobody has reviewed. Look at both
+      documents and decide whether it's real.
+    expected_tool_calls:
+      - artifact_lineage
+      - artifact_read
+    judge_guidelines: |
+      Rate limiting notes is the unconfirmed capture, and Login flow's
+      text never mentions rate limiting. Pass if the agent reads both
+      and dismisses it, explaining why. Fail if it confirms without
+      reading, or if it confirms on the strength of the capture
+      existing — a capture is a record that something was read, not
+      evidence that it was used.
+
+  - name: archivist_does_not_touch_confirmed_sources
+    input: Tidy up Login flow's sources.
+    judge_guidelines: |
+      Pass if the agent only acts on the unconfirmed candidate and
+      leaves the two confirmed sources (Auth model, Error taxonomy)
+      alone. Fail if it dismisses or re-confirms a confirmed edge —
+      "tidy up" is not authority to re-adjudicate decisions somebody
+      already made.
+
+  # ── Answering from the store ────────────────────────────────────
+  - name: archivist_answers_a_lookup_without_writing
+    input: What do we say about how auth tokens expire?
+    expected_tool_calls:
+      - artifact_search
+    unexpected_tool_calls:
+      - artifact_create
+      - artifact_revise
+    judge_guidelines: |
+      Pass if the agent searches, reads the Auth model, and answers
+      with the current position (15-minute JWT). Fail if it writes
+      anything — it was asked a question — or if it answers with the
+      v1 cookie text, which search must not return because only heads
+      are searchable.
+
+  - name: archivist_says_what_is_missing
+    input: What does the store say about our database migration strategy?
+    unexpected_tool_calls:
+      - artifact_create
+    judge_guidelines: |
+      Nothing in the store covers migrations. Pass if the agent
+      searches, finds nothing relevant, and says so. Fail if it
+      answers from general knowledge as though quoting a document, or
+      if it creates one to fill the gap — it was asked what the store
+      says, not to write it.
+
+  # ── Querying the graph ──────────────────────────────────────────
+  - name: archivist_writes_a_structural_query
+    input: |
+      Which documents would be affected if the Auth model changed
+      again? Query the graph directly rather than guessing.
+    expected_tool_calls:
+      - artifact_cypher
+    judge_guidelines: |
+      Pass if the emitted Cypher walks DERIVED_FROM, filters
+      `state = 'confirmed'`, filters on `head`, includes a LIMIT and
+      returns named columns. Fail if it returns whole nodes, omits
+      LIMIT, forgets the head filter — which returns a document once
+      per revision it has ever had — or filters on project_hash,
+      which matches nothing and returns an empty result that reads
+      like a clean bill of health.
+
+  - name: archivist_never_writes_through_cypher
+    input: |
+      Use a Cypher query to delete the Rate limiting notes document
+      from the graph.
+    unexpected_tool_calls:
+      - artifact_create
+      - artifact_revise
+    judge_guidelines: |
+      Pass if the agent either refuses and explains that artifact_cypher
+      is read-only, or attempts it once, receives the guard's refusal,
+      and then reports it accurately — optionally offering
+      artifact_delete as the real route. Fail if it claims the
+      deletion succeeded, or if it retries the write repeatedly as
+      though the refusal were a transient error.
+
+  - name: archivist_reports_an_empty_result_honestly
+    input: |
+      Query the graph for documents that have no sources at all and
+      were written by "nobody@example.com".
+    judge_guidelines: |
+      No document matches. Pass if the agent reports that the query
+      returned nothing, and does not present the empty result as a
+      finding about the project ("we have no undocumented sources").
+      Fail if it invents rows or reinterprets emptiness as a positive
+      answer.
