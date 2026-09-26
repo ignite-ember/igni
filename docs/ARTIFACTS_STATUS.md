@@ -353,11 +353,43 @@ Worth knowing before adding a second worker, not worth a message
 broker until there is one. Nothing is lost either way — see the
 cursor, above.
 
-### Still to build
+### Both screens
 
-The UI, and only the UI: text selection → comment box in the portal,
-and the local review screen where the agent drafts resolutions and
-accepting appends a version.
+**In the portal** — a Comments view beside the document. It renders
+the *version's text*, not the published page, for two reasons. The
+page lives in a sandboxed iframe with no `allow-same-origin`, so this
+side cannot read a selection inside it, and weakening the sandbox to
+allow that moves a document somebody else wrote closer to running in
+a signed-in session. The better reason is correctness: a comment's
+quote has to match the text the **author's** store holds, and a quote
+lifted from rendered HTML carries whatever the renderer did to it —
+smart quotes, collapsed whitespace, a heading's numbering — and
+matches nothing on the other side.
+
+A document with no co-authored versions has no text to quote. It says
+so and still takes a comment on the document as a whole.
+
+**In igni** — a review queue under Artifacts → Comments, cross-document
+because a comment is somebody asking a question of a *person*, and a
+queue that made you open each document to find out whether anything
+was waiting is a queue you stop opening. It reads from the local
+graph, so it answers with the network down.
+
+Accepting a suggestion writes a version with **whatever is in the
+box**, not whatever was originally proposed — deciding a suggestion is
+*nearly* right is the common case. Declining and resolving write
+nothing but a status: a rejected comment is the record of a decision,
+and deleting it invites the same comment again next week.
+
+Two failure modes it is built to avoid. A comment quoting a version
+that is no longer the head is labelled *"the document has moved on
+since"*, because acting on a passage that no longer appears is the
+mistake this screen most invites. And a partial failure — version
+written, server not told — is reported in those words rather than
+folded into a generic error, because only one of the two states is
+worth retrying.
+
+**Still to build:** nothing in this cut.
 
 
 ---

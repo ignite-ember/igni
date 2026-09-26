@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Any
 
 from ember_code.backend.schemas_artifacts import (
     ArtifactExportResult,
+    ArtifactCommentResolved,
+    ArtifactCommentRow,
     ArtifactGetResult,
     ArtifactGraphEdge,
     ArtifactGraphNode,
@@ -249,6 +251,70 @@ class ArtifactController:
             )
             for s in rows
         ]
+
+    async def comments(
+        self, *, artifact_id: str = "", open_only: bool = True
+    ) -> list[ArtifactCommentRow]:
+        """Comments projected from the server, for the review screen.
+
+        Read from the local graph rather than the API. That is the
+        point of projecting them: the queue answers with the network
+        down, and it answers with the same query language as staleness
+        and lineage.
+        """
+        mgr = self._session.artifact_mgr
+        rows = await mgr.comments(artifact_id=artifact_id or None, open_only=open_only)
+        names: dict[str, tuple[str, int]] = {}
+        out: list[ArtifactCommentRow] = []
+        for c in rows:
+            if c.artifact_id not in names:
+                summary = await mgr.resolve(c.artifact_id)
+                names[c.artifact_id] = (
+                    (getattr(summary, "name", "") or ""),
+                    int(getattr(summary, "head_n", 0) or 0),
+                )
+            name, head_n = names[c.artifact_id]
+            out.append(
+                ArtifactCommentRow(
+                    comment_id=c.comment_id,
+                    artifact_id=c.artifact_id,
+                    document_name=name,
+                    n=c.n,
+                    thread_id=c.thread_id,
+                    quote=c.quote,
+                    body=c.body,
+                    suggested_text=c.suggested_text or "",
+                    status=c.status.value,
+                    resolved_in_n=c.resolved_in_n or 0,
+                    author=c.author,
+                    at=c.at,
+                    # The passage may have been rewritten since. Say so
+                    # rather than letting a reviewer act on a quote that
+                    # no longer appears in the document.
+                    behind_head=bool(head_n and c.n < head_n),
+                )
+            )
+        return out
+
+    async def resolve_comment(
+        self, *, comment_id: str, status: str, content: str = ""
+    ) -> ArtifactCommentResolved:
+        """Accept, reject or resolve one comment.
+
+        Accepting with ``content`` appends a version **first**, then
+        records the acceptance against the version that carried it.
+        That order is what keeps "somebody asked for this" joined to
+        "here is where it happened" — recording acceptance first and
+        writing afterwards leaves a closed thread pointing at nothing
+        whenever the write fails.
+        """
+        return await self._session.artifact_mgr.resolve_comment(
+            comment_id=comment_id, status=status, content=content
+        )
+
+    async def sync_comments(self) -> int:
+        """Pull comment activity and project it. Returns how many landed."""
+        return await self._session.artifact_mgr.sync_comments()
 
     async def confirm_source(self, entry_id: str, source_id: str) -> bool:
         return await self._session.artifact_mgr.confirm_source(ref=entry_id, source_ref=source_id)

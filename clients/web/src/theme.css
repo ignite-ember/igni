@@ -10316,3 +10316,116 @@ button {
   font-size: 11.5px;
   color: var(--fg-muted);
 }
+
+/* ── Comment review ──────────────────────────────────────────────────
+   Comments waiting on you, across every document you published.
+
+   Grouped by document because the rows come back cross-document: a
+   flat list of bodies is a list nobody can triage. Within a group the
+   order is oldest-first, so whoever has been waiting longest is at the
+   top of it. */
+
+.comment-review {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.comment-review-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.comment-review-doc {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.comment-review-doc-name {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.comment-review-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--accent-blue-text);
+  cursor: pointer;
+}
+
+.comment-review-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-surface);
+}
+
+/* The passage being talked about. The rule down the left is what
+   says "not my words" before anything is read. */
+.comment-review-quote {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--accent-blue);
+  background: var(--bg-inset);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  /* A quoted chapter must not push the buttons off the panel. */
+  max-height: 9rem;
+  overflow-y: auto;
+}
+
+.comment-review-body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: break-word;
+}
+
+.comment-review-meta {
+  margin: 0;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.comment-review-warn {
+  color: var(--accent-orange-text);
+}
+
+/* Editable before accepting: the suggestion is a proposal, and the
+   owner deciding it is nearly right is the common case. What lands in
+   the version is whatever is in this box. */
+.comment-review-suggestion {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-inset);
+  color: var(--fg);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.comment-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

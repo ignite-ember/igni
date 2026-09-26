@@ -19,6 +19,8 @@ from pathlib import Path
 from ember_code.core.artifacts.errors import SourcesRequired
 from ember_code.core.artifacts.index import ArtifactIndex
 from ember_code.core.artifacts.ingest import Ingester
+from ember_code.backend.schemas_artifacts import ArtifactCommentResolved
+from ember_code.core.artifacts.collaboration import CollaborationSync
 from ember_code.core.artifacts.models import (
     ArtifactLineage,
     ArtifactSearchHit,
@@ -28,6 +30,8 @@ from ember_code.core.artifacts.models import (
     ArtifactSyncResult,
     ArtifactVersion,
     ArtifactWriteResult,
+    Comment,
+    CommentStatus,
     ReconcilePlan,
     SourceDeclaration,
     StaleDependent,
@@ -59,6 +63,11 @@ class SessionArtifactManager:
         self.project_dir = project_dir
         self.session_id = session_id
         self.author = author
+        # Advanced by the sync, so a second pull in one session asks
+        # only for what changed. Not persisted: starting from the
+        # beginning is idempotent, and a stale cursor on disk would be
+        # the one way to *miss* something.
+        self._comment_cursor: str | None = None
 
     # ── Config surface ────────────────────────────────────────────────
 
@@ -318,6 +327,106 @@ class SessionArtifactManager:
             service,
             model_factory=lambda: ModelRegistry(self.settings).get_model(),
         )
+
+    # ── Comments ──────────────────────────────────────────────────────
+
+    def _sync(self) -> CollaborationSync | None:
+        """The sync client, or ``None`` when this machine is signed out.
+
+        Built per call rather than held: the account token can change
+        under a long session, and a cached client would keep using the
+        one it was constructed with.
+        """
+        if self.artifacts is None:
+            return None
+        server = str(getattr(self.settings, "server_url", "") or "")
+        token = str(getattr(self.settings, "access_token", "") or "")
+        if not (server and token):
+            return None
+        return CollaborationSync(self.artifacts, server_url=server, access_token=token)
+
+    async def comments(
+        self, *, artifact_id: str | None = None, open_only: bool = True
+    ) -> list[Comment]:
+        """Read projected comments from the local graph.
+
+        Local, not over the API: the queue has to answer with the
+        network down, which is the whole reason comments are projected
+        rather than fetched.
+        """
+        if self.artifacts is None:
+            return []
+        return await self.artifacts.client.comments(artifact_id=artifact_id, open_only=open_only)
+
+    async def sync_comments(self) -> int:
+        sync = self._sync()
+        if sync is None:
+            return 0
+        projected, _ = await sync.pull_comments(cursor=self._comment_cursor)
+        return projected
+
+    async def resolve_comment(
+        self, *, comment_id: str, status: str, content: str = ""
+    ) -> ArtifactCommentResolved:
+        """Adjudicate one comment, appending a version when accepting.
+
+        **Write first, then record.** Accepting with content revises
+        the document and only then tells the server which version
+        applied it. The other order leaves a closed thread pointing at
+        a version that does not exist whenever the write fails — and
+        the commenter, who sees only the server, would be told their
+        suggestion was applied to nothing.
+        """
+        if self.artifacts is None:
+            return ArtifactCommentResolved(ok=False, message=self.disabled_message)
+        sync = self._sync()
+        if sync is None:
+            return ArtifactCommentResolved(
+                ok=False,
+                message="Resolving a comment needs a signed-in igni account — run `igni login`.",
+            )
+        try:
+            state = CommentStatus(status)
+        except ValueError:
+            return ArtifactCommentResolved(ok=False, message=f"Unknown status: {status!r}")
+
+        applied_in = 0
+        if content:
+            existing = await self.artifacts.client.comments(limit=10_000)
+            target = next((c for c in existing if c.comment_id == comment_id), None)
+            if target is None:
+                return ArtifactCommentResolved(ok=False, message="No such comment here.")
+            written = await self.revise(
+                ref=target.artifact_id,
+                content=content,
+                sources=SourceDeclaration(),
+            )
+            if not written.ok:
+                return ArtifactCommentResolved(ok=False, message=written.message)
+            applied_in = written.n
+
+        try:
+            await sync.resolve(
+                comment_id=comment_id,
+                status=state,
+                resolved_in_n=applied_in or None,
+            )
+        except Exception as exc:
+            # The version is written and the server does not know. Say
+            # so plainly: the next sync will not repair it, and a
+            # silent "ok" here would hide a real split.
+            logger.warning("comment %s resolved locally but not on the server", comment_id)
+            return ArtifactCommentResolved(
+                ok=False,
+                status=state.value,
+                resolved_in_n=applied_in,
+                message=(
+                    f"Version {applied_in} was written, but the server was not told: {exc}"
+                    if applied_in
+                    else f"Could not reach the server: {exc}"
+                ),
+            )
+        return ArtifactCommentResolved(ok=True, status=state.value, resolved_in_n=applied_in)
 
     async def stale(self, *, limit: int = 100) -> list[StaleDependent]:
         if self.artifacts is None:

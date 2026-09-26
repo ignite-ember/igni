@@ -132,6 +132,43 @@ class ArtifactStaleRow(BaseModel):
     versions_behind: int = 0
 
 
+class ArtifactCommentRow(BaseModel):
+    """One comment, as the review screen needs it.
+
+    Carries ``document_name`` alongside the id because the review
+    screen is cross-document by nature — it answers "what is waiting
+    on me", and a list of bodies with no document beside them is a
+    list nobody can triage.
+    """
+
+    comment_id: str
+    artifact_id: str
+    document_name: str = ""
+    n: int = 0
+    thread_id: str = ""
+    quote: str = ""
+    body: str = ""
+    suggested_text: str = ""
+    status: str = "open"
+    resolved_in_n: int = 0
+    author: str = ""
+    at: str = ""
+    #: True when the comment quotes a version that is no longer the
+    #: head. The passage may have been rewritten since, so the
+    #: reviewer is told rather than left to notice.
+    behind_head: bool = False
+
+
+class ArtifactCommentResolved(BaseModel):
+    """The outcome of adjudicating one comment."""
+
+    ok: bool = False
+    status: str = ""
+    #: The version an accepted suggestion was applied in, if any.
+    resolved_in_n: int = 0
+    message: str = ""
+
+
 class ArtifactExportResult(BaseModel):
     """Where a local export landed."""
 

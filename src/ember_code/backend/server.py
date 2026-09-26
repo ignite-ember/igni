@@ -78,6 +78,8 @@ if TYPE_CHECKING:
         ArtifactLineageView,
         ArtifactQueryResult,
         ArtifactShareResult,
+        ArtifactCommentResolved,
+        ArtifactCommentRow,
         ArtifactStaleRow,
         ArtifactStatus,
         ArtifactVersionRow,
@@ -979,6 +981,24 @@ class BackendServer:
     async def artifact_stale(self) -> list[ArtifactStaleRow]:
         """See :meth:`ArtifactController.stale`."""
         return await self.artifacts.stale()
+
+    async def artifact_comments(
+        self, *, artifact_id: str = "", open_only: bool = True
+    ) -> list[ArtifactCommentRow]:
+        """See :meth:`ArtifactController.comments`."""
+        return await self.artifacts.comments(artifact_id=artifact_id, open_only=open_only)
+
+    async def artifact_resolve_comment(
+        self, *, comment_id: str, status: str, content: str = ""
+    ) -> ArtifactCommentResolved:
+        """See :meth:`ArtifactController.resolve_comment`."""
+        return await self.artifacts.resolve_comment(
+            comment_id=comment_id, status=status, content=content
+        )
+
+    async def artifact_sync_comments(self) -> int:
+        """See :meth:`ArtifactController.sync_comments`."""
+        return await self.artifacts.sync_comments()
 
     async def artifact_confirm_source(self, entry_id: str, source_id: str) -> bool:
         """See :meth:`ArtifactController.confirm_source`."""

@@ -53,6 +53,25 @@ class ArtifactRpcHandler(RpcHandler):
     def artifact_dismiss_source(self, args: dict) -> Any:
         return self._ctx.backend.artifact_dismiss_source(args["id"], args["source_id"])
 
+    @rpc(RpcMethod.ARTIFACT_COMMENTS)
+    def artifact_comments(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_comments(
+            artifact_id=str(args.get("id") or ""),
+            open_only=bool(args.get("open_only", True)),
+        )
+
+    @rpc(RpcMethod.ARTIFACT_RESOLVE_COMMENT)
+    def artifact_resolve_comment(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_resolve_comment(
+            comment_id=args["comment_id"],
+            status=args["status"],
+            content=str(args.get("content") or ""),
+        )
+
+    @rpc(RpcMethod.ARTIFACT_SYNC_COMMENTS)
+    def artifact_sync_comments(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_sync_comments()
+
     @rpc(RpcMethod.ARTIFACT_RECONCILE_DIFF)
     def artifact_reconcile_diff(self, args: dict) -> Any:
         return self._ctx.backend.artifact_reconcile_diff(args["id"], args["source_id"])

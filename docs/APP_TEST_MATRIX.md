@@ -281,6 +281,9 @@ What the agent is told to remember.
 | `artifact_confirm_source` | Confirming a link that was never captured. Sweep: **answers** (`--mutating`). | `answers` |
 | `artifact_dismiss_source` | Dismissing an already-confirmed source. Sweep: **answers** (`--mutating`). | `answers` |
 | `artifact_reconcile_diff` | A source whose change is whitespace only; a diff past the truncation limit. Sweep: **answers** (default run). | `answers` |
+| `artifact_comments` | No comments at all; a comment quoting a version that is no longer the head. Sweep: **answers** (default run). | `answers` |
+| `artifact_resolve_comment` | Accepting with edited text rather than the original suggestion; declining, which must write no version; the version written but the server unreachable, which must report rather than read as success. Sweep: **answers** (default run). | `answers` |
+| `artifact_sync_comments` | Signed out, so there is nothing to pull; a comment naming a version this machine has not fetched, which is skipped without consuming the cursor. Sweep: **answers** (default run). | `answers` |
 | `artifact_preview` | An artifact whose content is not markdown. Sweep: **answers** (default run). | `answers` |
 | `artifact_export` | A destination that is not writable; a version that does not exist. Sweep: **answers** (`--mutating`). | `answers` |
 | `artifact_share` | Logged out; an edge pointing outside the shared set. Sweep: **answers** (`--mutating`). | `answers` |

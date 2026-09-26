@@ -6,6 +6,7 @@ import type { IgniClient } from "../../protocol/client";
 import { ArtifactGraphSearch } from "./ArtifactGraphSearch";
 import { ArtifactSearch } from "./ArtifactSearch";
 import { ArtifactShareDialog } from "./ArtifactShareDialog";
+import { ArtifactCommentReview } from "./ArtifactCommentReview";
 import { ArtifactStaleReview } from "./ArtifactStaleReview";
 import { Drawer } from "./Drawer";
 import { Skeleton } from "../Skeleton";
@@ -81,7 +82,7 @@ interface ArtifactLineageView {
   citations: string[];
 }
 
-type View = "list" | "detail" | "add" | "ask" | "stale" | "share";
+type View = "list" | "detail" | "add" | "ask" | "stale" | "share" | "comments";
 type AddMode = "url" | "path" | "text";
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -242,6 +243,8 @@ export function ArtifactPanel({
           ? "Ask the graph"
           : view === "stale"
             ? "Needs attention"
+            : view === "comments"
+              ? "Comments"
             : view === "share" && selectedDoc
               ? `Share ${selectedDoc.name}`
               : null;
@@ -291,6 +294,17 @@ export function ArtifactPanel({
             {status.stale_count} out of date
           </button>
         )}
+        {/* Always offered, not gated on a count. "Nothing is waiting
+            on you" is worth being able to confirm, and a button that
+            appears only when there is bad news is one people learn to
+            dread rather than to use. */}
+        <button
+          className="btn btn-sm"
+          title="Comments people left on documents you published"
+          onClick={() => setView("comments")}
+        >
+          Comments
+        </button>
         <button
           className="btn btn-sm"
           disabled={!status.enabled}
@@ -371,6 +385,14 @@ export function ArtifactPanel({
       )}
       {status === null ? (
         <ArtifactsSkeleton />
+      ) : view === "comments" ? (
+        <ArtifactCommentReview
+          client={client}
+          onOpenArtifact={(id) => {
+            setSelected(id);
+            setView("detail");
+          }}
+        />
       ) : view === "stale" ? (
         <ArtifactStaleReview
           client={client}

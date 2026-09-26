@@ -257,6 +257,9 @@ class RpcMethod(StrEnum):
     # when somebody types a question and the second when they edit the
     # query it produced, and those are different enough actions that
     # one endpoint would branch on a mode argument.
+    ARTIFACT_COMMENTS = "artifact_comments"
+    ARTIFACT_RESOLVE_COMMENT = "artifact_resolve_comment"
+    ARTIFACT_SYNC_COMMENTS = "artifact_sync_comments"
     ARTIFACT_ASK = "artifact_ask"
     ARTIFACT_RUN_CYPHER = "artifact_run_cypher"
 
