@@ -36,6 +36,10 @@ class UserInfo(BaseModel):
     model_config = {"extra": "ignore"}
 
     email: str = ""
+    #: Display name. The portal has returned this all along and
+    #: this model dropped it, which is why the header could only
+    #: ever show an org.
+    full_name: str | None = None
     tier: str | None = None
     org_display_name: str | None = None
 

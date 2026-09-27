@@ -10592,3 +10592,18 @@ button {
   letter-spacing: normal;
   cursor: pointer;
 }
+
+/* Two letters standing in for a face. See Monogram.tsx for why this
+   is not an avatar. */
+.monogram {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  user-select: none;
+}

@@ -41,6 +41,7 @@ import {
   type PageRoute,
 } from "./chat/pageStack";
 import { PageContext } from "./components/PageShell";
+import { Monogram } from "./components/Monogram";
 import { WorkflowsPage } from "./components/pages/WorkflowsPage";
 import { HelpPage } from "./components/pages/HelpPage";
 import { ContextPage } from "./components/pages/ContextPage";
@@ -71,7 +72,6 @@ import { FPSCounterOverlay } from "./components/FPSCounter";
 import { HitlDialog, type HitlDecision } from "./components/HitlDialog";
 import {
   ChevronIcon,
-  CloudIcon,
   FlameIcon,
   FolderIcon,
   MenuIcon,
@@ -576,6 +576,13 @@ export default function App() {
   // active org membership. Refreshing on each open ensures the UI
   // reflects seat-tier reassignments without an app restart.
   const [cloudPlan, setCloudPlan] = useState<string | null>(null);
+  const [cloudName, setCloudName] = useState<string>("");
+  // Best thing we can currently say about who is signed in, in
+  // descending order of how much it sounds like a person. The org is
+  // last because it is not a person at all — it was the only thing
+  // this header ever showed, which is the bug.
+  const accountName =
+    cloudName || status?.cloud_email || status?.cloud_org || "Account";
   // Live draft from another attached view (mirroring).
   // The directory this session is locked to (tools + shell cwd).
   const [projectDir, setProjectDir] = useState("");
@@ -2834,14 +2841,30 @@ export default function App() {
                   // tier changes show up without an app restart. The
                   // BE proxies to ``/portal/me`` on the cloud.
                   void client
-                    .rpc<{ tier?: string | null } | null>("get_cloud_plan")
-                    .then((info) => setCloudPlan(info?.tier ?? null))
+                    .rpc<{
+                      tier?: string | null;
+                      full_name?: string | null;
+                      email?: string | null;
+                    } | null>("get_cloud_plan")
+                    .then((info) => {
+                      setCloudPlan(info?.tier ?? null);
+                      // The display name only exists on the cloud, so
+                      // it arrives here. Until it does the chip shows
+                      // the address, which is on disk and correct —
+                      // rather than nothing while a request is out.
+                      if (info?.full_name) setCloudName(info.full_name);
+                    })
                     .catch(() => setCloudPlan(null));
                 }
               }}
             >
-              <CloudIcon />{" "}
-              <span className="chip-label">{status.cloud_org}</span>{" "}
+              {/* A monogram, not an avatar: nothing in the product
+                  stores an uploaded picture, and inventing a silhouette
+                  for everybody says less than two letters of their own
+                  name. The portal draws the same thing from the same
+                  source. */}
+              <Monogram name={accountName} />{" "}
+              <span className="chip-label">{accountName}</span>{" "}
               <ChevronIcon size={9} down />
             </button>
           ) : (
@@ -2876,7 +2899,16 @@ export default function App() {
               />
               <div className="dropdown" style={{ width: 220 }}>
                 <div className="popup-item" style={{ cursor: "default" }}>
-                  <span className="desc">Signed in to {status?.cloud_org}</span>
+                  <span className="desc">
+                    Signed in as{" "}
+                    <span style={{ color: "var(--fg)", fontWeight: 500 }}>
+                      {accountName}
+                    </span>
+                    {/* The organisation is still worth saying — it
+                        decides which seat and which models — but it is
+                        not the answer to "who am I signed in as". */}
+                    {status?.cloud_org ? ` · ${status.cloud_org}` : ""}
+                  </span>
                 </div>
                 {cloudPlan && (
                   <div className="popup-item" style={{ cursor: "default" }}>

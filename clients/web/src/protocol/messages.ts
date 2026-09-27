@@ -163,6 +163,11 @@ export interface StatusUpdate extends BaseMessage {
   model_configured?: boolean;
   cloud_connected: boolean;
   cloud_org: string;
+  /** The signed-in account's address. On disk, so it is present
+   *  on the first status push rather than after a round trip. */
+  cloud_email?: string;
+  /** Display name, once `/portal/me` has been asked. */
+  cloud_name?: string;
   /** Active permission mode (row 50 — plan-mode badge). One of
    *  ``default`` / ``plan`` / ``acceptEdits`` / ``bypassPermissions`` /
    *  ``dontAsk``. ``plan`` triggers the PlanBadge in the header.

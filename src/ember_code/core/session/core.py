@@ -1047,6 +1047,11 @@ class Session:
         return self.cloud_auth.connected
 
     @property
+    def cloud_email(self) -> str | None:
+        """The signed-in account's address."""
+        return self.cloud_auth.email
+
+    @property
     def cloud_org_id(self) -> str | None:
         """The organization ID from the Ember Cloud JWT."""
         return self.cloud_auth.org_id

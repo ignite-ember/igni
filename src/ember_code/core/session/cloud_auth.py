@@ -85,6 +85,18 @@ class SessionCloudAuth:
         return self._creds.access_token
 
     @property
+    def email(self) -> str | None:
+        """The signed-in account's address, straight off the
+        credentials file.
+
+        No network. The address is on disk from the moment somebody
+        logs in, which is what lets the header name the account
+        immediately rather than after a round trip — a header that
+        fills in a second late reads as a glitch.
+        """
+        return self._creds.email
+
+    @property
     def server_url(self) -> str:
         """The Ember Cloud API root URL used by cloud-routed tools."""
         return self._server_url

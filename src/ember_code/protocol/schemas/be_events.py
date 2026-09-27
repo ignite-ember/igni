@@ -326,6 +326,14 @@ class StatusUpdate(Message):
     model_configured: bool = True
     cloud_connected: bool = False
     cloud_org: str = ""
+    #: The signed-in account, for the header. Read from the
+    #: credentials file, so it is present on the first status push
+    #: rather than after a call to the cloud.
+    cloud_email: str = ""
+    #: Display name, once ``/portal/me`` has been asked. Empty
+    #: until then — the address is the fallback, and it is better
+    #: than showing nothing while waiting.
+    cloud_name: str = ""
     # Active ``PermissionEvaluator`` mode (``default`` / ``plan`` /
     # ``acceptEdits`` / ``bypassPermissions`` / ``dontAsk``). The
     # FE renders a badge when this is ``plan`` (row 50 — plan-mode
