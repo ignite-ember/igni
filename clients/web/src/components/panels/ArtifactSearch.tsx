@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { MarkdownInline } from "../MarkdownInline";
 import type { IgniClient } from "../../protocol/client";
 
 /**
@@ -252,7 +253,12 @@ function Row({
             </span>
           )}
         </span>
-        {snippet && <span className="afs-row-snippet">{snippet.slice(0, 200)}</span>}
+        {/* Rendered, not raw. A preview full of ``##`` and ``**`` is
+            the document's source, and nobody scanning a list is
+            reading source. The name is passed so a document that
+            opens with its own title does not spend both preview
+            lines repeating the line above. */}
+        <MarkdownInline text={snippet} name={name} className="afs-row-snippet" />
       </button>
     </li>
   );

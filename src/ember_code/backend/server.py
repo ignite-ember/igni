@@ -73,14 +73,20 @@ from ember_code.core.config.user_config_store import UserConfigStore
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
-    from ember_code.core.artifacts.side_by_side import VersionDiff
     from ember_code.backend.schemas_artifacts import (
-        ArtifactExportResult,
-        ArtifactLineageView,
-        ArtifactQueryResult,
-        ArtifactShareResult,
+        ArtifactCandidateEvidence,
+        ArtifactCandidateVerdict,
+        ArtifactCommentPosted,
         ArtifactCommentResolved,
         ArtifactCommentRow,
+        ArtifactDrift,
+        ArtifactDriftApplied,
+        ArtifactExportResult,
+        ArtifactLineageView,
+        ArtifactOpenResult,
+        ArtifactProvenance,
+        ArtifactQueryResult,
+        ArtifactShareResult,
         ArtifactStaleRow,
         ArtifactStatus,
         ArtifactVersionRow,
@@ -134,6 +140,7 @@ if TYPE_CHECKING:
         UploadAttachmentResult,
     )
     from ember_code.core.agents import AgentInfo
+    from ember_code.core.artifacts.side_by_side import VersionDiff
     from ember_code.core.config.settings import Settings
     from ember_code.core.config.tool_permissions import PermissionLevel
     from ember_code.core.plugins.models import MarketplaceInfo, PluginInfo
@@ -1022,10 +1029,63 @@ class BackendServer:
         return await self.artifacts.preview(entry_id, version)
 
     async def artifact_export(
-        self, entry_id: str, version: int = 0, destination: str = ""
+        self, entry_id: str, version: int = 0, destination: str = "", fmt: str = "html"
     ) -> ArtifactExportResult:
         """See :meth:`ArtifactController.export`."""
-        return await self.artifacts.export(entry_id, version, destination)
+        return await self.artifacts.export(entry_id, version, destination, fmt)
+
+    async def artifact_drift_apply(self, entry_id: str, source_id: str) -> ArtifactDriftApplied:
+        """See :meth:`ArtifactController.apply_drift`."""
+        return await self.artifacts.apply_drift(artifact_id=entry_id, source_id=source_id)
+
+    async def artifact_drift(self, entry_id: str, source_id: str) -> ArtifactDrift:
+        """See :meth:`ArtifactController.drift`."""
+        return await self.artifacts.drift(artifact_id=entry_id, source_id=source_id)
+
+    async def artifact_provenance(self, entry_id: str, n: int = 0) -> ArtifactProvenance:
+        """See :meth:`ArtifactController.provenance`."""
+        return await self.artifacts.provenance(artifact_id=entry_id, n=n)
+
+    async def artifact_candidate_evidence(
+        self, entry_id: str, source_id: str
+    ) -> ArtifactCandidateEvidence:
+        """See :meth:`ArtifactController.candidate_evidence`."""
+        return await self.artifacts.candidate_evidence(artifact_id=entry_id, source_id=source_id)
+
+    async def artifact_candidate_verdict(
+        self, entry_id: str, source_id: str
+    ) -> ArtifactCandidateVerdict:
+        """See :meth:`ArtifactController.candidate_verdict`."""
+        return await self.artifacts.candidate_verdict(artifact_id=entry_id, source_id=source_id)
+
+    async def artifact_comment(
+        self,
+        entry_id: str,
+        n: int = 0,
+        body: str = "",
+        quote: str = "",
+        quote_start: int = -1,
+        quote_end: int = -1,
+        thread_id: str = "",
+        parent_id: str = "",
+        origin: str = "local",
+    ) -> ArtifactCommentPosted:
+        """See :meth:`ArtifactController.comment`."""
+        return await self.artifacts.comment(
+            artifact_id=entry_id,
+            n=n,
+            body=body,
+            quote=quote,
+            quote_start=quote_start,
+            quote_end=quote_end,
+            thread_id=thread_id,
+            parent_id=parent_id,
+            origin=origin,
+        )
+
+    async def artifact_open_export(self, path: str) -> ArtifactOpenResult:
+        """See :meth:`ArtifactController.open_export`."""
+        return await self.artifacts.open_export(path)
 
     async def artifact_share(
         self,

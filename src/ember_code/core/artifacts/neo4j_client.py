@@ -48,12 +48,14 @@ from ember_code.core.artifacts.models import (
     ArtifactVersion,
     Citation,
     Comment,
+    CommentOrigin,
     CommentStatus,
     EdgeState,
     LineageEdge,
     StaleDependent,
     VersionPin,
 )
+from ember_code.core.artifacts.provenance import Passage
 from ember_code.core.code_index.neo4j_schema import (
     ARTIFACT_SCHEMA_STATEMENTS,
     DEFAULT_DATABASE,
@@ -142,6 +144,7 @@ class Neo4jArtifactClient:
         kind: str | None = None,
         embedding: list[float] | None = None,
         chunks: list[tuple[str, int, int]] | None = None,
+        chunk_embeddings: list[list[float]] | None = None,
         metadata: dict[str, str] | None = None,
         author: str = "",
         session_id: str = "",
@@ -160,6 +163,9 @@ class Neo4jArtifactClient:
         content_hash = self._codec.content_hash(content)
         meta_json = json.dumps(dict(metadata or {}))
         chunk_rows = list(chunks or [])
+        # Positional, so a short list leaves the tail unembedded
+        # rather than shifting every vector onto the wrong passage.
+        vectors = list(chunk_embeddings or [])
         pin_rows = [
             {"artifact_id": p.artifact_id, "n": p.n, "state": p.state.value} for p in (pins or [])
         ]
@@ -190,6 +196,7 @@ class Neo4jArtifactClient:
                 chunk_rows,
                 pin_rows,
                 citation_rows,
+                vectors,
             )
 
     @staticmethod
@@ -209,6 +216,7 @@ class Neo4jArtifactClient:
         chunk_rows: list[tuple[str, int, int]],
         pin_rows: list[dict[str, Any]],
         citation_rows: list[dict[str, Any]],
+        vectors: list[list[float]],
     ) -> WriteOutcome:
         # Statement 1 — artifact upsert, head demotion, version create.
         # ``head_n`` is read and written inside one statement so two
@@ -265,12 +273,24 @@ class Neo4jArtifactClient:
                 "CREATE (v)-[:HAS_CHUNK]->(:Chunk {"
                 "  chunk_id: $vid + '::' + toString(row.i), parent_id: $vid, "
                 "  text: row.text, line_from: row.line_from, "
-                "  line_to: row.line_to, project_hash: $proj"
+                "  line_to: row.line_to, project_hash: $proj, "
+                "  ordinal: row.i, embedding: row.embedding"
                 "})",
                 vid=version_id,
                 proj=project_id,
                 rows=[
-                    {"i": i, "text": text, "line_from": lf, "line_to": lt}
+                    {
+                        "i": i,
+                        "text": text,
+                        "line_from": lf,
+                        "line_to": lt,
+                        # ``None`` where no vector was supplied. A
+                        # chunk without one is simply not a candidate
+                        # for passage matching — it is not an error,
+                        # and it is what every chunk written before
+                        # this field existed looks like.
+                        "embedding": vectors[i] if i < len(vectors) else None,
+                    }
                     for i, (text, lf, lt) in enumerate(chunk_rows)
                 ],
             )
@@ -405,6 +425,7 @@ class Neo4jArtifactClient:
                 "resolved_in_n": c.resolved_in_n,
                 "author": c.author,
                 "at": c.at,
+                "origin": c.origin.value,
             }
             for c in comments
         ]
@@ -420,7 +441,7 @@ class Neo4jArtifactClient:
                 "    c.quote_end = row.quote_end, c.body = row.body, "
                 "    c.suggested_text = row.suggested_text, c.status = row.status, "
                 "    c.resolved_in_n = row.resolved_in_n, c.author = row.author, "
-                "    c.at = row.at "
+                "    c.at = row.at, c.origin = row.origin "
                 "MERGE (c)-[:ON]->(v) "
                 "RETURN count(c) AS n",
                 proj=self._project_id,
@@ -463,6 +484,145 @@ class Neo4jArtifactClient:
             )
             return [self._to_comment(record["c"]) async for record in result]
 
+    async def passages(self, *, artifact_id: str, n: int) -> list[Passage]:
+        """Every chunk of one version, in document order, with vectors.
+
+        Ordered by ``ordinal`` — the chunker's own output order, which
+        is the authority on what comes first. Ordering by ``line_from``
+        instead made document order depend on line numbers being
+        right, and any chunk whose span could not be resolved sorted
+        to the top of the document. Chunk ids are no good either: they
+        end in a decimal index, so ``::10`` sorts before ``::2``.
+        """
+        async with self.session() as session:
+            result = await session.run(
+                "MATCH (a:Artifact {artifact_id: $aid, project_hash: $proj}) "
+                "MATCH (a)-[:HAS_VERSION]->(v:Version {n: $n}) "
+                "MATCH (v)-[:HAS_CHUNK]->(c:Chunk) "
+                "RETURN c ORDER BY coalesce(c.ordinal, c.line_from), c.line_from",
+                aid=artifact_id,
+                proj=self._project_id,
+                n=n,
+            )
+            return [
+                Passage(
+                    chunk_id=str(record["c"].get("chunk_id") or ""),
+                    text=str(record["c"].get("text") or ""),
+                    line_from=int(record["c"].get("line_from") or 0),
+                    line_to=int(record["c"].get("line_to") or 0),
+                    embedding=list(record["c"].get("embedding") or []) or None,
+                )
+                async for record in result
+            ]
+
+    async def versions_needing_rechunk(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        """Versions whose chunks predate ordinals or vectors.
+
+        ``ordinal`` is the marker: a chunk written before line spans
+        were resolved whitespace-tolerantly has none, and its stored
+        span is not to be trusted. Recomputing is cheap next to
+        carrying a citation that points at line zero.
+        """
+        async with self.session() as session:
+            result = await session.run(
+                "MATCH (v:Version {project_hash: $proj})-[:HAS_CHUNK]->(c:Chunk) "
+                "WITH v, count(c) AS total, "
+                "     count(c.ordinal) AS ordered, count(c.embedding) AS vectored "
+                "WHERE ordered < total OR vectored < total "
+                "MATCH (a:Artifact)-[:HAS_VERSION]->(v) "
+                "RETURN v.version_id AS version_id, v.content AS content, "
+                "       a.artifact_id AS artifact_id, v.n AS n "
+                "ORDER BY v.version_id LIMIT $limit",
+                proj=self._project_id,
+                limit=limit,
+            )
+            return [dict(record) async for record in result]
+
+    async def replace_chunks(
+        self,
+        *,
+        version_id: str,
+        rows: list[tuple[str, int, int]],
+        vectors: list[list[float]],
+    ) -> int:
+        """Swap a version's chunks for a freshly computed set.
+
+        Delete-then-create in one transaction. A version briefly
+        holding half its old chunks and half its new ones would answer
+        a provenance query with passages from two different splits.
+        """
+        payload = [
+            {
+                "i": i,
+                "text": text,
+                "line_from": lf,
+                "line_to": lt,
+                "embedding": vectors[i] if i < len(vectors) else None,
+            }
+            for i, (text, lf, lt) in enumerate(rows)
+        ]
+
+        async def _tx(tx: Any) -> int:
+            await tx.run(
+                "MATCH (v:Version {version_id: $vid})-[:HAS_CHUNK]->(c:Chunk) DETACH DELETE c",
+                vid=version_id,
+            )
+            if not payload:
+                return 0
+            result = await tx.run(
+                "MATCH (v:Version {version_id: $vid}) "
+                "UNWIND $rows AS row "
+                "CREATE (v)-[:HAS_CHUNK]->(:Chunk {"
+                "  chunk_id: $vid + '::' + toString(row.i), parent_id: $vid, "
+                "  text: row.text, line_from: row.line_from, "
+                "  line_to: row.line_to, project_hash: $proj, "
+                "  ordinal: row.i, embedding: row.embedding"
+                "}) RETURN count(*) AS n",
+                vid=version_id,
+                proj=self._project_id,
+                rows=payload,
+            )
+            record = await result.single()
+            return int(record["n"]) if record else 0
+
+        async with self.session() as session:
+            return await session.execute_write(_tx)
+
+    async def chunks_without_embeddings(self, *, limit: int = 500) -> list[dict[str, Any]]:
+        """Chunks written before vectors were stored, oldest first.
+
+        Every document in a store that predates this field has them,
+        and until they are filled that document cannot be placed
+        against its source at all.
+        """
+        async with self.session() as session:
+            result = await session.run(
+                "MATCH (c:Chunk {project_hash: $proj}) WHERE c.embedding IS NULL "
+                "RETURN c.chunk_id AS chunk_id, c.text AS text "
+                "ORDER BY c.chunk_id LIMIT $limit",
+                proj=self._project_id,
+                limit=limit,
+            )
+            return [
+                {"chunk_id": str(r["chunk_id"]), "text": str(r["text"] or "")} async for r in result
+            ]
+
+    async def set_chunk_embeddings(self, rows: list[dict[str, Any]]) -> int:
+        """Fill in vectors for chunks that had none."""
+        if not rows:
+            return 0
+        async with self.session() as session:
+            result = await session.run(
+                "UNWIND $rows AS row "
+                "MATCH (c:Chunk {chunk_id: row.chunk_id, project_hash: $proj}) "
+                "SET c.embedding = row.embedding "
+                "RETURN count(c) AS n",
+                proj=self._project_id,
+                rows=rows,
+            )
+            record = await result.single()
+        return int(record["n"]) if record else 0
+
     async def open_comment_count(self) -> int:
         async with self.session() as session:
             result = await session.run(
@@ -484,6 +644,16 @@ class Neo4jArtifactClient:
             # person instead of hiding it.
             logger.warning("unknown comment status %r; treating as open", raw)
             status = CommentStatus.OPEN
+        raw_origin = str(node.get("origin") or CommentOrigin.WEB.value)
+        try:
+            origin = CommentOrigin(raw_origin)
+        except ValueError:
+            # Unknown origin falls to ``WEB``, the narrower reading: a
+            # comment the agent treats as history at worst goes unacted
+            # on, where one wrongly treated as an instruction gets
+            # carried out by itself.
+            logger.warning("unknown comment origin %r; treating as web", raw_origin)
+            origin = CommentOrigin.WEB
         return Comment(
             comment_id=str(node.get("comment_id") or ""),
             artifact_id=str(node.get("artifact_id") or ""),
@@ -499,6 +669,7 @@ class Neo4jArtifactClient:
             resolved_in_n=node.get("resolved_in_n"),
             author=str(node.get("author") or ""),
             at=str(node.get("at") or ""),
+            origin=origin,
         )
 
     async def set_edge_state(
@@ -520,6 +691,60 @@ class Neo4jArtifactClient:
                 proj=self._project_id,
                 src=source_artifact_id,
                 state=state.value,
+            )
+            record = await result.single()
+        return bool(record and record["n"])
+
+    async def edge_review(
+        self, *, artifact_id: str, n: int, source_artifact_id: str
+    ) -> dict[str, Any] | None:
+        """What was already worked out about this edge, if anything.
+
+        Both halves of a source review are expensive and neither
+        changes on its own: the overlap is an embedding comparison of
+        every passage against every passage, and the verdict is a
+        model call over both documents. Recomputing them each time a
+        reviewer opens the row charges for the same answer repeatedly
+        and — for the verdict — can quietly return a *different* one,
+        so a reviewer who reopens a row to think about it finds the
+        recommendation has changed under them.
+
+        Returns the stored properties verbatim. Whether they are still
+        about the right pair of versions is the caller's question, and
+        it answers it from ``review_dependent_n`` / ``review_source_n``.
+        """
+        async with self.session() as session:
+            result = await session.run(
+                "MATCH (v:Version {version_id: $vid, project_hash: $proj})"
+                "-[d:DERIVED_FROM]->(sv:Version {artifact_id: $src}) "
+                "RETURN properties(d) AS props",
+                vid=self._codec.version_id(artifact_id, n),
+                proj=self._project_id,
+                src=source_artifact_id,
+            )
+            record = await result.single()
+        return dict(record["props"]) if record and record["props"] else None
+
+    async def set_edge_review(
+        self, *, artifact_id: str, n: int, source_artifact_id: str, review: dict[str, Any]
+    ) -> bool:
+        """Keep what was worked out, against the edge it is about.
+
+        Written with ``+=`` so it adds to the edge rather than
+        replacing it: ``state``, ``pinned_n`` and ``at`` are the
+        edge's own facts and a review must never be able to overwrite
+        one of them.
+        """
+        async with self.session() as session:
+            result = await session.run(
+                "MATCH (v:Version {version_id: $vid, project_hash: $proj})"
+                "-[d:DERIVED_FROM]->(sv:Version {artifact_id: $src}) "
+                "SET d += $review "
+                "RETURN count(d) AS n",
+                vid=self._codec.version_id(artifact_id, n),
+                proj=self._project_id,
+                src=source_artifact_id,
+                review=dict(review),
             )
             record = await result.single()
         return bool(record and record["n"])
@@ -772,6 +997,11 @@ class Neo4jArtifactClient:
                 "MATCH (v:Version {version_id: $vid})-[d:DERIVED_FROM]->(sv:Version) "
                 "MATCH (sa:Artifact)-[:HAS_VERSION]->(sv) "
                 "MATCH (va:Artifact)-[:HAS_VERSION]->(v) "
+                # A document is never its own source. Refused at the
+                # write now, but stores written before that carry the
+                # edges, and a filter here fixes what is on screen
+                # without deleting anybody's data.
+                "WHERE sa.artifact_id <> va.artifact_id "
                 "RETURN v.artifact_id AS from_artifact_id, v.n AS from_n, "
                 "va.name AS from_name, sv.artifact_id AS to_artifact_id, "
                 "sv.n AS to_n, sa.name AS to_name, d.state AS state, "
@@ -848,9 +1078,13 @@ class Neo4jArtifactClient:
             result = await session.run(
                 "MATCH (dep:Version {project_hash: $proj})-[d:DERIVED_FROM]->(src:Version) "
                 "MATCH (sa:Artifact)-[:HAS_VERSION]->(src) "
+                "MATCH (da:Artifact)-[:HAS_VERSION]->(dep) "
                 "WHERE d.state = $confirmed AND dep.head "
                 "  AND coalesce(d.pinned_n, src.n) < coalesce(sa.head_n, 0) "
-                "MATCH (da:Artifact)-[:HAS_VERSION]->(dep) "
+                # Same rule as lineage: a revision is not a dependent
+                # of its own previous draft, and reporting it as one
+                # put every document in the out-of-date queue for ever.
+                "  AND sa.artifact_id <> da.artifact_id "
                 "RETURN dep.artifact_id AS dependent_artifact_id, "
                 "da.name AS dependent_name, dep.n AS dependent_n, "
                 "sa.artifact_id AS source_artifact_id, sa.name AS source_name, "

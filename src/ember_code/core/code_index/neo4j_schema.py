@@ -241,6 +241,18 @@ ARTIFACT_SCHEMA_STATEMENTS: tuple[str, ...] = (
     "`vector.hnsw.m`: 32, "
     "`vector.hnsw.ef_construction`: 400"
     "}}",
+    # On :Chunk as well as :Version, because "which paragraph of this
+    # document came from which paragraph of its source" is a question
+    # about passages, and a whole-document vector cannot answer it.
+    # Same dims / metric / tuning, so the two are directly comparable.
+    "CREATE VECTOR INDEX chunk_embedding IF NOT EXISTS "
+    "FOR (c:Chunk) ON (c.embedding) "
+    "OPTIONS {indexConfig: {"
+    "`vector.dimensions`: 384, "
+    "`vector.similarity_function`: 'cosine', "
+    "`vector.hnsw.m`: 32, "
+    "`vector.hnsw.ef_construction`: 400"
+    "}}",
     # ── Full-text over names ────────────────────────────────────
     # Artifacts are looked up by name far more often than code is —
     # the agent cites "the auth design doc", not a hash.

@@ -14,14 +14,22 @@ one of them goes through here.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+from ember_code.backend.file_opener import FileOpener
 from ember_code.backend.schemas_artifacts import (
-    ArtifactExportResult,
+    ArtifactCandidateEvidence,
+    ArtifactCandidateVerdict,
+    ArtifactCommentPosted,
     ArtifactCommentResolved,
     ArtifactCommentRow,
+    ArtifactDrift,
+    ArtifactDriftApplied,
+    ArtifactExportResult,
     ArtifactGetResult,
     ArtifactGraphEdge,
     ArtifactGraphNode,
@@ -30,20 +38,46 @@ from ember_code.backend.schemas_artifacts import (
     ArtifactLineageRow,
     ArtifactLineageView,
     ArtifactListEntry,
+    ArtifactOpenResult,
+    ArtifactProvenance,
     ArtifactQueryResult,
     ArtifactRemoveResult,
     ArtifactShareResult,
     ArtifactStaleRow,
     ArtifactStatus,
     ArtifactVersionRow,
+    CandidateOverlapRow,
+    DriftAffectedRow,
+    ProvenanceMatchRow,
+    ProvenancePassageRow,
 )
 from ember_code.core.artifacts import side_by_side
 from ember_code.core.artifacts.collaboration import CollaborationSync
-from ember_code.core.artifacts.side_by_side import VersionDiff
+from ember_code.core.artifacts.conversation import CommentConversation
 from ember_code.core.artifacts.cypher import ArtifactCypherService, CypherResult
-from ember_code.core.artifacts.export import ArtifactExporter, ArtifactPublisher
-from ember_code.core.artifacts.models import ArtifactSummary, EdgeState
+from ember_code.core.artifacts.drift import (
+    AffectedPassage,
+    Divergence,
+    DriftReview,
+    DriftUpdate,
+)
+from ember_code.core.artifacts.export import (
+    ArtifactExporter,
+    ArtifactPublisher,
+    ExportFormat,
+)
+from ember_code.core.artifacts.models import (
+    ArtifactSummary,
+    CommentOrigin,
+    EdgeState,
+    StaleDependent,
+)
+from ember_code.core.artifacts.pdf import PdfUnavailable
+from ember_code.core.artifacts.provenance import ProvenanceMapper, quote_lines, strength_of
 from ember_code.core.artifacts.query_planner import ArtifactQueryPlanner
+from ember_code.core.artifacts.side_by_side import RowKind, VersionDiff
+from ember_code.core.artifacts.side_by_side import build as build_side_by_side
+from ember_code.core.artifacts.sourcing import CandidateReview, Overlap
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
@@ -59,6 +93,39 @@ __all__ = [
     "ArtifactRemoveResult",
     "ArtifactStatus",
 ]
+
+
+def _run_failed(response: Any) -> bool:
+    """Whether an agno run errored rather than answered.
+
+    A failed run is not an exception here: ``arun`` returns normally
+    with ``status`` set to ERROR and the provider's message sitting in
+    ``content``. Anything that treats ``content`` as the answer will
+    happily store "Token Plan usage limit reached" as a document.
+    """
+    status = getattr(response, "status", None)
+    return str(getattr(status, "value", status) or "").upper() == "ERROR"
+
+
+def _strip_fence(text: str) -> str:
+    """Drop a code fence a model wrapped the whole document in.
+
+    Asked for "the document and nothing else", a model will still
+    sometimes hand back ```markdown …```. Written through, those three
+    backticks become the document's first line for ever.
+    """
+    body = text.strip()
+    if not body.startswith("```"):
+        return body
+    lines = body.splitlines()
+    if len(lines) < 2:
+        return body
+    closing = len(lines) - 1
+    while closing > 0 and not lines[closing].strip().startswith("```"):
+        closing -= 1
+    if closing <= 0:
+        return body
+    return "\n".join(lines[1:closing]).strip()
 
 
 class ArtifactController:
@@ -333,6 +400,779 @@ class ArtifactController:
             )
         return out
 
+    async def provenance(self, *, artifact_id: str, n: int = 0) -> ArtifactProvenance:
+        """Which passage of this document came from which passage of its sources.
+
+        Inferred, never recorded — see
+        :mod:`ember_code.core.artifacts.provenance`. The result is
+        labelled as such all the way out to the screen, because a line
+        drawn between two paragraphs with the confidence of a recorded
+        fact would be a lie about what is known.
+
+        Only **confirmed** sources are mapped. A candidate edge is a
+        guess about whether the document derives from the source at
+        all; refining a guess with a guess produces two of them
+        stacked and one line on screen.
+        """
+        mgr = self._session.artifact_mgr
+        if self._session.artifacts is None:
+            return ArtifactProvenance(error="Artifacts are disabled.")
+
+        summary = await mgr.resolve_artifact(artifact_id)
+        if summary is None:
+            return ArtifactProvenance(error=f"No document {artifact_id!r}.")
+        version = n or int(summary.head_n or 0)
+
+        # Repaired on demand rather than in a migration: a store
+        # written before chunks carried vectors — or before their line
+        # spans could survive the chunker's own whitespace
+        # normalisation — needs re-splitting, and a document nobody
+        # opens never needs it.
+        pending_versions = await mgr.repair_chunks()
+        unplaced = await mgr.backfill_chunk_embeddings()
+        if pending_versions:
+            unplaced += pending_versions
+
+        client = self._session.artifacts.client
+        passages = await client.passages(artifact_id=summary.artifact_id, n=version)
+        if not passages:
+            return ArtifactProvenance(artifact_id=summary.artifact_id, n=version)
+
+        lineage = await mgr.lineage(summary.artifact_id, version)
+        # Direct attribute access, not ``getattr`` with a default. The
+        # first cut of this guessed the field names on ``LineageEdge``
+        # — they are ``to_artifact_id`` / ``to_name`` / ``source_head_n``,
+        # because the edge is rendered from either direction — and the
+        # defaults turned every wrong guess into an empty string, so
+        # the whole feature returned "nothing resembles a source"
+        # instead of failing.
+        confirmed = [
+            edge
+            for edge in (lineage.sources if lineage is not None else [])
+            # A revision derives from its own previous version, and
+            # that edge is real — but "this paragraph came from the
+            # previous draft of itself" is true of nearly every
+            # paragraph and answers nothing. It would also score near
+            # 1.0 and crowd out the source that actually matters.
+            if edge.state is EdgeState.CONFIRMED and edge.to_artifact_id != summary.artifact_id
+        ]
+
+        merged: dict[str, ProvenancePassageRow] = {
+            p.chunk_id: ProvenancePassageRow(
+                chunk_id=p.chunk_id,
+                line_from=p.line_from,
+                line_to=p.line_to,
+                text=p.text,
+            )
+            for p in passages
+        }
+        source_names: list[str] = []
+
+        for edge in confirmed:
+            # ``to_*`` is the source end: ``sources`` edges point from
+            # this document to what it was built on.
+            source_id = edge.to_artifact_id
+            pinned_n = int(edge.pinned_n or 0)
+            head_n = int(edge.source_head_n or 0)
+            source_name = edge.to_name or source_id
+
+            # Read the source at the version it is *now*, not at the
+            # pin. The question is which of my passages the source's
+            # current text bears on — and when it has moved, which of
+            # them the move touched.
+            current_n = head_n or pinned_n
+            source_passages = await client.passages(artifact_id=source_id, n=current_n)
+            if not source_passages:
+                continue
+            source_names.append(source_name)
+
+            # The source's own text, so a match can be quoted as the
+            # lines it points at rather than as the chunk that happened
+            # to contain them. One read per source, not per match.
+            source_version = await mgr.version(source_id, current_n)
+            source_content = (source_version.content or "") if source_version else ""
+
+            changed: list[tuple[int, int]] = []
+            if head_n and pinned_n and head_n > pinned_n:
+                left = await mgr.version(source_id, pinned_n)
+                right = await mgr.version(source_id, head_n)
+                if left is not None and right is not None:
+                    diff = build_side_by_side(
+                        left.content or "",
+                        right.content or "",
+                        from_n=pinned_n,
+                        to_n=head_n,
+                    )
+                    changed = ProvenanceMapper.changed_ranges(list(diff.rows))
+
+            for mapped in ProvenanceMapper.map(passages, source_passages, changed=changed):
+                row = merged[mapped.chunk_id]
+                row.matches.extend(
+                    ProvenanceMatchRow(
+                        source_artifact_id=source_id,
+                        source_name=source_name,
+                        source_n=current_n,
+                        source_line_from=m.source_line_from,
+                        source_line_to=m.source_line_to,
+                        source_text=quote_lines(
+                            source_content, m.source_line_from, m.source_line_to
+                        )
+                        or m.source_text,
+                        similarity=m.similarity,
+                        strength=strength_of(m.similarity),
+                        changed=m.changed,
+                    )
+                    for m in mapped.matches
+                )
+
+        for row in merged.values():
+            # Strongest first across every source, so the UI can take
+            # the head of the list and be showing the best answer.
+            row.matches.sort(key=lambda m: -m.similarity)
+            row.affected = any(m.changed for m in row.matches)
+
+        rows = list(merged.values())
+        return ArtifactProvenance(
+            artifact_id=summary.artifact_id,
+            n=version,
+            passages=rows,
+            sources=source_names,
+            affected_count=sum(1 for r in rows if r.affected),
+            unplaced=unplaced,
+        )
+
+    #: Overlaps quoted into a candidate review. Enough to decide on;
+    #: a reviewer who needs the twentieth is reading both documents.
+    MAX_OVERLAPS = 6
+
+    async def candidate_evidence(
+        self, *, artifact_id: str, source_id: str
+    ) -> ArtifactCandidateEvidence:
+        """Why a captured read might — or might not — be a source.
+
+        The review row used to offer Confirm and Not a source under a
+        name and a version number, which is the decision without any
+        of what it rests on. This is what it rests on: the passages of
+        this document that resemble passages of that one, strongest
+        first.
+
+        Deliberately pointed at an unconfirmed edge. :meth:`provenance`
+        maps confirmed sources only, and is right to — refining a
+        guess with a guess stacks two of them behind one line. Here the
+        guess *is* the question, and an empty answer is the most
+        useful one a reviewer can get: nothing in this document
+        resembles that one, so whatever the search turned it up for, it
+        did not end up here.
+        """
+        mgr = self._session.artifact_mgr
+        if self._session.artifacts is None:
+            return ArtifactCandidateEvidence(error="Artifacts are disabled.")
+
+        dependent = await mgr.resolve_artifact(artifact_id)
+        source = await mgr.resolve_artifact(source_id)
+        if dependent is None or source is None:
+            return ArtifactCandidateEvidence(error="Could not find both documents.")
+
+        # Same repair the trace view needs: a store written before
+        # chunks carried vectors cannot be matched on at all.
+        unplaced = await mgr.repair_chunks() + await mgr.backfill_chunk_embeddings()
+
+        lineage = await mgr.lineage(dependent.artifact_id, 0)
+        edge = next(
+            (
+                e
+                for e in (lineage.sources if lineage is not None else [])
+                if e.to_artifact_id == source.artifact_id
+            ),
+            None,
+        )
+        # The version that was *read*, not the source's head. The
+        # decision is about what the agent had in front of it.
+        read_n = int(edge.pinned_n if edge is not None else 0) or int(source.head_n or 0)
+
+        client = self._session.artifacts.client
+        # An explicit version, both sides. ``passages(n=0)`` is not
+        # "head" — it matches no version and returns nothing, and a
+        # comparison against an empty left side answers "nothing here
+        # resembles it" for every source there is. A false negative
+        # that reads like a finding is worse than an error.
+        mine_n = int(dependent.head_n or 0)
+        mine = await client.passages(artifact_id=dependent.artifact_id, n=mine_n)
+        theirs = await client.passages(artifact_id=source.artifact_id, n=read_n)
+
+        base = ArtifactCandidateEvidence(
+            artifact_id=dependent.artifact_id,
+            source_artifact_id=source.artifact_id,
+            source_name=source.name or source.artifact_id,
+            source_n=read_n,
+            captured_at=edge.at if edge is not None else "",
+            total_passages=len(mine),
+            unplaced=unplaced,
+        )
+
+        # Worked out once. The comparison is every passage against
+        # every passage, and neither side moves on its own — a stored
+        # answer for this exact pair of versions is still the answer.
+        stored = await self._stored_review(dependent, source.artifact_id, mine_n, read_n)
+        if stored is not None and stored.get("review_overlaps"):
+            try:
+                base.overlaps = [
+                    CandidateOverlapRow(**row) for row in json.loads(stored["review_overlaps"])
+                ]
+                base.passages_touched = int(stored.get("review_touched", 0))
+                base.total_passages = int(stored.get("review_total", 0)) or base.total_passages
+                return base
+            except (ValueError, TypeError) as exc:
+                # A stored answer that will not load is not worth
+                # failing over — recompute and overwrite it.
+                logger.info("stored overlap for %s unreadable: %s", artifact_id, exc)
+        if not mine or not theirs:
+            # Nothing to compare is not the same as nothing in common,
+            # and the caller has to be able to tell them apart.
+            base.error = (
+                "Neither document has indexed passages yet."
+                if not mine and not theirs
+                else f"{base.source_name} has no indexed passages at v{read_n}."
+                if not theirs
+                else "This document has no indexed passages yet."
+            )
+            return base
+
+        source_content = ""
+        read = await mgr.version(source.artifact_id, read_n)
+        if read is not None:
+            source_content = read.content or ""
+
+        overlaps: list[CandidateOverlapRow] = []
+        touched = 0
+        for mapped in ProvenanceMapper.map(mine, theirs):
+            if not mapped.matches:
+                continue
+            touched += 1
+            best = mapped.matches[0]
+            overlaps.append(
+                CandidateOverlapRow(
+                    here_text=mapped.text,
+                    here_line_from=mapped.line_from,
+                    here_line_to=mapped.line_to,
+                    there_text=quote_lines(
+                        source_content, best.source_line_from, best.source_line_to
+                    )
+                    or best.source_text,
+                    there_line_from=best.source_line_from,
+                    there_line_to=best.source_line_to,
+                    similarity=best.similarity,
+                    strength=strength_of(best.similarity),
+                )
+            )
+
+        overlaps.sort(key=lambda o: -o.similarity)
+        base.overlaps = overlaps[: self.MAX_OVERLAPS]
+        base.passages_touched = touched
+
+        await self._store_review(
+            dependent,
+            source.artifact_id,
+            mine_n,
+            read_n,
+            {
+                "review_overlaps": json.dumps([o.model_dump() for o in base.overlaps]),
+                "review_touched": touched,
+                "review_total": len(mine),
+            },
+        )
+        return base
+
+    async def _stored_review(
+        self, dependent: Any, source_id: str, mine_n: int, read_n: int
+    ) -> dict[str, Any] | None:
+        """A stored review, but only if it is about these two versions.
+
+        The version pair is the cache key, and it has to be: a review
+        of v2 against v5 says nothing about v3 against v6, and serving
+        it would be worse than recomputing — a stale verdict reads
+        exactly like a fresh one.
+        """
+        client = self._session.artifacts.client
+        try:
+            props = await client.edge_review(
+                artifact_id=dependent.artifact_id,
+                n=mine_n,
+                source_artifact_id=source_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — a cache miss is not a failure
+            logger.info("could not read stored review: %s", exc)
+            return None
+        if not props:
+            return None
+        if int(props.get("review_dependent_n", -1)) != mine_n:
+            return None
+        if int(props.get("review_source_n", -1)) != read_n:
+            return None
+        return props
+
+    async def _store_review(
+        self, dependent: Any, source_id: str, mine_n: int, read_n: int, review: dict[str, Any]
+    ) -> None:
+        """Keep an answer, stamped with the versions it is about."""
+        client = self._session.artifacts.client
+        try:
+            await client.set_edge_review(
+                artifact_id=dependent.artifact_id,
+                n=mine_n,
+                source_artifact_id=source_id,
+                review={
+                    **review,
+                    "review_dependent_n": mine_n,
+                    "review_source_n": read_n,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — losing the cache costs time, not truth
+            logger.info("could not store review: %s", exc)
+
+    async def candidate_verdict(
+        self, *, artifact_id: str, source_id: str
+    ) -> ArtifactCandidateVerdict:
+        """Whether the agent thinks this captured read was a source.
+
+        The evidence answered "what do these two documents share".
+        This answers the question actually being asked — *did this one
+        draw on that one* — which similarity cannot, because it says
+        two paragraphs are about the same thing and not which way the
+        influence ran.
+
+        Advisory only. The verdict writes nothing; Confirm and Not a
+        source still do, and a reviewer who disagrees presses the other
+        button. A recommendation with its reasons can be argued with,
+        which is the point of producing one rather than handing over a
+        score.
+        """
+        evidence = await self.candidate_evidence(artifact_id=artifact_id, source_id=source_id)
+        if evidence.error:
+            return ArtifactCandidateVerdict(error=evidence.error)
+
+        mgr = self._session.artifact_mgr
+        dependent = await mgr.resolve_artifact(artifact_id)
+        if dependent is None:
+            return ArtifactCandidateVerdict(error="Could not find the document.")
+
+        # Asked once. Beyond the cost, a model call is not a pure
+        # function: reopening the row to think about a recommendation
+        # and finding a different one is worse than waiting for the
+        # first.
+        mine_n = int(dependent.head_n or 0)
+        stored = await self._stored_review(
+            dependent, evidence.source_artifact_id, mine_n, evidence.source_n
+        )
+        if stored is not None and stored.get("review_verdict"):
+            return ArtifactCandidateVerdict(
+                recommendation=str(stored["review_verdict"]),
+                reason=str(stored.get("review_reason", "")),
+            )
+        mine = await mgr.version(dependent.artifact_id, int(dependent.head_n or 0))
+        theirs = await mgr.version(evidence.source_artifact_id, evidence.source_n)
+        if mine is None or theirs is None:
+            return ArtifactCandidateVerdict(error="Could not read both documents.")
+
+        review = CandidateReview(
+            dependent_name=dependent.name or dependent.artifact_id,
+            dependent_content=mine.content or "",
+            source_name=evidence.source_name,
+            source_n=evidence.source_n,
+            source_content=theirs.content or "",
+            overlaps=[
+                Overlap(
+                    here_text=o.here_text,
+                    here_line_from=o.here_line_from,
+                    here_line_to=o.here_line_to,
+                    there_text=o.there_text,
+                    there_line_from=o.there_line_from,
+                    there_line_to=o.there_line_to,
+                    similarity=o.similarity,
+                )
+                for o in evidence.overlaps
+            ],
+            passages_touched=evidence.passages_touched,
+            total_passages=evidence.total_passages,
+        )
+
+        try:
+            from agno.agent import Agent  # noqa: PLC0415 — heavy, and rarely reached
+
+            from ember_code.core.config.models import ModelRegistry  # noqa: PLC0415
+
+            agent = Agent(
+                name="_artifact_source_reviewer",
+                model=ModelRegistry(self._session.settings).get_model(),
+                markdown=False,
+            )
+            response = await agent.arun(review.prompt_for())
+        except Exception as exc:  # noqa: BLE001 — a model call, many failure modes
+            logger.info("candidate verdict failed for %s: %s", artifact_id, exc)
+            return ArtifactCandidateVerdict(error=f"Could not ask: {exc}")
+
+        # Agno does not raise on a provider failure — it sets ``status``
+        # to ERROR and puts the message in ``content``. Without this
+        # check "Token Plan usage limit reached" is rendered as the
+        # agent's opinion about somebody's provenance.
+        if _run_failed(response):
+            detail = str(getattr(response, "content", "") or "").strip()
+            return ArtifactCandidateVerdict(
+                error=f"The model did not answer: {detail}"
+                if detail
+                else "The model did not answer."
+            )
+
+        verdict = CandidateReview.parse(_strip_fence(str(getattr(response, "content", "") or "")))
+        await self._store_review(
+            dependent,
+            evidence.source_artifact_id,
+            mine_n,
+            evidence.source_n,
+            {
+                "review_verdict": verdict.recommendation.value,
+                "review_reason": verdict.reason,
+            },
+        )
+        return ArtifactCandidateVerdict(
+            recommendation=verdict.recommendation.value, reason=verdict.reason
+        )
+
+    async def drift(self, *, artifact_id: str, source_id: str) -> ArtifactDrift:
+        """What has landed upstream, and which of our sentences lean on it.
+
+        Everything the judgement needs is assembled here rather than
+        left for the agent to fetch: a round trip per question is the
+        cheap failure, and an answer made up from the two names is the
+        expensive one.
+        """
+        mgr = self._session.artifact_mgr
+        if self._session.artifacts is None:
+            return ArtifactDrift(error="Artifacts are disabled.")
+
+        dependent = await mgr.resolve_artifact(artifact_id)
+        source = await mgr.resolve_artifact(source_id)
+        if dependent is None or source is None:
+            return ArtifactDrift(error="One of those documents is not in the store.")
+        if dependent.artifact_id == source.artifact_id:
+            # The rule the whole model turns on. A later version of
+            # this document is a commit on the branch we are on.
+            return ArtifactDrift(
+                error="A document does not derive from itself; its own versions are not drift."
+            )
+
+        lineage = await mgr.lineage(dependent.artifact_id, 0)
+        edge = next(
+            (
+                e
+                for e in (lineage.sources if lineage is not None else [])
+                if e.to_artifact_id == source.artifact_id and e.state is EdgeState.CONFIRMED
+            ),
+            None,
+        )
+        if edge is None:
+            return ArtifactDrift(
+                error=f"{dependent.name} is not built on {source.name}, or the link is unconfirmed."
+            )
+
+        pinned_n = int(edge.pinned_n or 0)
+        head_n = int(source.head_n or 0)
+
+        divergence = Divergence(
+            dependent_id=dependent.artifact_id,
+            dependent_name=dependent.name or dependent.artifact_id,
+            dependent_n=int(dependent.head_n or 0),
+            source_id=source.artifact_id,
+            source_name=source.name or source.artifact_id,
+            pinned_n=pinned_n,
+            source_head_n=head_n,
+        )
+
+        if divergence.has_diverged:
+            left = await mgr.version(source.artifact_id, pinned_n)
+            right = await mgr.version(source.artifact_id, head_n)
+            mine = await mgr.version(dependent.artifact_id, 0)
+            divergence.dependent_content = (mine.content if mine else "") or ""
+            divergence.source_pinned_content = (left.content if left else "") or ""
+            divergence.source_head_content = (right.content if right else "") or ""
+            if left is not None and right is not None:
+                diff = build_side_by_side(
+                    left.content or "", right.content or "", from_n=pinned_n, to_n=head_n
+                )
+                divergence.changes = [
+                    (row.kind.value, row.left, row.right)
+                    for row in diff.rows
+                    if row.kind is not RowKind.EQUAL
+                ]
+
+            # Which of our passages lean on what moved. The provenance
+            # pass already answers this; reusing it means the review
+            # and the "where this came from" view cannot disagree.
+            traced = await self.provenance(artifact_id=dependent.artifact_id)
+            divergence.affected = [
+                AffectedPassage(
+                    text=row.text,
+                    line_from=row.line_from,
+                    line_to=row.line_to,
+                    source_text=(row.matches[0].source_text if row.matches else ""),
+                    strength=strength_of(row.matches[0].similarity) if row.matches else "",
+                )
+                for row in traced.passages
+                if row.affected
+            ]
+
+        return ArtifactDrift(
+            dependent_artifact_id=divergence.dependent_id,
+            dependent_name=divergence.dependent_name,
+            dependent_n=divergence.dependent_n,
+            source_artifact_id=divergence.source_id,
+            source_name=divergence.source_name,
+            pinned_n=pinned_n,
+            source_head_n=head_n,
+            versions_behind=divergence.versions_behind,
+            summary=DriftReview.summary(divergence),
+            affected=[
+                DriftAffectedRow(
+                    text=a.text,
+                    line_from=a.line_from,
+                    line_to=a.line_to,
+                    source_text=a.source_text,
+                    strength=a.strength,
+                )
+                for a in divergence.affected
+            ],
+            has_diverged=divergence.has_diverged,
+        )
+
+    async def apply_drift(self, *, artifact_id: str, source_id: str) -> ArtifactDriftApplied:
+        """Bring a document up to date with its source, and move the pin.
+
+        Two halves, and the second is the one that is easy to forget:
+        the text is revised *and* the ``DERIVED_FROM`` edge is re-pinned
+        to the source's current version. Without the re-pin the
+        document would be corrected and still reported as drifted,
+        which is the same warning for the rest of time.
+
+        Append-only, so this is safe to run: the previous version is
+        still there to read and to compare against. Nothing is
+        overwritten and nothing is lost if the answer is wrong.
+        """
+        drift = await self.drift(artifact_id=artifact_id, source_id=source_id)
+        if drift.error:
+            return ArtifactDriftApplied(error=drift.error)
+        if not drift.has_diverged:
+            return ArtifactDriftApplied(error="Nothing has diverged.")
+
+        mgr = self._session.artifact_mgr
+        dependent = await mgr.resolve_artifact(artifact_id)
+        source = await mgr.resolve_artifact(source_id)
+        if dependent is None or source is None:
+            return ArtifactDriftApplied(error="One of those documents is not in the store.")
+
+        current = await mgr.version(dependent.artifact_id, 0)
+        before = (current.content if current else "") or ""
+
+        divergence = await self._divergence_for(dependent, source, drift)
+        if divergence is None:
+            return ArtifactDriftApplied(error="Could not read both versions.")
+
+        try:
+            from agno.agent import Agent  # noqa: PLC0415 — heavy, and rarely reached
+
+            from ember_code.core.config.models import ModelRegistry  # noqa: PLC0415
+
+            agent = Agent(
+                name="_artifact_drift_updater",
+                model=ModelRegistry(self._session.settings).get_model(),
+                markdown=False,
+            )
+            response = await agent.arun(DriftUpdate.prompt_for(divergence))
+        except Exception as exc:  # noqa: BLE001 — a model call, many failure modes
+            logger.info("drift update failed for %s: %s", artifact_id, exc)
+            return ArtifactDriftApplied(error=f"Could not write the update: {exc}")
+
+        # Agno does not raise on a provider failure. It logs, sets
+        # ``status`` to ERROR, and puts the *error message* into
+        # ``content`` — so the ``except`` above never fires and the
+        # text reads as an answer. Checking only for emptiness let
+        # "Token Plan usage limit reached: Upgrade your Token Plan…"
+        # through as a document, and this writes a version.
+        if _run_failed(response):
+            detail = str(getattr(response, "content", "") or "").strip()
+            return ArtifactDriftApplied(
+                error=f"The model did not answer: {detail}"
+                if detail
+                else "The model did not answer."
+            )
+        updated = _strip_fence(str(getattr(response, "content", "") or "").strip())
+        if not updated:
+            return ArtifactDriftApplied(error="The update came back empty.")
+
+        stale = StaleDependent(
+            dependent_artifact_id=dependent.artifact_id,
+            dependent_name=dependent.name or dependent.artifact_id,
+            dependent_n=int(dependent.head_n or 0),
+            source_artifact_id=source.artifact_id,
+            source_name=source.name or source.artifact_id,
+            pinned_n=drift.pinned_n,
+            source_head_n=drift.source_head_n,
+        )
+        plan = await mgr.reconcile_plan(stale)
+        if plan is None:
+            return ArtifactDriftApplied(error="Could not build the update.")
+
+        # Unchanged text is a real answer, not a failure — the document
+        # was already correct and only its pin was behind. Re-pinning
+        # alone is exactly what ``accept_reconcile`` does with no
+        # content, so say so rather than writing an identical version.
+        same = updated.strip() == before.strip()
+        result = await mgr.accept_reconcile(plan=plan, content=None if same else updated)
+        if not result.success:
+            return ArtifactDriftApplied(error=result.message or "The update was not written.")
+
+        return ArtifactDriftApplied(
+            ok=True,
+            n=int(getattr(result, "n", 0) or 0),
+            pinned_to=drift.source_head_n,
+            text_unchanged=same,
+            message=result.message or "",
+        )
+
+    async def _divergence_for(
+        self, dependent: Any, source: Any, drift: ArtifactDrift
+    ) -> Divergence | None:
+        """Rebuild the divergence the update prompt needs."""
+        mgr = self._session.artifact_mgr
+        left = await mgr.version(source.artifact_id, drift.pinned_n)
+        right = await mgr.version(source.artifact_id, drift.source_head_n)
+        mine = await mgr.version(dependent.artifact_id, 0)
+        if left is None or right is None or mine is None:
+            return None
+        diff = build_side_by_side(
+            left.content or "",
+            right.content or "",
+            from_n=drift.pinned_n,
+            to_n=drift.source_head_n,
+        )
+        return Divergence(
+            dependent_id=dependent.artifact_id,
+            dependent_name=dependent.name or dependent.artifact_id,
+            dependent_n=int(dependent.head_n or 0),
+            source_id=source.artifact_id,
+            source_name=source.name or source.artifact_id,
+            pinned_n=drift.pinned_n,
+            source_head_n=drift.source_head_n,
+            changes=[
+                (row.kind.value, row.left, row.right)
+                for row in diff.rows
+                if row.kind is not RowKind.EQUAL
+            ],
+            dependent_content=mine.content or "",
+            source_head_content=right.content or "",
+        )
+
+    async def comment(
+        self,
+        *,
+        artifact_id: str,
+        n: int = 0,
+        body: str,
+        quote: str = "",
+        quote_start: int = -1,
+        quote_end: int = -1,
+        thread_id: str = "",
+        parent_id: str = "",
+        origin: str = "local",
+    ) -> ArtifactCommentPosted:
+        """Leave a comment on the local copy, addressed to the agent.
+
+        This is the local half of the comment model. Written here, in
+        igni, with no one else in the room — so it is an instruction,
+        and the answer to it is a revision rather than a reply.
+
+        Nothing is sent to the server. A comment written locally is
+        one side of a conversation the people on the shared copy are
+        not part of; what reaches them is the version the agent writes
+        in response, which is a thing they can read.
+        """
+        mgr = self._session.artifact_mgr
+        if self._session.artifacts is None:
+            return ArtifactCommentPosted(message="Artifacts are disabled.")
+        text = (body or "").strip()
+        if not text:
+            return ArtifactCommentPosted(message="A comment needs something in it.")
+
+        summary = await mgr.resolve_artifact(artifact_id)
+        if summary is None:
+            return ArtifactCommentPosted(message=f"No document {artifact_id!r}.")
+        # Version 0 means "whatever is current", the same convention
+        # the rest of the artifact RPCs use. Pinning it here rather
+        # than storing a zero keeps the comment anchored to the text
+        # that was actually on screen.
+        version = n or int(summary.head_n or 0)
+
+        try:
+            speaker = CommentOrigin(origin)
+        except ValueError:
+            return ArtifactCommentPosted(message=f"Unknown comment origin: {origin!r}")
+        if speaker is CommentOrigin.WEB:
+            # Writing a web comment from here would put words in the
+            # mouths of people who are not in this conversation.
+            return ArtifactCommentPosted(message="Only local turns can be recorded here.")
+
+        comment = await mgr.add_local_comment(
+            artifact_id=summary.artifact_id,
+            n=version,
+            body=text,
+            quote=quote,
+            quote_start=quote_start if quote_start >= 0 else None,
+            quote_end=quote_end if quote_end >= 0 else None,
+            author=self._local_author() if speaker is CommentOrigin.LOCAL else "igni",
+            thread_id=thread_id,
+            parent_id=parent_id or None,
+            origin=speaker,
+        )
+        if comment is None:
+            return ArtifactCommentPosted(message="Could not record that comment.")
+
+        # The thread is read *after* the write so the new comment is
+        # in it; ``history_for`` takes it back out. One query either
+        # way, and no chance of assembling a thread that is missing
+        # the thing being asked about.
+        thread = await mgr.thread_for(artifact_id=summary.artifact_id, thread_id=comment.thread_id)
+        history = CommentConversation.history_for(thread, exclude_id=comment.comment_id)
+
+        # The agent's own turns are recorded so the thread reads as a
+        # transcript, but nothing is asked of the agent by replaying
+        # what it already said — so no prompt comes back for one.
+        if speaker is not CommentOrigin.LOCAL:
+            return ArtifactCommentPosted(
+                ok=True, comment_id=comment.comment_id, thread_id=comment.thread_id
+            )
+
+        return ArtifactCommentPosted(
+            ok=True,
+            comment_id=comment.comment_id,
+            thread_id=comment.thread_id,
+            prompt=CommentConversation.prompt_for(
+                comment,
+                document_name=summary.name or summary.artifact_id,
+                thread=thread,
+            ),
+            history_count=len(history),
+        )
+
+    def _local_author(self) -> str:
+        """Who is writing, as far as this machine knows.
+
+        The signed-in account when there is one — it is the same name
+        the shared copy would show — and otherwise empty, which reads
+        as "me" rather than inventing a identity that does not match
+        anything on the server.
+        """
+        auth = getattr(self._session, "cloud_auth", None)
+        return str(getattr(auth, "email", "") or "")
+
     async def resolve_comment(
         self, *, comment_id: str, status: str, content: str = ""
     ) -> ArtifactCommentResolved:
@@ -478,20 +1318,58 @@ class ArtifactController:
         entry_id: str,
         version: int = 0,
         destination: str = "",
+        fmt: str = "html",
     ) -> ArtifactExportResult:
-        """Write a self-contained HTML page to disk."""
+        """Write the artifact to disk as HTML, Markdown or PDF."""
         artifacts = self._session.artifacts
         if artifacts is None:
             return ArtifactExportResult(error="Artifacts are disabled.")
+        try:
+            chosen = ExportFormat.parse(fmt)
+        except ValueError as exc:
+            return ArtifactExportResult(error=str(exc))
         exporter = ArtifactExporter(artifacts)
         target = Path(destination).expanduser() if destination else self._session.project_dir
         try:
-            written = await exporter.write(entry_id, target, version=version)
+            written = await exporter.write(entry_id, target, version=version, fmt=chosen)
+        except PdfUnavailable as exc:
+            # Its own branch because it is the one failure the reader
+            # can fix, and the fix is a command rather than a retry.
+            return ArtifactExportResult(format=chosen.value, error=str(exc))
         except OSError as exc:
-            return ArtifactExportResult(error=f"Could not write export: {exc}")
+            return ArtifactExportResult(format=chosen.value, error=f"Could not write export: {exc}")
         if written is None:
-            return ArtifactExportResult(error=f"Artifact {entry_id} not found.")
-        return ArtifactExportResult(path=str(written))
+            return ArtifactExportResult(
+                format=chosen.value, error=f"Artifact {entry_id} not found."
+            )
+        return ArtifactExportResult(path=str(written), format=chosen.value)
+
+    async def open_export(self, path: str) -> ArtifactOpenResult:
+        """Hand an exported file to whatever opens it on this machine.
+
+        Narrow on purpose. This takes a path from the UI and gives it
+        to the operating system, so the only paths it will accept are
+        ones this method could itself have produced: a real file, with
+        an extension we export, inside the project. Without those
+        checks the RPC is "open any file on this machine, by name" —
+        which is not what the button says it does.
+        """
+        target = Path(path).expanduser()
+        try:
+            resolved = target.resolve(strict=True)
+        except OSError:
+            return ArtifactOpenResult(error="That file is no longer there.")
+        if not resolved.is_file():
+            return ArtifactOpenResult(error="That is not a file.")
+        if resolved.suffix.casefold().lstrip(".") not in {f.value for f in ExportFormat}:
+            return ArtifactOpenResult(error="Only exported documents can be opened from here.")
+        project = Path(self._session.project_dir).expanduser().resolve()
+        if not resolved.is_relative_to(project):
+            return ArtifactOpenResult(error="That file is outside the project.")
+        opened = await asyncio.to_thread(FileOpener.open, resolved)
+        if not opened:
+            return ArtifactOpenResult(error="Could not open that file.")
+        return ArtifactOpenResult(opened=True)
 
     async def preview(self, entry_id: str, version: int = 0) -> str:
         """The rendered page as a string, for the in-app viewer."""

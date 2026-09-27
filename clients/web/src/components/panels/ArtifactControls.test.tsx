@@ -47,6 +47,47 @@ const STALE_ROW = {
   versions_behind: 2,
 };
 
+/** What `artifact_compare` returns for `Auth model` v1 → v3. */
+const STALE_DIFF = {
+  from_n: 1,
+  to_n: 3,
+  added: 1,
+  removed: 1,
+  changed: 0,
+  truncated: 0,
+  rows: [
+    {
+      kind: "removed",
+      left_n: 1,
+      right_n: null,
+      left: "Auth is a session cookie.",
+      right: "",
+      left_parts: [{ text: "Auth is a session cookie.", changed: false }],
+      right_parts: [],
+    },
+    {
+      kind: "added",
+      left_n: null,
+      right_n: 1,
+      left: "",
+      right: "Auth is a bearer token.",
+      left_parts: [],
+      right_parts: [{ text: "Auth is a bearer token.", changed: false }],
+    },
+  ],
+};
+
+/** The same call when the source moved without its text moving. */
+const EMPTY_DIFF = {
+  from_n: 1,
+  to_n: 3,
+  added: 0,
+  removed: 0,
+  changed: 0,
+  truncated: 0,
+  rows: [],
+};
+
 describe("the share dialog", () => {
   it("spells out who each option reaches", async () => {
     const { client } = fakeClient(async () => null);
@@ -189,7 +230,10 @@ describe("the stale review", () => {
 
     expect(await screen.findByText("Login flow")).toBeTruthy();
     expect(screen.getByText("Auth model")).toBeTruthy();
-    expect(screen.getByText(/2 behind/)).toBeTruthy();
+    // Branch wording: where we branched, and where that branch is
+    // now. "Sources have changed" said something had happened to us.
+    expect(screen.getByText(/branched from/)).toBeTruthy();
+    expect(screen.getByText(/2 versions behind/)).toBeTruthy();
   });
 
   it("does not fetch a diff until one is asked for", async () => {
@@ -199,36 +243,126 @@ describe("the stale review", () => {
     render(<ArtifactStaleReview client={client} onOpenArtifact={() => {}} />);
     await screen.findByText("Login flow");
 
-    expect(rpc).not.toHaveBeenCalledWith("artifact_reconcile_diff", expect.anything());
+    expect(rpc).not.toHaveBeenCalledWith("artifact_compare", expect.anything());
   });
 
-  it("fetches the diff for the right pair when asked", async () => {
+  it("compares the source across the span the pin fell behind by", async () => {
+    // Not a diff of *this* document: the question the row asks is
+    // what moved in the source between the version this one was
+    // written against and the version the source is at now.
     const { client, rpc } = fakeClient(async (method) =>
-      method === "artifact_stale" ? [STALE_ROW] : "-old line\n+new line",
+      method === "artifact_stale" ? [STALE_ROW] : STALE_DIFF,
     );
     render(<ArtifactStaleReview client={client} onOpenArtifact={() => {}} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /what changed/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /what landed/i }));
 
     await waitFor(() =>
-      expect(rpc).toHaveBeenCalledWith("artifact_reconcile_diff", {
-        id: "a1",
-        source_id: "s1",
+      expect(rpc).toHaveBeenCalledWith("artifact_compare", {
+        id: "s1",
+        from_n: 1,
+        to_n: 3,
       }),
     );
-    expect(await screen.findByText(/\+new line/)).toBeTruthy();
+  });
+
+  it("renders the change as a comparison, not as unified-diff text", async () => {
+    const { client } = fakeClient(async (method) =>
+      method === "artifact_stale" ? [STALE_ROW] : STALE_DIFF,
+    );
+    const { container } = render(
+      <ArtifactStaleReview client={client} onOpenArtifact={() => {}} />,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /what landed/i }),
+    );
+
+    // Both sides present, side by side, each labelled with the
+    // version it is — and no ``---``/``+++``/``@@`` header anywhere.
+    expect(await screen.findByText("Auth is a session cookie.")).toBeTruthy();
+    expect(screen.getByText("Auth is a bearer token.")).toBeTruthy();
+    expect(container.querySelector(".artifact-diff")).toBeTruthy();
+    expect(container.querySelector("pre")).toBeNull();
+    expect(container.textContent).not.toMatch(/@@|\+\+\+|---/);
   });
 
   it("explains a source that changed without a text diff", async () => {
     // An empty diff is not "nothing changed" — the version moved, so
     // something did. Rendering a blank box would read as a bug.
     const { client } = fakeClient(async (method) =>
-      method === "artifact_stale" ? [STALE_ROW] : "",
+      method === "artifact_stale" ? [STALE_ROW] : EMPTY_DIFF,
     );
     render(<ArtifactStaleReview client={client} onOpenArtifact={() => {}} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /what changed/i }));
-    expect(await screen.findByText(/not in a way that shows as a text diff/i)).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: /what landed/i }));
+    expect(
+      await screen.findByText(/not in a way that shows as a text change/i),
+    ).toBeTruthy();
+  });
+
+  it("asks the agent nothing until it is asked to", async () => {
+    // Every row in this queue would otherwise start a model run the
+    // moment the page was looked at.
+    const { client, rpc } = fakeClient(async (method) =>
+      method === "artifact_stale" ? [STALE_ROW] : null,
+    );
+    render(<ArtifactStaleReview client={client} onOpenArtifact={() => {}} />);
+    await screen.findByText("Login flow");
+
+    expect(rpc).not.toHaveBeenCalledWith("artifact_drift", expect.anything());
+  });
+
+  it("gathers the drift for the right pair when asked", async () => {
+    const { client, rpc } = fakeClient(async (method) =>
+      method === "artifact_stale"
+        ? [STALE_ROW]
+        : { prompt: "", affected: [], error: "Nothing has diverged." },
+    );
+    render(<ArtifactStaleReview client={client} onOpenArtifact={() => {}} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /what does it mean/i }));
+
+    await waitFor(() =>
+      expect(rpc).toHaveBeenCalledWith("artifact_drift", { id: "a1", source_id: "s1" }),
+    );
+  });
+
+  it("shows which of our sentences lean on what moved", async () => {
+    // The evidence the verdict is made from, worth reading even if
+    // the agent is never asked.
+    const { client } = fakeClient(async (method) =>
+      method === "artifact_stale"
+        ? [STALE_ROW]
+        : {
+            prompt: "ASK",
+            error: "",
+            affected: [
+              { text: "The flow stores the signed JWT.", line_from: 3, line_to: 3, strength: "close" },
+            ],
+          },
+    );
+    render(<ArtifactStaleReview client={client} onOpenArtifact={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /what does it mean/i }));
+
+    expect(await screen.findByText("The flow stores the signed JWT.")).toBeTruthy();
+    expect(screen.getByText("close match")).toBeTruthy();
+  });
+
+  it("runs no turn when nothing has actually diverged", async () => {
+    const { client } = fakeClient(async (method) =>
+      method === "artifact_stale"
+        ? [STALE_ROW]
+        : { prompt: "", affected: [], error: "Nothing has diverged." },
+    );
+    const runMessage = vi.fn();
+    (client as unknown as { runMessage: unknown }).runMessage = runMessage;
+    render(<ArtifactStaleReview client={client} onOpenArtifact={() => {}} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /what does it mean/i }));
+
+    expect(await screen.findByText("Nothing has diverged.")).toBeTruthy();
+    expect(runMessage).not.toHaveBeenCalled();
   });
 
   it("opens the document behind the name", async () => {

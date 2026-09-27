@@ -3145,6 +3145,11 @@ export default function App() {
             {page.kind === "plugins" && (
               <PluginsPanel client={client} onClose={goChat} />
             )}
+            {/* No ``onAsk`` here: commenting on a document runs the
+                turn on the document's own page, so the reply lands
+                under the comment instead of taking the reader off the
+                thing they were reading. The run still reaches this
+                chat — it is one session. */}
             {page.kind === "artifacts" && (
               <ArtifactPanel client={client} onClose={goChat} />
             )}

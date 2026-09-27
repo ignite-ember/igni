@@ -15,7 +15,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { ArtifactCompare, codeRows, foldUnchanged, tableCells } from "./ArtifactCompare";
+import { ArtifactCompare } from "./ArtifactCompare";
+import { DiffTable, codeRows, tableCells, type DiffRow } from "./ArtifactDiffTable";
 import type { IgniClient } from "../../protocol/client";
 
 afterEach(cleanup);
@@ -253,8 +254,11 @@ describe("it reads like a document, not like a terminal", () => {
     expect(await screen.findByText("a new sentence")).toBeTruthy();
   });
 
-  it("folds long stretches of untouched text", async () => {
-    // A document is mostly unchanged; showing all of it buries the edit.
+  it("shows an unchanged document in full, not a summary of it", async () => {
+    // The opposite of a code review. There the question is "what did
+    // this change"; here it is "what does the document say now, and
+    // what moved" — and a document with its middle replaced by
+    // "29 unchanged lines" cannot answer the first half.
     const many = Array.from({ length: 12 }, (_, i) =>
       row({ kind: "equal", left: `line ${i}`, right: `line ${i}` }),
     );
@@ -264,7 +268,12 @@ describe("it reads like a document, not like a terminal", () => {
     render(
       <ArtifactCompare client={client} artifactId="a1" versions={[3, 2]} headN={3} onClose={() => {}} />,
     );
-    expect(await screen.findByRole("button", { name: /unchanged lines/ })).toBeTruthy();
+
+    await screen.findByText("new");
+    expect(screen.queryByRole("button", { name: /unchanged lines/ })).toBeNull();
+    // Every line, including ones far from the edit.
+    expect(screen.getAllByText("line 0")).toHaveLength(2);
+    expect(screen.getAllByText("line 6")).toHaveLength(2);
   });
 
   it("keeps a little context either side of a change", async () => {
@@ -283,7 +292,10 @@ describe("it reads like a document, not like a terminal", () => {
     expect(screen.getAllByText("line 11")).toHaveLength(2);
   });
 
-  it("nothing is hidden — the fold opens", async () => {
+  it("says how much moved, without machinery to walk it", async () => {
+    // There was briefly a stepper here. The changes are highlighted
+    // and a document is a few screens: two buttons and an index to
+    // walk five rows is machinery in front of something visible.
     const many = Array.from({ length: 12 }, (_, i) =>
       row({ kind: "equal", left: `line ${i}`, right: `line ${i}` }),
     );
@@ -293,11 +305,13 @@ describe("it reads like a document, not like a terminal", () => {
     render(
       <ArtifactCompare client={client} artifactId="a1" versions={[3, 2]} headN={3} onClose={() => {}} />,
     );
-    fireEvent.click(await screen.findByRole("button", { name: /unchanged lines/ }));
-    await waitFor(() => expect(screen.getAllByText("line 0")).toHaveLength(2));
+
+    await screen.findByText("new");
+    expect(screen.getByText(/1 change across 13 rows/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Next change" })).toBeNull();
   });
 
-  it("does not fold a diff with nothing to fold", async () => {
+  it("keeps the tally, which answers the question at a glance", async () => {
     const { client } = makeClient(
       diff({ rows: [row({ kind: "added", right: "one" })], added: 1 }),
     );
@@ -305,40 +319,84 @@ describe("it reads like a document, not like a terminal", () => {
       <ArtifactCompare client={client} artifactId="a1" versions={[3, 2]} headN={3} onClose={() => {}} />,
     );
     await screen.findByText("one");
-    expect(screen.queryByRole("button", { name: /unchanged/ })).toBeNull();
+    expect(screen.getByText("+1")).toBeTruthy();
   });
 });
 
-describe("foldUnchanged", () => {
-  const eq = (i: number) => row({ kind: "equal", left: `l${i}`, right: `l${i}` }) as never;
-  const change = () => row({ kind: "added", right: "x" }) as never;
+describe("showing the whole document", () => {
+  const eq = (i: number) =>
+    row({ kind: "equal", left: `l${i}`, right: `l${i}` }) as unknown as DiffRow;
+  const change = () => row({ kind: "added", right: "x" }) as unknown as DiffRow;
 
-  it("leaves a short run alone", () => {
-    const out = foldUnchanged([eq(0), eq(1), change()], 2);
-    expect(out.every((e) => !("fold" in e))).toBe(true);
+  it("renders every row, however little changed", () => {
+    // Folding the unchanged parts away is what a code review wants —
+    // the question there is "what did this change". Here the question
+    // is "what does the document say now, and what moved", and a
+    // document with its middle replaced by "29 unchanged lines"
+    // cannot answer the first half of it.
+    const rows = [...Array.from({ length: 12 }, (_, i) => eq(i)), change()];
+    const { container } = render(
+      <DiffTable
+        diff={{ artifact_id: "a1", name: "Doc", from_n: 1, to_n: 2, rows, added: 1, removed: 0, changed: 0, truncated: 0 }}
+        leftLabel="v1"
+        rightLabel="v2"
+      />,
+    );
+
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(rows.length);
+    expect(container.querySelector(".diff-fold")).toBeNull();
   });
 
-  it("folds what is beyond the context window", () => {
-    const out = foldUnchanged([...Array.from({ length: 10 }, (_, i) => eq(i)), change()], 2);
-    const fold = out.find((e) => "fold" in e) as { fold: number; from: number };
-    expect(fold.fold).toBe(8);
-    expect(fold.from).toBe(0);
+  it("counts the changes, since the whole document is shown", () => {
+    const rows = [eq(0), change(), eq(1), change(), eq(2)];
+    render(
+      <DiffTable
+        diff={{ artifact_id: "a1", name: "Doc", from_n: 1, to_n: 2, rows, added: 2, removed: 0, changed: 0, truncated: 0 }}
+        leftLabel="v1"
+        rightLabel="v2"
+      />,
+    );
+    expect(screen.getByText(/2 changes across 5 rows/)).toBeTruthy();
   });
 
-  it("folds a trailing run too", () => {
-    const out = foldUnchanged([change(), ...Array.from({ length: 10 }, (_, i) => eq(i))], 2);
-    expect(out.some((e) => "fold" in e)).toBe(true);
+  it("counts a run of adjacent rows as one change", () => {
+    // Stepping through each line of a rewritten paragraph separately
+    // is the navigator getting in the way of the thing it is for.
+    const rows = [eq(0), change(), change(), change(), eq(1)];
+    render(
+      <DiffTable
+        diff={{ artifact_id: "a1", name: "Doc", from_n: 1, to_n: 2, rows, added: 3, removed: 0, changed: 0, truncated: 0 }}
+        leftLabel="v1"
+        rightLabel="v2"
+      />,
+    );
+    expect(screen.getByText(/1 change(?!s)/)).toBeTruthy();
   });
 
-  it("accounts for every row", () => {
-    // Folded or shown, nothing may be dropped on the floor.
-    const rows = [...Array.from({ length: 10 }, (_, i) => eq(i)), change()];
-    const out = foldUnchanged(rows, 2);
-    const shown = out.filter((e) => !("fold" in e)).length;
-    const folded = out
-      .filter((e) => "fold" in e)
-      .reduce((sum, e) => sum + (e as { fold: number }).fold, 0);
-    expect(shown + folded).toBe(rows.length);
+  it("says nothing at all when nothing moved", () => {
+    const rows = [eq(0), eq(1)];
+    const { container } = render(
+      <DiffTable
+        diff={{ artifact_id: "a1", name: "Doc", from_n: 1, to_n: 2, rows, added: 0, removed: 0, changed: 0, truncated: 0 }}
+        leftLabel="v1"
+        rightLabel="v2"
+      />,
+    );
+    expect(container.querySelector(".diff-count")).toBeNull();
+  });
+
+  it("anchors each change, so a link can point at one", () => {
+    const rows = [eq(0), change(), eq(1)];
+    const { container } = render(
+      <DiffTable
+        diff={{ artifact_id: "a1", name: "Doc", from_n: 1, to_n: 2, rows, added: 1, removed: 0, changed: 0, truncated: 0 }}
+        leftLabel="v1"
+        rightLabel="v2"
+      />,
+    );
+    expect(container.querySelector("#diff-change-1")).toBeTruthy();
+    // Unchanged rows carry no id: they are not destinations.
+    expect(container.querySelector("#diff-change-0")).toBeNull();
   });
 });
 
@@ -363,7 +421,7 @@ describe("tableCells", () => {
 });
 
 describe("codeRows", () => {
-  const r = (over: Record<string, unknown> = {}) => row(over) as never;
+  const r = (over: Record<string, unknown> = {}) => row(over) as unknown as DiffRow;
 
   it("marks the lines between two fences", () => {
     const rows = [

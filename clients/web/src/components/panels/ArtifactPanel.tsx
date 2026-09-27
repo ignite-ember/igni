@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -10,6 +10,51 @@ import { ArtifactCommentReview } from "./ArtifactCommentReview";
 import { ArtifactCompare } from "./ArtifactCompare";
 import { ArtifactStaleReview } from "./ArtifactStaleReview";
 import { Drawer } from "./Drawer";
+import { OverflowMenu } from "../OverflowMenu";
+import { MarkdownInline } from "../MarkdownInline";
+import { DocumentComment } from "./DocumentComment";
+import { DriftBanner, type StaleSource } from "./DocumentDrift";
+import { DriftReviewPage } from "./DriftReviewPage";
+import { ExportBanner, type ExportOutcome } from "./ExportBanner";
+import { ProvenanceView, type CandidateOverlap, type Provenance } from "./ProvenanceView";
+import { DocumentCitations } from "./DocumentCitations";
+
+/** Where the reader's preference about the comment rail is kept. */
+const COMMENTS_HIDDEN_KEY = "igni.artifact.comments.hidden";
+
+/** Shown by default: a rail nobody knows about is a feature nobody has. */
+function readCommentsHidden(): boolean {
+  try {
+    return localStorage.getItem(COMMENTS_HIDDEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** What `artifact_export` accepts, and what to call each one. */
+type ExportFormat = "html" | "md" | "pdf";
+
+const EXPORT_FORMATS: {
+  value: ExportFormat;
+  label: string;
+  title: string;
+}[] = [
+  {
+    value: "html",
+    label: "HTML",
+    title: "A self-contained page — styling, lineage and version history included",
+  },
+  {
+    value: "md",
+    label: "Markdown",
+    title: "The source text as written, under a front-matter header",
+  },
+  {
+    value: "pdf",
+    label: "PDF",
+    title: "The same page as the HTML export, printed",
+  },
+];
 import { Skeleton } from "../Skeleton";
 
 // ── Types ────────────────────────────────────────────────────────
@@ -83,7 +128,7 @@ interface ArtifactLineageView {
   citations: string[];
 }
 
-type View = "list" | "detail" | "add" | "ask" | "stale" | "share" | "comments";
+type View = "list" | "detail" | "add" | "ask" | "stale" | "share" | "comments" | "drift";
 type AddMode = "url" | "path" | "text";
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -132,11 +177,39 @@ export function ArtifactPanel({
   const [busy, setBusy] = useState("");
   const [addError, setAddError] = useState("");
   const [confirmingRemove, setConfirmingRemove] = useState(false);
+  /** The last export, until it is dismissed. */
+  const [exported, setExported] = useState<ExportOutcome | null>(null);
   // Comparing is a state of the page, so it lives with the page —
   // the control that toggles it is in the header, beside the other
   // things you can do to a document.
   const [comparing, setComparing] = useState(false);
+  /** The upstream change being reviewed. */
+  const [reviewing, setReviewing] = useState<StaleSource | null>(null);
+  // A third state of the page, beside reading and comparing: the same
+  // text, with where each passage came from shown against it.
+  const [tracing, setTracing] = useState(false);
   const [versionCount, setVersionCount] = useState(0);
+  /**
+   * Whether the comment rail is put away.
+   *
+   * Remembered, and deliberately not per document. Wanting the page to
+   * yourself is a preference about reading, not about this one
+   * document — a reader who puts the rail away and finds it back on
+   * the next document has not been given a setting, they have been
+   * given the same chore again.
+   */
+  const [commentsHidden, setCommentsHidden] = useState(readCommentsHidden);
+
+  const hideComments = useCallback((hidden: boolean) => {
+    setCommentsHidden(hidden);
+    try {
+      localStorage.setItem(COMMENTS_HIDDEN_KEY, hidden ? "1" : "0");
+    } catch {
+      /* Private browsing and locked-down origins both refuse this.
+         The toggle still works for as long as the page is open, which
+         is the part the reader is asking for. */
+    }
+  }, []);
 
   // A new document starts from its content. Carrying the comparison
   // state across would open the next document already mid-diff, of a
@@ -210,17 +283,41 @@ export function ArtifactPanel({
     }
   };
 
-  const exportDoc = async (id: string) => {
+  const exportDoc = async (id: string, format: ExportFormat) => {
     setBusy("export");
+    setExported(null);
     try {
-      const r = await client.rpc<{ path: string; error: string }>("artifact_export", {
-        id,
-      });
+      const r = await client.rpc<ExportOutcome>("artifact_export", { id, format });
       // Where the file landed is the whole result of the action, and
-      // a silent success leaves the user hunting for it.
-      setNotice(r.error ? r.error : `Exported to ${r.path}`);
+      // a silent success leaves the user hunting for it. It goes to a
+      // banner with an Open button rather than a line of text in the
+      // page: the path is a thing to act on, not to read.
+      setExported({ path: r.path || "", format: r.format || format, error: r.error || "" });
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
+      setExported({
+        path: "",
+        format,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const openExport = async (path: string) => {
+    setBusy("open");
+    try {
+      const r = await client.rpc<{ opened: boolean; error: string }>(
+        "artifact_open_export",
+        { path },
+      );
+      // A refusal replaces the banner's success rather than stacking a
+      // second notice on top of it — there is one export in question
+      // and it now has one state.
+      if (r.error) setExported((was) => (was ? { ...was, error: r.error } : was));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setExported((was) => (was ? { ...was, error: message } : was));
     } finally {
       setBusy("");
     }
@@ -265,10 +362,22 @@ export function ArtifactPanel({
               ? `Share ${selectedDoc.name}`
               : null;
   const title: React.ReactNode = leaf ?? "Artifacts";
+  // Two levels deep on the drift review: the document, then the
+  // change under it. A crumb per level is what lets the reader step
+  // back to the document rather than out to the list — which was the
+  // only way back when this panel only ever had one.
   const levels = {
-    labels: leaf ? [leaf] : [],
-    // One level deep, so any truncation returns to the list.
-    onTruncate: () => {
+    labels:
+      view === "drift" && selectedDoc
+        ? [selectedDoc.name, "Upstream change"]
+        : leaf
+          ? [leaf]
+          : [],
+    onTruncate: (index: number) => {
+      if (index === 0 && view === "drift") {
+        setView("detail");
+        return;
+      }
       setView("list");
       setSelected(null);
     },
@@ -341,8 +450,15 @@ export function ArtifactPanel({
         </button>
       </div>
     );
-  } else if (view === "detail" && selected) {
-    headerExtras = (
+  }
+
+  /* The document's own actions. Rendered inside the article rather
+     than in the page header, next to the name they act on — the
+     header was showing that name a second time, four lines above the
+     one the document itself carries. */
+  let docActions: React.ReactNode = null;
+  if (view === "detail" && selected) {
+    docActions = (
       <div className="kb-head-actions">
         {confirmingRemove ? (
           <>
@@ -363,38 +479,88 @@ export function ArtifactPanel({
             </button>
           </>
         ) : (
+          /* Two groups, and the split between them is what each kind
+             of control does. On the left, the ways of *looking* at
+             this document: reading it, comparing two versions,
+             following where its sentences came from. In the menu, the
+             things you *do* to it — export, share, remove.
+
+             They were all in the menu, which read tidily and behaved
+             badly. A view toggle in a menu shows its state only while
+             the menu is open, so the page gave no standing answer to
+             "why am I looking at a diff?"; the way back was behind
+             the same three dots as the button that deletes the
+             document. Out here they stay lit for as long as they are
+             on, which is the whole job. */
           <>
-            <button
-              className="btn btn-sm"
-              title="Write a self-contained HTML file next to the project"
-              disabled={busy === "export"}
-              onClick={() => void exportDoc(selected)}
-            >
-              {busy === "export" ? "Exporting…" : "Export"}
-            </button>
-            {/* Beside the other things you can do to this document,
-                at the top of the page. It used to sit under the
-                content next to the version list, which meant
-                scrolling past the whole document to reach it and
-                then scrolling back to read the result. */}
-            {versionCount > 1 ? (
+          <div className="doc-views" role="group" aria-label="How to view this document">
+            {versionCount > 1 && (
               <button
-                className={comparing ? "btn btn-sm btn-active" : "btn btn-sm"}
-                title="See what changed between two versions"
-                onClick={() => setComparing((on) => !on)}
+                type="button"
+                className={comparing ? "doc-view is-on" : "doc-view"}
+                aria-pressed={comparing}
+                title={
+                  comparing
+                    ? "Back to reading the document"
+                    : "See what changed between two versions"
+                }
+                onClick={() => {
+                  // One at a time. Both replace the document body, and
+                  // entering one while the other is on would leave a
+                  // stale toggle lit beside the view that won.
+                  setTracing(false);
+                  setComparing((on) => !on);
+                }}
               >
-                {comparing ? "Done comparing" : "Compare"}
+                Compare versions
               </button>
-            ) : null}
-            <button className="btn btn-sm" onClick={() => setView("share")}>
-              Share
-            </button>
+            )}
             <button
-              className="btn btn-sm btn-danger"
-              onClick={() => setConfirmingRemove(true)}
+              type="button"
+              className={tracing ? "doc-view is-on" : "doc-view"}
+              aria-pressed={tracing}
+              title={
+                tracing
+                  ? "Back to reading the document"
+                  : "Show which passage came from which part of its sources"
+              }
+              onClick={() => {
+                setComparing(false);
+                setTracing((on) => !on);
+              }}
             >
-              Remove
+              Where this came from
             </button>
+          </div>
+
+          <OverflowMenu
+            label="Document actions"
+            actions={[
+              {
+                key: "export",
+                label: busy === "export" ? "Exporting…" : "Export",
+                title: "Write this document to a file next to the project",
+                disabled: busy === "export",
+                items: EXPORT_FORMATS.map((f) => ({
+                  key: `export-${f.value}`,
+                  label: f.label,
+                  title: f.title,
+                  onSelect: () => void exportDoc(selected, f.value),
+                })),
+              },
+              {
+                key: "share",
+                label: "Share",
+                onSelect: () => setView("share"),
+              },
+              {
+                key: "remove",
+                label: "Remove",
+                danger: true,
+                onSelect: () => setConfirmingRemove(true),
+              },
+            ]}
+          />
           </>
         )}
       </div>
@@ -407,11 +573,20 @@ export function ArtifactPanel({
       levels={levels}
       onClose={onClose}
       headerExtras={headerExtras}
+      titleInBody={view === "detail"}
     >
       {notice && (
         <div className="kb-notice" role="status" onClick={() => setNotice("")}>
           {notice}
         </div>
+      )}
+      {exported && (
+        <ExportBanner
+          outcome={exported}
+          busy={busy === "open"}
+          onOpen={() => void openExport(exported.path)}
+          onDismiss={() => setExported(null)}
+        />
       )}
       {status === null ? (
         <ArtifactsSkeleton />
@@ -427,6 +602,25 @@ export function ArtifactPanel({
         <ArtifactStaleReview
           client={client}
           onOpenArtifact={(id) => {
+            setSelected(id);
+            setView("detail");
+          }}
+        />
+      ) : view === "drift" && selected && reviewing ? (
+        <DriftReviewPage
+          client={client}
+          artifactId={selected}
+          source={reviewing}
+          onBack={() => setView("detail")}
+          onUpdated={() => {
+            // The document itself refetches on its own: it unmounts
+            // while this page is showing and reloads on the way back.
+            // What does not is the panel's own status — the count of
+            // documents out of date, which has just gone down by one.
+            void refresh();
+          }}
+          onOpenSource={(id) => {
+            setReviewing(null);
             setSelected(id);
             setView("detail");
           }}
@@ -460,6 +654,19 @@ export function ArtifactPanel({
           client={client}
           id={selected}
           comparing={comparing}
+          tracing={tracing}
+          commentsHidden={commentsHidden}
+          onCommentsHiddenChange={hideComments}
+          actions={docActions}
+          onReviewDrift={(source) => {
+            setReviewing(source);
+            setView("drift");
+          }}
+          onOpenArtifact={(id) => {
+            setTracing(false);
+            setSelected(id);
+            setView("detail");
+          }}
           onCompareClosed={() => setComparing(false)}
           onVersionCount={setVersionCount}
         />
@@ -569,6 +776,12 @@ function DocumentDetail({
   client,
   id,
   comparing,
+  tracing,
+  commentsHidden,
+  onCommentsHiddenChange,
+  actions,
+  onOpenArtifact,
+  onReviewDrift,
   onCompareClosed,
   onVersionCount,
 }: {
@@ -576,6 +789,19 @@ function DocumentDetail({
   id: string;
   /** Whether the page is in its comparison state. */
   comparing: boolean;
+  /** Whether the page is showing where each passage came from. */
+  tracing?: boolean;
+  /** Whether the comment rail is put away. Owned by the panel, because
+   *  the control that toggles it is in the header beside the other
+   *  things you can do to a document. */
+  commentsHidden?: boolean;
+  onCommentsHiddenChange?: (hidden: boolean) => void;
+  /** Jump to another document — a source, from a traced passage. */
+  onOpenArtifact?: (id: string) => void;
+  /** Open the review page for an upstream change. */
+  onReviewDrift?: (source: StaleSource) => void;
+  /** What you can do to this document, shown beside its name. */
+  actions?: React.ReactNode;
   onCompareClosed: () => void;
   /** So the header knows whether there is anything to compare. */
   onVersionCount: (count: number) => void;
@@ -592,17 +818,59 @@ function DocumentDetail({
   // edit of the list would drift from the store the moment anything
   // else wrote an edge.
   const [lineageNonce, setLineageNonce] = useState(0);
+  // Bumped when the agent may have written a version. The document
+  // effect keys on ``version``, and answering a comment leaves that
+  // at 0 — "whatever head is" — so nothing would refetch and the
+  // page would sit on the text the comment was about.
+  const [docNonce, setDocNonce] = useState(0);
+  // Handed to the comment composer so only text inside the document
+  // can be quoted — without it, selecting a version number in the
+  // list below would be carried in as a passage.
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const [provenance, setProvenance] = useState<Provenance | null>(null);
+
+  // Derived above the early returns, because hooks cannot be called
+  // conditionally and ``useDrift`` needs the source.
+  // Confirmed only. A candidate is an unadjudicated guess, and
+  // printing one as a citation in the body asserts a relationship
+  // nobody confirmed — in the reader's own document, where it reads
+  // as the author's own attribution.
+  const citedSources = (lineage?.sources ?? [])
+    .filter((s) => s.state === "confirmed")
+    .map((s) => ({
+      artifact_id: s.artifact_id,
+      name: s.name || s.artifact_id,
+      pinned_n: s.pinned_n,
+    }));
+  const drifted = (lineage?.sources ?? []).filter((s) => s.state === "confirmed" && s.is_stale);
+  const driftedSource = drifted.length
+    ? {
+        artifact_id: drifted[0].artifact_id,
+        name: drifted[0].name || drifted[0].artifact_id,
+        pinned_n: drifted[0].pinned_n,
+        head_n: drifted[0].head_n,
+      }
+    : null;
+
 
   // Reset the pinned version when the selected document changes —
   // otherwise v3 of one artifact silently requests v3 of the next.
+  // Clearing ``doc`` belongs here and *only* here: a different
+  // document must not be read as this one for a frame, while a
+  // refetch of the same one must not blank the page.
   useEffect(() => {
     setVersion(0);
+    setDoc(null);
   }, [id]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setDoc(null);
+    // Deliberately *not* clearing ``doc``. Refetching after the agent
+    // answers a comment would blank the page for a frame, and the
+    // skeleton that replaces it unmounts the conversation along with
+    // the exchange the reader is in the middle of — the reply they
+    // were reading disappears at the moment it completes.
     void client
       .rpc<ArtifactsDocFull>("artifact_get", { id, version })
       .then((r) => {
@@ -626,7 +894,7 @@ function DocumentDetail({
     return () => {
       cancelled = true;
     };
-  }, [client, id, version]);
+  }, [client, id, version, docNonce]);
 
   // History and lineage load alongside the document rather than
   // inside it: a failure to walk the graph should leave the document
@@ -650,7 +918,7 @@ function DocumentDetail({
     return () => {
       cancelled = true;
     };
-  }, [client, id]);
+  }, [client, id, docNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -667,7 +935,44 @@ function DocumentDetail({
     };
   }, [client, id, version, lineageNonce]);
 
-  if (loading || !doc) {
+  // Fetched on entering the tracing state rather than with the
+  // document: it compares every passage against every passage of
+  // every source, which is work nobody asked for while they are only
+  // reading.
+  useEffect(() => {
+    if (!tracing) {
+      setProvenance(null);
+      return;
+    }
+    let cancelled = false;
+    void client
+      .rpc<Provenance>("artifact_provenance", { id, n: version })
+      .then((r) => {
+        if (!cancelled) setProvenance(r ?? null);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setProvenance({
+            artifact_id: id,
+            n: version,
+            passages: [],
+            sources: [],
+            affected_count: 0,
+            inferred: true,
+            unplaced: 0,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, id, version, tracing]);
+
+  // Only while there is nothing to show. A reload of a document
+  // already on screen keeps showing it, so answering a comment does
+  // not flash a skeleton over what was being read.
+  if (!doc) {
     return (
       <div style={{ marginTop: 12 }}>
         <Skeleton.Line width="40%" height={20} />
@@ -680,9 +985,24 @@ function DocumentDetail({
     return <div className="msg-error">{doc.error}</div>;
   }
 
-  const staleSources = (lineage?.sources ?? []).filter(
-    (s) => s.state === "confirmed" && s.is_stale,
-  );
+  const staleSources = drifted.map((s) => ({
+    artifact_id: s.artifact_id,
+    name: s.name || s.artifact_id,
+    pinned_n: s.pinned_n,
+    head_n: s.head_n,
+  }));
+
+  // Drift is only answerable from the current version. Reading an
+  // older one you can look backwards, not forwards: every version
+  // after it already exists, so there is nothing to bring up to date
+  // that has not been overtaken.
+  //
+  // Not a tidiness rule. ``_divergence_for`` reads the dependent at
+  // version 0 — head — whatever is on screen, so the banner offered
+  // from v2 led to a page whose button would have rewritten v3. A
+  // control that acts on a document you are not looking at is worse
+  // than one that makes no sense.
+  const onHead = doc.is_head !== false;
 
   // Attribution as a sentence, the way an artifact header reads:
   // who wrote it, which version, when. A row of chips makes three
@@ -697,9 +1017,30 @@ function DocumentDetail({
     .join(" · ");
 
   return (
-    <article className="kb-doc">
+    <article
+      className={[
+        "kb-doc",
+        comparing ? "kb-doc-comparing" : "",
+        tracing ? "kb-doc-tracing" : "",
+        !comparing && !tracing ? "kb-doc-reading" : "",
+        // A reload of a document already on screen keeps showing it,
+        // so this is the only sign a refetch is in flight. Without it
+        // the text simply changes under the reader with no warning
+        // that it was about to.
+        loading ? "kb-doc-reloading" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      aria-busy={loading || undefined}
+    >
       <header className="kb-doc-head">
-        <h2 className="kb-doc-title">{doc.name}</h2>
+        {/* Name left, actions right, on one line — so the actions sit
+            against the thing they act on rather than against the
+            window. */}
+        <div className="kb-doc-head-row">
+          <h2 className="kb-doc-title">{doc.name}</h2>
+          {actions}
+        </div>
         {attribution && <p className="kb-doc-attribution">{attribution}</p>}
         {doc.source && doc.source !== doc.name && (
           <p className="kb-doc-origin">
@@ -714,24 +1055,52 @@ function DocumentDetail({
         )}
       </header>
 
-      {staleSources.length > 0 && (
-        <div className="kb-stale-banner" role="status">
-          <strong>Sources have changed since this was written.</strong>
-          <ul>
-            {staleSources.map((s) => (
-              <li key={s.artifact_id}>
-                {s.name || s.artifact_id} moved from v{s.pinned_n} to v{s.head_n}
-              </li>
-            ))}
-          </ul>
-        </div>
+      {/* Where we branched, and what to do about it. This used to
+          say "Sources have changed since this was written" and stop —
+          naming neither the source, nor how far it had gone, nor
+          anything anyone could do. The answers now live on the
+          document rather than in a separate queue: the page with the
+          problem is the page with the answer.
+
+          On head only. See ``onHead``. */}
+      {onHead ? (
+        <DriftBanner
+          sources={staleSources}
+          onReview={() => driftedSource && onReviewDrift?.(driftedSource)}
+        />
+      ) : (
+        staleSources.length > 0 && (
+          /* Said, not silently dropped. A reader who knows a source
+             moved and finds no sign of it here would reasonably
+             conclude it had been dealt with. */
+          <p className="kb-doc-drift-elsewhere">
+            {staleSources[0].name} has moved since this version was written.
+            Bringing the document up to date happens from the current version
+            {doc.head_n ? ` (v${doc.head_n})` : ""}
+            {" — "}
+            <button type="button" className="kb-doc-drift-goto" onClick={() => setVersion(0)}>
+              go there
+            </button>
+            .
+          </p>
+        )
       )}
 
       {/* Comparing is a *state of the document*, not a panel under
           it. Showing both at once meant reading the current version,
           scrolling past it, and then reading two more copies of the
           same text. */}
-      {comparing ? (
+      {tracing ? (
+        provenance === null ? (
+          <div className="kb-hint">Tracing…</div>
+        ) : (
+          <ProvenanceView
+            provenance={provenance}
+            content={doc.content}
+            onOpenSource={onOpenArtifact}
+          />
+        )
+      ) : comparing ? (
         <ArtifactCompare
           client={client}
           artifactId={doc.id}
@@ -740,10 +1109,57 @@ function DocumentDetail({
           onClose={onCompareClosed}
         />
       ) : (
-        <div className="kb-doc-body markdown-body">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-            {doc.content || "_(empty)_"}
-          </ReactMarkdown>
+        /* Document left, its conversation right. Two columns rather
+           than one under the other: a comment is about a *passage*,
+           and a reader who has to scroll past the whole document to
+           read the answer — and scroll back to find the sentence it
+           was about — is doing the join by hand. */
+        <div className={commentsHidden ? "kb-doc-split kb-doc-split-wide" : "kb-doc-split"}>
+          <div className="kb-doc-body markdown-body" ref={bodyRef}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+              {doc.content || "_(empty)_"}
+            </ReactMarkdown>
+            {/* Where each passage came from, marked in the passage.
+                An overlay, not nodes spliced into the markdown above —
+                text React owns and something else mutates is a
+                reconciliation bug waiting for a re-render. */}
+            <DocumentCitations
+              client={client}
+              artifactId={doc.id}
+              sources={citedSources}
+              bodyRef={bodyRef}
+              version={doc.n ?? 0}
+              onOpenSource={onOpenArtifact}
+            />
+          </div>
+
+          {/* Commenting on the local copy is talking to the agent —
+              there is nobody else here — and the exchange stays on
+              this page. Right-click a selection to ask about that
+              passage, or use the composer for the document as a
+              whole; the reply streams into this rail either way.
+
+              ``onRevised`` refetches, because the answer to a comment
+              is usually a new version and the page under it is then
+              out of date with itself. */}
+          <div className="kb-doc-aside">
+            <DocumentComment
+              client={client}
+              artifactId={doc.id}
+              n={doc.n ?? 0}
+              bodyRef={bodyRef}
+              hidden={commentsHidden}
+              onHiddenChange={onCommentsHiddenChange}
+            onRevised={() => {
+              // Back to head: the new version is the answer, and
+              // staying pinned to the one that prompted it would show
+              // the reply beside the text it asked to change.
+                setVersion(0);
+                setDocNonce((v) => v + 1);
+                setLineageNonce((v) => v + 1);
+              }}
+            />
+          </div>
         </div>
       )}
 
@@ -822,13 +1238,21 @@ function LineageSection({
   onReviewed: () => void;
 }) {
   if (!lineage) return null;
-  const confirmed = lineage.sources.filter((s) => s.state === "confirmed");
-  const candidates = lineage.sources.filter((s) => s.state === "candidate");
+  // Defaulted, not assumed. A failed ``artifact_lineage`` answers with
+  // an error payload that carries no lists, and reading ``.filter`` off
+  // one threw inside render — which in React means the whole panel
+  // unmounts. A transient RPC failure blanked the page, document and
+  // all, with nothing on screen to say why.
+  const sources = lineage.sources ?? [];
+  const citations = lineage.citations ?? [];
+  const dependents = lineage.dependents ?? [];
+  const confirmed = sources.filter((s) => s.state === "confirmed");
+  const candidates = sources.filter((s) => s.state === "candidate");
   if (
     confirmed.length === 0 &&
     candidates.length === 0 &&
-    lineage.citations.length === 0 &&
-    lineage.dependents.length === 0
+    citations.length === 0 &&
+    dependents.length === 0
   ) {
     return null;
   }
@@ -839,26 +1263,22 @@ function LineageSection({
           <h3 className="kb-lineage-heading">Built on</h3>
           <ul className="kb-lineage-rows">
             {confirmed.map((s) => (
-              <li
+              <ConfirmedSourceRow
                 key={s.artifact_id}
-                className={s.is_stale ? "kb-row kb-row-stale" : "kb-row"}
-              >
-                <span className="kb-row-name">{s.name || s.artifact_id}</span>
-                <span className="kb-row-n">v{s.pinned_n}</span>
-                <span className="kb-row-note">
-                  {s.is_stale ? `source now at v${s.head_n}` : "up to date"}
-                </span>
-              </li>
+                client={client}
+                artifactId={artifactId}
+                row={s}
+              />
             ))}
           </ul>
         </section>
       )}
 
-      {lineage.citations.length > 0 && (
+      {citations.length > 0 && (
         <section className="kb-lineage">
           <h3 className="kb-lineage-heading">External sources</h3>
           <ul className="kb-lineage-rows">
-            {lineage.citations.map((url) => (
+            {citations.map((url) => (
               <li key={url} className="kb-row">
                 <a href={url} target="_blank" rel="noreferrer">
                   {url}
@@ -886,11 +1306,11 @@ function LineageSection({
         </section>
       )}
 
-      {lineage.dependents.length > 0 && (
+      {dependents.length > 0 && (
         <section className="kb-lineage">
           <h3 className="kb-lineage-heading">Depended on by</h3>
           <ul className="kb-lineage-rows">
-            {lineage.dependents.map((d) => (
+            {dependents.map((d) => (
               <li
                 key={d.artifact_id}
                 className={d.is_stale ? "kb-row kb-row-stale" : "kb-row"}
@@ -919,6 +1339,289 @@ function LineageSection({
  * re-reading the same source would otherwise re-capture it, and the
  * same judgement would be asked for again every session.
  */
+interface CandidateVerdict {
+  /** "source" | "not-a-source" | "unclear". */
+  recommendation: string;
+  reason: string;
+  error: string;
+}
+
+/** The agent's call, in the reviewer's words. */
+const VERDICT_LABEL: Record<string, string> = {
+  source: "The agent thinks this was a source",
+  "not-a-source": "The agent thinks this was not a source",
+  unclear: "The agent could not tell",
+};
+
+interface CandidateEvidence {
+  source_name: string;
+  source_n: number;
+  captured_at: string;
+  overlaps: CandidateOverlap[];
+  passages_touched: number;
+  total_passages: number;
+  unplaced: number;
+  error: string;
+}
+
+/**
+ * Which part of a source this document draws on.
+ *
+ * Shared by both halves of the lineage panel, because both were
+ * asking the reader to take a relationship on trust. "Built on Rate
+ * limiting v3" names a document and stops — it does not say which
+ * paragraph, so a reader who wants to check it re-reads both
+ * documents by hand. A captured read had the same problem plus a
+ * decision attached.
+ *
+ * Worked out once and kept on the edge. The comparison is every
+ * passage against every passage and the verdict is a model call, and
+ * neither side moves on its own — recomputing on every open charges
+ * twice for one answer, and a *verdict* recomputed can come back
+ * different, so a reviewer who reopens a row to think about it finds
+ * the recommendation changed under them.
+ */
+function SourceEvidenceBody({
+  client,
+  artifactId,
+  sourceId,
+  sourceName,
+  withVerdict,
+  onVerdict,
+}: {
+  client: IgniClient;
+  artifactId: string;
+  sourceId: string;
+  sourceName: string;
+  /** Confirmed sources are already decided; only candidates need a call. */
+  withVerdict: boolean;
+  onVerdict?: (verdict: CandidateVerdict | null) => void;
+}) {
+  const [evidence, setEvidence] = useState<CandidateEvidence | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [verdict, setVerdict] = useState<CandidateVerdict | null>(null);
+  const [thinking, setThinking] = useState(withVerdict);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    void client
+      .rpc<CandidateEvidence>("artifact_candidate_evidence", {
+        id: artifactId,
+        source_id: sourceId,
+      })
+      .then((r) => !cancelled && setEvidence(r ?? null))
+      .catch((e) => {
+        if (cancelled) return;
+        setEvidence({
+          source_name: "",
+          source_n: 0,
+          captured_at: "",
+          overlaps: [],
+          passages_touched: 0,
+          total_passages: 0,
+          unplaced: 0,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      })
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [client, artifactId, sourceId]);
+
+  // The agent answers, and the reviewer accepts or rejects the
+  // answer. That is the right way round: similarity says two
+  // paragraphs are about the same thing and cannot say which way the
+  // influence ran, so leaving the judgement to a score left the
+  // reviewer adjudicating a question the agent — which read both
+  // documents — is better placed to take a position on.
+  useEffect(() => {
+    if (!withVerdict) return;
+    let cancelled = false;
+    setThinking(true);
+    void client
+      .rpc<CandidateVerdict>("artifact_candidate_verdict", {
+        id: artifactId,
+        source_id: sourceId,
+      })
+      .then((r) => {
+        if (cancelled) return;
+        setVerdict(r ?? null);
+        onVerdict?.(r ?? null);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        const failed = {
+          recommendation: "unclear",
+          reason: "",
+          error: e instanceof Error ? e.message : String(e),
+        };
+        setVerdict(failed);
+        onVerdict?.(failed);
+      })
+      .finally(() => !cancelled && setThinking(false));
+    return () => {
+      cancelled = true;
+    };
+    // ``onVerdict`` is deliberately out: it is recreated every render
+    // by the parent, and depending on it would re-ask the model on
+    // every keystroke anywhere in the panel.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [withVerdict, client, artifactId, sourceId]);
+
+  return (
+    <div className="kb-cand-body">
+      {/* The verdict leads. The measurements under it are what it was
+          formed from, and what a reviewer checks it against. */}
+      {withVerdict && thinking && !verdict && (
+        <p className="kb-hint">The agent is reading both documents…</p>
+      )}
+      {verdict && !verdict.error && (
+        <div className={`kb-cand-verdict kb-cand-verdict-${verdict.recommendation}`}>
+          <strong>{VERDICT_LABEL[verdict.recommendation] ?? VERDICT_LABEL.unclear}</strong>
+          {verdict.reason && <span>{verdict.reason}</span>}
+          <span className="kb-cand-advisory">
+            A recommendation, not a decision — nothing is written until you press one of
+            the buttons above.
+          </span>
+        </div>
+      )}
+      {verdict?.error && (
+        <p className="kb-cand-verdict kb-cand-verdict-unclear">
+          <strong>No verdict.</strong>
+          <span>{verdict.error}</span>
+        </p>
+      )}
+
+      {loading && <p className="kb-hint">Comparing the two documents…</p>}
+      {evidence?.error && <p className="msg-error">{evidence.error}</p>}
+
+      {evidence && !evidence.error && (
+        <>
+          {evidence.overlaps.length === 0 ? (
+            /* The most useful answer there is, and the one a bare row
+               could never give. */
+            <p className="kb-cand-none">
+              Nothing in this document resembles it closely enough to measure.
+              {evidence.unplaced > 0
+                ? ` ${evidence.unplaced} passage${evidence.unplaced === 1 ? "" : "s"} could not be compared yet — reopen this in a moment before deciding.`
+                : withVerdict
+                  ? " On this evidence it was read, not used."
+                  : " The link was recorded, but the texts no longer show it."}
+            </p>
+          ) : (
+            <>
+              <p className="kb-cand-count">
+                {evidence.passages_touched} of {evidence.total_passages} passage
+                {evidence.total_passages === 1 ? "" : "s"} here resemble something in it.
+                Matched by meaning, not recorded — each is a lead to check.
+              </p>
+              <ul className="kb-cand-overlaps">
+                {evidence.overlaps.map((o) => (
+                  <li key={`${o.here_line_from}-${o.there_line_from}`}>
+                    <div className="kb-cand-pair">
+                      <span className="kb-cand-side">
+                        <span className="kb-cand-where">
+                          here · L{o.here_line_from}
+                          {o.here_line_to !== o.here_line_from ? `–${o.here_line_to}` : ""}
+                        </span>
+                        {/* Rendered inline, not raw: printed literally
+                            the evidence reads as "# Client retry guide
+                            … `RateLimit-Remaining`" — markup where the
+                            reviewer is trying to judge prose. */}
+                        <MarkdownInline className="kb-cand-text" text={o.here_text} limit={400} />
+                      </span>
+                      <span className="kb-cand-side">
+                        <span className="kb-cand-where">
+                          {sourceName} · L{o.there_line_from}
+                          {o.there_line_to !== o.there_line_from
+                            ? `–${o.there_line_to}`
+                            : ""}
+                        </span>
+                        <MarkdownInline className="kb-cand-text" text={o.there_text} limit={400} />
+                      </span>
+                    </div>
+                    <span className="kb-cand-strength">
+                      {o.strength} · {o.similarity.toFixed(2)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A confirmed source, with which part of it this document draws on.
+ *
+ * "Built on Rate limiting v3" was the whole row. It names the
+ * dependency and says nothing about where it bites, which is the only
+ * question a reader has when that source moves.
+ */
+function ConfirmedSourceRow({
+  client,
+  artifactId,
+  row,
+}: {
+  client: IgniClient;
+  artifactId: string;
+  row: ArtifactLineageRow;
+}) {
+  const [open, setOpen] = useState(false);
+  const name = row.name || row.artifact_id;
+
+  return (
+    <li className={row.is_stale ? "kb-row kb-row-source kb-row-stale" : "kb-row kb-row-source"}>
+      <div className="kb-cand-head">
+        <button
+          type="button"
+          className="kb-cand-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((on) => !on)}
+        >
+          <span className={open ? "kb-cand-caret kb-cand-caret-open" : "kb-cand-caret"}>
+            ›
+          </span>
+          <span className="kb-row-name">{name}</span>
+          <span className="kb-row-n">v{row.pinned_n}</span>
+          <span className="kb-row-note">
+            {row.is_stale ? `source now at v${row.head_n}` : "up to date"}
+          </span>
+        </button>
+      </div>
+      {open && (
+        <SourceEvidenceBody
+          client={client}
+          artifactId={artifactId}
+          sourceId={row.artifact_id}
+          sourceName={name}
+          withVerdict={false}
+        />
+      )}
+    </li>
+  );
+}
+
+/**
+ * A captured read, with enough to decide about it.
+ *
+ * This row used to be a name, a version number, Confirm and Not a
+ * source — the decision with none of what it rests on. Confirm is not
+ * a small button: it makes the edge real, and from then on this
+ * document is reported as out of date every time that one moves.
+ * Being asked to press it knowing only that *something* was read is
+ * how a reviewer learns to press whichever is on the left.
+ *
+ * So the agent's call is marked on the button it points at. It is a
+ * *proposal*, not a default — nothing is pre-pressed and nothing
+ * happens on a timer, because an accept-by-doing-nothing would make
+ * the model's opinion into the record without anybody agreeing to it.
+ */
 function CandidateRow({
   client,
   artifactId,
@@ -931,8 +1634,12 @@ function CandidateRow({
   onReviewed: () => void;
 }) {
   const [busy, setBusy] = useState("");
+  const [open, setOpen] = useState(false);
+  const [proposed, setProposed] = useState("");
 
-  const verdict = async (
+  // ``decide``, not ``verdict``: the agent gives a verdict, this
+  // records the reviewer's decision about it.
+  const decide = async (
     method: "artifact_confirm_source" | "artifact_dismiss_source",
   ) => {
     setBusy(method);
@@ -947,26 +1654,67 @@ function CandidateRow({
     }
   };
 
+  const name = row.name || row.artifact_id;
+  const confirmProposed = proposed === "source";
+  const dismissProposed = proposed === "not-a-source";
+
   return (
     <li className="kb-row kb-row-candidate">
-      <span className="kb-row-name">{row.name || row.artifact_id}</span>
-      <span className="kb-row-n">v{row.pinned_n}</span>
-      <button
-        className="btn btn-xs"
-        disabled={!!busy}
-        title="This document really was built on that one"
-        onClick={() => void verdict("artifact_confirm_source")}
-      >
-        {busy === "artifact_confirm_source" ? "…" : "Confirm"}
-      </button>
-      <button
-        className="btn btn-xs btn-quiet"
-        disabled={!!busy}
-        title="Read at the time, but not a source"
-        onClick={() => void verdict("artifact_dismiss_source")}
-      >
-        {busy === "artifact_dismiss_source" ? "…" : "Not a source"}
-      </button>
+      <div className="kb-cand-head">
+        <button
+          type="button"
+          className="kb-cand-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((on) => !on)}
+        >
+          <span className={open ? "kb-cand-caret kb-cand-caret-open" : "kb-cand-caret"}>
+            ›
+          </span>
+          <span className="kb-row-name">{name}</span>
+          <span className="kb-row-n">v{row.pinned_n}</span>
+        </button>
+        <button
+          className={confirmProposed ? "btn btn-xs btn-primary" : "btn btn-xs"}
+          disabled={!!busy}
+          title={
+            confirmProposed
+              ? "The agent's recommendation — warn me when this source changes"
+              : "This document really was built on that one — warn me when it changes"
+          }
+          onClick={() => void decide("artifact_confirm_source")}
+        >
+          {busy === "artifact_confirm_source" ? "…" : "Confirm"}
+        </button>
+        <button
+          className={dismissProposed ? "btn btn-xs btn-primary" : "btn btn-xs btn-quiet"}
+          disabled={!!busy}
+          title={
+            dismissProposed
+              ? "The agent's recommendation — read at the time, but not a source"
+              : "Read at the time, but not a source"
+          }
+          onClick={() => void decide("artifact_dismiss_source")}
+        >
+          {busy === "artifact_dismiss_source" ? "…" : "Not a source"}
+        </button>
+        {proposed && (
+          /* Named, so the highlight reads as somebody's suggestion
+             rather than as the button that was always going to be
+             pressed. */
+          <span className="kb-cand-proposed">agent's pick</span>
+        )}
+      </div>
+
+      {open && (
+        <SourceEvidenceBody
+          client={client}
+          artifactId={artifactId}
+          sourceId={row.artifact_id}
+          sourceName={name}
+          withVerdict
+          onVerdict={(v) => setProposed(v && !v.error ? v.recommendation : "")}
+        />
+      )}
     </li>
   );
 }

@@ -132,6 +132,212 @@ class ArtifactStaleRow(BaseModel):
     versions_behind: int = 0
 
 
+class ProvenanceMatchRow(BaseModel):
+    """One source passage a passage of this document resembles."""
+
+    source_artifact_id: str = ""
+    source_name: str = ""
+    source_n: int = 0
+    source_line_from: int = 0
+    source_line_to: int = 0
+    source_text: str = ""
+    #: Cosine similarity. Surfaced so the UI can say how sure this is
+    #: rather than drawing every line with the same weight — and shown
+    #: outright beside the label, because "close" is an opinion and
+    #: 0.78 is the thing the opinion was formed from.
+    similarity: float = 0.0
+    #: That same number in words. Banded here rather than in the
+    #: browser: the cuts are an argument about what the measurements
+    #: in :mod:`ember_code.core.artifacts.provenance` support, and two
+    #: copies of an argument is one copy that goes stale.
+    strength: str = ""
+    #: The source text this resembles has changed since it was pinned.
+    changed: bool = False
+
+
+class ProvenancePassageRow(BaseModel):
+    """One passage of the document, and what it traces to."""
+
+    chunk_id: str = ""
+    line_from: int = 0
+    line_to: int = 0
+    text: str = ""
+    matches: list[ProvenanceMatchRow] = Field(default_factory=list)
+    affected: bool = False
+
+
+class ArtifactProvenance(BaseModel):
+    """Passage-level provenance for one version of one document.
+
+    ``inferred`` is always true and is sent anyway: the UI has to say
+    so. Nothing records which passage came from which, so these are
+    resemblances between passages, and a line drawn with the
+    confidence of a recorded fact would be a lie about what is known.
+    """
+
+    artifact_id: str = ""
+    n: int = 0
+    passages: list[ProvenancePassageRow] = Field(default_factory=list)
+    #: Sources considered, so the UI can colour by source.
+    sources: list[str] = Field(default_factory=list)
+    #: Passages whose source text has since changed.
+    affected_count: int = 0
+    inferred: bool = True
+    #: Chunks that carry no vector yet, so cannot be placed. Non-zero
+    #: means the answer is incomplete and says which way.
+    unplaced: int = 0
+    error: str = ""
+
+
+class CandidateOverlapRow(BaseModel):
+    """One place this document and a captured read say the same thing."""
+
+    here_text: str = ""
+    here_line_from: int = 0
+    here_line_to: int = 0
+    there_text: str = ""
+    there_line_from: int = 0
+    there_line_to: int = 0
+    similarity: float = 0.0
+    strength: str = ""
+
+
+class ArtifactCandidateEvidence(BaseModel):
+    """What there is to go on when deciding whether a read was a source.
+
+    A captured read is a name and a version number, which is not
+    enough to accept or reject it — the reviewer is being asked
+    whether this document was built on that one and given nothing
+    about either. This is the evidence: where the two texts say
+    similar things, how similar, and how much of this document is
+    involved at all.
+
+    It is the same passage matching the trace view uses, pointed at an
+    *unconfirmed* source on purpose. Refusing to guess there was right
+    — a guess refining a guess produces two stacked and one line on
+    screen — but here the guess is the question being asked, and
+    "nothing in this document resembles it" is the most useful answer
+    a reviewer can get.
+    """
+
+    artifact_id: str = ""
+    source_artifact_id: str = ""
+    source_name: str = ""
+    #: The version that was read, which is what the decision is about.
+    source_n: int = 0
+    #: When the read was captured.
+    captured_at: str = ""
+    overlaps: list[CandidateOverlapRow] = Field(default_factory=list)
+    #: Passages of this document that resemble anything there, out of
+    #: how many. "2 of 14" is a different answer from "11 of 14".
+    passages_touched: int = 0
+    total_passages: int = 0
+    #: Chunks with no vector yet. Non-zero means the answer is
+    #: incomplete and says which way.
+    unplaced: int = 0
+    error: str = ""
+
+
+class ArtifactCandidateVerdict(BaseModel):
+    """The agent's read on whether a captured read was a source.
+
+    Advisory, and sent as such. Nothing here writes an edge — the two
+    buttons still do, and they still mean what they meant. What
+    changes is that the reviewer is now accepting or rejecting a
+    recommendation with reasons, instead of adjudicating a similarity
+    score on their own.
+    """
+
+    #: ``source`` | ``not-a-source`` | ``unclear``.
+    recommendation: str = "unclear"
+    #: Three sentences at most, naming what carries the resemblance.
+    reason: str = ""
+    error: str = ""
+
+
+class DriftAffectedRow(BaseModel):
+    """A passage of the dependent that leans on something that moved."""
+
+    text: str = ""
+    line_from: int = 0
+    line_to: int = 0
+    source_text: str = ""
+    strength: str = ""
+
+
+class ArtifactDrift(BaseModel):
+    """How far a document has drifted from what it was built on.
+
+    Named for the branch situation it describes rather than for
+    staleness: the version chain of a document is not a dependency,
+    and a revision is a commit on the branch you are working on. This
+    is about the *other* branch having moved.
+    """
+
+    dependent_artifact_id: str = ""
+    dependent_name: str = ""
+    dependent_n: int = 0
+    source_artifact_id: str = ""
+    source_name: str = ""
+    #: The merge base — the version this was written against.
+    pinned_n: int = 0
+    #: Where the source is now.
+    source_head_n: int = 0
+    versions_behind: int = 0
+    #: One line, in the terms the reader already has.
+    summary: str = ""
+    #: Passages of the dependent that resemble the changed parts.
+    affected: list[DriftAffectedRow] = Field(default_factory=list)
+    #: Whether the two have actually parted company. False means the
+    #: document is pinned to the source's current version and there is
+    #: nothing to decide.
+    has_diverged: bool = False
+    error: str = ""
+
+
+class ArtifactDriftApplied(BaseModel):
+    """The outcome of bringing a document up to date with its source.
+
+    Two halves, and the second is the one that is easy to forget: a
+    version is written *and* the ``DERIVED_FROM`` edge is re-pinned.
+    ``pinned_to`` is reported so the caller can say which, rather than
+    leaving the reader to check whether the warning will return.
+    """
+
+    ok: bool = False
+    #: The version that was written, when one was.
+    n: int = 0
+    #: Where the edge now points.
+    pinned_to: int = 0
+    #: True when the text was already correct and only the pin moved.
+    #: A real outcome, not a failure — and not worth writing an
+    #: identical version to record.
+    text_unchanged: bool = False
+    message: str = ""
+    error: str = ""
+
+
+class ArtifactCommentPosted(BaseModel):
+    """A comment written here, and what to ask the agent.
+
+    ``prompt`` is handed back rather than sent from here so the client
+    can post it as an ordinary chat turn. That keeps what the agent
+    was told on screen next to what it did — an instruction assembled
+    out of sight is one nobody can check.
+    """
+
+    ok: bool = False
+    comment_id: str = ""
+    thread_id: str = ""
+    #: The turn text. Empty when ``ok`` is false.
+    prompt: str = ""
+    #: How many earlier comments were folded into ``prompt`` as
+    #: context, so the UI can say "answering with 4 earlier comments
+    #: in view" rather than leaving it a mystery.
+    history_count: int = 0
+    message: str = ""
+
+
 class ArtifactCommentRow(BaseModel):
     """One comment, as the review screen needs it.
 
@@ -170,9 +376,20 @@ class ArtifactCommentResolved(BaseModel):
 
 
 class ArtifactExportResult(BaseModel):
-    """Where a local export landed."""
+    """Where a local export landed, and as what."""
 
     path: str = ""
+    #: ``html``, ``md`` or ``pdf``. Echoed back rather than assumed by
+    #: the caller: the request names a format, and what actually got
+    #: written is the answer to a different question.
+    format: str = ""
+    error: str = ""
+
+
+class ArtifactOpenResult(BaseModel):
+    """Whether the OS took the file off our hands."""
+
+    opened: bool = False
     error: str = ""
 
 

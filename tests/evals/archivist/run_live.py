@@ -65,7 +65,6 @@ async def build_agent(settings):
     from ember_code.core.agents.schemas import AgentBuildContext
     from ember_code.core.artifacts.index import ArtifactIndex
     from ember_code.core.session.artifact_ops import SessionArtifactManager
-
     from evals.archivist.setup import build_seeded_index
 
     index: ArtifactIndex = await build_seeded_index(REPO_ROOT)

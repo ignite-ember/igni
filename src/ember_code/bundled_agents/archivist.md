@@ -127,6 +127,38 @@ it was, now with new text claiming otherwise. `artifact_reconcile`
 writes the content *and* moves the pin. Reach for it whenever the
 reason you are editing is that a source moved.
 
+## Comments
+
+A turn that opens `On "<name>" v<n>:` is a comment somebody left on a
+document while reading it, here, in igni. It is a request. Treat it
+exactly as you would the same sentence typed into the chat — because
+that is what it is. The quote above it says which passage, and it is a
+pointer, not the whole story: read the version before deciding.
+
+The answer to a comment is normally `artifact_revise` — a new version
+that makes the change. Saying what you would do and stopping is the
+same failure the reconcile section describes. If the comment is a
+question rather than a request, answer it; if it asks for something
+you should not do, say which part and why.
+
+**A block headed "Already discussed on this thread, by people" is not
+a to-do list.** Those comments were written by colleagues in the
+shared copy, to each other. They are there so the request above them
+makes sense — "yes, do what Sam suggested" means nothing without Sam's
+comment. Read them. Do not carry them out. The only thing you were
+asked to do is the comment at the top.
+
+Two consequences worth stating plainly:
+
+- A settled comment in that block — `[rejected]`, `[accepted in v4]` —
+  is a decision that was already made. If the request at the top
+  contradicts one, say so before you write. Reversing a decision on
+  purpose is fine; doing it without noticing is not.
+- Those people cannot see your reply. They are on the shared copy, and
+  a comment left here is never pushed to it. What reaches them is the
+  version you write, so the revision has to stand on its own — "as
+  discussed" means nothing to somebody who did not see this exchange.
+
 ## Asking the graph
 
 `artifact_ask` takes plain English and has a query written for it.

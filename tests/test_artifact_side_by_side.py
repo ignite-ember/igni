@@ -218,7 +218,10 @@ class TestWordLevelChanges:
             set([(i, k) for i, k in enumerate(kinds)])
         )
         # No two adjacent parts share a flag.
-        assert all(a.changed != b.changed for a, b in zip(row.right_parts, row.right_parts[1:]))
+        assert all(
+            a.changed != b.changed
+            for a, b in zip(row.right_parts, row.right_parts[1:], strict=False)
+        )
 
     def test_an_added_passage_has_no_parts(self):
         # Nothing to compare it against on the other side. A blank

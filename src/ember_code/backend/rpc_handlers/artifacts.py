@@ -89,8 +89,49 @@ class ArtifactRpcHandler(RpcHandler):
     @rpc(RpcMethod.ARTIFACT_EXPORT)
     def artifact_export(self, args: dict) -> Any:
         return self._ctx.backend.artifact_export(
-            args["id"], int(args.get("version", 0)), args.get("destination", "")
+            args["id"],
+            int(args.get("version", 0)),
+            args.get("destination", ""),
+            args.get("format", "html"),
         )
+
+    @rpc(RpcMethod.ARTIFACT_DRIFT_APPLY)
+    def artifact_drift_apply(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_drift_apply(args["id"], args["source_id"])
+
+    @rpc(RpcMethod.ARTIFACT_DRIFT)
+    def artifact_drift(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_drift(args["id"], args["source_id"])
+
+    @rpc(RpcMethod.ARTIFACT_PROVENANCE)
+    def artifact_provenance(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_provenance(args["id"], int(args.get("n", 0)))
+
+    @rpc(RpcMethod.ARTIFACT_CANDIDATE_EVIDENCE)
+    def artifact_candidate_evidence(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_candidate_evidence(args["id"], args["source_id"])
+
+    @rpc(RpcMethod.ARTIFACT_CANDIDATE_VERDICT)
+    def artifact_candidate_verdict(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_candidate_verdict(args["id"], args["source_id"])
+
+    @rpc(RpcMethod.ARTIFACT_COMMENT)
+    def artifact_comment(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_comment(
+            args["id"],
+            int(args.get("n", 0)),
+            args.get("body", ""),
+            args.get("quote", ""),
+            int(args.get("quote_start", -1)),
+            int(args.get("quote_end", -1)),
+            args.get("thread_id", ""),
+            args.get("parent_id", ""),
+            args.get("origin", "local"),
+        )
+
+    @rpc(RpcMethod.ARTIFACT_OPEN_EXPORT)
+    def artifact_open_export(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_open_export(args["path"])
 
     @rpc(RpcMethod.ARTIFACT_SHARE)
     def artifact_share(self, args: dict) -> Any:

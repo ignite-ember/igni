@@ -300,6 +300,34 @@ class CommentStatus(str, Enum):
     RESOLVED = "resolved"
 
 
+class CommentOrigin(str, Enum):
+    """Where a comment was written, and therefore who it is addressed to.
+
+    Not a preference, and not a field anybody sets by hand: it follows
+    from where the person was standing when they wrote it. Locally the
+    agent is the only other party in the room, so a comment is an
+    instruction to it. On the web the agent is not present at all, so
+    a comment is a remark to another person.
+
+    Deriving it rather than asking is the point. A "send this to the
+    AI?" checkbox would put the question to the one person who has
+    never needed to think about it — they already know who they are
+    talking to, because they can see who is there.
+    """
+
+    #: Written in igni, against the local copy. An instruction.
+    LOCAL = "local"
+    #: Written in the hosted app, or pulled down from it. A remark
+    #: between people, which the agent may read as history and must
+    #: not carry out.
+    WEB = "web"
+    #: The agent's own answer, recorded so the thread is a transcript
+    #: rather than a list of one side's turns. Never an instruction —
+    #: an agent handed its own previous reply as a request would set
+    #: about doing what it has already done.
+    AGENT = "agent"
+
+
 class Comment(BaseModel):
     """A comment on one version of a document, projected into the graph.
 
@@ -333,10 +361,27 @@ class Comment(BaseModel):
     resolved_in_n: int | None = None
     author: str = ""
     at: str = ""
+    #: Defaults to ``WEB`` because every comment that predates this
+    #: field arrived from the server, and a projected row with no
+    #: origin recorded is one of those.
+    origin: CommentOrigin = CommentOrigin.WEB
 
     @property
     def needs_attention(self) -> bool:
         return self.status is CommentStatus.OPEN
+
+    @property
+    def is_instruction(self) -> bool:
+        """Whether the agent should act on this, rather than read it.
+
+        The load-bearing distinction in the whole comment model. A
+        pulled-down thread is context that makes the local comment
+        legible — "yes, do what Sam suggested" means nothing without
+        Sam's comment above it — but replaying six months of other
+        people's remarks as a backlog of commands is the failure this
+        property exists to prevent.
+        """
+        return self.origin is CommentOrigin.LOCAL
 
     @property
     def is_suggestion(self) -> bool:

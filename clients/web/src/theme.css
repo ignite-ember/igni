@@ -4369,18 +4369,61 @@ button {
   border-bottom: 1px solid var(--border-soft);
 }
 
+/* The scrolling element, full width, so the scrollbar is where a
+   scrollbar belongs: at the right edge of the window. It used to be
+   the measure as well, which put the bar against the text — a rail
+   floating in the middle of the page that reads as belonging to
+   whatever it happens to be beside. */
 .page-body {
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 16px 18px;
   font-size: 13.5px;
-  /* Wider than the drawer's 620px, but not the full width of a
-     27-inch display — these are lists and forms, and a line of
-     metadata stretched across a metre reads worse than it did in
-     the modal. */
+}
+
+/* The measure. Wider than the drawer's 620px, but not the full width
+   of a 27-inch display — these are lists and forms, and a line of
+   metadata stretched across a metre reads worse than it did in the
+   modal. */
+.page-measure {
+  padding: 16px 18px;
   width: min(900px, 100%);
   margin: 0 auto;
+}
+
+/* Comparing is the exception: two columns of text where everything
+   else on the page is one, so one measure's worth of room gives each
+   side half of it. It takes the width by widening the centred column
+   rather than by overflowing it — an element wider than its scroll
+   container scrolls the page sideways, which is the one thing a diff
+   must never do. */
+.page-measure:has(.kb-doc-comparing) {
+  width: min(1500px, 100%);
+}
+
+/* Tracing is the same bargain as comparing: a document beside the
+   sources each of its passages draws on is two columns where the rest
+   of the page is one. Narrower than the diff, because only one of the
+   two columns is prose. */
+.page-measure:has(.kb-doc-tracing) {
+  width: min(1240px, 100%);
+}
+
+/* And so is reading, now that the conversation sits beside the text.
+   Without this the rail takes its 24rem out of the 900px measure and
+   leaves the document a 19-em column — narrower than the prose it is
+   setting, which is the one thing a reading view cannot be. */
+.page-measure:has(.kb-doc-reading) {
+  width: min(1180px, 100%);
+}
+
+/* …and gives it back when the rail is put away. The extra 280px is
+   the rail's, borrowed so the document does not pay for it; keeping
+   the page stretched with nothing in the second column leaves the
+   prose against the left edge of a void, which is a worse read than
+   the one the widening was protecting. */
+.page-measure:has(.kb-doc-reading .doc-rail-stowed) {
+  width: min(900px, 100%);
 }
 
 .drawer {
@@ -7597,6 +7640,44 @@ button {
   margin-left: auto;
 }
 
+/* ── How to look at this document ─────────────────────────────────
+   The ways of *viewing* it, beside the menu of things you can do to
+   it. Quiet until one is on: these sit next to the document's name,
+   and two filled buttons up there would read as the heading rather
+   than as controls under it. The lit state is the point — it is the
+   page's standing answer to "why am I looking at a diff?", which is
+   the thing a menu entry could never give. */
+.doc-views {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.doc-view {
+  height: 23px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 5px);
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.doc-view:hover {
+  background: var(--bg-raised);
+  color: var(--fg);
+}
+
+.doc-view.is-on {
+  border-color: var(--border-soft);
+  background: var(--bg-inset);
+  color: var(--fg);
+}
+
 .kb-head-actions .btn-sm {
   height: 23px;
   display: inline-flex;
@@ -8092,15 +8173,6 @@ button {
    of pushing the version number off the panel — the version number
    is the part the reader came for. */
 
-.kb-stale-banner {
-  margin: 14px 0 0;
-  padding: 10px 12px;
-  border: 1px solid var(--warning);
-  border-radius: 6px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--fg);
-}
 
 .kb-stale-banner ul {
   margin: 6px 0 0;
@@ -9917,14 +9989,287 @@ button {
   white-space: nowrap;
 }
 
+/* ── Drift, on the document itself ───────────────────────────────────
+   Where we branched, what landed there, and what it means here. All
+   of it used to live in a separate queue, so the page with the
+   problem did not have the answer. */
+
+.kb-drift-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding: 12px 14px;
+  border: 1px solid var(--warning);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warning) 7%, transparent);
+}
+
+.kb-drift-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+  font-size: 12.5px;
+}
+
+.kb-drift-banner-detail {
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+
+.kb-drift-banner-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.kb-drift-comparison {
+  margin-bottom: 20px;
+}
+
+/* The rail column holds the drift panel above the comment threads. */
+.kb-doc-aside {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.kb-drift-panel {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+
+.kb-drift-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.kb-drift-lead {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+
+/* Each row leads back to the sentence it names. */
+.kb-drift-affected li > button {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-left: 2px solid var(--warning);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kb-drift-affected li > button:hover,
+.kb-drift-affected li > button:focus-visible {
+  background: color-mix(in srgb, var(--warning) 9%, transparent);
+  outline: none;
+}
+
+/* Sentences that lean on what moved, marked in the document. Amber,
+   and under its own highlight name so the comment marks survive
+   alongside them. */
+::highlight(doc-drift-mark) {
+  text-decoration: underline;
+  text-decoration-color: var(--warning);
+  text-decoration-style: wavy;
+  text-underline-offset: 3px;
+}
+
+/* The one whose row is hovered. */
+::highlight(doc-drift-lit) {
+  background: color-mix(in srgb, var(--warning) 26%, transparent);
+}
+
+/* ── The upstream-change review, on its own page ─────────────────────
+   Reached by a crumb from the document. Everything needed to check
+   the answer, in the order somebody checks it: where we branched,
+   what landed, which of our sentences lean on it, and only then what
+   the agent makes of it. */
+
+.drift-page {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+.drift-page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.drift-page-where {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--fg);
+}
+
+.drift-page-source {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-blue-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.drift-page-source:hover {
+  text-decoration: underline;
+}
+
+.drift-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.drift-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.drift-section-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.drift-page-affected {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 12px;
+  border-left: 2px solid var(--warning);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.drift-page-affected li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+/* What the update did. Stated rather than left to the version list:
+   the two halves — a new version, and the link moved — are one
+   action, and reporting only the first leaves the reader to check
+   whether the warning will come back. */
+.drift-applied {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--accent-green, var(--success));
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--success) 8%, transparent);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.drift-applied span {
+  color: var(--fg-muted);
+}
+
+/* ── Drift, told the way branches work ───────────────────────────────
+   Which of our sentences lean on the parts that moved upstream, and
+   what the agent makes of it. */
+
+.kb-drift-affected {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.kb-drift-affected li {
+  display: flex;
+  min-width: 0;
+}
+
+.kb-drift-where {
+  flex: 0 0 auto;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+.kb-drift-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--fg);
+  overflow-wrap: break-word;
+}
+
+/* How sure the match is, said in words. These are leads, not
+   findings, and a row that looks equally confident about all of them
+   is the view overstating what it knows. */
+.kb-drift-strength {
+  flex: 0 0 auto;
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+
+.kb-drift-verdict {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--accent-blue, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.kb-drift-waiting {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  font-style: italic;
+}
+
+/* Holds the same comparison the version picker renders, so it brings
+   no type of its own — it used to be a ``<pre>`` of unified-diff
+   output, which is the terminal paste the comparison view exists to
+   replace. */
 .kb-stale-diff {
   margin: 0;
   padding: 10px;
-  max-height: 300px;
-  overflow: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  line-height: 1.5;
   background: var(--bg-inset);
   border-top: 1px solid var(--border-soft);
 }
@@ -10015,8 +10360,69 @@ button {
   padding: 8px 0 48px;
 }
 
+/* A refetch in flight over a document that is still readable. Dimmed
+   rather than replaced: the reader keeps their place, and the text
+   changing under them is announced rather than sprung. */
+.kb-doc-reloading .kb-doc-body,
+.kb-doc-reloading .kb-doc-head {
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+/* Prose has a measure; a comparison has two side by side, and so do
+   a traced document and one being discussed. In each the article
+   takes the whole column the page gives it, and the measure is set
+   on the prose column inside instead. */
+.kb-doc-comparing,
+.kb-doc-tracing,
+.kb-doc-reading {
+  max-width: none;
+}
+
+/* The measure moves here — the article is now a two-column frame, so
+   capping *it* would cap the pair rather than the prose. */
+.kb-doc-split > .kb-doc-body {
+  max-width: 45rem;
+  /* The citation overlay is positioned against this box. */
+  position: relative;
+}
+
 .kb-doc-head {
   margin-bottom: 28px;
+}
+
+/* The document's name and the things you can do to it, on one line.
+   The actions used to live in the page header, which meant the page
+   said the name once at the top and the article said it again four
+   lines below — and the actions sat against the window rather than
+   against what they act on. */
+.kb-doc-head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  /* Wraps rather than squeezing: the remove confirmation swaps the
+     menu for a question and two buttons, which will not share a line
+     with a long title. */
+  flex-wrap: wrap;
+}
+
+/* The title takes whatever room is left over; the actions keep their
+   size. The basis is the title's own width rather than a fraction of
+   the row — at 60% the remove confirmation ("Remove this document?"
+   and two buttons) overshot by two pixels and wrapped onto a line of
+   its own, for a title fifteen characters long. */
+.kb-doc-head-row .kb-doc-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.kb-doc-head-row .kb-head-actions {
+  flex: 0 0 auto;
+  /* Nudged onto the title's cap-height. Aligning the boxes puts a
+     23px button against a 25px line and reads as half a pixel high. */
+  margin-top: 2px;
 }
 
 .kb-doc-title {
@@ -10044,6 +10450,143 @@ button {
   font-size: 11px;
 }
 
+/* ── Inline citations ─────────────────────────────────────────────
+   Markers live in a layer over the text, not in it. The layer takes
+   no space and catches no clicks; each marker turns pointer events
+   back on for itself. Nothing is spliced into the markdown React
+   rendered — text React owns and something else mutates is a
+   reconciliation bug waiting for a re-render. */
+.doc-cites {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* In the margin, aligned to the line the passage ends on — not at
+   the character it ends at. A chunk is cut to a character budget, so
+   a passage routinely ends mid-sentence, and a marker placed exactly
+   there sits on top of the next letter. */
+.doc-cite {
+  position: absolute;
+  left: 100%;
+  margin-left: 8px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  pointer-events: auto;
+  border: 1px solid hsl(var(--cite-hue) 45% 45% / 0.5);
+  border-radius: 4px;
+  background: hsl(var(--cite-hue) 45% 45% / 0.14);
+  color: hsl(var(--cite-hue) 55% 62%);
+  font-size: 9.5px;
+  line-height: 13px;
+  font-variant-numeric: tabular-nums;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.doc-cite:hover,
+.doc-cite-open {
+  background: hsl(var(--cite-hue) 45% 45% / 0.28);
+  color: hsl(var(--cite-hue) 60% 72%);
+}
+
+/* Catches the click that dismisses the card. Under the card, over
+   everything else — including the markers, so the next click closes
+   rather than opening a second one. */
+.doc-cite-backdrop {
+  position: fixed;
+  inset: 0;
+  pointer-events: auto;
+  z-index: 40;
+}
+
+.doc-cite-card {
+  position: absolute;
+  right: 0;
+  z-index: 41;
+  width: min(23rem, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 11px 13px;
+  pointer-events: auto;
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid hsl(var(--cite-hue) 45% 45%);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.28);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.doc-cite-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.doc-cite-number {
+  flex: none;
+  color: hsl(var(--cite-hue) 55% 62%);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.doc-cite-source {
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent-blue-text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.doc-cite-source:hover {
+  text-decoration: underline;
+}
+
+.doc-cite-where {
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.doc-cite-quote {
+  margin: 0;
+  padding-left: 9px;
+  max-height: 10rem;
+  overflow-y: auto;
+  overflow-wrap: break-word;
+  border-left: 2px solid var(--border);
+  color: var(--fg);
+}
+
+/* On every card. These are resemblances between passages, not a
+   record of what the author read. */
+.doc-cite-foot {
+  margin: 0;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+/* No margin to put them in: back inside the column, at the right
+   edge, where a full line may pass under them. The narrow layout is
+   already a compromise. */
+@media (max-width: 64rem) {
+  .doc-cite {
+    left: auto;
+    right: 0;
+    margin-left: 0;
+  }
+}
+
+::highlight(doc-cite-lit) {
+  background: hsl(210 45% 50% / 0.16);
+}
+
 .kb-doc-body {
   font-size: 14.5px;
   line-height: 1.65;
@@ -10058,10 +10601,20 @@ button {
   margin-bottom: 0;
 }
 
+/* Headings, code, tables and quotes are shared with the trace view:
+   it shows the same document, so a table that has rules there must
+   have them here. Rendering the markdown but leaving it to browser
+   defaults was the other half of "it does not render" — borderless
+   tables and code with no box read as unrendered even though the
+   parse was right. */
 .kb-doc-body h1,
 .kb-doc-body h2,
 .kb-doc-body h3,
-.kb-doc-body h4 {
+.kb-doc-body h4,
+.prov-passage h1,
+.prov-passage h2,
+.prov-passage h3,
+.prov-passage h4 {
   margin: 1.9em 0 0.5em;
   font-weight: 600;
   line-height: 1.35;
@@ -10071,10 +10624,14 @@ button {
   color: var(--fg-muted);
 }
 
-.kb-doc-body h1 { font-size: 1.12em; }
-.kb-doc-body h2 { font-size: 1.06em; }
+.kb-doc-body h1,
+.prov-passage h1 { font-size: 1.12em; }
+.kb-doc-body h2,
+.prov-passage h2 { font-size: 1.06em; }
 .kb-doc-body h3,
-.kb-doc-body h4 { font-size: 1em; }
+.kb-doc-body h4,
+.prov-passage h3,
+.prov-passage h4 { font-size: 1em; }
 
 .kb-doc-body p,
 .kb-doc-body ul,
@@ -10082,11 +10639,14 @@ button {
   margin: 0 0 1em;
 }
 
-.kb-doc-body li {
+.kb-doc-body li,
+.prov-passage li {
   margin-bottom: 0.3em;
 }
 
-.kb-doc-body pre {
+.kb-doc-body pre,
+.prov-passage pre,
+.prov-card-quote pre {
   margin: 0 0 1.2em;
   padding: 12px 14px;
   overflow-x: auto;
@@ -10097,21 +10657,26 @@ button {
   border-radius: 6px;
 }
 
-.kb-doc-body :not(pre) > code {
+.kb-doc-body :not(pre) > code,
+.prov-passage :not(pre) > code,
+.prov-card-quote :not(pre) > code {
   padding: 0.1em 0.32em;
   font-size: 0.87em;
   background: var(--bg-inset);
   border-radius: 4px;
 }
 
-.kb-doc-body blockquote {
+.kb-doc-body blockquote,
+.prov-passage blockquote {
   margin: 0 0 1em;
   padding-left: 0.9em;
   border-left: 2px solid var(--border);
   color: var(--fg-muted);
 }
 
-.kb-doc-body table {
+.kb-doc-body table,
+.prov-passage table,
+.prov-card-quote table {
   width: 100%;
   margin: 0 0 1.2em;
   border-collapse: collapse;
@@ -10119,15 +10684,230 @@ button {
 }
 
 .kb-doc-body th,
-.kb-doc-body td {
+.kb-doc-body td,
+.prov-passage th,
+.prov-passage td,
+.prov-card-quote th,
+.prov-card-quote td {
   padding: 5px 9px;
   text-align: left;
   border-bottom: 1px solid var(--border-soft);
 }
 
-.kb-doc-body th {
+.kb-doc-body th,
+.prov-passage th {
   font-weight: 600;
   color: var(--fg-muted);
+}
+
+/* ── A captured read, under review ────────────────────────────────
+   The row opens rather than linking away: the decision is about this
+   document, and a reviewer sent to another page to judge it comes
+   back having lost the row they were judging. */
+.kb-row-candidate,
+.kb-row-source {
+  display: block;
+}
+
+/* The agent's pick, named. A highlighted button with no word next to
+   it reads as the default rather than as somebody's suggestion, and a
+   default is a decision nobody made. */
+.kb-cand-proposed {
+  flex: none;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.kb-cand-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kb-cand-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.kb-cand-caret {
+  flex: none;
+  color: var(--fg-muted);
+  transition: transform 120ms ease;
+}
+
+.kb-cand-caret-open {
+  transform: rotate(90deg);
+}
+
+.kb-cand-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* The agent's call, at the top of the panel it opened. Bordered on
+   the left in the colour of the answer, so the shape of the
+   recommendation reads before the sentence does. */
+.kb-cand-verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 9px 12px;
+  border-left: 3px solid var(--border);
+  border-radius: 0 6px 6px 0;
+  background: var(--bg);
+}
+
+.kb-cand-verdict-source {
+  border-left-color: var(--accent-green-text, var(--fg));
+}
+
+.kb-cand-verdict-not-a-source {
+  border-left-color: var(--fg-muted);
+}
+
+.kb-cand-verdict-unclear {
+  border-left-color: var(--accent-orange-text, var(--fg-muted));
+}
+
+.kb-cand-verdict > span {
+  color: var(--fg-muted);
+}
+
+/* Said every time. An opinion rendered like a result is how a
+   recommendation quietly becomes a decision nobody made. */
+.kb-cand-advisory {
+  font-size: 11px;
+  font-style: italic;
+  opacity: 0.8;
+}
+
+.kb-cand-what,
+.kb-cand-count,
+.kb-cand-none,
+.kb-cand-stakes {
+  margin: 0;
+  color: var(--fg-muted);
+}
+
+/* Said plainly, because it is the answer that decides the row. */
+.kb-cand-none {
+  color: var(--fg);
+}
+
+/* The consequence of the button, beside the button. Confirm switches
+   on a warning that recurs for as long as both documents exist. */
+.kb-cand-stakes {
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 11.5px;
+}
+
+.kb-cand-overlaps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kb-cand-overlaps > li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 11px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+}
+
+/* Side by side, because the claim is that these two say the same
+   thing and the reader has to be able to see whether they do. */
+.kb-cand-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 52rem) {
+  .kb-cand-pair {
+    grid-template-columns: 1fr;
+  }
+}
+
+.kb-cand-side {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.kb-cand-where {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.kb-cand-text {
+  overflow-wrap: break-word;
+  /* Four lines: enough to judge a resemblance, not so many that six
+     overlaps become a second copy of both documents. */
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.kb-cand-strength {
+  align-self: flex-start;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+}
+
+/* The line that stands in for the drift banner on an older version.
+   A hint, not a banner: there is nothing to decide here, only a
+   pointer to the version where the decision lives. */
+.kb-doc-drift-elsewhere {
+  margin: 0 0 24px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
+.kb-doc-drift-goto {
+  padding: 0;
+  font: inherit;
+  color: var(--accent-blue-text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.kb-doc-drift-goto:hover {
+  text-decoration: underline;
 }
 
 /* The stale banner is the one thing allowed to interrupt the column:
@@ -10296,6 +11076,74 @@ button {
   color: var(--fg-muted);
 }
 
+/* ── Inline markdown ─────────────────────────────────────────────────
+   Rendered markdown flattened to one run of text, for previews.
+
+   Every rule here exists to keep the content *inline*: the row that
+   holds it clamps to two lines with ``-webkit-box``, and a single
+   block-level child inside that breaks the clamp — the preview grows
+   to the document's full height and the list stops being a list. */
+
+.mdi {
+  display: inline;
+}
+
+/* React Markdown wraps its output; the wrapper has to disappear too. */
+.mdi > * {
+  display: inline;
+}
+
+/* Blocks become inline runs with a space after, so two paragraphs
+   read as two sentences rather than as one run-on word. */
+.mdi-block {
+  display: inline;
+}
+
+.mdi-block::after {
+  content: " ";
+}
+
+/* A heading keeps its emphasis and loses its size. At preview scale a
+   heading rendered as a heading is just large text in a small row. */
+.mdi-heading {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.mdi-heading::after {
+  content: " · ";
+  font-weight: 400;
+  color: var(--fg-faint);
+}
+
+/* List items separated rather than laid out: four bullets would be
+   four lines where the row has room for two. */
+.mdi-item {
+  display: inline;
+}
+
+.mdi-item + .mdi-item::before,
+.mdi-cell + .mdi-cell::before {
+  content: " · ";
+  color: var(--fg-faint);
+}
+
+.mdi-cell {
+  display: inline;
+}
+
+/* Code keeps its face, because the point of code in a preview is that
+   it is code — but not its block, which would break the clamp. */
+.mdi-code {
+  display: inline;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--bg-raised);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.92em;
+  white-space: pre-wrap;
+}
+
 .afs-empty {
   display: flex;
   flex-direction: column;
@@ -10428,6 +11276,1131 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* ── Overflow menu ───────────────────────────────────────────────────
+   A row of secondary actions behind one button. Opens downward and
+   aligns to its right edge, because it hangs off the end of a header
+   row — aligning left would push it out past the window. */
+
+.overflow-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+/* Catches the click that dismisses the menu. Fixed rather than
+   absolute so it covers the window and not just the header. Below the
+   list, above everything else. */
+.overflow-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+}
+
+.overflow-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  padding: 5px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  animation: menu-pop 0.14s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+  transform-origin: top right;
+}
+
+/* A ``button`` wearing ``.popup-item``, which was written for divs:
+   these three undo what the user agent gives buttons and nothing
+   else, so the items match every other menu in the app. */
+.overflow-item {
+  appearance: none;
+  border: 0;
+  background: none;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+.overflow-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.overflow-item:disabled:hover {
+  background: none;
+}
+
+/* Focus is how this menu is operated from the keyboard, so it is
+   drawn, not left to the browser's default outline on a transparent
+   button. */
+.overflow-item:focus-visible {
+  outline: 2px solid var(--accent-blue, var(--border));
+  outline-offset: -2px;
+}
+
+/* The toggle that is currently on. ``.popup-item.active`` already
+   tints the row; the tick is what says *which* state without relying
+   on the tint being noticed. */
+.overflow-item.active::after {
+  content: "✓";
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--fg-muted);
+}
+
+.overflow-item-danger {
+  color: var(--danger-text, var(--accent-red-text));
+}
+
+.overflow-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-soft);
+}
+
+/* A submenu inside the overflow menu. Three export formats behind one
+   Export item, so the menu stays a list of things you can do rather
+   than a list of every combination of them. */
+.overflow-sub-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The chevron sits at the far edge, away from the label, so the row
+   reads as "Export … onwards" rather than as a two-word label. */
+.overflow-item-parent .overflow-chevron {
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--fg-faint);
+}
+
+/* Opens leftward. The parent list is already pinned to the right edge
+   of whatever it hangs off, so a submenu flying out to the right —
+   the desktop default — would open past the window. */
+.overflow-sub {
+  top: -5px;
+  right: calc(100% + 4px);
+  left: auto;
+  transform-origin: top right;
+}
+
+/* Keep the parent row lit while its submenu is open: without it the
+   submenu looks unattached to anything. */
+.overflow-sub-wrap:hover > .overflow-item-parent,
+.overflow-item-parent[aria-expanded='true'] {
+  background: var(--bg-raised);
+}
+
+/* ── Where a passage came from ───────────────────────────────────────
+   An aligned sidebar: the document on the left, the source each
+   passage draws on in a column to its right, on the same grid row.
+
+   Not a taste call. Compared against a footer list and a hover card
+   showing the same citations, the aligned sidebar was the only one
+   that was both noticed and used — a footer is visible but nobody
+   goes to it, a hover card is reachable but nobody knows it is there
+   (arXiv 2512.12207). One CSS grid row per passage gets the vertical
+   alignment for free, whatever the two sides' heights. */
+
+.prov {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* ── Legend ────────────────────────────────────────────────────── */
+
+.prov-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.prov-legend-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.prov-legend-empty {
+  color: var(--fg-muted);
+  font-size: 12.5px;
+}
+
+/* A source, with how much of the document it accounts for. Naming
+   the sources without the counts leaves "which one carries this
+   document" unanswered, which is usually the first question. */
+.prov-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px 4px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-surface);
+  font-size: 11.5px;
+}
+
+.prov-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: hsl(var(--prov-hue, 210) 58% 52%);
+}
+
+.prov-chip-name {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.prov-chip-count {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.prov-chip-affected {
+  padding-left: 7px;
+  border-left: 1px solid var(--border-soft);
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.prov-caveat {
+  margin: 0;
+  color: var(--fg-faint);
+  font-size: 11.5px;
+}
+
+.prov-pending {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+
+/* ── The aligned grid ──────────────────────────────────────────── */
+
+.prov-grid {
+  display: grid;
+  /* One column for the text, one for its sources. The row is the
+     unit: a passage and its card share it and therefore line up,
+     whichever of the two is taller. */
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
+  column-gap: 28px;
+  align-items: start;
+}
+
+/* ``display: contents`` so each row's two children become direct
+   grid items of ``.prov-grid`` — that is what makes them share a row.
+   A wrapper with its own layout would put both in one cell and the
+   alignment would be gone. */
+.prov-row {
+  display: contents;
+}
+
+.prov-passage {
+  position: relative;
+  padding: 10px 14px 10px 12px;
+  border-left: 3px solid transparent;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 13.5px;
+  line-height: 1.65;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.prov-traced > .prov-passage {
+  border-left-color: hsl(var(--prov-hue, 210) 58% 52% / 0.5);
+}
+
+/* Hovering either half lights both, so the line between a passage and
+   its source never has to be drawn. */
+.prov-lit > .prov-passage {
+  background: hsl(var(--prov-hue, 210) 58% 52% / 0.07);
+  border-left-color: hsl(var(--prov-hue, 210) 58% 48%);
+}
+
+.prov-untraced > .prov-passage {
+  color: var(--fg-muted);
+}
+
+/* Amber carries "the source moved", but never alone — the card says
+   "changed since pinned" in words, because roughly one reader in
+   twelve cannot separate this hue from the traced one, and which
+   passages went stale is the whole question. */
+.prov-affected > .prov-passage {
+  border-left-color: var(--warning);
+}
+
+.prov-affected.prov-lit > .prov-passage {
+  background: color-mix(in srgb, var(--warning) 9%, transparent);
+}
+
+/* The citation number, the way every reader already expects to meet
+   one: superscript, at the end of the claim.
+ 
+   The marker is a sibling of the rendered markdown, not inside it, so
+   it starts life on a line of its own. Making the block it follows
+   inline pulls it up to the end of the last sentence — done in CSS
+   rather than by injecting HTML into the document's own text, which
+   would mean turning on raw-HTML rendering for every document to
+   place a number. Only paragraphs: after a list or a table the marker
+   belongs on its own line anyway. */
+.prov-passage > p:has(+ .prov-marker) {
+  display: inline;
+}
+
+.prov-marker {
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: hsl(var(--prov-hue, 210) 58% 52% / 0.16);
+  color: hsl(var(--prov-hue, 210) 45% 38%);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  vertical-align: super;
+  line-height: 1;
+}
+
+.prov-affected .prov-marker {
+  background: color-mix(in srgb, var(--warning) 20%, transparent);
+  color: var(--warning);
+}
+
+/* Markdown inside a passage keeps the document's own rhythm rather
+   than the raw text it used to show — but tightened, because a
+   passage is a fragment and should not open with a full heading's
+   worth of space above it. */
+.prov-passage > .prov-md-first,
+.prov-passage :is(h1, h2, h3, h4):first-child {
+  margin-top: 0;
+}
+
+.prov-passage :is(p, ul, ol, pre, table, blockquote):last-child {
+  margin-bottom: 0;
+}
+
+.prov-passage :is(h1, h2, h3, h4) {
+  font-size: 14px;
+  margin: 12px 0 6px;
+}
+
+.prov-passage pre {
+  overflow-x: auto;
+}
+
+/* ── The source column ─────────────────────────────────────────── */
+
+.prov-aside {
+  padding: 10px 0;
+  min-width: 0;
+}
+
+.prov-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid hsl(var(--prov-hue, 210) 58% 52% / 0.6);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+}
+
+.prov-lit .prov-card {
+  border-color: hsl(var(--prov-hue, 210) 58% 48%);
+  border-left-color: hsl(var(--prov-hue, 210) 58% 48%);
+}
+
+.prov-affected .prov-card {
+  border-left-color: var(--warning);
+}
+
+.prov-affected.prov-lit .prov-card {
+  border-color: var(--warning);
+}
+
+.prov-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 11.5px;
+}
+
+/* The same number as the marker in the text. That pairing is the
+   whole mechanism: it is how a reader knows which card belongs to
+   which sentence without a drawn line. */
+.prov-card-number {
+  min-width: 17px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: hsl(var(--prov-hue, 210) 58% 52% / 0.16);
+  color: hsl(var(--prov-hue, 210) 45% 38%);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.prov-affected .prov-card-number {
+  background: color-mix(in srgb, var(--warning) 20%, transparent);
+  color: var(--warning);
+}
+
+.prov-card-source {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-blue-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.prov-card-source:hover {
+  text-decoration: underline;
+}
+
+.prov-card-where {
+  margin-left: auto;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The passage itself, which is the evidence. Clamped: a card taller
+   than its passage breaks the alignment the layout exists for. */
+.prov-card-quote {
+  margin: 0;
+  padding-left: 9px;
+  border-left: 2px solid var(--border);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.5;
+  /* No ``pre-wrap``: it was holding the shape of raw text, and now
+     that the quote is rendered markdown it would double every gap
+     between blocks. Whitespace inside a code block is kept by the
+     ``pre`` itself. */
+  overflow-wrap: break-word;
+  max-height: 11rem;
+  overflow-y: auto;
+}
+
+/* The blocks inside a quote. Tighter than the document's, because the
+   card is an aside — and flush at both ends, so the quote starts
+   against its own rule rather than a line below it. */
+.prov-card-quote > :first-child {
+  margin-top: 0;
+}
+
+.prov-card-quote > :last-child {
+  margin-bottom: 0;
+}
+
+.prov-card-quote p,
+.prov-card-quote ul,
+.prov-card-quote ol,
+.prov-card-quote pre,
+.prov-card-quote table,
+.prov-card-quote blockquote {
+  margin: 0 0 0.7em;
+}
+
+.prov-card-quote :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0 0 0.4em;
+  font-size: 1em;
+  font-weight: 600;
+}
+
+.prov-card-quote pre {
+  padding: 8px 10px;
+  font-size: 11px;
+}
+
+.prov-card-quote blockquote {
+  padding-left: 0.7em;
+  border-left: 2px solid var(--border-soft);
+  color: var(--fg-muted);
+}
+
+.prov-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.prov-strength {
+  color: var(--fg-muted);
+}
+
+.prov-card-changed {
+  margin-left: auto;
+  padding: 1px 7px;
+  border: 1px solid var(--warning);
+  border-radius: 999px;
+  color: var(--warning);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Alternatives, named rather than hidden. Showing only the top match
+   makes a guess look like a finding. */
+.prov-card-others {
+  font-size: 11px;
+}
+
+.prov-card-others > summary {
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.prov-other {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* A gap left blank reads as "nothing to see". Named, it reads as a
+   limit of the method. */
+.prov-none {
+  margin: 0;
+  padding: 10px 0 0;
+  color: var(--fg-faint);
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* Below the breakpoint the sidebar cannot be aligned to anything —
+   two 9rem columns is two unreadable ones. The card goes under its
+   passage, which keeps the pairing even though it loses the scan. */
+@media (max-width: 62rem) {
+  .prov-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .prov-aside {
+    padding: 0 0 14px 12px;
+  }
+}
+
+/* ── Commenting on a local document ──────────────────────────────────
+   Talking to the agent about what you are reading. Sits under the
+   document rather than in a rail beside it: there is no thread here
+   to put in a rail — the answer is a new version. */
+
+/* ── The conversation rail ───────────────────────────────────────────
+   Document left, its comments right, on the artifact's own page.
+
+   Two columns rather than one under the other: a comment is about a
+   *passage*, and a reader who scrolls past the whole document to read
+   the answer — then scrolls back to find the sentence it was about —
+   is doing the join by hand. Beside it, both are in view. */
+
+.kb-doc-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(19rem, 24rem);
+  gap: 28px;
+  align-items: start;
+}
+
+/* Put away, the rail keeps a strip — the way back has to be where the
+   thing went. Everything else is the document's. */
+.kb-doc-split-wide {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+}
+
+/* Below the breakpoint the rail cannot be beside anything: two 10rem
+   columns are two unreadable ones. It goes under the document, which
+   keeps the pairing and loses only the glance. */
+@media (max-width: 64rem) {
+  .kb-doc-split,
+  .kb-doc-split-wide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.doc-rail {
+  position: sticky;
+  top: 8px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 160px);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+
+@media (max-width: 64rem) {
+  .doc-rail {
+    position: static;
+    max-height: none;
+  }
+}
+
+.doc-rail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.doc-rail-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+/* Pushed to the far end of the header, away from the title it is not
+   part of. */
+.doc-rail-hide {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm, 5px);
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.doc-rail-hide:hover {
+  background: var(--bg-raised);
+  color: var(--fg);
+}
+
+.doc-rail-chevron-back {
+  transform: rotate(180deg);
+}
+
+/* ── Put away ──────────────────────────────────────────────────────
+   One button, the size of its icon. It keeps the rail's own frame —
+   this *is* the rail, collapsed, and a control that shed its border
+   on the way down would read as a different thing in a similar
+   place. Not stretched: a 30px column of nothing running the height
+   of the document would be a bigger scar than the rail was. */
+.doc-rail-stowed {
+  width: auto;
+  align-self: start;
+  justify-self: end;
+  overflow: visible;
+}
+
+.doc-rail-restore {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.doc-rail-restore:hover {
+  background: var(--bg-raised);
+  color: var(--fg);
+}
+
+.doc-rail-stowed-icon {
+  display: block;
+}
+
+/* On the corner, the way a count sits on an icon everywhere else.
+   Beside it the button stops being square and starts nudging the
+   prose, which is the width this state exists to give back. */
+.doc-rail-stowed-count {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  /* Solid, not the raised-on-inset the open rail's count uses: at
+     15px overlapping a border, that pairing has too little of either
+     to read. ``--accent`` would have been the obvious choice and does
+     not exist in this theme — it fell back silently to exactly this
+     colour, so it is named outright. The ring is the page behind it,
+     lifting the badge off the button's edge. */
+  background: var(--fg-muted);
+  color: var(--bg);
+  box-shadow: 0 0 0 2px var(--bg);
+  font-size: 10px;
+  line-height: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* Under the breakpoint the rail returns below the document rather
+   than beside it, so the button goes where the rail would start
+   rather than off to the right. */
+@media (max-width: 64rem) {
+  .doc-rail-stowed {
+    align-self: start;
+    justify-self: start;
+  }
+}
+
+.doc-rail-count {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The scrolling part. The header stays put so "Comments" does not
+   scroll away from the thread it labels. */
+.doc-rail-body {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 14px;
+}
+
+.doc-rail-empty {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.doc-conv-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.doc-conv-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+/* The thread the reader is on — lit here and in the document at the
+   same time, so the pair is obviously one thing. */
+.doc-conv-focused {
+  border-color: var(--accent-blue, var(--border));
+}
+
+/* The whole header is the way back to the passage: a link on the
+   quote alone is a small target beside a large inert one. */
+.doc-conv-anchor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 0 0 0 10px;
+  border: 0;
+  border-left: 3px solid var(--accent-blue, var(--border));
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.doc-conv-anchor:focus-visible {
+  outline: 2px solid var(--accent-blue, var(--border));
+  outline-offset: 2px;
+}
+
+.doc-conv-scope {
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+
+.doc-conv-quote {
+  display: block;
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  font-style: italic;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  max-height: 6rem;
+  overflow-y: auto;
+}
+
+/* A quote whose passage has since been rewritten — which is the
+   usual outcome, since answering a comment changes the text it was
+   about. Without saying so, the highlight simply stops working and
+   looks broken. */
+.doc-conv-moved {
+  margin: 0;
+  color: var(--warning);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.doc-conv-body {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--fg);
+}
+
+.doc-conv-reply {
+  padding-left: 10px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  overflow-wrap: break-word;
+}
+
+.doc-conv-reply pre {
+  overflow-x: auto;
+}
+
+/* Something rather than a blank space: a comment that appears to do
+   nothing for twenty seconds reads as a comment that was dropped. */
+.doc-conv-waiting {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  font-style: italic;
+}
+
+/* The caret that says the answer is still arriving — the one thing
+   distinguishing a reply mid-stream from one that stopped short. */
+.doc-conv-cursor {
+  display: inline-block;
+  width: 6px;
+  height: 12px;
+  margin-left: 2px;
+  background: var(--fg-muted);
+  vertical-align: text-bottom;
+  animation: doc-conv-blink 1s steps(2, start) infinite;
+}
+
+@keyframes doc-conv-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-conv-cursor {
+    animation: none;
+  }
+}
+
+/* The composer at the foot of a thread. Part of it, not a button
+   that opens one elsewhere: continuing is the default, and starting
+   a new conversation is the deliberate act. */
+.doc-thread-compose {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  margin-left: 10px;
+}
+
+.doc-thread-compose .doc-comment-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  font-size: 12px;
+}
+
+.doc-thread-send {
+  flex: 0 0 auto;
+}
+
+/* Every commented passage, marked for as long as the comment exists.
+   An underline rather than a fill: prose is read in lines, and a
+   block of colour at reading size breaks the line into chunks.
+   Painted through the Custom Highlight API, so the document's markup
+   is never rewritten to show it. */
+::highlight(doc-comment-mark) {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent-blue, #4a7dff) 60%, transparent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+/* The one whose card is hovered. Filled, because at this point the
+   reader is looking for it rather than reading past it. */
+::highlight(doc-comment-quote) {
+  background: color-mix(in srgb, var(--accent-blue, #4a7dff) 22%, transparent);
+}
+
+.doc-comment-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.doc-comment-hint {
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+
+.doc-comment-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 28px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+}
+
+/* The passage being asked about. Same treatment the shared app gives
+   a quote, so the two read as the same gesture even though one ends
+   in a reply and the other in a revision. */
+.doc-comment-quote {
+  position: relative;
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent-blue, var(--border));
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--bg-surface);
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-style: italic;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  max-height: 9rem;
+  overflow-y: auto;
+}
+
+/* Says what this comment is attached to when nothing is quoted. An
+   empty composer and a quoting one otherwise look identical, and the
+   difference between them is the whole point. */
+.doc-comment-scope {
+  margin: 0;
+  color: var(--fg-faint);
+  font-size: 11.5px;
+}
+
+/* ── Right-click a selection ─────────────────────────────────────────
+   Suppressed only over a selection inside the document — everywhere
+   else the browser's own menu is left alone, because an app that
+   swallows right-click wholesale takes away copy, search and inspect
+   to offer one item of its own. */
+
+.doc-selection-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+}
+
+.doc-selection-pop {
+  position: fixed;
+  z-index: 50;
+  min-width: 190px;
+  max-width: min(420px, calc(100vw - 24px));
+  padding: 5px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  animation: menu-pop 0.14s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+  transform-origin: top left;
+}
+
+/* The composer inside the popover brings no frame of its own — the
+   popover is already the frame. */
+.doc-selection-pop .doc-comment-compose {
+  margin: 0;
+  padding: 7px;
+  border: 0;
+  background: none;
+}
+
+.doc-comment-input {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.doc-comment-input::placeholder {
+  color: var(--fg-faint);
+}
+
+.doc-comment-input:focus-visible {
+  outline: 2px solid var(--accent-blue, var(--border));
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.doc-comment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Pushed to the end of the row: it is a statement about where this
+   goes, not a third button. */
+.doc-comment-actions .doc-comment-hint {
+  margin-left: auto;
+}
+
+/* ── Export banner ───────────────────────────────────────────────────
+   The result of an export, over the page rather than in it.
+
+   Pinned to the bottom-right: the top of the page is where the
+   document's own title and actions are, and a notice that lands there
+   pushes the thing you were reading down by a row every time you
+   export. Down here nothing reflows. */
+
+.export-banner {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(420px, calc(100vw - 36px));
+  padding: 12px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent-green, var(--success));
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  animation: menu-pop 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+  transform-origin: bottom right;
+}
+
+/* Failure is carried by the edge, not by a red wash over the text —
+   the message is the part that has to stay readable. */
+.export-banner-failed {
+  border-left-color: var(--danger-text, var(--accent-red-text));
+}
+
+.export-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.export-banner-text strong {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* The filename, which is what identifies the file to a person. */
+.export-banner-file {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+/* The folder, and the failure message. Truncated to one line with the
+   full text on hover: an absolute path is three wrapped lines at this
+   width and reads as a stack trace. */
+.export-banner-detail {
+  color: var(--fg-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The message, unlike the path, is a sentence and has to wrap. */
+.export-banner-failed .export-banner-detail {
+  white-space: normal;
+  overflow: visible;
+}
+
+.export-banner .btn {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.export-banner-close {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--fg-faint);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.export-banner-close:hover {
+  background: var(--bg-raised);
+  color: var(--fg);
+}
+
+.export-banner-close:focus-visible {
+  outline: 2px solid var(--accent-blue, var(--border));
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .export-banner {
+    animation: none;
+  }
+}
+
+/* How much moved, said once above the comparison. There was briefly
+   a stepper here — arrows and an index — on the reasoning that
+   showing the whole document makes the changes hard to find. It does
+   not: they are highlighted, and a document is a few screens. */
+
+.diff-count {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Version comparison ──────────────────────────────────────────────

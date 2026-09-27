@@ -217,7 +217,12 @@ class ArtifactIndex:
         inherited = [
             VersionPin(artifact_id=e.to_artifact_id, n=e.pinned_n, state=EdgeState.CONFIRMED)
             for e in lineage.sources
-            if e.state is EdgeState.CONFIRMED and e.to_artifact_id not in declared
+            # Never the document itself: an edge recorded before this
+            # was guarded would otherwise be copied onto every later
+            # revision, outliving the bug that made it.
+            if e.state is EdgeState.CONFIRMED
+            and e.to_artifact_id not in declared
+            and e.to_artifact_id != artifact_id
         ]
         if not inherited:
             return sources
@@ -244,9 +249,39 @@ class ArtifactIndex:
                 + ". Use 'artifact_id' or 'artifact_id@n' for artifacts, a full "
                 "URL for external material."
             )
+        # A document never derives from itself.
+        #
+        # The version chain already records that v6 follows v5 —
+        # ``HAS_VERSION`` and ``n`` say so. A ``DERIVED_FROM`` edge
+        # alongside it says something different and false: that this
+        # document is *built on* an earlier draft of itself, the way
+        # it is built on another document. Staleness is a query over
+        # those edges, so every revision then made the document out of
+        # date with respect to itself, for ever, and the banner said
+        # "Sources have changed since this was written" about the one
+        # document that had not changed underneath it.
+        #
+        # Filtered here rather than at each caller because all three
+        # paths can produce one: a declared source naming the document
+        # itself, an inherited edge carrying a previous mistake
+        # forward, and the read ledger.
+        self_pins = [p for p in sources.pins if p.artifact_id == artifact_id]
+        if self_pins:
+            logger.debug("dropping %d self-derivation pin(s) for %s", len(self_pins), artifact_id)
+            sources = sources.model_copy(
+                update={"pins": [p for p in sources.pins if p.artifact_id != artifact_id]}
+            )
+
         embedder = self._require_embedder()
-        embedding = embedder.embed([content])[0]
         chunks = self._chunk(content)
+        # One call for the document and every passage in it. Batching
+        # matters: a local sentence-transformer pays its cost per
+        # call, not per string, and a document of forty paragraphs
+        # would otherwise be forty round trips.
+        texts = [content, *(text for text, _lf, _lt in chunks)]
+        vectors = embedder.embed(texts)
+        embedding = vectors[0]
+        chunk_embeddings = list(vectors[1:])
 
         outcome = await self._client.append_version(
             artifact_id=artifact_id,
@@ -255,6 +290,7 @@ class ArtifactIndex:
             kind=kind,
             embedding=embedding,
             chunks=chunks,
+            chunk_embeddings=chunk_embeddings,
             metadata=metadata,
             author=author,
             session_id=session_id,
@@ -299,22 +335,45 @@ class ArtifactIndex:
         Line spans are resolved by walking the original text rather
         than trusting chunk order, so an overlapping chunker still
         produces spans that point at the right lines.
+
+        The walk is **whitespace-tolerant**, and that is the whole
+        difficulty. The chunker normalises as it splits — runs of
+        blank lines collapse, runs of spaces collapse — so a chunk's
+        text is very often not a literal substring of the document it
+        came from. A plain ``find`` misses, and the version of this
+        that did returned ``(0, 0)`` for those chunks: they sorted to
+        the top of the document, and every line number they carried
+        pointed at a line that does not exist.
         """
         documents = self.chunker.chunk(Document(content=content))
         texts = [d.content for d in documents if d.content] or [content]
+        # Normalised copy plus a map back to the original offsets, so
+        # a match found in normalised space still reports true lines.
+        flat, offsets = _normalise_with_offsets(content)
         rows: list[tuple[str, int, int]] = []
         cursor = 0
+        # Where the previous chunk ended, so an unfindable one lands
+        # after it rather than at the top.
+        previous_to = 1
         for text in texts:
-            found = content.find(text, cursor)
+            needle, _ = _normalise_with_offsets(text)
+            found = flat.find(needle, cursor) if needle else -1
+            if found < 0 and needle:
+                found = flat.find(needle)
             if found < 0:
-                found = content.find(text)
-            if found < 0:
-                rows.append((text, 0, 0))
+                # Genuinely unplaceable. Keep it in document order by
+                # pinning it to where the last one ended: a wrong-but-
+                # ordered span beats a right-looking zero.
+                logger.debug("chunk could not be located in its own document; ordering only")
+                rows.append((text, previous_to, previous_to))
                 continue
-            line_from = content.count("\n", 0, found) + 1
-            line_to = line_from + text.count("\n")
+            start = offsets[found]
+            last = offsets[min(found + len(needle) - 1, len(offsets) - 1)]
+            line_from = content.count("\n", 0, start) + 1
+            line_to = content.count("\n", 0, last) + 1
             rows.append((text, line_from, line_to))
-            cursor = found + max(len(text) // 2, 1)
+            previous_to = line_to
+            cursor = found + max(len(needle) // 2, 1)
         return rows
 
     def _require_embedder(self) -> Any:
@@ -548,3 +607,54 @@ class ArtifactIndex:
             except Exception as exc:  # surface rather than swallow
                 errors.append(f"{hit.artifact_id}: {exc}")
         return ArtifactDeleteResult(deleted=deleted, errors=errors)
+
+
+def _normalise_with_offsets(text: str) -> tuple[str, list[int]]:
+    """Apply the chunker's whitespace rules, keeping a map home.
+
+    Returns the normalised text and, for each character in it, the
+    index it came from in ``text``. Mirrors
+    :meth:`NewlinePreservingChunker.clean_text` — line endings
+    unified, three-or-more newlines capped at two, runs of spaces and
+    tabs collapsed to one — because the point is to match what the
+    chunker produced against what the author wrote.
+    """
+    out: list[str] = []
+    offsets: list[int] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\r":
+            # ``\r\n`` and a bare ``\r`` both become one ``\n``.
+            out.append("\n")
+            offsets.append(i)
+            i += 2 if i + 1 < n and text[i + 1] == "\n" else 1
+            continue
+        if ch == "\n":
+            run = 0
+            j = i
+            while j < n and text[j] in "\n\r":
+                if text[j] == "\n":
+                    run += 1
+                j += 1
+            kept = min(run, 2)
+            for _ in range(kept):
+                out.append("\n")
+                offsets.append(i)
+            i = j
+            continue
+        if ch in " \t\f\v":
+            j = i
+            while j < n and text[j] in " \t\f\v":
+                j += 1
+            out.append(" ")
+            offsets.append(i)
+            i = j
+            continue
+        out.append(ch)
+        offsets.append(i)
+        i += 1
+    if not offsets:
+        offsets = [0]
+    return "".join(out), offsets

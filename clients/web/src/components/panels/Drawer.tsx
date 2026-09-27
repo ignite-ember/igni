@@ -24,6 +24,7 @@ export function Drawer({
   levels,
   headerExtras,
   toolbar,
+  titleInBody,
   onClose,
   children,
 }: {
@@ -39,6 +40,10 @@ export function Drawer({
    *  status counts). Sits outside the scrollable body so list
    *  items can never peek above it. */
   toolbar?: ReactNode;
+  /** The body opens with its own heading, so the frame must not draw
+   *  one too. Honoured as a page; ignored as a dialog, where the
+   *  title bar is also the thing you drag and close. */
+  titleInBody?: boolean;
   onClose: () => void;
   children: ReactNode;
 }) {
@@ -74,6 +79,7 @@ export function Drawer({
         title={title}
         headerExtras={headerExtras}
         toolbar={toolbar}
+        titleInBody={titleInBody}
         onCrumb={page.onCrumb}
         onBack={page.onBack}
         onClose={page.onClose}

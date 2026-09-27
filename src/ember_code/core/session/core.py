@@ -744,6 +744,14 @@ class Session:
         # index that was replaced.
         if self.artifact_mgr is not None:
             self.artifact_mgr.artifacts = index
+        # And tell the pool, which took its copy in ``__init__`` when
+        # ``self.artifacts`` was still ``None`` — so every agent it
+        # built got ``artifact_mgr=None`` and the archivist, the one
+        # agent the toolkit exists for, came up without it. It read
+        # its own system prompt describing tools it did not have and
+        # reported the store unreachable, which is exactly what it
+        # looked like from the outside.
+        self.pool.attach_artifact_manager(self.artifact_mgr)
         # The deferred-state explanation set in the constructor is no
         # longer true. Leaving it would have ``/artifacts`` telling a
         # working session to go and start the runtime it is already

@@ -28,11 +28,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 import httpx
 
 from ember_code.core.artifacts.index import ArtifactIndex
+from ember_code.core.artifacts.pdf import PdfRenderer
 from ember_code.core.artifacts.render import (
     ArtifactRenderer,
     ExportScope,
@@ -42,6 +44,50 @@ from ember_code.core.artifacts.render import (
 logger = logging.getLogger(__name__)
 
 PUBLISH_TIMEOUT_SECONDS: float = 30.0
+
+
+class ExportFormat(str, Enum):
+    """What an export is written as.
+
+    Three containers for one projection, not three projections. The
+    same :class:`ExportBundle` answers all of them, so what a PDF
+    contains is what the HTML contains is what the share contains —
+    the property the module docstring above exists to protect.
+    """
+
+    HTML = "html"
+    MARKDOWN = "md"
+    PDF = "pdf"
+
+    @property
+    def suffix(self) -> str:
+        """The file extension, leading dot included."""
+        return f".{self.value}"
+
+    @property
+    def label(self) -> str:
+        """What to call it in front of somebody."""
+        return {"html": "HTML", "md": "Markdown", "pdf": "PDF"}[self.value]
+
+    @classmethod
+    def parse(cls, value: str) -> ExportFormat:
+        """Read a format name, defaulting to HTML.
+
+        Accepts the spellings people actually type — ``markdown`` as
+        well as ``md`` — because this crosses an RPC boundary and a
+        typo should not become a silent HTML file.
+        """
+        text = str(value or "").strip().casefold().lstrip(".")
+        if not text:
+            return cls.HTML
+        aliases = {"markdown": cls.MARKDOWN, "htm": cls.HTML}
+        if text in aliases:
+            return aliases[text]
+        try:
+            return cls(text)
+        except ValueError as exc:
+            known = ", ".join(f.value for f in cls)
+            raise ValueError(f"Unknown export format {value!r}. Try one of: {known}.") from exc
 
 
 @dataclass
@@ -55,6 +101,10 @@ class ExportBundle:
     html: str
     exported_at: str
     author: str = ""
+    #: The version's own text, as written. Carried alongside the
+    #: rendered page so a Markdown export is the author's source
+    #: rather than HTML converted back into an approximation of it.
+    content: str = ""
 
     def to_payload(self, *, visibility: str, audience: list[str]) -> dict[str, object]:
         """The server-facing shape.
@@ -120,6 +170,7 @@ class ArtifactExporter:
             html=self._renderer.render(request),
             exported_at=target.created_at,
             author=target.author,
+            content=target.content or "",
         )
 
     async def share_bundle(
@@ -151,6 +202,7 @@ class ArtifactExporter:
         destination: Path,
         *,
         version: int = 0,
+        fmt: ExportFormat = ExportFormat.HTML,
     ) -> Path | None:
         """Write a local export to ``destination``.
 
@@ -163,9 +215,16 @@ class ArtifactExporter:
         target = destination
         if destination.is_dir() or not destination.suffix:
             slug = _slug(bundle.title) or bundle.artifact_id
-            target = destination / f"{slug}-v{bundle.n}.html"
+            target = destination / f"{slug}-v{bundle.n}{fmt.suffix}"
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(bundle.html, encoding="utf-8")
+        if fmt is ExportFormat.PDF:
+            # Bytes, so no ``write_text`` — and rendered from the same
+            # page the HTML export writes, which is what keeps the two
+            # from drifting.
+            target.write_bytes(PdfRenderer.render(bundle.html))
+        else:
+            body = bundle.html if fmt is ExportFormat.HTML else _markdown_document(bundle)
+            target.write_text(body, encoding="utf-8")
         return target
 
 
@@ -244,6 +303,35 @@ class ArtifactPublisher:
         if not share_url:
             raise RuntimeError("Server accepted the artifact but returned no URL.")
         return share_url
+
+
+def _markdown_document(bundle: ExportBundle) -> str:
+    """The version's own text, under a front-matter header.
+
+    Front matter rather than a prose preamble: the version number and
+    author are what make an exported file traceable back to the chain
+    it came from, and every tool that reads Markdown either parses this
+    block or hides it. A line of prose saying the same thing would be
+    read as part of the document.
+    """
+
+    def quote(value: str) -> str:
+        return '"' + str(value or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    front = [
+        "---",
+        f"title: {quote(bundle.title)}",
+        f"artifact_id: {quote(bundle.artifact_id)}",
+        f"kind: {quote(bundle.kind)}",
+        f"version: {bundle.n}",
+    ]
+    if bundle.author:
+        front.append(f"author: {quote(bundle.author)}")
+    if bundle.exported_at:
+        front.append(f"created_at: {quote(bundle.exported_at)}")
+    front.append("---")
+    body = (bundle.content or "").rstrip("\n")
+    return "\n".join(front) + "\n\n" + body + "\n"
 
 
 def _slug(text: str) -> str:

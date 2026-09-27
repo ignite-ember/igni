@@ -14,13 +14,15 @@ the moment to ask is while the agent still knows the answer.
 from __future__ import annotations
 
 import logging
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
+from ember_code.backend.schemas_artifacts import ArtifactCommentResolved
+from ember_code.core.artifacts.collaboration import CollaborationSync
 from ember_code.core.artifacts.errors import SourcesRequired
 from ember_code.core.artifacts.index import ArtifactIndex
 from ember_code.core.artifacts.ingest import Ingester
-from ember_code.backend.schemas_artifacts import ArtifactCommentResolved
-from ember_code.core.artifacts.collaboration import CollaborationSync
 from ember_code.core.artifacts.models import (
     ArtifactLineage,
     ArtifactSearchHit,
@@ -31,6 +33,7 @@ from ember_code.core.artifacts.models import (
     ArtifactVersion,
     ArtifactWriteResult,
     Comment,
+    CommentOrigin,
     CommentStatus,
     ReconcilePlan,
     SourceDeclaration,
@@ -242,6 +245,74 @@ class SessionArtifactManager:
             return []
         return await self.artifacts.list_artifacts(limit=limit)
 
+    async def repair_chunks(self, *, budget: int = 12) -> int:
+        """Re-split versions whose chunks predate correct line spans.
+
+        Returns how many versions are *still* waiting, so the caller
+        can say the answer is incomplete rather than quietly showing a
+        partial one. Bounded per call: a large store gets better over
+        a few openings rather than blocking the first one.
+
+        Recomputes rather than patches. Line spans, ordinals and
+        vectors all come out of one split, and repairing them
+        separately would leave a version whose ordinals belong to one
+        split and whose spans belong to another.
+        """
+        if self.artifacts is None:
+            return 0
+        client = self.artifacts.client
+        pending = await client.versions_needing_rechunk(limit=budget)
+        if not pending:
+            return 0
+        embedder = getattr(self.artifacts, "_embedder", None)
+        for row in pending:
+            content = str(row.get("content") or "")
+            if not content.strip():
+                continue
+            rows = self.artifacts._chunk(content)
+            vectors: list[list[float]] = []
+            if embedder is not None and rows:
+                vectors = list(embedder.embed([text for text, _lf, _lt in rows]))
+            await client.replace_chunks(
+                version_id=str(row["version_id"]), rows=rows, vectors=vectors
+            )
+        return len(await client.versions_needing_rechunk(limit=1))
+
+    async def backfill_chunk_embeddings(self, *, budget: int = 500) -> int:
+        """Give vectors to chunks written before they were stored.
+
+        Returns how many are *still* unplaced after this pass, so the
+        caller can say the answer is incomplete rather than quietly
+        showing a partial one. Bounded per call: a large store should
+        make provenance progressively better over a few openings
+        rather than blocking the first one for a minute.
+        """
+        if self.artifacts is None:
+            return 0
+        client = self.artifacts.client
+        pending = await client.chunks_without_embeddings(limit=budget)
+        if not pending:
+            return 0
+        embedder = getattr(self.artifacts, "_embedder", None)
+        if embedder is None:
+            return len(pending)
+        vectors = embedder.embed([row["text"] for row in pending])
+        await client.set_chunk_embeddings(
+            [
+                {"chunk_id": row["chunk_id"], "embedding": list(vec)}
+                for row, vec in zip(pending, vectors, strict=False)
+            ]
+        )
+        # Anything beyond this pass's budget is still unplaced.
+        remaining = await client.chunks_without_embeddings(limit=1)
+        return len(remaining)
+
+    async def resolve_artifact(self, ref: str) -> ArtifactSummary | None:
+        """A name, id or ``id@n`` ref, as the document it names."""
+        if self.artifacts is None:
+            return None
+        return await self.artifacts.resolve(ref)
+
     async def versions(self, ref: str) -> list[ArtifactVersion]:
         if self.artifacts is None:
             return []
@@ -341,6 +412,69 @@ class SessionArtifactManager:
         if self.artifacts is None:
             return []
         return await self.artifacts.client.comments(artifact_id=artifact_id, open_only=open_only)
+
+    async def add_local_comment(
+        self,
+        *,
+        artifact_id: str,
+        n: int,
+        body: str,
+        quote: str = "",
+        quote_start: int | None = None,
+        quote_end: int | None = None,
+        author: str = "",
+        thread_id: str = "",
+        parent_id: str | None = None,
+        origin: CommentOrigin = CommentOrigin.LOCAL,
+        at: str = "",
+    ) -> Comment | None:
+        """Record a comment written here, against the local copy.
+
+        Local only: it is projected into the graph and never pushed.
+        A comment written in igni is addressed to the agent, and
+        sending it to the people on the shared copy would publish one
+        side of a conversation they are not part of. When the agent
+        answers, what *does* reach them is the revision — a version
+        with an author and a reason, which is the thing they can read.
+        """
+        if self.artifacts is None:
+            return None
+        comment = Comment(
+            comment_id=f"local-{uuid.uuid4().hex[:16]}",
+            artifact_id=artifact_id,
+            n=n,
+            # A reply joins the thread it answers; a fresh comment
+            # starts one named after itself.
+            thread_id=thread_id or f"local-thread-{uuid.uuid4().hex[:12]}",
+            parent_id=parent_id,
+            quote=quote,
+            # Where the passage sat in the text at the time. A hint
+            # for picking between repeated lines, never the anchor:
+            # everything below an edit shifts, so an offset is wrong
+            # the moment anything above it changes.
+            quote_start=quote_start,
+            quote_end=quote_end,
+            body=body,
+            status=CommentStatus.OPEN,
+            author=author,
+            at=at or datetime.now(tz=UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            origin=origin,
+        )
+        await self.artifacts.client.project_comments([comment])
+        return comment
+
+    async def thread_for(self, *, artifact_id: str, thread_id: str) -> list[Comment]:
+        """Every comment on one thread, whatever its origin or status.
+
+        Not ``open_only``: a settled comment is exactly the kind of
+        thing a new instruction can contradict, and the agent should
+        be able to notice it is being asked to reverse a decision
+        rather than discover it by making the change twice.
+        """
+        if self.artifacts is None or not thread_id:
+            return []
+        rows = await self.artifacts.client.comments(artifact_id=artifact_id, open_only=False)
+        return [c for c in rows if c.thread_id == thread_id]
 
     async def resolve_comment(
         self, *, comment_id: str, status: str, content: str = "", sync: CollaborationSync

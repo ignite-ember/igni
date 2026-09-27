@@ -118,6 +118,10 @@ class FakeArtifactStore:
         kind: str | None = None,
         embedding: list[float] | None = None,
         chunks: list | None = None,
+        # Accepted and ignored: this store answers questions about
+        # lineage, and nothing here reads a vector. Present so the
+        # signature keeps matching the real client's.
+        chunk_embeddings: list | None = None,
         metadata: dict | None = None,
         author: str = "",
         session_id: str = "",
