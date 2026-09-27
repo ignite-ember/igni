@@ -10502,12 +10502,19 @@ button {
   border: 1px solid var(--border-soft);
   border-radius: 6px;
   overflow: hidden;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 12px;
-  line-height: 1.55;
+  /* Proportional, not monospace.
+   *
+   * This compares *documents*. A monospace grid is right for code —
+   * alignment carries meaning there — and wrong for prose, where it
+   * makes a paragraph read like terminal output and fits a third
+   * fewer words on a line. The first cut of this panel looked like
+   * `git diff` in a window, which is exactly the wrong reference. */
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.65;
   /* Long prose lines wrap inside their cell rather than scrolling the
-     whole table sideways — a document is not code, and a horizontal
-     scrollbar under a paragraph is unreadable. */
+     whole table sideways — a horizontal scrollbar under a paragraph is
+     unreadable. */
   table-layout: fixed;
 }
 
@@ -10541,7 +10548,9 @@ button {
 }
 
 .diff-cell {
-  padding: 1px 10px;
+  /* Room to breathe. A one-pixel row is dense enough to scan as a
+     block of output; a document wants to be read. */
+  padding: 4px 14px;
   vertical-align: top;
   white-space: pre-wrap;
   overflow-wrap: break-word;
@@ -10552,14 +10561,71 @@ button {
   border-left: 1px solid var(--border-soft);
 }
 
-.artifact-diff tr[data-kind="removed"] .diff-left,
-.artifact-diff tr[data-kind="changed"] .diff-left {
-  background: color-mix(in srgb, var(--danger) 16%, transparent);
+/* A whole line that arrived or left keeps its full tint. */
+.artifact-diff tr[data-kind="removed"] .diff-left {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
 }
 
-.artifact-diff tr[data-kind="added"] .diff-right,
+.artifact-diff tr[data-kind="added"] .diff-right {
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+}
+
+/* A *rewritten* line is tinted faintly, because the words inside it
+   carry the change now. Tinting it as strongly as a wholly new line
+   would say the whole sentence moved when three words did. */
+.artifact-diff tr[data-kind="changed"] .diff-left {
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+}
+
 .artifact-diff tr[data-kind="changed"] .diff-right {
-  background: color-mix(in srgb, var(--success) 16%, transparent);
+  background: color-mix(in srgb, var(--success) 6%, transparent);
+}
+
+/* The words that actually differ. This is the part a reader is
+   looking for, and before it existed they had to find it themselves
+   by comparing two highlighted paragraphs word by word. */
+.diff-left .diff-word {
+  background: color-mix(in srgb, var(--danger) 30%, transparent);
+  border-radius: 3px;
+  padding: 0 1px;
+  /* Not only colour: roughly one reader in twelve cannot separate the
+     red from the green, and a strikethrough says "gone" on its own. */
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--danger) 70%, transparent);
+}
+
+.diff-right .diff-word {
+  background: color-mix(in srgb, var(--success) 30%, transparent);
+  border-radius: 3px;
+  padding: 0 1px;
+  font-weight: 600;
+}
+
+/* A folded stretch of untouched text. Nothing is hidden — the button
+   says how much and opens it — but a document is mostly unchanged,
+   and showing all of it buries the edit. */
+.diff-fold td {
+  padding: 0;
+  background: var(--bg-inset);
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.diff-fold button {
+  width: 100%;
+  padding: 5px 14px;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.diff-fold button:hover {
+  background: var(--bg-raised);
+  color: var(--fg);
 }
 
 /* The empty half of an unpaired change. Hatched rather than left
@@ -10606,4 +10672,103 @@ button {
   letter-spacing: 0.02em;
   line-height: 1;
   user-select: none;
+}
+
+/* The line-number gutters. Declared on a <col> because
+   `table-layout: fixed` reads its widths from the first row, and that
+   row is a header spanning two cells per side — so a `width` on the
+   cell itself is never consulted. */
+.artifact-diff .diff-col-num {
+  width: 3rem;
+}
+
+/* The header control that is currently on. Used by Compare, which is
+   a mode rather than an action — it stays pressed while the page is
+   in its comparison state. */
+.btn.btn-active {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue-text);
+}
+
+/* A diff cell rendered as the document rather than as its markup.
+   The markdown body brings its own margins, which would double the
+   row height inside a table cell. */
+.diff-md > :first-child {
+  margin-top: 0;
+}
+
+.diff-md > :last-child {
+  margin-bottom: 0;
+}
+
+.diff-md h1,
+.diff-md h2,
+.diff-md h3,
+.diff-md h4 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.diff-md p,
+.diff-md ul,
+.diff-md ol {
+  margin: 0;
+}
+
+.diff-md ul,
+.diff-md ol {
+  padding-left: 18px;
+}
+
+.diff-md table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.diff-md th,
+.diff-md td {
+  padding: 2px 6px;
+  border: 1px solid var(--border-soft);
+  text-align: left;
+}
+
+.diff-md blockquote {
+  margin: 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--border);
+  color: var(--fg-muted);
+}
+
+/* A fenced line, kept verbatim: indentation is the content there, and
+   markdown would try to interpret it. */
+.diff-code {
+  margin: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+/* `<mark>` carries a UA background that would fight the diff colour. */
+.diff-md mark.diff-word {
+  color: inherit;
+}
+
+/* A single table row, drawn as one. The diff compares rows
+   individually — which is what makes "one cell changed" land on that
+   cell — so a row never arrives with the header and separator that
+   markdown needs to recognise a table. */
+.diff-row-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.diff-row-table td {
+  padding: 2px 8px;
+  border: 1px solid var(--border-soft);
+  vertical-align: top;
 }

@@ -132,6 +132,18 @@ export function ArtifactPanel({
   const [busy, setBusy] = useState("");
   const [addError, setAddError] = useState("");
   const [confirmingRemove, setConfirmingRemove] = useState(false);
+  // Comparing is a state of the page, so it lives with the page —
+  // the control that toggles it is in the header, beside the other
+  // things you can do to a document.
+  const [comparing, setComparing] = useState(false);
+  const [versionCount, setVersionCount] = useState(0);
+
+  // A new document starts from its content. Carrying the comparison
+  // state across would open the next document already mid-diff, of a
+  // revision the reader has not seen.
+  useEffect(() => {
+    setComparing(false);
+  }, [selected]);
   const [notice, setNotice] = useState("");
   // Which documents have a source that moved. Fetched once with the
   // list so a search result can say "out of date" without a request
@@ -167,7 +179,10 @@ export function ArtifactPanel({
   }, [refresh]);
 
   useEffect(() => {
-    if (view !== "detail") setConfirmingRemove(false);
+    if (view !== "detail") {
+      setConfirmingRemove(false);
+      setComparing(false);
+    }
   }, [view, selected]);
 
   const sync = async () => {
@@ -357,6 +372,20 @@ export function ArtifactPanel({
             >
               {busy === "export" ? "Exporting…" : "Export"}
             </button>
+            {/* Beside the other things you can do to this document,
+                at the top of the page. It used to sit under the
+                content next to the version list, which meant
+                scrolling past the whole document to reach it and
+                then scrolling back to read the result. */}
+            {versionCount > 1 ? (
+              <button
+                className={comparing ? "btn btn-sm btn-active" : "btn btn-sm"}
+                title="See what changed between two versions"
+                onClick={() => setComparing((on) => !on)}
+              >
+                {comparing ? "Done comparing" : "Compare"}
+              </button>
+            ) : null}
             <button className="btn btn-sm" onClick={() => setView("share")}>
               Share
             </button>
@@ -427,7 +456,13 @@ export function ArtifactPanel({
           onCancel={() => setView("list")}
         />
       ) : view === "detail" && selected ? (
-        <DocumentDetail client={client} id={selected} />
+        <DocumentDetail
+          client={client}
+          id={selected}
+          comparing={comparing}
+          onCompareClosed={() => setComparing(false)}
+          onVersionCount={setVersionCount}
+        />
       ) : !status.enabled ? (
         <DisabledState />
       ) : docs && docs.length === 0 ? (
@@ -533,9 +568,17 @@ function EmptyHero({
 function DocumentDetail({
   client,
   id,
+  comparing,
+  onCompareClosed,
+  onVersionCount,
 }: {
   client: IgniClient;
   id: string;
+  /** Whether the page is in its comparison state. */
+  comparing: boolean;
+  onCompareClosed: () => void;
+  /** So the header knows whether there is anything to compare. */
+  onVersionCount: (count: number) => void;
 }) {
   const [doc, setDoc] = useState<ArtifactsDocFull | null>(null);
   const [loading, setLoading] = useState(true);
@@ -544,7 +587,6 @@ function DocumentDetail({
   // number this component happened to remember.
   const [version, setVersion] = useState(0);
   const [versions, setVersions] = useState<ArtifactVersionRow[]>([]);
-  const [comparing, setComparing] = useState(false);
   const [lineage, setLineage] = useState<ArtifactLineageView | null>(null);
   // Bumped after a confirm/dismiss so the lineage refetches. A local
   // edit of the list would drift from the store the moment anything
@@ -594,10 +636,16 @@ function DocumentDetail({
     void client
       .rpc<ArtifactVersionRow[]>("artifact_versions", { id })
       .then((r) => {
-        if (!cancelled) setVersions(r ?? []);
+        if (!cancelled) {
+          setVersions(r ?? []);
+          onVersionCount((r ?? []).length);
+        }
       })
       .catch(() => {
-        if (!cancelled) setVersions([]);
+        if (!cancelled) {
+          setVersions([]);
+          onVersionCount(0);
+        }
       });
     return () => {
       cancelled = true;
@@ -679,27 +727,31 @@ function DocumentDetail({
         </div>
       )}
 
-      <div className="kb-doc-body markdown-body">
-        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-          {doc.content || "_(empty)_"}
-        </ReactMarkdown>
-      </div>
-
-      <VersionSwitcher
-        versions={versions}
-        current={doc.n ?? 0}
-        onPick={(n) => setVersion(n)}
-        onCompare={() => setComparing(true)}
-      />
+      {/* Comparing is a *state of the document*, not a panel under
+          it. Showing both at once meant reading the current version,
+          scrolling past it, and then reading two more copies of the
+          same text. */}
       {comparing ? (
         <ArtifactCompare
           client={client}
           artifactId={doc.id}
           versions={versions.map((v) => v.n)}
           headN={versions.find((v) => v.is_head)?.n ?? doc.n ?? 0}
-          onClose={() => setComparing(false)}
+          onClose={onCompareClosed}
         />
-      ) : null}
+      ) : (
+        <div className="kb-doc-body markdown-body">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+            {doc.content || "_(empty)_"}
+          </ReactMarkdown>
+        </div>
+      )}
+
+      <VersionSwitcher
+        versions={versions}
+        current={doc.n ?? 0}
+        onPick={(n) => setVersion(n)}
+      />
       <LineageSection
         client={client}
         artifactId={doc.id}
@@ -718,25 +770,15 @@ function VersionSwitcher({
   versions,
   current,
   onPick,
-  onCompare,
 }: {
   versions: ArtifactVersionRow[];
   current: number;
   onPick: (n: number) => void;
-  onCompare: () => void;
 }) {
   if (versions.length < 2) return null;
   return (
     <section className="kb-lineage">
-      <h3 className="kb-lineage-heading">
-        Versions
-        {/* Offered beside the list rather than per row: comparing
-            needs two versions, and a button on one row has to invent
-            the other. */}
-        <button type="button" className="kb-compare-btn" onClick={onCompare}>
-          Compare
-        </button>
-      </h3>
+      <h3 className="kb-lineage-heading">Versions</h3>
       <ul className="kb-lineage-rows">
         {versions.map((v) => (
           <li key={v.n} className={v.n === current ? "kb-row kb-row-current" : "kb-row"}>

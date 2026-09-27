@@ -15,13 +15,22 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { ArtifactCompare } from "./ArtifactCompare";
+import { ArtifactCompare, codeRows, foldUnchanged, tableCells } from "./ArtifactCompare";
 import type { IgniClient } from "../../protocol/client";
 
 afterEach(cleanup);
 
 function row(over: Record<string, unknown> = {}) {
-  return { kind: "equal", left_n: 1, left: "same", right_n: 1, right: "same", ...over };
+  return {
+    kind: "equal",
+    left_n: 1,
+    left: "same",
+    right_n: 1,
+    right: "same",
+    left_parts: [],
+    right_parts: [],
+    ...over,
+  };
 }
 
 function diff(over: Record<string, unknown> = {}) {
@@ -193,5 +202,189 @@ describe("ArtifactCompare", () => {
       <ArtifactCompare client={client} artifactId="a1" versions={[3, 2]} headN={3} onClose={() => {}} />,
     );
     expect(await screen.findByText(/v3 · current/)).toBeTruthy();
+  });
+});
+
+describe("it reads like a document, not like a terminal", () => {
+  it("marks only the words that changed inside a rewritten line", async () => {
+    // Marking the whole line tells a reader something in this
+    // paragraph moved and leaves them to find out what — which, for a
+    // paragraph, is the hard part.
+    const { client } = makeClient(
+      diff({
+        rows: [
+          row({
+            kind: "changed",
+            left: "The cookie is good for 24 hours.",
+            right: "The token is good for 15 hours.",
+            left_parts: [
+              { text: "The ", changed: false },
+              { text: "cookie", changed: true },
+              { text: " is good for 24 hours.", changed: false },
+            ],
+            right_parts: [
+              { text: "The ", changed: false },
+              { text: "token", changed: true },
+              { text: " is good for 15 hours.", changed: false },
+            ],
+          }),
+        ],
+        changed: 1,
+      }),
+    );
+    render(
+      <ArtifactCompare client={client} artifactId="a1" versions={[3, 2]} headN={3} onClose={() => {}} />,
+    );
+    await screen.findByText("cookie");
+
+    const marked = [...document.querySelectorAll(".diff-word")].map((n) => n.textContent);
+    expect(marked).toEqual(["cookie", "token"]);
+  });
+
+  it("still renders a line that has no word breakdown", async () => {
+    // Added and removed lines have nothing to compare against, so
+    // they arrive whole.
+    const { client } = makeClient(
+      diff({ rows: [row({ kind: "added", left: "", right: "a new sentence" })], added: 1 }),
+    );
+    render(
+      <ArtifactCompare client={client} artifactId="a1" versions={[3, 2]} headN={3} onClose={() => {}} />,
+    );
+    expect(await screen.findByText("a new sentence")).toBeTruthy();
+  });
+
+  it("folds long stretches of untouched text", async () => {
+    // A document is mostly unchanged; showing all of it buries the edit.
+    const many = Array.from({ length: 12 }, (_, i) =>
+      row({ kind: "equal", left: `line ${i}`, right: `line ${i}` }),
+    );
+    const { client } = makeClient(
+      diff({ rows: [...many, row({ kind: "added", right: "new" })], added: 1 }),
+    );
+    render(
+      <ArtifactCompare client={client} artifactId="a1" versions={[3, 2]} headN={3} onClose={() => {}} />,
+    );
+    expect(await screen.findByRole("button", { name: /unchanged lines/ })).toBeTruthy();
+  });
+
+  it("keeps a little context either side of a change", async () => {
+    const many = Array.from({ length: 12 }, (_, i) =>
+      row({ kind: "equal", left: `line ${i}`, right: `line ${i}` }),
+    );
+    const { client } = makeClient(
+      diff({ rows: [...many, row({ kind: "added", right: "new" })], added: 1 }),
+    );
+    render(
+      <ArtifactCompare client={client} artifactId="a1" versions={[3, 2]} headN={3} onClose={() => {}} />,
+    );
+    await screen.findByText("new");
+    // The change needs somewhere to sit, so the lines next to it stay.
+    // Two matches — the line appears in both columns, unchanged.
+    expect(screen.getAllByText("line 11")).toHaveLength(2);
+  });
+
+  it("nothing is hidden — the fold opens", async () => {
+    const many = Array.from({ length: 12 }, (_, i) =>
+      row({ kind: "equal", left: `line ${i}`, right: `line ${i}` }),
+    );
+    const { client } = makeClient(
+      diff({ rows: [...many, row({ kind: "added", right: "new" })], added: 1 }),
+    );
+    render(
+      <ArtifactCompare client={client} artifactId="a1" versions={[3, 2]} headN={3} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /unchanged lines/ }));
+    await waitFor(() => expect(screen.getAllByText("line 0")).toHaveLength(2));
+  });
+
+  it("does not fold a diff with nothing to fold", async () => {
+    const { client } = makeClient(
+      diff({ rows: [row({ kind: "added", right: "one" })], added: 1 }),
+    );
+    render(
+      <ArtifactCompare client={client} artifactId="a1" versions={[3, 2]} headN={3} onClose={() => {}} />,
+    );
+    await screen.findByText("one");
+    expect(screen.queryByRole("button", { name: /unchanged/ })).toBeNull();
+  });
+});
+
+describe("foldUnchanged", () => {
+  const eq = (i: number) => row({ kind: "equal", left: `l${i}`, right: `l${i}` }) as never;
+  const change = () => row({ kind: "added", right: "x" }) as never;
+
+  it("leaves a short run alone", () => {
+    const out = foldUnchanged([eq(0), eq(1), change()], 2);
+    expect(out.every((e) => !("fold" in e))).toBe(true);
+  });
+
+  it("folds what is beyond the context window", () => {
+    const out = foldUnchanged([...Array.from({ length: 10 }, (_, i) => eq(i)), change()], 2);
+    const fold = out.find((e) => "fold" in e) as { fold: number; from: number };
+    expect(fold.fold).toBe(8);
+    expect(fold.from).toBe(0);
+  });
+
+  it("folds a trailing run too", () => {
+    const out = foldUnchanged([change(), ...Array.from({ length: 10 }, (_, i) => eq(i))], 2);
+    expect(out.some((e) => "fold" in e)).toBe(true);
+  });
+
+  it("accounts for every row", () => {
+    // Folded or shown, nothing may be dropped on the floor.
+    const rows = [...Array.from({ length: 10 }, (_, i) => eq(i)), change()];
+    const out = foldUnchanged(rows, 2);
+    const shown = out.filter((e) => !("fold" in e)).length;
+    const folded = out
+      .filter((e) => "fold" in e)
+      .reduce((sum, e) => sum + (e as { fold: number }).fold, 0);
+    expect(shown + folded).toBe(rows.length);
+  });
+});
+
+describe("tableCells", () => {
+  it("splits a pipe row into cells", () => {
+    expect(tableCells("| a | b | c |")).toEqual(["a", "b", "c"]);
+  });
+
+  it("ignores the separator row", () => {
+    // Drawing a row of dashes says nothing and costs a row to say it.
+    expect(tableCells("| --- | --- |")).toBeNull();
+    expect(tableCells("| :--- | ---: |")).toBeNull();
+  });
+
+  it("is not fooled by prose containing a pipe", () => {
+    expect(tableCells("run a | b in the shell")).toBeNull();
+  });
+
+  it("keeps empty cells so the columns still line up", () => {
+    expect(tableCells("| a |  | c |")).toEqual(["a", "", "c"]);
+  });
+});
+
+describe("codeRows", () => {
+  const r = (over: Record<string, unknown> = {}) => row(over) as never;
+
+  it("marks the lines between two fences", () => {
+    const rows = [
+      r({ left: "prose", right: "prose" }),
+      r({ left: "```yaml", right: "```yaml" }),
+      r({ left: "  key: 1", right: "  key: 2" }),
+      r({ left: "```", right: "```" }),
+      r({ left: "after", right: "after" }),
+    ];
+    expect(codeRows(rows)).toEqual([false, true, true, true, false]);
+  });
+
+  it("treats an unclosed fence as running to the end", () => {
+    // Malformed input should degrade, not mis-render the rest as
+    // markdown that happens to start with a hash.
+    const rows = [r({ left: "```", right: "```" }), r({ left: "# not a heading", right: "x" })];
+    expect(codeRows(rows)).toEqual([true, true]);
+  });
+
+  it("handles a fence that exists on one side only", () => {
+    const rows = [r({ left: "", right: "```" }), r({ left: "", right: "code" })];
+    expect(codeRows(rows)).toEqual([true, true]);
   });
 });

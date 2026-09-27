@@ -258,6 +258,8 @@
     ],
     "status_update": [
       "cloud_connected",
+      "cloud_email",
+      "cloud_name",
       "cloud_org",
       "context_tokens",
       "event_seq",
