@@ -53,6 +53,12 @@ class ArtifactRpcHandler(RpcHandler):
     def artifact_dismiss_source(self, args: dict) -> Any:
         return self._ctx.backend.artifact_dismiss_source(args["id"], args["source_id"])
 
+    @rpc(RpcMethod.ARTIFACT_COMPARE)
+    def artifact_compare(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_compare(
+            args["id"], int(args["from_n"]), int(args["to_n"])
+        )
+
     @rpc(RpcMethod.ARTIFACT_COMMENTS)
     def artifact_comments(self, args: dict) -> Any:
         return self._ctx.backend.artifact_comments(

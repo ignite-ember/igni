@@ -7,6 +7,7 @@ import { ArtifactGraphSearch } from "./ArtifactGraphSearch";
 import { ArtifactSearch } from "./ArtifactSearch";
 import { ArtifactShareDialog } from "./ArtifactShareDialog";
 import { ArtifactCommentReview } from "./ArtifactCommentReview";
+import { ArtifactCompare } from "./ArtifactCompare";
 import { ArtifactStaleReview } from "./ArtifactStaleReview";
 import { Drawer } from "./Drawer";
 import { Skeleton } from "../Skeleton";
@@ -543,6 +544,7 @@ function DocumentDetail({
   // number this component happened to remember.
   const [version, setVersion] = useState(0);
   const [versions, setVersions] = useState<ArtifactVersionRow[]>([]);
+  const [comparing, setComparing] = useState(false);
   const [lineage, setLineage] = useState<ArtifactLineageView | null>(null);
   // Bumped after a confirm/dismiss so the lineage refetches. A local
   // edit of the list would drift from the store the moment anything
@@ -687,7 +689,17 @@ function DocumentDetail({
         versions={versions}
         current={doc.n ?? 0}
         onPick={(n) => setVersion(n)}
+        onCompare={() => setComparing(true)}
       />
+      {comparing ? (
+        <ArtifactCompare
+          client={client}
+          artifactId={doc.id}
+          versions={versions.map((v) => v.n)}
+          headN={versions.find((v) => v.is_head)?.n ?? doc.n ?? 0}
+          onClose={() => setComparing(false)}
+        />
+      ) : null}
       <LineageSection
         client={client}
         artifactId={doc.id}
@@ -706,15 +718,25 @@ function VersionSwitcher({
   versions,
   current,
   onPick,
+  onCompare,
 }: {
   versions: ArtifactVersionRow[];
   current: number;
   onPick: (n: number) => void;
+  onCompare: () => void;
 }) {
   if (versions.length < 2) return null;
   return (
     <section className="kb-lineage">
-      <h3 className="kb-lineage-heading">Versions</h3>
+      <h3 className="kb-lineage-heading">
+        Versions
+        {/* Offered beside the list rather than per row: comparing
+            needs two versions, and a button on one row has to invent
+            the other. */}
+        <button type="button" className="kb-compare-btn" onClick={onCompare}>
+          Compare
+        </button>
+      </h3>
       <ul className="kb-lineage-rows">
         {versions.map((v) => (
           <li key={v.n} className={v.n === current ? "kb-row kb-row-current" : "kb-row"}>

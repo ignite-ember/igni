@@ -37,7 +37,9 @@ from ember_code.backend.schemas_artifacts import (
     ArtifactStatus,
     ArtifactVersionRow,
 )
+from ember_code.core.artifacts import side_by_side
 from ember_code.core.artifacts.collaboration import CollaborationSync
+from ember_code.core.artifacts.side_by_side import VersionDiff
 from ember_code.core.artifacts.cypher import ArtifactCypherService, CypherResult
 from ember_code.core.artifacts.export import ArtifactExporter, ArtifactPublisher
 from ember_code.core.artifacts.models import ArtifactSummary, EdgeState
@@ -257,6 +259,33 @@ class ArtifactController:
             )
             for s in rows
         ]
+
+    async def compare(self, entry_id: str, from_n: int, to_n: int) -> VersionDiff:
+        """Two versions of one document, aligned into columns.
+
+        Either number may be ``0``, meaning "the head" — the panel
+        offers "compare with current" far more often than it offers a
+        specific pair, and resolving it here saves the client having
+        to know the head number to ask the question.
+        """
+        mgr = self._session.artifact_mgr
+        left = await mgr.version(entry_id, from_n)
+        right = await mgr.version(entry_id, to_n)
+        if left is None or right is None:
+            # An empty diff rather than an error: asking for a version
+            # that is not there is a stale panel, not a fault, and one
+            # that throws on a deleted version is worse than one that
+            # reports no changes.
+            return VersionDiff(artifact_id=entry_id, from_n=from_n, to_n=to_n)
+        known = {s.artifact_id: s.name for s in await mgr.list_artifacts()}
+        return side_by_side.build(
+            left.content,
+            right.content,
+            artifact_id=entry_id,
+            name=known.get(entry_id, "") or "",
+            from_n=left.n,
+            to_n=right.n,
+        )
 
     async def comments(
         self, *, artifact_id: str = "", open_only: bool = True

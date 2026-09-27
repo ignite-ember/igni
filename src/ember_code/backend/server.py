@@ -73,6 +73,7 @@ from ember_code.core.config.user_config_store import UserConfigStore
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
+    from ember_code.core.artifacts.side_by_side import VersionDiff
     from ember_code.backend.schemas_artifacts import (
         ArtifactExportResult,
         ArtifactLineageView,
@@ -981,6 +982,10 @@ class BackendServer:
     async def artifact_stale(self) -> list[ArtifactStaleRow]:
         """See :meth:`ArtifactController.stale`."""
         return await self.artifacts.stale()
+
+    async def artifact_compare(self, entry_id: str, from_n: int, to_n: int) -> VersionDiff:
+        """See :meth:`ArtifactController.compare`."""
+        return await self.artifacts.compare(entry_id, from_n, to_n)
 
     async def artifact_comments(
         self, *, artifact_id: str = "", open_only: bool = True

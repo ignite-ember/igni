@@ -10429,3 +10429,166 @@ button {
   flex-wrap: wrap;
   gap: 8px;
 }
+
+/* ── Version comparison ──────────────────────────────────────────────
+   Two versions in columns, GitHub-style.
+
+   Colour carries the change, but it is not the only thing carrying it:
+   a left cell and a right cell that differ are already visibly a pair.
+   That matters because roughly one reader in twelve cannot separate
+   the red from the green, and a diff whose entire meaning is hue is a
+   diff they cannot read. The line numbers on each side do the rest. */
+
+.artifact-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.artifact-compare-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.artifact-compare-head label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.artifact-compare-head select {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+
+.artifact-compare-tally {
+  display: inline-flex;
+  gap: 8px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tally-added {
+  color: var(--accent-green-text);
+}
+
+.tally-removed {
+  color: var(--accent-red-text);
+}
+
+.artifact-compare-close {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.artifact-diff {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  overflow: hidden;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.55;
+  /* Long prose lines wrap inside their cell rather than scrolling the
+     whole table sideways — a document is not code, and a horizontal
+     scrollbar under a paragraph is unreadable. */
+  table-layout: fixed;
+}
+
+.artifact-diff th {
+  padding: 6px 10px;
+  background: var(--bg-inset);
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.artifact-diff th:nth-child(2) {
+  border-left: 1px solid var(--border-soft);
+}
+
+/* The gutter. Narrow, right-aligned, and not selectable, so copying a
+   passage out of the diff does not carry line numbers with it. */
+.diff-num {
+  width: 3.2em;
+  padding: 1px 8px;
+  vertical-align: top;
+  text-align: right;
+  color: var(--fg-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  background: var(--bg-inset);
+}
+
+.diff-cell {
+  padding: 1px 10px;
+  vertical-align: top;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  color: var(--fg);
+}
+
+.diff-right {
+  border-left: 1px solid var(--border-soft);
+}
+
+.artifact-diff tr[data-kind="removed"] .diff-left,
+.artifact-diff tr[data-kind="changed"] .diff-left {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+.artifact-diff tr[data-kind="added"] .diff-right,
+.artifact-diff tr[data-kind="changed"] .diff-right {
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+}
+
+/* The empty half of an unpaired change. Hatched rather than left
+   blank: an empty cell reads as "this line is unchanged and blank",
+   which is the opposite of what it means. */
+.artifact-diff tr[data-kind="removed"] .diff-right,
+.artifact-diff tr[data-kind="added"] .diff-left {
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 5px,
+    var(--bg-inset) 5px,
+    var(--bg-inset) 10px
+  );
+}
+
+/* "Compare" sits in the Versions heading, not on a row: comparing
+   takes two versions, and a per-row button has to invent the other. */
+.kb-compare-btn {
+  margin-left: 10px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-surface);
+  color: var(--accent-blue-text);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: pointer;
+}
