@@ -53,6 +53,9 @@ class TestBackendServerCommands:
             server._session = MagicMock()
             server._session.cloud_connected = True
             server._session.cloud_org_name = "Test Org"
+            # The header names the account, not just the org, so the
+            # status push carries the address too.
+            server._session.cloud_email = "maya@acme.test"
             server._session.last_input_tokens = 1234
             # ``Session.permission_mode_value`` is the wire-safe string
             # StatusUpdate needs — MagicMock returns another MagicMock
@@ -66,6 +69,7 @@ class TestBackendServerCommands:
         assert isinstance(status, msg.StatusUpdate)
         assert status.model == "test-model"
         assert status.cloud_connected is True
+        assert status.cloud_email == "maya@acme.test"
         assert status.cloud_org == "Test Org"
         assert status.max_context == 128_000
         assert status.context_tokens == 1234
