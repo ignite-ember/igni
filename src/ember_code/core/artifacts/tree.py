@@ -53,6 +53,10 @@ class TreeNode:
     #: the reader cannot open. It holds a place; there is nothing
     #: behind it to open.
     placeholder: bool = False
+    #: Put away. Carried through the tree rather than filtered out
+    #: here: whether archived documents are shown is the caller's
+    #: decision, and the rows it passes in are already that decision.
+    archived: bool = False
 
     @property
     def descendants(self) -> int:
@@ -101,6 +105,7 @@ def build(rows: list[dict], *, visible: set[str] | None = None) -> list[TreeNode
             is_folder=bool(r.get("is_folder")),
             head_n=int(r.get("head_n") or 0),
             updated_at=r.get("updated_at") or "",
+            archived=bool(r.get("archived")),
         )
         for r in rows
         if visible is None or r["node_id"] in visible

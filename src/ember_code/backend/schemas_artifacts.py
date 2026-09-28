@@ -387,6 +387,8 @@ class ArtifactTreeNode(BaseModel):
     descendants: int = 0
     #: Stands in for a parent that is missing or cannot be opened.
     placeholder: bool = False
+    #: Put away. Only ever present when the reader asked to see them.
+    archived: bool = False
 
 
 class ArtifactTree(BaseModel):
@@ -401,6 +403,16 @@ class ArtifactTree(BaseModel):
     error: str = ""
 
 
+class ArtifactDependent(BaseModel):
+    """One document standing in the way of a delete."""
+
+    artifact_id: str = ""
+    name: str = ""
+    #: ``confirmed`` — somebody agreed this was a source.
+    #: ``candidate`` — the agent noticed a read and nobody has ruled.
+    state: str = ""
+
+
 class ArtifactTreeChanged(BaseModel):
     """The outcome of creating, moving, renaming or removing."""
 
@@ -410,6 +422,14 @@ class ArtifactTreeChanged(BaseModel):
     promoted: int = 0
     message: str = ""
     error: str = ""
+    #: Why a delete was refused, named rather than counted.
+    #:
+    #: "3 documents depend on this" tells a reader they are stuck.
+    #: Naming them tells them what to go and change, which is the
+    #: only version of this message that leads anywhere.
+    blocked_by: list[ArtifactDependent] = Field(default_factory=list)
+    #: True when archiving would do what the reader was after.
+    suggest_archive: bool = False
 
 
 class ArtifactCommentReplied(BaseModel):

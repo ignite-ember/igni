@@ -174,7 +174,10 @@ class ArtifactSyncer:
             return ArtifactSyncResult(direction="db_to_file", message="Artifacts disabled.")
 
         previous = self.load_file()
-        summaries = await self.artifacts.list_artifacts()
+        # Archived entries stay in the file. Dropping them would
+        # delete them from it, and the next file-to-store sync would
+        # bring them back as new documents at the top level.
+        summaries = await self.artifacts.list_artifacts(include_archived=True)
         rows: list[ArtifactEntry] = []
         for summary in summaries:
             head = await self.artifacts.version(summary.artifact_id, 0)

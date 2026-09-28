@@ -240,10 +240,12 @@ class SessionArtifactManager:
             )
         return ArtifactSearchHit(artifact_id="")
 
-    async def list_artifacts(self, *, limit: int = 1000) -> list[ArtifactSummary]:
+    async def list_artifacts(
+        self, *, limit: int = 1000, include_archived: bool = False
+    ) -> list[ArtifactSummary]:
         if self.artifacts is None:
             return []
-        return await self.artifacts.list_artifacts(limit=limit)
+        return await self.artifacts.list_artifacts(limit=limit, include_archived=include_archived)
 
     async def repair_chunks(self, *, budget: int = 12) -> int:
         """Re-split versions whose chunks predate correct line spans.

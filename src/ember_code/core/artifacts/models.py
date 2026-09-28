@@ -216,6 +216,15 @@ class ArtifactSummary(BaseModel):
     #: tree needs one parent, chosen by a person, that stays where
     #: they put it.
     parent_id: str = ""
+    #: Put away, but still here.
+    #:
+    #: The answer to "I am done with this and something is built on
+    #: it". Deleting would break the thing that cites it; leaving it
+    #: in the tree leaves clutter that reads as current. Archived, it
+    #: is out of the tree and out of the list, and every version and
+    #: every edge into it still resolves — so a dependent's lineage
+    #: still says what it was built on.
+    archived: bool = False
 
     @property
     def is_imported(self) -> bool:

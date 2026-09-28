@@ -1075,9 +1075,9 @@ class BackendServer:
         """See :meth:`ArtifactController.reply_comment`."""
         return await self.artifacts.reply_comment(comment_id=comment_id, body=body)
 
-    async def artifact_tree(self) -> ArtifactTree:
+    async def artifact_tree(self, include_archived: bool = False) -> ArtifactTree:
         """See :meth:`ArtifactController.tree`."""
-        return await self.artifacts.tree()
+        return await self.artifacts.tree(include_archived=include_archived)
 
     async def artifact_create_folder(self, name: str, parent_id: str = "") -> ArtifactTreeChanged:
         """See :meth:`ArtifactController.create_folder`."""
@@ -1094,6 +1094,16 @@ class BackendServer:
     async def artifact_move_node(self, node_id: str, parent_id: str = "") -> ArtifactTreeChanged:
         """See :meth:`ArtifactController.move_node`."""
         return await self.artifacts.move_node(node_id=node_id, parent_id=parent_id)
+
+    async def artifact_archive_node(
+        self, node_id: str, archived: bool = True
+    ) -> ArtifactTreeChanged:
+        """See :meth:`ArtifactController.archive_node`."""
+        return await self.artifacts.archive_node(node_id=node_id, archived=archived)
+
+    async def artifact_delete_node(self, node_id: str) -> ArtifactTreeChanged:
+        """See :meth:`ArtifactController.delete_node`."""
+        return await self.artifacts.delete_node(node_id=node_id)
 
     async def artifact_comment(
         self,

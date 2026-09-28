@@ -424,8 +424,10 @@ class ArtifactIndex:
             return found
         return await self._client.find_by_name(text)
 
-    async def list_artifacts(self, *, limit: int = 1000) -> list[ArtifactSummary]:
-        return await self._client.list_artifacts(limit=limit)
+    async def list_artifacts(
+        self, *, limit: int = 1000, include_archived: bool = False
+    ) -> list[ArtifactSummary]:
+        return await self._client.list_artifacts(limit=limit, include_archived=include_archived)
 
     async def versions(self, ref: str, *, limit: int = 200) -> list[ArtifactVersion]:
         summary = await self.resolve(ref)

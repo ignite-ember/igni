@@ -30,6 +30,7 @@ from ember_code.backend.schemas_artifacts import (
     ArtifactCommentReplied,
     ArtifactCommentResolved,
     ArtifactCommentRow,
+    ArtifactDependent,
     ArtifactDrift,
     ArtifactDriftApplied,
     ArtifactExportResult,
@@ -375,7 +376,10 @@ class ArtifactController:
             # that throws on a deleted version is worse than one that
             # reports no changes.
             return VersionDiff(artifact_id=entry_id, from_n=from_n, to_n=to_n)
-        known = {s.artifact_id: s.name for s in await mgr.list_artifacts()}
+        # Archived included: this only turns ids into names, and a
+        # name that goes blank because somebody archived the document
+        # is the thing archiving promised would keep resolving.
+        known = {s.artifact_id: s.name for s in await mgr.list_artifacts(include_archived=True)}
         return side_by_side.build(
             left.content,
             right.content,
@@ -401,7 +405,11 @@ class ArtifactController:
         # cross-document but a person's documents number in the tens,
         # and a resolve per row would be a query per comment.
         known = {
-            s.artifact_id: ((s.name or ""), int(s.head_n or 0)) for s in await mgr.list_artifacts()
+            s.artifact_id: ((s.name or ""), int(s.head_n or 0))
+            # Archived too: a comment on a document that was put away
+            # is still a comment somebody has to answer, and a row
+            # with no name is one nobody can act on.
+            for s in await mgr.list_artifacts(include_archived=True)
         }
         out: list[ArtifactCommentRow] = []
         for c in rows:
@@ -1102,14 +1110,14 @@ class ArtifactController:
         result.message = "Replied, and igni answered."
         return result
 
-    async def _tree_rows(self) -> list[dict[str, Any]]:
+    async def _tree_rows(self, *, include_archived: bool = False) -> list[dict[str, Any]]:
         """Documents and folders as one set of rows.
 
         The tree is the one place the two node kinds meet, so it is
         the one place that assembles both.
         """
         mgr = self._session.artifact_mgr
-        docs = await mgr.list_artifacts()
+        docs = await mgr.list_artifacts(include_archived=include_archived)
         rows: list[dict[str, Any]] = [
             {
                 "node_id": d.artifact_id,
@@ -1118,6 +1126,7 @@ class ArtifactController:
                 "head_n": int(d.head_n or 0),
                 "updated_at": d.updated_at or "",
                 "parent_id": getattr(d, "parent_id", "") or "",
+                "archived": bool(getattr(d, "archived", False)),
                 "is_folder": False,
             }
             for d in docs
@@ -1129,11 +1138,17 @@ class ArtifactController:
                 logger.info("could not read folders: %s", exc)
         return rows
 
-    async def tree(self) -> ArtifactTree:
-        """The navigation tree, flattened and ordered."""
+    async def tree(self, *, include_archived: bool = False) -> ArtifactTree:
+        """The navigation tree, flattened and ordered.
+
+        Archived documents are left out unless asked for. They are
+        asked for from one place — the reader turning them on — and
+        they come back in the same tree rather than a separate screen,
+        so restoring one is done where it will end up.
+        """
         if self._session.artifacts is None:
             return ArtifactTree(error="Artifacts are disabled.")
-        rows = await self._tree_rows()
+        rows = await self._tree_rows(include_archived=include_archived)
         nodes = build_tree(rows)
         return ArtifactTree(
             nodes=[
@@ -1146,6 +1161,7 @@ class ArtifactController:
                     depth=n.depth,
                     descendants=n.descendants,
                     placeholder=n.placeholder,
+                    archived=n.archived,
                 )
                 for n in flatten_tree(nodes)
             ]
@@ -1194,6 +1210,89 @@ class ArtifactController:
                 else "Folder removed."
             ),
         )
+
+    async def archive_node(self, *, node_id: str, archived: bool = True) -> ArtifactTreeChanged:
+        """Put a document away, or bring it back.
+
+        The answer to "I am finished with this" that does not break
+        anything built on it. Nothing is removed: the versions stay,
+        the edges into it stay, and a dependent's lineage still
+        resolves. It leaves the tree and the list, which is the whole
+        of what was asked for.
+        """
+        if self._session.artifacts is None:
+            return ArtifactTreeChanged(error="Artifacts are disabled.")
+        moved = await self._session.artifacts.client.set_archived(
+            artifact_id=node_id, archived=archived
+        )
+        if moved is None:
+            return ArtifactTreeChanged(error="No such document.")
+        if not archived:
+            return ArtifactTreeChanged(ok=True, node_id=node_id, message="Restored.")
+        # Said out loud. Things moved out of a branch without being
+        # asked to is exactly the kind of change people discover a
+        # week later and cannot account for.
+        moved_note = f" {moved} item{'' if moved == 1 else 's'} moved up a level." if moved else ""
+        return ArtifactTreeChanged(
+            ok=True,
+            node_id=node_id,
+            promoted=moved,
+            message=(
+                "Archived. It is out of the tree; anything built on it still resolves." + moved_note
+            ),
+        )
+
+    async def delete_node(self, *, node_id: str) -> ArtifactTreeChanged:
+        """Delete a document, unless something is built on it.
+
+        Deleting takes the whole version chain with it, so every
+        ``DERIVED_FROM`` edge pointing into any version of it breaks —
+        and the damage does not show up on this screen. It shows up
+        later, on another document, as a source that no longer says
+        what it was.
+
+        Confirmed edges refuse the delete. Candidates do not: a
+        candidate is the agent's guess that a read happened, nobody
+        has ruled on it, and letting a guess veto a person's delete
+        teaches them to ignore both. They are still named, so the
+        refusal and the warning read as one list.
+        """
+        if self._session.artifacts is None:
+            return ArtifactTreeChanged(error="Artifacts are disabled.")
+
+        store = self._session.artifacts.client
+        try:
+            dependents = await store.dependents_of(node_id)
+        except Exception as exc:  # noqa: BLE001
+            # Not "delete anyway". A delete that cannot be checked is
+            # the one case where doing nothing is clearly right.
+            logger.warning("could not check dependents of %s: %s", node_id, exc)
+            return ArtifactTreeChanged(
+                error="Could not check what depends on this, so nothing was deleted."
+            )
+
+        confirmed = [d for d in dependents if (d.get("state") or "") == "confirmed"]
+        if confirmed:
+            names = ", ".join(d["name"] or d["artifact_id"] for d in confirmed)
+            return ArtifactTreeChanged(
+                blocked_by=[
+                    ArtifactDependent(
+                        artifact_id=d["artifact_id"], name=d["name"], state=d["state"]
+                    )
+                    for d in confirmed
+                ],
+                suggest_archive=True,
+                error=(
+                    f"{names} {'is' if len(confirmed) == 1 else 'are'} built on this. "
+                    "Archive it instead, or drop the source from "
+                    f"{'that document' if len(confirmed) == 1 else 'those documents'} first."
+                ),
+            )
+
+        result = await self.remove(node_id)
+        if result.error or not result.removed:
+            return ArtifactTreeChanged(error=result.error or "Nothing was deleted.")
+        return ArtifactTreeChanged(ok=True, node_id=node_id, message="Deleted.")
 
     async def move_node(self, *, node_id: str, parent_id: str = "") -> ArtifactTreeChanged:
         """Put something somewhere else in the tree.

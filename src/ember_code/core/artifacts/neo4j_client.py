@@ -910,6 +910,89 @@ class Neo4jArtifactClient:
             record = await result.single()
         return bool(record and record["n"])
 
+    async def set_archived(self, *, artifact_id: str, archived: bool) -> int | None:
+        """Put a document away, or bring it back.
+
+        A flag, not a delete. Every version and every ``DERIVED_FROM``
+        edge stays exactly as it was, so a document built on this one
+        still resolves what it was built on and still reports drift
+        when this one moves. What changes is only whether it is
+        offered: out of the tree, out of the list, out of the way.
+
+        **Anything under it moves up a level**, the way it does when a
+        folder is removed. Archiving is a decision about one document,
+        and leaving its children pointing at a parent that is no
+        longer in the tree strands them under "a document you cannot
+        open" — which is what the first version did, and it reads as
+        the archive having swallowed them.
+
+        Returns how many were moved, or ``None`` if there is no such
+        document. Zero and "not found" are different answers and the
+        caller has to be able to tell them apart.
+        """
+        async with self.session() as session:
+            result = await session.run(
+                "MATCH (a:Artifact {artifact_id: $aid, project_hash: $proj}) "
+                "SET a.archived = $archived, a.updated_at = datetime() "
+                "RETURN coalesce(a.parent_id, '') AS parent_id",
+                aid=artifact_id,
+                proj=self._project_id,
+                archived=bool(archived),
+            )
+            record = await result.single()
+            if record is None:
+                return None
+            if not archived:
+                return 0
+            moved = await session.run(
+                "MATCH (c) WHERE (c:Artifact OR c:Folder) "
+                "AND c.parent_id = $aid AND c.project_hash = $proj "
+                "SET c.parent_id = $up, c.updated_at = datetime() "
+                "RETURN count(c) AS n",
+                aid=artifact_id,
+                proj=self._project_id,
+                up=record["parent_id"] or "",
+            )
+            moved_record = await moved.single()
+        return int(moved_record["n"]) if moved_record else 0
+
+    async def dependents_of(self, artifact_id: str) -> list[dict[str, Any]]:
+        """Every document built on **any** version of this one.
+
+        Any version, not the head. Deleting an artifact takes its
+        whole version chain with it, so a dependent pinned to v2 is
+        broken by the delete just as surely as one pinned to the head
+        — and it is the older pins that are easiest to forget.
+
+        The edge's state comes back with it, because candidate and
+        confirmed are not the same claim and the caller has to be able
+        to tell them apart.
+        """
+        async with self.session() as session:
+            result = await session.run(
+                "MATCH (dv:Version)-[d:DERIVED_FROM]->(sv:Version) "
+                "MATCH (sa:Artifact {artifact_id: $aid, project_hash: $proj})"
+                "-[:HAS_VERSION]->(sv) "
+                "MATCH (da:Artifact)-[:HAS_VERSION]->(dv) "
+                "WHERE da.artifact_id <> $aid "
+                "RETURN DISTINCT da.artifact_id AS artifact_id, "
+                "coalesce(da.name, '') AS name, coalesce(d.state, '') AS state, "
+                "coalesce(da.archived, false) AS archived "
+                "ORDER BY name",
+                aid=artifact_id,
+                proj=self._project_id,
+            )
+            records = (await result.to_eager_result()).records
+        return [
+            {
+                "artifact_id": r["artifact_id"],
+                "name": r["name"],
+                "state": r["state"],
+                "archived": bool(r["archived"]),
+            }
+            for r in records
+        ]
+
     async def create_folder(self, *, name: str, parent_id: str = "") -> str:
         """A place to put things, holding nothing itself.
 
@@ -1000,12 +1083,22 @@ class Neo4jArtifactClient:
             for r in records
         ]
 
-    async def list_artifacts(self, *, limit: int = 1000) -> list[ArtifactSummary]:
-        """Every artifact in this project, heads only."""
+    async def list_artifacts(
+        self, *, limit: int = 1000, include_archived: bool = False
+    ) -> list[ArtifactSummary]:
+        """Every artifact in this project, heads only.
+
+        Archived ones are left out by default. Archiving is only
+        worth anything if the archived thing stops turning up, and
+        every caller that lists documents is somewhere it should not
+        turn up. The two places that pass ``True`` are the tree, when
+        the reader has asked to see them, and restoring.
+        """
         async with self.session() as session:
             result = await session.run(
                 "MATCH (a:Artifact {project_hash: $proj}) "
-                "OPTIONAL MATCH (a)-[:HAS_VERSION]->(v:Version) "
+                + ("" if include_archived else "WHERE NOT coalesce(a.archived, false) ")
+                + "OPTIONAL MATCH (a)-[:HAS_VERSION]->(v:Version) "
                 "WITH a, count(v) AS versions "
                 "RETURN a.artifact_id AS artifact_id, a.name AS name, "
                 "a.kind AS kind, coalesce(a.head_n, 0) AS head_n, "
@@ -1013,7 +1106,8 @@ class Neo4jArtifactClient:
                 "toString(a.updated_at) AS updated_at, "
                 "coalesce(a.author, '') AS author, "
                 "coalesce(a.origin, '') AS origin, "
-                "coalesce(a.parent_id, '') AS parent_id, versions "
+                "coalesce(a.parent_id, '') AS parent_id, "
+                "coalesce(a.archived, false) AS archived, versions "
                 "ORDER BY a.updated_at DESC LIMIT $limit",
                 proj=self._project_id,
                 limit=limit,
@@ -1310,6 +1404,7 @@ def _summary(record: Any) -> ArtifactSummary:
         # records from queries written before the tree existed, and a
         # KeyError there would take out the artifact list.
         parent_id=(_maybe(record, "parent_id") or ""),
+        archived=bool(_maybe(record, "archived") or False),
     )
 
 

@@ -274,6 +274,8 @@ class RpcMethod(StrEnum):
     ARTIFACT_RENAME_FOLDER = "artifact_rename_folder"
     ARTIFACT_DELETE_FOLDER = "artifact_delete_folder"
     ARTIFACT_MOVE_NODE = "artifact_move_node"
+    ARTIFACT_ARCHIVE_NODE = "artifact_archive_node"
+    ARTIFACT_DELETE_NODE = "artifact_delete_node"
     ARTIFACT_RESOLVE_COMMENT = "artifact_resolve_comment"
     ARTIFACT_SYNC_COMMENTS = "artifact_sync_comments"
     ARTIFACT_ASK = "artifact_ask"

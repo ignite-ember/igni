@@ -129,7 +129,7 @@ class ArtifactRpcHandler(RpcHandler):
 
     @rpc(RpcMethod.ARTIFACT_TREE)
     def artifact_tree(self, args: dict) -> Any:
-        return self._ctx.backend.artifact_tree()
+        return self._ctx.backend.artifact_tree(bool(args.get("include_archived", False)))
 
     @rpc(RpcMethod.ARTIFACT_CREATE_FOLDER)
     def artifact_create_folder(self, args: dict) -> Any:
@@ -148,6 +148,16 @@ class ArtifactRpcHandler(RpcHandler):
     @rpc(RpcMethod.ARTIFACT_MOVE_NODE)
     def artifact_move_node(self, args: dict) -> Any:
         return self._ctx.backend.artifact_move_node(args["node_id"], args.get("parent_id", ""))
+
+    @rpc(RpcMethod.ARTIFACT_ARCHIVE_NODE)
+    def artifact_archive_node(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_archive_node(
+            args["node_id"], bool(args.get("archived", True))
+        )
+
+    @rpc(RpcMethod.ARTIFACT_DELETE_NODE)
+    def artifact_delete_node(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_delete_node(args["node_id"])
 
     @rpc(RpcMethod.ARTIFACT_COMMENT)
     def artifact_comment(self, args: dict) -> Any:
