@@ -4322,12 +4322,17 @@ button {
   visibility: hidden;
 }
 
+/* 18px is the page's left edge, and it is the crumb's *text* that has
+   to sit on it — so the container gives back the 4px of padding the
+   crumb carries for its hover fill. Align the boxes instead and every
+   label ends up four pixels right of everything below it. The fill
+   hangs into the gutter, where there is nothing to hit. */
 .page-crumbs {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 2px;
-  padding: 10px 18px 0;
+  padding: 10px 18px 0 14px;
   font-size: 12.5px;
 }
 
@@ -12127,8 +12132,13 @@ button {
   white-space: nowrap;
 }
 
+/* Outdented by its own padding for the same reason the crumbs are:
+   what the eye lines up is the word "Show", not the invisible box
+   around it. Puts it on 18 with the crumb above it and the New
+   document button's border beside it. */
 .kb-tree-archived {
   padding: 2px 6px;
+  margin-left: -6px;
   font: inherit;
   font-size: 11px;
   color: var(--fg-muted);
@@ -13452,11 +13462,21 @@ button {
   background: color-mix(in srgb, var(--accent-blue, #4a7dff) 30%, transparent);
 }
 
+/* The rail's footer, under the scrolling threads rather than after
+   them. It holds the floor: the list runs out above the rule, and
+   the way to start a comment stays where it was whatever the reader
+   scrolled past to get there.
+
+   Opaque, because the threads pass beneath it, and with room under
+   the button so it is not sitting on the bottom of the window. */
 .doc-comment-bar {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding-right: 18px;
+  padding: 12px 18px 16px 0;
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg);
 }
 
 .doc-comment-hint {
