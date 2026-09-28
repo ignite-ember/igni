@@ -777,24 +777,31 @@ export function DocumentComment({
    * recency, the card beside a sentence is nowhere near it, and the
    * reader has to search a list to find the one they are looking at.
    *
-   * Three groups. A comment about the whole document has no passage
-   * to sit beside and goes first, because it is about everything that
-   * follows. Then the anchored ones, in the document's own order.
-   * Then the ones whose passage has since been rewritten: they cannot
-   * be placed, and guessing a position for them would put them
-   * somewhere they do not belong. Ties keep the order they arrived
-   * in, which is newest first.
+   * Three groups. The anchored ones first, in the document's own
+   * order. Then the ones whose passage has since been rewritten: they
+   * cannot be placed, and guessing a position for them would put them
+   * somewhere they do not belong. Then the ones about the whole
+   * document, which sit under all of it for the same reason a note on
+   * an article goes at its foot rather than across its title — a
+   * remark about the whole thing is made once the whole thing has
+   * been read. Ties keep the order they arrived in, which is newest
+   * first.
    */
   const ordered = useMemo(() => {
     const text = bodyRef.current?.textContent ?? "";
+    // Past the end of any real position, so nothing in the document
+    // can sort below them, and ordered among themselves so a lost
+    // passage still reads before a note on the whole document.
+    const PASSAGE_GONE = Number.MAX_SAFE_INTEGER - 1;
+    const WHOLE_DOCUMENT = Number.MAX_SAFE_INTEGER;
     const place = (thread: Thread) => {
-      if (!thread.quote.trim()) return -1;
+      if (!thread.quote.trim()) return WHOLE_DOCUMENT;
       // The same lookup the highlight uses, so a passage the rail
       // places and a passage the document lights up are the same
       // passage. A plainer search disagreed with it on any quote
       // whose whitespace had moved.
       const at = whereIn(text, thread.quote, thread.quoteStart);
-      return at >= 0 ? at : Number.MAX_SAFE_INTEGER;
+      return at >= 0 ? at : PASSAGE_GONE;
     };
     return [...started]
       .map((thread) => ({ thread, at: place(thread) }))
@@ -1356,7 +1363,6 @@ export function DocumentComment({
             ))}
           </ol>
         )}
-
       </div>
 
       {/* Outside the scroller on purpose. As the last item in the list
@@ -1365,7 +1371,18 @@ export function DocumentComment({
           scroll to the end of everyone else's. A footer is always
           where it was last time. */}
       <div className="doc-comment-bar">
-        <button type="button" className="btn btn-sm" onClick={() => startThread("")}>
+        {/* Scrolled to, because a note on the whole document is filed
+            under every comment on it — on a busy page that is past
+            the bottom of the rail, and a button that files something
+            out of sight reads as a button that did nothing. */}
+        <button
+          type="button"
+          className="btn btn-sm"
+          onClick={() => {
+            const key = startThread("");
+            window.requestAnimationFrame(() => revealThread(key));
+          }}
+        >
           New comment
         </button>
         {/* Names the other way in, because a right-click affordance

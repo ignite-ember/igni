@@ -1322,7 +1322,11 @@ describe("the order the threads are listed in", () => {
     expect(document.querySelectorAll(".doc-conv-group")).toHaveLength(2);
   });
 
-  it("puts a comment about the whole document above the passages", async () => {
+  it("puts a comment about the whole document under the passages", async () => {
+    // Where a note on an article goes: at its foot. A remark about
+    // the whole thing is made once the whole thing has been read, and
+    // above the first passage it sat between the reader and every
+    // comment that was actually about a sentence.
     withStored(
       [
         stored({ comment_id: "a", thread_id: "t1", quote: "first line" }),
@@ -1331,7 +1335,29 @@ describe("the order the threads are listed in", () => {
       "first line, then the last line.",
     );
 
-    await waitFor(() => expect(quotesShown()[0]).toBe("(document)"));
+    await waitFor(() => expect(quotesShown()).toHaveLength(2));
+    expect(quotesShown()).toEqual(["first line", "(document)"]);
+  });
+
+  it("still keeps a rewritten passage above a note on the whole document", async () => {
+    // Both are filed past the end, so they need an order between
+    // them. A comment that was about a sentence belongs with the
+    // sentences, however lost that sentence now is.
+    withStored(
+      [
+        stored({ comment_id: "a", thread_id: "t1", quote: "" }),
+        stored({ comment_id: "b", thread_id: "t2", quote: "a line since rewritten" }),
+        stored({ comment_id: "c", thread_id: "t3", quote: "first line" }),
+      ],
+      "first line, then the last line.",
+    );
+
+    await waitFor(() => expect(quotesShown()).toHaveLength(3));
+    expect(quotesShown()).toEqual([
+      "first line",
+      "a line since rewritten",
+      "(document)",
+    ]);
   });
 
   it("puts a rewritten passage last, because it cannot be placed", async () => {
