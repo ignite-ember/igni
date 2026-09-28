@@ -911,6 +911,39 @@ describe("the marks in the document, while the rail is away", () => {
     expect(highlights.size).toBe(0);
   });
 
+  it("marks the passages behind comments the document already had", async () => {
+    // The bug this covers: the marks were computed from the threads
+    // started in *this session* only, so a document's existing
+    // comments highlighted nothing. Every card in the rail looked
+    // alive and half of them were inert.
+    const { highlights } = stubHighlights();
+    const harness = fakeClient();
+    harness.rpc.mockImplementation(async (method: string) =>
+      method === "artifact_comments"
+        ? [
+            {
+              comment_id: "c1",
+              thread_id: "t1",
+              parent_id: "",
+              origin: "web",
+              quote: "The service issues a signed JWT on sign-in.",
+              body: "Which algorithm?",
+              status: "open",
+              author: "dana@acme.test",
+              at: "2026-09-01T10:00:00Z",
+              n: 2,
+            },
+          ]
+        : { ok: true, prompt: "PROMPT", message: "" },
+    );
+    const { ref } = mountBody();
+    render(
+      <DocumentComment client={harness.client} artifactId="a1" n={2} bodyRef={ref} />,
+    );
+
+    await waitFor(() => expect(highlights.size).toBeGreaterThan(0));
+  });
+
   it("paints them again on the way back", () => {
     const { highlights } = stubHighlights();
     const { body } = setupHideable();

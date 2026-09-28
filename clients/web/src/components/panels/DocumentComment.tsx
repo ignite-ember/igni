@@ -480,7 +480,25 @@ export function DocumentComment({
   // thread, and leaving the links painted while the thing they lead to
   // is put away gives the reader underlined sentences that do nothing
   // — which is the opposite of what hiding the comments was for.
-  useMarks(bodyRef, hidden ? NO_THREADS : threads, focused, n, ranges);
+  /**
+   * Every thread on screen, newest first.
+   *
+   * Defined here rather than beside the list that renders it because
+   * the highlights are computed from it: fed only the threads started
+   * in this session, the passages behind a document's *existing*
+   * comments never got a range, so clicking one of those cards lit
+   * nothing up and read as a dead card.
+   */
+  const started = useMemo(
+    () => [
+      // What is being written now, above what was settled before it.
+      ...threads.filter((t) => t.turns.length > 0 || t.key === focused),
+      ...stored,
+    ],
+    [threads, stored, focused],
+  );
+
+  useMarks(bodyRef, hidden ? NO_THREADS : started, focused, n, ranges);
 
   /** Put the document's view on a thread's passage. */
   const revealPassage = useCallback((key: string) => {
@@ -757,15 +775,6 @@ export function DocumentComment({
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [menu]);
-
-  const started = useMemo(
-    () => [
-      // What is being written now, above what was settled before it.
-      ...threads.filter((t) => t.turns.length > 0 || t.key === focused),
-      ...stored,
-    ],
-    [threads, stored, focused],
-  );
 
   /* Shared by both states. Right-click → Comment is the main way in,
      and it goes on working with the rail put away — the thread it
