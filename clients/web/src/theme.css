@@ -4379,6 +4379,11 @@ button {
   overflow-y: auto;
   overscroll-behavior: contain;
   font-size: 13.5px;
+  /* The frame the hierarchy pins to. It sits against the left edge of
+     the content area rather than taking a column, so the artifact
+     stays centred in the window instead of centred in what is left
+     over after the tree. */
+  position: relative;
 }
 
 /* The measure. Wider than the drawer's 620px, but not the full width
@@ -4402,7 +4407,7 @@ button {
 }
 
 .page-measure:has(.kb-shell-with-tree):has(.kb-doc-comparing) {
-  width: min(1920px, 100%);
+  width: min(1880px, 100%);
 }
 
 /* Tracing is the same bargain as comparing: a document beside the
@@ -4414,26 +4419,20 @@ button {
 }
 
 .page-measure:has(.kb-shell-with-tree):has(.kb-doc-tracing) {
-  width: min(1660px, 100%);
+  width: min(1620px, 100%);
 }
 
 /* And so is reading, now that the conversation sits beside the text.
    Without this the rail takes its 24rem out of the 900px measure and
    leaves the document a 19-em column — narrower than the prose it is
    setting, which is the one thing a reading view cannot be. */
-/* Room for the tree beside whatever is being read. Everything below
-   adds the tree's column to the measure it would otherwise want. */
-.page-measure:has(.kb-shell-with-tree) {
-  width: min(1280px, 100%);
-}
-
 .page-measure:has(.kb-doc-reading) {
   width: min(1180px, 100%);
 }
 
-/* Tree + document + comment rail. */
+/* The gutter, the document and the rail. */
 .page-measure:has(.kb-shell-with-tree):has(.kb-doc-reading) {
-  width: min(1570px, 100%);
+  width: min(1544px, 100%);
 }
 
 /* …and gives it back when the rail is put away. The extra 280px is
@@ -4446,7 +4445,7 @@ button {
 }
 
 .page-measure:has(.kb-shell-with-tree):has(.kb-doc-reading .doc-rail-stowed) {
-  width: min(1220px, 100%);
+  width: min(1180px, 100%);
 }
 
 .drawer {
@@ -10410,6 +10409,22 @@ button {
   position: relative;
 }
 
+/* A gutter opposite the comment rail, so the document is centred
+   between them and the pinned tree has somewhere to sit.
+
+   On the article rather than on the split: the header spans the body
+   and the rail together, so padding only the split would slide the
+   prose out from under its own title. */
+.kb-shell-with-tree .kb-doc {
+  padding-left: calc(24rem + 28px);
+}
+
+@media (max-width: 78rem) {
+  .kb-shell-with-tree .kb-doc {
+    padding-left: 0;
+  }
+}
+
 .kb-doc-head {
   margin-bottom: 28px;
 }
@@ -11213,46 +11228,48 @@ button {
    Where documents live, as against what they refer to. Indentation
    comes from a depth the server computed, so what is shown and what
    was reasoned about are the same ordering. */
-/* Hierarchy left, the artifact in the middle, its comments right.
-   The tree belongs to the panel rather than to the list: a reader who
-   opens a document has not stopped needing to know where they are. */
+/* The hierarchy belongs to the panel rather than to the list: a
+   reader who opens a document has not stopped needing to know where
+   they are. */
 .kb-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-}
-
-/* The tree's column matches the comment rail's, because the artifact
-   between them has to be centred and it cannot be if the two sides
-   are different widths. Centring the document *within* its own track
-   would do it too, and would pull the text out from under its own
-   title — the header spans body and rail together. */
-.kb-shell-with-tree {
-  grid-template-columns: minmax(19rem, 24rem) minmax(0, 1fr);
-  gap: 28px;
+  min-width: 0;
 }
 
 .kb-shell-body {
   min-width: 0;
 }
 
-/* Below the breakpoint two columns are two unreadable ones, so the
-   tree goes above — wrong for a wide window and right for a narrow
-   one. */
-@media (max-width: 64rem) {
-  .kb-shell-with-tree {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0;
-  }
-}
-
+/* Against the left edge of the content area, out of the flow.
+   In a column it pushed the artifact off-centre and the page had to be
+   widened to compensate; pinned, the artifact is centred in the window
+   and the search above it lines up with the artifact rather than with
+   whatever was left after the tree. */
 .kb-tree {
-  position: sticky;
-  top: 8px;
+  position: absolute;
+  left: 18px;
+  top: 16px;
+  width: 15.5rem;
+  /* Tall enough for the tree it holds, never taller than the window.
+     Stretched to the bottom, the top-level drop zone ended up pinned
+     to the foot of the screen with a field of nothing above it, which
+     reads as an unrelated control rather than as the end of the
+     list. */
+  max-height: calc(100% - 32px);
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: calc(100vh - 150px);
+}
+
+/* No room to pin it: below this width the centred measure reaches the
+   edge and a fixed tree would sit on top of the text. It rejoins the
+   flow above the content, which is wrong for a wide window and right
+   for a narrow one. */
+@media (max-width: 78rem) {
+  .kb-tree {
+    position: static;
+    width: auto;
+    margin-bottom: 18px;
+  }
 }
 
 /* The rows scroll; the New-folder bar and the top-level drop zone do
@@ -11261,14 +11278,6 @@ button {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-}
-
-@media (max-width: 60rem) {
-  .kb-tree {
-    position: static;
-    max-height: none;
-    margin-bottom: 18px;
-  }
 }
 
 /* Stacked, not side by side: at the column's width a button and a
