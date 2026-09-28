@@ -126,6 +126,10 @@ class CollaborationSync:
         self._server_url = (server_url or "").rstrip("/")
         self._access_token = access_token
         self._client = client
+        #: ``artifact_id`` → the server's slug, for the life of this
+        #: object. A document's slug does not change once published,
+        #: and the alternative is a listing request per comment.
+        self._slugs: dict[str, str] = {}
 
     @property
     def is_configured(self) -> bool:
@@ -328,6 +332,88 @@ class CollaborationSync:
         comment = _to_comment(response.json())
         await self._index.client.project_comments([comment])
         return comment
+
+    async def slug_for(self, artifact_id: str) -> str:
+        """The server's name for a document this account has published.
+
+        Resolved rather than remembered. The server already holds the
+        client-side ``artifact_id`` on every shared row, under a
+        unique constraint per owner, so it can answer this — and a
+        slug cached in the local graph is a second copy of somebody
+        else's primary key, wrong from the moment a document is
+        re-published from another machine.
+
+        Empty when this account has not published the document. That
+        is a state, not a failure: it is how the caller knows there is
+        no shared document to write to yet.
+        """
+        if artifact_id in self._slugs:
+            return self._slugs[artifact_id]
+        response = await self._request("GET", "/v1/artifacts/shared")
+        response.raise_for_status()
+        rows = response.json().get("items") or []
+        for row in rows:
+            known = str(row.get("artifact_id") or "")
+            if known:
+                self._slugs[known] = str(row.get("slug") or "")
+        return self._slugs.get(artifact_id, "")
+
+    async def comment(
+        self,
+        *,
+        slug: str,
+        version: int,
+        body: str,
+        quote: str = "",
+        quote_start: int | None = None,
+        quote_end: int | None = None,
+        parent_id: str | None = None,
+    ) -> Comment | None:
+        """Open a thread on a shared document, then project the result.
+
+        The counterpart to :meth:`reply`, which can key on a comment
+        id because the thread it joins already records the document.
+        A first comment has no thread to name, so this one is
+        addressed by slug.
+
+        Projected from the server's response for the same reason the
+        others are: the server decides what a comment's id, thread and
+        timestamps are, and a local copy that invented its own would
+        disagree with what everybody else is reading.
+        """
+        payload: dict[str, Any] = {"version": version, "body": body, "quote": quote}
+        if quote_start is not None and quote_start >= 0:
+            payload["quote_start"] = quote_start
+        if quote_end is not None and quote_end >= 0:
+            payload["quote_end"] = quote_end
+        if parent_id:
+            payload["parent_id"] = parent_id
+        response = await self._request(
+            "POST", f"/v1/artifacts/shared/{slug}/comments", json=payload
+        )
+        if response.status_code == 404:
+            raise NotAllowed(slug)
+        response.raise_for_status()
+        comment = _to_comment(response.json())
+        await self._index.client.project_comments([comment])
+        return comment
+
+    async def comments_on(self, *, slug: str) -> list[Comment]:
+        """Every comment the server has on a shared document.
+
+        Read from the server rather than from the graph: the graph
+        holds what this machine has pulled, and somebody else's
+        comment written a second ago is not in it yet.
+        """
+        response = await self._request("GET", f"/v1/artifacts/shared/{slug}/comments")
+        if response.status_code == 404:
+            raise NotAllowed(slug)
+        response.raise_for_status()
+        rows = response.json().get("comments") or []
+        comments = [_to_comment(row) for row in rows]
+        if comments:
+            await self._index.client.project_comments(comments)
+        return comments
 
     async def reply(
         self, *, comment_id: str, body: str, suggested_text: str | None = None

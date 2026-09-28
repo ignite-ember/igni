@@ -60,7 +60,7 @@ from ember_code.backend.schemas_artifacts import (
 )
 from ember_code.core.artifacts import side_by_side
 from ember_code.core.artifacts.anchoring import RelevanceReview, surrounding, track_anchor
-from ember_code.core.artifacts.collaboration import CollaborationSync
+from ember_code.core.artifacts.collaboration import CollaborationSync, NotAllowed
 from ember_code.core.artifacts.conversation import CommentConversation
 from ember_code.core.artifacts.cypher import ArtifactCypherService, CypherResult
 from ember_code.core.artifacts.drift import (
@@ -77,6 +77,7 @@ from ember_code.core.artifacts.export import (
 from ember_code.core.artifacts.mentions import resolve
 from ember_code.core.artifacts.models import (
     ArtifactSummary,
+    Comment,
     CommentOrigin,
     EdgeState,
     StaleDependent,
@@ -1596,16 +1597,23 @@ class ArtifactController:
         parent_id: str = "",
         origin: str = "local",
     ) -> ArtifactCommentPosted:
-        """Leave a comment on the local copy, addressed to the agent.
+        """Comment on a document, through the server that holds it.
 
-        This is the local half of the comment model. Written here, in
-        igni, with no one else in the room — so it is an instruction,
-        and the answer to it is a revision rather than a reply.
+        Artifacts are shared, so a comment that never leaves this
+        machine is invisible to the people it is addressed to. The
+        write goes to the server and the server's answer is projected
+        into the local graph, which makes the graph a cache of what
+        everybody can see rather than a second opinion about it.
 
-        Nothing is sent to the server. A comment written locally is
-        one side of a conversation the people on the shared copy are
-        not part of; what reaches them is the version the agent writes
-        in response, which is a thing they can read.
+        A document nobody has published yet has no shared copy to
+        write to, so one is published — privately, which is a row on
+        the server and not an audience. Sharing it with somebody is
+        still a separate, deliberate act.
+
+        The local write remains, for the one case the server cannot
+        answer: signed out, or unreachable. That is a cache entry
+        waiting for a push, not a private conversation — and it is
+        reported as such rather than looking like a successful post.
         """
         mgr = self._session.artifact_mgr
         if self._session.artifacts is None:
@@ -1632,6 +1640,22 @@ class ArtifactController:
             # mouths of people who are not in this conversation.
             return ArtifactCommentPosted(message="Only local turns can be recorded here.")
 
+        # The shared copy first. Falls through to the local write when
+        # there is no server to reach — the tail below is the same
+        # either way, because what a comment *is* does not depend on
+        # which of the two recorded it.
+        comment = await self._comment_on_server(
+            artifact_id=summary.artifact_id,
+            version=version,
+            body=text,
+            quote=quote,
+            quote_start=quote_start,
+            quote_end=quote_end,
+            parent_id=parent_id,
+        )
+        if comment is not None:
+            return await self._answer_for(comment, mgr=mgr, speaker=speaker)
+
         comment = await mgr.add_local_comment(
             artifact_id=summary.artifact_id,
             n=version,
@@ -1646,12 +1670,75 @@ class ArtifactController:
         )
         if comment is None:
             return ArtifactCommentPosted(message="Could not record that comment.")
+        return await self._answer_for(comment, mgr=mgr, speaker=speaker)
 
+    async def _comment_on_server(
+        self,
+        *,
+        artifact_id: str,
+        version: int,
+        body: str,
+        quote: str,
+        quote_start: int,
+        quote_end: int,
+        parent_id: str,
+    ) -> Comment | None:
+        """Write the comment to the shared copy, or answer ``None``.
+
+        ``None`` is "no server to write to" — signed out, unreachable,
+        or a refusal — and the caller falls back to the local graph.
+        It is never "the comment was rejected for what it said": that
+        raises, because silently keeping a refused comment on one
+        machine is how a person comes to believe they have been heard.
+
+        A reply goes through the thread it answers rather than being
+        re-addressed to the document. The server takes the version,
+        the quote and its offsets from the comment being replied to,
+        which is the only way a reply cannot end up pointing somewhere
+        its own thread does not.
+        """
+        sync = self._collaboration()
+        if sync is None:
+            return None
+        try:
+            slug = await sync.slug_for(artifact_id)
+            if not slug:
+                # Server-first: a document with no shared copy gets
+                # one. Private — a row on the server, not an audience
+                # — so publishing stays a separate, deliberate act.
+                shared = await self.share(artifact_id, visibility="private")
+                if shared.error:
+                    logger.info("could not publish %s to comment on it: %s", artifact_id, shared.error)
+                    return None
+                slug = await sync.slug_for(artifact_id)
+            if not slug:
+                return None
+            if parent_id:
+                return await sync.reply(comment_id=parent_id, body=body)
+            return await sync.comment(
+                slug=slug,
+                version=version,
+                body=body,
+                quote=quote,
+                quote_start=quote_start if quote_start >= 0 else None,
+                quote_end=quote_end if quote_end >= 0 else None,
+            )
+        except NotAllowed:
+            raise
+        except Exception as exc:  # noqa: BLE001 — network, auth, DNS, timeouts
+            logger.info("comment on %s did not reach the server: %s", artifact_id, exc)
+            return None
+
+    async def _answer_for(
+        self, comment: Comment, *, mgr: Any, speaker: CommentOrigin
+    ) -> ArtifactCommentPosted:
+        """What the caller gets back, wherever the comment was written."""
+        summary = await mgr.resolve_artifact(comment.artifact_id)
         # The thread is read *after* the write so the new comment is
         # in it; ``history_for`` takes it back out. One query either
         # way, and no chance of assembling a thread that is missing
         # the thing being asked about.
-        thread = await mgr.thread_for(artifact_id=summary.artifact_id, thread_id=comment.thread_id)
+        thread = await mgr.thread_for(artifact_id=comment.artifact_id, thread_id=comment.thread_id)
         history = CommentConversation.history_for(thread, exclude_id=comment.comment_id)
 
         # The agent's own turns are recorded so the thread reads as a
@@ -1668,7 +1755,7 @@ class ArtifactController:
             thread_id=comment.thread_id,
             prompt=CommentConversation.prompt_for(
                 comment,
-                document_name=summary.name or summary.artifact_id,
+                document_name=(summary.name if summary else "") or comment.artifact_id,
                 thread=thread,
             ),
             history_count=len(history),
@@ -1928,11 +2015,13 @@ class ArtifactController:
         if bundle is None:
             return ArtifactShareResult(error=f"Artifact {entry_id} not found.")
         try:
-            url = await publisher.publish(bundle, visibility=visibility, audience=audience or [])
+            published = await publisher.publish(
+                bundle, visibility=visibility, audience=audience or []
+            )
         except Exception as exc:
             logger.warning("Artifact share failed: %s", exc)
             return ArtifactShareResult(error=f"Share failed: {exc}")
-        return ArtifactShareResult(url=url, version=bundle.n)
+        return ArtifactShareResult(url=published.url, version=bundle.n)
 
     # ── Admin ─────────────────────────────────────────────────────────
 

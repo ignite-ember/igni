@@ -228,6 +228,19 @@ class ArtifactExporter:
         return target
 
 
+@dataclass(frozen=True)
+class Published:
+    """Where a published document landed on the server."""
+
+    #: The page a recipient opens.
+    url: str
+    #: The server's name for the document. What every later call
+    #: about it is addressed by, comments included.
+    slug: str
+    #: The version the snapshot was taken from.
+    n: int
+
+
 class ArtifactPublisher:
     """Uploads a projected bundle to the igni server.
 
@@ -263,8 +276,15 @@ class ArtifactPublisher:
         *,
         visibility: str = "private",
         audience: list[str] | None = None,
-    ) -> str:
-        """Upload and return the shareable URL.
+    ) -> Published:
+        """Upload, and answer with where it landed.
+
+        The slug comes back as well as the URL. It is the server's
+        name for this document — every later call about it, including
+        posting a comment on it, is addressed by slug — and the
+        version of this that returned a bare URL threw it away, which
+        left a published document with no way to say which shared
+        document it was.
 
         ``visibility`` is one of:
 
@@ -302,7 +322,11 @@ class ArtifactPublisher:
         share_url = str(data.get("url") or "")
         if not share_url:
             raise RuntimeError("Server accepted the artifact but returned no URL.")
-        return share_url
+        return Published(
+            url=share_url,
+            slug=str(data.get("slug") or ""),
+            n=int(data.get("version") or bundle.n or 0),
+        )
 
 
 def _markdown_document(bundle: ExportBundle) -> str:

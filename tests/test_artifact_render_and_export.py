@@ -334,7 +334,11 @@ class TestPublishing:
                 return None
 
             def json(self) -> dict:
-                return {"url": "https://igni.test/a/abc123"}
+                return {
+                    "url": "https://igni.test/a/abc123",
+                    "slug": "abc123",
+                    "version": 2,
+                }
 
         class _Client:
             async def post(self, url, *, json, headers):
@@ -349,9 +353,16 @@ class TestPublishing:
         publisher = ArtifactPublisher(
             server_url="https://igni.test/", access_token="tok", client=_Client()
         )
-        url = await publisher.publish(self._bundle(), visibility="users", audience=["a@b.test"])
+        published = await publisher.publish(
+            self._bundle(), visibility="users", audience=["a@b.test"]
+        )
 
-        assert url == "https://igni.test/a/abc123"
+        assert published.url == "https://igni.test/a/abc123"
+        # The server's name for the document, which every later call
+        # about it is addressed by. Returning only the URL left a
+        # published document unable to say which shared document it
+        # was, and a comment on it with nowhere to go.
+        assert published.slug == "abc123"
         assert sent["url"] == "https://igni.test/v1/artifacts/shared"
         assert sent["headers"]["Authorization"] == "Bearer tok"
         assert sent["json"]["visibility"] == "users"
