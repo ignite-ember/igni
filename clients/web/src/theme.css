@@ -4390,6 +4390,29 @@ button {
      containing-block chain, and this is not one. */
 }
 
+/* The room the pinned hierarchy needs, taken off this box.
+   It is pinned to the frame *outside* this one, so it costs the
+   layout nothing on its own — and everything in here was therefore
+   centring in the whole window while the tree covered the left of it.
+   The document ended up hard against the rule on its right with a
+   field of nothing on its left. Reserved here, what remains centres
+   in what is left, which is what "centred" has to mean when one side
+   of the window is spoken for. */
+.page-body:has(.kb-shell-with-tree) {
+  /* 18px to the tree, the tree, 16px on to the rule, and then the
+     28px the grid puts between the prose and the rule on its other
+     side — less the 18px the measure's own padding already
+     contributes. That last term is what makes the two sides of the
+     document come out equal rather than merely both non-zero. */
+  padding-left: calc(18px + var(--tree-width) + 16px + 28px - 18px);
+}
+
+@media (max-width: 78rem) {
+  .page-body:has(.kb-shell-with-tree) {
+    padding-left: 0;
+  }
+}
+
 /* The measure. Wider than the drawer's 620px, but not the full width
    of a 27-inch display — these are lists and forms, and a line of
    metadata stretched across a metre reads worse than it did in the
@@ -4410,9 +4433,6 @@ button {
   width: min(1500px, 100%);
 }
 
-.page-measure:has(.kb-shell-with-tree):has(.kb-doc-comparing) {
-  width: min(1880px, 100%);
-}
 
 /* Tracing is the same bargain as comparing: a document beside the
    sources each of its passages draws on is two columns where the rest
@@ -4422,9 +4442,6 @@ button {
   width: min(1240px, 100%);
 }
 
-.page-measure:has(.kb-shell-with-tree):has(.kb-doc-tracing) {
-  width: min(1620px, 100%);
-}
 
 /* And so is reading, now that the conversation sits beside the text.
    Without this the rail takes its 24rem out of the 900px measure and
@@ -4434,10 +4451,13 @@ button {
   width: min(1180px, 100%);
 }
 
-/* The gutter, the document and the rail. */
+/* Wider where the hierarchy is pinned, so the column holding the
+   prose has slack on both sides of it rather than just enough room
+   to set 45rem and stop. */
 .page-measure:has(.kb-shell-with-tree):has(.kb-doc-reading) {
-  width: min(1544px, 100%);
+  width: min(1600px, 100%);
 }
+
 
 /* …and gives some of it back when the conversation is put away. Not
    all of it, the way it used to: the version history lives in that
@@ -4448,8 +4468,13 @@ button {
   width: min(1060px, 100%);
 }
 
+/* …but not where the hierarchy is pinned. Narrowing the page there
+   as well moved the document away from the rule beside the tree and
+   towards the one beside the history, which is the imbalance putting
+   the thread away was supposed to relieve. The rail narrowing is
+   enough on its own; the prose re-centres in the room it leaves. */
 .page-measure:has(.kb-shell-with-tree):has(.kb-doc-reading .doc-rail-stowed) {
-  width: min(1424px, 100%);
+  width: min(1600px, 100%);
 }
 
 .drawer {
@@ -10455,18 +10480,33 @@ button {
   position: relative;
 }
 
-/* A gutter opposite the comment rail, so the document is centred
-   between them and the pinned tree has somewhere to sit.
+/* The prose centred between the two rules, with the title, the
+   banners and the history moving with it.
 
-   On the article rather than on the split: the header spans the body
-   and the rail together, so padding only the split would slide the
-   prose out from under its own title. */
-.kb-shell-with-tree .kb-doc {
-  padding-left: calc(24rem + 28px);
+   The indent is half the slack the prose does not use: the column it
+   sits in is the article's width less the rail and the gap, so
+   ``(100% - rail - gap - 45rem) / 2`` puts the same amount on each
+   side of it. Percentages here resolve against the containing block
+   rather than the element, so the padding does not chase its own
+   tail.
+
+   On the article rather than on the prose. Centring the prose alone
+   got the text right and left its own title hanging to the left of
+   the words it names — the header spans the body and the rail
+   together, so it has to be moved by something they share. */
+.kb-doc-reading {
+  --rail-w: 24rem;
+  padding-left: max(0px, calc((100% - var(--rail-w) - 28px - 45rem) / 2));
 }
 
-@media (max-width: 78rem) {
-  .kb-shell-with-tree .kb-doc {
+/* The conversation put away narrows the rail, which widens the column
+   and moves the middle of it. */
+.kb-doc-reading:has(.kb-doc-split-wide) {
+  --rail-w: 16rem;
+}
+
+@media (max-width: 64rem) {
+  .kb-doc-reading {
     padding-left: 0;
   }
 }
