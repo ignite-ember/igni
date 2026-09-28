@@ -366,6 +366,12 @@ class ArtifactCommentRow(BaseModel):
     #: an instruction.
     origin: str = "web"
     quote: str = ""
+    #: Where the passage sat when the comment was written, or -1.
+    #:
+    #: The only way to tell two identical sentences apart. Without it
+    #: a comment on the second "Limits" heading in a document
+    #: highlights the first one and files itself beside it.
+    quote_start: int = -1
     body: str = ""
     suggested_text: str = ""
     status: str = "open"

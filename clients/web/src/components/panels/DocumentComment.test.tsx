@@ -389,6 +389,42 @@ describe("the two directions between a passage and its thread", () => {
     expect(composerIn(0).value).toBe("half a thought");
   });
 
+  it("clicking the empty page puts it down as well", async () => {
+    // Most of what is on screen is margin: the gutter, the space
+    // beside the measure, the room under a short document. A
+    // dismissal that only works on the words themselves is one people
+    // try twice and conclude does not work.
+    const { body } = setup();
+    openAnchored(body);
+    type("@igni why?");
+    ask();
+    await screen.findByText(/why\?/);
+
+    // Somewhere that is neither the prose nor the rail.
+    const margin = document.createElement("div");
+    document.body.appendChild(margin);
+    fireEvent.click(margin);
+
+    expect(document.querySelector(".doc-conv-focused")).toBeNull();
+  });
+
+  it("but a click inside the rail leaves it alone", async () => {
+    // Otherwise reading a long thread would put down the selection
+    // that says which passage the thread is about.
+    const harness = setup();
+    openAnchored(harness.body);
+    type("@igni why?");
+    ask();
+    await screen.findByText(/why\?/);
+    fireEvent.click(document.querySelector(".doc-conv-anchor") as HTMLElement);
+    fireEvent.click(document.querySelector(".doc-conv-anchor") as HTMLElement);
+    expect(document.querySelector(".doc-conv-focused")).toBeTruthy();
+
+    fireEvent.click(document.querySelector(".doc-rail-body") as HTMLElement);
+
+    expect(document.querySelector(".doc-conv-focused")).toBeTruthy();
+  });
+
   it("reading the document puts it down too", async () => {
     // Once the reader is back in the prose the question has been
     // answered, and a ring left over the sentence they are reading is
@@ -973,6 +1009,7 @@ describe("what selects a thread", () => {
     parent_id: "",
     origin: "web",
     quote: "The service issues a signed JWT on sign-in.",
+    quote_start: -1,
     body: "Which algorithm?",
     status: "open",
     author: "sam@acme.test",
@@ -992,6 +1029,9 @@ describe("what selects a thread", () => {
     return document.querySelector(".doc-conv-item") as HTMLElement;
   }
 
+  /** The quote sits on the group, which holds the conversations. */
+  const anchor = () => document.querySelector(".doc-conv-anchor") as HTMLElement;
+
   const isFocused = (card: HTMLElement) => card.classList.contains("doc-conv-focused");
 
   it("is the comment itself, not only the quote above it", async () => {
@@ -1008,7 +1048,7 @@ describe("what selects a thread", () => {
   it("is still the quote", async () => {
     const card = await mounted();
 
-    fireEvent.click(card.querySelector(".doc-conv-anchor") as HTMLElement);
+    fireEvent.click(anchor());
 
     expect(isFocused(card)).toBe(true);
   });
@@ -1043,6 +1083,7 @@ describe("the order the threads are listed in", () => {
     parent_id: "",
     origin: "web",
     quote: "",
+    quote_start: -1,
     body: "",
     status: "open",
     author: "sam@acme.test",
@@ -1051,8 +1092,10 @@ describe("the order the threads are listed in", () => {
     ...over,
   });
 
+  // One entry per passage: conversations about the same sentence are
+  // grouped under a single quote.
   const quotesShown = () =>
-    [...document.querySelectorAll(".doc-conv-item")].map(
+    [...document.querySelectorAll(".doc-conv-group")].map(
       (c) => c.querySelector(".doc-conv-quote")?.textContent ?? "(document)",
     );
 
@@ -1092,6 +1135,54 @@ describe("the order the threads are listed in", () => {
     await waitFor(() =>
       expect(quotesShown()).toEqual(["alpha beta gamma.", "then the tail."]),
     );
+  });
+
+  it("quotes a passage once, however many conversations are on it", async () => {
+    // Two remarks on the same sentence, usually a month and a few
+    // versions apart, were two cards quoting it back. The repetition
+    // reads as a rendering fault before it reads as two
+    // conversations — and it states the thing they share twice while
+    // burying the thing that differs.
+    withStored(
+      [
+        stored({ comment_id: "a", thread_id: "t1", quote: "first line", body: "early", n: 2 }),
+        stored({ comment_id: "b", thread_id: "t2", quote: "first line", body: "late", n: 4 }),
+      ],
+      "first line, then the last line.",
+    );
+
+    await waitFor(() => expect(screen.getByText("late")).toBeTruthy());
+    expect(document.querySelectorAll(".doc-conv-quote")).toHaveLength(1);
+    // Still two conversations, each keeping its own version.
+    expect(document.querySelectorAll(".doc-conv-group")).toHaveLength(1);
+    expect(document.querySelectorAll(".doc-conv-group .doc-conv-item")).toHaveLength(2);
+    // Oldest first inside a group: the conversations about one
+    // sentence are its history, and a history reads forwards.
+    expect([...document.querySelectorAll(".doc-conv-at")].map((e) => e.textContent)).toEqual([
+      "v2",
+      "v4",
+    ]);
+  });
+
+  it("does not pile together the same words from two different places", async () => {
+    // A heading repeated in a document is two passages. Grouping on
+    // the text alone would collect the comments from both into one.
+    withStored(
+      [
+        stored({ comment_id: "a", thread_id: "t1", quote: "Limits", body: "up here", quote_start: 0 }),
+        stored({
+          comment_id: "b",
+          thread_id: "t2",
+          quote: "Limits",
+          body: "down there",
+          quote_start: 49,
+        }),
+      ],
+      "Limits, and a good deal of text between, and then Limits again.",
+    );
+
+    await waitFor(() => expect(screen.getByText("up here")).toBeTruthy());
+    expect(document.querySelectorAll(".doc-conv-group")).toHaveLength(2);
   });
 
   it("puts a comment about the whole document above the passages", async () => {

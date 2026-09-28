@@ -428,6 +428,7 @@ class ArtifactController:
                     parent_id=c.parent_id or "",
                     origin=c.origin.value,
                     quote=c.quote,
+                    quote_start=-1 if c.quote_start is None else c.quote_start,
                     body=c.body,
                     suggested_text=c.suggested_text or "",
                     status=c.status.value,

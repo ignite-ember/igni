@@ -10216,6 +10216,24 @@ button {
   text-decoration: underline;
 }
 
+/* One passage, with every conversation about it under it. The box
+   belongs to the passage now; the conversations inside are divided
+   from each other rather than each carrying its own frame. */
+.doc-conv-group {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.doc-conv-group > .doc-conv-item + .doc-conv-item {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+}
+
 /* The whole card is the way back to the passage, so the whole card
    says so. */
 .doc-conv-item {
@@ -12974,20 +12992,29 @@ button {
   gap: 16px;
 }
 
+/* No box of its own. The passage it belongs to has one, and a frame
+   inside a frame around every conversation was the repetition the
+   grouping exists to remove. */
 .doc-conv-item {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--border-soft);
+  padding: 8px 0 0;
   border-radius: var(--radius-sm);
-  background: var(--bg-surface);
 }
 
-/* The thread the reader is on — lit here and in the document at the
-   same time, so the pair is obviously one thing. */
+/* The conversation the reader is on — lit here and in the document
+   at the same time, so the pair is obviously one thing. Inset rather
+   than bordered, so a selected conversation inside a group does not
+   draw a second box around part of one. */
 .doc-conv-focused {
-  border-color: var(--accent-blue, var(--border));
+  padding: 8px 8px 8px 8px;
+  margin: 0 -8px;
+  background: color-mix(in srgb, var(--accent-blue, #4a7dff) 8%, transparent);
+}
+
+.doc-conv-group > .doc-conv-item:first-of-type {
+  padding-top: 10px;
 }
 
 /* The whole header is the way back to the passage: a link on the

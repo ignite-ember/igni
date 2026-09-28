@@ -71,6 +71,8 @@ export interface StoredComment {
   parent_id: string;
   origin: string;
   quote: string;
+  /** Where the passage sat when it was written, or -1. */
+  quote_start?: number;
   body: string;
   status: string;
   author: string;
@@ -115,7 +117,10 @@ export function threadsFrom(rows: StoredComment[]): Thread[] {
       key: `stored-${key}`,
       id: ordered[0].comment_id,
       quote: ordered[0].quote,
-      quoteStart: -1,
+      // Carried through, because it is the only thing that tells two
+      // identical sentences apart — without it a comment on the
+      // second one lands on the first.
+      quoteStart: ordered[0].quote_start ?? -1,
       status: ordered[0].status,
       n: ordered[0].n,
       turns: ordered.map((r) => ({
@@ -419,6 +424,9 @@ function useMarks(
 /** Stable, so putting the rail away does not re-run the mark effect twice. */
 const NO_THREADS: Thread[] = [];
 
+/** Everything this component puts on the page, in one selector. */
+const MINE = ".doc-rail, .doc-rail-away, .doc-selection-pop, .doc-selection-backdrop";
+
 /**
  * A line from the passage to the card about it.
  *
@@ -690,10 +698,47 @@ export function DocumentComment({
       const at = whereIn(text, thread.quote, thread.quoteStart);
       return at >= 0 ? at : Number.MAX_SAFE_INTEGER;
     };
-    return [...started].sort((a, b) => place(a) - place(b));
+    return [...started]
+      .map((thread) => ({ thread, at: place(thread) }))
+      .sort((a, b) => a.at - b.at);
   }, [started, bodyRef, n]);
 
-  useMarks(bodyRef, hidden ? NO_THREADS : ordered, focused, n, ranges);
+  /**
+   * The threads grouped by the passage they are about.
+   *
+   * The same sentence commented on twice — often on two versions, a
+   * month apart — was two cards quoting the same words back. The
+   * repetition reads as a rendering fault long before it reads as
+   * two conversations, and the thing they have in common, the
+   * passage, is stated twice while the thing that differs, the
+   * version, is buried in each.
+   *
+   * Grouped on *position as well as text*, so a heading that appears
+   * twice in a document does not collect the comments from both
+   * places into one pile.
+   */
+  const groups = useMemo(() => {
+    const out: { key: string; at: number; quote: string; threads: Thread[] }[] = [];
+    for (const { thread, at } of ordered) {
+      const last = out[out.length - 1];
+      const same =
+        last &&
+        last.at === at &&
+        last.quote.replace(/\s+/g, " ") === thread.quote.replace(/\s+/g, " ");
+      if (same) last.threads.push(thread);
+      else out.push({ key: thread.key, at, quote: thread.quote, threads: [thread] });
+    }
+    // Oldest first inside a group. The conversations about one
+    // sentence are its history, and a history reads forwards.
+    for (const g of out) {
+      g.threads.sort((a, b) => (a.n ?? 0) - (b.n ?? 0));
+    }
+    return out;
+  }, [ordered]);
+
+  const orderedThreads = useMemo(() => ordered.map((o) => o.thread), [ordered]);
+
+  useMarks(bodyRef, hidden ? NO_THREADS : orderedThreads, focused, n, ranges);
 
   /** Put the document's view on a thread's passage. */
   const revealPassage = useCallback((key: string) => {
@@ -876,23 +921,35 @@ export function DocumentComment({
   }, [client, artifactId]);
 
   /**
-   * Reading the document puts the selection down.
+   * Going back to the page puts the selection down.
    *
    * The selection exists to answer "which passage is this card
-   * about". Once the reader has gone back to the text, it has been
-   * answered — and a ring and a curve left over a sentence somebody
-   * is reading is furniture on top of the thing it was pointing at.
+   * about". Once the reader has looked away from the rail it has
+   * been answered, and a wash and a curve left over the page is
+   * furniture on top of the thing they were pointing at.
    *
-   * A click in the prose only. Right-click keeps its menu, and a
-   * click in the rail is the rail's own business.
+   * Anywhere but the rail, rather than the prose alone. The margins,
+   * the gutter and the space under a short document are most of what
+   * is on screen, and a reader clicking off to the side of the text
+   * has looked away just as plainly as one who clicked on it — a
+   * dismissal that only works on the words is one people conclude
+   * does not work.
+   *
+   * The rail is excluded rather than the document included, so
+   * anything the page grows around it is covered by default. What
+   * counts as the rail is named by what this component renders — an
+   * ancestor it does not own would be a rule that holds only where
+   * somebody remembered to wrap it.
    */
   useEffect(() => {
-    const body = bodyRef.current;
-    if (!body) return;
-    const clear = () => setFocused(null);
-    body.addEventListener("click", clear);
-    return () => body.removeEventListener("click", clear);
-  }, [bodyRef]);
+    const clear = (e: MouseEvent) => {
+      const at = e.target as HTMLElement | null;
+      if (at?.closest?.(MINE)) return;
+      setFocused(null);
+    };
+    document.addEventListener("click", clear);
+    return () => document.removeEventListener("click", clear);
+  }, []);
 
   const startThread = useCallback(
     (quote: string, quoteStart = -1) => {
@@ -1085,13 +1142,13 @@ export function DocumentComment({
           </p>
         ) : (
           <ol className="doc-conv-list">
-            {ordered.map((thread) => (
-              <ThreadView
-                key={thread.key}
-                thread={thread}
+            {groups.map((group) => (
+              <PassageGroup
+                key={group.key}
+                group={group}
                 bodyRef={bodyRef}
-                focused={focused === thread.key}
-                onFocus={() => {
+                focused={focused}
+                onFocus={(thread) => {
                   // Pressing the selected one again puts it down. A
                   // selection with no way out but selecting something
                   // else leaves the document permanently marked up
@@ -1106,7 +1163,7 @@ export function DocumentComment({
                   setFocused(already ? null : thread.key);
                   if (!already) revealPassage(thread.key);
                 }}
-                onSend={(body) => void send(thread.key, body)}
+                onSend={(key, body) => void send(key, body)}
               />
             ))}
           </ol>
@@ -1132,28 +1189,80 @@ export function DocumentComment({
   );
 }
 
-/** One conversation, with its own composer at the foot. */
-function ThreadView({
-  thread,
+/** One passage, and every conversation about it. */
+function PassageGroup({
+  group,
   bodyRef,
   focused,
   onFocus,
   onSend,
 }: {
-  thread: Thread;
+  group: { quote: string; threads: Thread[] };
   bodyRef: React.RefObject<HTMLElement | null>;
-  focused: boolean;
-  onFocus: () => void;
-  onSend: (body: string) => void;
+  focused: string | null;
+  onFocus: (thread: Thread) => void;
+  onSend: (threadKey: string, body: string) => void;
 }) {
   // Checked on render rather than remembered: answering a comment
   // usually rewrites the very passage it was about, so the common
   // case is that this becomes false a moment after the reply lands.
-  const anchored = quoteStillPresent(bodyRef.current, thread.quote);
+  const anchored = quoteStillPresent(bodyRef.current, group.quote);
+
+  return (
+    <li className="doc-conv-group">
+      {/* The passage, once. Two conversations about the same sentence
+          used to quote it back twice, which reads as a rendering
+          fault before it reads as two conversations. */}
+      <button
+        type="button"
+        className="doc-conv-anchor"
+        onClick={() => onFocus(group.threads[0])}
+      >
+        {group.quote ? (
+          <>
+            <span className="doc-conv-quote">{group.quote}</span>
+            {/* Said, not left to be noticed. A quote that no longer
+                appears in the document simply stops lighting up, and
+                a highlight that does nothing is indistinguishable
+                from one that is broken. */}
+            {!anchored && (
+              <span className="doc-conv-moved">This passage has changed since</span>
+            )}
+          </>
+        ) : (
+          <span className="doc-conv-scope">About the whole document</span>
+        )}
+      </button>
+
+      {group.threads.map((thread) => (
+        <ThreadView
+          key={thread.key}
+          thread={thread}
+          focused={focused === thread.key}
+          onFocus={() => onFocus(thread)}
+          onSend={(body) => onSend(thread.key, body)}
+        />
+      ))}
+    </li>
+  );
+}
+
+/** One conversation about that passage, with its own composer. */
+function ThreadView({
+  thread,
+  focused,
+  onFocus,
+  onSend,
+}: {
+  thread: Thread;
+  focused: boolean;
+  onFocus: () => void;
+  onSend: (body: string) => void;
+}) {
   const running = isRunning(thread);
 
   /**
-   * Anywhere on the card takes you to the passage.
+   * Anywhere on the conversation takes you to the passage.
    *
    * It used to be the quote alone, which made a small target sit
    * inside a large inert one: the sentence you are reading in the
@@ -1173,7 +1282,7 @@ function ThreadView({
   };
 
   return (
-    <li
+    <div
       className={focused ? "doc-conv-item doc-conv-focused" : "doc-conv-item"}
       data-thread={thread.key}
       onClick={fromCard}
@@ -1191,33 +1300,12 @@ function ThreadView({
         </div>
       )}
 
-      {/* Still a button, so the passage is reachable from the
-          keyboard. Its click bubbles to the card, which is the one
-          place this is handled. */}
-      <button type="button" className="doc-conv-anchor">
-        {thread.quote ? (
-          <>
-            <span className="doc-conv-quote">{thread.quote}</span>
-            {/* Said, not left to be noticed. A quote that no longer
-                appears in the document simply stops lighting up, and
-                a highlight that does nothing is indistinguishable
-                from one that is broken. */}
-            {!anchored && <span className="doc-conv-moved">This passage has changed since</span>}
-          </>
-        ) : (
-          <span className="doc-conv-scope">About the whole document</span>
-        )}
-      </button>
-
       {thread.turns.map((turn) => (
         <TurnView key={turn.key} turn={turn} />
       ))}
 
       {thread.error && <div className="msg-error">{thread.error}</div>}
 
-      {/* Part of the thread, not a button that opens one elsewhere.
-          Continuing is the default; starting a new conversation is
-          the deliberate act. */}
       {/* Settled threads are read, not continued. A reply box under
           a decision invites reopening it by accident. */}
       {(!thread.status || thread.status === "open") && (
@@ -1227,7 +1315,7 @@ function ThreadView({
           onSend={onSend}
         />
       )}
-    </li>
+    </div>
   );
 }
 
