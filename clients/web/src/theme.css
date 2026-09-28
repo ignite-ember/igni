@@ -4413,6 +4413,13 @@ button {
    Without this the rail takes its 24rem out of the 900px measure and
    leaves the document a 19-em column — narrower than the prose it is
    setting, which is the one thing a reading view cannot be. */
+/* The list is two columns now — a tree beside the results — so it
+   takes the same room the reading view does rather than squeezing
+   both into the one-column measure. */
+.page-measure:has(.kb-list-split) {
+  width: min(1180px, 100%);
+}
+
 .page-measure:has(.kb-doc-reading) {
   width: min(1180px, 100%);
 }
@@ -11184,6 +11191,220 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+/* ── The navigation tree ──────────────────────────────────────────
+   Where documents live, as against what they refer to. Indentation
+   comes from a depth the server computed, so what is shown and what
+   was reasoned about are the same ordering. */
+/* Tree left, what you are looking at right. */
+.kb-list-split {
+  display: grid;
+  grid-template-columns: minmax(15rem, 17rem) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+/* Below the breakpoint two columns are two unreadable ones, so the
+   tree goes back above — where it was, and where it was wrong for a
+   wide window. */
+@media (max-width: 60rem) {
+  .kb-list-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.kb-tree {
+  position: sticky;
+  top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: calc(100vh - 150px);
+}
+
+/* The rows scroll; the New-folder bar and the top-level drop zone do
+   not, or a deep tree would put both out of reach. */
+.kb-tree-rows {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+@media (max-width: 60rem) {
+  .kb-tree {
+    position: static;
+    max-height: none;
+    margin-bottom: 18px;
+  }
+}
+
+/* Stacked, not side by side: at the column's width a button and a
+   sentence beside it wrap the button onto two lines. */
+.kb-tree-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.kb-tree-bar .btn {
+  white-space: nowrap;
+}
+
+.kb-tree-note {
+  margin: 0;
+}
+
+.kb-tree-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+
+.kb-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* The indent is the structure. Everything else on the row is
+     secondary to knowing what sits under what. */
+  padding: 4px 8px 4px calc(8px + var(--tree-depth, 0) * 18px);
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.kb-tree-row:last-child {
+  border-bottom: 0;
+}
+
+.kb-tree-row:hover {
+  background: var(--bg-inset);
+}
+
+.kb-tree-row.is-current {
+  background: var(--bg-inset);
+}
+
+.kb-tree-row.is-dragging {
+  opacity: 0.45;
+}
+
+/* The destination, drawn on the row itself rather than as a line
+   between rows: this drop means "inside", and a line would say
+   "between". */
+.kb-tree-row.is-target,
+.kb-tree-root.is-target {
+  background: hsl(210 45% 50% / 0.16);
+  outline: 1px solid var(--accent-blue);
+  outline-offset: -1px;
+}
+
+/* A parent that is missing or cannot be opened. It holds a place;
+   there is nothing behind it. */
+.kb-tree-row.is-placeholder .kb-tree-name {
+  color: var(--fg-muted);
+  font-style: italic;
+  cursor: default;
+}
+
+.kb-tree-twist {
+  flex: none;
+  width: 14px;
+  padding: 0;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--fg-muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.kb-tree-twist:disabled {
+  cursor: default;
+  opacity: 0;
+}
+
+.kb-tree-icon {
+  flex: none;
+  font-size: 9px;
+  color: var(--fg-muted);
+}
+
+.kb-tree-row.is-folder .kb-tree-icon {
+  color: var(--accent-orange-text, var(--fg-muted));
+}
+
+.kb-tree-name {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  color: var(--fg);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-tree-row.is-folder .kb-tree-name {
+  font-weight: 600;
+}
+
+.kb-tree-rename {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 5px;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--accent-blue);
+  border-radius: 4px;
+}
+
+.kb-tree-n,
+.kb-tree-stale {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.kb-tree-stale {
+  color: var(--accent-orange-text, var(--fg-muted));
+}
+
+.kb-tree-remove {
+  flex: none;
+  padding: 0 4px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--fg-muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.kb-tree-row:hover .kb-tree-remove,
+.kb-tree-remove:focus-visible {
+  opacity: 1;
+}
+
+/* The way back to the top level. Without it, a document dragged into
+   a folder could only ever be moved to another folder. */
+.kb-tree-root {
+  padding: 7px 10px;
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius);
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  text-align: center;
 }
 
 /* ── Replying ─────────────────────────────────────────────────────
