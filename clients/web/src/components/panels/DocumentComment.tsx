@@ -393,6 +393,24 @@ function useMarks(
 /** Stable, so putting the rail away does not re-run the mark effect twice. */
 const NO_THREADS: Thread[] = [];
 
+/**
+ * Whether a message is addressed to igni.
+ *
+ * The one thing that decides whether a model runs. Everything in this
+ * rail used to run one: the rail was local, the agent was the only
+ * other party, and "reply" and "ask" were the same act. They stopped
+ * being the same act when the rail started showing threads other
+ * people are in — a remark to a colleague is not an instruction, and
+ * an agent that took every remark as one would set about editing the
+ * document each time somebody agreed with somebody else.
+ *
+ * Only an explicit mention counts. Inferring it from tone would put
+ * the question to the one person who never needed to think about it.
+ */
+export function mentionsIgni(text: string): boolean {
+  return /(?:^|[\s(])@igni\b/i.test(text);
+}
+
 export function DocumentComment({
   client,
   artifactId,
@@ -488,6 +506,7 @@ export function DocumentComment({
       const thread = threads.find((t) => t.key === threadKey);
       if (!thread) return;
 
+      const asksAgent = mentionsIgni(text);
       const mine = `t${(seq.current += 1)}`;
       const answer = `t${(seq.current += 1)}`;
       const patchThread = (change: (t: Thread) => Thread) =>
@@ -499,7 +518,21 @@ export function DocumentComment({
         turns: [
           ...t.turns,
           { key: mine, who: "me", body: text, activity: "", phase: "done", error: "" },
-          { key: answer, who: "agent", body: "", activity: "", phase: "running", error: "" },
+          // The waiting turn only exists when something is coming. A
+          // spinner under a remark to a colleague promises an answer
+          // nobody is writing.
+          ...(asksAgent
+            ? [
+                {
+                  key: answer,
+                  who: "agent" as const,
+                  body: "",
+                  activity: "",
+                  phase: "running" as const,
+                  error: "",
+                },
+              ]
+            : []),
         ],
       }));
 
@@ -543,6 +576,11 @@ export function DocumentComment({
 
       const threadId = posted.thread_id || thread.id;
       patchThread((t) => ({ ...t, id: threadId }));
+
+      // Recorded, and that is all. A remark to the people in the
+      // thread is not an instruction, and running a model on it would
+      // answer a question nobody asked.
+      if (!asksAgent) return;
 
       let reply = "";
       client
@@ -1003,6 +1041,8 @@ function ThreadComposer({
     setBody("");
   };
 
+  const asksAgent = mentionsIgni(body);
+
   return (
     <div className="doc-thread-compose">
       <textarea
@@ -1011,7 +1051,9 @@ function ThreadComposer({
         rows={first ? 2 : 1}
         value={body}
         disabled={busy}
-        placeholder={first ? "What should change, or what do you want to know?" : "Reply…"}
+        placeholder={
+          first ? "What should change, or what do you want to know?" : "Reply…"
+        }
         onChange={(e) => setBody(e.target.value)}
         onKeyDown={(e) => {
           // Enter sends, because this is a message. Shift+Enter for a
@@ -1022,14 +1064,28 @@ function ThreadComposer({
           }
         }}
       />
-      <button
-        type="button"
-        className="btn btn-sm btn-primary doc-thread-send"
-        disabled={busy || !body.trim()}
-        onClick={submit}
-      >
-        {busy ? "…" : "Ask"}
-      </button>
+      {/* Under the box rather than beside it. Beside it the button
+          had to align to one edge of a growing textarea and sat below
+          its middle, and there was nowhere to say what it does. */}
+      <div className="doc-thread-actions">
+        <button
+          type="button"
+          className="btn btn-sm btn-primary doc-thread-send"
+          disabled={busy || !body.trim()}
+          onClick={submit}
+        >
+          {busy ? "…" : asksAgent ? "Ask igni" : "Comment"}
+        </button>
+        {/* Said before sending, not after. Whether a model runs is the
+            difference between a remark and an edit being proposed, and
+            the rule that decides it is one word the writer either
+            typed or did not. */}
+        <span className="doc-thread-hint">
+          {asksAgent
+            ? "igni will answer here and may propose a change — nothing is applied until you accept it."
+            : "Mention @igni to ask it to do something."}
+        </span>
+      </div>
     </div>
   );
 }

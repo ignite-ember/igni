@@ -313,7 +313,7 @@ describe("the composer at the foot of a thread", () => {
   it("is disabled while the agent is working", async () => {
     setup();
     newThread();
-    type("First.");
+    type("@igni First.");
     ask();
     await waitFor(() => expect(composerIn(0).disabled).toBe(true));
   });
@@ -446,10 +446,56 @@ describe("what each message sends", () => {
 });
 
 describe("the reply, in the rail", () => {
+  it("does not run a model for a remark to the people in the thread", async () => {
+    // The rule the whole rail now turns on. It used to run one for
+    // every message, which was right when the rail was local and the
+    // agent was the only other party — and became wrong the moment it
+    // started showing threads other people are in. An agent that took
+    // every remark as an instruction would set about editing the
+    // document each time somebody agreed with somebody else.
+    const { runMessage, posts } = setup();
+    newThread();
+    type("Agreed, and the runbook says the same.");
+    ask();
+
+    await waitFor(() => expect(posts().length).toBe(1));
+    expect(runMessage).not.toHaveBeenCalled();
+  });
+
+  it("leaves no pending answer under a remark", async () => {
+    // A spinner under a comment promises a reply nobody is writing.
+    const { posts } = setup();
+    newThread();
+    type("Agreed.");
+    ask();
+
+    await waitFor(() => expect(posts().length).toBe(1));
+    expect(document.querySelector(".doc-conv-reply")).toBeNull();
+  });
+
+  it("says which of the two the button will do, before it is pressed", () => {
+    // Whether a model runs is the difference between a remark and an
+    // edit being proposed, and it is decided by one word the writer
+    // either typed or did not.
+    setup();
+    newThread();
+    type("Agreed.");
+    expect(document.querySelector(".doc-thread-send")?.textContent).toBe("Comment");
+    type("@igni shorten this.");
+    expect(document.querySelector(".doc-thread-send")?.textContent).toBe("Ask igni");
+  });
+
+  it("names the convention where the message is written", () => {
+    setup();
+    newThread();
+    type("Agreed.");
+    expect(document.querySelector(".doc-thread-hint")?.textContent).toContain("@igni");
+  });
+
   it("runs the turn here rather than handing it to the chat", async () => {
     const { runMessage } = setup();
     newThread();
-    type("Why 15 minutes?");
+    type("@igni Why 15 minutes?");
     ask();
 
     await waitFor(() => expect(runMessage).toHaveBeenCalled());
@@ -459,9 +505,9 @@ describe("the reply, in the rail", () => {
   it("streams the answer under the message", async () => {
     const harness = setup();
     newThread();
-    type("Why?");
+    type("@igni Why?");
     ask();
-    await screen.findByText("Why?");
+    await screen.findByText(/Why\?/);
 
     harness.emit({ type: "content_delta", text: "Because ", is_thinking: false });
     harness.emit({ type: "content_delta", text: "of load.", is_thinking: false });
@@ -472,9 +518,9 @@ describe("the reply, in the rail", () => {
   it("keeps the model's thinking out of the reply", async () => {
     const harness = setup();
     newThread();
-    type("Why?");
+    type("@igni Why?");
     ask();
-    await screen.findByText("Why?");
+    await screen.findByText(/Why\?/);
 
     harness.emit({ type: "content_delta", text: "hmm, maybe", is_thinking: true });
     harness.emit({ type: "content_delta", text: "Because of load.", is_thinking: false });
@@ -486,9 +532,9 @@ describe("the reply, in the rail", () => {
   it("says who is working while nothing has come back yet", async () => {
     const harness = setup();
     newThread();
-    type("Why?");
+    type("@igni Why?");
     ask();
-    await screen.findByText("Why?");
+    await screen.findByText(/Why\?/);
 
     harness.emit({ type: "run_started", agent_name: "archivist", parent_run_id: "r0" });
 
@@ -499,9 +545,9 @@ describe("the reply, in the rail", () => {
     const onRevised = vi.fn();
     const harness = setup({ onRevised });
     newThread();
-    type("Shorten it.");
+    type("@igni Shorten it.");
     ask();
-    await screen.findByText("Shorten it.");
+    await screen.findByText(/Shorten it\./);
 
     harness.finish();
 
@@ -511,9 +557,9 @@ describe("the reply, in the rail", () => {
   it("reports a failed run in the thread rather than silently stopping", async () => {
     const harness = setup();
     newThread();
-    type("Why?");
+    type("@igni Why?");
     ask();
-    await screen.findByText("Why?");
+    await screen.findByText(/Why\?/);
 
     harness.emit({ type: "run_error", error: "the model is unreachable" });
 
@@ -527,9 +573,9 @@ describe("the reply, in the rail", () => {
       posted: { ok: true, prompt: "P", thread_id: "t-9", message: "" },
     });
     newThread();
-    type("Name the TTL.");
+    type("@igni Name the TTL.");
     ask();
-    await screen.findByText("Name the TTL.");
+    await screen.findByText(/Name the TTL\./);
 
     harness.emit({ type: "content_delta", text: "Done, now v4.", is_thinking: false });
     harness.finish();
@@ -546,7 +592,7 @@ describe("the reply, in the rail", () => {
     newThread();
     type("Name the TTL.");
     ask();
-    await screen.findByText("Name the TTL.");
+    await screen.findByText(/Name the TTL\./);
     harness.finish();
 
     await waitFor(() => expect(composerIn(0).disabled).toBe(false));

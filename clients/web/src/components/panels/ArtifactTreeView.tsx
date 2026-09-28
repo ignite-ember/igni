@@ -777,9 +777,13 @@ export function ArtifactTreeView({
         </>
       )}
 
-      {/* The way back to the top level. Without it a document dragged
-          into a folder can only be moved to another folder, and the
-          root stops being reachable once everything is nested. */}
+      {/* The way back to the top level, and only while something is
+          being carried there. Without it a document dragged into a
+          folder can only ever be moved to another folder — but shown
+          the rest of the time it is a labelled box under the tree
+          that does nothing and names no destination, which reads as a
+          control nobody can explain. */}
+      {dragging !== null && (
       <div
         className={over === "" ? "kb-tree-root is-target" : "kb-tree-root"}
         onDragOver={(e) => {
@@ -796,8 +800,9 @@ export function ArtifactTreeView({
           if (moving) void act("artifact_move_node", { node_id: moving, parent_id: "" });
         }}
       >
-        Top level
+        Move to the top level
       </div>
+      )}
     </div>
   );
 }

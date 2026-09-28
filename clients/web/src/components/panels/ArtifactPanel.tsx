@@ -1319,11 +1319,12 @@ function DocumentDetail({
            and a reader who has to scroll past the whole document to
            read the answer — and scroll back to find the sentence it
            was about — is doing the join by hand. */
-        <div
-          className={
-            asideView === "versions" ? "kb-doc-split kb-doc-split-wide" : "kb-doc-split"
-          }
-        >
+        /* One width, whichever of the two the column is showing.
+           Narrowing it for the history made the document reflow every
+           time the switch was touched — the text you are reading
+           jumping sideways to make room for a list of version numbers
+           is a worse trade than the room it buys. */
+        <div className="kb-doc-split">
           <div className="kb-doc-body markdown-body" ref={bodyRef}>
             <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
               {doc.content || "_(empty)_"}
