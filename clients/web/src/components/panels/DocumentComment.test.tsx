@@ -920,6 +920,52 @@ describe("putting the comment rail away", () => {
   });
 });
 
+describe("finding where a quote sits", () => {
+  it("does not care how the whitespace fell", async () => {
+    // The bug this exists for. A quote is stored as one line; the
+    // document wraps it and puts a newline in the middle. Matched
+    // literally, the passage is "not found" — so it highlighted fine
+    // (that path already squashed) and sorted to the bottom of the
+    // rail, which is how the two disagreed.
+    const { whereIn } = await import("./DocumentComment");
+
+    expect(whereIn("one two three", "one two")).toBe(0);
+    expect(whereIn("one\n  two three", "one two")).toBe(0);
+    expect(whereIn("one two three", "one\ntwo")).toBe(0);
+  });
+
+  it("picks the occurrence nearest where the comment was left", async () => {
+    // A sentence repeated twice is two different passages, and the
+    // comment is on one of them.
+    const { whereIn } = await import("./DocumentComment");
+    const text = "same line. filler filler filler. same line.";
+
+    expect(whereIn(text, "same line.", 32)).toBe(33);
+    expect(whereIn(text, "same line.", 0)).toBe(0);
+  });
+
+  it("is the first occurrence when nothing says which", async () => {
+    const { whereIn } = await import("./DocumentComment");
+
+    expect(whereIn("a. b. a.", "a.", -1)).toBe(0);
+  });
+
+  it("says -1 for a passage that is gone", async () => {
+    const { whereIn } = await import("./DocumentComment");
+
+    expect(whereIn("what is left", "what was deleted")).toBe(-1);
+  });
+
+  it("says -1 for an empty quote rather than matching the start", async () => {
+    // Position 0 is a real answer and would be believed — it would
+    // sort a comment about the whole document into the first
+    // paragraph.
+    const { whereIn } = await import("./DocumentComment");
+
+    expect(whereIn("anything", "   ")).toBe(-1);
+  });
+});
+
 describe("what selects a thread", () => {
   const stored = (over: Record<string, unknown>) => ({
     comment_id: "c1",
@@ -1027,6 +1073,25 @@ describe("the order the threads are listed in", () => {
     );
 
     await waitFor(() => expect(quotesShown()).toEqual(["first line", "last line"]));
+  });
+
+  it("places a quote whose whitespace has moved, rather than dumping it last", async () => {
+    // The reported bug. The document wraps a sentence and puts a
+    // newline inside it; the stored quote is one line. Searched
+    // literally the passage is "not found", so it highlighted
+    // perfectly and sorted to the bottom of the rail — the rail and
+    // the document disagreeing about the same sentence.
+    withStored(
+      [
+        stored({ comment_id: "wrapped", thread_id: "t1", quote: "alpha beta gamma." }),
+        stored({ comment_id: "later", thread_id: "t2", quote: "then the tail." }),
+      ],
+      "alpha beta\ngamma. then the tail.",
+    );
+
+    await waitFor(() =>
+      expect(quotesShown()).toEqual(["alpha beta gamma.", "then the tail."]),
+    );
   });
 
   it("puts a comment about the whole document above the passages", async () => {

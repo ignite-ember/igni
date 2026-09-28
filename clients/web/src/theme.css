@@ -13147,46 +13147,16 @@ button {
   overflow: visible;
 }
 
-.doc-thread-line path,
-.doc-thread-line rect {
+/* The curve is a pointer, not a part of the document; at full
+   strength it reads as a rule dividing the page. The wash on the
+   passage says which one; this only says which card it belongs to,
+   and needs no outline of its own to do that. */
+.doc-thread-curve {
   fill: none;
   stroke: var(--accent-blue, #4a7dff);
   stroke-width: 1.5;
   stroke-linecap: round;
-}
-
-/* The curve is a pointer, not a part of the document; at full
-   strength it reads as a rule dividing the page. */
-.doc-thread-curve {
   opacity: 0.5;
-}
-
-/* Moving dashes around the passage and around its card.
-   Motion rather than another shade of blue: the page already has a
-   blue wash on the passage, blue on the citation marks and a blue
-   border on the card, and a fourth blue thing would be one more
-   thing to tell apart. Nothing else on the page moves, so this needs
-   no colour of its own to be found. */
-.doc-thread-ring {
-  stroke-dasharray: 5 4;
-  opacity: 0.85;
-  animation: doc-thread-march 0.7s linear infinite;
-}
-
-@keyframes doc-thread-march {
-  /* One dash and one gap, so the loop is seamless. */
-  to {
-    stroke-dashoffset: -9;
-  }
-}
-
-/* Still drawn, just still. The outline is the answer to "which one
-   is selected"; the movement only makes it quicker to find, and for
-   a reader who has asked for less of it the answer is what matters. */
-@media (prefers-reduced-motion: reduce) {
-  .doc-thread-ring {
-    animation: none;
-  }
 }
 
 /* Every commented passage, marked for as long as the comment exists.

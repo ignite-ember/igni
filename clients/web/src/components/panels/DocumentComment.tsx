@@ -197,6 +197,42 @@ export function offsetWithin(root: HTMLElement, node: Node, nodeOffset: number):
   return probe.toString().length;
 }
 
+/**
+ * Where a quote sits in the document, as a position in its text.
+ *
+ * The one place that answers "where is this passage", so the rail's
+ * order and the highlight can never disagree about it. Sorting the
+ * rail by a plainer ``indexOf`` looked right and was not: the
+ * document's text and a stored quote differ in their whitespace the
+ * moment the passage wraps, so quotes that highlighted perfectly well
+ * failed to be *found* and fell to the bottom of the list.
+ *
+ * Whitespace is squashed on both sides for the same reason, and
+ * ``near`` breaks the tie when a sentence appears more than once —
+ * the comment is on one of them, not on the first.
+ *
+ * Returns -1 for a passage that is not there any more.
+ */
+export function whereIn(flat: string, needle: string, near = -1): number {
+  if (!needle.trim()) return -1;
+  const squash = (s: string) => s.replace(/\s+/g, " ");
+  const haystack = squash(flat);
+  const target = squash(needle);
+
+  const hits: number[] = [];
+  for (let i = haystack.indexOf(target); i >= 0; i = haystack.indexOf(target, i + 1)) {
+    hits.push(i);
+  }
+  if (!hits.length) return -1;
+
+  // Nearest to where the passage was when the comment was written.
+  // With no hint, or after an edit moved everything, the first is as
+  // good an answer as any — and is at least stable.
+  return near < 0
+    ? hits[0]
+    : hits.reduce((best, i) => (Math.abs(i - near) < Math.abs(best - near) ? i : best), hits[0]);
+}
+
 export function findText(root: HTMLElement, needle: string, near = -1): Range | null {
   // An empty needle would "match" at position 0 and yield a
   // degenerate range covering the first character — a highlight on a
@@ -215,25 +251,9 @@ export function findText(root: HTMLElement, needle: string, near = -1): Range | 
     flat += node.textContent ?? "";
   }
 
-  const squash = (s: string) => s.replace(/\s+/g, " ");
-  const haystack = squash(flat);
-  const target = squash(needle);
-
-  // Every occurrence, so a repeated line can be told apart by where
-  // it sits rather than by being first.
-  const hits: number[] = [];
-  for (let i = haystack.indexOf(target); i >= 0; i = haystack.indexOf(target, i + 1)) {
-    hits.push(i);
-  }
-  if (!hits.length) return null;
-
-  // Nearest to where the passage was when the comment was written.
-  // With no hint, or after an edit moved everything, the first is as
-  // good an answer as any — and is at least stable.
-  const at =
-    near < 0
-      ? hits[0]
-      : hits.reduce((best, i) => (Math.abs(i - near) < Math.abs(best - near) ? i : best), hits[0]);
+  const target = needle.replace(/\s+/g, " ");
+  const at = whereIn(flat, needle, near);
+  if (at < 0) return null;
 
   // Map a position in the squashed text back to the original by
   // counting non-collapsed characters.
@@ -422,29 +442,6 @@ function measure(of: Range | Element): DOMRect | null {
   }
 }
 
-/**
- * One rect per line the passage runs over.
- *
- * A sentence that wraps is several boxes, and one box around the lot
- * would enclose the left margin of every line between — including
- * text the comment is not about.
- */
-function lineBoxes(range: Range): DOMRect[] {
-  try {
-    const get = (range as { getClientRects?: () => DOMRectList }).getClientRects;
-    if (typeof get !== "function") return [];
-    return [...get.call(range)].filter((r) => r.width > 1 && r.height > 1);
-  } catch {
-    return [];
-  }
-}
-
-/** What the overlay draws: the outlines, and the curve joining them. */
-interface Tether {
-  boxes: { x: number; y: number; w: number; h: number }[];
-  path: string;
-}
-
 function ThreadLine({
   focused,
   ranges,
@@ -455,11 +452,11 @@ function ThreadLine({
   /** The ranges are stale the moment the document is rewritten. */
   version: number;
 }) {
-  const [tether, setTether] = useState<Tether | null>(null);
+  const [path, setPath] = useState("");
 
   useEffect(() => {
     if (!focused) {
-      setTether(null);
+      setPath("");
       return;
     }
     let frame = 0;
@@ -472,7 +469,7 @@ function ThreadLine({
           : (s: string) => s;
       const card = document.querySelector(`[data-thread="${escape(focused)}"]`);
       if (!range || !card) {
-        setTether(null);
+        setPath("");
         return;
       }
       // Measured defensively. A Range whose nodes have been removed
@@ -482,7 +479,7 @@ function ThreadLine({
       const from = measure(range);
       const whole = measure(card);
       if (!from || !whole) {
-        setTether(null);
+        setPath("");
         return;
       }
 
@@ -503,7 +500,7 @@ function ThreadLine({
         window.innerHeight,
       );
       if (bottom - top < 12) {
-        setTether(null);
+        setPath("");
         return;
       }
       const to = new DOMRect(whole.left, top, whole.width, bottom - top);
@@ -515,7 +512,7 @@ function ThreadLine({
       const onScreen = (r: DOMRect) =>
         (r.width || r.height) && r.bottom > 0 && r.top < window.innerHeight;
       if (!onScreen(from) || !onScreen(to)) {
-        setTether(null);
+        setPath("");
         return;
       }
 
@@ -531,22 +528,7 @@ function ThreadLine({
       // not bow into the text.
       const pull = Math.max(24, Math.min(140, (x2 - x1) / 2));
 
-      // The passage, line by line, and the card it belongs to. Both
-      // outlined in the same moving dashes: the pair is one object,
-      // and drawing them differently would make the reader work out
-      // that they are related.
-      const grow = (r: DOMRect, pad: number) => ({
-        x: r.left - pad,
-        y: r.top - pad,
-        w: r.width + pad * 2,
-        h: r.height + pad * 2,
-      });
-      const boxes = [...lineBoxes(range).map((r) => grow(r, 2)), grow(to, 0)];
-
-      setTether({
-        boxes,
-        path: `M${x1},${y1} C${x1 + pull},${y1} ${x2 - pull},${y2} ${x2},${y2}`,
-      });
+      setPath(`M${x1},${y1} C${x1 + pull},${y1} ${x2 - pull},${y2} ${x2},${y2}`);
     };
 
     draw();
@@ -566,21 +548,10 @@ function ThreadLine({
     };
   }, [focused, ranges, version]);
 
-  if (!tether) return null;
+  if (!path) return null;
   return createPortal(
     <svg className="doc-thread-line" aria-hidden="true">
-      <path className="doc-thread-curve" d={tether.path} />
-      {tether.boxes.map((b, i) => (
-        <rect
-          key={i}
-          className="doc-thread-ring"
-          x={b.x}
-          y={b.y}
-          width={b.w}
-          height={b.h}
-          rx="4"
-        />
-      ))}
+      <path className="doc-thread-curve" d={path} />
     </svg>,
     document.body,
   );
@@ -711,9 +682,12 @@ export function DocumentComment({
   const ordered = useMemo(() => {
     const text = bodyRef.current?.textContent ?? "";
     const place = (thread: Thread) => {
-      const quote = thread.quote.trim();
-      if (!quote) return -1;
-      const at = text.indexOf(quote);
+      if (!thread.quote.trim()) return -1;
+      // The same lookup the highlight uses, so a passage the rail
+      // places and a passage the document lights up are the same
+      // passage. A plainer search disagreed with it on any quote
+      // whose whitespace had moved.
+      const at = whereIn(text, thread.quote, thread.quoteStart);
       return at >= 0 ? at : Number.MAX_SAFE_INTEGER;
     };
     return [...started].sort((a, b) => place(a) - place(b));
