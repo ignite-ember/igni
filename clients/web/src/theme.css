@@ -4399,12 +4399,25 @@ button {
    in what is left, which is what "centred" has to mean when one side
    of the window is spoken for. */
 .page-body:has(.kb-shell-with-tree) {
-  /* 18px to the tree, the tree, 16px on to the rule, and then the
-     28px the grid puts between the prose and the rule on its other
-     side — less the 18px the measure's own padding already
-     contributes. That last term is what makes the two sides of the
-     document come out equal rather than merely both non-zero. */
-  padding-left: calc(18px + var(--tree-width) + 16px + 28px - 18px);
+  /* 18px to the tree, the tree itself, then 26px on to where the
+     text starts. The measure's own 18px of padding makes up the
+     rest of the gutter. */
+  padding-left: calc(18px + var(--tree-width) + 26px);
+}
+
+/* And the conversation's width on the other side, so the document
+   centres between the two of them rather than in the whole window
+   with a docked column sitting on top of it. */
+.page-body:has(.kb-shell-with-tree):not(:has(.kb-doc-comparing)):not(
+    :has(.kb-doc-tracing)
+  ) {
+  padding-right: calc(24rem + 46px);
+}
+
+@media (max-width: 64rem) {
+  .page-body:has(.kb-shell-with-tree) {
+    padding-right: 0;
+  }
 }
 
 @media (max-width: 78rem) {
@@ -4447,9 +4460,7 @@ button {
    Without this the rail takes its 24rem out of the 900px measure and
    leaves the document a 19-em column — narrower than the prose it is
    setting, which is the one thing a reading view cannot be. */
-.page-measure:has(.kb-doc-reading) {
-  width: min(1180px, 100%);
-}
+
 
 
 
@@ -4463,20 +4474,26 @@ button {
   width: min(1060px, 100%);
 }
 
-/* One width wherever the hierarchy is pinned, for every view.
-   Last, so it wins over the per-view widths above: those exist to
-   give a two-column view more room than a one-column view, and this
-   is already wider than any of them. Keeping a narrower width for
-   some views is what made the list sit in a different column from
-   the document, so walking into a document and back out moved the
-   page under the reader.
+/* Where the hierarchy is pinned, two widths and no more.
 
-   Narrowing it when the thread is put away is deliberately *not*
-   done: that moved the document away from the rule beside the tree
-   and towards the one beside the history, which is the imbalance
-   putting the thread away was meant to relieve. The rail narrowing
-   is enough on its own. */
-.page-measure:has(.kb-shell-with-tree) {
+   Reading and the list share one: 45rem of prose plus the measure's
+   own padding. With a gutter reserved on each side of the page,
+   centring that measure centres the document between the hierarchy
+   and the conversation — and the title, the banners, the history and
+   the list all begin where the text does, because they are all
+   simply the measure's width. It is also why walking into a document
+   and back out no longer moves the page.
+
+   Comparing and tracing are two columns of their own with nothing
+   docked beside them, and keep the wide one. */
+.page-measure:has(.kb-shell-with-tree):not(:has(.kb-doc-comparing)):not(
+    :has(.kb-doc-tracing)
+  ) {
+  width: min(756px, 100%);
+}
+
+.page-measure:has(.kb-shell-with-tree):has(.kb-doc-comparing),
+.page-measure:has(.kb-shell-with-tree):has(.kb-doc-tracing) {
   width: min(1600px, 100%);
 }
 
@@ -10086,7 +10103,20 @@ button {
 }
 
 /* The rail column holds the drift panel above the comment threads. */
+/* Docked to the page frame, mirroring the hierarchy on the other
+   side. Against the frame rather than the scrolling area: that is
+   what keeps it still while the document moves, and what puts its
+   scrollbar against the window instead of a third of the way in.
+
+   Flush to the right edge with the inset taken as padding, so the
+   bar it grows sits where a scrollbar belongs. */
 .kb-doc-aside {
+  position: absolute;
+  right: 0;
+  top: calc(var(--page-chrome-h) + 16px);
+  bottom: 0;
+  width: calc(24rem + 46px);
+  padding: 0 0 0 28px;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -10097,14 +10127,6 @@ button {
      are reading, this one divides what you are reading from what is
      said about it. */
   border-left: 1px solid var(--border-soft);
-  padding-left: 28px;
-}
-
-/* Put away, there is nothing on this side to divide off. */
-/* The rule stays. It divides the document from what is said about
-   it, and the history is still there to be divided off. */
-.kb-doc-split-wide > .kb-doc-aside {
-  padding-left: 20px;
 }
 
 /* What pins: the history and the conversation as one unit. The
@@ -10115,6 +10137,8 @@ button {
   flex-direction: column;
   gap: 14px;
   min-height: 0;
+  /* Everything here is inset from the window's edge… */
+  padding-right: 18px;
   /* The column is its own scroller now, so this fills it rather than
      sticking inside a page that scrolls underneath. */
   height: 100%;
@@ -10154,9 +10178,33 @@ button {
   min-height: 0;
 }
 
+/* Too narrow to dock anything: the conversation rejoins the flow
+   under the document, which keeps the pairing and loses only the
+   glance across. */
 @media (max-width: 64rem) {
+  .kb-doc-aside {
+    position: static;
+    width: auto;
+    padding: 0;
+    margin-top: 24px;
+    border-left: 0;
+    border-top: 1px solid var(--border-soft);
+    padding-top: 20px;
+  }
+
   .kb-doc-aside-pin {
     height: auto;
+    padding-right: 0;
+  }
+
+  .doc-rail {
+    margin-right: 0;
+  }
+
+  .doc-rail-body,
+  .doc-rail-head,
+  .doc-comment-bar {
+    padding-right: 0;
   }
 }
 
@@ -10825,94 +10873,14 @@ button {
   position: relative;
 }
 
-/* The prose centred between the two rules, with the title, the
-   banners and the history moving with it.
-
-   The indent is half the slack the prose does not use: the column it
-   sits in is the article's width less the rail and the gap, so
-   ``(100% - rail - gap - 45rem) / 2`` puts the same amount on each
-   side of it. Percentages here resolve against the containing block
-   rather than the element, so the padding does not chase its own
-   tail.
-
-   On the article rather than on the prose. Centring the prose alone
-   got the text right and left its own title hanging to the left of
-   the words it names — the header spans the body and the rail
-   together, so it has to be moved by something they share. */
-.kb-doc-reading {
-  --rail-w: 24rem;
-  padding-left: max(0px, calc((100% - var(--rail-w) - 28px - 45rem) / 2));
-}
-
-@media (max-width: 64rem) {
-  .kb-doc-reading {
-    padding-left: 0;
-  }
-}
-
-/* The list stands where the document stands.
-   Same indent as the prose and the same measure, so walking into a
-   document and back out does not slide the page sideways. It was
-   centred in the whole column, which put it a hundred pixels right of
-   the text it opens into and a hundred wider. */
-.kb-shell-with-tree .afs {
-  max-width: 45rem;
-  margin-left: max(0px, calc((100% - 24rem - 28px - 45rem) / 2));
-}
-
-@media (max-width: 64rem) {
-  .kb-shell-with-tree .afs {
-    max-width: none;
-    margin-left: 0;
-  }
-}
-
-/* ── Reading: two columns that scroll on their own ──────────────────
-   The page used to be one scroller, so reaching the end of the
-   document dragged the conversation with it and the scrollbar sat
-   against the window rather than against the text it belonged to.
-   Here the frame is fixed to the window and each column scrolls
-   inside it. The document's own header stays put above them, which
-   is what keeps its title and controls reachable from the foot of a
-   long page.
-
-   Only in the reading view. Comparing and tracing are one wide
-   column with nothing beside them, and they keep the page scroll. */
-.page-body:has(.kb-doc-reading) {
-  overflow: hidden;
-}
-
-.page-measure:has(.kb-doc-reading),
-.page-measure:has(.kb-doc-reading) .kb-shell,
-.page-measure:has(.kb-doc-reading) .kb-shell-body {
-  height: 100%;
-  min-height: 0;
-}
-
-.kb-doc-reading {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-
-.kb-doc-reading > .kb-doc-split {
-  flex: 1;
-  min-height: 0;
-  /* One row, bounded by the grid rather than by its content. Left
-     to size itself the row grew to the height of the document and
-     neither column had anything to scroll inside. */
-  grid-template-rows: minmax(0, 1fr);
-}
-
-/* The text and everything filed under it. */
+/* ── Reading: the page scrolls, the columns beside it do not ────────
+   One scrollbar, against the window, carrying the document and its
+   title together. The hierarchy and the conversation are docked to
+   the frame *around* the scrolling area, so neither moves with the
+   text and each keeps its own scrollbar at the window's edge rather
+   than a third of the way into the page. */
 .kb-doc-scroll {
   min-width: 0;
-  min-height: 0;
-  overflow-y: auto;
-  /* Room for the scrollbar, so it does not sit on the last word of
-     every line. */
-  padding-right: 14px;
 }
 
 .kb-doc-head {
@@ -13023,33 +12991,14 @@ button {
    the answer — then scrolls back to find the sentence it was about —
    is doing the join by hand. Beside it, both are in view. */
 
+/* One column. What used to be the second is docked to the frame
+   instead, so it does not move with the text and its scrollbar lands
+   at the window's edge. */
 .kb-doc-split {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(19rem, 24rem);
-  gap: 28px;
-  /* ``stretch``, so the rule dividing the two columns runs the height
-     of the document rather than the height of whatever happens to be
-     in the rail. The rail itself stays put with ``position: sticky``;
-     stretching its container does not move it. */
-  align-items: stretch;
+  display: block;
 }
 
-/* Put away, the column narrows rather than closing: the version
-   history is still in it, and the way back to the thread has to be
-   where the thread went. */
-.kb-doc-split-wide {
-  grid-template-columns: minmax(0, 1fr) minmax(13rem, 16rem);
-}
 
-/* Below the breakpoint the rail cannot be beside anything: two 10rem
-   columns are two unreadable ones. It goes under the document, which
-   keeps the pairing and loses only the glance. */
-@media (max-width: 64rem) {
-  .kb-doc-split,
-  .kb-doc-split-wide {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
 
 /* No box. The rule down the left of this column already says where
    it starts, and a bordered, filled card inside it is a second frame
@@ -13068,6 +13017,11 @@ button {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+  /* …except the part that scrolls, which reaches it and takes the
+     inset back as padding. A scrollbar belongs against the edge of
+     the window; eighteen pixels short of it, it reads as a bar
+     floating in the middle of the page. */
+  margin-right: -18px;
 }
 
 /* A label, not a title bar. The border under it belonged to the card
@@ -13076,7 +13030,7 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 0 8px;
+  padding: 0 18px 8px 0;
 }
 
 .doc-rail-title {
@@ -13204,6 +13158,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  padding-right: 18px;
   /* The card's inset is gone with the card. The threads line up with
      the heading above them and the version rows below. */
   padding: 0;
@@ -13445,6 +13400,7 @@ button {
   display: flex;
   align-items: center;
   gap: 10px;
+  padding-right: 18px;
 }
 
 .doc-comment-hint {
