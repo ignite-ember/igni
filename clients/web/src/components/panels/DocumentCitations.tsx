@@ -167,6 +167,8 @@ export function DocumentCitations({
   const [evidence, setEvidence] = useState<Map<string, Evidence>>(new Map());
   const [citations, setCitations] = useState<Citation[]>([]);
   const [open, setOpen] = useState<string | null>(null);
+  /** Lit while the pointer or keyboard focus is on a marker. */
+  const [grazed, setGrazed] = useState<string | null>(null);
   const ranges = useRef(new Map<string, Range>());
 
   // Keyed by id so a re-render with the same sources does not refetch.
@@ -302,9 +304,23 @@ export function DocumentCitations({
     return () => observer?.disconnect();
   }, [measure, bodyRef, version]);
 
-  // Light the cited passage while its marker is open, so the reader
-  // can see how much of the text the citation covers rather than
-  // guessing from where the superscript landed.
+  /**
+   * Light the cited passage while a marker is pointed at or open.
+   *
+   * On hover, not only on click. The marker sits in the margin and a
+   * chunk can run to sixteen lines, so where the citation *starts* is
+   * the one thing its position cannot say — and answering that by
+   * opening a card makes the reader commit to a detour to learn how
+   * much text is involved. Grazing the marker answers it for free and
+   * costs nothing to undo.
+   *
+   * Focus counts as grazing, so tabbing through the markers previews
+   * them the same way.
+   *
+   * The grazed one wins over the open one: with a card open, moving
+   * along the margin should preview the others rather than keep
+   * lighting the passage whose card you already have.
+   */
   useEffect(() => {
     const highlights =
       typeof CSS === "undefined"
@@ -314,13 +330,14 @@ export function DocumentCitations({
       window as unknown as { Highlight?: new (...r: Range[]) => unknown }
     ).Highlight;
     if (!highlights || !HighlightCtor) return;
-    const lit = open ? ranges.current.get(open) : undefined;
+    const which = grazed ?? open;
+    const lit = which ? ranges.current.get(which) : undefined;
     if (lit) highlights.set("doc-cite-lit", new HighlightCtor(lit));
     else highlights.delete("doc-cite-lit");
     return () => {
       highlights.delete("doc-cite-lit");
     };
-  }, [open]);
+  }, [open, grazed]);
 
   // Escape closes, capture phase so the page behind does not also
   // navigate back on the same keypress.
@@ -353,6 +370,10 @@ export function DocumentCitations({
           }
           title={`Draws on ${citation.sourceName} v${citation.sourceN}`}
           aria-label={`Citation ${citation.number}: ${citation.sourceName} v${citation.sourceN}`}
+          onMouseEnter={() => setGrazed(citation.key)}
+          onMouseLeave={() => setGrazed((on) => (on === citation.key ? null : on))}
+          onFocus={() => setGrazed(citation.key)}
+          onBlur={() => setGrazed((on) => (on === citation.key ? null : on))}
           onClick={() => setOpen((on) => (on === citation.key ? null : citation.key))}
         >
           {citation.number}
