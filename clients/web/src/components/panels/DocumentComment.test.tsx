@@ -44,7 +44,13 @@ type Handler = (m: Record<string, unknown>) => void;
 function fakeClient(posted: unknown = { ok: true, prompt: "PROMPT", message: "" }) {
   // Typed args, so ``mock.calls`` carries the payload rather than an
   // empty tuple a cast has to lie about.
-  const rpc = vi.fn(async (_method: string, _args: Record<string, unknown>) => posted);
+  //
+  // The rail reads the document's existing conversation on mount, so
+  // this answers that call with nothing. Without it every assertion
+  // about "what was posted" would be looking at the load.
+  const rpc = vi.fn(async (method: string, _args: Record<string, unknown>) =>
+    method === "artifact_comments" ? [] : posted,
+  );
   let emit: Handler = () => {};
   let finish: () => void = () => {};
   const runMessage = vi.fn(
@@ -57,6 +63,11 @@ function fakeClient(posted: unknown = { ok: true, prompt: "PROMPT", message: "" 
   return {
     client: { rpc, runMessage } as unknown as IgniClient,
     rpc,
+    /** What was posted, ignoring the conversation the rail loaded. */
+    posts: () =>
+      rpc.mock.calls
+        .filter(([method]) => method === "artifact_comment")
+        .map(([, args]) => args),
     runMessage,
     emit: (m: Record<string, unknown>) => emit(m),
     finish: () => finish(),
@@ -193,13 +204,13 @@ describe("a thread keeps its own messages", () => {
   };
 
   it("sends the first message with no thread id, because there is none yet", async () => {
-    const { rpc } = setup();
+    const { posts } = setup();
     newThread();
     type("Name the TTL.");
     ask();
 
-    await waitFor(() => expect(rpc).toHaveBeenCalled());
-    expect(rpc.mock.calls[0][1].thread_id).toBe("");
+    await waitFor(() => expect(posts().length).toBe(1));
+    expect(posts()[0].thread_id).toBe("");
   });
 
   it("sends every later message into the same thread", async () => {
@@ -308,13 +319,13 @@ describe("the composer at the foot of a thread", () => {
   });
 
   it("will not send an empty message", () => {
-    const { rpc } = setup();
+    const { posts } = setup();
     newThread();
     type("   ");
     expect(
       (document.querySelector(".doc-thread-send") as HTMLButtonElement).disabled,
     ).toBe(true);
-    expect(rpc).not.toHaveBeenCalled();
+    expect(posts()).toEqual([]);
   });
 
   it("clears after sending, so the next message starts empty", async () => {
@@ -387,13 +398,13 @@ describe("the two directions between a passage and its thread", () => {
 
 describe("what each message sends", () => {
   it("carries the passage and where it sat", async () => {
-    const { body, rpc } = setup();
+    const { body, posts } = setup();
     openAnchored(body);
     type("Name the TTL.");
     ask();
 
-    await waitFor(() => expect(rpc).toHaveBeenCalled());
-    const payload = rpc.mock.calls[0][1];
+    await waitFor(() => expect(posts().length).toBe(1));
+    const payload = posts()[0];
     expect(payload.quote).toBe("The service issues a signed JWT on sign-in.");
     // An offset, so a document with the same sentence twice can tell
     // the two apart rather than always marking the first.
@@ -404,13 +415,13 @@ describe("what each message sends", () => {
   });
 
   it("carries no passage for a comment about the document", async () => {
-    const { rpc } = setup();
+    const { posts } = setup();
     newThread();
     type("Too long.");
     ask();
 
-    await waitFor(() => expect(rpc).toHaveBeenCalled());
-    const payload = rpc.mock.calls[0][1];
+    await waitFor(() => expect(posts().length).toBe(1));
+    const payload = posts()[0];
     expect(payload.quote).toBe("");
     expect(payload.quote_start).toBe(-1);
     expect(payload.quote_end).toBe(-1);

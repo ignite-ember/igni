@@ -425,6 +425,8 @@ class ArtifactController:
                     document_name=name,
                     n=c.n,
                     thread_id=c.thread_id,
+                    parent_id=c.parent_id or "",
+                    origin=c.origin.value,
                     quote=c.quote,
                     body=c.body,
                     suggested_text=c.suggested_text or "",

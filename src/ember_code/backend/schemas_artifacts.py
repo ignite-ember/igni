@@ -356,6 +356,15 @@ class ArtifactCommentRow(BaseModel):
     document_name: str = ""
     n: int = 0
     thread_id: str = ""
+    #: Empty for the comment that opened a thread, the root's id for a
+    #: reply. Sent because a thread read back out of the store is a
+    #: conversation, and a flat list of bodies in ``at`` order is not
+    #: one — the answer has to sit under the question.
+    parent_id: str = ""
+    #: ``web`` — a person, elsewhere. ``local`` — a person, here.
+    #: ``agent`` — igni's own reply, which is a transcript and never
+    #: an instruction.
+    origin: str = "web"
     quote: str = ""
     body: str = ""
     suggested_text: str = ""

@@ -63,6 +63,10 @@ class ArtifactRpcHandler(RpcHandler):
     def artifact_comments(self, args: dict) -> Any:
         return self._ctx.backend.artifact_comments(
             artifact_id=str(args.get("id") or ""),
+            # The review queue wants what is waiting; the rail beside
+            # a document wants the whole conversation, settled parts
+            # included, because a thread with its answers removed
+            # reads as a question nobody replied to.
             open_only=bool(args.get("open_only", True)),
         )
 

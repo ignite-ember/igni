@@ -56,6 +56,83 @@ export interface Turn {
   activity: string;
   phase: "running" | "done" | "failed";
   error: string;
+  /** Who wrote it, for turns read back out of the store. Absent on
+   *  turns written here, where "me" is the whole answer. */
+  author?: string;
+  /** When it was written. Absent for the same reason. */
+  at?: string;
+}
+
+/** One stored comment, as the rail reads it back. */
+export interface StoredComment {
+  comment_id: string;
+  thread_id: string;
+  parent_id: string;
+  origin: string;
+  quote: string;
+  body: string;
+  status: string;
+  author: string;
+  at: string;
+  n: number;
+}
+
+/**
+ * Stored comments, as threads.
+ *
+ * Grouped by ``thread_id`` with the opening comment first, because a
+ * conversation read back as a flat list in timestamp order puts every
+ * answer next to the wrong question. Threads are ordered by their
+ * opening comment, newest first: the argument people are having now
+ * is the one worth being at the top.
+ *
+ * Exported for its own test — the grouping is the part that is wrong
+ * in ways a screenshot does not show.
+ */
+export function threadsFrom(rows: StoredComment[]): Thread[] {
+  const byThread = new Map<string, StoredComment[]>();
+  for (const row of rows) {
+    // A comment with no thread id is its own thread. Falling back to
+    // the comment id keeps it separate rather than collapsing every
+    // such comment into one.
+    const key = row.thread_id || row.comment_id;
+    const group = byThread.get(key);
+    if (group) group.push(row);
+    else byThread.set(key, [row]);
+  }
+
+  const threads: Thread[] = [];
+  for (const [key, group] of byThread) {
+    const roots = group.filter((r) => !r.parent_id);
+    const replies = group.filter((r) => r.parent_id);
+    const ordered = [
+      ...roots.sort((a, b) => a.at.localeCompare(b.at)),
+      ...replies.sort((a, b) => a.at.localeCompare(b.at)),
+    ];
+    if (!ordered.length) continue;
+    threads.push({
+      key: `stored-${key}`,
+      id: ordered[0].comment_id,
+      quote: ordered[0].quote,
+      quoteStart: -1,
+      status: ordered[0].status,
+      n: ordered[0].n,
+      turns: ordered.map((r) => ({
+        key: r.comment_id,
+        who: r.origin === "agent" ? "agent" : "me",
+        body: r.body,
+        activity: "",
+        phase: "done" as const,
+        error: "",
+        author: r.author,
+        at: r.at,
+      })),
+      error: "",
+    });
+  }
+  return threads.sort((a, b) =>
+    (b.turns[0]?.at ?? "").localeCompare(a.turns[0]?.at ?? ""),
+  );
 }
 
 /** A conversation about one passage, or about the document. */
@@ -69,6 +146,12 @@ export interface Thread {
   quoteStart: number;
   turns: Turn[];
   error: string;
+  /** ``open``, ``accepted``, ``rejected``… for threads read back out
+   *  of the store. Absent on threads started here, which are open by
+   *  definition. */
+  status?: string;
+  /** The version the thread was left against. */
+  n?: number;
 }
 
 /** How far a context menu stays from the window edge. */
@@ -318,6 +401,8 @@ export function DocumentComment({
   onRevised,
   frozen = false,
   hidden = false,
+  switched = false,
+  onThreadStarted,
   onHiddenChange,
 }: {
   client: IgniClient;
@@ -332,6 +417,18 @@ export function DocumentComment({
    * was never going to land.
    */
   frozen?: boolean;
+  /**
+   * Something above this owns the showing and hiding.
+   *
+   * The rail grew its own chevron when it was a panel beside the
+   * text. In the column it is one of two sections under a switch, so
+   * it keeps neither the chevron nor the put-away strip — two ways to
+   * do one thing, one of which is invisible from where the other
+   * lives.
+   */
+  switched?: boolean;
+  /** A thread was started while the conversation was hidden. */
+  onThreadStarted?: () => void;
   /** The element holding the document, so only its text can be quoted. */
   bodyRef: React.RefObject<HTMLElement | null>;
   /** The agent finished; the document may have a new version. */
@@ -348,6 +445,8 @@ export function DocumentComment({
   onHiddenChange?: (hidden: boolean) => void;
 }) {
   const [threads, setThreads] = useState<Thread[]>([]);
+  /** The conversation already on this document, read back on open. */
+  const [stored, setStored] = useState<Thread[]>([]);
   const [menu, setMenu] = useState<Anchor | null>(null);
   /** The thread the reader is on: lit in the rail and in the document. */
   const [focused, setFocused] = useState<string | null>(null);
@@ -498,6 +597,33 @@ export function DocumentComment({
   );
 
   /** Start a thread, on a passage or on the document. */
+  /**
+   * The conversation this document already has.
+   *
+   * The rail used to start empty every time, holding only what was
+   * said in this session — so a document with a hundred comments on
+   * it looked like a document nobody had ever read. Loaded threads
+   * sit under the ones started here, because what you are typing
+   * belongs above what was settled last month.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    void client
+      .rpc<StoredComment[]>("artifact_comments", { id: artifactId, open_only: false })
+      .then((rows) => {
+        if (cancelled) return;
+        setStored(threadsFrom(rows ?? []));
+      })
+      .catch(() => {
+        // A conversation that failed to load is not worth replacing
+        // the document with an error; the composer still works.
+        if (!cancelled) setStored([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, artifactId]);
+
   const startThread = useCallback(
     (quote: string, quoteStart = -1) => {
       const key = `th${(seq.current += 1)}`;
@@ -512,9 +638,10 @@ export function DocumentComment({
       // thread land somewhere invisible would read as nothing
       // happening.
       onHiddenChange?.(false);
+      onThreadStarted?.();
       return key;
     },
-    [onHiddenChange],
+    [onHiddenChange, onThreadStarted],
   );
 
   // ── Right-click a selection ─────────────────────────────────────
@@ -594,8 +721,12 @@ export function DocumentComment({
   }, [menu]);
 
   const started = useMemo(
-    () => threads.filter((t) => t.turns.length > 0 || t.key === focused),
-    [threads, focused],
+    () => [
+      // What is being written now, above what was settled before it.
+      ...threads.filter((t) => t.turns.length > 0 || t.key === focused),
+      ...stored,
+    ],
+    [threads, stored, focused],
   );
 
   /* Shared by both states. Right-click → Comment is the main way in,
@@ -631,6 +762,13 @@ export function DocumentComment({
      word set sideways down a 30px strip said the same thing in a
      column of rotated capitals nobody reads. The count rides on it,
      which is the part actually worth keeping on screen. */
+  if (hidden && switched) {
+    // Mounted but not drawn: a reply in flight keeps running, every
+    // thread is where it was on the way back, and a right-click on a
+    // passage still opens one — the switch comes back on its own.
+    return <div className="doc-rail-away">{selectionMenu}</div>;
+  }
+
   if (hidden) {
     return (
       <aside className="doc-rail doc-rail-stowed" aria-label="Comments">
@@ -658,15 +796,17 @@ export function DocumentComment({
       <header className="doc-rail-head">
         <h3 className="doc-rail-title">Comments</h3>
         {started.length > 0 && <span className="doc-rail-count">{started.length}</span>}
-        <button
-          type="button"
-          className="doc-rail-hide"
-          onClick={() => onHiddenChange?.(true)}
-          aria-expanded
-          title="Hide comments"
-        >
-          <Chevron />
-        </button>
+        {!switched && (
+          <button
+            type="button"
+            className="doc-rail-hide"
+            onClick={() => onHiddenChange?.(true)}
+            aria-expanded
+            title="Hide comments"
+          >
+            <Chevron />
+          </button>
+        )}
       </header>
 
       {frozen && (
@@ -743,6 +883,19 @@ function ThreadView({
       {/* The whole card is the way back to the passage — a link on
           the quote alone would be a small target next to a large
           inert one. */}
+      {/* Which version it was left against, and where it got to.
+          A thread on v12 beside one on v50 is a different kind of
+          remark, and "accepted" is the difference between a question
+          and a decision. */}
+      {(thread.n || thread.status) && (
+        <div className="doc-conv-meta">
+          {thread.n ? <span className="doc-conv-at">v{thread.n}</span> : null}
+          {thread.status && thread.status !== "open" && (
+            <span className={`doc-conv-status is-${thread.status}`}>{thread.status}</span>
+          )}
+        </div>
+      )}
+
       <button type="button" className="doc-conv-anchor" onClick={onFocus}>
         {thread.quote ? (
           <>
@@ -767,19 +920,41 @@ function ThreadView({
       {/* Part of the thread, not a button that opens one elsewhere.
           Continuing is the default; starting a new conversation is
           the deliberate act. */}
-      <ThreadComposer
-        busy={running}
-        first={thread.turns.length === 0}
-        onSend={onSend}
-      />
+      {/* Settled threads are read, not continued. A reply box under
+          a decision invites reopening it by accident. */}
+      {(!thread.status || thread.status === "open") && (
+        <ThreadComposer
+          busy={running}
+          first={thread.turns.length === 0}
+          onSend={onSend}
+        />
+      )}
     </li>
   );
 }
 
+/** ``sam@acme.test`` → ``sam``. What people call each other. */
+function shortName(email: string): string {
+  return email.split("@")[0] || email;
+}
+
 /** One turn — mine, or the answer to it. */
 function TurnView({ turn }: { turn: Turn }) {
+  // Named only when it was somebody else. A turn written here needs
+  // no byline — there is one person on this side of the screen — but
+  // a thread read back out of the store is several people, and
+  // without names it is one voice arguing with itself.
+  const byline = turn.author ? (
+    <span className="doc-conv-by">{shortName(turn.author)}</span>
+  ) : null;
+
   if (turn.who === "me") {
-    return <p className="doc-conv-body">{turn.body}</p>;
+    return (
+      <p className="doc-conv-body">
+        {byline}
+        {turn.body}
+      </p>
+    );
   }
 
   return (
