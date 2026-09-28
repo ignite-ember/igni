@@ -4435,17 +4435,17 @@ button {
   width: min(1544px, 100%);
 }
 
-/* …and gives it back when the rail is put away. The extra 280px is
-   the rail's, borrowed so the document does not pay for it; keeping
-   the page stretched with nothing in the second column leaves the
-   prose against the left edge of a void, which is a worse read than
-   the one the widening was protecting. */
+/* …and gives some of it back when the conversation is put away. Not
+   all of it, the way it used to: the version history lives in that
+   column now, so putting the thread away narrows the column rather
+   than emptying it. Taking the whole 280px back left the document
+   running into the history with nothing between them. */
 .page-measure:has(.kb-doc-reading .doc-rail-stowed) {
-  width: min(900px, 100%);
+  width: min(1060px, 100%);
 }
 
 .page-measure:has(.kb-shell-with-tree):has(.kb-doc-reading .doc-rail-stowed) {
-  width: min(1180px, 100%);
+  width: min(1424px, 100%);
 }
 
 .drawer {
@@ -10059,6 +10059,28 @@ button {
   flex-direction: column;
   gap: 14px;
   min-width: 0;
+  /* The same rule as the one between the hierarchy and the document,
+     on the other side of the text. Both say "a different kind of
+     thing starts here": that one divides where you are from what you
+     are reading, this one divides what you are reading from what is
+     said about it. */
+  border-left: 1px solid var(--border-soft);
+  padding-left: 28px;
+}
+
+/* Put away, there is nothing on this side to divide off. */
+/* The rule stays. It divides the document from what is said about
+   it, and the history is still there to be divided off. */
+.kb-doc-split-wide > .kb-doc-aside {
+  padding-left: 20px;
+}
+
+/* Between the conversation and the history, which are two kinds of
+   thing in one column. */
+.kb-aside-rule {
+  flex: none;
+  height: 1px;
+  background: var(--border-soft);
 }
 
 .kb-drift-panel {
@@ -12517,14 +12539,18 @@ button {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(19rem, 24rem);
   gap: 28px;
-  align-items: start;
+  /* ``stretch``, so the rule dividing the two columns runs the height
+     of the document rather than the height of whatever happens to be
+     in the rail. The rail itself stays put with ``position: sticky``;
+     stretching its container does not move it. */
+  align-items: stretch;
 }
 
-/* Put away, the rail keeps a strip — the way back has to be where the
-   thing went. Everything else is the document's. */
+/* Put away, the column narrows rather than closing: the version
+   history is still in it, and the way back to the thread has to be
+   where the thread went. */
 .kb-doc-split-wide {
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(13rem, 16rem);
 }
 
 /* Below the breakpoint the rail cannot be beside anything: two 10rem
@@ -12537,15 +12563,20 @@ button {
   }
 }
 
+/* No box. The rule down the left of this column already says where
+   it starts, and a bordered, filled card inside it is a second frame
+   around one thing — it also made the conversation and the version
+   history, which sit in the same column, look like two different
+   kinds of object.
+
+   Bounded in height so a long thread scrolls inside itself rather
+   than pushing the history off the bottom of the column. */
 .doc-rail {
   position: sticky;
   top: 8px;
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 160px);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius);
-  background: var(--bg-inset);
+  max-height: calc(100vh - 220px);
   overflow: hidden;
 }
 
@@ -12556,12 +12587,13 @@ button {
   }
 }
 
+/* A label, not a title bar. The border under it belonged to the card
+   and now reads as a third rule in a column that already has two. */
 .doc-rail-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border-soft);
+  padding: 0 0 8px;
 }
 
 .doc-rail-title {
@@ -12689,7 +12721,9 @@ button {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 14px;
+  /* The card's inset is gone with the card. The threads line up with
+     the heading above them and the version rows below. */
+  padding: 0;
 }
 
 .doc-rail-empty {

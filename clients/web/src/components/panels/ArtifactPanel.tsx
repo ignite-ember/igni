@@ -1342,15 +1342,24 @@ function DocumentDetail({
                 setLineageNonce((v) => v + 1);
               }}
             />
+
+            {/* The history joins the conversation rather than sitting
+                below the document. Both are things said *about* this
+                text — one by people, one by the revisions — and a
+                reader who has to scroll past the whole document to
+                find out it has six versions finds out too late. */}
+            {versions.length > 1 && !commentsHidden && (
+              <div className="kb-aside-rule" />
+            )}
+            <VersionSwitcher
+              versions={versions}
+              current={doc.n ?? 0}
+              onPick={(n) => setVersion(n)}
+            />
           </div>
         </div>
       )}
 
-      <VersionSwitcher
-        versions={versions}
-        current={doc.n ?? 0}
-        onPick={(n) => setVersion(n)}
-      />
       <LineageSection
         client={client}
         artifactId={doc.id}
