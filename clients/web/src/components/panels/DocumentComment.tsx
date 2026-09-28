@@ -431,25 +431,37 @@ const MINE =
 /**
  * What the rail is being narrowed to.
  *
- * Every field is a *restriction*, and an empty one restricts nothing,
- * so the default is the empty object and "no filters" is a thing the
- * reader can always get back to by clearing them. They combine, which
- * is the point: "open, on this version, not settled" is one question
- * with three clauses and not three separate views.
+ * One list per question, and the usual bargain for a faceted filter:
+ * *any* of the values inside a list, *all* of the lists. Ticking both
+ * "Unresolved" and "Resolved" therefore says the same as ticking
+ * neither, which is the behaviour people expect and the reason a set
+ * is the right shape here rather than a flag — a flag has no way to
+ * say "either".
+ *
+ * An empty list restricts nothing, so "no filter" is always
+ * reachable by clearing.
  */
 export interface CommentFilter {
-  /** Only threads still open. */
-  open?: boolean;
-  /** Only threads left on these versions. */
+  /** ``unresolved`` — still open. ``resolved`` — accepted or declined. */
+  status?: ("unresolved" | "resolved")[];
+  /** Whether igni has replied in the thread. */
+  answer?: ("answered" | "unanswered")[];
+  /** Whether the quoted passage is still in the document. */
+  passage?: ("here" | "gone")[];
+  /** The versions a thread was left against. */
   versions?: number[];
-  /** Only threads whose passage is still in the document. */
-  anchored?: boolean;
-  /** Only threads igni has answered. */
-  answered?: boolean;
 }
 
+/** Every facet, in the order they are offered. */
+const FACETS = ["status", "answer", "passage", "versions"] as const;
+
 export function filterIsEmpty(f: CommentFilter): boolean {
-  return !f.open && !f.anchored && !f.answered && !f.versions?.length;
+  return FACETS.every((k) => !f[k]?.length);
+}
+
+/** A thread that has been accepted or declined is settled. */
+function isSettled(thread: Thread): boolean {
+  return !!thread.status && thread.status !== "open";
 }
 
 /**
@@ -460,26 +472,69 @@ export function filterIsEmpty(f: CommentFilter): boolean {
  * reader concludes the comments are gone rather than hidden.
  */
 export function keeps(f: CommentFilter, thread: Thread, anchored: boolean): boolean {
-  if (f.open && thread.status && thread.status !== "open") return false;
-  if (f.versions?.length && !f.versions.includes(thread.n ?? 0)) return false;
-  if (f.anchored && !anchored) return false;
-  if (f.answered && !thread.turns.some((turn) => turn.who === "agent")) return false;
-  return true;
+  const within = <T,>(chosen: T[] | undefined, actual: T) =>
+    !chosen?.length || chosen.includes(actual);
+
+  return (
+    within(f.status, isSettled(thread) ? "resolved" : "unresolved") &&
+    within(f.answer, thread.turns.some((t) => t.who === "agent") ? "answered" : "unanswered") &&
+    within(f.passage, anchored ? "here" : "gone") &&
+    (!f.versions?.length || f.versions.includes(thread.n ?? 0))
+  );
 }
 
+/** One thing the reader has chosen, and how to take it back off. */
+export interface FilterChip {
+  key: string;
+  label: string;
+  drop: (f: CommentFilter) => CommentFilter;
+}
+
+const FACET_LABELS: Record<string, string> = {
+  unresolved: "Unresolved",
+  resolved: "Resolved",
+  answered: "Answered by igni",
+  unanswered: "Not answered",
+  here: "Passage still there",
+  gone: "Passage rewritten",
+};
+
 /**
- * A line from the passage to the card about it.
+ * The filter as a row of chips.
  *
- * One line, for the thread being read. The underline says *that* a
- * sentence has a comment; it cannot say *which* of nine cards, and on
- * a document with a hundred of them the answer matters more than the
- * fact. Drawing all of them at once would be a cat's cradle across
- * the page, so this follows the focus.
- *
- * Fixed to the viewport and portalled to the body: it has to cross
- * the gap between two scrolling boxes, and anything inside either of
- * them is clipped at the boundary it needs to span.
+ * Every restriction on screen, each removable on its own. Behind a
+ * button, the only sign that anything was hidden is a number, and
+ * the reader has to open a menu to find out *what* they asked for —
+ * which is the moment they stop trusting the count.
  */
+export function chipsOf(f: CommentFilter): FilterChip[] {
+  const out: FilterChip[] = [];
+  const pull = <K extends "status" | "answer" | "passage">(facet: K, value: string) => (
+    prev: CommentFilter,
+  ): CommentFilter => ({
+    ...prev,
+    [facet]: (prev[facet] as string[] | undefined)?.filter((v) => v !== value),
+  });
+
+  for (const facet of ["status", "answer", "passage"] as const) {
+    for (const value of f[facet] ?? []) {
+      out.push({
+        key: `${facet}:${value}`,
+        label: FACET_LABELS[value] ?? value,
+        drop: pull(facet, value),
+      });
+    }
+  }
+  for (const n of f.versions ?? []) {
+    out.push({
+      key: `v:${n}`,
+      label: `v${n}`,
+      drop: (prev) => ({ ...prev, versions: prev.versions?.filter((v) => v !== n) }),
+    });
+  }
+  return out;
+}
+
 /** A rect, or nothing at all, and never an exception. */
 function measure(of: Range | Element): DOMRect | null {
   try {
@@ -807,6 +862,8 @@ export function DocumentComment({
     for (const g of groups) for (const th of g.threads) if (th.n) seen.add(th.n);
     return [...seen].sort((a, b) => b - a);
   }, [groups]);
+
+  const chips = useMemo(() => chipsOf(filter), [filter]);
 
   const hiddenCount = useMemo(
     () =>
@@ -1224,17 +1281,44 @@ export function DocumentComment({
       )}
 
       <div className="doc-rail-body">
+        {/* What was asked for, on screen and each of it removable.
+            Behind the button the only sign anything was hidden is a
+            number, and finding out *what* was asked for costs a trip
+            into a menu — which is the moment the reader stops
+            trusting the number. */}
+        {chips.length > 0 && (
+          <div className="doc-filter-chips">
+            {chips.map((chip) => (
+              <button
+                key={chip.key}
+                type="button"
+                className="doc-filter-chip"
+                title={`Stop filtering by ${chip.label}`}
+                onClick={() => setFilter(chip.drop)}
+              >
+                {chip.label}
+                <span className="doc-filter-chip-x" aria-hidden="true">
+                  ×
+                </span>
+              </button>
+            ))}
+            {chips.length > 1 && (
+              <button
+                type="button"
+                className="doc-filter-clear"
+                onClick={() => setFilter({})}
+              >
+                Clear all
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Said, not left to be inferred from a short list. A filter
-            that hides things silently is indistinguishable from a
-            document that has fewer comments than the reader thought.
-            The way out is on the same line as the count. */}
+            that hides silently is indistinguishable from a document
+            with fewer comments than the reader thought. */}
         {hiddenCount > 0 && (
-          <p className="doc-filter-note">
-            {hiddenCount} hidden by filters.{" "}
-            <button type="button" className="doc-filter-clear" onClick={() => setFilter({})}>
-              Show all
-            </button>
-          </p>
+          <p className="doc-filter-note">{hiddenCount} hidden.</p>
         )}
 
         {started.length === 0 ? (
@@ -1296,15 +1380,16 @@ export function DocumentComment({
 /**
  * Narrowing the rail, by as many clauses as the reader wants.
  *
- * Checkboxes rather than a row of exclusive tabs, because the
- * questions people actually have are conjunctions — "what is still
- * open on the version I am reading" is one question with two clauses
- * — and a tab strip makes every one of those a sequence of views to
- * hold in your head.
+ * Grouped into the questions somebody actually asks — is it settled,
+ * has igni answered, is the passage still there, which version — and
+ * within a group the values are alternatives. That is what makes
+ * "unresolved or resolved" mean the same as asking neither, and it
+ * is why the groups need saying out loud: a flat list of eight
+ * checkboxes gives no clue which of them compete.
  *
- * Behind a button with a count on it, because most of the time there
- * is no filter and the control is a row of empty boxes taking up the
- * space the conversation wants.
+ * Behind a button, because most of the time nothing is filtered and
+ * the control is a column of empty boxes taking the space the
+ * conversation wants.
  */
 function CommentFilters({
   filter,
@@ -1320,61 +1405,80 @@ function CommentFilters({
   onOpen: (open: boolean) => void;
   onChange: (filter: CommentFilter) => void;
 }) {
-  const active =
-    (filter.open ? 1 : 0) +
-    (filter.anchored ? 1 : 0) +
-    (filter.answered ? 1 : 0) +
-    (filter.versions?.length ? 1 : 0);
+  const chips = chipsOf(filter);
 
-  const toggleVersion = (n: number) => {
-    const was = filter.versions ?? [];
-    const next = was.includes(n) ? was.filter((v) => v !== n) : [...was, n];
-    onChange({ ...filter, versions: next.length ? next : undefined });
+  const toggle = (
+    facet: "status" | "answer" | "passage",
+    value: string,
+  ) => {
+    const was = (filter[facet] as string[] | undefined) ?? [];
+    const next = was.includes(value) ? was.filter((v) => v !== value) : [...was, value];
+    onChange({ ...filter, [facet]: next.length ? next : undefined });
   };
 
   const box = (
-    key: "open" | "anchored" | "answered",
+    facet: "status" | "answer" | "passage",
+    value: string,
     label: string,
-    title: string,
   ) => (
-    <label className="doc-filter-row" title={title}>
+    <label key={value} className="doc-filter-row">
       <input
         type="checkbox"
-        checked={!!filter[key]}
-        onChange={(e) => onChange({ ...filter, [key]: e.target.checked || undefined })}
+        checked={((filter[facet] as string[] | undefined) ?? []).includes(value)}
+        onChange={() => toggle(facet, value)}
       />
       {label}
     </label>
+  );
+
+  const section = (heading: string, children: React.ReactNode) => (
+    <div className="doc-filter-section">
+      <p className="doc-filter-heading">{heading}</p>
+      {children}
+    </div>
   );
 
   return (
     <div className="doc-filter">
       <button
         type="button"
-        className={active ? "doc-filter-open is-on" : "doc-filter-open"}
+        className={chips.length ? "doc-filter-open is-on" : "doc-filter-open"}
         aria-expanded={open}
         title="Narrow what is shown"
         onClick={() => onOpen(!open)}
       >
-        Filter{active > 0 && <span className="doc-filter-count">{active}</span>}
+        Filter
+        {chips.length > 0 && <span className="doc-filter-count">{chips.length}</span>}
       </button>
 
       {open && (
         <>
           <div className="doc-filter-backdrop" onClick={() => onOpen(false)} />
           <div className="doc-filter-pop" role="group" aria-label="Filter comments">
-            {box("open", "Still open", "Hide anything already accepted or declined")}
-            {box("answered", "Answered by igni", "Only threads igni has replied in")}
-            {box(
-              "anchored",
-              "Passage still there",
-              "Hide comments whose passage has since been rewritten",
-            )}
-
-            {versions.length > 1 && (
+            {section(
+              "State",
               <>
-                <div className="doc-filter-rule" />
-                <p className="doc-filter-heading">Left on version</p>
+                {box("status", "unresolved", "Unresolved")}
+                {box("status", "resolved", "Resolved")}
+              </>,
+            )}
+            {section(
+              "Replies",
+              <>
+                {box("answer", "answered", "Answered by igni")}
+                {box("answer", "unanswered", "Not answered")}
+              </>,
+            )}
+            {section(
+              "Passage",
+              <>
+                {box("passage", "here", "Still in the document")}
+                {box("passage", "gone", "Rewritten since")}
+              </>,
+            )}
+            {versions.length > 1 &&
+              section(
+                "Left on version",
                 <div className="doc-filter-versions">
                   {versions.map((n) => (
                     <button
@@ -1386,27 +1490,19 @@ function CommentFilters({
                           : "doc-filter-version"
                       }
                       aria-pressed={filter.versions?.includes(n)}
-                      onClick={() => toggleVersion(n)}
+                      onClick={() => {
+                        const was = filter.versions ?? [];
+                        const next = was.includes(n)
+                          ? was.filter((v) => v !== n)
+                          : [...was, n];
+                        onChange({ ...filter, versions: next.length ? next : undefined });
+                      }}
                     >
                       v{n}
                     </button>
                   ))}
-                </div>
-              </>
-            )}
-
-            {active > 0 && (
-              <>
-                <div className="doc-filter-rule" />
-                <button
-                  type="button"
-                  className="doc-filter-clear"
-                  onClick={() => onChange({})}
-                >
-                  Clear all
-                </button>
-              </>
-            )}
+                </div>,
+              )}
           </div>
         </>
       )}

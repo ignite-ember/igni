@@ -977,12 +977,34 @@ describe("narrowing the rail", () => {
     expect(keeps({}, thread({ status: "rejected" }), false)).toBe(true);
   });
 
+  it("asking for both sides of a question is the same as asking neither", async () => {
+    // The reason a facet is a set and not a flag: a flag has no way
+    // to say "either", so a reader who ticks both ends up with an
+    // empty rail and no idea why.
+    const { keeps } = await import("./DocumentComment");
+    const both = { status: ["unresolved" as const, "resolved" as const] };
+
+    expect(keeps(both, thread({ status: "open" }), true)).toBe(true);
+    expect(keeps(both, thread({ status: "accepted" }), true)).toBe(true);
+  });
+
+  it("counts accepted and declined alike as resolved", async () => {
+    // Both mean somebody has dealt with it. The difference matters
+    // to the person who raised it and not to "what is left".
+    const { keeps } = await import("./DocumentComment");
+    const settled = { status: ["resolved" as const] };
+
+    expect(keeps(settled, thread({ status: "accepted" }), true)).toBe(true);
+    expect(keeps(settled, thread({ status: "rejected" }), true)).toBe(true);
+    expect(keeps(settled, thread({ status: "open" }), true)).toBe(false);
+  });
+
   it("combines its clauses rather than replacing them", async () => {
     // The whole point. "What is still open on v3" is one question
     // with two clauses; a row of exclusive tabs makes it a sequence
     // of views to hold in your head.
     const { keeps } = await import("./DocumentComment");
-    const both = { open: true, versions: [3] };
+    const both = { status: ["unresolved" as const], versions: [3] };
 
     expect(keeps(both, thread({ status: "open", n: 3 }), true)).toBe(true);
     expect(keeps(both, thread({ status: "open", n: 4 }), true)).toBe(false);
@@ -995,14 +1017,18 @@ describe("narrowing the rail", () => {
     // thing a filter can do.
     const { keeps } = await import("./DocumentComment");
 
-    expect(keeps({ open: true }, thread({ status: undefined }), true)).toBe(true);
+    expect(keeps({ status: ["unresolved"] }, thread({ status: undefined }), true)).toBe(
+      true,
+    );
   });
 
   it("can hide comments whose passage has been rewritten", async () => {
     const { keeps } = await import("./DocumentComment");
 
-    expect(keeps({ anchored: true }, thread(), false)).toBe(false);
-    expect(keeps({ anchored: true }, thread(), true)).toBe(true);
+    expect(keeps({ passage: ["here"] }, thread(), false)).toBe(false);
+    expect(keeps({ passage: ["here"] }, thread(), true)).toBe(true);
+    // And the other way, for finding the ones that need re-anchoring.
+    expect(keeps({ passage: ["gone"] }, thread(), false)).toBe(true);
   });
 
   it("can keep only what igni has answered", async () => {
@@ -1014,8 +1040,9 @@ describe("narrowing the rail", () => {
       ],
     });
 
-    expect(keeps({ answered: true }, thread(), true)).toBe(false);
-    expect(keeps({ answered: true }, answered, true)).toBe(true);
+    expect(keeps({ answer: ["answered"] }, thread(), true)).toBe(false);
+    expect(keeps({ answer: ["answered"] }, answered, true)).toBe(true);
+    expect(keeps({ answer: ["unanswered"] }, thread(), true)).toBe(true);
   });
 
   it("takes any of the versions asked for, not all of them", async () => {
@@ -1025,6 +1052,44 @@ describe("narrowing the rail", () => {
     expect(keeps(f, thread({ n: 2 }), true)).toBe(true);
     expect(keeps(f, thread({ n: 5 }), true)).toBe(true);
     expect(keeps(f, thread({ n: 3 }), true)).toBe(false);
+  });
+});
+
+describe("the chips that say what is being filtered", () => {
+  it("names every restriction, one chip each", async () => {
+    const { chipsOf } = await import("./DocumentComment");
+
+    const chips = chipsOf({
+      status: ["unresolved"],
+      answer: ["answered"],
+      versions: [4, 2],
+    });
+
+    expect(chips.map((c) => c.label)).toEqual([
+      "Unresolved",
+      "Answered by igni",
+      "v4",
+      "v2",
+    ]);
+  });
+
+  it("each takes back only its own", async () => {
+    // A chip that cleared the whole facet would take "v4" off with
+    // "v2", which is a different filter from the one the reader
+    // asked to change.
+    const { chipsOf } = await import("./DocumentComment");
+    const filter = { status: ["unresolved" as const], versions: [4, 2] };
+
+    const v4 = chipsOf(filter).find((c) => c.label === "v4")!;
+
+    expect(v4.drop(filter)).toEqual({ status: ["unresolved"], versions: [2] });
+  });
+
+  it("is empty when nothing is filtered", async () => {
+    const { chipsOf } = await import("./DocumentComment");
+
+    expect(chipsOf({})).toEqual([]);
+    expect(chipsOf({ versions: [] })).toEqual([]);
   });
 });
 

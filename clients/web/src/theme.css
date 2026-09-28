@@ -10271,7 +10271,7 @@ button {
   z-index: 40;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   min-width: 210px;
   padding: 10px;
   text-align: left;
@@ -10290,13 +10290,61 @@ button {
   cursor: pointer;
 }
 
+/* One question per section, with its alternatives under it. A flat
+   list of eight checkboxes gives no clue which of them compete. */
+.doc-filter-section {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.doc-filter-section + .doc-filter-section {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+
 .doc-filter-heading {
-  margin: 0;
+  margin: 0 0 2px;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--fg-muted);
+}
+
+/* What is being filtered on, each removable on its own. */
+.doc-filter-chips {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.doc-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px 2px 8px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--accent-blue-text);
+  background: color-mix(in srgb, var(--accent-blue, #4a7dff) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-blue, #4a7dff) 30%, transparent);
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.doc-filter-chip:hover {
+  background: color-mix(in srgb, var(--accent-blue, #4a7dff) 20%, transparent);
+}
+
+.doc-filter-chip-x {
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.7;
 }
 
 .doc-filter-versions {
