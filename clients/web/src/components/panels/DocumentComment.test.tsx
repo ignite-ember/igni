@@ -878,6 +878,65 @@ describe("putting the comment rail away", () => {
   });
 });
 
+describe("what selects a thread", () => {
+  const stored = (over: Record<string, unknown>) => ({
+    comment_id: "c1",
+    thread_id: "t1",
+    parent_id: "",
+    origin: "web",
+    quote: "The service issues a signed JWT on sign-in.",
+    body: "Which algorithm?",
+    status: "open",
+    author: "sam@acme.test",
+    at: "2026-09-01T10:00:00Z",
+    n: 2,
+    ...over,
+  });
+
+  async function mounted(rows = [stored({})]) {
+    const harness = fakeClient();
+    harness.rpc.mockImplementation(async (method: string) =>
+      method === "artifact_comments" ? rows : { ok: true, prompt: "P", message: "" },
+    );
+    const { ref } = mountBody();
+    render(<DocumentComment client={harness.client} artifactId="a1" n={2} bodyRef={ref} />);
+    await screen.findByText("Which algorithm?");
+    return document.querySelector(".doc-conv-item") as HTMLElement;
+  }
+
+  const isFocused = (card: HTMLElement) => card.classList.contains("doc-conv-focused");
+
+  it("is the comment itself, not only the quote above it", async () => {
+    // The sentence in the card *is* the comment. A clickable quote
+    // inside an inert card is a small target sitting in a large one.
+    const card = await mounted();
+    expect(isFocused(card)).toBe(false);
+
+    fireEvent.click(screen.getByText("Which algorithm?"));
+
+    expect(isFocused(card)).toBe(true);
+  });
+
+  it("is still the quote", async () => {
+    const card = await mounted();
+
+    fireEvent.click(card.querySelector(".doc-conv-anchor") as HTMLElement);
+
+    expect(isFocused(card)).toBe(true);
+  });
+
+  it("is not the reply box", async () => {
+    // Selecting scrolls the document to the passage. Doing that to
+    // somebody who has just clicked into the composer moves the page
+    // out from under them as they start to type.
+    const card = await mounted();
+
+    fireEvent.click(card.querySelector("textarea") as HTMLElement);
+
+    expect(isFocused(card)).toBe(false);
+  });
+});
+
 describe("the order the threads are listed in", () => {
   /** Mount the rail over a known document, with a known conversation. */
   function withStored(rows: Record<string, unknown>[], text: string) {

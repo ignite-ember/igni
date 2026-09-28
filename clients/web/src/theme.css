@@ -10216,6 +10216,18 @@ button {
   text-decoration: underline;
 }
 
+/* The whole card is the way back to the passage, so the whole card
+   says so. */
+.doc-conv-item {
+  cursor: pointer;
+}
+
+/* …except the parts that do something else. */
+.doc-conv-item textarea,
+.doc-conv-item input {
+  cursor: auto;
+}
+
 /* Who said it, for threads read back out of the store. */
 .doc-conv-by {
   margin-right: 6px;

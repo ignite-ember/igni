@@ -407,6 +407,16 @@ const NO_THREADS: Thread[] = [];
  * the gap between two scrolling boxes, and anything inside either of
  * them is clipped at the boundary it needs to span.
  */
+/** A rect, or nothing at all, and never an exception. */
+function measure(of: Range | Element): DOMRect | null {
+  try {
+    const get = (of as { getBoundingClientRect?: () => DOMRect }).getBoundingClientRect;
+    return typeof get === "function" ? get.call(of) : null;
+  } catch {
+    return null;
+  }
+}
+
 function ThreadLine({
   focused,
   ranges,
@@ -437,8 +447,16 @@ function ThreadLine({
         setPath("");
         return;
       }
-      const from = range.getBoundingClientRect();
-      const to = card.getBoundingClientRect();
+      // Measured defensively. A Range whose nodes have been removed
+      // throws, and the environment need not implement the method at
+      // all — this line is decoration, and decoration that can take
+      // the conversation down with it is worse than no line.
+      const from = measure(range);
+      const to = measure(card);
+      if (!from || !to) {
+        setPath("");
+        return;
+      }
       // Both ends have to be on screen. Either one scrolled out of
       // the window — the passage above the fold, or the card out of
       // the rail's own scroll — draws a line that leaves the page and
@@ -1054,14 +1072,32 @@ function ThreadView({
   const anchored = quoteStillPresent(bodyRef.current, thread.quote);
   const running = isRunning(thread);
 
+  /**
+   * Anywhere on the card takes you to the passage.
+   *
+   * It used to be the quote alone, which made a small target sit
+   * inside a large inert one: the sentence you are reading in the
+   * card *is* the comment, and clicking it did nothing.
+   *
+   * The controls keep their own jobs. Clicking into the reply box has
+   * to leave the page where it is — scrolling the document out from
+   * under somebody who is starting to type is the one thing this must
+   * not do.
+   */
+  const fromCard = (e: React.MouseEvent) => {
+    const at = e.target as HTMLElement;
+    if (at.closest("textarea, input, select")) return;
+    const control = at.closest("button, a");
+    if (control && !control.classList.contains("doc-conv-anchor")) return;
+    onFocus();
+  };
+
   return (
     <li
       className={focused ? "doc-conv-item doc-conv-focused" : "doc-conv-item"}
       data-thread={thread.key}
+      onClick={fromCard}
     >
-      {/* The whole card is the way back to the passage — a link on
-          the quote alone would be a small target next to a large
-          inert one. */}
       {/* Which version it was left against, and where it got to.
           A thread on v12 beside one on v50 is a different kind of
           remark, and "accepted" is the difference between a question
@@ -1075,7 +1111,10 @@ function ThreadView({
         </div>
       )}
 
-      <button type="button" className="doc-conv-anchor" onClick={onFocus}>
+      {/* Still a button, so the passage is reachable from the
+          keyboard. Its click bubbles to the card, which is the one
+          place this is handled. */}
+      <button type="button" className="doc-conv-anchor">
         {thread.quote ? (
           <>
             <span className="doc-conv-quote">{thread.quote}</span>
