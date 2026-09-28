@@ -77,7 +77,27 @@ describe("grouping stored comments into threads", () => {
       row({ comment_id: "new", thread_id: "t2", at: "2026-09-01T00:00:00Z" }),
     ]);
 
-    expect(threads.map((t) => t.id)).toEqual(["new", "old"]);
+    expect(threads.map((t) => t.id)).toEqual(["t2", "t1"]);
+  });
+
+  it("carries the thread's id, not the opening comment's", () => {
+    // What a reply is posted against. The two are different strings —
+    // the backend mints ``local-thread-…`` when a thread starts — and
+    // sending the comment id back joined the reply to nothing, so it
+    // was never recorded and never appeared.
+    const threads = threadsFrom([
+      row({ comment_id: "c-1", thread_id: "local-thread-abc" }),
+    ]);
+
+    expect(threads[0].id).toBe("local-thread-abc");
+  });
+
+  it("falls back to the comment id when there is no thread id", () => {
+    // Older rows, and anything written before threads had ids. It
+    // still has to be posted against something.
+    const threads = threadsFrom([row({ comment_id: "c-1", thread_id: "" })]);
+
+    expect(threads[0].id).toBe("c-1");
   });
 
   it("marks igni's turns as the agent's", () => {

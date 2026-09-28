@@ -115,7 +115,11 @@ export function threadsFrom(rows: StoredComment[]): Thread[] {
     if (!ordered.length) continue;
     threads.push({
       key: `stored-${key}`,
-      id: ordered[0].comment_id,
+      // The *thread's* id, which is what a reply has to be posted
+      // against. The opening comment's own id is a different string —
+      // the backend mints ``local-thread-…`` for a new thread — so
+      // sending that back joined the reply to nothing.
+      id: ordered[0].thread_id || ordered[0].comment_id,
       quote: ordered[0].quote,
       // Carried through, because it is the only thing that tells two
       // identical sentences apart — without it a comment on the
@@ -900,18 +904,45 @@ export function DocumentComment({
     }
   }, []);
 
+  /**
+   * Backing out of a composer.
+   *
+   * A thread that never got a turn goes with it. It was only on
+   * screen because somebody pressed New comment, and leaving it
+   * behind would put an empty card in the rail quoting a passage
+   * nobody ended up saying anything about — indistinguishable from a
+   * comment whose text failed to load.
+   *
+   * A thread that has been spoken in stays: cancelling a reply is
+   * abandoning the reply, not the conversation.
+   */
+  const discard = useCallback((thread: Thread) => {
+    if (thread.turns.length > 0) return;
+    setThreads((prev) => prev.filter((t) => t.key !== thread.key));
+    setFocused((key) => (key === thread.key ? null : key));
+  }, []);
+
   const send = useCallback(
     async (threadKey: string, body: string) => {
       const text = body.trim();
       if (!text) return;
-      const thread = threads.find((t) => t.key === threadKey);
+      // Every thread on screen, not only the ones started here. The
+      // rail draws two lists — what this session opened and what the
+      // document already had — and looking in the first one alone
+      // meant replying to an existing comment found nothing and
+      // returned: no post, no turn, no error. The reply vanished.
+      const thread = started.find((t) => t.key === threadKey);
       if (!thread) return;
 
       const asksAgent = mentionsIgni(text);
       const mine = `t${(seq.current += 1)}`;
       const answer = `t${(seq.current += 1)}`;
-      const patchThread = (change: (t: Thread) => Thread) =>
+      // Both lists, for the same reason. Keys are unique across them,
+      // so whichever holds this thread is the one that changes.
+      const patchThread = (change: (t: Thread) => Thread) => {
         setThreads((prev) => prev.map((t) => (t.key === threadKey ? change(t) : t)));
+        setStored((prev) => prev.map((t) => (t.key === threadKey ? change(t) : t)));
+      };
 
       patchThread((t) => ({
         ...t,
@@ -1032,7 +1063,7 @@ export function DocumentComment({
           });
         });
     },
-    [client, artifactId, n, threads, onRevised],
+    [client, artifactId, n, started, onRevised],
   );
 
   /** Start a thread, on a passage or on the document. */
@@ -1359,6 +1390,7 @@ export function DocumentComment({
                   if (!already) revealPassage(thread.key);
                 }}
                 onSend={(key, body) => void send(key, body)}
+                onCancel={discard}
               />
             ))}
           </ol>
@@ -1574,12 +1606,14 @@ function PassageGroup({
   focused,
   onFocus,
   onSend,
+  onCancel,
 }: {
   group: { quote: string; threads: Thread[] };
   bodyRef: React.RefObject<HTMLElement | null>;
   focused: string | null;
   onFocus: (thread: Thread) => void;
   onSend: (threadKey: string, body: string) => void;
+  onCancel: (thread: Thread) => void;
 }) {
   // Checked on render rather than remembered: answering a comment
   // usually rewrites the very passage it was about, so the common
@@ -1619,6 +1653,7 @@ function PassageGroup({
           focused={focused === thread.key}
           onFocus={() => onFocus(thread)}
           onSend={(body) => onSend(thread.key, body)}
+          onCancel={() => onCancel(thread)}
         />
       ))}
     </li>
@@ -1631,11 +1666,13 @@ function ThreadView({
   focused,
   onFocus,
   onSend,
+  onCancel,
 }: {
   thread: Thread;
   focused: boolean;
   onFocus: () => void;
   onSend: (body: string) => void;
+  onCancel: () => void;
 }) {
   const running = isRunning(thread);
 
@@ -1691,9 +1728,34 @@ function ThreadView({
           busy={running}
           first={thread.turns.length === 0}
           onSend={onSend}
+          onCancel={onCancel}
         />
       )}
     </div>
+  );
+}
+
+/** The turn-back arrow beside the word Reply. */
+function ReplyArrow() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" className="doc-thread-reply-icon">
+      <path
+        d="M6 4 2.5 7.5 6 11"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M2.5 7.5H9a4 4 0 0 1 4 4V13"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
@@ -1743,29 +1805,76 @@ function TurnView({ turn }: { turn: Turn }) {
   );
 }
 
-/** The small input at the foot of a thread. */
+/**
+ * The foot of a thread, in its two states.
+ *
+ * At rest it is the word Reply. Open, it is the box and the two ways
+ * out of it. A box under every thread meant a rail of twenty
+ * conversations carried twenty empty textareas and twenty send
+ * buttons — more furniture than comment, and every one of them
+ * looking like somewhere a reply had been started and abandoned.
+ *
+ * A thread with nothing in it yet opens straight into the box: it
+ * only exists because somebody just asked for it, and asking them to
+ * press Reply to the comment they are in the middle of writing is a
+ * click that says nothing.
+ */
 function ThreadComposer({
   busy,
   first,
   onSend,
+  onCancel,
 }: {
   busy: boolean;
   /** Nothing has been said yet, so this is the opening remark. */
   first: boolean;
   onSend: (body: string) => void;
+  /** Backing out of the box. Discards the thread if it was empty. */
+  onCancel: () => void;
 }) {
   const [body, setBody] = useState("");
+  const [open, setOpen] = useState(first);
   const input = useRef<HTMLTextAreaElement>(null);
 
+  // On opening, not only on mount: the point of pressing Reply is to
+  // type, and a box that has to be clicked as well is a box that has
+  // asked for the same decision twice.
   useEffect(() => {
-    if (first) input.current?.focus();
-  }, [first]);
+    if (open) input.current?.focus();
+  }, [open]);
 
   const submit = () => {
     if (!body.trim() || busy) return;
     onSend(body);
     setBody("");
+    // Back to the word Reply — including for the comment that opened
+    // the thread. Leaving that one open would make a thread look
+    // different depending on whether you happened to start it this
+    // session or read it back from the store, which is not a
+    // difference the reader has.
+    setOpen(false);
   };
+
+  const cancel = () => {
+    setBody("");
+    setOpen(false);
+    onCancel();
+  };
+
+  if (!open) {
+    return (
+      <div className="doc-thread-foot">
+        <button
+          type="button"
+          className="doc-thread-reply"
+          onClick={() => setOpen(true)}
+        >
+          <ReplyArrow />
+          Reply
+        </button>
+      </div>
+    );
+  }
 
   const asksAgent = mentionsIgni(body);
 
@@ -1788,6 +1897,13 @@ function ThreadComposer({
             e.preventDefault();
             submit();
           }
+          // The other way out, for a keyboard. Only from an empty box:
+          // Escape over a half-written reply would throw it away, and
+          // there is no undo for that.
+          if (e.key === "Escape" && !body.trim()) {
+            e.preventDefault();
+            cancel();
+          }
         }}
       />
       {/* Under the box rather than beside it. Beside it the button
@@ -1796,11 +1912,18 @@ function ThreadComposer({
       <div className="doc-thread-actions">
         <button
           type="button"
+          className="btn btn-sm doc-thread-cancel"
+          onClick={cancel}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
           className="btn btn-sm btn-primary doc-thread-send"
           disabled={busy || !body.trim()}
           onClick={submit}
         >
-          {busy ? "…" : asksAgent ? "Ask igni" : "Comment"}
+          {busy ? "…" : asksAgent ? "Ask igni" : first ? "Comment" : "Reply"}
         </button>
         {/* Said before sending, not after. Whether a model runs is the
             difference between a remark and an edit being proposed, and

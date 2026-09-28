@@ -13405,6 +13405,58 @@ button {
   flex: 0 0 auto;
 }
 
+/* Cancel is the way back, not a second thing to do. Quiet, and to
+   the left of the send button so the eye lands on the send. */
+.doc-thread-cancel {
+  flex: 0 0 auto;
+  background: none;
+  border-color: transparent;
+  color: var(--fg-muted);
+}
+
+.doc-thread-cancel:hover {
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
+/* The resting state of a thread's foot: the word Reply, and no box.
+   Sized like the text it sits under rather than like a button, so a
+   rail of conversations reads as conversations. */
+.doc-thread-foot {
+  display: flex;
+  align-items: center;
+  margin-left: 10px;
+}
+
+.doc-thread-reply {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  /* Outdented by its own padding, so the word starts on the same
+     left edge as the comment above it and the hover fill still
+     surrounds it. */
+  margin-left: -6px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.doc-thread-reply:hover {
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
+.doc-thread-reply-icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
 /* Where this message goes, before it goes. */
 .doc-thread-hint {
   flex: 1;

@@ -128,6 +128,20 @@ const type = (value: string, index = 0) =>
 const ask = (index = 0) =>
   fireEvent.click(document.querySelectorAll(".doc-thread-send")[index] as HTMLElement);
 
+/**
+ * Wait for a run to settle, then open the thread's reply box again.
+ *
+ * The box puts itself away on send, so continuing a conversation is
+ * Reply → type → send, the same three steps it is on screen.
+ */
+const reopen = async (index = 0) => {
+  await waitFor(() =>
+    expect(document.querySelectorAll(".doc-thread-reply")[index]).toBeTruthy(),
+  );
+  fireEvent.click(document.querySelectorAll(".doc-thread-reply")[index] as HTMLElement);
+  await waitFor(() => expect(composerIn(index).disabled).toBe(false));
+};
+
 /** Everything the reader sees about comments lives in the rail. */
 const rail = () => document.querySelector(".doc-rail") as HTMLElement;
 
@@ -227,7 +241,7 @@ describe("a thread keeps its own messages", () => {
     await waitFor(() => expect(harness.rpc).toHaveBeenCalled());
     settle(harness);
 
-    await waitFor(() => expect(composerIn(0).disabled).toBe(false));
+    await reopen();
     type("Second.");
     ask();
 
@@ -248,7 +262,7 @@ describe("a thread keeps its own messages", () => {
     ask();
     await screen.findByText("First.");
     settle(harness);
-    await waitFor(() => expect(composerIn(0).disabled).toBe(false));
+    await reopen();
 
     type("Second.");
     ask();
@@ -280,7 +294,7 @@ describe("a thread keeps its own messages", () => {
     ask();
     await waitFor(() => expect(harness.rpc).toHaveBeenCalled());
     settle(harness);
-    await waitFor(() => expect(composerIn(0).disabled).toBe(false));
+    await reopen();
 
     type("Second.");
     ask();
@@ -293,10 +307,27 @@ describe("a thread keeps its own messages", () => {
 });
 
 describe("the composer at the foot of a thread", () => {
-  it("is there from the start, not behind a button", () => {
+  it("is there from the start for a comment being started", () => {
+    // It exists only because New comment was just pressed. Asking for
+    // a second press before the box appears says nothing.
     setup();
     newThread();
     expect(composerIn(0)).toBeTruthy();
+  });
+
+  it("rests once the message has been sent", async () => {
+    // Including the one that opened the thread. Left open, a thread
+    // would look different depending on whether you started it this
+    // session or read it back from the store.
+    const harness = setup();
+    newThread();
+    type("First.");
+    ask();
+    await screen.findByText("First.");
+    settleAll(harness);
+
+    await waitFor(() => expect(document.querySelector(".doc-comment-input")).toBeNull());
+    expect(document.querySelector(".doc-thread-reply")).toBeTruthy();
   });
 
   it("invites a reply once something has been said", async () => {
@@ -305,18 +336,26 @@ describe("the composer at the foot of a thread", () => {
     type("First.");
     ask();
     await screen.findByText("First.");
-    harness.emit({ type: "content_delta", text: "Answered.", is_thinking: false });
-    harness.finish();
+    settleAll(harness);
+    await waitFor(() => expect(document.querySelector(".doc-thread-reply")).toBeTruthy());
 
-    await waitFor(() => expect(composerIn(0).placeholder).toBe("Reply…"));
+    fireEvent.click(document.querySelector(".doc-thread-reply") as HTMLElement);
+
+    expect(composerIn(0).placeholder).toBe("Reply…");
   });
 
   it("is disabled while the agent is working", async () => {
+    // Reopened mid-run it is a box you cannot type a second message
+    // into, rather than one that quietly queues one.
     setup();
     newThread();
     type("@igni First.");
     ask();
-    await waitFor(() => expect(composerIn(0).disabled).toBe(true));
+
+    await waitFor(() => expect(document.querySelector(".doc-thread-reply")).toBeTruthy());
+    fireEvent.click(document.querySelector(".doc-thread-reply") as HTMLElement);
+
+    expect(composerIn(0).disabled).toBe(true);
   });
 
   it("will not send an empty message", () => {
@@ -336,7 +375,11 @@ describe("the composer at the foot of a thread", () => {
     ask();
     await screen.findByText("First.");
     settleAll(harness);
-    await waitFor(() => expect(composerIn(0).value).toBe(""));
+    await waitFor(() => expect(document.querySelector(".doc-thread-reply")).toBeTruthy());
+
+    fireEvent.click(document.querySelector(".doc-thread-reply") as HTMLElement);
+
+    expect(composerIn(0).value).toBe("");
   });
 });
 
@@ -674,7 +717,7 @@ describe("the reply, in the rail", () => {
     await screen.findByText(/Name the TTL\./);
     harness.finish();
 
-    await waitFor(() => expect(composerIn(0).disabled).toBe(false));
+    await reopen();
     expect(harness.rpc.mock.calls.map((c) => c[1]).find((a) => a.origin === "agent")).toBeUndefined();
   });
 });
@@ -1195,10 +1238,101 @@ describe("what selects a thread", () => {
     // somebody who has just clicked into the composer moves the page
     // out from under them as they start to type.
     const card = await mounted();
+    fireEvent.click(card.querySelector(".doc-thread-reply") as HTMLElement);
 
     fireEvent.click(card.querySelector("textarea") as HTMLElement);
 
     expect(isFocused(card)).toBe(false);
+  });
+});
+
+describe("the two states of a thread's foot", () => {
+  const stored = (over: Record<string, unknown> = {}) => ({
+    comment_id: "c1",
+    thread_id: "t1",
+    parent_id: "",
+    origin: "web",
+    quote: "The service issues a signed JWT on sign-in.",
+    quote_start: -1,
+    body: "Which algorithm?",
+    status: "open",
+    author: "sam@acme.test",
+    at: "2026-09-01T10:00:00Z",
+    n: 2,
+    ...over,
+  });
+
+  async function withThread() {
+    const harness = fakeClient();
+    harness.rpc.mockImplementation(async (method: string) =>
+      method === "artifact_comments" ? [stored()] : { ok: true, prompt: "P", message: "" },
+    );
+    const { ref } = mountBody();
+    render(<DocumentComment client={harness.client} artifactId="a1" n={2} bodyRef={ref} />);
+    await screen.findByText("Which algorithm?");
+    return harness;
+  }
+
+  const replyLink = () => document.querySelector(".doc-thread-reply") as HTMLElement;
+  const box = () => document.querySelector(".doc-comment-input");
+
+  it("rests as the word Reply, with no box", async () => {
+    // Twenty conversations used to carry twenty empty textareas, each
+    // one looking like a reply somebody started and abandoned.
+    await withThread();
+
+    expect(replyLink()).toBeTruthy();
+    expect(box()).toBeNull();
+  });
+
+  it("opens the box when Reply is pressed", async () => {
+    await withThread();
+
+    fireEvent.click(replyLink());
+
+    expect(box()).toBeTruthy();
+  });
+
+  it("puts the box away again on Cancel", async () => {
+    await withThread();
+    fireEvent.click(replyLink());
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(box()).toBeNull();
+    expect(replyLink()).toBeTruthy();
+  });
+
+  it("keeps the conversation when a reply to it is cancelled", async () => {
+    // Backing out of the reply is not backing out of the thread.
+    await withThread();
+    fireEvent.click(replyLink());
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.getByText("Which algorithm?")).toBeTruthy();
+  });
+
+  it("opens straight into the box for a comment being started", async () => {
+    // It exists only because New comment was just pressed. Asking for
+    // a second press before the box appears says nothing.
+    await withThread();
+
+    newThread();
+
+    expect(document.querySelectorAll(".doc-comment-input")).toHaveLength(1);
+  });
+
+  it("discards a new comment nobody wrote in", async () => {
+    // Left behind it is an empty card quoting a passage nobody said
+    // anything about — indistinguishable from one that failed to load.
+    await withThread();
+    newThread();
+    expect(document.querySelectorAll(".doc-conv-item")).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(document.querySelectorAll(".doc-conv-item")).toHaveLength(1);
   });
 });
 
@@ -1477,5 +1611,73 @@ describe("where the way to start a comment lives", () => {
     const start = screen.getByRole("button", { name: "New comment" });
 
     expect(start.closest(".doc-rail")).not.toBeNull();
+  });
+});
+
+describe("replying to a comment the document already had", () => {
+  // The rail draws two lists: what this session started, and what was
+  // read back from the store. ``send`` looked in the first one only,
+  // so a reply to an existing comment found no thread and returned —
+  // no post, no turn, no error. It simply vanished.
+  const stored = (over: Record<string, unknown> = {}) => ({
+    comment_id: "c1",
+    thread_id: "local-thread-abc",
+    parent_id: "",
+    origin: "web",
+    quote: "The service issues a signed JWT on sign-in.",
+    quote_start: -1,
+    body: "Which algorithm?",
+    status: "open",
+    author: "sam@acme.test",
+    at: "2026-09-01T10:00:00Z",
+    n: 2,
+    ...over,
+  });
+
+  async function replyTo(text: string) {
+    const harness = fakeClient({ ok: true, prompt: "P", thread_id: "local-thread-abc", message: "" });
+    harness.rpc.mockImplementation(async (method: string) =>
+      method === "artifact_comments"
+        ? [stored()]
+        : { ok: true, prompt: "P", thread_id: "local-thread-abc", message: "" },
+    );
+    const { ref } = mountBody();
+    render(<DocumentComment client={harness.client} artifactId="a1" n={2} bodyRef={ref} />);
+    await screen.findByText("Which algorithm?");
+
+    fireEvent.click(document.querySelector(".doc-thread-reply") as HTMLElement);
+    type(text);
+    ask();
+    return harness;
+  }
+
+  it("posts it", async () => {
+    const harness = await replyTo("Because of the lock.");
+
+    await waitFor(() => expect(harness.posts()).toHaveLength(1));
+    expect(harness.posts()[0].body).toBe("Because of the lock.");
+  });
+
+  it("posts it into the thread it is answering", async () => {
+    // Not a new one. The thread id is what keeps a conversation a
+    // conversation rather than a column of unrelated remarks.
+    const harness = await replyTo("Because of the lock.");
+
+    await waitFor(() => expect(harness.posts()).toHaveLength(1));
+    expect(harness.posts()[0].thread_id).toBe("local-thread-abc");
+  });
+
+  it("shows it under the comment it answers", async () => {
+    await replyTo("Because of the lock.");
+
+    await screen.findByText("Because of the lock.");
+    expect(document.querySelectorAll(".doc-conv-item")).toHaveLength(1);
+  });
+
+  it("carries the quote of the thread it joins", async () => {
+    const harness = await replyTo("Because of the lock.");
+
+    await waitFor(() => expect(harness.posts()).toHaveLength(1));
+    expect(harness.posts()[0].quote).toBe("The service issues a signed JWT on sign-in.");
   });
 });
