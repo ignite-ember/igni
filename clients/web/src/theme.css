@@ -13121,6 +13121,30 @@ button {
   color: var(--fg-muted);
 }
 
+/* The line from a passage to the card about it.
+   Over the page and through nothing: fixed to the viewport so it can
+   cross from one scrolling box to another, and transparent to the
+   pointer so it never takes a click meant for the text underneath. */
+.doc-thread-line {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 30;
+  overflow: visible;
+}
+
+.doc-thread-line path {
+  fill: none;
+  stroke: var(--accent-blue, #4a7dff);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  /* Faint. It is a pointer, not a part of the document, and at full
+     strength it reads as a rule dividing the page. */
+  opacity: 0.5;
+}
+
 /* Every commented passage, marked for as long as the comment exists.
    An underline rather than a fill: prose is read in lines, and a
    block of colour at reading size breaks the line into chunks.

@@ -878,6 +878,85 @@ describe("putting the comment rail away", () => {
   });
 });
 
+describe("the order the threads are listed in", () => {
+  /** Mount the rail over a known document, with a known conversation. */
+  function withStored(rows: Record<string, unknown>[], text: string) {
+    const harness = fakeClient();
+    harness.rpc.mockImplementation(async (method: string) =>
+      method === "artifact_comments" ? rows : { ok: true, prompt: "P", message: "" },
+    );
+    const { ref } = mountBody(text);
+    render(<DocumentComment client={harness.client} artifactId="a1" n={2} bodyRef={ref} />);
+    return harness;
+  }
+
+  const stored = (over: Record<string, unknown>) => ({
+    comment_id: "c",
+    thread_id: "t",
+    parent_id: "",
+    origin: "web",
+    quote: "",
+    body: "",
+    status: "open",
+    author: "sam@acme.test",
+    at: "2026-09-01T10:00:00Z",
+    n: 2,
+    ...over,
+  });
+
+  const quotesShown = () =>
+    [...document.querySelectorAll(".doc-conv-item")].map(
+      (c) => c.querySelector(".doc-conv-quote")?.textContent ?? "(document)",
+    );
+
+  it("follows the document, not the clock", async () => {
+    // A margin conversation is read alongside the text. Sorted by
+    // recency, the card beside a sentence is nowhere near it, and a
+    // comment made this morning on the first paragraph sits below one
+    // made last month on the last.
+    // The two orders have to disagree, or the test cannot tell which
+    // one produced the answer: the newest comment is on the *last*
+    // line, so by the clock it would come first.
+    withStored(
+      [
+        stored({ comment_id: "late", thread_id: "t2", quote: "last line", at: "2026-09-09T00:00:00Z" }),
+        stored({ comment_id: "early", thread_id: "t1", quote: "first line", at: "2026-09-01T00:00:00Z" }),
+      ],
+      "first line, then the middle, then the last line.",
+    );
+
+    await waitFor(() => expect(quotesShown()).toEqual(["first line", "last line"]));
+  });
+
+  it("puts a comment about the whole document above the passages", async () => {
+    withStored(
+      [
+        stored({ comment_id: "a", thread_id: "t1", quote: "first line" }),
+        stored({ comment_id: "b", thread_id: "t2", quote: "" }),
+      ],
+      "first line, then the last line.",
+    );
+
+    await waitFor(() => expect(quotesShown()[0]).toBe("(document)"));
+  });
+
+  it("puts a rewritten passage last, because it cannot be placed", async () => {
+    // Guessing a position for it would sit it beside a sentence it is
+    // not about.
+    withStored(
+      [
+        stored({ comment_id: "gone", thread_id: "t1", quote: "a sentence since deleted" }),
+        stored({ comment_id: "here", thread_id: "t2", quote: "last line" }),
+      ],
+      "first line, then the last line.",
+    );
+
+    await waitFor(() =>
+      expect(quotesShown()).toEqual(["last line", "a sentence since deleted"]),
+    );
+  });
+});
+
 describe("the marks in the document, while the rail is away", () => {
   /** jsdom has neither ``CSS.highlights`` nor ``Highlight``. */
   function stubHighlights() {

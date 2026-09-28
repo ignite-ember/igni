@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -394,6 +395,104 @@ function useMarks(
 const NO_THREADS: Thread[] = [];
 
 /**
+ * A line from the passage to the card about it.
+ *
+ * One line, for the thread being read. The underline says *that* a
+ * sentence has a comment; it cannot say *which* of nine cards, and on
+ * a document with a hundred of them the answer matters more than the
+ * fact. Drawing all of them at once would be a cat's cradle across
+ * the page, so this follows the focus.
+ *
+ * Fixed to the viewport and portalled to the body: it has to cross
+ * the gap between two scrolling boxes, and anything inside either of
+ * them is clipped at the boundary it needs to span.
+ */
+function ThreadLine({
+  focused,
+  ranges,
+  version,
+}: {
+  focused: string | null;
+  ranges: React.RefObject<Map<string, Range>>;
+  /** The ranges are stale the moment the document is rewritten. */
+  version: number;
+}) {
+  const [path, setPath] = useState("");
+
+  useEffect(() => {
+    if (!focused) {
+      setPath("");
+      return;
+    }
+    let frame = 0;
+
+    const draw = () => {
+      const range = ranges.current?.get(focused);
+      const escape =
+        typeof CSS !== "undefined" && typeof CSS.escape === "function"
+          ? CSS.escape
+          : (s: string) => s;
+      const card = document.querySelector(`[data-thread="${escape(focused)}"]`);
+      if (!range || !card) {
+        setPath("");
+        return;
+      }
+      const from = range.getBoundingClientRect();
+      const to = card.getBoundingClientRect();
+      // Both ends have to be on screen. Either one scrolled out of
+      // the window — the passage above the fold, or the card out of
+      // the rail's own scroll — draws a line that leaves the page and
+      // points at nothing, which reads as a rendering fault rather
+      // than as an answer about where the other end is.
+      const onScreen = (r: DOMRect) =>
+        (r.width || r.height) && r.bottom > 0 && r.top < window.innerHeight;
+      if (!onScreen(from) || !onScreen(to)) {
+        setPath("");
+        return;
+      }
+
+      const x1 = from.right + 6;
+      const y1 = from.top + from.height / 2;
+      const x2 = to.left - 6;
+      // The head of the card rather than its middle: a tall thread
+      // would have the line arrive halfway down a conversation
+      // instead of at the thing it labels.
+      const y2 = to.top + 18;
+      // Horizontal control points, so the curve leaves the sentence
+      // sideways and arrives at the card sideways. Pulled out by the
+      // gap itself, so a short hop stays gentle and a long one does
+      // not bow into the text.
+      const pull = Math.max(24, Math.min(140, (x2 - x1) / 2));
+      setPath(`M${x1},${y1} C${x1 + pull},${y1} ${x2 - pull},${y2} ${x2},${y2}`);
+    };
+
+    draw();
+    // Both boxes move independently, so the line is re-measured
+    // rather than positioned once. Capture, because the scroll that
+    // matters is a container's and does not bubble.
+    const follow = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(draw);
+    };
+    window.addEventListener("scroll", follow, true);
+    window.addEventListener("resize", follow);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", follow, true);
+      window.removeEventListener("resize", follow);
+    };
+  }, [focused, ranges, version]);
+
+  if (!path) return null;
+  return createPortal(
+    <svg className="doc-thread-line" aria-hidden="true">
+      <path d={path} />
+    </svg>,
+    document.body,
+  );
+}
+
+/**
  * Whether a message is addressed to igni.
  *
  * The one thing that decides whether a model runs. Everything in this
@@ -498,7 +597,35 @@ export function DocumentComment({
     [threads, stored, focused],
   );
 
-  useMarks(bodyRef, hidden ? NO_THREADS : started, focused, n, ranges);
+  /**
+   * The threads in the order their passages appear in the document.
+   *
+   * Not the order they were written. A margin conversation is read
+   * alongside the text, so a comment on the first paragraph belongs
+   * at the top of the rail however recently it was made — sorted by
+   * recency, the card beside a sentence is nowhere near it, and the
+   * reader has to search a list to find the one they are looking at.
+   *
+   * Three groups. A comment about the whole document has no passage
+   * to sit beside and goes first, because it is about everything that
+   * follows. Then the anchored ones, in the document's own order.
+   * Then the ones whose passage has since been rewritten: they cannot
+   * be placed, and guessing a position for them would put them
+   * somewhere they do not belong. Ties keep the order they arrived
+   * in, which is newest first.
+   */
+  const ordered = useMemo(() => {
+    const text = bodyRef.current?.textContent ?? "";
+    const place = (thread: Thread) => {
+      const quote = thread.quote.trim();
+      if (!quote) return -1;
+      const at = text.indexOf(quote);
+      return at >= 0 ? at : Number.MAX_SAFE_INTEGER;
+    };
+    return [...started].sort((a, b) => place(a) - place(b));
+  }, [started, bodyRef, n]);
+
+  useMarks(bodyRef, hidden ? NO_THREADS : ordered, focused, n, ranges);
 
   /** Put the document's view on a thread's passage. */
   const revealPassage = useCallback((key: string) => {
@@ -871,7 +998,7 @@ export function DocumentComment({
           </p>
         ) : (
           <ol className="doc-conv-list">
-            {started.map((thread) => (
+            {ordered.map((thread) => (
               <ThreadView
                 key={thread.key}
                 thread={thread}
@@ -898,6 +1025,11 @@ export function DocumentComment({
       </div>
 
       {selectionMenu}
+
+      {/* The one line, from the passage being read to the card about
+          it. Only while the rail is open: it joins two things and one
+          of them is not on screen otherwise. */}
+      <ThreadLine focused={focused} ranges={ranges} version={n} />
     </aside>
   );
 }
