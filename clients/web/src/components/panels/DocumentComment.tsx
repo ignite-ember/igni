@@ -623,13 +623,13 @@ export function DocumentComment({
     </>
   ) : null;
 
-  /* Put away, the rail is an icon rather than nothing. The way back
-     has to be where the thing went — a control that lives only in a
-     menu asks the reader to remember that comments exist at all — but
-     it should cost the page as little as the thing it replaced. A
-     speech bubble says "comments" in the width of a bubble; the
-     word set sideways down a 30px strip said the same thing in a
-     column of rotated capitals nobody reads. The count rides on it,
+  /* Put away, the section keeps its heading. The way back has to be
+     where the thing went — a control that lives only in a menu asks
+     the reader to remember that comments exist at all — and in a
+     column the row that was there is the obvious place for it. It
+     used to collapse to a bare speech bubble, which was right when
+     this was a strip down the right edge of the page and says
+     nothing in a stack of named sections. The count rides on it,
      which is the part actually worth keeping on screen. */
   if (hidden) {
     return (
@@ -639,11 +639,11 @@ export function DocumentComment({
           className="doc-rail-restore"
           onClick={() => onHiddenChange?.(false)}
           aria-expanded={false}
-          // Named, because an icon has no text to be named by.
           aria-label={started.length ? `Show comments (${started.length})` : "Show comments"}
           title={started.length ? `Show comments (${started.length})` : "Show comments"}
         >
           <CommentIcon />
+          <span className="doc-rail-stowed-label">Comments</span>
           {started.length > 0 && (
             <span className="doc-rail-stowed-count">{started.length}</span>
           )}
