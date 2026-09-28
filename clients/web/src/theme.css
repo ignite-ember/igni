@@ -11288,35 +11288,40 @@ button {
   margin: 0;
 }
 
+/* No box and no rules between rows. Confluence's page tree is a list
+   of text, and the indentation carries the structure on its own —
+   a border per row turns a hierarchy into a table, where every entry
+   reads as a record rather than as a place. */
 .kb-tree-rows {
   margin: 0;
   padding: 0;
   list-style: none;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius);
 }
 
 .kb-tree-row {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  /* The indent is the structure. Everything else on the row is
-     secondary to knowing what sits under what. */
-  padding: 4px 8px 4px calc(8px + var(--tree-depth, 0) * 18px);
+  /* Not centred: a title that wraps to two lines should keep its
+     chevron beside the first of them. */
+  align-items: flex-start;
+  gap: 5px;
+  /* The indent is the structure, and it has to be big enough to read
+     at a glance — 22px, near Confluence's own. */
+  padding: 3px 6px 3px calc(6px + var(--tree-depth, 0) * 22px);
   font-size: 12.5px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.kb-tree-row:last-child {
-  border-bottom: 0;
+  line-height: 1.45;
+  border-radius: 4px;
 }
 
 .kb-tree-row:hover {
   background: var(--bg-inset);
 }
 
-.kb-tree-row.is-current {
-  background: var(--bg-inset);
+/* Weight and colour, not a filled row. The current page has to be
+   findable while scanning, and a background block competes with the
+   drop highlight, which means something else entirely. */
+.kb-tree-row.is-current > .kb-tree-name {
+  font-weight: 600;
+  color: var(--accent-blue-text);
 }
 
 .kb-tree-row.is-dragging {
@@ -11341,12 +11346,14 @@ button {
   cursor: default;
 }
 
+/* Present only where there is something to open, and reserving its
+   width regardless so the titles of siblings line up. */
 .kb-tree-twist {
   flex: none;
-  width: 14px;
+  width: 13px;
   padding: 0;
-  font-size: 9px;
-  line-height: 1;
+  font-size: 10px;
+  line-height: 1.45;
   color: var(--fg-muted);
   background: none;
   border: 0;
@@ -11358,16 +11365,20 @@ button {
   opacity: 0;
 }
 
+/* Only folders are marked. Confluence marks nothing, because when
+   every row carries an icon the icons stop distinguishing anything —
+   but we have two node kinds and the difference decides what a drop
+   will do, so the folder says so and the document does not. */
 .kb-tree-icon {
   flex: none;
   font-size: 9px;
-  color: var(--fg-muted);
-}
-
-.kb-tree-row.is-folder .kb-tree-icon {
+  line-height: 1.7;
   color: var(--accent-orange-text, var(--fg-muted));
 }
 
+/* Wraps rather than truncating. A document is found by its title,
+   and "Autocomplete for links, files, macros…" cut at the column's
+   width is indistinguishable from three other documents. */
 .kb-tree-name {
   flex: 1;
   min-width: 0;
@@ -11378,9 +11389,7 @@ button {
   background: none;
   border: 0;
   cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .kb-tree-row.is-folder .kb-tree-name {
@@ -11398,16 +11407,17 @@ button {
   border-radius: 4px;
 }
 
-.kb-tree-n,
+/* The version number is gone from the tree. It is metadata about a
+   document, not a way of telling one document from another, and a
+   column of "v3 v6 v2" beside the titles is what made this read as a
+   table. "Out of date" stays: it is the one thing that changes what
+   somebody does next. */
 .kb-tree-stale {
   flex: none;
-  font-size: 10.5px;
-  color: var(--fg-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.kb-tree-stale {
+  align-self: center;
+  font-size: 10px;
   color: var(--accent-orange-text, var(--fg-muted));
+  white-space: nowrap;
 }
 
 .kb-tree-remove {

@@ -227,12 +227,18 @@ export function ArtifactTreeView({
                   })
                 }
               >
-                {expandable ? (open ? "▾" : "▸") : ""}
+                {expandable ? (open ? "⌄" : "›") : ""}
               </button>
 
-              <span className="kb-tree-icon" aria-hidden="true">
-                {node.is_folder ? "▮" : "▫"}
-              </span>
+              {/* Only folders are marked. When every row carries an
+                  icon the icons stop distinguishing anything — but the
+                  two kinds decide what a drop does, so the folder says
+                  so and the document does not. */}
+              {node.is_folder && (
+                <span className="kb-tree-icon" aria-hidden="true">
+                  ▪
+                </span>
+              )}
 
               {renaming === node.node_id ? (
                 <input
@@ -280,9 +286,10 @@ export function ArtifactTreeView({
                 </button>
               )}
 
-              {!node.is_folder && node.head_n > 0 && (
-                <span className="kb-tree-n">v{node.head_n}</span>
-              )}
+              {/* No version number. It is metadata about a document
+                  rather than a way of telling two apart, and a column
+                  of it beside the titles is what made this read as a
+                  table. */}
               {staleIds?.has(node.node_id) && (
                 <span className="kb-tree-stale">out of date</span>
               )}
