@@ -10113,7 +10113,7 @@ button {
 .kb-doc-aside {
   position: absolute;
   right: 0;
-  top: calc(var(--page-chrome-h) + 16px);
+  top: var(--dock-top);
   bottom: 0;
   width: calc(24rem + 46px);
   padding: 0 0 0 28px;
@@ -11699,12 +11699,18 @@ button {
 
 :root {
   --tree-width: 15.5rem;
-  /* What sits above the scrolling area inside ``.page``: the
-     breadcrumbs and the page head. The hierarchy is pinned to
-     ``.page`` rather than to the box that scrolls, so it needs to
-     start below them. Tracks ``.page-crumbs`` + ``.page-head``; if
-     either changes height this follows. */
-  --page-chrome-h: 82px;
+  /* Where a docked column starts, measured down from ``.page``.
+     Three terms, and every one of them is something else's spacing:
+     the breadcrumbs above the scrolling area, the page measure's own
+     padding, and the article's. Together they put a docked column
+     level with the document's title rather than forty pixels below
+     it — which is where the guess this replaces had left both of
+     them.
+
+     ``.page-head`` is *not* in here. It was, on the reading that it
+     sits beside the crumbs; it does not, and the extra 47px it
+     contributed is exactly the drop. */
+  --dock-top: calc(35px + 16px + 8px);
 }
 
 /* The gutter the hierarchy lives in: against the left edge of the
@@ -11723,7 +11729,7 @@ button {
 .kb-tree-dock {
   position: absolute;
   left: 18px;
-  top: calc(var(--page-chrome-h) + 16px);
+  top: var(--dock-top);
   bottom: 0;
   width: var(--tree-width);
   /* Off, so the empty part of a full-height dock does not swallow
