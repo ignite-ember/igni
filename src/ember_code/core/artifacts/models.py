@@ -207,6 +207,15 @@ class ArtifactSummary(BaseModel):
     author: str = ""
     origin: str = ""
     version_count: int = 0
+    #: Where this sits in the navigation tree, or empty for a root.
+    #:
+    #: A *separate* relation from ``DERIVED_FROM`` on purpose. Lineage
+    #: says "this was built on that" — a citation, and a DAG: a
+    #: document has several sources, gains more over time, and an
+    #: unsourced one has none at all. None of that is navigation. A
+    #: tree needs one parent, chosen by a person, that stays where
+    #: they put it.
+    parent_id: str = ""
 
     @property
     def is_imported(self) -> bool:

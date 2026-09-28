@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import Any
 
 from neo4j import AsyncDriver, AsyncSession
@@ -879,6 +880,126 @@ class Neo4jArtifactClient:
             record = await result.single()
         return int(record["n"]) if record else 0
 
+    async def set_parent(self, *, node_id: str, parent_id: str | None) -> bool:
+        """Put a document or folder under another, or at the root.
+
+        The parent is a **property, not a relationship**. A
+        ``CHILD_OF`` edge would need a label to match on, and the two
+        node kinds here do not share one — giving them one would make
+        folders satisfy ``:Artifact``, which is what search, lineage,
+        drift and the vector index all key on. A property costs one
+        write and the tree is assembled from rows that are fetched
+        whole anyway.
+
+        Cycles are refused by the caller, against the same rows the
+        tree is built from, so the answer is known before the write is
+        attempted — see :func:`~ember_code.core.artifacts.tree.would_cycle`.
+        ``None`` clears the parent and makes it a root.
+        """
+        async with self.session() as session:
+            result = await session.run(
+                "MATCH (n) WHERE (n:Artifact OR n:Folder) "
+                "AND coalesce(n.artifact_id, n.folder_id) = $nid "
+                "AND n.project_hash = $proj "
+                "SET n.parent_id = coalesce($pid, ''), n.updated_at = datetime() "
+                "RETURN count(n) AS n",
+                nid=node_id,
+                pid=parent_id or None,
+                proj=self._project_id,
+            )
+            record = await result.single()
+        return bool(record and record["n"])
+
+    async def create_folder(self, *, name: str, parent_id: str = "") -> str:
+        """A place to put things, holding nothing itself.
+
+        A separate label from ``:Artifact`` deliberately. A folder with
+        that label would turn up in search, in lineage, in drift and in
+        the vector index as a document with no text — every one of
+        those keys on it.
+        """
+        folder_id = uuid.uuid4().hex[:16]
+        async with self.session() as session:
+            await session.run(
+                "CREATE (f:Folder {folder_id: $fid, project_hash: $proj, "
+                "name: $name, parent_id: $pid, "
+                "created_at: datetime(), updated_at: datetime()})",
+                fid=folder_id,
+                proj=self._project_id,
+                name=name,
+                pid=parent_id or "",
+            )
+        return folder_id
+
+    async def rename_folder(self, *, folder_id: str, name: str) -> bool:
+        async with self.session() as session:
+            result = await session.run(
+                "MATCH (f:Folder {folder_id: $fid, project_hash: $proj}) "
+                "SET f.name = $name, f.updated_at = datetime() RETURN count(f) AS n",
+                fid=folder_id,
+                proj=self._project_id,
+                name=name,
+            )
+            record = await result.single()
+        return bool(record and record["n"])
+
+    async def delete_folder(self, *, folder_id: str) -> int:
+        """Remove a folder, promoting whatever was inside it.
+
+        Never deletes documents. A folder is an arrangement, and
+        deleting an arrangement must not delete the things arranged —
+        so its children move up to its own parent rather than being
+        orphaned or removed. Returns how many moved.
+        """
+        async with self.session() as session:
+            found = await session.run(
+                "MATCH (f:Folder {folder_id: $fid, project_hash: $proj}) "
+                "RETURN coalesce(f.parent_id, '') AS parent",
+                fid=folder_id,
+                proj=self._project_id,
+            )
+            record = await found.single()
+            if record is None:
+                return 0
+            promoted = await session.run(
+                "MATCH (n) WHERE (n:Artifact OR n:Folder) "
+                "AND n.project_hash = $proj AND n.parent_id = $fid "
+                "SET n.parent_id = $parent RETURN count(n) AS n",
+                fid=folder_id,
+                parent=record["parent"] or "",
+                proj=self._project_id,
+            )
+            moved = (await promoted.single())["n"]
+            await session.run(
+                "MATCH (f:Folder {folder_id: $fid, project_hash: $proj}) DELETE f",
+                fid=folder_id,
+                proj=self._project_id,
+            )
+        return int(moved or 0)
+
+    async def folders(self) -> list[dict[str, Any]]:
+        """Every folder in this project."""
+        async with self.session() as session:
+            result = await session.run(
+                "MATCH (f:Folder {project_hash: $proj}) "
+                "RETURN f.folder_id AS node_id, coalesce(f.name, '') AS name, "
+                "coalesce(f.parent_id, '') AS parent_id, "
+                "toString(f.updated_at) AS updated_at "
+                "ORDER BY f.name",
+                proj=self._project_id,
+            )
+            records = (await result.to_eager_result()).records
+        return [
+            {
+                "node_id": r["node_id"],
+                "name": r["name"],
+                "parent_id": r["parent_id"],
+                "updated_at": r["updated_at"] or "",
+                "is_folder": True,
+            }
+            for r in records
+        ]
+
     async def list_artifacts(self, *, limit: int = 1000) -> list[ArtifactSummary]:
         """Every artifact in this project, heads only."""
         async with self.session() as session:
@@ -891,7 +1012,8 @@ class Neo4jArtifactClient:
                 "toString(a.created_at) AS created_at, "
                 "toString(a.updated_at) AS updated_at, "
                 "coalesce(a.author, '') AS author, "
-                "coalesce(a.origin, '') AS origin, versions "
+                "coalesce(a.origin, '') AS origin, "
+                "coalesce(a.parent_id, '') AS parent_id, versions "
                 "ORDER BY a.updated_at DESC LIMIT $limit",
                 proj=self._project_id,
                 limit=limit,
@@ -1165,6 +1287,14 @@ def _edge_state(raw: Any) -> EdgeState:
         return EdgeState.CANDIDATE
 
 
+def _maybe(record: Any, key: str) -> Any:
+    """A field the record may not carry."""
+    try:
+        return record[key]
+    except (KeyError, IndexError):
+        return None
+
+
 def _summary(record: Any) -> ArtifactSummary:
     return ArtifactSummary(
         artifact_id=record["artifact_id"],
@@ -1176,6 +1306,10 @@ def _summary(record: Any) -> ArtifactSummary:
         author=record["author"] or "",
         origin=record["origin"] or "",
         version_count=int(record["versions"] or 0),
+        # Tolerated rather than required: the same helper projects
+        # records from queries written before the tree existed, and a
+        # KeyError there would take out the artifact list.
+        parent_id=(_maybe(record, "parent_id") or ""),
     )
 
 

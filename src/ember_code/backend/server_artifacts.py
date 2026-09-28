@@ -48,6 +48,9 @@ from ember_code.backend.schemas_artifacts import (
     ArtifactShareResult,
     ArtifactStaleRow,
     ArtifactStatus,
+    ArtifactTree,
+    ArtifactTreeChanged,
+    ArtifactTreeNode,
     ArtifactVersionRow,
     CandidateOverlapRow,
     DriftAffectedRow,
@@ -84,6 +87,9 @@ from ember_code.core.artifacts.side_by_side import RowKind, VersionDiff
 from ember_code.core.artifacts.side_by_side import build as build_side_by_side
 from ember_code.core.artifacts.sourcing import CandidateReview, Overlap
 from ember_code.core.artifacts.threads import ThreadInstruction
+from ember_code.core.artifacts.tree import build as build_tree
+from ember_code.core.artifacts.tree import flatten as flatten_tree
+from ember_code.core.artifacts.tree import would_cycle
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
@@ -1076,6 +1082,121 @@ class ArtifactController:
         result.agent_suggestion = answer.suggestion
         result.message = "Replied, and igni answered."
         return result
+
+    async def _tree_rows(self) -> list[dict[str, Any]]:
+        """Documents and folders as one set of rows.
+
+        The tree is the one place the two node kinds meet, so it is
+        the one place that assembles both.
+        """
+        mgr = self._session.artifact_mgr
+        docs = await mgr.list_artifacts()
+        rows: list[dict[str, Any]] = [
+            {
+                "node_id": d.artifact_id,
+                "name": d.name or d.artifact_id,
+                "kind": d.kind or "note",
+                "head_n": int(d.head_n or 0),
+                "updated_at": d.updated_at or "",
+                "parent_id": getattr(d, "parent_id", "") or "",
+                "is_folder": False,
+            }
+            for d in docs
+        ]
+        if self._session.artifacts is not None:
+            try:
+                rows.extend(await self._session.artifacts.client.folders())
+            except Exception as exc:  # noqa: BLE001 — a store without folders yet
+                logger.info("could not read folders: %s", exc)
+        return rows
+
+    async def tree(self) -> ArtifactTree:
+        """The navigation tree, flattened and ordered."""
+        if self._session.artifacts is None:
+            return ArtifactTree(error="Artifacts are disabled.")
+        rows = await self._tree_rows()
+        nodes = build_tree(rows)
+        return ArtifactTree(
+            nodes=[
+                ArtifactTreeNode(
+                    node_id=n.node_id,
+                    name=n.name,
+                    kind=n.kind,
+                    is_folder=n.is_folder,
+                    head_n=n.head_n,
+                    depth=n.depth,
+                    descendants=n.descendants,
+                    placeholder=n.placeholder,
+                )
+                for n in flatten_tree(nodes)
+            ]
+        )
+
+    async def create_folder(self, *, name: str, parent_id: str = "") -> ArtifactTreeChanged:
+        """A place to put things."""
+        if self._session.artifacts is None:
+            return ArtifactTreeChanged(error="Artifacts are disabled.")
+        title = name.strip()
+        if not title:
+            return ArtifactTreeChanged(error="A folder needs a name.")
+        folder_id = await self._session.artifacts.client.create_folder(
+            name=title, parent_id=parent_id or ""
+        )
+        return ArtifactTreeChanged(ok=True, node_id=folder_id, message=f"Created {title}.")
+
+    async def rename_folder(self, *, folder_id: str, name: str) -> ArtifactTreeChanged:
+        if self._session.artifacts is None:
+            return ArtifactTreeChanged(error="Artifacts are disabled.")
+        title = name.strip()
+        if not title:
+            return ArtifactTreeChanged(error="A folder needs a name.")
+        ok = await self._session.artifacts.client.rename_folder(folder_id=folder_id, name=title)
+        if not ok:
+            return ArtifactTreeChanged(error="No such folder.")
+        return ArtifactTreeChanged(ok=True, node_id=folder_id, message=f"Renamed to {title}.")
+
+    async def delete_folder(self, *, folder_id: str) -> ArtifactTreeChanged:
+        """Remove a folder and keep everything that was in it.
+
+        A folder is an arrangement. Deleting an arrangement must not
+        delete the things arranged, so its contents move up to its own
+        parent — said out loud in the message, because "deleted" next
+        to a folder full of documents is a sentence people read twice.
+        """
+        if self._session.artifacts is None:
+            return ArtifactTreeChanged(error="Artifacts are disabled.")
+        moved = await self._session.artifacts.client.delete_folder(folder_id=folder_id)
+        return ArtifactTreeChanged(
+            ok=True,
+            promoted=moved,
+            message=(
+                f"Folder removed. {moved} item{'' if moved == 1 else 's'} moved up."
+                if moved
+                else "Folder removed."
+            ),
+        )
+
+    async def move_node(self, *, node_id: str, parent_id: str = "") -> ArtifactTreeChanged:
+        """Put something somewhere else in the tree.
+
+        Refused when it would close a loop. A cycle does not error and
+        does not look broken: the branch detaches from every root, so
+        everything on it disappears from navigation while still being
+        in the store. Checked against the same rows the tree is built
+        from, so the refusal happens before the write rather than being
+        reported after it.
+        """
+        if self._session.artifacts is None:
+            return ArtifactTreeChanged(error="Artifacts are disabled.")
+        rows = await self._tree_rows()
+        if would_cycle(rows, node_id=node_id, parent_id=parent_id or ""):
+            return ArtifactTreeChanged(error="That would put a document inside itself.")
+        ok = await self._session.artifacts.client.set_parent(
+            node_id=node_id, parent_id=parent_id or None
+        )
+        if not ok:
+            return ArtifactTreeChanged(error="Could not find that.")
+        return ArtifactTreeChanged(ok=True, node_id=node_id, message="Moved.")
 
     async def drift(self, *, artifact_id: str, source_id: str) -> ArtifactDrift:
         """What has landed upstream, and which of our sentences lean on it.

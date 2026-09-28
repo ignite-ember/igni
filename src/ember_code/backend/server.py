@@ -92,6 +92,8 @@ if TYPE_CHECKING:
         ArtifactShareResult,
         ArtifactStaleRow,
         ArtifactStatus,
+        ArtifactTree,
+        ArtifactTreeChanged,
         ArtifactVersionRow,
     )
     from ember_code.backend.schemas_codeindex_rpc import (
@@ -1072,6 +1074,26 @@ class BackendServer:
     async def artifact_reply_comment(self, comment_id: str, body: str) -> ArtifactCommentReplied:
         """See :meth:`ArtifactController.reply_comment`."""
         return await self.artifacts.reply_comment(comment_id=comment_id, body=body)
+
+    async def artifact_tree(self) -> ArtifactTree:
+        """See :meth:`ArtifactController.tree`."""
+        return await self.artifacts.tree()
+
+    async def artifact_create_folder(self, name: str, parent_id: str = "") -> ArtifactTreeChanged:
+        """See :meth:`ArtifactController.create_folder`."""
+        return await self.artifacts.create_folder(name=name, parent_id=parent_id)
+
+    async def artifact_rename_folder(self, folder_id: str, name: str) -> ArtifactTreeChanged:
+        """See :meth:`ArtifactController.rename_folder`."""
+        return await self.artifacts.rename_folder(folder_id=folder_id, name=name)
+
+    async def artifact_delete_folder(self, folder_id: str) -> ArtifactTreeChanged:
+        """See :meth:`ArtifactController.delete_folder`."""
+        return await self.artifacts.delete_folder(folder_id=folder_id)
+
+    async def artifact_move_node(self, node_id: str, parent_id: str = "") -> ArtifactTreeChanged:
+        """See :meth:`ArtifactController.move_node`."""
+        return await self.artifacts.move_node(node_id=node_id, parent_id=parent_id)
 
     async def artifact_comment(
         self,

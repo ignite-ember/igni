@@ -127,6 +127,28 @@ class ArtifactRpcHandler(RpcHandler):
     def artifact_reply_comment(self, args: dict) -> Any:
         return self._ctx.backend.artifact_reply_comment(args["comment_id"], args.get("body", ""))
 
+    @rpc(RpcMethod.ARTIFACT_TREE)
+    def artifact_tree(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_tree()
+
+    @rpc(RpcMethod.ARTIFACT_CREATE_FOLDER)
+    def artifact_create_folder(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_create_folder(
+            args.get("name", ""), args.get("parent_id", "")
+        )
+
+    @rpc(RpcMethod.ARTIFACT_RENAME_FOLDER)
+    def artifact_rename_folder(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_rename_folder(args["folder_id"], args.get("name", ""))
+
+    @rpc(RpcMethod.ARTIFACT_DELETE_FOLDER)
+    def artifact_delete_folder(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_delete_folder(args["folder_id"])
+
+    @rpc(RpcMethod.ARTIFACT_MOVE_NODE)
+    def artifact_move_node(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_move_node(args["node_id"], args.get("parent_id", ""))
+
     @rpc(RpcMethod.ARTIFACT_COMMENT)
     def artifact_comment(self, args: dict) -> Any:
         return self._ctx.backend.artifact_comment(

@@ -374,6 +374,44 @@ class ArtifactCommentRow(BaseModel):
     head_n: int = 0
 
 
+class ArtifactTreeNode(BaseModel):
+    """One entry in the navigation tree."""
+
+    node_id: str = ""
+    name: str = ""
+    kind: str = "note"
+    is_folder: bool = False
+    head_n: int = 0
+    depth: int = 0
+    #: How many things sit below this one, at any depth.
+    descendants: int = 0
+    #: Stands in for a parent that is missing or cannot be opened.
+    placeholder: bool = False
+
+
+class ArtifactTree(BaseModel):
+    """The tree, already flattened and ordered.
+
+    Flattened on this side because the order shown and the order
+    reasoned about should be the same one, and depth is what the UI
+    indents by.
+    """
+
+    nodes: list[ArtifactTreeNode] = Field(default_factory=list)
+    error: str = ""
+
+
+class ArtifactTreeChanged(BaseModel):
+    """The outcome of creating, moving, renaming or removing."""
+
+    ok: bool = False
+    node_id: str = ""
+    #: Set when a folder was removed and its contents moved up.
+    promoted: int = 0
+    message: str = ""
+    error: str = ""
+
+
 class ArtifactCommentReplied(BaseModel):
     """The outcome of answering a comment.
 

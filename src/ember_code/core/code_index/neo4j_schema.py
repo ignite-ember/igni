@@ -233,6 +233,11 @@ ARTIFACT_SCHEMA_STATEMENTS: tuple[str, ...] = (
     # On :Version, not :Artifact — the embedding describes one
     # revision's text. Same 384 dims / cosine / HNSW tuning as the
     # code index, so the same over-fetch-and-rerank applies.
+    # Folders are navigation only: a separate label from :Artifact so
+    # they cannot turn up in search, lineage, drift or the vector
+    # index, all of which key on that label.
+    "CREATE INDEX folder_idx IF NOT EXISTS FOR (f:Folder) ON (f.folder_id)",
+    "CREATE INDEX folder_project IF NOT EXISTS FOR (f:Folder) ON (f.project_hash)",
     "CREATE VECTOR INDEX version_embedding IF NOT EXISTS "
     "FOR (v:Version) ON (v.embedding) "
     "OPTIONS {indexConfig: {"
