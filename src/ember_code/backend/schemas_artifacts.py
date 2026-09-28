@@ -75,6 +75,10 @@ class ArtifactGetResult(BaseModel):
     n: int = 0
     head_n: int = 0
     is_head: bool = False
+    #: Archived, and therefore frozen. The page has to say so: finding
+    #: out that a document cannot change by pressing something and
+    #: being refused is one round trip too many.
+    archived: bool = False
     content: str = ""
     created_at: str = ""
     author: str = ""
@@ -411,6 +415,13 @@ class ArtifactDependent(BaseModel):
     #: ``confirmed`` — somebody agreed this was a source.
     #: ``candidate`` — the agent noticed a read and nobody has ruled.
     state: str = ""
+    #: ``dependent`` — that document was built on this one.
+    #: ``source`` — this one was built on that document.
+    #:
+    #: Which way the edge runs is what tells a reader where to go to
+    #: change it, so it travels with the name rather than being
+    #: flattened into "related".
+    direction: str = ""
 
 
 class ArtifactTreeChanged(BaseModel):

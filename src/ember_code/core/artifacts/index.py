@@ -163,12 +163,29 @@ class ArtifactIndex:
         session_id: str = "",
         metadata: dict[str, str] | None = None,
     ) -> ArtifactWriteResult:
-        """Append a new version to an existing artifact."""
+        """Append a new version to an existing artifact.
+
+        Refused when the artifact is archived. Archiving is what is
+        offered instead of deleting something the lineage depends on,
+        and it is only worth offering if the archived thing stops
+        moving: a document whose dependents were told "this is what it
+        was built on" must not quietly gain a v7 afterwards.
+
+        Refused *here* rather than in each caller. Accepting a comment,
+        applying a drift fix and the agent's own revise tool all end up
+        in this method, and a gate per entrance is a gate somebody adds
+        an entrance around.
+        """
         summary = await self.resolve(ref)
         if summary is None:
             return ArtifactWriteResult.fail(
                 f"No artifact matches '{ref}'. Use artifact_list to see what exists, "
                 f"or artifact_create to start a new one."
+            )
+        if summary.archived:
+            return ArtifactWriteResult.fail(
+                f"'{summary.name or ref}' is archived, and archived documents are "
+                f"frozen. Restore it first if it needs to change."
             )
         return await self._write(
             artifact_id=summary.artifact_id,

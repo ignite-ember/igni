@@ -42,6 +42,8 @@ interface Dependent {
   artifact_id: string;
   name: string;
   state: string;
+  /** ``dependent`` — built on this one. ``source`` — this was built on it. */
+  direction: string;
 }
 
 interface Changed {
@@ -128,6 +130,7 @@ export function ArtifactTreeView({
   reloadKey,
   onOpen,
   onCreateInside,
+  onChanged,
 }: {
   client: IgniClient;
   selectedId?: string | null;
@@ -139,6 +142,14 @@ export function ArtifactTreeView({
    *  text — the tree only says where it goes, and what that place is
    *  called, so the form can say so rather than filing it silently. */
   onCreateInside: (parentId: string, parentName: string) => void;
+  /**
+   * The set of documents changed from in here.
+   *
+   * Archiving takes one out of the list as well as out of the tree,
+   * and a list still showing it is a list the reader will click —
+   * and then wonder why the document they just put away is open.
+   */
+  onChanged?: () => void;
 }) {
   const [nodes, setNodes] = useState<TreeNode[] | null>(null);
   const [error, setError] = useState("");
@@ -208,6 +219,7 @@ export function ArtifactTreeView({
         // than deleting them, and a reader needs to be told which.
         setNote(r?.message ?? "");
         await load();
+        onChanged?.();
         return true;
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -317,6 +329,7 @@ export function ArtifactTreeView({
       }
       setNote(r?.message ?? "");
       await load();
+      onChanged?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -369,9 +382,8 @@ export function ArtifactTreeView({
       {blocked && (
         <div className="kb-tree-blocked">
           <p>
-            <strong>{blocked.name}</strong> was not deleted.{" "}
-            {blocked.by.length === 1 ? "This document is" : "These documents are"} built on
-            it:
+            <strong>{blocked.name}</strong> was not deleted. It is part of the
+            lineage:
           </p>
           <ul>
             {blocked.by.map((d) => (
@@ -382,12 +394,19 @@ export function ArtifactTreeView({
                   onClick={() => onOpen(d.artifact_id)}
                 >
                   {d.name || d.artifact_id}
-                </button>
+                </button>{" "}
+                {/* Which way the link runs, per row. Without it the
+                    reader cannot tell whether to go and change that
+                    document or this one. */}
+                <span className="kb-tree-blocked-way">
+                  {d.direction === "source" ? "— this is built on it" : "— built on this"}
+                </span>
               </li>
             ))}
           </ul>
           <p className="kb-hint">
-            Archiving takes it out of the tree and leaves those documents intact.
+            Archiving keeps every version and every one of those links resolving.
+            An archived document is frozen: it stays readable and stops changing.
           </p>
           <div className="kb-tree-blocked-do">
             <button

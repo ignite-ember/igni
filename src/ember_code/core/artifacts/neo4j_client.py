@@ -956,28 +956,50 @@ class Neo4jArtifactClient:
             moved_record = await moved.single()
         return int(moved_record["n"]) if moved_record else 0
 
-    async def dependents_of(self, artifact_id: str) -> list[dict[str, Any]]:
-        """Every document built on **any** version of this one.
+    async def lineage_ties(self, artifact_id: str) -> list[dict[str, Any]]:
+        """Every document this one is joined to by a derivation edge.
+
+        **Both directions.** A document built on this one breaks when
+        this one goes, which is the obvious half. The other half is
+        this document's own sources: the edge is the record of what it
+        was written from, and deleting the document destroys that
+        record for the source as well — its dependents list is how
+        anybody finds out the thing existed.
 
         Any version, not the head. Deleting an artifact takes its
-        whole version chain with it, so a dependent pinned to v2 is
-        broken by the delete just as surely as one pinned to the head
-        — and it is the older pins that are easiest to forget.
+        whole version chain with it, so a tie pinned to v2 is cut just
+        as surely as one pinned to the head, and it is the older pins
+        that are easiest to forget.
 
-        The edge's state comes back with it, because candidate and
-        confirmed are not the same claim and the caller has to be able
-        to tell them apart.
+        ``direction`` is ``dependent`` when the other document was
+        built on this one and ``source`` when this one was built on
+        it. ``state`` comes back too: candidate and confirmed are not
+        the same claim, and dismissed is not a claim at all.
         """
         async with self.session() as session:
             result = await session.run(
-                "MATCH (dv:Version)-[d:DERIVED_FROM]->(sv:Version) "
-                "MATCH (sa:Artifact {artifact_id: $aid, project_hash: $proj})"
-                "-[:HAS_VERSION]->(sv) "
-                "MATCH (da:Artifact)-[:HAS_VERSION]->(dv) "
-                "WHERE da.artifact_id <> $aid "
-                "RETURN DISTINCT da.artifact_id AS artifact_id, "
-                "coalesce(da.name, '') AS name, coalesce(d.state, '') AS state, "
-                "coalesce(da.archived, false) AS archived "
+                "MATCH (mine:Artifact {artifact_id: $aid, project_hash: $proj}) "
+                "CALL { "
+                "  WITH mine "
+                "  MATCH (dv:Version)-[d:DERIVED_FROM]->(sv:Version) "
+                "  MATCH (mine)-[:HAS_VERSION]->(sv) "
+                "  MATCH (other:Artifact)-[:HAS_VERSION]->(dv) "
+                "  RETURN other, d, 'dependent' AS direction "
+                "  UNION "
+                "  WITH mine "
+                "  MATCH (mv:Version)-[d:DERIVED_FROM]->(ov:Version) "
+                "  MATCH (mine)-[:HAS_VERSION]->(mv) "
+                "  MATCH (other:Artifact)-[:HAS_VERSION]->(ov) "
+                "  RETURN other, d, 'source' AS direction "
+                "} "
+                # A document is never its own tie. Self-edges exist in
+                # stores written before that was refused at the write,
+                # and one here would make every such document
+                # undeletable on its own account.
+                "WITH other, d, direction WHERE other.artifact_id <> $aid "
+                "RETURN DISTINCT other.artifact_id AS artifact_id, "
+                "coalesce(other.name, '') AS name, coalesce(d.state, '') AS state, "
+                "coalesce(other.archived, false) AS archived, direction "
                 "ORDER BY name",
                 aid=artifact_id,
                 proj=self._project_id,
@@ -989,6 +1011,7 @@ class Neo4jArtifactClient:
                 "name": r["name"],
                 "state": r["state"],
                 "archived": bool(r["archived"]),
+                "direction": r["direction"],
             }
             for r in records
         ]
@@ -1126,7 +1149,8 @@ class Neo4jArtifactClient:
                 "toString(a.created_at) AS created_at, "
                 "toString(a.updated_at) AS updated_at, "
                 "coalesce(a.author, '') AS author, "
-                "coalesce(a.origin, '') AS origin, versions",
+                "coalesce(a.origin, '') AS origin, "
+                "coalesce(a.archived, false) AS archived, versions",
                 aid=artifact_id,
                 proj=self._project_id,
             )
@@ -1155,7 +1179,8 @@ class Neo4jArtifactClient:
                 "toString(a.created_at) AS created_at, "
                 "toString(a.updated_at) AS updated_at, "
                 "coalesce(a.author, '') AS author, "
-                "coalesce(a.origin, '') AS origin, versions "
+                "coalesce(a.origin, '') AS origin, "
+                "coalesce(a.archived, false) AS archived, versions "
                 "LIMIT 1",
                 proj=self._project_id,
                 name=name,

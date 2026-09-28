@@ -91,6 +91,7 @@ interface ArtifactsDocFull {
   n?: number;
   head_n?: number;
   is_head?: boolean;
+  archived?: boolean;
   content: string;
   created_at?: string;
   author?: string;
@@ -184,6 +185,10 @@ export function ArtifactPanel({
   /** Bumped when the documents changed, to make the tree re-read. */
   const [treeVersion, setTreeVersion] = useState(0);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
+  /** Why the delete was refused: the documents it is joined to. */
+  const [removeBlocked, setRemoveBlocked] = useState<
+    { artifact_id: string; name: string; direction: string }[] | null
+  >(null);
   /** The last export, until it is dismissed. */
   const [exported, setExported] = useState<ExportOutcome | null>(null);
   // Comparing is a state of the page, so it lives with the page —
@@ -196,6 +201,16 @@ export function ArtifactPanel({
   // text, with where each passage came from shown against it.
   const [tracing, setTracing] = useState(false);
   const [versionCount, setVersionCount] = useState(0);
+  /**
+   * Whether the document on screen is archived.
+   *
+   * Reported up from the detail rather than read off the list: the
+   * list deliberately no longer contains archived documents, so the
+   * one place that knows is the fetch that opened this one.
+   */
+  const [openArchived, setOpenArchived] = useState(false);
+  /** Bumped when the page archived or restored the open document. */
+  const [detailNonce, setDetailNonce] = useState(0);
   /**
    * Whether the comment rail is put away.
    *
@@ -280,16 +295,56 @@ export function ArtifactPanel({
     }
   };
 
+  /**
+   * Delete from the document's own menu, through the same gate as the
+   * tree's.
+   *
+   * It used to call ``artifact_remove``, which deletes without asking
+   * what is joined to the document — so the rule that a document in
+   * the lineage is archived rather than deleted held in the tree and
+   * was defeated by the menu on the page itself. One entrance.
+   */
   const remove = async (id: string) => {
     setBusy("remove");
+    setRemoveBlocked(null);
     try {
-      const r = await client.rpc<{ removed: boolean }>("artifact_remove", { id });
-      if (r.removed) {
-        setSelected(null);
-        setConfirmingRemove(false);
-        setView("list");
-        void refresh();
+      const r = await client.rpc<{
+        ok?: boolean;
+        error?: string;
+        blocked_by?: { artifact_id: string; name: string; direction: string }[];
+      }>("artifact_delete_node", { node_id: id });
+      if (r?.blocked_by?.length) {
+        setRemoveBlocked(r.blocked_by);
+        return;
       }
+      if (r?.error) {
+        setNotice(r.error);
+        setConfirmingRemove(false);
+        return;
+      }
+      setSelected(null);
+      setConfirmingRemove(false);
+      setRemoveBlocked(null);
+      setView("list");
+      void refresh();
+    } finally {
+      setBusy("");
+    }
+  };
+
+  /** Archive the document on screen, and stay on it: it is still readable. */
+  const archive = async (id: string, archived: boolean) => {
+    setBusy("archive");
+    try {
+      const r = await client.rpc<{ ok?: boolean; error?: string; message?: string }>(
+        "artifact_archive_node",
+        { node_id: id, archived },
+      );
+      setNotice(r?.error || r?.message || "");
+      setConfirmingRemove(false);
+      setRemoveBlocked(null);
+      setDetailNonce((v) => v + 1);
+      void refresh();
     } finally {
       setBusy("");
     }
@@ -477,23 +532,57 @@ export function ArtifactPanel({
     docActions = (
       <div className="kb-head-actions">
         {confirmingRemove ? (
-          <>
-            <span className="kb-hint">Remove this document?</span>
-            <button
-              className="btn btn-sm"
-              onClick={() => setConfirmingRemove(false)}
-              disabled={busy === "remove"}
-            >
-              Cancel
-            </button>
-            <button
-              className="btn btn-sm btn-danger"
-              disabled={busy === "remove"}
-              onClick={() => void remove(selected)}
-            >
-              {busy === "remove" ? "…" : "Confirm"}
-            </button>
-          </>
+          removeBlocked ? (
+            /* The refusal, where the delete was asked for. Naming
+               what it is joined to is what turns "you cannot" into
+               something the reader can act on. */
+            <>
+              <span className="kb-hint kb-head-blocked">
+                Part of the lineage —{" "}
+                {removeBlocked
+                  .map(
+                    (d) =>
+                      `${d.name}${d.direction === "source" ? " (this is built on it)" : " (built on this)"}`,
+                  )
+                  .join(", ")}
+                . Archive it instead.
+              </span>
+              <button
+                className="btn btn-sm"
+                onClick={() => {
+                  setConfirmingRemove(false);
+                  setRemoveBlocked(null);
+                }}
+              >
+                Leave it
+              </button>
+              <button
+                className="btn btn-sm"
+                disabled={busy === "archive"}
+                onClick={() => void archive(selected, true)}
+              >
+                {busy === "archive" ? "…" : "Archive"}
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="kb-hint">Remove this document?</span>
+              <button
+                className="btn btn-sm"
+                onClick={() => setConfirmingRemove(false)}
+                disabled={busy === "remove"}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-sm btn-danger"
+                disabled={busy === "remove"}
+                onClick={() => void remove(selected)}
+              >
+                {busy === "remove" ? "…" : "Confirm"}
+              </button>
+            </>
+          )
         ) : (
           /* Two groups, and the split between them is what each kind
              of control does. On the left, the ways of *looking* at
@@ -570,10 +659,18 @@ export function ArtifactPanel({
                 onSelect: () => setView("share"),
               },
               {
+                key: "archive",
+                label: openArchived ? "Restore" : "Archive",
+                onSelect: () => void archive(selected, !openArchived),
+              },
+              {
                 key: "remove",
                 label: "Remove",
                 danger: true,
-                onSelect: () => setConfirmingRemove(true),
+                onSelect: () => {
+                  setRemoveBlocked(null);
+                  setConfirmingRemove(true);
+                },
               },
             ]}
           />
@@ -621,6 +718,10 @@ export function ArtifactPanel({
               setComparing(false);
               setSelected(id);
               setView("detail");
+            }}
+            onChanged={() => {
+              setDetailNonce((v) => v + 1);
+              void refresh();
             }}
             onCreateInside={(parentId, parentName) => {
               setAddError("");
@@ -717,6 +818,8 @@ export function ArtifactPanel({
           }}
           onCompareClosed={() => setComparing(false)}
           onVersionCount={setVersionCount}
+          onArchivedChange={setOpenArchived}
+          reloadNonce={detailNonce}
         />
       ) : !status.enabled ? (
         <DisabledState />
@@ -834,6 +937,8 @@ function DocumentDetail({
   onReviewDrift,
   onCompareClosed,
   onVersionCount,
+  onArchivedChange,
+  reloadNonce = 0,
 }: {
   client: IgniClient;
   id: string;
@@ -855,6 +960,10 @@ function DocumentDetail({
   onCompareClosed: () => void;
   /** So the header knows whether there is anything to compare. */
   onVersionCount: (count: number) => void;
+  /** Whether this document is frozen, for the page's own menu. */
+  onArchivedChange: (archived: boolean) => void;
+  /** Bumped by the page when it archived or restored this document. */
+  reloadNonce?: number;
 }) {
   const [doc, setDoc] = useState<ArtifactsDocFull | null>(null);
   const [loading, setLoading] = useState(true);
@@ -924,7 +1033,12 @@ function DocumentDetail({
     void client
       .rpc<ArtifactsDocFull>("artifact_get", { id, version })
       .then((r) => {
-        if (!cancelled) setDoc(r);
+        if (cancelled) return;
+        setDoc(r);
+        // The page's own menu offers Archive or Restore, and the list
+        // it would otherwise read from no longer holds archived
+        // documents. This fetch is the one place that knows.
+        onArchivedChange(r?.archived === true);
       })
       .catch((e) => {
         if (!cancelled) {
@@ -944,7 +1058,7 @@ function DocumentDetail({
     return () => {
       cancelled = true;
     };
-  }, [client, id, version, docNonce]);
+  }, [client, id, version, docNonce, reloadNonce]);
 
   // History and lineage load alongside the document rather than
   // inside it: a failure to walk the graph should leave the document
@@ -1054,6 +1168,16 @@ function DocumentDetail({
   // than one that makes no sense.
   const onHead = doc.is_head !== false;
 
+  /**
+   * Archived, and therefore frozen.
+   *
+   * Every control on this page that writes a version is withdrawn
+   * rather than left to fail: a button that is refused every time it
+   * is pressed is worse than no button, because the first press is
+   * spent finding that out and the rest are spent doubting it.
+   */
+  const frozen = doc.archived === true;
+
   // Attribution as a sentence, the way an artifact header reads:
   // who wrote it, which version, when. A row of chips makes three
   // facts look like three filters.
@@ -1113,7 +1237,15 @@ function DocumentDetail({
           problem is the page with the answer.
 
           On head only. See ``onHead``. */}
-      {onHead ? (
+      {frozen && (
+        <p className="kb-doc-frozen">
+          <strong>Archived.</strong> This document is frozen — it keeps every
+          version and every link, and it does not take new ones. Restore it
+          from the tree if it needs to change.
+        </p>
+      )}
+
+      {frozen ? null : onHead ? (
         <DriftBanner
           sources={staleSources}
           onReview={() => driftedSource && onReviewDrift?.(driftedSource)}
@@ -1198,6 +1330,7 @@ function DocumentDetail({
               artifactId={doc.id}
               n={doc.n ?? 0}
               bodyRef={bodyRef}
+              frozen={frozen}
               hidden={commentsHidden}
               onHiddenChange={onCommentsHiddenChange}
             onRevised={() => {

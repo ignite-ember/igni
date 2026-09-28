@@ -1,19 +1,28 @@
 """Ending a document, and the two ways of doing it.
 
-Deleting takes the whole version chain with it, so every
-``DERIVED_FROM`` edge pointing into any version of it breaks. The
-damage does not show up on the screen where the delete was pressed:
-it shows up later, on a different document, as a source that has
-quietly stopped saying what it was. Nobody connects the two.
+**A document in the lineage graph is archived, never deleted.**
+Deleting takes the whole version chain with it, and every
+``DERIVED_FROM`` edge touching any version goes with it. The damage
+does not show up on the screen where the delete was pressed: it shows
+up later, on a different document, as a source that has quietly
+stopped saying what it was. Nobody connects the two.
 
-So a confirmed dependent refuses the delete, and archiving is the
-thing offered instead — out of the tree, out of the list, every
-version and every edge still resolving.
+Both directions count, which is the part that is easy to get wrong.
+A document built on this one obviously breaks. So does this
+document's own *source*: the edge is the record of what this was
+written from, and the source's list of dependents is how anybody
+finds out the thing existed. Cutting either end destroys the same
+fact.
 
-Candidates deliberately do not refuse it. A candidate is the agent's
-guess that a read happened and nobody has ruled on it; a guess that
-can veto a person's delete is a guess people learn to route around,
-and they stop reading the confirmed ones too.
+Dismissed edges are the exception. "This was not a source" is a
+ruling that there is no relationship, and holding a document hostage
+to an edge somebody already rejected would make the dismissal
+meaningless.
+
+And archiving freezes. It is what is offered instead of deleting
+something the lineage depends on, so it is only worth offering if the
+archived thing stops moving — a document whose dependents were told
+"this is what it was built on" must not quietly gain a v7 afterwards.
 """
 
 from __future__ import annotations
@@ -39,7 +48,7 @@ class FakeStore:
         self.archived: list[tuple[str, bool]] = []
         self.known = {"doc-1"}
 
-    async def dependents_of(self, artifact_id: str) -> list[dict]:
+    async def lineage_ties(self, artifact_id: str) -> list[dict]:
         if self._raises:
             raise RuntimeError("bolt is down")
         return list(self._dependents)
@@ -69,14 +78,25 @@ def controller(store: FakeStore) -> tuple[ArtifactController, FakeManager]:
     return ArtifactController(session), mgr
 
 
-def dependent(name: str, state: str, artifact_id: str = "dep-1") -> dict:
-    return {"artifact_id": artifact_id, "name": name, "state": state, "archived": False}
+def tie(
+    name: str,
+    state: str,
+    artifact_id: str = "dep-1",
+    direction: str = "dependent",
+) -> dict:
+    return {
+        "artifact_id": artifact_id,
+        "name": name,
+        "state": state,
+        "archived": False,
+        "direction": direction,
+    }
 
 
-class TestDeleteIsRefusedForSomethingBuiltOnIt:
+class TestLineageMeansArchiveOnly:
     @pytest.mark.asyncio
-    async def test_a_confirmed_dependent_stops_it(self):
-        store = FakeStore([dependent("Client retry guide", "confirmed")])
+    async def test_a_document_built_on_this_one_stops_it(self):
+        store = FakeStore([tie("Client retry guide", "confirmed")])
         ctl, mgr = controller(store)
 
         result = await ctl.delete_node(node_id="doc-1")
@@ -85,13 +105,37 @@ class TestDeleteIsRefusedForSomethingBuiltOnIt:
         assert not result.ok
 
     @pytest.mark.asyncio
+    async def test_its_own_source_stops_it_too(self):
+        # The half that is easy to miss. The edge is the record of
+        # what this was written from, and the source's dependents list
+        # is how anybody finds out this document existed — deleting
+        # from this end destroys the same fact.
+        store = FakeStore([tie("Rate limiting", "confirmed", "src", direction="source")])
+        ctl, mgr = controller(store)
+
+        result = await ctl.delete_node(node_id="doc-1")
+
+        assert mgr.deleted == []
+        assert "it is built on Rate limiting" in result.error
+
+    @pytest.mark.asyncio
+    async def test_a_candidate_stops_it(self):
+        # An unreviewed read is still a link on the graph, and the
+        # answer for anything on the graph is archive.
+        store = FakeStore([tie("Client retry guide", "candidate")])
+        ctl, mgr = controller(store)
+
+        assert not (await ctl.delete_node(node_id="doc-1")).ok
+        assert mgr.deleted == []
+
+    @pytest.mark.asyncio
     async def test_it_names_what_is_in_the_way(self):
-        # "3 documents depend on this" tells a reader they are stuck.
-        # Naming them tells them what to go and change.
+        # "2 documents" tells a reader they are stuck. Naming them
+        # tells them what to go and change.
         store = FakeStore(
             [
-                dependent("Client retry guide", "confirmed", "a"),
-                dependent("Release checklist", "confirmed", "b"),
+                tie("Client retry guide", "confirmed", "a"),
+                tie("Release checklist", "confirmed", "b"),
             ]
         )
         ctl, _ = controller(store)
@@ -106,48 +150,77 @@ class TestDeleteIsRefusedForSomethingBuiltOnIt:
         assert "Release checklist" in result.error
 
     @pytest.mark.asyncio
+    async def test_which_way_each_link_runs_travels_with_it(self):
+        # Flattened to "related", the reader cannot tell whether to go
+        # and edit the other document or this one.
+        store = FakeStore(
+            [
+                tie("Client retry guide", "confirmed", "a"),
+                tie("Rate limiting", "confirmed", "b", direction="source"),
+            ]
+        )
+        ctl, _ = controller(store)
+
+        result = await ctl.delete_node(node_id="doc-1")
+
+        assert {d.name: d.direction for d in result.blocked_by} == {
+            "Client retry guide": "dependent",
+            "Rate limiting": "source",
+        }
+
+    @pytest.mark.asyncio
+    async def test_both_directions_are_said_separately(self):
+        store = FakeStore(
+            [
+                tie("Client retry guide", "confirmed", "a"),
+                tie("Rate limiting", "confirmed", "b", direction="source"),
+            ]
+        )
+        ctl, _ = controller(store)
+
+        result = await ctl.delete_node(node_id="doc-1")
+
+        assert "Client retry guide is built on it" in result.error
+        assert "it is built on Rate limiting" in result.error
+
+    @pytest.mark.asyncio
     async def test_it_offers_the_thing_that_would_work(self):
-        store = FakeStore([dependent("Client retry guide", "confirmed")])
+        store = FakeStore([tie("Client retry guide", "confirmed")])
         ctl, _ = controller(store)
 
         result = await ctl.delete_node(node_id="doc-1")
 
         assert result.suggest_archive
+        assert "Archive it instead" in result.error
 
     @pytest.mark.asyncio
-    async def test_the_sentence_agrees_with_itself_for_one(self):
-        store = FakeStore([dependent("Client retry guide", "confirmed")])
+    async def test_the_sentence_agrees_with_itself(self):
+        store = FakeStore(
+            [
+                tie("Client retry guide", "confirmed", "a"),
+                tie("Release checklist", "confirmed", "b"),
+            ]
+        )
         ctl, _ = controller(store)
 
-        result = await ctl.delete_node(node_id="doc-1")
-
-        assert " is built on this" in result.error
-        assert "that document" in result.error
+        assert "are built on it" in (await ctl.delete_node(node_id="doc-1")).error
 
 
 class TestWhatDoesNotStopIt:
     @pytest.mark.asyncio
-    async def test_a_candidate_does_not_veto_a_person(self):
-        # Nobody has ruled on it. A guess that can refuse a delete is
-        # a guess people learn to route around.
-        store = FakeStore([dependent("Client retry guide", "candidate")])
-        ctl, mgr = controller(store)
-
-        result = await ctl.delete_node(node_id="doc-1")
-
-        assert result.ok
-        assert mgr.deleted == ["doc-1"]
-
-    @pytest.mark.asyncio
     async def test_a_dismissed_edge_does_not(self):
-        store = FakeStore([dependent("Client retry guide", "dismissed")])
+        # "This was not a source" is a ruling that there is no
+        # relationship. Holding the document hostage to an edge
+        # somebody already rejected would make the dismissal
+        # meaningless.
+        store = FakeStore([tie("Client retry guide", "dismissed")])
         ctl, mgr = controller(store)
 
         assert (await ctl.delete_node(node_id="doc-1")).ok
         assert mgr.deleted == ["doc-1"]
 
     @pytest.mark.asyncio
-    async def test_nothing_depending_on_it_deletes(self):
+    async def test_a_document_on_no_edges_deletes(self):
         ctl, mgr = controller(FakeStore([]))
 
         result = await ctl.delete_node(node_id="doc-1")

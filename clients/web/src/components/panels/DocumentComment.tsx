@@ -316,12 +316,22 @@ export function DocumentComment({
   n,
   bodyRef,
   onRevised,
+  frozen = false,
   hidden = false,
   onHiddenChange,
 }: {
   client: IgniClient;
   artifactId: string;
   n: number;
+  /**
+   * The document is archived and cannot take a new version.
+   *
+   * Said here rather than left to the write to refuse. Asking igni to
+   * change a passage, watching it work, and being told at the end
+   * that the document is frozen is a minute spent on an answer that
+   * was never going to land.
+   */
+  frozen?: boolean;
   /** The element holding the document, so only its text can be quoted. */
   bodyRef: React.RefObject<HTMLElement | null>;
   /** The agent finished; the document may have a new version. */
@@ -658,6 +668,13 @@ export function DocumentComment({
           <Chevron />
         </button>
       </header>
+
+      {frozen && (
+        <p className="doc-rail-frozen">
+          This document is archived. You can read the thread and add to it;
+          nothing here can change the text until it is restored.
+        </p>
+      )}
 
       <div className="doc-rail-body">
         {started.length === 0 ? (

@@ -283,6 +283,7 @@ class ArtifactController:
             n=found.n,
             head_n=summary.head_n,
             is_head=found.head,
+            archived=summary.archived,
             content=found.content,
             created_at=found.created_at,
             author=found.author,
@@ -1243,56 +1244,86 @@ class ArtifactController:
         )
 
     async def delete_node(self, *, node_id: str) -> ArtifactTreeChanged:
-        """Delete a document, unless something is built on it.
+        """Delete a document, unless it is joined to another one.
 
-        Deleting takes the whole version chain with it, so every
-        ``DERIVED_FROM`` edge pointing into any version of it breaks —
-        and the damage does not show up on this screen. It shows up
-        later, on another document, as a source that no longer says
-        what it was.
+        **A document in the lineage graph is archived, never deleted.**
+        Deleting takes the whole version chain with it, and every
+        ``DERIVED_FROM`` edge touching any version goes with it. The
+        damage does not show up on this screen — it shows up later, on
+        a different document, as a source that has quietly stopped
+        saying what it was.
 
-        Confirmed edges refuse the delete. Candidates do not: a
-        candidate is the agent's guess that a read happened, nobody
-        has ruled on it, and letting a guess veto a person's delete
-        teaches them to ignore both. They are still named, so the
-        refusal and the warning read as one list.
+        Both directions count. A document built on this one obviously
+        breaks. So does this document's own source: the edge is the
+        record of what this was written from, and the source's list of
+        dependents is how anybody finds out it existed at all. Cutting
+        either end destroys the same fact.
+
+        Dismissed edges do not count. "This was not a source" is a
+        ruling that there is no relationship, and holding a document
+        hostage to an edge somebody already rejected would make the
+        dismissal meaningless.
         """
         if self._session.artifacts is None:
             return ArtifactTreeChanged(error="Artifacts are disabled.")
 
         store = self._session.artifacts.client
         try:
-            dependents = await store.dependents_of(node_id)
+            ties = await store.lineage_ties(node_id)
         except Exception as exc:  # noqa: BLE001
             # Not "delete anyway". A delete that cannot be checked is
             # the one case where doing nothing is clearly right.
-            logger.warning("could not check dependents of %s: %s", node_id, exc)
+            logger.warning("could not check the lineage of %s: %s", node_id, exc)
             return ArtifactTreeChanged(
-                error="Could not check what depends on this, so nothing was deleted."
+                error="Could not check what this is joined to, so nothing was deleted."
             )
 
-        confirmed = [d for d in dependents if (d.get("state") or "") == "confirmed"]
-        if confirmed:
-            names = ", ".join(d["name"] or d["artifact_id"] for d in confirmed)
+        joined = [t for t in ties if (t.get("state") or "") != "dismissed"]
+        if joined:
             return ArtifactTreeChanged(
                 blocked_by=[
                     ArtifactDependent(
-                        artifact_id=d["artifact_id"], name=d["name"], state=d["state"]
+                        artifact_id=t["artifact_id"],
+                        name=t["name"],
+                        state=t["state"],
+                        direction=t.get("direction") or "",
                     )
-                    for d in confirmed
+                    for t in joined
                 ],
                 suggest_archive=True,
-                error=(
-                    f"{names} {'is' if len(confirmed) == 1 else 'are'} built on this. "
-                    "Archive it instead, or drop the source from "
-                    f"{'that document' if len(confirmed) == 1 else 'those documents'} first."
-                ),
+                error=self._why_not_deletable(joined),
             )
 
         result = await self.remove(node_id)
         if result.error or not result.removed:
             return ArtifactTreeChanged(error=result.error or "Nothing was deleted.")
         return ArtifactTreeChanged(ok=True, node_id=node_id, message="Deleted.")
+
+    @staticmethod
+    def _why_not_deletable(ties: list[dict[str, Any]]) -> str:
+        """The refusal, in the reader's terms rather than the graph's.
+
+        Said as a relationship rather than as a count. "2 documents"
+        tells somebody they are stuck; which way the edge runs tells
+        them what they would have to change to get unstuck.
+        """
+        below = [t for t in ties if t.get("direction") == "dependent"]
+        above = [t for t in ties if t.get("direction") == "source"]
+
+        def names(rows: list[dict[str, Any]]) -> str:
+            return ", ".join(r["name"] or r["artifact_id"] for r in rows)
+
+        parts: list[str] = []
+        if below:
+            parts.append(f"{names(below)} {'is' if len(below) == 1 else 'are'} built on it")
+        if above:
+            parts.append(f"it is built on {names(above)}")
+        return (
+            "This document is part of the lineage: "
+            + "; ".join(parts)
+            + ". Archive it instead — archiving keeps every version and "
+            "every one of those links resolving."
+        )
 
     async def move_node(self, *, node_id: str, parent_id: str = "") -> ArtifactTreeChanged:
         """Put something somewhere else in the tree.
