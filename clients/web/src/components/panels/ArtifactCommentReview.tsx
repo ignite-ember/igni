@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { IgniClient } from "../../protocol/client";
+import { CommentDocumentPeek } from "./CommentDocumentPeek";
 
 /**
  * Comments waiting on you, across every document you have published.
@@ -60,6 +61,50 @@ export function ArtifactCommentReview({
   const [busy, setBusy] = useState("");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [syncing, setSyncing] = useState(false);
+  /**
+   * The comment whose document is being previewed, and where its card
+   * sits.
+   *
+   * A one-line quote is enough to read a comment and not enough to
+   * judge one — whether a paragraph already half says what is being
+   * asked for decides the answer, and finding that out meant leaving
+   * the queue. Hovering shows the document, scrolled to the passage.
+   */
+  const [peeking, setPeeking] = useState<{ row: CommentRow; at: DOMRect } | null>(null);
+  /** Documents already read, so hovering the same one again is free. */
+  const peekCache = useRef(new Map<string, never>());
+  /**
+   * Opening and closing are both delayed, for opposite reasons.
+   *
+   * Opening, because a pointer crossing the list on its way somewhere
+   * else should not fire four fetches and four panels. Closing,
+   * because the panel sits beside the card with a gap between them,
+   * and closing the instant the pointer leaves the card makes the
+   * panel unreachable.
+   */
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const peekAt = useCallback((row: CommentRow, element: HTMLElement) => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    const at = element.getBoundingClientRect();
+    hoverTimer.current = setTimeout(() => setPeeking({ row, at }), 220);
+  }, []);
+
+  const endPeek = useCallback(() => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => setPeeking(null), 160);
+  }, []);
+
+  const holdPeek = useCallback(() => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    },
+    [],
+  );
 
   /**
    * Refresh the queue.
@@ -167,7 +212,16 @@ export function ArtifactCommentReview({
           </h3>
 
           {comments.map((comment) => (
-            <article key={comment.comment_id} className="comment-review-item">
+            <article
+              key={comment.comment_id}
+              className="comment-review-item"
+              onMouseEnter={(e) => peekAt(comment, e.currentTarget)}
+              onMouseLeave={endPeek}
+              // Focus counts as hover, so the preview is reachable
+              // without a pointer.
+              onFocus={(e) => peekAt(comment, e.currentTarget)}
+              onBlur={endPeek}
+            >
               {comment.quote ? (
                 <blockquote className="comment-review-quote">{comment.quote}</blockquote>
               ) : null}
@@ -252,6 +306,21 @@ export function ArtifactCommentReview({
           ))}
         </section>
       ))}
+
+      {peeking && (
+        <CommentDocumentPeek
+          client={client}
+          artifactId={peeking.row.artifact_id}
+          documentName={peeking.row.document_name}
+          quote={peeking.row.quote}
+          commentN={peeking.row.n}
+          headN={peeking.row.head_n}
+          anchor={peeking.at}
+          cache={peekCache.current as never}
+          onEnter={holdPeek}
+          onLeave={endPeek}
+        />
+      )}
     </div>
   );
 }

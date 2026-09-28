@@ -11186,6 +11186,97 @@ button {
   gap: 12px;
 }
 
+/* ── The document a comment is about ──────────────────────────────
+   Opened by hovering a row in the queue, beside it rather than over
+   it: the point is to read the passage *and* the comment, and a
+   panel covering the comment trades one missing half for the other. */
+.comment-peek {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  box-shadow: 0 12px 36px rgb(0 0 0 / 0.32);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.comment-peek-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: none;
+}
+
+.comment-peek-name {
+  font-size: 12.5px;
+}
+
+.comment-peek-where {
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.comment-peek-note {
+  flex: none;
+  margin: 0;
+}
+
+/* Said in the panel's own voice, because every row in the queue
+   already says "the document has moved on since" and that sentence
+   cannot tell a passage that survived from one that is gone. */
+.comment-peek-gone {
+  padding: 6px 9px;
+  border-left: 3px solid var(--accent-orange-text, var(--fg-muted));
+  border-radius: 0 5px 5px 0;
+  background: var(--bg-inset);
+  color: var(--fg);
+  font-size: 11.5px;
+}
+
+.comment-peek-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.comment-peek-body :is(h1, h2, h3, h4) {
+  margin: 1em 0 0.4em;
+  font-size: 1em;
+  font-weight: 600;
+}
+
+.comment-peek-body > :first-child {
+  margin-top: 0;
+}
+
+.comment-peek-body p,
+.comment-peek-body ul,
+.comment-peek-body ol,
+.comment-peek-body pre,
+.comment-peek-body table,
+.comment-peek-body blockquote {
+  margin: 0 0 0.8em;
+}
+
+/* The passage the comment is about, lit where it sits. */
+::highlight(comment-peek) {
+  background: hsl(38 70% 50% / 0.26);
+}
+
+/* The row being previewed, so the panel and its comment read as a
+   pair rather than as two things that happen to be on screen. */
+.comment-review-item:hover {
+  border-color: var(--border);
+}
+
 .comment-review-doc {
   display: flex;
   flex-direction: column;
