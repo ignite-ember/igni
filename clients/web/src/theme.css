@@ -10111,16 +10111,13 @@ button {
    column around it stays stretched, so the rule dividing it from the
    document still runs the document's full height. */
 .kb-doc-aside-pin {
-  position: sticky;
-  top: 16px;
   display: flex;
   flex-direction: column;
   gap: 14px;
   min-height: 0;
-  /* Nearly the whole window. The old reserve was arbitrary and cost
-     the conversation a couple of hundred pixels for nothing; what
-     actually bounds this is the sticky offset above it. */
-  max-height: calc(100vh - 120px);
+  /* The column is its own scroller now, so this fills it rather than
+     sticking inside a page that scrolls underneath. */
+  height: 100%;
   /* Nothing leaves the column. Without this a fifty-version history
      simply ran off the bottom of the window and took the
      conversation with it — the comments were still in the document,
@@ -10159,8 +10156,7 @@ button {
 
 @media (max-width: 64rem) {
   .kb-doc-aside-pin {
-    position: static;
-    max-height: none;
+    height: auto;
   }
 }
 
@@ -10264,15 +10260,22 @@ button {
   z-index: 39;
 }
 
+/* Against the viewport, not the rail. The rail clips what scrolls
+   inside it, and on a document with no comments it is two lines
+   tall — the chooser came out sawn off below its first section. */
 .doc-filter-pop {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
+  position: fixed;
   z-index: 40;
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-width: 210px;
+  /* Bounded, or the version pills lay themselves out on one line and
+     a document with fifty of them opens a chooser the width of the
+     window. */
+  max-width: 260px;
   padding: 10px;
   text-align: left;
   background: var(--bg-raised, var(--bg));
@@ -10862,6 +10865,54 @@ button {
     max-width: none;
     margin-left: 0;
   }
+}
+
+/* ── Reading: two columns that scroll on their own ──────────────────
+   The page used to be one scroller, so reaching the end of the
+   document dragged the conversation with it and the scrollbar sat
+   against the window rather than against the text it belonged to.
+   Here the frame is fixed to the window and each column scrolls
+   inside it. The document's own header stays put above them, which
+   is what keeps its title and controls reachable from the foot of a
+   long page.
+
+   Only in the reading view. Comparing and tracing are one wide
+   column with nothing beside them, and they keep the page scroll. */
+.page-body:has(.kb-doc-reading) {
+  overflow: hidden;
+}
+
+.page-measure:has(.kb-doc-reading),
+.page-measure:has(.kb-doc-reading) .kb-shell,
+.page-measure:has(.kb-doc-reading) .kb-shell-body {
+  height: 100%;
+  min-height: 0;
+}
+
+.kb-doc-reading {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.kb-doc-reading > .kb-doc-split {
+  flex: 1;
+  min-height: 0;
+  /* One row, bounded by the grid rather than by its content. Left
+     to size itself the row grew to the height of the document and
+     neither column had anything to scroll inside. */
+  grid-template-rows: minmax(0, 1fr);
+}
+
+/* The text and everything filed under it. */
+.kb-doc-scroll {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  /* Room for the scrollbar, so it does not sit on the last word of
+     every line. */
+  padding-right: 14px;
 }
 
 .kb-doc-head {

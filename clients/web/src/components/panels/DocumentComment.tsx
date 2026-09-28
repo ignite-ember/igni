@@ -1438,9 +1438,37 @@ function CommentFilters({
     </div>
   );
 
+  // Anchored to the button and drawn against the viewport. The rail
+  // clips what scrolls inside it, and a menu positioned in there is
+  // clipped with it — on a document with no comments the rail is two
+  // lines tall and the chooser came out sawn off below the first
+  // section.
+  const anchor = useRef<HTMLButtonElement>(null);
+  const [at, setAt] = useState<{ top: number; right: number } | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setAt(null);
+      return;
+    }
+    const place = () => {
+      const box = anchor.current?.getBoundingClientRect();
+      if (!box) return;
+      setAt({ top: box.bottom + 6, right: Math.max(8, window.innerWidth - box.right) });
+    };
+    place();
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open]);
+
   return (
     <div className="doc-filter">
       <button
+        ref={anchor}
         type="button"
         className={chips.length ? "doc-filter-open is-on" : "doc-filter-open"}
         aria-expanded={open}
@@ -1451,10 +1479,15 @@ function CommentFilters({
         {chips.length > 0 && <span className="doc-filter-count">{chips.length}</span>}
       </button>
 
-      {open && (
+      {open && at && createPortal(
         <>
           <div className="doc-filter-backdrop" onClick={() => onOpen(false)} />
-          <div className="doc-filter-pop" role="group" aria-label="Filter comments">
+          <div
+            className="doc-filter-pop"
+            role="group"
+            aria-label="Filter comments"
+            style={{ top: at.top, right: at.right }}
+          >
             {section(
               "State",
               <>
@@ -1504,7 +1537,8 @@ function CommentFilters({
                 </div>,
               )}
           </div>
-        </>
+        </>,
+        document.body,
       )}
     </div>
   );

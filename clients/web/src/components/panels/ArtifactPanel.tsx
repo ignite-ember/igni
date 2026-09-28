@@ -1201,6 +1201,16 @@ function DocumentDetail({
    */
   const frozen = doc.archived === true;
 
+  /** Rendered in one place or another; never twice. */
+  const lineageSection = (
+    <LineageSection
+      client={client}
+      artifactId={doc.id}
+      lineage={lineage}
+      onReviewed={() => setLineageNonce((n) => n + 1)}
+    />
+  );
+
   // Attribution as a sentence, the way an artifact header reads:
   // who wrote it, which version, when. A row of chips makes three
   // facts look like three filters.
@@ -1325,6 +1335,10 @@ function DocumentDetail({
            jumping sideways to make room for a list of version numbers
            is a worse trade than the room it buys. */
         <div className="kb-doc-split">
+          {/* The column that scrolls. Everything belonging to the
+              document is inside it, so the conversation beside it can
+              scroll on its own without dragging the text along. */}
+          <div className="kb-doc-scroll">
           <div className="kb-doc-body markdown-body" ref={bodyRef}>
             <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
               {doc.content || "_(empty)_"}
@@ -1341,6 +1355,9 @@ function DocumentDetail({
               version={doc.n ?? 0}
               onOpenSource={onOpenArtifact}
             />
+          </div>
+
+          {lineageSection}
           </div>
 
           {/* Commenting on the local copy is talking to the agent —
@@ -1421,12 +1438,11 @@ function DocumentDetail({
         </div>
       )}
 
-      <LineageSection
-        client={client}
-        artifactId={doc.id}
-        lineage={lineage}
-        onReviewed={() => setLineageNonce((n) => n + 1)}
-      />
+      {/* Where it goes depends on which column scrolls. Reading, it
+          belongs inside the one holding the text — pinned below a
+          fixed-height column it would be a permanent strip nobody
+          asked for, and outside it entirely it would be unreachable. */}
+      {(tracing || comparing) && lineageSection}
     </article>
   );
 }
