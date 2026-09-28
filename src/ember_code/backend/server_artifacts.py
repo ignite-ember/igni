@@ -1703,15 +1703,14 @@ class ArtifactController:
         try:
             slug = await sync.slug_for(artifact_id)
             if not slug:
-                # Server-first: a document with no shared copy gets
-                # one. Private — a row on the server, not an audience
-                # — so publishing stays a separate, deliberate act.
-                shared = await self.share(artifact_id, visibility="private")
-                if shared.error:
-                    logger.info("could not publish %s to comment on it: %s", artifact_id, shared.error)
-                    return None
-                slug = await sync.slug_for(artifact_id)
-            if not slug:
+                # A document with no row on the server. Not published
+                # from here: a comment must not decide a document's
+                # visibility, and publishing only the documents
+                # somebody happens to comment on would migrate the
+                # store halfway and leave it there. The seam is
+                # creation — a document should have a server identity
+                # because it was written, not because it was
+                # discussed.
                 return None
             if parent_id:
                 return await sync.reply(comment_id=parent_id, body=body)
