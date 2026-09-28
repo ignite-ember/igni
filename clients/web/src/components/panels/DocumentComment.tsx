@@ -374,8 +374,13 @@ function useMarks(
     ).Highlight;
     if (!highlights || !HighlightCtor) return;
 
-    const marks = [...found.entries()].filter(([key]) => key !== focused).map(([, r]) => r);
+    // Nothing selected: every commented passage is marked, which is
+    // how a reader finds out the document has been talked about.
+    // Something selected: only that one. Leaving the rest lit while
+    // one is being read turns the answer to "which passage is this
+    // card about" back into the question — everything is blue again.
     const lit = focused ? found.get(focused) : undefined;
+    const marks = focused ? [] : [...found.values()];
 
     if (marks.length) highlights.set("doc-comment-mark", new HighlightCtor(...marks));
     else highlights.delete("doc-comment-mark");
@@ -417,6 +422,29 @@ function measure(of: Range | Element): DOMRect | null {
   }
 }
 
+/**
+ * One rect per line the passage runs over.
+ *
+ * A sentence that wraps is several boxes, and one box around the lot
+ * would enclose the left margin of every line between — including
+ * text the comment is not about.
+ */
+function lineBoxes(range: Range): DOMRect[] {
+  try {
+    const get = (range as { getClientRects?: () => DOMRectList }).getClientRects;
+    if (typeof get !== "function") return [];
+    return [...get.call(range)].filter((r) => r.width > 1 && r.height > 1);
+  } catch {
+    return [];
+  }
+}
+
+/** What the overlay draws: the outlines, and the curve joining them. */
+interface Tether {
+  boxes: { x: number; y: number; w: number; h: number }[];
+  path: string;
+}
+
 function ThreadLine({
   focused,
   ranges,
@@ -427,11 +455,11 @@ function ThreadLine({
   /** The ranges are stale the moment the document is rewritten. */
   version: number;
 }) {
-  const [path, setPath] = useState("");
+  const [tether, setTether] = useState<Tether | null>(null);
 
   useEffect(() => {
     if (!focused) {
-      setPath("");
+      setTether(null);
       return;
     }
     let frame = 0;
@@ -444,7 +472,7 @@ function ThreadLine({
           : (s: string) => s;
       const card = document.querySelector(`[data-thread="${escape(focused)}"]`);
       if (!range || !card) {
-        setPath("");
+        setTether(null);
         return;
       }
       // Measured defensively. A Range whose nodes have been removed
@@ -452,11 +480,33 @@ function ThreadLine({
       // all — this line is decoration, and decoration that can take
       // the conversation down with it is worse than no line.
       const from = measure(range);
-      const to = measure(card);
-      if (!from || !to) {
-        setPath("");
+      const whole = measure(card);
+      if (!from || !whole) {
+        setTether(null);
         return;
       }
+
+      // As much of the card as can actually be seen.
+      //
+      // Two things go wrong without this. A thread with a long answer
+      // in it is taller than the window, so an outline around the
+      // whole card is a rectangle drawn across the page rather than a
+      // mark on the thing selected. And the rail scrolls inside
+      // itself, so an unclamped outline runs up over the version
+      // history sitting above it.
+      const rail = card.closest(".doc-rail-body");
+      const within = (rail && measure(rail)) || null;
+      const top = Math.max(whole.top, within?.top ?? 0, 0);
+      const bottom = Math.min(
+        whole.bottom,
+        within?.bottom ?? window.innerHeight,
+        window.innerHeight,
+      );
+      if (bottom - top < 12) {
+        setTether(null);
+        return;
+      }
+      const to = new DOMRect(whole.left, top, whole.width, bottom - top);
       // Both ends have to be on screen. Either one scrolled out of
       // the window — the passage above the fold, or the card out of
       // the rail's own scroll — draws a line that leaves the page and
@@ -465,23 +515,38 @@ function ThreadLine({
       const onScreen = (r: DOMRect) =>
         (r.width || r.height) && r.bottom > 0 && r.top < window.innerHeight;
       if (!onScreen(from) || !onScreen(to)) {
-        setPath("");
+        setTether(null);
         return;
       }
 
       const x1 = from.right + 6;
       const y1 = from.top + from.height / 2;
       const x2 = to.left - 6;
-      // The head of the card rather than its middle: a tall thread
-      // would have the line arrive halfway down a conversation
-      // instead of at the thing it labels.
-      const y2 = to.top + 18;
+      // Near the top of what is visible, not the middle of it: the
+      // middle of a tall card is the middle of somebody's answer.
+      const y2 = to.top + Math.min(20, to.height / 2);
       // Horizontal control points, so the curve leaves the sentence
       // sideways and arrives at the card sideways. Pulled out by the
       // gap itself, so a short hop stays gentle and a long one does
       // not bow into the text.
       const pull = Math.max(24, Math.min(140, (x2 - x1) / 2));
-      setPath(`M${x1},${y1} C${x1 + pull},${y1} ${x2 - pull},${y2} ${x2},${y2}`);
+
+      // The passage, line by line, and the card it belongs to. Both
+      // outlined in the same moving dashes: the pair is one object,
+      // and drawing them differently would make the reader work out
+      // that they are related.
+      const grow = (r: DOMRect, pad: number) => ({
+        x: r.left - pad,
+        y: r.top - pad,
+        w: r.width + pad * 2,
+        h: r.height + pad * 2,
+      });
+      const boxes = [...lineBoxes(range).map((r) => grow(r, 2)), grow(to, 0)];
+
+      setTether({
+        boxes,
+        path: `M${x1},${y1} C${x1 + pull},${y1} ${x2 - pull},${y2} ${x2},${y2}`,
+      });
     };
 
     draw();
@@ -501,10 +566,21 @@ function ThreadLine({
     };
   }, [focused, ranges, version]);
 
-  if (!path) return null;
+  if (!tether) return null;
   return createPortal(
     <svg className="doc-thread-line" aria-hidden="true">
-      <path d={path} />
+      <path className="doc-thread-curve" d={tether.path} />
+      {tether.boxes.map((b, i) => (
+        <rect
+          key={i}
+          className="doc-thread-ring"
+          x={b.x}
+          y={b.y}
+          width={b.w}
+          height={b.h}
+          rx="4"
+        />
+      ))}
     </svg>,
     document.body,
   );
