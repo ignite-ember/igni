@@ -10216,6 +10216,140 @@ button {
   text-decoration: underline;
 }
 
+/* Narrowing the rail. Folded away behind a button because most of
+   the time nothing is filtered, and a row of empty checkboxes takes
+   the space the conversation wants. */
+.doc-filter {
+  position: relative;
+  margin-left: auto;
+}
+
+.doc-filter-open {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg-muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.doc-filter-open:hover {
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
+/* Something is hidden. The button says so wherever the reader is in
+   the rail, including scrolled past the note. */
+.doc-filter-open.is-on {
+  color: var(--accent-blue-text);
+  border-color: var(--border-soft);
+}
+
+.doc-filter-count {
+  padding: 0 5px;
+  font-size: 10px;
+  color: var(--bg);
+  background: var(--accent-blue, #4a7dff);
+  border-radius: 999px;
+}
+
+.doc-filter-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+}
+
+.doc-filter-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 210px;
+  padding: 10px;
+  text-align: left;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px hsl(0 0% 0% / 0.22);
+}
+
+.doc-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.doc-filter-heading {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.doc-filter-versions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.doc-filter-version {
+  padding: 2px 7px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg-muted);
+  background: var(--bg-inset);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.doc-filter-version.is-on {
+  color: var(--bg);
+  background: var(--accent-blue, #4a7dff);
+}
+
+.doc-filter-rule {
+  height: 1px;
+  background: var(--border-soft);
+}
+
+/* How many were hidden, and the way back. A filter that hides
+   silently is indistinguishable from a document with fewer comments
+   than the reader thought. */
+.doc-filter-note {
+  flex: none;
+  margin: 0;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.doc-filter-clear {
+  padding: 0;
+  font: inherit;
+  font-size: inherit;
+  color: var(--accent-blue-text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.doc-filter-clear:hover {
+  text-decoration: underline;
+}
+
 /* One passage, with every conversation about it under it. The box
    belongs to the passage now; the conversations inside are divided
    from each other rather than each carrying its own frame. */

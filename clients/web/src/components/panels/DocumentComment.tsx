@@ -425,7 +425,47 @@ function useMarks(
 const NO_THREADS: Thread[] = [];
 
 /** Everything this component puts on the page, in one selector. */
-const MINE = ".doc-rail, .doc-rail-away, .doc-selection-pop, .doc-selection-backdrop";
+const MINE =
+  ".doc-rail, .doc-rail-away, .doc-selection-pop, .doc-selection-backdrop, .doc-filter-pop";
+
+/**
+ * What the rail is being narrowed to.
+ *
+ * Every field is a *restriction*, and an empty one restricts nothing,
+ * so the default is the empty object and "no filters" is a thing the
+ * reader can always get back to by clearing them. They combine, which
+ * is the point: "open, on this version, not settled" is one question
+ * with three clauses and not three separate views.
+ */
+export interface CommentFilter {
+  /** Only threads still open. */
+  open?: boolean;
+  /** Only threads left on these versions. */
+  versions?: number[];
+  /** Only threads whose passage is still in the document. */
+  anchored?: boolean;
+  /** Only threads igni has answered. */
+  answered?: boolean;
+}
+
+export function filterIsEmpty(f: CommentFilter): boolean {
+  return !f.open && !f.anchored && !f.answered && !f.versions?.length;
+}
+
+/**
+ * Whether a thread survives the filter.
+ *
+ * Kept out of the component for its own test: a filter that hides the
+ * wrong thing is invisible — the rail just looks emptier, and the
+ * reader concludes the comments are gone rather than hidden.
+ */
+export function keeps(f: CommentFilter, thread: Thread, anchored: boolean): boolean {
+  if (f.open && thread.status && thread.status !== "open") return false;
+  if (f.versions?.length && !f.versions.includes(thread.n ?? 0)) return false;
+  if (f.anchored && !anchored) return false;
+  if (f.answered && !thread.turns.some((turn) => turn.who === "agent")) return false;
+  return true;
+}
 
 /**
  * A line from the passage to the card about it.
@@ -637,6 +677,9 @@ export function DocumentComment({
   const [threads, setThreads] = useState<Thread[]>([]);
   /** The conversation already on this document, read back on open. */
   const [stored, setStored] = useState<Thread[]>([]);
+  /** What the rail is narrowed to, and whether the chooser is open. */
+  const [filter, setFilter] = useState<CommentFilter>({});
+  const [filtering, setFiltering] = useState(false);
   const [menu, setMenu] = useState<Anchor | null>(null);
   /** The thread the reader is on: lit in the rail and in the document. */
   const [focused, setFocused] = useState<string | null>(null);
@@ -735,6 +778,42 @@ export function DocumentComment({
     }
     return out;
   }, [ordered]);
+
+  /**
+   * The groups the filter leaves.
+   *
+   * Applied to the conversations and not to the passages, so a
+   * passage with four remarks on it and one of them open does not
+   * vanish from a rail narrowed to open ones — it shows the one.
+   * A group that loses all of them goes with them: a quote with no
+   * conversation under it is a heading for nothing.
+   */
+  const shown = useMemo(() => {
+    if (filterIsEmpty(filter)) return groups;
+    const body = bodyRef.current;
+    return groups
+      .map((g) => ({
+        ...g,
+        threads: g.threads.filter((th) =>
+          keeps(filter, th, quoteStillPresent(body, g.quote)),
+        ),
+      }))
+      .filter((g) => g.threads.length > 0);
+  }, [groups, filter, bodyRef]);
+
+  /** Every version this document has been commented on. */
+  const commentedVersions = useMemo(() => {
+    const seen = new Set<number>();
+    for (const g of groups) for (const th of g.threads) if (th.n) seen.add(th.n);
+    return [...seen].sort((a, b) => b - a);
+  }, [groups]);
+
+  const hiddenCount = useMemo(
+    () =>
+      groups.reduce((n, g) => n + g.threads.length, 0) -
+      shown.reduce((n, g) => n + g.threads.length, 0),
+    [groups, shown],
+  );
 
   const orderedThreads = useMemo(() => ordered.map((o) => o.thread), [ordered]);
 
@@ -1114,6 +1193,16 @@ export function DocumentComment({
       <header className="doc-rail-head">
         <h3 className="doc-rail-title">Comments</h3>
         {started.length > 0 && <span className="doc-rail-count">{started.length}</span>}
+
+        {started.length > 0 && (
+          <CommentFilters
+            filter={filter}
+            open={filtering}
+            versions={commentedVersions}
+            onOpen={setFiltering}
+            onChange={setFilter}
+          />
+        )}
         {!switched && (
           <button
             type="button"
@@ -1135,14 +1224,29 @@ export function DocumentComment({
       )}
 
       <div className="doc-rail-body">
+        {/* Said, not left to be inferred from a short list. A filter
+            that hides things silently is indistinguishable from a
+            document that has fewer comments than the reader thought.
+            The way out is on the same line as the count. */}
+        {hiddenCount > 0 && (
+          <p className="doc-filter-note">
+            {hiddenCount} hidden by filters.{" "}
+            <button type="button" className="doc-filter-clear" onClick={() => setFilter({})}>
+              Show all
+            </button>
+          </p>
+        )}
+
         {started.length === 0 ? (
           <p className="doc-rail-empty">
             Nothing yet. Select a passage and right-click to ask about it, or comment on the
             document as a whole.
           </p>
+        ) : shown.length === 0 ? (
+          <p className="doc-rail-empty">Nothing matches those filters.</p>
         ) : (
           <ol className="doc-conv-list">
-            {groups.map((group) => (
+            {shown.map((group) => (
               <PassageGroup
                 key={group.key}
                 group={group}
@@ -1186,6 +1290,127 @@ export function DocumentComment({
           of them is not on screen otherwise. */}
       <ThreadLine focused={focused} ranges={ranges} version={n} />
     </aside>
+  );
+}
+
+/**
+ * Narrowing the rail, by as many clauses as the reader wants.
+ *
+ * Checkboxes rather than a row of exclusive tabs, because the
+ * questions people actually have are conjunctions — "what is still
+ * open on the version I am reading" is one question with two clauses
+ * — and a tab strip makes every one of those a sequence of views to
+ * hold in your head.
+ *
+ * Behind a button with a count on it, because most of the time there
+ * is no filter and the control is a row of empty boxes taking up the
+ * space the conversation wants.
+ */
+function CommentFilters({
+  filter,
+  open,
+  versions,
+  onOpen,
+  onChange,
+}: {
+  filter: CommentFilter;
+  open: boolean;
+  /** Every version this document has been commented on. */
+  versions: number[];
+  onOpen: (open: boolean) => void;
+  onChange: (filter: CommentFilter) => void;
+}) {
+  const active =
+    (filter.open ? 1 : 0) +
+    (filter.anchored ? 1 : 0) +
+    (filter.answered ? 1 : 0) +
+    (filter.versions?.length ? 1 : 0);
+
+  const toggleVersion = (n: number) => {
+    const was = filter.versions ?? [];
+    const next = was.includes(n) ? was.filter((v) => v !== n) : [...was, n];
+    onChange({ ...filter, versions: next.length ? next : undefined });
+  };
+
+  const box = (
+    key: "open" | "anchored" | "answered",
+    label: string,
+    title: string,
+  ) => (
+    <label className="doc-filter-row" title={title}>
+      <input
+        type="checkbox"
+        checked={!!filter[key]}
+        onChange={(e) => onChange({ ...filter, [key]: e.target.checked || undefined })}
+      />
+      {label}
+    </label>
+  );
+
+  return (
+    <div className="doc-filter">
+      <button
+        type="button"
+        className={active ? "doc-filter-open is-on" : "doc-filter-open"}
+        aria-expanded={open}
+        title="Narrow what is shown"
+        onClick={() => onOpen(!open)}
+      >
+        Filter{active > 0 && <span className="doc-filter-count">{active}</span>}
+      </button>
+
+      {open && (
+        <>
+          <div className="doc-filter-backdrop" onClick={() => onOpen(false)} />
+          <div className="doc-filter-pop" role="group" aria-label="Filter comments">
+            {box("open", "Still open", "Hide anything already accepted or declined")}
+            {box("answered", "Answered by igni", "Only threads igni has replied in")}
+            {box(
+              "anchored",
+              "Passage still there",
+              "Hide comments whose passage has since been rewritten",
+            )}
+
+            {versions.length > 1 && (
+              <>
+                <div className="doc-filter-rule" />
+                <p className="doc-filter-heading">Left on version</p>
+                <div className="doc-filter-versions">
+                  {versions.map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      className={
+                        filter.versions?.includes(n)
+                          ? "doc-filter-version is-on"
+                          : "doc-filter-version"
+                      }
+                      aria-pressed={filter.versions?.includes(n)}
+                      onClick={() => toggleVersion(n)}
+                    >
+                      v{n}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {active > 0 && (
+              <>
+                <div className="doc-filter-rule" />
+                <button
+                  type="button"
+                  className="doc-filter-clear"
+                  onClick={() => onChange({})}
+                >
+                  Clear all
+                </button>
+              </>
+            )}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

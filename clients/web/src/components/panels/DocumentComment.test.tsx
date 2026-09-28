@@ -20,6 +20,7 @@ import {
   offsetWithin,
   quoteStillPresent,
   threadAtPoint,
+  type Thread,
 } from "./DocumentComment";
 import type { IgniClient } from "../../protocol/client";
 
@@ -953,6 +954,77 @@ describe("putting the comment rail away", () => {
 
     expect(onHiddenChange).toHaveBeenCalledWith(false);
     expect(threads()).toHaveLength(1);
+  });
+});
+
+describe("narrowing the rail", () => {
+  const thread = (over: Partial<Thread> = {}): Thread => ({
+    key: "k",
+    id: "c",
+    quote: "a passage",
+    quoteStart: -1,
+    turns: [{ key: "t", who: "me", body: "hi", activity: "", phase: "done", error: "" }],
+    error: "",
+    status: "open",
+    n: 3,
+    ...over,
+  });
+
+  it("keeps everything when nothing is asked for", async () => {
+    const { keeps, filterIsEmpty } = await import("./DocumentComment");
+
+    expect(filterIsEmpty({})).toBe(true);
+    expect(keeps({}, thread({ status: "rejected" }), false)).toBe(true);
+  });
+
+  it("combines its clauses rather than replacing them", async () => {
+    // The whole point. "What is still open on v3" is one question
+    // with two clauses; a row of exclusive tabs makes it a sequence
+    // of views to hold in your head.
+    const { keeps } = await import("./DocumentComment");
+    const both = { open: true, versions: [3] };
+
+    expect(keeps(both, thread({ status: "open", n: 3 }), true)).toBe(true);
+    expect(keeps(both, thread({ status: "open", n: 4 }), true)).toBe(false);
+    expect(keeps(both, thread({ status: "accepted", n: 3 }), true)).toBe(false);
+  });
+
+  it("treats a thread with no status as open", async () => {
+    // Threads started here have none until they are settled, and
+    // hiding what somebody is in the middle of writing is the worst
+    // thing a filter can do.
+    const { keeps } = await import("./DocumentComment");
+
+    expect(keeps({ open: true }, thread({ status: undefined }), true)).toBe(true);
+  });
+
+  it("can hide comments whose passage has been rewritten", async () => {
+    const { keeps } = await import("./DocumentComment");
+
+    expect(keeps({ anchored: true }, thread(), false)).toBe(false);
+    expect(keeps({ anchored: true }, thread(), true)).toBe(true);
+  });
+
+  it("can keep only what igni has answered", async () => {
+    const { keeps } = await import("./DocumentComment");
+    const answered = thread({
+      turns: [
+        { key: "a", who: "me", body: "?", activity: "", phase: "done", error: "" },
+        { key: "b", who: "agent", body: "!", activity: "", phase: "done", error: "" },
+      ],
+    });
+
+    expect(keeps({ answered: true }, thread(), true)).toBe(false);
+    expect(keeps({ answered: true }, answered, true)).toBe(true);
+  });
+
+  it("takes any of the versions asked for, not all of them", async () => {
+    const { keeps } = await import("./DocumentComment");
+    const f = { versions: [2, 5] };
+
+    expect(keeps(f, thread({ n: 2 }), true)).toBe(true);
+    expect(keeps(f, thread({ n: 5 }), true)).toBe(true);
+    expect(keeps(f, thread({ n: 3 }), true)).toBe(false);
   });
 });
 
