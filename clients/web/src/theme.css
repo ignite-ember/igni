@@ -4301,6 +4301,20 @@ button {
   display: flex;
   flex-direction: column;
   background: var(--bg);
+
+  /* How far the scrolling area starts below this box, and therefore
+     where a column docked to it has to begin. Not one number: the
+     breadcrumbs are always there, and ``.page-head`` is there for a
+     list and absent for a document. Assuming either one puts the
+     hierarchy forty pixels below the text or on top of the panel's
+     own buttons — this file has had both bugs, so it is measured
+     from what is actually on the page. */
+  --page-chrome-h: 35px;
+  --dock-top: calc(var(--page-chrome-h) + var(--doc-air));
+}
+
+.page:has(> .page-head) {
+  --page-chrome-h: 82px;
 }
 
 .main--paged > .conversation-frame,
@@ -4434,6 +4448,14 @@ button {
   padding: 16px 18px;
   width: min(900px, 100%);
   margin: 0 auto;
+}
+
+/* Tighter above a document than above a conversation: the title is
+   the first thing on the page and does not need a band of nothing
+   over it. Half the air here and half on the article, so the sum is
+   ``--doc-air``. */
+.page-measure:has(.kb-shell) {
+  padding-top: calc(var(--doc-air) / 2);
 }
 
 /* Comparing is the exception: two columns of text where everything
@@ -10843,7 +10865,7 @@ button {
 .kb-doc {
   max-width: 45rem;
   margin: 0 auto;
-  padding: 8px 0 48px;
+  padding: calc(var(--doc-air) / 2) 0 48px;
 }
 
 /* A refetch in flight over a document that is still readable. Dimmed
@@ -10901,8 +10923,8 @@ button {
   position: sticky;
   top: 0;
   z-index: 3;
-  margin: -24px -18px 20px;
-  padding: 24px 18px 12px;
+  margin: calc(-1 * var(--doc-air)) -18px 20px;
+  padding: var(--doc-air) 18px 12px;
   background: var(--bg);
 }
 
@@ -11437,10 +11459,14 @@ button {
    UI says which one produced the results on screen, because a person
    who cannot tell which ran cannot tell why a document is missing. */
 
+/* The same half of the air the article takes, so the list's first row
+   and a document's title sit the same distance down and one
+   ``--dock-top`` can place the hierarchy beside either. */
 .afs {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  padding-top: calc(var(--doc-air) / 2);
 }
 
 .afs-bar {
@@ -11718,18 +11744,12 @@ button {
 
 :root {
   --tree-width: 15.5rem;
-  /* Where a docked column starts, measured down from ``.page``.
-     Three terms, and every one of them is something else's spacing:
-     the breadcrumbs above the scrolling area, the page measure's own
-     padding, and the article's. Together they put a docked column
-     level with the document's title rather than forty pixels below
-     it — which is where the guess this replaces had left both of
-     them.
-
-     ``.page-head`` is *not* in here. It was, on the reading that it
-     sits beside the crumbs; it does not, and the extra 47px it
-     contributed is exactly the drop. */
-  --dock-top: calc(35px + 16px + 8px);
+  /* The air above the first line of a panel, and the one number the
+     three columns are placed from. The measure and whatever it holds
+     each take half of it, so changing it here moves the title, the
+     hierarchy and the conversation together — which is the only way
+     they stay level. */
+  --doc-air: 12px;
 }
 
 /* The gutter the hierarchy lives in: against the left edge of the
