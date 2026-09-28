@@ -1357,14 +1357,20 @@ export function DocumentComment({
           </ol>
         )}
 
-        <div className="doc-comment-bar">
-          <button type="button" className="btn btn-sm" onClick={() => startThread("")}>
-            New comment
-          </button>
-          {/* Names the other way in, because a right-click affordance
-              is not discoverable by looking. */}
-          <span className="doc-comment-hint">For one passage, select it and right-click</span>
-        </div>
+      </div>
+
+      {/* Outside the scroller on purpose. As the last item in the list
+          it sat below every comment on the document — a hundred of
+          them on a busy one — so the way to start a new one was to
+          scroll to the end of everyone else's. A footer is always
+          where it was last time. */}
+      <div className="doc-comment-bar">
+        <button type="button" className="btn btn-sm" onClick={() => startThread("")}>
+          New comment
+        </button>
+        {/* Names the other way in, because a right-click affordance
+            is not discoverable by looking. */}
+        <span className="doc-comment-hint">For one passage, select it and right-click</span>
       </div>
 
       {selectionMenu}

@@ -1428,3 +1428,28 @@ describe("the marks in the document, while the rail is away", () => {
     expect(highlights.size).toBeGreaterThan(0);
   });
 });
+
+describe("where the way to start a comment lives", () => {
+  // It used to be the last child of the scrolling list, which reads
+  // fine on a document nobody has commented on and badly on a real
+  // one: on a page with a hundred comments the control was a hundred
+  // cards down, so starting a new thread meant scrolling to the end
+  // of everyone else's.
+  it("is not inside the part that scrolls", () => {
+    setup();
+
+    const start = screen.getByRole("button", { name: "New comment" });
+
+    expect(start.closest(".doc-rail-body")).toBeNull();
+  });
+
+  it("is still inside the rail", () => {
+    // Outside the scroller, not outside the column — a footer that
+    // escaped the aside would be loose on the page.
+    setup();
+
+    const start = screen.getByRole("button", { name: "New comment" });
+
+    expect(start.closest(".doc-rail")).not.toBeNull();
+  });
+});
