@@ -177,6 +177,12 @@ export function ArtifactPanel({
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState("");
   const [addError, setAddError] = useState("");
+  /** Where a document started from the tree will be filed. Empty is
+   *  the top level, which is also where the panel's own Add starts. */
+  const [addParent, setAddParent] = useState("");
+  const [addParentName, setAddParentName] = useState("");
+  /** Bumped when the documents changed, to make the tree re-read. */
+  const [treeVersion, setTreeVersion] = useState(0);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   /** The last export, until it is dismissed. */
   const [exported, setExported] = useState<ExportOutcome | null>(null);
@@ -228,6 +234,11 @@ export function ArtifactPanel({
   const [pendingQuestion, setPendingQuestion] = useState("");
 
   const refresh = useCallback(async () => {
+    // The tree loads itself, so it has to be told when the set of
+    // documents changed from somewhere else on the page — adding one
+    // and not seeing it appear reads as the placement having failed,
+    // which is exactly what it did not do.
+    setTreeVersion((v) => v + 1);
     try {
       setStatus(await client.rpc<ArtifactStatus>("get_artifact_status"));
     } catch (e) {
@@ -329,7 +340,9 @@ export function ArtifactPanel({
     setBusy("add");
     setAddError("");
     try {
-      await client.rpc("artifact_add", { source: source.trim() });
+      await client.rpc("artifact_add", { source: source.trim(), parent_id: addParent });
+      setAddParent("");
+      setAddParentName("");
       void refresh();
       setView("list");
       return true;
@@ -444,6 +457,8 @@ export function ArtifactPanel({
           disabled={!status.enabled}
           onClick={() => {
             setAddError("");
+            setAddParent("");
+            setAddParentName("");
             setView("add");
           }}
         >
@@ -600,11 +615,18 @@ export function ArtifactPanel({
             client={client}
             selectedId={selected}
             staleIds={staleIds}
+            reloadKey={treeVersion}
             onOpen={(id) => {
               setTracing(false);
               setComparing(false);
               setSelected(id);
               setView("detail");
+            }}
+            onCreateInside={(parentId, parentName) => {
+              setAddError("");
+              setAddParent(parentId);
+              setAddParentName(parentName);
+              setView("add");
             }}
           />
         )}
@@ -667,8 +689,13 @@ export function ArtifactPanel({
         <AddSource
           busy={busy === "add"}
           error={addError}
+          into={addParentName}
           onAdd={tryAdd}
-          onCancel={() => setView("list")}
+          onCancel={() => {
+            setAddParent("");
+            setAddParentName("");
+            setView("list");
+          }}
         />
       ) : view === "detail" && selected ? (
         <DocumentDetail
@@ -1747,11 +1774,14 @@ function CandidateRow({
 function AddSource({
   busy,
   error,
+  into,
   onAdd,
   onCancel,
 }: {
   busy: boolean;
   error: string;
+  /** The document or folder this will be filed under, if any. */
+  into: string;
   onAdd: (s: string) => Promise<boolean>;
   onCancel: () => void;
 }) {
@@ -1765,6 +1795,11 @@ function AddSource({
 
   return (
     <div className="kb-add-page">
+      {/* Where it lands, said on the form rather than discovered
+          afterwards. Coming here from a row in the tree is the only
+          way to file something on creation, and a form that looks
+          identical either way makes the placement a surprise. */}
+      {into && <p className="kb-hint kb-add-into">Filed under {into}.</p>}
       <div className="kb-add-modes">
         {(["url", "path", "text"] as AddMode[]).map((m) => (
           <button

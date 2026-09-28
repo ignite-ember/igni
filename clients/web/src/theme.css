@@ -11280,36 +11280,18 @@ button {
   overflow-y: auto;
 }
 
-/* A filter over the titles, above the tree it filters. Distinct from
-   the search in the centre column, which asks the index what matches
-   a question; this only asks which of these names contains a string,
-   and answers instantly because the tree is already here. */
+/* What can be started from here, above the tree. No filter: the
+   centre column already searches the documents, and a second box
+   over the same names is two places to look for one answer. */
 .kb-tree-bar {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
   flex: none;
 }
 
-.kb-tree-filter {
-  width: 100%;
-  padding: 6px 9px;
-  font: inherit;
-  font-size: 12px;
-  color: var(--fg);
-  background: var(--bg-inset);
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-}
-
-.kb-tree-filter:focus {
-  outline: none;
-  border-color: var(--accent-blue);
-}
-
 .kb-tree-new {
-  align-self: flex-start;
   white-space: nowrap;
 }
 
@@ -11471,22 +11453,169 @@ button {
   white-space: nowrap;
 }
 
-.kb-tree-remove {
+/* Create and manage, on the row they act on.
+   Hidden until the row is pointed at: two controls on every row of a
+   long tree is more furniture than tree. They still take their space
+   when hidden, so titles do not shift sideways under the pointer —
+   which is what makes a moving target of the thing you are reaching
+   for. */
+.kb-tree-actions {
   flex: none;
-  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: auto;
+  visibility: hidden;
+}
+
+.kb-tree-row:hover .kb-tree-actions,
+.kb-tree-actions:focus-within {
+  visibility: visible;
+}
+
+/* An open menu keeps its button visible after the pointer has left
+   the row, or the menu appears to belong to nothing. */
+.kb-tree-actions:has(.is-open) {
+  visibility: visible;
+}
+
+.kb-tree-act {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
   font: inherit;
   font-size: 13px;
   line-height: 1;
   color: var(--fg-muted);
   background: none;
   border: 0;
+  border-radius: 4px;
   cursor: pointer;
-  opacity: 0;
 }
 
-.kb-tree-row:hover .kb-tree-remove,
-.kb-tree-remove:focus-visible {
-  opacity: 1;
+.kb-tree-act:hover,
+.kb-tree-act.is-open {
+  color: var(--fg);
+  background: var(--bg-raised, var(--bg));
+}
+
+/* Against the viewport, not the row.
+   The rows scroll, and anything positioned inside a scrolling box is
+   clipped by it — the first version came out with its right edge and
+   its shadow sheared off along the scroller's boundary. The anchor is
+   the button's rect, read when it was pressed. */
+.kb-tree-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 168px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px hsl(0 0% 0% / 0.22);
+}
+
+/* Catches the click that closes the menu. Behind the menu and in
+   front of everything else, so the next click anywhere dismisses it
+   instead of also hitting whatever is underneath. */
+.kb-tree-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+}
+
+/* A rule above the row that ends a document rather than arranging
+   it. Archive and Delete are a different kind of act from Open and
+   Move, and the gap is what stops a hurried pointer landing on one
+   while reaching for the other. */
+.kb-tree-menu-sep {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.kb-tree-menu .overflow-item.is-destructive {
+  color: var(--accent-red-text, var(--fg));
+}
+
+/* Kept, and plainly not current. Dimmed rather than struck through:
+   the text is still there to be read, it is just no longer part of
+   what is being worked on. */
+.kb-tree-row.is-archived .kb-tree-name,
+.kb-tree-row.is-archived .kb-tree-icon {
+  opacity: 0.5;
+}
+
+.kb-tree-badge {
+  flex: none;
+  align-self: center;
+  font-size: 10px;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.kb-tree-archived {
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg-muted);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.kb-tree-archived:hover,
+.kb-tree-archived.is-on {
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
+/* Why a delete did not happen, and what to do instead. Placed above
+   the tree rather than in a dialog: the documents it names are rows
+   in that tree, and the reader's next move is to go and look at one. */
+.kb-tree-blocked {
+  flex: none;
+  padding: 8px 10px;
+  font-size: 12px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+
+.kb-tree-blocked p {
+  margin: 0 0 6px;
+}
+
+.kb-tree-blocked ul {
+  margin: 0 0 6px;
+  padding-left: 16px;
+}
+
+/* The named document reads as somewhere to go, not as a control.
+   The reader's next move is to open it and look. */
+.kb-tree-blocked-link {
+  padding: 0;
+  font: inherit;
+  color: var(--accent-blue-text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.kb-tree-blocked-link:hover {
+  text-decoration: underline;
+}
+
+.kb-tree-blocked-do {
+  display: flex;
+  gap: 6px;
 }
 
 /* The way back to the top level. Without it, a document dragged into

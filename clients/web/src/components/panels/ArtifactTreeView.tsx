@@ -30,11 +30,18 @@ export interface TreeNode {
   depth: number;
   descendants: number;
   placeholder: boolean;
+  archived?: boolean;
 }
 
 interface Tree {
   nodes: TreeNode[];
   error: string;
+}
+
+interface Dependent {
+  artifact_id: string;
+  name: string;
+  state: string;
 }
 
 interface Changed {
@@ -43,6 +50,16 @@ interface Changed {
   promoted: number;
   message: string;
   error: string;
+  blocked_by?: Dependent[];
+  suggest_archive?: boolean;
+}
+
+/** The open menu: which row, which of the two, and where to draw it. */
+interface Menu {
+  id: string;
+  kind: "create" | "more";
+  top: number;
+  right: number;
 }
 
 /**
@@ -62,35 +79,6 @@ export function branchOf(nodes: TreeNode[], at: number): Set<string> {
     out.add(nodes[i].node_id);
   }
   return out;
-}
-
-/**
- * Rows whose title matches, plus every ancestor of each.
- *
- * The ancestors are the point. A match shown without the branch it
- * sits on tells you a document exists and not where it is, which is
- * the one thing a tree is for — and the centre column already answers
- * "which documents mention this".
- */
-export function filterRows(nodes: TreeNode[], query: string): TreeNode[] {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return nodes;
-
-  const keep = new Set<number>();
-  for (let i = 0; i < nodes.length; i++) {
-    if (!nodes[i].name.toLowerCase().includes(needle)) continue;
-    keep.add(i);
-    // Walk back up: the previous row one level shallower is the
-    // parent, and so on to the root.
-    let depth = nodes[i].depth;
-    for (let j = i - 1; j >= 0 && depth > 0; j--) {
-      if (nodes[j].depth < depth) {
-        keep.add(j);
-        depth = nodes[j].depth;
-      }
-    }
-  }
-  return nodes.filter((_, i) => keep.has(i));
 }
 
 /** Which rows are hidden because an ancestor is collapsed. */
@@ -137,12 +125,20 @@ export function ArtifactTreeView({
   client,
   selectedId,
   staleIds,
+  reloadKey,
   onOpen,
+  onCreateInside,
 }: {
   client: IgniClient;
   selectedId?: string | null;
   staleIds?: Set<string>;
+  /** Changes when the documents changed elsewhere on the page. */
+  reloadKey?: number;
   onOpen: (id: string) => void;
+  /** Start a new document under this row. The panel collects the
+   *  text — the tree only says where it goes, and what that place is
+   *  called, so the form can say so rather than filing it silently. */
+  onCreateInside: (parentId: string, parentName: string) => void;
 }) {
   const [nodes, setNodes] = useState<TreeNode[] | null>(null);
   const [error, setError] = useState("");
@@ -152,17 +148,47 @@ export function ArtifactTreeView({
   const [over, setOver] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  const [query, setQuery] = useState("");
+  /**
+   * The open menu, if any — which row, which of the two, and where.
+   *
+   * Where, because the menu cannot live inside the row it belongs to.
+   * The rows scroll, and an absolutely positioned menu inside a
+   * scrolling box is clipped by it: the first version came out with
+   * its right edge and its shadow sheared off along the scroller's
+   * boundary. So it is rendered once, outside, against the viewport,
+   * anchored to the button that opened it.
+   */
+  const [menu, setMenu] = useState<Menu | null>(null);
+  /**
+   * Whether archived documents are shown, dimmed, in place.
+   *
+   * In the same tree rather than on a screen of their own. Restoring
+   * one is a question about where it goes back to, and that question
+   * is only answerable next to the rest of the tree.
+   */
+  const [showArchived, setShowArchived] = useState(false);
+  /** A delete that was refused, and what refused it. */
+  const [blocked, setBlocked] = useState<{
+    id: string;
+    name: string;
+    by: Dependent[];
+  } | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const tree = await client.rpc<Tree>("artifact_tree", {});
+      const tree = await client.rpc<Tree>("artifact_tree", {
+        include_archived: showArchived,
+      });
       setNodes(tree?.nodes ?? []);
       setError(tree?.error ?? "");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [client]);
+    // ``reloadKey`` is a dependency the body does not read. It is the
+    // page saying the set of documents changed underneath this — an
+    // add or a delete from the centre column — and re-reading is the
+    // whole point of being told.
+  }, [client, showArchived, reloadKey]);
 
   useEffect(() => {
     void load();
@@ -177,6 +203,7 @@ export function ArtifactTreeView({
           setError(r.error);
           return false;
         }
+        setBlocked(null);
         // Said out loud: removing a folder moves its contents rather
         // than deleting them, and a reader needs to be told which.
         setNote(r?.message ?? "");
@@ -190,13 +217,13 @@ export function ArtifactTreeView({
     [client, load],
   );
 
-  const rows = useMemo(() => {
-    // Filtering ignores what is collapsed: a query is a request to be
-    // shown the matches, not to be shown the matches you had already
-    // opened.
-    if (query.trim()) return filterRows(nodes ?? [], query);
-    return visibleRows(nodes ?? [], collapsed);
-  }, [nodes, collapsed, query]);
+  const rows = useMemo(() => visibleRows(nodes ?? [], collapsed), [nodes, collapsed]);
+
+  /** The row the open menu belongs to, or nothing if it has gone. */
+  const menuNode = useMemo(
+    () => (menu ? (nodes ?? []).find((n) => n.node_id === menu.id) : undefined),
+    [menu, nodes],
+  );
 
   /** The branch being dragged — never a valid destination for itself. */
   const forbidden = useMemo(() => {
@@ -207,6 +234,94 @@ export function ArtifactTreeView({
     );
   }, [dragging, nodes]);
 
+  /**
+   * A folder, straight into rename.
+   *
+   * "New folder" then find it then rename it is three steps for one
+   * intention. It is created, opened, and its name selected, so the
+   * next thing typed is the thing it is called.
+   */
+  const addFolder = useCallback(
+    async (parentId: string) => {
+      const r = await client
+        .rpc<Changed>("artifact_create_folder", { name: "New folder", parent_id: parentId })
+        .catch((e) => ({ error: e instanceof Error ? e.message : String(e) }) as Changed);
+      if (r?.error) {
+        setError(r.error);
+        return;
+      }
+      if (parentId) {
+        setCollapsed((prev) => {
+          const next = new Set(prev);
+          next.delete(parentId);
+          return next;
+        });
+      }
+      await load();
+      if (r?.node_id) {
+        setDraft("New folder");
+        setRenaming(r.node_id);
+      }
+    },
+    [client, load],
+  );
+
+  /**
+   * Open a menu against the button that asked for it.
+   *
+   * The rect is read now and kept, rather than the menu being placed
+   * inside the row: the rows scroll, and anything absolutely
+   * positioned inside a scrolling box is clipped by it — the first
+   * version came out with its right edge and its shadow sheared off
+   * along the scroller's boundary.
+   */
+  const openMenu = (
+    e: React.MouseEvent<HTMLButtonElement>,
+    node: TreeNode,
+    kind: "create" | "more",
+  ) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    setMenu((on) =>
+      on?.id === node.node_id && on.kind === kind
+        ? null
+        : {
+            id: node.node_id,
+            kind,
+            top: box.bottom + 4,
+            right: Math.max(8, window.innerWidth - box.right),
+          },
+    );
+  };
+
+  /**
+   * Delete, or say why not.
+   *
+   * The refusal is the point. Deleting takes the whole version chain
+   * with it, so anything built on any version of it breaks — and it
+   * breaks somewhere else, later, on a document whose sources
+   * silently stop saying what they were.
+   */
+  const removeDocument = async (node: TreeNode) => {
+    setError("");
+    setNote("");
+    setBlocked(null);
+    try {
+      const r = await client.rpc<Changed>("artifact_delete_node", { node_id: node.node_id });
+      if (r?.blocked_by?.length) {
+        setBlocked({ id: node.node_id, name: node.name, by: r.blocked_by });
+        return;
+      }
+      if (r?.error) {
+        setError(r.error);
+        return;
+      }
+      setNote(r?.message ?? "");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const hasChildren = (node: TreeNode, index: number) =>
     index + 1 < rows.length ? rows[index + 1].depth > node.depth : node.descendants > 0;
 
@@ -215,26 +330,83 @@ export function ArtifactTreeView({
 
   return (
     <div className="kb-tree">
+      {/* No filter here. The centre column already searches the
+          documents, and a second box over the same names is two
+          places to look for one answer. */}
       <div className="kb-tree-bar">
-        <input
-          className="kb-tree-filter"
-          type="search"
-          placeholder="Search by title"
-          aria-label="Search the tree by title"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
         <button
           type="button"
           className="btn btn-xs kb-tree-new"
-          onClick={() => void act("artifact_create_folder", { name: "New folder" })}
+          onClick={() => onCreateInside("", "")}
+        >
+          New document
+        </button>
+        <button
+          type="button"
+          className="btn btn-xs kb-tree-new"
+          onClick={() => void addFolder("")}
         >
           New folder
+        </button>
+        <button
+          type="button"
+          className={showArchived ? "kb-tree-archived is-on" : "kb-tree-archived"}
+          aria-pressed={showArchived}
+          title="Archived documents are kept, and still resolve for anything built on them"
+          onClick={() => setShowArchived((on) => !on)}
+        >
+          {showArchived ? "Hide archived" : "Show archived"}
         </button>
       </div>
 
       {error && <p className="msg-error">{error}</p>}
       {note && <p className="kb-hint kb-tree-note">{note}</p>}
+
+      {/* Named, not counted. "3 documents depend on this" tells a
+          reader they are stuck; naming them tells them what to go and
+          change, which is the only version of this that leads
+          anywhere. */}
+      {blocked && (
+        <div className="kb-tree-blocked">
+          <p>
+            <strong>{blocked.name}</strong> was not deleted.{" "}
+            {blocked.by.length === 1 ? "This document is" : "These documents are"} built on
+            it:
+          </p>
+          <ul>
+            {blocked.by.map((d) => (
+              <li key={d.artifact_id}>
+                <button
+                  type="button"
+                  className="kb-tree-blocked-link"
+                  onClick={() => onOpen(d.artifact_id)}
+                >
+                  {d.name || d.artifact_id}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="kb-hint">
+            Archiving takes it out of the tree and leaves those documents intact.
+          </p>
+          <div className="kb-tree-blocked-do">
+            <button
+              type="button"
+              className="btn btn-xs"
+              onClick={() => {
+                const id = blocked.id;
+                setBlocked(null);
+                void act("artifact_archive_node", { node_id: id, archived: true });
+              }}
+            >
+              Archive instead
+            </button>
+            <button type="button" className="btn btn-xs" onClick={() => setBlocked(null)}>
+              Leave it
+            </button>
+          </div>
+        </div>
+      )}
 
       <ul className="kb-tree-rows">
         {rows.map((node, index) => {
@@ -248,6 +420,7 @@ export function ArtifactTreeView({
                 "kb-tree-row",
                 node.is_folder ? "is-folder" : "",
                 node.placeholder ? "is-placeholder" : "",
+                node.archived ? "is-archived" : "",
                 node.node_id === selectedId ? "is-current" : "",
                 isTarget ? "is-target" : "",
                 dragging === node.node_id ? "is-dragging" : "",
@@ -373,25 +546,217 @@ export function ArtifactTreeView({
                   rather than a way of telling two apart, and a column
                   of it beside the titles is what made this read as a
                   table. */}
+              {node.archived && <span className="kb-tree-badge">archived</span>}
               {staleIds?.has(node.node_id) && (
                 <span className="kb-tree-stale">out of date</span>
               )}
-              {node.is_folder && !node.placeholder && (
-                <button
-                  type="button"
-                  className="kb-tree-remove"
-                  title="Remove this folder — whatever is inside moves up"
-                  onClick={() =>
-                    void act("artifact_delete_folder", { folder_id: node.node_id })
-                  }
-                >
-                  ×
-                </button>
+
+              {/* Hidden until the row is pointed at or focused. Shown
+                  always, two controls on every row is more furniture
+                  than tree. */}
+              {!node.placeholder && (
+                <span className="kb-tree-actions">
+                  <button
+                    type="button"
+                    className={
+                      menu?.id === node.node_id && menu.kind === "create"
+                        ? "kb-tree-act is-open"
+                        : "kb-tree-act"
+                    }
+                    title="Create inside"
+                    aria-label={`Create inside ${node.name}`}
+                    aria-expanded={menu?.id === node.node_id && menu.kind === "create"}
+                    onClick={(e) => openMenu(e, node, "create")}
+                  >
+                    +
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      menu?.id === node.node_id && menu.kind === "more"
+                        ? "kb-tree-act is-open"
+                        : "kb-tree-act"
+                    }
+                    title="More"
+                    aria-label={`More actions for ${node.name}`}
+                    aria-expanded={menu?.id === node.node_id && menu.kind === "more"}
+                    onClick={(e) => openMenu(e, node, "more")}
+                  >
+                    ⋯
+                  </button>
+                </span>
               )}
             </li>
           );
         })}
       </ul>
+
+      {/* Drawn here rather than inside the row, and against the
+          viewport, so the scrolling list cannot clip it. */}
+      {menu && menuNode && (
+        <>
+          <div className="kb-tree-backdrop" onClick={() => setMenu(null)} />
+          <ul
+            className="kb-tree-menu"
+            role="menu"
+            style={{ top: menu.top, right: menu.right }}
+          >
+            {menu.kind === "create" ? (
+              <>
+                <li>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="popup-item overflow-item"
+                    onClick={() => {
+                      const id = menuNode.node_id;
+                      setMenu(null);
+                      setCollapsed((prev) => {
+                        const next = new Set(prev);
+                        next.delete(id);
+                        return next;
+                      });
+                      onCreateInside(id, menuNode.name);
+                    }}
+                  >
+                    Document
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="popup-item overflow-item"
+                    onClick={() => {
+                      const id = menuNode.node_id;
+                      setMenu(null);
+                      void addFolder(id);
+                    }}
+                  >
+                    Folder
+                  </button>
+                </li>
+              </>
+            ) : (
+              <>
+                {!menuNode.is_folder && (
+                  <li>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="popup-item overflow-item"
+                      onClick={() => {
+                        const id = menuNode.node_id;
+                        setMenu(null);
+                        onOpen(id);
+                      }}
+                    >
+                      Open
+                    </button>
+                  </li>
+                )}
+                {menuNode.is_folder && (
+                  <li>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="popup-item overflow-item"
+                      onClick={() => {
+                        setMenu(null);
+                        setDraft(menuNode.name);
+                        setRenaming(menuNode.node_id);
+                      }}
+                    >
+                      Rename
+                    </button>
+                  </li>
+                )}
+                {menuNode.depth > 0 && (
+                  <li>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="popup-item overflow-item"
+                      onClick={() => {
+                        const id = menuNode.node_id;
+                        setMenu(null);
+                        void act("artifact_move_node", { node_id: id, parent_id: "" });
+                      }}
+                    >
+                      Move to top level
+                    </button>
+                  </li>
+                )}
+
+                {/* Archiving and deleting are different answers to the
+                    same wish, and the difference is what happens to the
+                    documents built on this one. Archive is listed
+                    first because it is the one that is always safe. */}
+                {!menuNode.is_folder && (
+                  <li className="kb-tree-menu-sep">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="popup-item overflow-item"
+                      title={
+                        menuNode.archived
+                          ? "Put it back in the tree"
+                          : "Out of the tree and the list; anything built on it still resolves"
+                      }
+                      onClick={() => {
+                        const id = menuNode.node_id;
+                        const archived = !menuNode.archived;
+                        setMenu(null);
+                        void act("artifact_archive_node", { node_id: id, archived });
+                      }}
+                    >
+                      {menuNode.archived ? "Restore" : "Archive"}
+                    </button>
+                  </li>
+                )}
+                {!menuNode.is_folder && (
+                  <li>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="popup-item overflow-item is-destructive"
+                      title="Refused while another document is built on this one"
+                      onClick={() => {
+                        const node = menuNode;
+                        setMenu(null);
+                        void removeDocument(node);
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </li>
+                )}
+                {menuNode.is_folder && (
+                  <li className="kb-tree-menu-sep">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="popup-item overflow-item"
+                      /* Not "delete": a folder is an arrangement, and
+                         what is inside it survives. Saying "delete"
+                         beside a folder full of documents is a
+                         sentence people read twice. */
+                      title="Whatever is inside moves up a level"
+                      onClick={() => {
+                        const id = menuNode.node_id;
+                        setMenu(null);
+                        void act("artifact_delete_folder", { folder_id: id });
+                      }}
+                    >
+                      Remove folder
+                    </button>
+                  </li>
+                )}
+              </>
+            )}
+          </ul>
+        </>
+      )}
 
       {/* The way back to the top level. Without it a document dragged
           into a folder can only be moved to another folder, and the
