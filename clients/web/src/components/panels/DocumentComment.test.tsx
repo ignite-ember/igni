@@ -757,17 +757,15 @@ describe("putting the comment rail away", () => {
     expect(document.querySelector(".doc-rail-head")).not.toBeNull();
   });
 
-  it("keeps the heading it collapsed, not a bare icon", () => {
-    // This used to be a 30px strip down the right edge, where the
-    // only thing that fitted was the bubble. It is a section of the
-    // left column now, stacked under the hierarchy and over the
-    // version history, and a collapsed section that loses its name
-    // reads as an icon floating between two labelled things.
+  it("is an icon, not the word set sideways", () => {
+    // The lane is 30px. "Comments" does not fit across it, and set
+    // down it is a column of rotated capitals nobody reads — so the
+    // only text here is the count.
     setupHideable(true);
     const button = screen.getByRole("button", { name: "Show comments" });
 
     expect(button.querySelector("svg")).not.toBeNull();
-    expect(button.textContent).toContain("Comments");
+    expect(button.textContent).toBe("");
   });
 
   it("keeps saying how many there are", () => {

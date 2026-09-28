@@ -4422,18 +4422,30 @@ button {
   width: min(1620px, 100%);
 }
 
-/* Reading is back to one measure. The conversation used to sit to the
-   right of the text and take its 24rem out of the page, so the page
-   was widened to stop the prose being set in a 19-em column. It is in
-   the left column now, and the document pays nothing for it. */
+/* And so is reading, now that the conversation sits beside the text.
+   Without this the rail takes its 24rem out of the 900px measure and
+   leaves the document a 19-em column — narrower than the prose it is
+   setting, which is the one thing a reading view cannot be. */
 .page-measure:has(.kb-doc-reading) {
+  width: min(1180px, 100%);
+}
+
+/* The gutter, the document and the rail. */
+.page-measure:has(.kb-shell-with-tree):has(.kb-doc-reading) {
+  width: min(1544px, 100%);
+}
+
+/* …and gives it back when the rail is put away. The extra 280px is
+   the rail's, borrowed so the document does not pay for it; keeping
+   the page stretched with nothing in the second column leaves the
+   prose against the left edge of a void, which is a worse read than
+   the one the widening was protecting. */
+.page-measure:has(.kb-doc-reading .doc-rail-stowed) {
   width: min(900px, 100%);
 }
 
-/* Plus the left column, which is beside the measure rather than
-   inside it. */
-.page-measure:has(.kb-shell-with-tree):has(.kb-doc-reading) {
-  width: min(1264px, 100%);
+.page-measure:has(.kb-shell-with-tree):has(.kb-doc-reading .doc-rail-stowed) {
+  width: min(1180px, 100%);
 }
 
 .drawer {
@@ -10404,7 +10416,7 @@ button {
    and the rail together, so padding only the split would slide the
    prose out from under its own title. */
 .kb-shell-with-tree .kb-doc {
-  padding-left: calc(var(--tree-width) + 3rem);
+  padding-left: calc(24rem + 28px);
 }
 
 @media (max-width: 78rem) {
@@ -11232,7 +11244,7 @@ button {
    cannot drift apart. */
 :root {
   --tree-left: 18px;
-  --tree-width: 21rem;
+  --tree-width: 15.5rem;
 }
 
 /* A rule between the hierarchy and what you are reading.
@@ -11261,126 +11273,25 @@ button {
   }
 }
 
-/* Everything *about* the document, down the left.
-   Where you are, what was said about it, and what it has been. Out of
-   the flow: in a column it pushed the artifact off-centre and the page
-   had to be widened to compensate, and pinned, the artifact is centred
-   in the window and the search above it lines up with the artifact
-   rather than with whatever was left over. */
-.kb-side {
+/* Against the left edge of the content area, out of the flow.
+   In a column it pushed the artifact off-centre and the page had to be
+   widened to compensate; pinned, the artifact is centred in the window
+   and the search above it lines up with the artifact rather than with
+   whatever was left after the tree. */
+.kb-tree {
   position: absolute;
   left: var(--tree-left);
   top: 16px;
   width: var(--tree-width);
+  /* Tall enough for the tree it holds, never taller than the window.
+     Stretched to the bottom, the top-level drop zone ended up pinned
+     to the foot of the screen with a field of nothing above it, which
+     reads as an unrelated control rather than as the end of the
+     list. */
   max-height: calc(100% - 32px);
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  /* The whole column scrolls as one. Three separately scrolling boxes
-     stacked in a viewport's height is three places to lose your
-     position. */
-  overflow-y: auto;
-  gap: 10px;
-}
-
-/* A section of it, not a column of its own any more. */
-.kb-tree {
-  display: flex;
-  flex-direction: column;
-  /* Bounded, so a long tree cannot push the conversation and the
-     history off the bottom of the column and out of reach. */
-  max-height: 46vh;
-  flex: none;
   gap: 8px;
-}
-
-.kb-side-slot {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  gap: 10px;
-}
-
-.kb-side-slot:empty {
-  display: none;
-}
-
-/* Between the sections. The same rule that divides the column from
-   the document, turned on its side: what it is saying in both places
-   is "a different kind of thing starts here". */
-.kb-side-rule {
-  flex: none;
-  height: 1px;
-  background: var(--border-soft);
-}
-
-/* The sections line up with each other and with the tree above them.
-   The rail's header carried a card's padding and the history's
-   heading carried none, so side by side they read as two different
-   kinds of thing rather than two parts of one column. */
-.kb-side .doc-rail-head {
-  padding: 2px 6px 8px;
-  border-bottom: 0;
-}
-
-.kb-side .doc-rail-body {
-  padding-left: 6px;
-  padding-right: 6px;
-}
-
-.kb-side .kb-lineage {
-  margin-top: 0;
-  padding: 0 6px;
-}
-
-.kb-side .kb-lineage-heading {
-  margin: 0 0 8px;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-}
-
-/* Collapsed, the section still reads as a section: the same label in
-   the same place, with the count and the way back on it. */
-.kb-side .doc-rail-stowed {
-  max-height: none;
-}
-
-.kb-side .doc-rail-restore {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 2px 6px 8px;
-  color: var(--fg-muted);
-  background: none;
-  border: 0;
-  cursor: pointer;
-}
-
-.doc-rail-stowed-label {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.kb-side .doc-rail-empty {
-  padding-left: 6px;
-  padding-right: 6px;
-}
-
-/* The prompt sits under the button rather than beside it. At this
-   width they shared a line and "New comment" broke across two. */
-.kb-side .doc-comment-bar {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  padding-left: 6px;
-  padding-right: 6px;
-}
-
-.kb-side .doc-comment-bar .btn {
-  white-space: nowrap;
 }
 
 /* No room to pin it: below this width the centred measure reaches the
@@ -11388,16 +11299,10 @@ button {
    flow above the content, which is wrong for a wide window and right
    for a narrow one. */
 @media (max-width: 78rem) {
-  .kb-side {
+  .kb-tree {
     position: static;
     width: auto;
-    max-height: none;
-    overflow-y: visible;
     margin-bottom: 18px;
-  }
-
-  .kb-tree {
-    max-height: none;
   }
 }
 
@@ -12608,16 +12513,18 @@ button {
    the answer — then scrolls back to find the sentence it was about —
    is doing the join by hand. Beside it, both are in view. */
 
-/* One column now. The conversation moved to the left, beside the
-   hierarchy, so the document has the measure to itself. */
 .kb-doc-split {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(19rem, 24rem);
+  gap: 28px;
   align-items: start;
 }
 
+/* Put away, the rail keeps a strip — the way back has to be where the
+   thing went. Everything else is the document's. */
 .kb-doc-split-wide {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
 }
 
 /* Below the breakpoint the rail cannot be beside anything: two 10rem
@@ -12630,18 +12537,23 @@ button {
   }
 }
 
-/* A section of the left column rather than a panel beside the text.
-   No box: it is already inside one, and a bordered card inside a
-   bordered column is two frames around one thing. The rules above and
-   below it do the separating. */
 .doc-rail {
+  position: sticky;
+  top: 8px;
   display: flex;
   flex-direction: column;
-  flex: none;
-  min-height: 0;
-  /* Bounded so a long thread cannot push the version history out of
-     reach below it; the thread scrolls inside this. */
-  max-height: 52vh;
+  max-height: calc(100vh - 160px);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+
+@media (max-width: 64rem) {
+  .doc-rail {
+    position: static;
+    max-height: none;
+  }
 }
 
 .doc-rail-head {

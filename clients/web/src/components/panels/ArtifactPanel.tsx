@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -212,14 +211,6 @@ export function ArtifactPanel({
   const [openArchived, setOpenArchived] = useState(false);
   /** Bumped when the page archived or restored the open document. */
   const [detailNonce, setDetailNonce] = useState(0);
-  /**
-   * The node in the left column the document portals its own sections
-   * into.
-   *
-   * State rather than a ref: the portal has to re-render once the node
-   * exists, and a ref assignment does not tell React that.
-   */
-  const [sideSlot, setSideSlot] = useState<HTMLDivElement | null>(null);
   /**
    * Whether the comment rail is put away.
    *
@@ -710,19 +701,13 @@ export function ArtifactPanel({
           onDismiss={() => setExported(null)}
         />
       )}
-      {/* Everything *about* the document down the left, the document
-          itself in the middle. Where you are, what was said about it
-          and what it has been — three answers to "what am I looking
-          at", and they belong together rather than one on each side
-          of the text.
-
-          The tree belongs to the *panel*, not to the list: a reader
-          who opens a document has not stopped needing to know where
-          they are, and a tree that disappears on the way in is a tree
-          you navigate by going back. */}
+      {/* Hierarchy left, the artifact in the middle, its comments on
+          the right. The tree belongs to the *panel*, not to the list:
+          a reader who opens a document has not stopped needing to know
+          where they are, and a tree that disappears on the way in is a
+          tree you navigate by going back. */}
       <div className={status === null ? "kb-shell" : "kb-shell kb-shell-with-tree"}>
         {status !== null && status.enabled && (
-          <aside className="kb-side" aria-label="About this document">
           <ArtifactTreeView
             client={client}
             selectedId={selected}
@@ -745,13 +730,6 @@ export function ArtifactPanel({
               setView("add");
             }}
           />
-          {/* Where the open document's conversation and its history
-              are put. They are rendered by the document — the thread
-              needs the element it is quoting — and portalled in here,
-              so the column can hold them without the page having to
-              hoist a DOM ref out of the article. */}
-          <div className="kb-side-slot" ref={setSideSlot} />
-          </aside>
         )}
         <div className="kb-shell-body">
       {status === null ? (
@@ -842,7 +820,6 @@ export function ArtifactPanel({
           onVersionCount={setVersionCount}
           onArchivedChange={setOpenArchived}
           reloadNonce={detailNonce}
-          sideSlot={sideSlot}
         />
       ) : !status.enabled ? (
         <DisabledState />
@@ -962,7 +939,6 @@ function DocumentDetail({
   onVersionCount,
   onArchivedChange,
   reloadNonce = 0,
-  sideSlot,
 }: {
   client: IgniClient;
   id: string;
@@ -988,9 +964,6 @@ function DocumentDetail({
   onArchivedChange: (archived: boolean) => void;
   /** Bumped by the page when it archived or restored this document. */
   reloadNonce?: number;
-  /** The left column's node, where this document shows its thread
-   *  and its history. */
-  sideSlot?: HTMLElement | null;
 }) {
   const [doc, setDoc] = useState<ArtifactsDocFull | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1318,11 +1291,12 @@ function DocumentDetail({
           onClose={onCompareClosed}
         />
       ) : (
-        /* One column. The conversation and the history moved to the
-           left, beside the hierarchy: they are all answers to "what
-           am I looking at", and a document with one of them on each
-           side is a page the eye has to cross to read. */
-        <div className="kb-doc-split kb-doc-split-wide">
+        /* Document left, its conversation right. Two columns rather
+           than one under the other: a comment is about a *passage*,
+           and a reader who has to scroll past the whole document to
+           read the answer — and scroll back to find the sentence it
+           was about — is doing the join by hand. */
+        <div className={commentsHidden ? "kb-doc-split kb-doc-split-wide" : "kb-doc-split"}>
           <div className="kb-doc-body markdown-body" ref={bodyRef}>
             <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
               {doc.content || "_(empty)_"}
@@ -1341,23 +1315,16 @@ function DocumentDetail({
             />
           </div>
 
-        </div>
-      )}
+          {/* Commenting on the local copy is talking to the agent —
+              there is nobody else here — and the exchange stays on
+              this page. Right-click a selection to ask about that
+              passage, or use the composer for the document as a
+              whole; the reply streams into this rail either way.
 
-      {/* Rendered by the document and shown in the left column.
-          A portal rather than a hoist: the thread needs the element
-          it is quoting from, which is this component's own ref, and
-          moving the component up to reach the column would mean
-          threading that ref back down through the page.
-
-          ``onRevised`` refetches, because the answer to a comment is
-          usually a new version and the page under it is then out of
-          date with itself. */}
-      {sideSlot &&
-        !comparing &&
-        createPortal(
-          <>
-            <div className="kb-side-rule" />
+              ``onRevised`` refetches, because the answer to a comment
+              is usually a new version and the page under it is then
+              out of date with itself. */}
+          <div className="kb-doc-aside">
             <DocumentComment
               client={client}
               artifactId={doc.id}
@@ -1366,25 +1333,24 @@ function DocumentDetail({
               frozen={frozen}
               hidden={commentsHidden}
               onHiddenChange={onCommentsHiddenChange}
-              onRevised={() => {
-                // Back to head: the new version is the answer, and
-                // staying pinned to the one that prompted it would
-                // show the reply beside the text it asked to change.
+            onRevised={() => {
+              // Back to head: the new version is the answer, and
+              // staying pinned to the one that prompted it would show
+              // the reply beside the text it asked to change.
                 setVersion(0);
                 setDocNonce((v) => v + 1);
                 setLineageNonce((v) => v + 1);
               }}
             />
-            {versions.length > 1 && <div className="kb-side-rule" />}
-            <VersionSwitcher
-              versions={versions}
-              current={doc.n ?? 0}
-              onPick={(n) => setVersion(n)}
-            />
-          </>,
-          sideSlot,
-        )}
+          </div>
+        </div>
+      )}
 
+      <VersionSwitcher
+        versions={versions}
+        current={doc.n ?? 0}
+        onPick={(n) => setVersion(n)}
+      />
       <LineageSection
         client={client}
         artifactId={doc.id}
