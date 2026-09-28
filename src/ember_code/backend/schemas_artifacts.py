@@ -363,6 +363,15 @@ class ArtifactCommentRow(BaseModel):
     #: head. The passage may have been rewritten since, so the
     #: reviewer is told rather than left to notice.
     behind_head: bool = False
+    #: Where the document is now.
+    #:
+    #: Sent because accepting a suggestion appends after *head*, not
+    #: after the version commented on, and the button that does it has
+    #: to be able to say which version it will write. Without this the
+    #: screen could only guess from ``n`` — and on a comment left on
+    #: v2 of a document since revised to v5, it promised v3 and wrote
+    #: v6.
+    head_n: int = 0
 
 
 class ArtifactCommentResolved(BaseModel):

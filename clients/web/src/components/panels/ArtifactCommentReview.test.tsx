@@ -39,6 +39,7 @@ function comment(overrides: Record<string, unknown> = {}) {
     author: "colleague@acme.test",
     at: "2026-09-26T10:00:00Z",
     behind_head: false,
+    head_n: 2,
     ...overrides,
   };
 }
@@ -235,5 +236,32 @@ describe("groupByDocument", () => {
       ["Zeta", 2],
       ["Alpha", 1],
     ]);
+  });
+});
+
+describe("the version an accepted suggestion writes", () => {
+  it("counts from head, not from the version commented on", () => {
+    // Accepting revises the document, and a revision appends after
+    // whatever is current. A comment left on v2 of a document since
+    // taken to v5 used to offer "Accept and write v3" and write v6 —
+    // a button wrong about what it writes to the store.
+    const { client } = makeClient([
+      comment({ n: 2, head_n: 5, suggested_text: "the replacement", behind_head: true }),
+    ]);
+    render(<ArtifactCommentReview client={client} />);
+
+    return screen.findByRole("button", { name: "Accept and write v6" });
+  });
+
+  it("falls back to the comment's own version when head is unknown", () => {
+    // A comment can outlive the document it was left on, and the
+    // projection then has no head to report. Offering "v1" there
+    // would be a worse guess than the one fact we still have.
+    const { client } = makeClient([
+      comment({ n: 4, head_n: 0, suggested_text: "the replacement" }),
+    ]);
+    render(<ArtifactCommentReview client={client} />);
+
+    return screen.findByRole("button", { name: "Accept and write v5" });
   });
 });

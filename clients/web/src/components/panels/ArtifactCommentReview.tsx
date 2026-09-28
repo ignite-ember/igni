@@ -37,6 +37,8 @@ interface CommentRow {
   author: string;
   at: string;
   behind_head: boolean;
+  /** Where the document is now. Accepting appends after *this*. */
+  head_n: number;
 }
 
 interface Resolved {
@@ -141,7 +143,7 @@ export function ArtifactCommentReview({
             ? "Nothing is waiting on you."
             : `${rows.length} comment${rows.length === 1 ? "" : "s"} waiting`}
         </span>
-        <button type="button" onClick={sync} disabled={syncing}>
+        <button type="button" className="btn btn-sm" onClick={sync} disabled={syncing}>
           {syncing ? "Checking…" : "Check for new"}
         </button>
       </div>
@@ -209,6 +211,7 @@ export function ArtifactCommentReview({
                 {comment.suggested_text ? (
                   <button
                     type="button"
+                    className="btn btn-sm btn-primary"
                     disabled={busy === comment.comment_id}
                     onClick={() =>
                       act(
@@ -218,11 +221,19 @@ export function ArtifactCommentReview({
                       )
                     }
                   >
-                    Accept and write v{/* the next one */ comment.n + 1}
+                    {/* Counted from *head*, not from the version
+                        commented on. Accepting revises the document,
+                        and a revision appends after whatever is
+                        current — so on a comment left on v2 of a
+                        document since taken to v5, this said "write
+                        v3" and wrote v6. A button that writes to the
+                        store must not be wrong about what it writes. */}
+                    Accept and write v{Math.max(comment.head_n, comment.n) + 1}
                   </button>
                 ) : null}
                 <button
                   type="button"
+                  className="btn btn-sm"
                   disabled={busy === comment.comment_id}
                   onClick={() => act(comment, "resolved")}
                 >
@@ -230,6 +241,7 @@ export function ArtifactCommentReview({
                 </button>
                 <button
                   type="button"
+                  className="btn btn-sm btn-quiet"
                   disabled={busy === comment.comment_id}
                   onClick={() => act(comment, "rejected")}
                 >

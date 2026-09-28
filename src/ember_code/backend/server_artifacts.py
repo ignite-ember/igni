@@ -396,6 +396,7 @@ class ArtifactController:
                     # rather than letting a reviewer act on a quote that
                     # no longer appears in the document.
                     behind_head=bool(head_n and c.n < head_n),
+                    head_n=head_n,
                 )
             )
         return out
