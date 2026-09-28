@@ -11239,6 +11239,40 @@ button {
   min-width: 0;
 }
 
+/* Where the hierarchy sits, in one place. The separator is drawn
+   from the same two numbers, so the rule and the column it divides
+   cannot drift apart. */
+:root {
+  --tree-left: 18px;
+  --tree-width: 15.5rem;
+}
+
+/* A rule between the hierarchy and what you are reading.
+   Drawn on the page body rather than as a border on the tree: the
+   tree is only as tall as its rows, and a border that stops halfway
+   down the window reads as an unfinished box rather than as the edge
+   of a column. Full height, it is the edge.
+
+   Only where there is a tree to divide, and only while it is pinned —
+   below 78rem it rejoins the flow above the content, where a vertical
+   rule would cut across nothing. */
+.page-body:has(.kb-shell-with-tree)::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--tree-left) + var(--tree-width) + 16px);
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-soft);
+  pointer-events: none;
+}
+
+@media (max-width: 78rem) {
+  .page-body:has(.kb-shell-with-tree)::before {
+    display: none;
+  }
+}
+
 /* Against the left edge of the content area, out of the flow.
    In a column it pushed the artifact off-centre and the page had to be
    widened to compensate; pinned, the artifact is centred in the window
@@ -11246,9 +11280,9 @@ button {
    whatever was left after the tree. */
 .kb-tree {
   position: absolute;
-  left: 18px;
+  left: var(--tree-left);
   top: 16px;
-  width: 15.5rem;
+  width: var(--tree-width);
   /* Tall enough for the tree it holds, never taller than the window.
      Stretched to the bottom, the top-level drop zone ended up pinned
      to the foot of the screen with a field of nothing above it, which
@@ -11595,6 +11629,40 @@ button {
 .kb-tree-blocked ul {
   margin: 0 0 6px;
   padding-left: 16px;
+}
+
+/* Frozen, said on the document itself.
+   Quiet rather than alarming: nothing is wrong, and an archived
+   document is a normal thing to be reading. What it has to do is stop
+   a reader from planning an edit. */
+.kb-doc-frozen {
+  margin: 0 0 20px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--fg-muted);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+
+.kb-doc-frozen strong {
+  color: var(--fg);
+}
+
+/* And again beside the thread, because the thread is where somebody
+   would otherwise ask igni to change something. */
+.doc-rail-frozen {
+  flex: none;
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
+/* Which way each link runs. "Related" leaves the reader guessing
+   whether to go and edit that document or this one. */
+.kb-tree-blocked-way {
+  color: var(--fg-muted);
 }
 
 /* The named document reads as somewhere to go, not as a control.
