@@ -1385,6 +1385,7 @@ function DocumentDetail({
               <VersionSwitcher
                 versions={versions}
                 current={doc.n ?? 0}
+                full={asideView === "versions"}
                 limit={asideView === "both" ? VERSIONS_IN_BOTH : 0}
                 onShowAll={() => onAsideViewChange?.("versions")}
                 onPick={(n) => setVersion(n)}
@@ -1484,12 +1485,16 @@ function VersionSwitcher({
   versions,
   current,
   limit = 0,
+  full = false,
   onShowAll,
   onPick,
 }: {
   versions: ArtifactVersionRow[];
   current: number;
   limit?: number;
+  /** Showing the whole history, so this section takes the column and
+   *  scrolls inside itself rather than sizing to its rows. */
+  full?: boolean;
   onShowAll?: () => void;
   onPick: (n: number) => void;
 }) {
@@ -1504,7 +1509,7 @@ function VersionSwitcher({
       : undefined;
   const rows = hiddenCurrent ? [...shown, hiddenCurrent] : shown;
   return (
-    <section className="kb-lineage">
+    <section className={full ? "kb-lineage kb-lineage-full" : "kb-lineage"}>
       <h3 className="kb-lineage-heading">Versions</h3>
       <ul className="kb-lineage-rows">
         {rows.map((v) => (

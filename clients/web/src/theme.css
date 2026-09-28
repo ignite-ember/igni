@@ -10128,21 +10128,33 @@ button {
   overflow: hidden;
 }
 
-/* The history takes what it needs up to about a third of the column
-   and scrolls inside that. A long history is a thing you look
-   something up in, not a thing you read to the end, and it must not
-   cost the conversation its place. */
+/* Five rows and a link. It sizes to them and does not give ground:
+   left shrinkable, the conversation underneath squeezed it to
+   nothing, and what was left was a heading and a link sitting on top
+   of the rule below them. */
 .kb-doc-aside .kb-lineage {
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  flex: 0 1 auto;
+  flex: none;
 }
 
-.kb-doc-aside .kb-lineage-rows {
+/* Showing the whole history is the other case. There it takes the
+   column and scrolls inside itself — a fifty-version list is a thing
+   you look something up in, not a thing you read to the end. */
+.kb-doc-aside .kb-lineage-full {
+  flex: 1;
   min-height: 0;
-  max-height: 32vh;
+}
+
+.kb-doc-aside .kb-lineage-full .kb-lineage-rows {
+  min-height: 0;
   overflow-y: auto;
+}
+
+/* The conversation takes what the history leaves, and scrolls. */
+.kb-doc-aside .doc-rail {
+  flex: 1;
+  min-height: 0;
 }
 
 @media (max-width: 64rem) {
