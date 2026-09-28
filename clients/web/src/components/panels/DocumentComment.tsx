@@ -901,6 +901,25 @@ export function DocumentComment({
     };
   }, [client, artifactId]);
 
+  /**
+   * Reading the document puts the selection down.
+   *
+   * The selection exists to answer "which passage is this card
+   * about". Once the reader has gone back to the text, it has been
+   * answered — and a ring and a curve left over a sentence somebody
+   * is reading is furniture on top of the thing it was pointing at.
+   *
+   * A click in the prose only. Right-click keeps its menu, and a
+   * click in the rail is the rail's own business.
+   */
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const clear = () => setFocused(null);
+    body.addEventListener("click", clear);
+    return () => body.removeEventListener("click", clear);
+  }, [bodyRef]);
+
   const startThread = useCallback(
     (quote: string, quoteStart = -1) => {
       const key = `th${(seq.current += 1)}`;
@@ -1099,8 +1118,19 @@ export function DocumentComment({
                 bodyRef={bodyRef}
                 focused={focused === thread.key}
                 onFocus={() => {
-                  setFocused(thread.key);
-                  revealPassage(thread.key);
+                  // Pressing the selected one again puts it down. A
+                  // selection with no way out but selecting something
+                  // else leaves the document permanently marked up
+                  // with an answer the reader has finished with.
+                  //
+                  // Except while it is being written. A thread with
+                  // nothing said in it yet is only on screen because
+                  // it is selected, so putting it down would take the
+                  // box somebody is typing into with it.
+                  const composing = thread.turns.length === 0;
+                  const already = focused === thread.key && !composing;
+                  setFocused(already ? null : thread.key);
+                  if (!already) revealPassage(thread.key);
                 }}
                 onSend={(body) => void send(thread.key, body)}
               />

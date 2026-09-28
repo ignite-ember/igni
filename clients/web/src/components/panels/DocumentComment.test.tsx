@@ -361,6 +361,48 @@ describe("the two directions between a passage and its thread", () => {
     expect(document.querySelector(".doc-conv-focused")).toBeTruthy();
   });
 
+  it("clicking the selected thread again puts it down", async () => {
+    // A selection with no way out but selecting something else
+    // leaves the document permanently marked up with an answer the
+    // reader has finished with.
+    const harness = setup();
+    openAnchored(harness.body);
+    type("@igni why?");
+    ask();
+    await screen.findByText(/why\?/);
+
+    fireEvent.click(document.querySelector(".doc-conv-anchor") as HTMLElement);
+    expect(document.querySelector(".doc-conv-focused")).toBeNull();
+  });
+
+  it("but not while the first message is still being written", async () => {
+    // A thread with nothing said in it yet is on screen only because
+    // it is selected. Putting it down would take the box somebody is
+    // typing into with it.
+    const { body } = setup();
+    openAnchored(body);
+    type("half a thought");
+
+    fireEvent.click(document.querySelector(".doc-conv-anchor") as HTMLElement);
+
+    expect(document.querySelector(".doc-conv-focused")).toBeTruthy();
+    expect(composerIn(0).value).toBe("half a thought");
+  });
+
+  it("reading the document puts it down too", async () => {
+    // Once the reader is back in the prose the question has been
+    // answered, and a ring left over the sentence they are reading is
+    // furniture on top of the thing it was pointing at.
+    const { body } = setup();
+    openAnchored(body);
+    expect(document.querySelector(".doc-conv-focused")).toBeTruthy();
+
+    fireEvent.click(body);
+
+
+    expect(document.querySelector(".doc-conv-focused")).toBeNull();
+  });
+
   it("hit-tests a point against the marked passages", () => {
     // Highlights painted through the Custom Highlight API are not in
     // the DOM and cannot carry a click handler, so the ranges are
