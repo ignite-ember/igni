@@ -4379,11 +4379,15 @@ button {
   overflow-y: auto;
   overscroll-behavior: contain;
   font-size: 13.5px;
-  /* The frame the hierarchy pins to. It sits against the left edge of
-     the content area rather than taking a column, so the artifact
-     stays centred in the window instead of centred in what is left
-     over after the tree. */
-  position: relative;
+  /* Deliberately *not* ``position: relative``. This box scrolls, and
+     the hierarchy is positioned against ``.page`` above it, which
+     does not — that is the whole of what keeps the tree still while
+     the document moves under it. Making this a containing block
+     again would re-attach the tree to the scrolling content.
+
+     The tree escapes this box's ``overflow`` for the same reason: an
+     absolutely positioned element is only clipped by ancestors in its
+     containing-block chain, and this is not one. */
 }
 
 /* The measure. Wider than the drawer's 620px, but not the full width
@@ -10075,6 +10079,26 @@ button {
   padding-left: 20px;
 }
 
+/* What pins: the history and the conversation as one unit. The
+   column around it stays stretched, so the rule dividing it from the
+   document still runs the document's full height. */
+.kb-doc-aside-pin {
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  max-height: calc(100vh - 200px);
+}
+
+@media (max-width: 64rem) {
+  .kb-doc-aside-pin {
+    position: static;
+    max-height: none;
+  }
+}
+
 /* Between the conversation and the history, which are two kinds of
    thing in one column. */
 .kb-aside-rule {
@@ -11261,56 +11285,65 @@ button {
   min-width: 0;
 }
 
-/* Where the hierarchy sits, in one place. The separator is drawn
-   from the same two numbers, so the rule and the column it divides
-   cannot drift apart. */
 :root {
-  --tree-left: 18px;
   --tree-width: 15.5rem;
+  /* What sits above the scrolling area inside ``.page``: the
+     breadcrumbs and the page head. The hierarchy is pinned to
+     ``.page`` rather than to the box that scrolls, so it needs to
+     start below them. Tracks ``.page-crumbs`` + ``.page-head``; if
+     either changes height this follows. */
+  --page-chrome-h: 82px;
 }
 
-/* A rule between the hierarchy and what you are reading.
-   Drawn on the page body rather than as a border on the tree: the
-   tree is only as tall as its rows, and a border that stops halfway
-   down the window reads as an unfinished box rather than as the edge
-   of a column. Full height, it is the edge.
+/* The gutter the hierarchy lives in: against the left edge of the
+   content, out of the flow, and as tall as everything beside it.
 
-   Only where there is a tree to divide, and only while it is pinned —
-   below 78rem it rejoins the flow above the content, where a vertical
-   rule would cut across nothing. */
-.page-body:has(.kb-shell-with-tree)::before {
-  content: "";
+   Out of the flow because in a column it pushed the artifact
+   off-centre and the page had to be widened to compensate; docked
+   like this the artifact is centred in the window and the search
+   above it lines up with the artifact rather than with whatever was
+   left over after the tree.
+
+   As tall as the content because that is what lets the tree inside it
+   stay stuck all the way down. ``pointer-events`` are off so the
+   empty part of the dock does not swallow clicks meant for the page
+   underneath; the tree turns them back on for itself. */
+.kb-tree-dock {
   position: absolute;
-  left: calc(var(--tree-left) + var(--tree-width) + 16px);
-  top: 0;
+  left: 18px;
+  top: calc(var(--page-chrome-h) + 16px);
   bottom: 0;
-  width: 1px;
-  background: var(--border-soft);
+  width: var(--tree-width);
+  /* Off, so the empty part of a full-height dock does not swallow
+     clicks meant for the page underneath. The tree turns them back
+     on for itself. */
   pointer-events: none;
 }
 
-@media (max-width: 78rem) {
-  .page-body:has(.kb-shell-with-tree)::before {
-    display: none;
-  }
+/* The rule between the hierarchy and what you are reading.
+   On the dock rather than on the tree: the tree is only as tall as
+   its rows, and a border that stopped halfway down the window would
+   read as an unfinished box rather than as the edge of a column. It
+   starts at the page head's own border so the two meet. */
+.kb-tree-dock::after {
+  content: "";
+  position: absolute;
+  right: -16px;
+  top: -16px;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-soft);
 }
 
-/* Against the left edge of the content area, out of the flow.
-   In a column it pushed the artifact off-centre and the page had to be
-   widened to compensate; pinned, the artifact is centred in the window
-   and the search above it lines up with the artifact rather than with
-   whatever was left after the tree. */
 .kb-tree {
-  position: absolute;
-  left: var(--tree-left);
-  top: 16px;
-  width: var(--tree-width);
+  pointer-events: auto;
+  width: 100%;
   /* Tall enough for the tree it holds, never taller than the window.
      Stretched to the bottom, the top-level drop zone ended up pinned
      to the foot of the screen with a field of nothing above it, which
      reads as an unrelated control rather than as the end of the
      list. */
-  max-height: calc(100% - 32px);
+  max-height: 100%;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -11321,10 +11354,21 @@ button {
    flow above the content, which is wrong for a wide window and right
    for a narrow one. */
 @media (max-width: 78rem) {
-  .kb-tree {
+  .kb-tree-dock {
     position: static;
     width: auto;
+    pointer-events: auto;
     margin-bottom: 18px;
+  }
+
+  /* Rejoined the flow above the content, where a vertical rule would
+     cut across nothing. */
+  .kb-tree-dock::after {
+    display: none;
+  }
+
+  .kb-tree {
+    max-height: none;
   }
 }
 
@@ -12571,20 +12615,15 @@ button {
 
    Bounded in height so a long thread scrolls inside itself rather
    than pushing the history off the bottom of the column. */
+/* Not sticky itself any more — the pin moved up to hold the history
+   and the conversation together. On its own, scrolling a long
+   document slid the version list out of the top of the window while
+   the thread stayed put, which read as the history having closed. */
 .doc-rail {
-  position: sticky;
-  top: 8px;
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 220px);
+  min-height: 0;
   overflow: hidden;
-}
-
-@media (max-width: 64rem) {
-  .doc-rail {
-    position: static;
-    max-height: none;
-  }
 }
 
 /* A label, not a title bar. The border under it belonged to the card

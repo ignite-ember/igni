@@ -708,6 +708,13 @@ export function ArtifactPanel({
           tree you navigate by going back. */}
       <div className={status === null ? "kb-shell" : "kb-shell kb-shell-with-tree"}>
         {status !== null && status.enabled && (
+          /* The tree is pinned inside a dock that spans the whole
+             scrollable height. It has to be *inside* something that
+             tall for ``position: sticky`` to hold all the way down —
+             docked to the viewport-height page body it came unstuck
+             partway through a long document, which is the one thing a
+             navigation column must not do. */
+          <div className="kb-tree-dock">
           <ArtifactTreeView
             client={client}
             selectedId={selected}
@@ -730,6 +737,7 @@ export function ArtifactPanel({
               setView("add");
             }}
           />
+          </div>
         )}
         <div className="kb-shell-body">
       {status === null ? (
@@ -1325,6 +1333,29 @@ function DocumentDetail({
               is usually a new version and the page under it is then
               out of date with itself. */}
           <div className="kb-doc-aside">
+            {/* Both sections pin together. The thread used to be the
+                only sticky thing here, so scrolling a long document
+                slid the version list out of the top of the window
+                while the conversation stayed — which read as the
+                history having been closed. */}
+            <div className="kb-doc-aside-pin">
+            {/* The history first, and the conversation under it.
+                Which version you are reading is the frame everything
+                else in this column is said within — a comment on v2
+                means something different from the same comment on the
+                current one — so it is settled before the thread, not
+                after it.
+
+                It is also the shorter and the more fixed of the two:
+                a list that does not change while you read it sits
+                still above one that grows. */}
+            <VersionSwitcher
+              versions={versions}
+              current={doc.n ?? 0}
+              onPick={(n) => setVersion(n)}
+            />
+            {versions.length > 1 && <div className="kb-aside-rule" />}
+
             <DocumentComment
               client={client}
               artifactId={doc.id}
@@ -1333,29 +1364,16 @@ function DocumentDetail({
               frozen={frozen}
               hidden={commentsHidden}
               onHiddenChange={onCommentsHiddenChange}
-            onRevised={() => {
-              // Back to head: the new version is the answer, and
-              // staying pinned to the one that prompted it would show
-              // the reply beside the text it asked to change.
+              onRevised={() => {
+                // Back to head: the new version is the answer, and
+                // staying pinned to the one that prompted it would
+                // show the reply beside the text it asked to change.
                 setVersion(0);
                 setDocNonce((v) => v + 1);
                 setLineageNonce((v) => v + 1);
               }}
             />
-
-            {/* The history joins the conversation rather than sitting
-                below the document. Both are things said *about* this
-                text — one by people, one by the revisions — and a
-                reader who has to scroll past the whole document to
-                find out it has six versions finds out too late. */}
-            {versions.length > 1 && !commentsHidden && (
-              <div className="kb-aside-rule" />
-            )}
-            <VersionSwitcher
-              versions={versions}
-              current={doc.n ?? 0}
-              onPick={(n) => setVersion(n)}
-            />
+            </div>
           </div>
         </div>
       )}
