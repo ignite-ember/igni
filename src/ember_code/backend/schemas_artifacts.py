@@ -374,6 +374,33 @@ class ArtifactCommentRow(BaseModel):
     head_n: int = 0
 
 
+class ArtifactCommentReplied(BaseModel):
+    """The outcome of answering a comment.
+
+    Two replies can come back from one send. The person's reply is
+    always posted; the agent's is posted only when the message
+    addressed ``@igni``, and only as a *suggestion* — the thread is
+    shared, other people are watching it, and an agent that appended a
+    version because somebody typed its name would be writing on their
+    behalf in public.
+    """
+
+    ok: bool = False
+    comment_id: str = ""
+    #: Who the message reached, for the UI to confirm.
+    mentioned: list[str] = Field(default_factory=list)
+    #: Handles that matched nobody in the thread.
+    unknown: list[str] = Field(default_factory=list)
+    #: True when ``@igni`` was addressed and the agent answered.
+    agent_replied: bool = False
+    agent_body: str = ""
+    #: Replacement text the agent proposed, if any. Applying it is
+    #: still the existing Accept button's job.
+    agent_suggestion: str = ""
+    message: str = ""
+    error: str = ""
+
+
 class ArtifactCommentAnchor(BaseModel):
     """What became of the passage a comment was left on.
 

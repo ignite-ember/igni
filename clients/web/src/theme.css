@@ -11186,6 +11186,105 @@ button {
   gap: 12px;
 }
 
+/* ── Replying ─────────────────────────────────────────────────────
+   Above the verdict buttons, because answering is the ordinary case
+   and closing is the exception. */
+.comment-reply {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 12px;
+}
+
+.comment-reply-field {
+  position: relative;
+}
+
+.comment-reply-input {
+  width: 100%;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.comment-reply-input:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+/* Over the text, not pushing it down: a picker that reflowed the card
+   would move the buttons under the pointer mid-type. */
+.comment-reply-picker {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 14rem;
+  max-width: 100%;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.26);
+}
+
+.comment-reply-pick {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 7px;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  color: var(--fg);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.comment-reply-pick:hover {
+  background: var(--bg-inset);
+}
+
+/* The agent reads differently from a colleague, because addressing it
+   is what turns a note into an instruction. */
+.comment-reply-pick.is-agent .comment-reply-handle {
+  color: var(--accent-orange-text, var(--fg));
+}
+
+.comment-reply-handle {
+  font-weight: 600;
+}
+
+.comment-reply-who {
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
+.comment-reply-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.comment-reply-hint,
+.comment-reply-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
 /* ── The document a comment is about ──────────────────────────────
    Opened by hovering a row in the queue, beside it rather than over
    it: the point is to read the passage *and* the comment, and a

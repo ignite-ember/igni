@@ -123,6 +123,10 @@ class ArtifactRpcHandler(RpcHandler):
     def artifact_comment_relevance(self, args: dict) -> Any:
         return self._ctx.backend.artifact_comment_relevance(args["comment_id"])
 
+    @rpc(RpcMethod.ARTIFACT_REPLY_COMMENT)
+    def artifact_reply_comment(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_reply_comment(args["comment_id"], args.get("body", ""))
+
     @rpc(RpcMethod.ARTIFACT_COMMENT)
     def artifact_comment(self, args: dict) -> Any:
         return self._ctx.backend.artifact_comment(

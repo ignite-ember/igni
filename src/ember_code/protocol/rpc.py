@@ -268,6 +268,7 @@ class RpcMethod(StrEnum):
     ARTIFACT_CANDIDATE_VERDICT = "artifact_candidate_verdict"
     ARTIFACT_COMMENT_ANCHOR = "artifact_comment_anchor"
     ARTIFACT_COMMENT_RELEVANCE = "artifact_comment_relevance"
+    ARTIFACT_REPLY_COMMENT = "artifact_reply_comment"
     ARTIFACT_RESOLVE_COMMENT = "artifact_resolve_comment"
     ARTIFACT_SYNC_COMMENTS = "artifact_sync_comments"
     ARTIFACT_ASK = "artifact_ask"

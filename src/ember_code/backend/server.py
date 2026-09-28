@@ -79,6 +79,7 @@ if TYPE_CHECKING:
         ArtifactCommentAnchor,
         ArtifactCommentPosted,
         ArtifactCommentRelevance,
+        ArtifactCommentReplied,
         ArtifactCommentResolved,
         ArtifactCommentRow,
         ArtifactDrift,
@@ -1067,6 +1068,10 @@ class BackendServer:
     async def artifact_comment_relevance(self, comment_id: str) -> ArtifactCommentRelevance:
         """See :meth:`ArtifactController.comment_relevance`."""
         return await self.artifacts.comment_relevance(comment_id=comment_id)
+
+    async def artifact_reply_comment(self, comment_id: str, body: str) -> ArtifactCommentReplied:
+        """See :meth:`ArtifactController.reply_comment`."""
+        return await self.artifacts.reply_comment(comment_id=comment_id, body=body)
 
     async def artifact_comment(
         self,

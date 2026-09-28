@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { IgniClient } from "../../protocol/client";
 import { CommentDocumentPeek } from "./CommentDocumentPeek";
+import { CommentReplyBox } from "./CommentReplyBox";
 
 /**
  * Comments waiting on you, across every document you have published.
@@ -178,6 +179,24 @@ export function ArtifactCommentReview({
 
   const byDocument = useMemo(() => groupByDocument(rows ?? []), [rows]);
 
+  /**
+   * Who has spoken in each thread, so a reply can offer them.
+   *
+   * Built from the rows already loaded rather than fetched: the queue
+   * holds every comment on every document, so the participants of a
+   * thread are already on screen.
+   */
+  const authorsByThread = useMemo(() => {
+    const out = new Map<string, string[]>();
+    for (const row of rows ?? []) {
+      const key = row.thread_id || row.comment_id;
+      const seen = out.get(key) ?? [];
+      if (row.author && !seen.includes(row.author)) seen.push(row.author);
+      out.set(key, seen);
+    }
+    return out;
+  }, [rows]);
+
   if (rows === null) return <div className="kb-hint">Checking…</div>;
 
   return (
@@ -260,6 +279,17 @@ export function ArtifactCommentReview({
                   </p>
                 </>
               ) : null}
+
+              {/* Before the verdict buttons, because answering is the
+                  ordinary case and closing is the exception. Mark
+                  resolved is for a thread that is finished, not for
+                  one nobody replied to. */}
+              <CommentReplyBox
+                client={client}
+                commentId={comment.comment_id}
+                participants={authorsByThread.get(comment.thread_id || comment.comment_id) ?? []}
+                onReplied={load}
+              />
 
               <div className="comment-review-actions">
                 {comment.suggested_text ? (

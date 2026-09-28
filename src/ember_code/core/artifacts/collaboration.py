@@ -329,6 +329,34 @@ class CollaborationSync:
         await self._index.client.project_comments([comment])
         return comment
 
+    async def reply(
+        self, *, comment_id: str, body: str, suggested_text: str | None = None
+    ) -> Comment | None:
+        """Answer a comment in its thread, then project the result.
+
+        Keyed on the comment rather than on a slug, because this
+        client holds no slug: :meth:`push` and :meth:`pull` are the
+        only calls that take one and nothing calls them. The thread
+        already records the document, the version and the passage.
+
+        Projected from the server's response for the same reason
+        :meth:`resolve` is — the server is the authority on what a
+        thread contains, and a local copy that moved on its own would
+        disagree with what the other participants see.
+        """
+        payload: dict[str, Any] = {"body": body}
+        if suggested_text is not None:
+            payload["suggested_text"] = suggested_text
+        response = await self._request(
+            "POST", f"/v1/artifacts/comments/{comment_id}/replies", json=payload
+        )
+        if response.status_code == 404:
+            raise NotAllowed(comment_id)
+        response.raise_for_status()
+        comment = _to_comment(response.json())
+        await self._index.client.project_comments([comment])
+        return comment
+
     # ── Helpers ──────────────────────────────────────────────────────
 
     async def _local_head(self, ref: str) -> int:

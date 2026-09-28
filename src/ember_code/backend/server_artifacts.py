@@ -27,6 +27,7 @@ from ember_code.backend.schemas_artifacts import (
     ArtifactCommentAnchor,
     ArtifactCommentPosted,
     ArtifactCommentRelevance,
+    ArtifactCommentReplied,
     ArtifactCommentResolved,
     ArtifactCommentRow,
     ArtifactDrift,
@@ -69,6 +70,7 @@ from ember_code.core.artifacts.export import (
     ArtifactPublisher,
     ExportFormat,
 )
+from ember_code.core.artifacts.mentions import resolve
 from ember_code.core.artifacts.models import (
     ArtifactSummary,
     CommentOrigin,
@@ -81,6 +83,7 @@ from ember_code.core.artifacts.query_planner import ArtifactQueryPlanner
 from ember_code.core.artifacts.side_by_side import RowKind, VersionDiff
 from ember_code.core.artifacts.side_by_side import build as build_side_by_side
 from ember_code.core.artifacts.sourcing import CandidateReview, Overlap
+from ember_code.core.artifacts.threads import ThreadInstruction
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
@@ -949,6 +952,130 @@ class ArtifactController:
 
         verdict = RelevanceReview.parse(_strip_fence(str(getattr(response, "content", "") or "")))
         return ArtifactCommentRelevance(relevance=verdict.relevance.value, reason=verdict.reason)
+
+    async def reply_comment(self, *, comment_id: str, body: str) -> ArtifactCommentReplied:
+        """Answer a comment, and act on it only if asked to.
+
+        The queue used to offer three terminal actions and no way to
+        say anything back, so declining told the commenter "rejected"
+        with no reason attached and a question could only be answered
+        by closing it.
+
+        **Whether the agent runs is decided by the text.** ``@igni``
+        in the message is an instruction; its absence means the reply
+        is between people, however much it sounds like a request. An
+        agent that decided for itself when a message was meant for it
+        would turn every aside in a shared thread into a possible
+        edit.
+
+        **And when it does run, it proposes rather than writes.** The
+        local comment rail answers by appending a version, which is
+        right there — one person, their own document. A web thread has
+        other people watching it, so the agent's answer arrives as
+        ``suggested_text`` and the existing Accept button stays the
+        thing that writes. Nobody's document changes because somebody
+        typed a name.
+        """
+        if not body.strip():
+            return ArtifactCommentReplied(error="A reply needs something in it.")
+        sync = self._collaboration()
+        if sync is None:
+            return ArtifactCommentReplied(
+                error="Replying needs a signed-in igni account — run `igni login`."
+            )
+
+        mgr = self._session.artifact_mgr
+        rows = (
+            await self._session.artifacts.client.comments(limit=10_000)
+            if self._session.artifacts is not None
+            else []
+        )
+        parent = next((c for c in rows if c.comment_id == comment_id), None)
+        if parent is None:
+            return ArtifactCommentReplied(error="No such comment here.")
+
+        thread = [
+            c
+            for c in rows
+            if (c.thread_id or c.comment_id) == (parent.thread_id or parent.comment_id)
+        ]
+        addressed = resolve(body, [c.author for c in thread if c.author])
+
+        try:
+            posted = await sync.reply(comment_id=comment_id, body=body)
+        except Exception as exc:  # noqa: BLE001 — network, auth, permissions
+            logger.info("reply to %s failed: %s", comment_id, exc)
+            return ArtifactCommentReplied(error=f"Could not post the reply: {exc}")
+
+        result = ArtifactCommentReplied(
+            ok=True,
+            comment_id=getattr(posted, "comment_id", "") or "",
+            mentioned=[p.label for p in addressed.people],
+            unknown=addressed.unknown,
+            message="Replied.",
+        )
+        if not addressed.agent:
+            return result
+
+        summary = await mgr.resolve_artifact(parent.artifact_id)
+        head = (
+            await mgr.version(parent.artifact_id, int(summary.head_n or 0))
+            if summary is not None
+            else None
+        )
+        review = ThreadInstruction(
+            document_name=(summary.name if summary else "") or parent.artifact_id,
+            document=head.content if head is not None else "",
+            quote=parent.quote or "",
+            thread=[(c.author or "someone", c.body or "") for c in thread],
+            instruction=body,
+        )
+        try:
+            from agno.agent import Agent  # noqa: PLC0415 — heavy, and rarely reached
+
+            from ember_code.core.config.models import ModelRegistry  # noqa: PLC0415
+
+            agent = Agent(
+                name="_artifact_thread_agent",
+                model=ModelRegistry(self._session.settings).get_model(),
+                markdown=False,
+            )
+            response = await agent.arun(review.prompt_for())
+        except Exception as exc:  # noqa: BLE001 — a model call, many failure modes
+            logger.info("thread agent failed for %s: %s", comment_id, exc)
+            result.message = f"Replied. The agent could not be reached: {exc}"
+            return result
+
+        if _run_failed(response):
+            detail = str(getattr(response, "content", "") or "").strip()
+            result.message = (
+                f"Replied. The agent did not answer: {detail}"
+                if detail
+                else ("Replied. The agent did not answer.")
+            )
+            return result
+
+        answer = ThreadInstruction.parse(_strip_fence(str(getattr(response, "content", "") or "")))
+        if not answer.body.strip():
+            result.message = "Replied. The agent had nothing to add."
+            return result
+
+        try:
+            await sync.reply(
+                comment_id=comment_id,
+                body=answer.body,
+                suggested_text=answer.suggestion or None,
+            )
+        except Exception as exc:  # noqa: BLE001 — the human reply is already posted
+            logger.info("agent reply to %s failed: %s", comment_id, exc)
+            result.message = f"Replied, but the agent's answer did not post: {exc}"
+            return result
+
+        result.agent_replied = True
+        result.agent_body = answer.body
+        result.agent_suggestion = answer.suggestion
+        result.message = "Replied, and igni answered."
+        return result
 
     async def drift(self, *, artifact_id: str, source_id: str) -> ArtifactDrift:
         """What has landed upstream, and which of our sentences lean on it.
