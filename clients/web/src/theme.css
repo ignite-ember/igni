@@ -11848,8 +11848,19 @@ button {
   flex: none;
 }
 
+/* Nudged down onto the title's baseline. Equal box tops are not equal
+   levels when the boxes are different heights: a 22px pill of 10.5px
+   text beside a 25px line of 19px text puts the label about five
+   pixels above the title's baseline, and the pill's border makes that
+   gap something you see rather than something you measure.
+
+   A visual offset and not margin or padding, so the row underneath —
+   which already lines up with the document's ``v6 · 1d ago`` — does
+   not move with it. */
 .kb-tree-new {
   white-space: nowrap;
+  position: relative;
+  top: 5px;
 }
 
 .kb-tree-note {
