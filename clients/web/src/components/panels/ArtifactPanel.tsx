@@ -21,16 +21,31 @@ import { DocumentCitations } from "./DocumentCitations";
 import { ArtifactTreeView } from "./ArtifactTreeView";
 
 /** Where the reader's preference about the comment rail is kept. */
-const COMMENTS_HIDDEN_KEY = "igni.artifact.comments.hidden";
+/**
+ * What the column beside the document is showing.
+ *
+ * Two things live there and they are wanted at different times: the
+ * history when you are working out what changed, the conversation
+ * when you are working out what to change. ``both`` is the default
+ * and truncates the history, because a fifty-version list shown in
+ * full is a wall that pushes the conversation off the screen.
+ */
+type AsideView = "both" | "versions" | "comments";
 
-/** Shown by default: a rail nobody knows about is a feature nobody has. */
-function readCommentsHidden(): boolean {
+const ASIDE_VIEW_KEY = "igni.artifact.aside";
+
+/** Both by default: a section nobody knows about is a feature nobody has. */
+function readAsideView(): AsideView {
   try {
-    return localStorage.getItem(COMMENTS_HIDDEN_KEY) === "1";
+    const kept = localStorage.getItem(ASIDE_VIEW_KEY);
+    return kept === "versions" || kept === "comments" ? kept : "both";
   } catch {
-    return false;
+    return "both";
   }
 }
+
+/** How many versions the combined view shows before it stops. */
+const VERSIONS_IN_BOTH = 5;
 
 /** What `artifact_export` accepts, and what to call each one. */
 type ExportFormat = "html" | "md" | "pdf";
@@ -220,12 +235,12 @@ export function ArtifactPanel({
    * the next document has not been given a setting, they have been
    * given the same chore again.
    */
-  const [commentsHidden, setCommentsHidden] = useState(readCommentsHidden);
+  const [asideView, setAsideView] = useState<AsideView>(readAsideView);
 
-  const hideComments = useCallback((hidden: boolean) => {
-    setCommentsHidden(hidden);
+  const chooseAsideView = useCallback((view: AsideView) => {
+    setAsideView(view);
     try {
-      localStorage.setItem(COMMENTS_HIDDEN_KEY, hidden ? "1" : "0");
+      localStorage.setItem(ASIDE_VIEW_KEY, view);
     } catch {
       /* Private browsing and locked-down origins both refuse this.
          The toggle still works for as long as the page is open, which
@@ -812,8 +827,8 @@ export function ArtifactPanel({
           id={selected}
           comparing={comparing}
           tracing={tracing}
-          commentsHidden={commentsHidden}
-          onCommentsHiddenChange={hideComments}
+          asideView={asideView}
+          onAsideViewChange={chooseAsideView}
           actions={docActions}
           onReviewDrift={(source) => {
             setReviewing(source);
@@ -938,8 +953,8 @@ function DocumentDetail({
   id,
   comparing,
   tracing,
-  commentsHidden,
-  onCommentsHiddenChange,
+  asideView = "both",
+  onAsideViewChange,
   actions,
   onOpenArtifact,
   onReviewDrift,
@@ -957,8 +972,8 @@ function DocumentDetail({
   /** Whether the comment rail is put away. Owned by the panel, because
    *  the control that toggles it is in the header beside the other
    *  things you can do to a document. */
-  commentsHidden?: boolean;
-  onCommentsHiddenChange?: (hidden: boolean) => void;
+  asideView?: AsideView;
+  onAsideViewChange?: (view: AsideView) => void;
   /** Jump to another document — a source, from a traced passage. */
   onOpenArtifact?: (id: string) => void;
   /** Open the review page for an upstream change. */
@@ -1304,7 +1319,11 @@ function DocumentDetail({
            and a reader who has to scroll past the whole document to
            read the answer — and scroll back to find the sentence it
            was about — is doing the join by hand. */
-        <div className={commentsHidden ? "kb-doc-split kb-doc-split-wide" : "kb-doc-split"}>
+        <div
+          className={
+            asideView === "versions" ? "kb-doc-split kb-doc-split-wide" : "kb-doc-split"
+          }
+        >
           <div className="kb-doc-body markdown-body" ref={bodyRef}>
             <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
               {doc.content || "_(empty)_"}
@@ -1339,6 +1358,18 @@ function DocumentDetail({
                 while the conversation stayed — which read as the
                 history having been closed. */}
             <div className="kb-doc-aside-pin">
+            {/* Which of the two this column is showing. The history
+                and the conversation are wanted at different moments —
+                one while working out what changed, the other while
+                working out what to change — and a fifty-version list
+                shown in full is a wall the conversation falls off the
+                bottom of. */}
+            <AsideSwitch
+              value={asideView}
+              versionCount={versions.length}
+              onChange={(v) => onAsideViewChange?.(v)}
+            />
+
             {/* The history first, and the conversation under it.
                 Which version you are reading is the frame everything
                 else in this column is said within — a comment on v2
@@ -1349,12 +1380,18 @@ function DocumentDetail({
                 It is also the shorter and the more fixed of the two:
                 a list that does not change while you read it sits
                 still above one that grows. */}
-            <VersionSwitcher
-              versions={versions}
-              current={doc.n ?? 0}
-              onPick={(n) => setVersion(n)}
-            />
-            {versions.length > 1 && <div className="kb-aside-rule" />}
+            {asideView !== "comments" && (
+              <VersionSwitcher
+                versions={versions}
+                current={doc.n ?? 0}
+                limit={asideView === "both" ? VERSIONS_IN_BOTH : 0}
+                onShowAll={() => onAsideViewChange?.("versions")}
+                onPick={(n) => setVersion(n)}
+              />
+            )}
+            {asideView === "both" && versions.length > 1 && (
+              <div className="kb-aside-rule" />
+            )}
 
             <DocumentComment
               client={client}
@@ -1362,8 +1399,12 @@ function DocumentDetail({
               n={doc.n ?? 0}
               bodyRef={bodyRef}
               frozen={frozen}
-              hidden={commentsHidden}
-              onHiddenChange={onCommentsHiddenChange}
+              hidden={asideView === "versions"}
+              switched
+              /* Commenting on a passage while the conversation is put
+                 away would file the thread somewhere invisible. The
+                 switch comes back on its own. */
+              onThreadStarted={() => onAsideViewChange?.("both")}
               onRevised={() => {
                 // Back to head: the new version is the answer, and
                 // staying pinned to the one that prompted it would
@@ -1389,24 +1430,83 @@ function DocumentDetail({
 }
 
 /**
+ * Which of the two the column beside the document is showing.
+ *
+ * Three states rather than a pair of toggles: they are exclusive in
+ * practice — nobody wants neither — and one control with the current
+ * state visible says what two checkboxes only imply.
+ */
+function AsideSwitch({
+  value,
+  versionCount,
+  onChange,
+}: {
+  value: AsideView;
+  versionCount: number;
+  onChange: (view: AsideView) => void;
+}) {
+  // Nothing to choose between when there is no history to speak of.
+  if (versionCount < 2) return null;
+  const options: { key: AsideView; label: string; title: string }[] = [
+    { key: "both", label: "Both", title: "Recent versions, then the conversation" },
+    { key: "versions", label: "Versions", title: `All ${versionCount} versions` },
+    { key: "comments", label: "Comments", title: "The conversation only" },
+  ];
+  return (
+    <div className="kb-aside-switch" role="group" aria-label="What to show beside the document">
+      {options.map((o) => (
+        <button
+          key={o.key}
+          type="button"
+          className={value === o.key ? "kb-aside-tab is-on" : "kb-aside-tab"}
+          aria-pressed={value === o.key}
+          title={o.title}
+          onClick={() => onChange(o.key)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
  * The version switcher. Hidden for a single-version artifact — a
  * picker with one option is chrome that teaches nothing.
+ *
+ * ``limit`` truncates to the most recent few. A long history is a
+ * thing you look something up in rather than read to the end, and
+ * shown in full beside the conversation it is a wall that pushes the
+ * conversation off the bottom of the window.
  */
 function VersionSwitcher({
   versions,
   current,
+  limit = 0,
+  onShowAll,
   onPick,
 }: {
   versions: ArtifactVersionRow[];
   current: number;
+  limit?: number;
+  onShowAll?: () => void;
   onPick: (n: number) => void;
 }) {
   if (versions.length < 2) return null;
+  // The one being read stays on the list even when it is older than
+  // the cut — a picker that hides the current selection is a picker
+  // that looks broken.
+  const shown = limit > 0 ? versions.slice(0, limit) : versions;
+  const hiddenCurrent =
+    limit > 0 && !shown.some((v) => v.n === current)
+      ? versions.find((v) => v.n === current)
+      : undefined;
+  const rows = hiddenCurrent ? [...shown, hiddenCurrent] : shown;
   return (
     <section className="kb-lineage">
       <h3 className="kb-lineage-heading">Versions</h3>
       <ul className="kb-lineage-rows">
-        {versions.map((v) => (
+        {rows.map((v) => (
           <li key={v.n} className={v.n === current ? "kb-row kb-row-current" : "kb-row"}>
             <button
               type="button"
@@ -1424,6 +1524,11 @@ function VersionSwitcher({
           </li>
         ))}
       </ul>
+      {limit > 0 && versions.length > limit && (
+        <button type="button" className="kb-lineage-more" onClick={onShowAll}>
+          All {versions.length} versions
+        </button>
+      )}
     </section>
   );
 }

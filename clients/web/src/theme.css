@@ -4451,12 +4451,7 @@ button {
   width: min(1180px, 100%);
 }
 
-/* Wider where the hierarchy is pinned, so the column holding the
-   prose has slack on both sides of it rather than just enough room
-   to set 45rem and stop. */
-.page-measure:has(.kb-shell-with-tree):has(.kb-doc-reading) {
-  width: min(1600px, 100%);
-}
+
 
 
 /* …and gives some of it back when the conversation is put away. Not
@@ -4468,12 +4463,20 @@ button {
   width: min(1060px, 100%);
 }
 
-/* …but not where the hierarchy is pinned. Narrowing the page there
-   as well moved the document away from the rule beside the tree and
-   towards the one beside the history, which is the imbalance putting
-   the thread away was supposed to relieve. The rail narrowing is
-   enough on its own; the prose re-centres in the room it leaves. */
-.page-measure:has(.kb-shell-with-tree):has(.kb-doc-reading .doc-rail-stowed) {
+/* One width wherever the hierarchy is pinned, for every view.
+   Last, so it wins over the per-view widths above: those exist to
+   give a two-column view more room than a one-column view, and this
+   is already wider than any of them. Keeping a narrower width for
+   some views is what made the list sit in a different column from
+   the document, so walking into a document and back out moved the
+   page under the reader.
+
+   Narrowing it when the thread is put away is deliberately *not*
+   done: that moved the document away from the rule beside the tree
+   and towards the one beside the history, which is the imbalance
+   putting the thread away was meant to relieve. The rail narrowing
+   is enough on its own. */
+.page-measure:has(.kb-shell-with-tree) {
   width: min(1600px, 100%);
 }
 
@@ -10115,6 +10118,28 @@ button {
   gap: 14px;
   min-height: 0;
   max-height: calc(100vh - 200px);
+  /* Nothing leaves the column. Without this a fifty-version history
+     simply ran off the bottom of the window and took the
+     conversation with it — the comments were still in the document,
+     below the fold of a box that had no scrollbar. */
+  overflow: hidden;
+}
+
+/* The history takes what it needs up to about a third of the column
+   and scrolls inside that. A long history is a thing you look
+   something up in, not a thing you read to the end, and it must not
+   cost the conversation its place. */
+.kb-doc-aside .kb-lineage {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 0 1 auto;
+}
+
+.kb-doc-aside .kb-lineage-rows {
+  min-height: 0;
+  max-height: 32vh;
+  overflow-y: auto;
 }
 
 @media (max-width: 64rem) {
@@ -10122,6 +10147,96 @@ button {
     position: static;
     max-height: none;
   }
+}
+
+/* The switch at the top of the column. Segmented rather than three
+   loose buttons: they are exclusive, and a joined control says that
+   where three separate ones only imply it. */
+.kb-aside-switch {
+  flex: none;
+  display: flex;
+  align-self: flex-start;
+  padding: 2px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+}
+
+.kb-aside-tab {
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.kb-aside-tab:hover {
+  color: var(--fg);
+}
+
+.kb-aside-tab.is-on {
+  color: var(--fg);
+  background: var(--bg);
+  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.08);
+}
+
+/* The way from the truncated history to all of it. */
+.kb-lineage-more {
+  align-self: flex-start;
+  margin-top: 8px;
+  padding: 0;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--accent-blue-text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.kb-lineage-more:hover {
+  text-decoration: underline;
+}
+
+/* Who said it, for threads read back out of the store. */
+.doc-conv-by {
+  margin-right: 6px;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
+/* Which version, and where the thread got to. */
+.doc-conv-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 10.5px;
+  color: var(--fg-muted);
+}
+
+.doc-conv-status {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--bg-inset);
+  text-transform: lowercase;
+}
+
+.doc-conv-status.is-accepted {
+  color: var(--accent-green-text, var(--fg));
+}
+
+.doc-conv-status.is-rejected {
+  color: var(--fg-muted);
+}
+
+/* Mounted, not drawn. A reply in flight keeps running and a
+   right-click on a passage still opens a thread. */
+.doc-rail-away {
+  display: contents;
 }
 
 /* Between the conversation and the history, which are two kinds of
@@ -10508,6 +10623,23 @@ button {
 @media (max-width: 64rem) {
   .kb-doc-reading {
     padding-left: 0;
+  }
+}
+
+/* The list stands where the document stands.
+   Same indent as the prose and the same measure, so walking into a
+   document and back out does not slide the page sideways. It was
+   centred in the whole column, which put it a hundred pixels right of
+   the text it opens into and a hundred wider. */
+.kb-shell-with-tree .afs {
+  max-width: 45rem;
+  margin-left: max(0px, calc((100% - 24rem - 28px - 45rem) / 2));
+}
+
+@media (max-width: 64rem) {
+  .kb-shell-with-tree .afs {
+    max-width: none;
+    margin-left: 0;
   }
 }
 
