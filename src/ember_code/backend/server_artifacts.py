@@ -188,13 +188,19 @@ class ArtifactController:
             for r in response.results
         ]
 
-    async def add(self, source: str) -> msg.Info:
+    async def add(self, source: str, parent_id: str = "") -> msg.Info:
         """Add content from the panel.
 
         A URL or path is ingestion — the source is self-evident and no
         declaration is asked for. Pasted text is a new artifact with
         no antecedent, which the panel states rather than inventing
         one.
+
+        ``parent_id`` is where it goes in the tree, and it is passed at
+        creation rather than moved afterwards: a document that appears
+        at the top level and then jumps is two events for one
+        intention, and if the move fails it has quietly landed
+        somewhere nobody asked for.
         """
         mgr = self._session.artifact_mgr
         if source.startswith(("http://", "https://")):
@@ -214,7 +220,20 @@ class ArtifactController:
             )
         if not result.success:
             return msg.Info(text=result.error or "Add failed.")
-        return msg.Info(text=result.message)
+
+        placed = ""
+        if parent_id and result.artifact_id and self._session.artifacts is not None:
+            try:
+                if await self._session.artifacts.client.set_parent(
+                    node_id=result.artifact_id, parent_id=parent_id
+                ):
+                    placed = " Filed where you asked."
+            except Exception as exc:
+                # The document exists either way, so this is a note
+                # about where it is rather than a failure of the add.
+                logger.debug("could not file %s under %s: %s", result.artifact_id, parent_id, exc)
+                placed = " It is at the top level — filing it failed."
+        return msg.Info(text=f"{result.message}{placed}")
 
     async def list(self) -> list[ArtifactListEntry]:
         """Every artifact, head version — the panel's Browse tab."""

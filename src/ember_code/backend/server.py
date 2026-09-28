@@ -971,9 +971,9 @@ class BackendServer:
         """See :meth:`ArtifactController.search`."""
         return await self.artifacts.search(query)
 
-    async def artifact_add(self, source: str) -> msg.Info:
+    async def artifact_add(self, source: str, parent_id: str = "") -> msg.Info:
         """See :meth:`ArtifactController.add`."""
-        return await self.artifacts.add(source)
+        return await self.artifacts.add(source, parent_id=parent_id)
 
     async def artifact_list(self) -> list[ArtifactListEntry]:
         """See :meth:`ArtifactController.list`."""

@@ -23,7 +23,7 @@ class ArtifactRpcHandler(RpcHandler):
 
     @rpc(RpcMethod.ARTIFACT_ADD)
     def artifact_add(self, args: dict) -> Any:
-        return self._ctx.backend.artifact_add(args["source"])
+        return self._ctx.backend.artifact_add(args["source"], args.get("parent_id", ""))
 
     @rpc(RpcMethod.ARTIFACT_LIST)
     def artifact_list(self, args: dict) -> Any:
