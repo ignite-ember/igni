@@ -4401,6 +4401,10 @@ button {
   width: min(1500px, 100%);
 }
 
+.page-measure:has(.kb-shell-with-tree):has(.kb-doc-comparing) {
+  width: min(1920px, 100%);
+}
+
 /* Tracing is the same bargain as comparing: a document beside the
    sources each of its passages draws on is two columns where the rest
    of the page is one. Narrower than the diff, because only one of the
@@ -4409,19 +4413,27 @@ button {
   width: min(1240px, 100%);
 }
 
+.page-measure:has(.kb-shell-with-tree):has(.kb-doc-tracing) {
+  width: min(1660px, 100%);
+}
+
 /* And so is reading, now that the conversation sits beside the text.
    Without this the rail takes its 24rem out of the 900px measure and
    leaves the document a 19-em column — narrower than the prose it is
    setting, which is the one thing a reading view cannot be. */
-/* The list is two columns now — a tree beside the results — so it
-   takes the same room the reading view does rather than squeezing
-   both into the one-column measure. */
-.page-measure:has(.kb-list-split) {
-  width: min(1180px, 100%);
+/* Room for the tree beside whatever is being read. Everything below
+   adds the tree's column to the measure it would otherwise want. */
+.page-measure:has(.kb-shell-with-tree) {
+  width: min(1280px, 100%);
 }
 
 .page-measure:has(.kb-doc-reading) {
   width: min(1180px, 100%);
+}
+
+/* Tree + document + comment rail. */
+.page-measure:has(.kb-shell-with-tree):has(.kb-doc-reading) {
+  width: min(1570px, 100%);
 }
 
 /* …and gives it back when the rail is put away. The extra 280px is
@@ -4431,6 +4443,10 @@ button {
    the one the widening was protecting. */
 .page-measure:has(.kb-doc-reading .doc-rail-stowed) {
   width: min(900px, 100%);
+}
+
+.page-measure:has(.kb-shell-with-tree):has(.kb-doc-reading .doc-rail-stowed) {
+  width: min(1220px, 100%);
 }
 
 .drawer {
@@ -11197,20 +11213,36 @@ button {
    Where documents live, as against what they refer to. Indentation
    comes from a depth the server computed, so what is shown and what
    was reasoned about are the same ordering. */
-/* Tree left, what you are looking at right. */
-.kb-list-split {
+/* Hierarchy left, the artifact in the middle, its comments right.
+   The tree belongs to the panel rather than to the list: a reader who
+   opens a document has not stopped needing to know where they are. */
+.kb-shell {
   display: grid;
-  grid-template-columns: minmax(15rem, 17rem) minmax(0, 1fr);
-  gap: 24px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
 }
 
+/* The tree's column matches the comment rail's, because the artifact
+   between them has to be centred and it cannot be if the two sides
+   are different widths. Centring the document *within* its own track
+   would do it too, and would pull the text out from under its own
+   title — the header spans body and rail together. */
+.kb-shell-with-tree {
+  grid-template-columns: minmax(19rem, 24rem) minmax(0, 1fr);
+  gap: 28px;
+}
+
+.kb-shell-body {
+  min-width: 0;
+}
+
 /* Below the breakpoint two columns are two unreadable ones, so the
-   tree goes back above — where it was, and where it was wrong for a
-   wide window. */
-@media (max-width: 60rem) {
-  .kb-list-split {
+   tree goes above — wrong for a wide window and right for a narrow
+   one. */
+@media (max-width: 64rem) {
+  .kb-shell-with-tree {
     grid-template-columns: minmax(0, 1fr);
+    gap: 0;
   }
 }
 

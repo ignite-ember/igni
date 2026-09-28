@@ -589,6 +589,26 @@ export function ArtifactPanel({
           onDismiss={() => setExported(null)}
         />
       )}
+      {/* Hierarchy left, the artifact in the middle, its comments on
+          the right. The tree belongs to the *panel*, not to the list:
+          a reader who opens a document has not stopped needing to know
+          where they are, and a tree that disappears on the way in is a
+          tree you navigate by going back. */}
+      <div className={status === null ? "kb-shell" : "kb-shell kb-shell-with-tree"}>
+        {status !== null && status.enabled && (
+          <ArtifactTreeView
+            client={client}
+            selectedId={selected}
+            staleIds={staleIds}
+            onOpen={(id) => {
+              setTracing(false);
+              setComparing(false);
+              setSelected(id);
+              setView("detail");
+            }}
+          />
+        )}
+        <div className="kb-shell-body">
       {status === null ? (
         <ArtifactsSkeleton />
       ) : view === "comments" ? (
@@ -676,22 +696,6 @@ export function ArtifactPanel({
       ) : docs && docs.length === 0 ? (
         <EmptyHero onAdd={() => setView("add")} embedder={status.embedder} />
       ) : (
-        /* Two columns, not two stacked blocks. The tree is how
-           somebody who knows what they are looking for gets to it and
-           search is for when they do not — which means the tree is
-           *context*, standing beside the work rather than taking a
-           turn ahead of it. Stacked, it pushed the list below the fold
-           and had to be scrolled past on every visit. */
-        <div className="kb-list-split">
-        <ArtifactTreeView
-          client={client}
-          selectedId={selected}
-          staleIds={staleIds}
-          onOpen={(id) => {
-            setSelected(id);
-            setView("detail");
-          }}
-        />
         <ArtifactSearch
           client={client}
           docs={(docs || []).map((d) => ({
@@ -713,8 +717,9 @@ export function ArtifactPanel({
             setView("ask");
           }}
         />
-        </div>
       )}
+        </div>
+      </div>
     </Drawer>
   );
 }
