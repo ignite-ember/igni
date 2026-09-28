@@ -10887,6 +10887,25 @@ button {
   margin-bottom: 28px;
 }
 
+/* The document's header stays where it starts.
+   Sticky rather than docked: the page keeps its own scrollbar at the
+   window's edge, and the header simply never reaches the top. The
+   offset is the measure's padding plus the article's — the same two
+   terms that put it at 117 in the first place — so it does not move
+   at all rather than jumping to the top on the first scroll.
+
+   Its box is pulled up over that gap and pads the space back, so the
+   text passing underneath is covered instead of showing through in
+   the band above the title. */
+.kb-doc-reading > .kb-doc-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  margin: -24px -18px 20px;
+  padding: 24px 18px 12px;
+  background: var(--bg);
+}
+
 /* The document's name and the things you can do to it, on one line.
    The actions used to live in the page header, which meant the page
    said the name once at the top and the article said it again four
