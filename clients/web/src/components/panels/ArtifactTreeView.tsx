@@ -64,6 +64,35 @@ export function branchOf(nodes: TreeNode[], at: number): Set<string> {
   return out;
 }
 
+/**
+ * Rows whose title matches, plus every ancestor of each.
+ *
+ * The ancestors are the point. A match shown without the branch it
+ * sits on tells you a document exists and not where it is, which is
+ * the one thing a tree is for — and the centre column already answers
+ * "which documents mention this".
+ */
+export function filterRows(nodes: TreeNode[], query: string): TreeNode[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return nodes;
+
+  const keep = new Set<number>();
+  for (let i = 0; i < nodes.length; i++) {
+    if (!nodes[i].name.toLowerCase().includes(needle)) continue;
+    keep.add(i);
+    // Walk back up: the previous row one level shallower is the
+    // parent, and so on to the root.
+    let depth = nodes[i].depth;
+    for (let j = i - 1; j >= 0 && depth > 0; j--) {
+      if (nodes[j].depth < depth) {
+        keep.add(j);
+        depth = nodes[j].depth;
+      }
+    }
+  }
+  return nodes.filter((_, i) => keep.has(i));
+}
+
 /** Which rows are hidden because an ancestor is collapsed. */
 export function visibleRows(nodes: TreeNode[], collapsed: Set<string>): TreeNode[] {
   const out: TreeNode[] = [];
@@ -75,6 +104,33 @@ export function visibleRows(nodes: TreeNode[], collapsed: Set<string>): TreeNode
     if (collapsed.has(node.node_id)) hiddenBelow = node.depth;
   }
   return out;
+}
+
+/** A page. Outlined, so it reads at 14px without becoming a blob. */
+function PageIcon() {
+  return (
+    <svg className="kb-tree-glyph" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <rect x="2.5" y="1.8" width="11" height="12.4" rx="2" fill="none"
+        stroke="currentColor" strokeWidth="1.3" />
+      <path d="M5.4 5.6h5.2M5.4 8h5.2M5.4 10.4h3.2" stroke="currentColor"
+        strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** A folder, open or closed — the state is worth showing twice. */
+function FolderIcon({ open }: { open: boolean }) {
+  return (
+    <svg className="kb-tree-glyph" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      {open ? (
+        <path d="M1.9 12.6V4.1a.9.9 0 0 1 .9-.9h3.1l1.5 1.7h4.8a.9.9 0 0 1 .9.9v1.1M1.9 12.6l1.7-4.6h11L12.9 12.6a.9.9 0 0 1-.85.6H2.8a.9.9 0 0 1-.9-.6Z"
+          fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      ) : (
+        <path d="M2 12.4V4a.9.9 0 0 1 .9-.9h3.2l1.5 1.7h5.5a.9.9 0 0 1 .9.9v6.7a.9.9 0 0 1-.9.9H2.9a.9.9 0 0 1-.9-.9Z"
+          fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      )}
+    </svg>
+  );
 }
 
 export function ArtifactTreeView({
@@ -96,6 +152,7 @@ export function ArtifactTreeView({
   const [over, setOver] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [query, setQuery] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -133,7 +190,13 @@ export function ArtifactTreeView({
     [client, load],
   );
 
-  const rows = useMemo(() => visibleRows(nodes ?? [], collapsed), [nodes, collapsed]);
+  const rows = useMemo(() => {
+    // Filtering ignores what is collapsed: a query is a request to be
+    // shown the matches, not to be shown the matches you had already
+    // opened.
+    if (query.trim()) return filterRows(nodes ?? [], query);
+    return visibleRows(nodes ?? [], collapsed);
+  }, [nodes, collapsed, query]);
 
   /** The branch being dragged — never a valid destination for itself. */
   const forbidden = useMemo(() => {
@@ -153,14 +216,21 @@ export function ArtifactTreeView({
   return (
     <div className="kb-tree">
       <div className="kb-tree-bar">
+        <input
+          className="kb-tree-filter"
+          type="search"
+          placeholder="Search by title"
+          aria-label="Search the tree by title"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
         <button
           type="button"
-          className="btn btn-sm"
+          className="btn btn-xs kb-tree-new"
           onClick={() => void act("artifact_create_folder", { name: "New folder" })}
         >
           New folder
         </button>
-        <span className="kb-hint">Drag to move. Drop at the foot for the top level.</span>
       </div>
 
       {error && <p className="msg-error">{error}</p>}
@@ -227,18 +297,31 @@ export function ArtifactTreeView({
                   })
                 }
               >
-                {expandable ? (open ? "⌄" : "›") : ""}
+                {expandable ? (
+                  <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
+                    <path
+                      d={open ? "M2.5 4.5 6 8l3.5-3.5" : "M4.5 2.5 8 6l-3.5 3.5"}
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                ) : (
+                  /* A dot where the chevron would be. Empty space says
+                     nothing; this says "nothing under here". */
+                  <span className="kb-tree-leaf" aria-hidden="true" />
+                )}
               </button>
 
-              {/* Only folders are marked. When every row carries an
-                  icon the icons stop distinguishing anything — but the
-                  two kinds decide what a drop does, so the folder says
-                  so and the document does not. */}
-              {node.is_folder && (
-                <span className="kb-tree-icon" aria-hidden="true">
-                  ▪
-                </span>
-              )}
+              {/* Both kinds are marked, and the folder shows whether
+                  it is open. The two decide what a drop will do, and
+                  at a glance an outline is quicker to tell apart than
+                  a word. */}
+              <span className="kb-tree-icon">
+                {node.is_folder ? <FolderIcon open={open} /> : <PageIcon />}
+              </span>
 
               {renaming === node.node_id ? (
                 <input

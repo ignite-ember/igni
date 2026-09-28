@@ -11280,16 +11280,36 @@ button {
   overflow-y: auto;
 }
 
-/* Stacked, not side by side: at the column's width a button and a
-   sentence beside it wrap the button onto two lines. */
+/* A filter over the titles, above the tree it filters. Distinct from
+   the search in the centre column, which asks the index what matches
+   a question; this only asks which of these names contains a string,
+   and answers instantly because the tree is already here. */
 .kb-tree-bar {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 5px;
+  align-items: stretch;
+  gap: 6px;
+  flex: none;
 }
 
-.kb-tree-bar .btn {
+.kb-tree-filter {
+  width: 100%;
+  padding: 6px 9px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+.kb-tree-filter:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+.kb-tree-new {
+  align-self: flex-start;
   white-space: nowrap;
 }
 
@@ -11309,28 +11329,33 @@ button {
 
 .kb-tree-row {
   display: flex;
-  /* Not centred: a title that wraps to two lines should keep its
-     chevron beside the first of them. */
-  align-items: flex-start;
+  align-items: center;
   gap: 5px;
   /* The indent is the structure, and it has to be big enough to read
      at a glance — 22px, near Confluence's own. */
-  padding: 3px 6px 3px calc(6px + var(--tree-depth, 0) * 22px);
+  padding: 4px 6px 4px calc(6px + var(--tree-depth, 0) * 20px);
   font-size: 12.5px;
-  line-height: 1.45;
-  border-radius: 4px;
+  line-height: 1.6;
+  border-radius: 5px;
 }
 
 .kb-tree-row:hover {
   background: var(--bg-inset);
 }
 
-/* Weight and colour, not a filled row. The current page has to be
-   findable while scanning, and a background block competes with the
-   drop highlight, which means something else entirely. */
-.kb-tree-row.is-current > .kb-tree-name {
-  font-weight: 600;
+/* The current page is filled, not merely coloured. At a glance the
+   fill is what finds it; the colour alone was too quiet in a long
+   tree. The drop target stays distinguishable because it is outlined
+   rather than filled. */
+.kb-tree-row.is-current {
+  background: var(--accent-blue-soft, hsl(210 80% 55% / 0.12));
+}
+
+.kb-tree-row.is-current > .kb-tree-name,
+.kb-tree-row.is-current > .kb-tree-icon,
+.kb-tree-row.is-current > .kb-tree-twist {
   color: var(--accent-blue-text);
+  font-weight: 600;
 }
 
 .kb-tree-row.is-dragging {
@@ -11359,10 +11384,12 @@ button {
    width regardless so the titles of siblings line up. */
 .kb-tree-twist {
   flex: none;
-  width: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 20px;
   padding: 0;
-  font-size: 10px;
-  line-height: 1.45;
   color: var(--fg-muted);
   background: none;
   border: 0;
@@ -11371,23 +11398,36 @@ button {
 
 .kb-tree-twist:disabled {
   cursor: default;
-  opacity: 0;
 }
 
-/* Only folders are marked. Confluence marks nothing, because when
-   every row carries an icon the icons stop distinguishing anything —
-   but we have two node kinds and the difference decides what a drop
-   will do, so the folder says so and the document does not. */
+/* Both kinds are marked. The difference decides what a drop does, and
+   an outline is quicker to tell apart at a glance than a word. */
 .kb-tree-icon {
   flex: none;
-  font-size: 9px;
-  line-height: 1.7;
-  color: var(--accent-orange-text, var(--fg-muted));
+  display: flex;
+  align-items: center;
+  color: var(--fg-muted);
 }
 
-/* Wraps rather than truncating. A document is found by its title,
-   and "Autocomplete for links, files, macros…" cut at the column's
-   width is indistinguishable from three other documents. */
+.kb-tree-glyph {
+  display: block;
+}
+
+/* Where a chevron would be, on a row with nothing under it. Empty
+   space says nothing; a dot says "nothing below here". */
+.kb-tree-leaf {
+  display: block;
+  width: 3px;
+  height: 3px;
+  margin: 0 auto;
+  border-radius: 50%;
+  background: var(--fg-muted);
+  opacity: 0.55;
+}
+
+/* One line, truncated. A wrapped title costs two rows of vertical
+   space in the one place where seeing many entries at once is the
+   whole point, and the full name is on the row's tooltip. */
 .kb-tree-name {
   flex: 1;
   min-width: 0;
@@ -11398,7 +11438,9 @@ button {
   background: none;
   border: 0;
   cursor: pointer;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .kb-tree-row.is-folder .kb-tree-name {

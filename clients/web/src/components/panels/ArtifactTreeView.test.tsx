@@ -13,7 +13,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { branchOf, visibleRows, type TreeNode } from "./ArtifactTreeView";
+import { branchOf, filterRows, visibleRows, type TreeNode } from "./ArtifactTreeView";
 
 const node = (id: string, depth: number, over: Partial<TreeNode> = {}): TreeNode => ({
   node_id: id,
@@ -113,5 +113,47 @@ describe("what a collapsed branch hides", () => {
   it("handles two collapsed branches at once", () => {
     const shown = visibleRows(TREE, new Set(["design", "auth"]));
     expect(shown.map((n) => n.node_id)).toEqual(["design", "checklist"]);
+  });
+});
+
+describe("filtering by title", () => {
+  it("keeps a match and every ancestor of it", () => {
+    // The ancestors are the point. A match shown without the branch
+    // it sits on says a document exists and not where it is, which is
+    // the one thing a tree is for.
+    const shown = filterRows(TREE, "login");
+    expect(shown.map((n) => n.node_id)).toEqual(["design", "auth", "login"]);
+  });
+
+  it("keeps two matches under one parent without repeating it", () => {
+    const shown = filterRows(TREE, "s");
+    expect(shown.filter((n) => n.node_id === "design")).toHaveLength(1);
+  });
+
+  it("ignores case", () => {
+    expect(filterRows(TREE, "LOGIN").map((n) => n.node_id)).toContain("login");
+  });
+
+  it("matches a folder by its own name", () => {
+    expect(filterRows(TREE, "design").map((n) => n.node_id)).toEqual(["design"]);
+  });
+
+  it("an empty query is not a filter", () => {
+    expect(filterRows(TREE, "   ")).toBe(TREE);
+  });
+
+  it("nothing matching is nothing shown", () => {
+    // Not "everything" — a filter that silently gives up is worse
+    // than one that says there is no such document.
+    expect(filterRows(TREE, "zzz")).toEqual([]);
+  });
+
+  it("keeps rows in tree order, not match order", () => {
+    const shown = filterRows(TREE, "e");
+    const depths = shown.map((n) => n.depth);
+    expect(shown.map((n) => n.node_id)).toEqual(
+      TREE.filter((n) => shown.includes(n)).map((n) => n.node_id),
+    );
+    expect(depths[0]).toBe(0);
   });
 });
