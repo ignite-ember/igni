@@ -115,6 +115,14 @@ class ArtifactRpcHandler(RpcHandler):
     def artifact_candidate_verdict(self, args: dict) -> Any:
         return self._ctx.backend.artifact_candidate_verdict(args["id"], args["source_id"])
 
+    @rpc(RpcMethod.ARTIFACT_COMMENT_ANCHOR)
+    def artifact_comment_anchor(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_comment_anchor(args["comment_id"])
+
+    @rpc(RpcMethod.ARTIFACT_COMMENT_RELEVANCE)
+    def artifact_comment_relevance(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_comment_relevance(args["comment_id"])
+
     @rpc(RpcMethod.ARTIFACT_COMMENT)
     def artifact_comment(self, args: dict) -> Any:
         return self._ctx.backend.artifact_comment(

@@ -24,7 +24,9 @@ from ember_code.backend.file_opener import FileOpener
 from ember_code.backend.schemas_artifacts import (
     ArtifactCandidateEvidence,
     ArtifactCandidateVerdict,
+    ArtifactCommentAnchor,
     ArtifactCommentPosted,
+    ArtifactCommentRelevance,
     ArtifactCommentResolved,
     ArtifactCommentRow,
     ArtifactDrift,
@@ -52,6 +54,7 @@ from ember_code.backend.schemas_artifacts import (
     ProvenancePassageRow,
 )
 from ember_code.core.artifacts import side_by_side
+from ember_code.core.artifacts.anchoring import RelevanceReview, surrounding, track_anchor
 from ember_code.core.artifacts.collaboration import CollaborationSync
 from ember_code.core.artifacts.conversation import CommentConversation
 from ember_code.core.artifacts.cypher import ArtifactCypherService, CypherResult
@@ -838,6 +841,114 @@ class ArtifactController:
         return ArtifactCandidateVerdict(
             recommendation=verdict.recommendation.value, reason=verdict.reason
         )
+
+    async def _comment_and_versions(self, comment_id: str):
+        """One comment, the version it was left on, and head."""
+        mgr = self._session.artifact_mgr
+        if self._session.artifacts is None:
+            return None, None, None, "Artifacts are disabled."
+        rows = await self._session.artifacts.client.comments(limit=10_000)
+        found = next((c for c in rows if c.comment_id == comment_id), None)
+        if found is None:
+            return None, None, None, "No such comment here."
+        summary = await mgr.resolve_artifact(found.artifact_id)
+        if summary is None:
+            return found, None, None, "The document this was left on is gone."
+        head = await mgr.version(found.artifact_id, int(summary.head_n or 0))
+        if head is None:
+            return found, None, None, "Could not read the document."
+        return found, head, int(summary.head_n or 0), ""
+
+    async def comment_anchor(self, *, comment_id: str) -> ArtifactCommentAnchor:
+        """What became of the passage this comment was left on.
+
+        No model, no opinion. The queue says "the document has moved
+        on since" against every row, which is true of all of them and
+        separates none — a passage still there word for word and a
+        passage deleted outright read identically, and those are
+        opposite decisions.
+
+        Exact match first, because the common case is common and a
+        string comparison is not a judgement. Only when that fails is
+        anything inferred, and what is inferred is reported with the
+        number it rests on.
+        """
+        found, head, head_n, error = await self._comment_and_versions(comment_id)
+        if error:
+            return ArtifactCommentAnchor(error=error)
+        assert found is not None and head is not None  # noqa: S101 — narrowed above
+
+        content = head.content or ""
+        fate = track_anchor(found.quote or "", content)
+        return ArtifactCommentAnchor(
+            state=fate.state.value,
+            then=fate.then,
+            now=fate.now,
+            similarity=round(fate.similarity, 3),
+            commented_n=int(found.n or 0),
+            head_n=head_n or 0,
+            context=surrounding(content, fate.now or fate.then),
+        )
+
+    async def comment_relevance(self, *, comment_id: str) -> ArtifactCommentRelevance:
+        """Whether the comment survived what happened to its passage.
+
+        Asked after :meth:`comment_anchor` and never instead of it. A
+        changed anchor is not an answered comment — "name the cookie
+        and its lifetime" is answered by an edit that names the cookie
+        and overtaken by one that removes cookies entirely, and both
+        are "the anchor changed". Only something that reads the
+        comment against the change can tell those apart.
+        """
+        found, head, head_n, error = await self._comment_and_versions(comment_id)
+        if error:
+            return ArtifactCommentRelevance(error=error)
+        assert found is not None and head is not None  # noqa: S101 — narrowed above
+
+        mgr = self._session.artifact_mgr
+        summary = await mgr.resolve_artifact(found.artifact_id)
+        content = head.content or ""
+        fate = track_anchor(found.quote or "", content)
+        review = RelevanceReview(
+            document_name=(summary.name if summary else "") or found.artifact_id,
+            comment_body=found.body or "",
+            author=found.author or "",
+            commented_n=int(found.n or 0),
+            head_n=head_n or 0,
+            fate=fate,
+            context=surrounding(content, fate.now or fate.then),
+            suggested_text=found.suggested_text or "",
+        )
+
+        try:
+            from agno.agent import Agent  # noqa: PLC0415 — heavy, and rarely reached
+
+            from ember_code.core.config.models import ModelRegistry  # noqa: PLC0415
+
+            agent = Agent(
+                name="_artifact_comment_reviewer",
+                model=ModelRegistry(self._session.settings).get_model(),
+                markdown=False,
+            )
+            response = await agent.arun(review.prompt_for())
+        except Exception as exc:  # noqa: BLE001 — a model call, many failure modes
+            logger.info("comment relevance failed for %s: %s", comment_id, exc)
+            return ArtifactCommentRelevance(error=f"Could not ask: {exc}")
+
+        # Agno reports provider failure as ``status=ERROR`` with the
+        # message in ``content`` rather than by raising. Without this
+        # "Token Plan usage limit reached" is rendered as the agent's
+        # read on somebody's comment.
+        if _run_failed(response):
+            detail = str(getattr(response, "content", "") or "").strip()
+            return ArtifactCommentRelevance(
+                error=f"The model did not answer: {detail}"
+                if detail
+                else "The model did not answer."
+            )
+
+        verdict = RelevanceReview.parse(_strip_fence(str(getattr(response, "content", "") or "")))
+        return ArtifactCommentRelevance(relevance=verdict.relevance.value, reason=verdict.reason)
 
     async def drift(self, *, artifact_id: str, source_id: str) -> ArtifactDrift:
         """What has landed upstream, and which of our sentences lean on it.

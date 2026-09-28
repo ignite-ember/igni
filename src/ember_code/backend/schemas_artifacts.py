@@ -374,6 +374,47 @@ class ArtifactCommentRow(BaseModel):
     head_n: int = 0
 
 
+class ArtifactCommentAnchor(BaseModel):
+    """What became of the passage a comment was left on.
+
+    Deterministic and opinion-free. The review queue's "the document
+    has moved on since" is true of every row and separates none of
+    them — a passage still present word for word and a passage deleted
+    outright read identically. This says which, and carries what the
+    passage says now so the change can be read rather than reported.
+    """
+
+    #: ``intact`` | ``edited`` | ``gone`` | ``no-anchor``.
+    state: str = "no-anchor"
+    #: The quote as the comment recorded it.
+    then: str = ""
+    #: What replaced it, when something did.
+    now: str = ""
+    #: How alike the two are, 0-1.
+    similarity: float = 0.0
+    commented_n: int = 0
+    head_n: int = 0
+    #: The passage in its paragraph at head, so the reviewer can see
+    #: whether the fix landed in the sentence after.
+    context: str = ""
+    error: str = ""
+
+
+class ArtifactCommentRelevance(BaseModel):
+    """Whether the comment survived what happened to its passage.
+
+    Asked *after* the anchor is tracked and never instead of it. A
+    changed anchor is not an answered comment and an intact one is not
+    an unanswered comment, which is the whole reason a string
+    comparison cannot finish this job.
+    """
+
+    #: ``still-applies`` | ``overtaken`` | ``unclear``.
+    relevance: str = "unclear"
+    reason: str = ""
+    error: str = ""
+
+
 class ArtifactCommentResolved(BaseModel):
     """The outcome of adjudicating one comment."""
 

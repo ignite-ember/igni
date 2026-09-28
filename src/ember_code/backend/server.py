@@ -76,7 +76,9 @@ if TYPE_CHECKING:
     from ember_code.backend.schemas_artifacts import (
         ArtifactCandidateEvidence,
         ArtifactCandidateVerdict,
+        ArtifactCommentAnchor,
         ArtifactCommentPosted,
+        ArtifactCommentRelevance,
         ArtifactCommentResolved,
         ArtifactCommentRow,
         ArtifactDrift,
@@ -1057,6 +1059,14 @@ class BackendServer:
     ) -> ArtifactCandidateVerdict:
         """See :meth:`ArtifactController.candidate_verdict`."""
         return await self.artifacts.candidate_verdict(artifact_id=entry_id, source_id=source_id)
+
+    async def artifact_comment_anchor(self, comment_id: str) -> ArtifactCommentAnchor:
+        """See :meth:`ArtifactController.comment_anchor`."""
+        return await self.artifacts.comment_anchor(comment_id=comment_id)
+
+    async def artifact_comment_relevance(self, comment_id: str) -> ArtifactCommentRelevance:
+        """See :meth:`ArtifactController.comment_relevance`."""
+        return await self.artifacts.comment_relevance(comment_id=comment_id)
 
     async def artifact_comment(
         self,
