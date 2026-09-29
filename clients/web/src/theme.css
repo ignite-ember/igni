@@ -13329,10 +13329,51 @@ button {
 }
 
 .doc-conv-reply {
-  padding-left: 10px;
+  position: relative;
+  /* Room for the elbow, which lives in this gutter rather than
+     displacing the text it points at. */
+  padding-left: 24px;
   font-size: 12.5px;
   line-height: 1.6;
   overflow-wrap: break-word;
+}
+
+/* Joins the answer to the turn above it. Same colour as the name it
+   leads to, at the weight of a rule rather than a stroke — it is
+   punctuation, and a line as loud as the text would turn a thread
+   into a diagram. */
+.doc-conv-hook {
+  position: absolute;
+  left: 4px;
+  /* top and height are set per turn, in the component: they
+     depend on how tall the comment being answered is, which is a
+     paragraph somebody typed. */
+  overflow: visible;
+  fill: none;
+  stroke: var(--accent-orange-text);
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  opacity: 0.45;
+}
+
+/* igni's name, in igni's colour.
+   Coloured rather than merely present because the other bylines in a
+   thread are people and this one is not: the difference between "a
+   colleague answered" and "the agent answered" decides whether the
+   next thing to do is reply or check. It is the accent the rest of
+   the app already uses for the agent, so the rail is not inventing a
+   fourth meaning for a colour. */
+.doc-conv-by-agent {
+  color: var(--accent-orange-text);
+}
+
+/* The agent's answer is a block of prose, several paragraphs of it,
+   and its first line starts after a name. Inlined, the name sits on
+   its own line above a paragraph that begins at the left margin and
+   the two read as unrelated. */
+.doc-conv-reply > .doc-conv-by-agent + .markdown-body > :first-child,
+.doc-conv-reply > .doc-conv-by-agent + .doc-conv-waiting {
+  display: inline;
 }
 
 .doc-conv-reply pre {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -1735,6 +1735,103 @@ function ThreadView({
   );
 }
 
+/**
+ * The elbow joining an answer to the turn above it.
+ *
+ * A thread is a column of paragraphs, and an answer sitting under a
+ * question looks exactly like a second question — the order is the
+ * only thing saying otherwise, and order is what a reader loses
+ * first in a thread with four turns in it. The line says which
+ * remark this one is about without a sentence having to.
+ *
+ * Drawn rather than measured: the answer is always directly beneath
+ * what it answers, so the two ends are a fixed distance apart and
+ * the curve that joins them is the same curve every time. The
+ * measured version of this exists for the passage-to-card line,
+ * where the two ends are in different scroll containers.
+ */
+function ReplyHook() {
+  const hook = useRef<SVGSVGElement>(null);
+  const [reach, setReach] = useState(FALLBACK_REACH);
+
+  // Measured, because the thing it reaches back to is a paragraph
+  // somebody typed and there is no other way to know how tall that
+  // is.
+  //
+  // Re-measured on every render, not once on mount. The rail settles
+  // in several passes — the document's text arrives, the threads
+  // reorder by anchor, the highlights paint — and a line measured
+  // during the first of those is drawn to where the comment was
+  // about to stop being. Measuring once left every hook reaching to
+  // a point 38 pixels above the turn it was meant to meet, which
+  // reads as a line to nothing in particular.
+  //
+  // Two rects per render is cheap. The guard below is what makes it
+  // safe: state is only set when the number actually changed, so
+  // this settles instead of re-rendering itself forever.
+  useLayoutEffect(() => {
+    const svg = hook.current;
+    const mine = svg?.parentElement;
+    const answered = mine?.previousElementSibling;
+    if (!svg || !mine || !answered) return;
+
+    const measure = () => {
+      // Exception-safe: jsdom has no layout, and a rail that threw
+      // here would take every thread on the page down with it.
+      try {
+        const from = answered.getBoundingClientRect();
+        const to = mine.getBoundingClientRect();
+        // From where the answered turn *ends*, not where it starts.
+        // Drawn from its top, the line runs the whole height of
+        // somebody's comment with their name sitting to the right of
+        // it, which reads as a bracket around what they said rather
+        // than a thread from it to the answer.
+        const span = to.top - from.bottom;
+        const next = span > 0 ? span + BYLINE_MIDDLE : FALLBACK_REACH;
+        setReach((was) => (Math.abs(was - next) > 0.5 ? next : was));
+      } catch {
+        setReach((was) => (was === FALLBACK_REACH ? was : FALLBACK_REACH));
+      }
+    };
+    measure();
+
+    if (typeof ResizeObserver !== "function") return;
+    const watch = new ResizeObserver(measure);
+    watch.observe(answered);
+    watch.observe(mine);
+    return () => watch.disconnect();
+  });
+
+  // Drawn in pixels rather than scaled from a viewBox: a stretched
+  // viewBox stretches the curve with it, and a quarter-circle three
+  // paragraphs tall is an arc, not a corner.
+  const corner = Math.min(CORNER, Math.max(2, reach - 2));
+  return (
+    <svg
+      ref={hook}
+      className="doc-conv-hook"
+      width={14}
+      height={reach}
+      style={{ top: `${BYLINE_MIDDLE - reach}px` }}
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        d={`M1 0 V${reach - corner} Q1 ${reach} ${1 + corner} ${reach} H13`}
+      />
+    </svg>
+  );
+}
+
+/** Where the line lands: the middle of the byline it leads to. */
+const BYLINE_MIDDLE = 9;
+
+/** How far it reaches when nothing can be measured. */
+const FALLBACK_REACH = 18;
+
+/** The radius of the corner at the bottom. */
+const CORNER = 6;
+
 /** The turn-back arrow beside the word Reply. */
 function ReplyArrow() {
   return (
@@ -1766,10 +1863,10 @@ function shortName(email: string): string {
 
 /** One turn — mine, or the answer to it. */
 function TurnView({ turn }: { turn: Turn }) {
-  // Named only when it was somebody else. A turn written here needs
-  // no byline — there is one person on this side of the screen — but
-  // a thread read back out of the store is several people, and
-  // without names it is one voice arguing with itself.
+  // Named when it was somebody else. A turn written here needs no
+  // byline — there is one person on this side of the screen — but a
+  // thread read back out of the store is several people, and without
+  // names it is one voice arguing with itself.
   const byline = turn.author ? (
     <span className="doc-conv-by">{shortName(turn.author)}</span>
   ) : null;
@@ -1785,6 +1882,15 @@ function TurnView({ turn }: { turn: Turn }) {
 
   return (
     <div className="doc-conv-reply" aria-live="polite">
+      {/* Always named, and named without waiting for an author field
+          to arrive from the store — the agent has no account and
+          never fills one in, so the version of this that keyed the
+          byline on ``author`` printed igni's answer as an
+          unattributed block of prose. In a thread where every other
+          turn carries a name, the one paragraph with no name reads as
+          part of whatever was said above it. */}
+      <ReplyHook />
+      <span className="doc-conv-by doc-conv-by-agent">igni</span>
       {turn.phase === "failed" ? (
         <div className="msg-error">{turn.error || "That run did not finish."}</div>
       ) : turn.body ? (

@@ -1681,3 +1681,79 @@ describe("replying to a comment the document already had", () => {
     expect(harness.posts()[0].quote).toBe("The service issues a signed JWT on sign-in.");
   });
 });
+
+describe("telling igni's answer apart from a person's", () => {
+  // The agent has no account and never fills in an author, so a
+  // byline keyed on ``author`` printed its answer as an
+  // unattributed block of prose. In a thread where every other turn
+  // carries a name, the one paragraph with no name reads as part of
+  // whatever was said above it.
+  const stored = (over: Record<string, unknown> = {}) => ({
+    comment_id: "c1",
+    thread_id: "t1",
+    parent_id: "",
+    origin: "web",
+    quote: "The service issues a signed JWT on sign-in.",
+    quote_start: -1,
+    body: "What does it mean?",
+    status: "open",
+    author: "maya@acme.test",
+    at: "2026-09-01T10:00:00Z",
+    n: 2,
+    ...over,
+  });
+
+  async function withAnswer(over: Record<string, unknown> = {}) {
+    const harness = fakeClient();
+    harness.rpc.mockImplementation(async (method: string) =>
+      method === "artifact_comments"
+        ? [
+            stored(),
+            stored({
+              comment_id: "c2",
+              parent_id: "c1",
+              origin: "agent",
+              body: "It checks on refresh only.",
+              at: "2026-09-01T10:05:00Z",
+              ...over,
+            }),
+          ]
+        : { ok: true, prompt: "P", message: "" },
+    );
+    const { ref } = mountBody();
+    render(<DocumentComment client={harness.client} artifactId="a1" n={2} bodyRef={ref} />);
+    await screen.findByText("It checks on refresh only.");
+  }
+
+  it("names the agent on its own turn", async () => {
+    await withAnswer();
+
+    expect(document.querySelector(".doc-conv-by-agent")?.textContent).toBe("igni");
+  });
+
+  it("names it even though the agent has no author", async () => {
+    // The actual bug. An agent row with no author field still has to
+    // be attributed — it is the one turn whose author can never
+    // arrive from the store.
+    await withAnswer({ author: "" });
+
+    expect(document.querySelector(".doc-conv-by-agent")?.textContent).toBe("igni");
+  });
+
+  it("draws the line joining it to the turn it answers", async () => {
+    // An answer sitting under a question looks exactly like a second
+    // question; the order is the only thing saying otherwise, and
+    // order is what a reader loses first in a long thread.
+    await withAnswer();
+
+    expect(document.querySelectorAll(".doc-conv-hook")).toHaveLength(1);
+  });
+
+  it("does not draw one on a person's turn", async () => {
+    await withAnswer();
+
+    const mine = document.querySelector(".doc-conv-body");
+    expect(mine?.querySelector(".doc-conv-hook")).toBeFalsy();
+    expect(mine?.textContent).toContain("maya");
+  });
+});
