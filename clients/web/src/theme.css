@@ -4346,17 +4346,26 @@ button {
      already supplies its own. The band read as a gap rather than as
      a row, and everything docked below it — the tree, the document,
      the conversation — started lower than it needed to. */
-  /* Out of the flow: full-width in the layout it took a band off
-     the top of all three columns, when what it actually occupies is
-     the first 190 pixels of the first one. Absolute, so the document
-     and the conversation start level with it and only the hierarchy
-     — which is under it — is pushed down. */
+  padding: 0 18px 0 14px;
+  font-size: 12.5px;
+}
+
+/* Out of the flow — but only on a page whose columns sit *beside* it.
+   Full-width in the layout, this row took a band off the top of all
+   three columns when what it actually occupies is the first 190
+   pixels of the first one, so a document started a row lower than it
+   needed to for a line it sits next to.
+
+   Not on a page with a ``.page-head``. There the crumbs really are
+   above something — a title and its buttons, full width — and taking
+   them out of the flow drops that header underneath them. Which is
+   the same distinction ``--page-chrome-h`` is already drawn on, and
+   the reason it is two numbers rather than one. */
+.page:not(:has(> .page-head)) > .page-crumbs {
   position: absolute;
   top: 0;
   left: 0;
   z-index: 2;
-  padding: 0 18px 0 14px;
-  font-size: 12.5px;
 }
 
 .page-crumb-group {
