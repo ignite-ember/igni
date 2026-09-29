@@ -12028,6 +12028,31 @@ button {
   flex: none;
 }
 
+/* The word an icon stands for, on hover and on focus.
+   ``display: contents`` — the wrapper must not become a box in a
+   flex row, or every toolbar it is used in silently gains a layer of
+   spacing nobody designed. */
+.tip-anchor {
+  display: contents;
+}
+
+.tip {
+  position: fixed;
+  z-index: 80;
+  max-width: 17rem;
+  padding: 5px 8px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--fg);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 30%);
+  /* It explains the thing under the pointer; it must never be the
+     thing under the pointer. */
+  pointer-events: none;
+}
+
 /* The verbs a file tree has, as glyphs. Sized like a control rather
    than like text: they sit in a row above the tree and the row has
    to read as a toolbar, not as three words somebody left there. */

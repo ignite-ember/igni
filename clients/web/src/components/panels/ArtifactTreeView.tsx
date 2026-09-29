@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { IgniClient } from "../../protocol/client";
 import { MenuIcon } from "../MenuIcon";
+import { Tooltip } from "../Tooltip";
 import { TreeNotice } from "./TreeNotice";
 
 /**
@@ -356,25 +357,34 @@ export function ArtifactTreeView({
           every time the column is looked at, and the tooltip is
           there for the once they do. */}
       <div className="kb-tree-bar">
-        <button
-          type="button"
-          className="kb-tree-act"
-          title="New document"
-          aria-label="New document"
-          onClick={() => onCreateInside("", "")}
-        >
-          <MenuIcon name="document-add" />
-        </button>
-        <button
-          type="button"
-          className="kb-tree-act"
-          title="New folder"
-          aria-label="New folder"
-          onClick={() => void addFolder("")}
-        >
-          <MenuIcon name="folder-add" />
-        </button>
+        <Tooltip text="New document">
+          <button
+            type="button"
+            className="kb-tree-act"
+            aria-label="New document"
+            onClick={() => onCreateInside("", "")}
+          >
+            <MenuIcon name="document-add" />
+          </button>
+        </Tooltip>
+        <Tooltip text="New folder">
+          <button
+            type="button"
+            className="kb-tree-act"
+            aria-label="New folder"
+            onClick={() => void addFolder("")}
+          >
+            <MenuIcon name="folder-add" />
+          </button>
+        </Tooltip>
         <span className="kb-tree-bar-gap" />
+        <Tooltip
+          text={
+            showArchived
+              ? "Hide archived documents"
+              : "Show archived documents. Archived keeps every version, and anything built on one still resolves — only its content is frozen."
+          }
+        >
         <button
           type="button"
           className={showArchived ? "kb-tree-act is-on" : "kb-tree-act"}
@@ -384,16 +394,12 @@ export function ArtifactTreeView({
           // under the pointer is wording you have to read twice to
           // work out which way it is about to go.
           aria-pressed={showArchived}
-          title={
-            showArchived
-              ? "Hide archived documents"
-              : "Show archived documents — they are kept, and still resolve for anything built on them"
-          }
           aria-label="Show archived documents"
           onClick={() => setShowArchived((on) => !on)}
         >
           <MenuIcon name="archive" />
         </button>
+        </Tooltip>
       </div>
 
       {/* Both raised over the page rather than printed here. A
@@ -602,6 +608,7 @@ export function ArtifactTreeView({
                   than tree. */}
               {!node.placeholder && (
                 <span className="kb-tree-actions">
+                  <Tooltip text={`New document or folder in ${node.name}`}>
                   <button
                     type="button"
                     className={
@@ -609,13 +616,14 @@ export function ArtifactTreeView({
                         ? "kb-tree-act is-open"
                         : "kb-tree-act"
                     }
-                    title="Create inside"
                     aria-label={`Create inside ${node.name}`}
                     aria-expanded={menu?.id === node.node_id && menu.kind === "create"}
                     onClick={(e) => openMenu(e, node, "create")}
                   >
                     +
                   </button>
+                  </Tooltip>
+                  <Tooltip text={`More actions for ${node.name}`}>
                   <button
                     type="button"
                     className={
@@ -623,13 +631,13 @@ export function ArtifactTreeView({
                         ? "kb-tree-act is-open"
                         : "kb-tree-act"
                     }
-                    title="More"
                     aria-label={`More actions for ${node.name}`}
                     aria-expanded={menu?.id === node.node_id && menu.kind === "more"}
                     onClick={(e) => openMenu(e, node, "more")}
                   >
                     ⋯
                   </button>
+                  </Tooltip>
                 </span>
               )}
             </li>
