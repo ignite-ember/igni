@@ -46,6 +46,7 @@ from ember_code.backend.schemas_artifacts import (
     ArtifactProvenance,
     ArtifactQueryResult,
     ArtifactRemoveResult,
+    ArtifactRevised,
     ArtifactShareResult,
     ArtifactStaleRow,
     ArtifactStatus,
@@ -80,6 +81,7 @@ from ember_code.core.artifacts.models import (
     Comment,
     CommentOrigin,
     EdgeState,
+    SourceDeclaration,
     StaleDependent,
 )
 from ember_code.core.artifacts.pdf import PdfUnavailable
@@ -1171,6 +1173,34 @@ class ArtifactController:
                 for n in flatten_tree(nodes)
             ]
         )
+
+    async def revise(self, *, entry_id: str, content: str) -> ArtifactRevised:
+        """Write a document somebody edited by hand as a new version.
+
+        Sources are left empty deliberately. ``ArtifactIndex.revise``
+        inherits the confirmed edges from the version before, so
+        editing a paragraph keeps the record of what the document was
+        built on — which a hand edit has no opinion about and should
+        not be able to erase by omission.
+
+        The archived refusal is not repeated here. It lives on
+        ``revise`` itself, where every other way of writing a version
+        also passes; a second copy would be a second thing to forget
+        to update.
+        """
+        if self._session.artifacts is None:
+            return ArtifactRevised(error="Artifacts are disabled.")
+        if not content.strip():
+            return ArtifactRevised(error="Refusing to save an empty document.")
+        result = await self._session.artifacts.revise(
+            ref=entry_id,
+            content=content,
+            sources=SourceDeclaration(),
+            author=self._local_author(),
+        )
+        if not result.success:
+            return ArtifactRevised(error=result.error or "Could not save that.")
+        return ArtifactRevised(ok=True, n=result.n, message=result.message)
 
     async def create_folder(self, *, name: str, parent_id: str = "") -> ArtifactTreeChanged:
         """A place to put things."""

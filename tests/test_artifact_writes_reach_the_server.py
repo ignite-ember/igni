@@ -246,3 +246,60 @@ class TestWithNoAccount:
 
         assert result.success
         assert len(graph.writes) == 1
+
+
+class TestAChainTheServerHasNeverSeen:
+    """A document written here before it had a shared copy.
+
+    Its local history — v1 to v6, say — exists nowhere else, so the
+    first push arrives claiming a base the server has no record of.
+    That is the same shape as a colleague appending underneath, and
+    the check that refuses one refuses the other. It has to tell them
+    apart by the server's own head: zero is an empty chain and there
+    is nothing there to overwrite.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_first_push_seeds_the_chain_instead_of_refusing(self):
+        graph = FakeGraph(ArtifactSummary(artifact_id="a1", name="Rate limiting", head_n=6))
+        server = DivergingServer(head_n=0)
+        index = index_for(graph, server)
+        server.known["a1"] = "s1"
+
+        result = await index.revise(ref="a1", content="v7 text", sources=SourceDeclaration())
+
+        assert result.success, result.error
+        # Retried from nothing rather than from the local head.
+        assert [p["base_n"] for p in server.pushed] == [0]
+
+    @pytest.mark.asyncio
+    async def test_a_real_divergence_is_still_refused(self):
+        # Somebody appended. Retrying here would overwrite them, which
+        # is the thing the refusal exists for.
+        graph = FakeGraph(ArtifactSummary(artifact_id="a1", name="Rate limiting", head_n=6))
+        server = DivergingServer(head_n=9)
+        index = index_for(graph, server)
+        server.known["a1"] = "s1"
+
+        result = await index.revise(ref="a1", content="v7 text", sources=SourceDeclaration())
+
+        assert not result.success
+        assert "v9" in (result.error or "")
+        assert server.pushed == []
+        assert graph.writes == []
+
+
+class DivergingServer(FakeServer):
+    """Refuses the first push, reporting a given head."""
+
+    def __init__(self, *, head_n: int) -> None:
+        super().__init__()
+        self._head_n = head_n
+        self._refused = False
+
+    async def push_content(self, **kwargs: Any) -> int:
+        if not self._refused:
+            self._refused = True
+            raise ChainDiverged(head_n=self._head_n, missing=[])
+        self.pushed.append(kwargs)
+        return int(kwargs["base_n"]) + 1

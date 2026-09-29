@@ -479,9 +479,27 @@ class ArtifactIndex:
                 return ArtifactWriteResult.fail(
                     f"The server did not give '{name}' a home to write to."
                 )
-            return await shared.push_content(
-                slug=slug, content=content, base_n=base_n, pins=pins, html=page
-            )
+            try:
+                return await shared.push_content(
+                    slug=slug, content=content, base_n=base_n, pins=pins, html=page
+                )
+            except ChainDiverged as diverged:
+                # An *empty* chain is not a divergence. A document
+                # written here before it had a shared copy arrives
+                # with a local history the server has never seen, so
+                # the first push is from v6 onto nothing — which is
+                # refused by the same check that protects against a
+                # colleague appending underneath.
+                #
+                # Distinguished by the server's own head. Zero means
+                # there is nothing to collide with; anything else
+                # means somebody wrote something, and that still has
+                # to be refused rather than overwritten.
+                if diverged.head_n:
+                    raise
+                return await shared.push_content(
+                    slug=slug, content=content, base_n=0, pins=pins, html=page
+                )
         except ChainDiverged as diverged:
             # Somebody else appended while this was being written. Not
             # merged here: two people editing one document is a

@@ -20,6 +20,7 @@ import { DriftReviewPage } from "./DriftReviewPage";
 import { ExportBanner, type ExportOutcome } from "./ExportBanner";
 import { ProvenanceView, type CandidateOverlap, type Provenance } from "./ProvenanceView";
 import { DocumentCitations } from "./DocumentCitations";
+import { DocumentEditor } from "./DocumentEditor";
 import { ArtifactTreeView } from "./ArtifactTreeView";
 
 /** Where the reader's preference about the comment rail is kept. */
@@ -186,6 +187,8 @@ export function ArtifactPanel({
   /** Bumped when the documents changed, to make the tree re-read. */
   const [treeVersion, setTreeVersion] = useState(0);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
+  /** Reading, or editing. One document at a time, so a boolean. */
+  const [editing, setEditing] = useState(false);
   /** Why the delete was refused: the documents it is joined to. */
   const [removeBlocked, setRemoveBlocked] = useState<
     { artifact_id: string; name: string; direction: string }[] | null
@@ -656,6 +659,20 @@ export function ArtifactPanel({
                 })),
               },
               {
+                key: "edit",
+                icon: "rename",
+                // Named for what it produces, not for the mode it
+                // enters: this writes a version, and the version
+                // list next to it is how people read the document's
+                // history.
+                label: openArchived ? "Archived — read only" : "Edit",
+                title: openArchived
+                  ? "Archived documents are frozen. Restore it to make changes."
+                  : "Edit this document and save it as a new version",
+                disabled: openArchived,
+                onSelect: () => setEditing(true),
+              },
+              {
                 key: "share",
                 icon: "share",
                 label: "Share",
@@ -849,6 +866,8 @@ export function ArtifactPanel({
           onCompareClosed={() => setComparing(false)}
           onVersionCount={setVersionCount}
           onArchivedChange={setOpenArchived}
+          editing={editing}
+          onEditingChange={setEditing}
           reloadNonce={detailNonce}
         />
       ) : !status.enabled ? (
@@ -968,6 +987,8 @@ function DocumentDetail({
   onCompareClosed,
   onVersionCount,
   onArchivedChange,
+  editing = false,
+  onEditingChange,
   reloadNonce = 0,
 }: {
   client: IgniClient;
@@ -990,6 +1011,11 @@ function DocumentDetail({
   onCompareClosed: () => void;
   /** So the header knows whether there is anything to compare. */
   onVersionCount: (count: number) => void;
+  /** Editing rather than reading. Owned by the panel, because the
+   *  control that turns it on is in the header beside the other
+   *  things you can do to a document. */
+  editing?: boolean;
+  onEditingChange?: (editing: boolean) => void;
   /** Whether this document is frozen, for the page's own menu. */
   onArchivedChange: (archived: boolean) => void;
   /** Bumped by the page when it archived or restored this document. */
@@ -1012,6 +1038,8 @@ function DocumentDetail({
   // at 0 — "whatever head is" — so nothing would refetch and the
   // page would sit on the text the comment was about.
   const [docNonce, setDocNonce] = useState(0);
+  /** A save is in flight. The editor says so and refuses a second. */
+  const [saving, setSaving] = useState(false);
   // Handed to the comment composer so only text inside the document
   // can be quoted — without it, selecting a version number in the
   // list below would be carried in as a passage.
@@ -1346,6 +1374,33 @@ function DocumentDetail({
               document is inside it, so the conversation beside it can
               scroll on its own without dragging the text along. */}
           <div className="kb-doc-scroll">
+          {editing ? (
+            <DocumentEditor
+              content={doc.content}
+              frozen={doc.archived}
+              busy={saving}
+              onSave={async (markdown) => {
+                setSaving(true);
+                try {
+                  const r = await client.rpc<{ ok?: boolean; n?: number; error?: string }>(
+                    "artifact_revise",
+                    { id, content: markdown },
+                  );
+                  // Thrown, not returned: the editor keeps the words
+                  // on screen when a save is refused, and the only
+                  // way to tell it so is for this to fail.
+                  if (r?.error || !r?.ok) {
+                    throw new Error(r?.error || "Could not save that.");
+                  }
+                  onEditingChange?.(false);
+                  setDocNonce((n) => n + 1);
+                } finally {
+                  setSaving(false);
+                }
+              }}
+              onCancel={() => onEditingChange?.(false)}
+            />
+          ) : (
           <div className="kb-doc-body markdown-body" ref={bodyRef}>
             <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
               {doc.content || "_(empty)_"}
@@ -1363,6 +1418,7 @@ function DocumentDetail({
               onOpenSource={onOpenArtifact}
             />
           </div>
+          )}
 
           {lineageSection}
           </div>

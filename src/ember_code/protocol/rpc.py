@@ -238,6 +238,10 @@ class RpcMethod(StrEnum):
     ARTIFACT_LIST = "artifact_list"
     ARTIFACT_GET = "artifact_get"
     ARTIFACT_REMOVE = "artifact_remove"
+    # Editing a document by hand. Separate from ``artifact_add``,
+    # which takes a *source* to read from: this one carries the text
+    # itself, because the text came from somebody typing it.
+    ARTIFACT_REVISE = "artifact_revise"
     # Versioning + lineage. Separate RPCs rather than fields on
     # ``artifact_get`` because the panel fetches them on different
     # interactions — opening a document, opening its history — and

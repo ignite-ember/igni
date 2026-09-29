@@ -975,6 +975,10 @@ class BackendServer:
         """See :meth:`ArtifactController.add`."""
         return await self.artifacts.add(source, parent_id=parent_id)
 
+    async def artifact_revise(self, entry_id: str, content: str) -> Any:
+        """See :meth:`ArtifactController.revise`."""
+        return await self.artifacts.revise(entry_id=entry_id, content=content)
+
     async def artifact_list(self) -> list[ArtifactListEntry]:
         """See :meth:`ArtifactController.list`."""
         return await self.artifacts.list()

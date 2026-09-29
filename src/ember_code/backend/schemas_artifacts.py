@@ -439,6 +439,18 @@ class ArtifactDependent(BaseModel):
     direction: str = ""
 
 
+class ArtifactRevised(BaseModel):
+    """The outcome of editing a document by hand."""
+
+    ok: bool = False
+    #: The version that was written. The caller shows it, and it is
+    #: how somebody knows their edit became a thing rather than
+    #: overwriting what was there.
+    n: int = 0
+    message: str = ""
+    error: str = ""
+
+
 class ArtifactTreeChanged(BaseModel):
     """The outcome of creating, moving, renaming or removing."""
 
