@@ -21,8 +21,12 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import type { Editor } from "@tiptap/core";
+
 import { MenuIcon } from "../MenuIcon";
+import { Tooltip } from "../Tooltip";
 import { DOCUMENT_EXTENSIONS, markdownOf, preserveWrapping } from "./documentMarkdown";
+import { SELECTION_TOOLS, TOOL_GROUPS, type EditorTool } from "./editorTools";
 import { SlashMenu } from "./SlashMenu";
 import { slashCommands, type SlashState } from "./slashCommands";
 
@@ -38,30 +42,31 @@ export interface DocumentEditorProps {
   onCancel: () => void;
 }
 
-/** What the toolbar can do, in the order it does it. */
-const TOOLS = [
-  { key: "bold", label: "Bold", glyph: "B", mark: "bold" },
-  { key: "italic", label: "Italic", glyph: "I", mark: "italic" },
-  { key: "code", label: "Code", glyph: "<>", mark: "code" },
-] as const;
-
-interface BlockTool {
-  key: string;
-  label: string;
-  glyph: string;
-  node: string;
-  /** Only headings need one, and a union without it does not narrow. */
-  attrs?: Record<string, unknown>;
+/** One toolbar button, wherever it is drawn. */
+function ToolButton({ tool, editor }: { tool: EditorTool; editor: Editor }) {
+  const on = tool.isOn(editor);
+  const usable = tool.can ? tool.can(editor) : true;
+  return (
+    <Tooltip text={tool.keys ? `${tool.label} · ${tool.keys}` : tool.label}>
+      <button
+        type="button"
+        className={on ? "doc-tool is-on" : "doc-tool"}
+        aria-label={tool.label}
+        aria-pressed={on}
+        disabled={!usable}
+        // Pointer down, not click: clicking takes focus out of the
+        // document first, and a mark then applies to a selection
+        // that has already collapsed.
+        onPointerDown={(e) => {
+          e.preventDefault();
+          tool.run(editor);
+        }}
+      >
+        {tool.glyph}
+      </button>
+    </Tooltip>
+  );
 }
-
-const BLOCKS: BlockTool[] = [
-  { key: "h2", label: "Heading", glyph: "H2", node: "heading", attrs: { level: 2 } },
-  { key: "h3", label: "Subheading", glyph: "H3", node: "heading", attrs: { level: 3 } },
-  { key: "bulletList", label: "Bulleted list", glyph: "•", node: "bulletList" },
-  { key: "orderedList", label: "Numbered list", glyph: "1.", node: "orderedList" },
-  { key: "blockquote", label: "Quote", glyph: "❝", node: "blockquote" },
-  { key: "codeBlock", label: "Code block", glyph: "{ }", node: "codeBlock" },
-];
 
 export function DocumentEditor({
   content,
@@ -162,43 +167,29 @@ export function DocumentEditor({
 
   return (
     <div className="doc-editor">
-      {/* The toolbar appears over the selection rather than above
-          the document. A permanent bar costs vertical room in a
-          column already squeezed between two docked panels, and it
-          is furniture for the ninety per cent of editing that is
-          typing rather than formatting. */}
+      {/* The whole of what the editor can do, at the top, while
+          editing. A bubble over the selection is quicker once you
+          know the tools; it is no way to find out what they are. */}
+      {!frozen && (
+        <div className="doc-editor-bar" role="toolbar" aria-label="Formatting">
+          {TOOL_GROUPS.map((group, i) => (
+            <div className="doc-tool-group" key={group.key}>
+              {i > 0 && <span className="doc-bar-gap" aria-hidden="true" />}
+              {group.tools.map((tool) => (
+                <ToolButton key={tool.key} tool={tool} editor={editor} />
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* And the same marks over the selection, for once you know
+          them. Marks and headings only: inserting a table into a
+          three-word selection is not what the selection meant. */}
       {!frozen && (
         <BubbleMenu editor={editor} className="doc-bubble">
-          {TOOLS.map((tool) => (
-            <button
-              key={tool.key}
-              type="button"
-              className={editor.isActive(tool.mark) ? "doc-tool is-on" : "doc-tool"}
-              aria-label={tool.label}
-              aria-pressed={editor.isActive(tool.mark)}
-              title={tool.label}
-              onClick={() => editor.chain().focus().toggleMark(tool.mark).run()}
-            >
-              {tool.glyph}
-            </button>
-          ))}
-          <span className="doc-bubble-gap" />
-          {BLOCKS.map((block) => (
-            <button
-              key={block.key}
-              type="button"
-              className={
-                editor.isActive(block.node, block.attrs) ? "doc-tool is-on" : "doc-tool"
-              }
-              aria-label={block.label}
-              aria-pressed={editor.isActive(block.node, block.attrs)}
-              title={block.label}
-              onClick={() =>
-                editor.chain().focus().toggleNode(block.node, "paragraph", block.attrs).run()
-              }
-            >
-              {block.glyph}
-            </button>
+          {SELECTION_TOOLS.map((tool) => (
+            <ToolButton key={tool.key} tool={tool} editor={editor} />
           ))}
         </BubbleMenu>
       )}

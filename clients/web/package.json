@@ -20,6 +20,8 @@
     "@json-render/core": "^0.19.0",
     "@json-render/react": "^0.19.0",
     "@tiptap/extension-drag-handle-react": "^3.31.3",
+    "@tiptap/extension-image": "^3.31.3",
+    "@tiptap/extension-list": "^3.31.3",
     "@tiptap/extension-table": "^3.31.3",
     "@tiptap/pm": "^3.31.3",
     "@tiptap/react": "^3.31.3",

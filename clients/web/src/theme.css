@@ -11152,17 +11152,22 @@ button {
   background: hsl(210 45% 50% / 0.16);
 }
 
-.kb-doc-body {
+/* The document's own typography — and the editing surface answers
+   to the same rules. Written once and applied to both, so a table
+   looks like a table and a fence looks like a fence while you are
+   typing in them. The alternative was a second copy of all of this
+   that drifts the first time one of them changes. */
+.kb-doc-body, .doc-editor-body .ProseMirror {
   font-size: 14.5px;
   line-height: 1.65;
   color: var(--fg);
 }
 
-.kb-doc-body > :first-child {
+.kb-doc-body > :first-child , .doc-editor-body .ProseMirror > :first-child {
   margin-top: 0;
 }
 
-.kb-doc-body > :last-child {
+.kb-doc-body > :last-child , .doc-editor-body .ProseMirror > :last-child {
   margin-bottom: 0;
 }
 
@@ -11172,10 +11177,10 @@ button {
    defaults was the other half of "it does not render" — borderless
    tables and code with no box read as unrendered even though the
    parse was right. */
-.kb-doc-body h1,
-.kb-doc-body h2,
-.kb-doc-body h3,
-.kb-doc-body h4,
+.kb-doc-body h1, .doc-editor-body .ProseMirror h1,
+.kb-doc-body h2, .doc-editor-body .ProseMirror h2,
+.kb-doc-body h3, .doc-editor-body .ProseMirror h3,
+.kb-doc-body h4, .doc-editor-body .ProseMirror h4,
 .prov-passage h1,
 .prov-passage h2,
 .prov-passage h3,
@@ -11189,27 +11194,27 @@ button {
   color: var(--fg-muted);
 }
 
-.kb-doc-body h1,
+.kb-doc-body h1, .doc-editor-body .ProseMirror h1,
 .prov-passage h1 { font-size: 1.12em; }
-.kb-doc-body h2,
+.kb-doc-body h2, .doc-editor-body .ProseMirror h2,
 .prov-passage h2 { font-size: 1.06em; }
-.kb-doc-body h3,
-.kb-doc-body h4,
+.kb-doc-body h3, .doc-editor-body .ProseMirror h3,
+.kb-doc-body h4, .doc-editor-body .ProseMirror h4,
 .prov-passage h3,
 .prov-passage h4 { font-size: 1em; }
 
-.kb-doc-body p,
-.kb-doc-body ul,
-.kb-doc-body ol {
+.kb-doc-body p, .doc-editor-body .ProseMirror p,
+.kb-doc-body ul, .doc-editor-body .ProseMirror ul,
+.kb-doc-body ol , .doc-editor-body .ProseMirror ol {
   margin: 0 0 1em;
 }
 
-.kb-doc-body li,
+.kb-doc-body li, .doc-editor-body .ProseMirror li,
 .prov-passage li {
   margin-bottom: 0.3em;
 }
 
-.kb-doc-body pre,
+.kb-doc-body pre, .doc-editor-body .ProseMirror pre,
 .prov-passage pre,
 .prov-card-quote pre {
   margin: 0 0 1.2em;
@@ -11222,7 +11227,7 @@ button {
   border-radius: 6px;
 }
 
-.kb-doc-body :not(pre) > code,
+.kb-doc-body :not(pre) > code, .doc-editor-body .ProseMirror :not(pre) > code,
 .prov-passage :not(pre) > code,
 .prov-card-quote :not(pre) > code {
   padding: 0.1em 0.32em;
@@ -11231,7 +11236,7 @@ button {
   border-radius: 4px;
 }
 
-.kb-doc-body blockquote,
+.kb-doc-body blockquote, .doc-editor-body .ProseMirror blockquote,
 .prov-passage blockquote {
   margin: 0 0 1em;
   padding-left: 0.9em;
@@ -11239,7 +11244,7 @@ button {
   color: var(--fg-muted);
 }
 
-.kb-doc-body table,
+.kb-doc-body table, .doc-editor-body .ProseMirror table,
 .prov-passage table,
 .prov-card-quote table {
   width: 100%;
@@ -11248,8 +11253,8 @@ button {
   font-size: 0.92em;
 }
 
-.kb-doc-body th,
-.kb-doc-body td,
+.kb-doc-body th, .doc-editor-body .ProseMirror th,
+.kb-doc-body td, .doc-editor-body .ProseMirror td,
 .prov-passage th,
 .prov-passage td,
 .prov-card-quote th,
@@ -11259,7 +11264,7 @@ button {
   border-bottom: 1px solid var(--border-soft);
 }
 
-.kb-doc-body th,
+.kb-doc-body th, .doc-editor-body .ProseMirror th,
 .prov-passage th {
   font-weight: 600;
   color: var(--fg-muted);
@@ -12038,6 +12043,51 @@ button {
   gap: 10px;
 }
 
+/* Everything the editor can do, at the top, while editing.
+   Sticky, because a document is longer than a screen and a toolbar
+   you have to scroll back to is a toolbar you stop using. It wraps
+   rather than scrolls: a hidden row of a toolbar is the same as not
+   having those tools. */
+.doc-editor-bar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-raised);
+}
+
+/* Kept together when the bar wraps. A group split across two lines
+   puts "Heading 3" under the undo arrow, which reads as a different
+   toolbar. */
+.doc-tool-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.doc-bar-gap {
+  width: 1px;
+  height: 17px;
+  margin: 0 5px;
+  background: var(--border-soft);
+}
+
+.doc-tool:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.doc-tool:disabled:hover {
+  color: var(--fg-muted);
+  background: none;
+}
+
 /* The toolbar, over the selection rather than above the document.
    A permanent bar costs vertical room in a column already squeezed
    between two docked panels, and it is furniture for the ninety per
@@ -12162,6 +12212,8 @@ button {
 
 /* The editing surface. Borderless: a box around the text would make
    this look like a form field rather than the document it is. */
+/* No focus ring on the document itself: the caret says where you
+   are, and a box round the whole page says "form field". */
 .doc-editor-body .ProseMirror {
   outline: none;
   min-height: 12rem;

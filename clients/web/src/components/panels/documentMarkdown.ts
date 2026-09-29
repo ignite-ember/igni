@@ -26,6 +26,8 @@
  * that really were edited take the editor's wrapping.
  */
 
+import { Image } from "@tiptap/extension-image";
+import { TaskItem, TaskList } from "@tiptap/extension-list";
 import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "tiptap-markdown";
@@ -47,6 +49,14 @@ export const DOCUMENT_EXTENSIONS = [
   TableRow,
   TableHeader,
   TableCell,
+  // Both added when the toolbar started offering them, and both for
+  // the same reason as ``Table``: a task list came back with its
+  // brackets escaped — "- \[ \] todo" — and an image came back as
+  // nothing at all. A button that inserts something the save then
+  // deletes is worse than no button.
+  TaskList,
+  TaskItem.configure({ nested: true }),
+  Image,
 ];
 
 /**
