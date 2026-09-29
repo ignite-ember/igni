@@ -13,6 +13,7 @@ import { Drawer } from "./Drawer";
 import { OverflowMenu } from "../OverflowMenu";
 import { MarkdownInline } from "../MarkdownInline";
 import { DocumentComment } from "./DocumentComment";
+import { ColumnHandle } from "./ColumnHandle";
 import { formatRelative } from "../../utils/when";
 import { DriftBanner, type StaleSource } from "./DocumentDrift";
 import { DriftReviewPage } from "./DriftReviewPage";
@@ -715,6 +716,17 @@ export function ArtifactPanel({
              partway through a long document, which is the one thing a
              navigation column must not do. */
           <div className="kb-tree-dock">
+            {/* The rule between the hierarchy and the document, and
+                the grip for moving it. How deep somebody's folders
+                go is not a thing this app can know. */}
+            <ColumnHandle
+              variable="--tree-width"
+              side="left"
+              min={150}
+              max={520}
+              storageKey="igni.artifact.treeWidth"
+              label="Resize the hierarchy"
+            />
           <ArtifactTreeView
             client={client}
             selectedId={selected}
@@ -1355,6 +1367,17 @@ function DocumentDetail({
               is usually a new version and the page under it is then
               out of date with itself. */}
           <div className="kb-doc-aside">
+            {/* And the one on the other side of the text. A passage
+                with an argument on it wants more room than a
+                passage with a remark. */}
+            <ColumnHandle
+              variable="--rail-width"
+              side="right"
+              min={240}
+              max={720}
+              storageKey="igni.artifact.railWidth"
+              label="Resize the conversation"
+            />
             {/* Both sections pin together. The thread used to be the
                 only sticky thing here, so scrolling a long document
                 slid the version list out of the top of the window

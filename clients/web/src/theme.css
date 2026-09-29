@@ -4430,7 +4430,7 @@ button {
 .page-body:has(.kb-shell-with-tree):not(:has(.kb-doc-comparing)):not(
     :has(.kb-doc-tracing)
   ) {
-  padding-right: calc(24rem + 46px);
+  padding-right: var(--rail-width);
 }
 
 @media (max-width: 64rem) {
@@ -4516,7 +4516,13 @@ button {
 .page-measure:has(.kb-shell-with-tree):not(:has(.kb-doc-comparing)):not(
     :has(.kb-doc-tracing)
   ) {
+  /* Whatever the two columns leave, up to a comfortable measure.
+     A fixed 756px was right for one pair of column widths and wrong
+     for every other, so dragging either handle used to move a column
+     and leave the text where it was — centred in a gap it no longer
+     matched. */
   width: min(756px, 100%);
+  max-width: 100%;
 }
 
 .page-measure:has(.kb-shell-with-tree):has(.kb-doc-comparing),
@@ -10142,7 +10148,7 @@ button {
   right: 0;
   top: var(--dock-top);
   bottom: 0;
-  width: calc(24rem + 46px);
+  width: var(--rail-width);
   padding: 0 0 0 28px;
   display: flex;
   flex-direction: column;
@@ -11766,6 +11772,13 @@ button {
 
 :root {
   --tree-width: 15.5rem;
+  /* The conversation's width, and a variable for the same reason
+     ``--tree-width`` is: three rules depend on it — the column, the
+     room the page leaves it, and how wide the text between them
+     ends up — and a number typed into each is three numbers that
+     have to be changed together and never are. Set on the element
+     by the handle between them. */
+  --rail-width: calc(24rem + 46px);
   /* The air above the first line of a panel, and the one number the
      three columns are placed from. The measure and whatever it holds
      each take half of it, so changing it here moves the title, the
@@ -11797,6 +11810,63 @@ button {
      clicks meant for the page underneath. The tree turns them back
      on for itself. */
   pointer-events: none;
+}
+
+/* The grip on a column's edge.
+   Wider than the line it sits on — a 1px target is a target nobody
+   hits — but invisible until the pointer is on it, so the page is
+   still two rules and a document rather than a window full of
+   furniture. It re-enables pointer events, which the dock turns off
+   for everything that is not the tree. */
+.col-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 11px;
+  z-index: 4;
+  cursor: col-resize;
+  pointer-events: auto;
+  /* Nothing drawn at rest: the rule beside it is the visible edge,
+     and a second line next to it would read as a scrollbar. */
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.col-handle-left {
+  /* Straddling the rule, which sits 16px right of the tree. */
+  right: -21px;
+}
+
+.col-handle-right {
+  left: -5px;
+}
+
+/* On approach, and while dragging. The line thickens rather than
+   changing colour: it is the same edge, being moved. */
+.col-handle:hover::after,
+.col-handle:focus-visible::after,
+.is-resizing-column .col-handle:active::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 5px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent-blue, #4a7dff);
+}
+
+.col-handle:focus-visible {
+  outline: none;
+}
+
+/* While a column is being dragged, the pointer is often not over the
+   strip any more, and text either side would otherwise select as it
+   sweeps past. */
+.is-resizing-column {
+  cursor: col-resize;
+  user-select: none;
 }
 
 /* The rule between the hierarchy and what you are reading.
