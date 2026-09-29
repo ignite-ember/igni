@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { IgniClient } from "../../protocol/client";
+import { TreeNotice } from "./TreeNotice";
 
 /**
  * Where documents live, as against what they refer to.
@@ -372,8 +373,11 @@ export function ArtifactTreeView({
         </button>
       </div>
 
-      {error && <p className="msg-error">{error}</p>}
-      {note && <p className="kb-hint kb-tree-note">{note}</p>}
+      {/* Both raised over the page rather than printed here. A
+          sentence about what just happened used to push every folder
+          down by two lines to announce that one of them had gone. */}
+      <TreeNotice text={error} tone="refused" onDismiss={() => setError("")} />
+      <TreeNotice text={note} onDismiss={() => setNote("")} />
 
       {/* Named, not counted. "3 documents depend on this" tells a
           reader they are stuck; naming them tells them what to go and

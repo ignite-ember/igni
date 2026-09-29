@@ -11812,6 +11812,57 @@ button {
   pointer-events: none;
 }
 
+/* What just happened, over the page rather than inside a column.
+   Bottom centre: out of the way of both docked columns and of the
+   document between them, and nowhere near the tree it is usually
+   about — a notice that covers the thing it refers to is a notice
+   you have to move to read past. */
+.tree-notice {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(34rem, calc(100vw - 48px));
+  padding: 9px 10px 9px 14px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-raised);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+}
+
+.tree-notice-refused {
+  border-color: color-mix(in srgb, var(--accent-red-text, #f09393) 45%, transparent);
+}
+
+.tree-notice-text {
+  min-width: 0;
+}
+
+.tree-notice-close {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--fg-muted);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tree-notice-close:hover {
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
 /* The grip on a column's edge.
    Wider than the line it sits on — a 1px target is a target nobody
    hits — but invisible until the pointer is on it, so the page is
