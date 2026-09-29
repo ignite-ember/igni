@@ -126,8 +126,9 @@ export function DocumentPeople({
 }: {
   roster: Roster | null;
   here: Occupant[];
-  /** Open the sharing controls. Absent for anybody who may not. */
-  onManage?: () => void;
+  /** Open the sharing controls. Given where the control sits, so the
+   *  popover can hang off it. Absent for anybody who may not. */
+  onManage?: (at: { left: number; right: number; top: number; bottom: number }) => void;
 }) {
   const row = useMemo(() => faces(roster, here), [roster, here]);
   const note = roster ? reachNote(roster) : "";
@@ -182,7 +183,10 @@ export function DocumentPeople({
             type="button"
             className="doc-people-note is-pressable"
             title="Change who can see this"
-            onClick={onManage}
+            onClick={(e) => {
+              const box = e.currentTarget.getBoundingClientRect();
+              onManage({ left: box.left, right: box.right, top: box.top, bottom: box.bottom });
+            }}
           >
             {note}
           </button>

@@ -9948,11 +9948,31 @@ button {
 
 /* ── Share dialog ── */
 
+/* The share panel: a popover now, not a page. Same surface, border
+   and shadow as the overflow menu it often opens from, because they
+   are the same kind of thing — something that hangs off a control and
+   goes away — and two popups in one header that look unrelated read
+   as two different products. */
+.kb-share-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+}
+
 .kb-share {
+  position: fixed;
+  z-index: 40;
   display: flex;
+  width: 340px;
+  max-width: calc(100vw - 24px);
   flex-direction: column;
-  gap: 14px;
-  max-width: 34rem;
+  gap: 12px;
+  padding: 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  animation: menu-pop 0.14s cubic-bezier(0.2, 0.9, 0.3, 1.1);
 }
 
 .kb-share-title {

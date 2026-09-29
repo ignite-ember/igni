@@ -5,7 +5,7 @@ import rehypeHighlight from "rehype-highlight";
 import type { IgniClient } from "../../protocol/client";
 import { ArtifactGraphSearch } from "./ArtifactGraphSearch";
 import { ArtifactSearch } from "./ArtifactSearch";
-import { ArtifactShareDialog } from "./ArtifactShareDialog";
+import { ArtifactShareDialog, type Anchor } from "./ArtifactShareDialog";
 import { ArtifactCommentReview } from "./ArtifactCommentReview";
 import { ArtifactCompare } from "./ArtifactCompare";
 import { DocumentPeople } from "./DocumentPeople";
@@ -152,7 +152,7 @@ interface ArtifactLineageView {
   citations: string[];
 }
 
-type View = "list" | "detail" | "add" | "ask" | "stale" | "share" | "comments" | "drift";
+type View = "list" | "detail" | "add" | "ask" | "stale" | "comments" | "drift";
 type AddMode = "url" | "path" | "text";
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -226,6 +226,23 @@ export function ArtifactPanel({
   // text, with where each passage came from shown against it.
   const [tracing, setTracing] = useState(false);
   const [versionCount, setVersionCount] = useState(0);
+  /** The open share popover: where it hangs and what it opens on.
+   *  Null when it is shut. An object rather than a boolean because it
+   *  is anchored to whichever of two controls opened it. */
+  const [sharing, setSharing] = useState<ShareOpening | null>(null);
+  /** How the document on screen is shared, as last reported by the
+   *  detail view. A ref, not state: the overflow menu reads it at the
+   *  moment it is pressed, and making it state would re-render the
+   *  whole panel every time a roster arrived. */
+  const sharedNow = useRef<{ reach: ShareReach; listed: string[] }>({
+    reach: "private",
+    listed: [],
+  });
+  // Stable, so the effect that reports the roster does not re-run on
+  // every render of the panel above it.
+  const rememberSharing = useCallback((reach: ShareReach, listed: string[]) => {
+    sharedNow.current = { reach, listed };
+  }, []);
   /**
    * Whether the document on screen is archived.
    *
@@ -452,9 +469,7 @@ export function ArtifactPanel({
             ? "Needs attention"
             : view === "comments"
               ? "Comments"
-            : view === "share" && selectedDoc
-              ? `Share ${selectedDoc.name}`
-              : null;
+            : null;
   const title: React.ReactNode = leaf ?? "Artifacts";
   // Two levels deep on the drift review: the document, then the
   // change under it. A crumb per level is what lets the reader step
@@ -697,7 +712,19 @@ export function ArtifactPanel({
                 key: "share",
                 icon: "share",
                 label: "Share",
-                onSelect: () => setView("share"),
+                // Anchored to the menu that ran it. The item itself
+                // is gone by the time this fires — the menu closes on
+                // select — so the anchor is taken from the trigger,
+                // which is still there.
+                onSelect: () =>
+                  setSharing({
+                    at: anchorOf(document.querySelector(".kb-doc-head .overflow-menu")),
+                    // Whatever the detail view last reported. The
+                    // menu is in the header beside it, so it is
+                    // always the document on screen.
+                    reach: sharedNow.current.reach,
+                    listed: sharedNow.current.listed,
+                  }),
               },
               {
                 key: "archive",
@@ -837,13 +864,6 @@ export function ArtifactPanel({
             setView("detail");
           }}
         />
-      ) : view === "share" && selected ? (
-        <ArtifactShareDialog
-          client={client}
-          artifactId={selected}
-          name={selectedDoc?.name ?? selected}
-          onClose={() => setView("detail")}
-        />
       ) : view === "ask" ? (
         <ArtifactGraphSearch
           client={client}
@@ -885,7 +905,11 @@ export function ArtifactPanel({
             setView("detail");
           }}
           onCompareClosed={() => setComparing(false)}
-          onShare={() => setView("share")}
+          onShare={(opening) => {
+            sharedNow.current = { reach: opening.reach, listed: opening.listed };
+            setSharing(opening);
+          }}
+          onSharingChanged={rememberSharing}
           onVersionCount={setVersionCount}
           onArchivedChange={setOpenArchived}
           editing={editing}
@@ -921,8 +945,40 @@ export function ArtifactPanel({
       )}
         </div>
       </div>
+      {/* Once for the panel rather than inside whichever control
+          opened it: two copies would be two pieces of state, and the
+          one left open behind the other is the bug that costs an
+          afternoon. */}
+      {selected && (
+        <ArtifactShareDialog
+          client={client}
+          artifactId={selected}
+          name={selectedDoc?.name ?? selected}
+          at={sharing?.at ?? null}
+          reach={sharing?.reach}
+          listed={sharing?.listed}
+          onClose={() => setSharing(null)}
+        />
+      )}
     </Drawer>
   );
+}
+
+/** How the document on screen is shared, and where to hang the panel
+ *  that changes it. */
+export type ShareReach = "private" | "users" | "domain" | "public";
+
+export interface ShareOpening {
+  at: Anchor | null;
+  reach: ShareReach;
+  listed: string[];
+}
+
+/** The rectangle an element occupies, for a popover to hang off. */
+function anchorOf(el: Element | null): Anchor | null {
+  if (!el) return null;
+  const box = el.getBoundingClientRect();
+  return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
 }
 
 // ── Disabled state ───────────────────────────────────────────────
@@ -1012,6 +1068,7 @@ function DocumentDetail({
   editing = false,
   onEditingChange,
   onShare,
+  onSharingChanged,
   reloadNonce = 0,
 }: {
   client: IgniClient;
@@ -1032,8 +1089,16 @@ function DocumentDetail({
   /** What you can do to this document, shown beside its name. */
   actions?: React.ReactNode;
   onCompareClosed: () => void;
-  /** Open the sharing controls. Absent for anybody who may not. */
-  onShare?: () => void;
+  /** Open the sharing controls, anchored to what was pressed, and
+   *  carrying how the document is shared today — the detail view has
+   *  that on screen already, and a panel that fetched it again would
+   *  open on a default and correct itself a moment later. Absent for
+   *  anybody who may not change them. */
+  onShare?: (opening: ShareOpening) => void;
+  /** How this document is shared, reported whenever it is learned —
+   *  so the overflow menu, which sits outside this view, can open the
+   *  share panel on the right answer rather than on a default. */
+  onSharingChanged?: (reach: ShareReach, listed: string[]) => void;
   /** So the header knows whether there is anything to compare. */
   onVersionCount: (count: number) => void;
   /** Editing rather than reading. Owned by the panel, because the
@@ -1079,6 +1144,16 @@ function DocumentDetail({
   // below that return is a hook React sees on some renders and not
   // others — which is not a subtle bug, it is a blank page.
   const room = useDocumentRoom(client, id);
+
+  // Tell the panel above how this document is shared, so a control
+  // outside this view can open the share popover on it.
+  useEffect(() => {
+    if (!room.roster) return;
+    onSharingChanged?.(
+      room.roster.reach as ShareReach,
+      room.roster.people.filter((p) => p.role !== "owner").map((p) => p.identity),
+    );
+  }, [room.roster, onSharingChanged]);
   // Whether the shared copy is open to this account. Up here with
   // every other hook, for the reason the one above learned the hard
   // way: this component returns early while a document loads.
@@ -1379,7 +1454,23 @@ function DocumentDetail({
               // Only for somebody who could act on it. A control that
               // opens a dialog whose every field is refused is worse
               // than no control.
-              onManage={room.roster?.can_manage ? onShare : undefined}
+              onManage={
+                room.roster?.can_manage && onShare
+                  ? (at) =>
+                      onShare({
+                        at,
+                        reach: (room.roster?.reach ?? "private") as ShareReach,
+                        // The addresses the document names, which is
+                        // what the audience box holds. The owner is
+                        // not one of them: they are on it by owning
+                        // it, and listing them would add them to
+                        // their own audience on the next publish.
+                        listed: (room.roster?.people ?? [])
+                          .filter((p) => p.role !== "owner")
+                          .map((p) => p.identity),
+                      })
+                  : undefined
+              }
             />
           </div>
         )}

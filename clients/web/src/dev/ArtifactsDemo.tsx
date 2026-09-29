@@ -29,7 +29,7 @@
  * arguments each control sends can be checked by eye.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArtifactShareDialog } from "../components/panels/ArtifactShareDialog";
 import { ArtifactStaleReview } from "../components/panels/ArtifactStaleReview";
 import { ArtifactGraphSearch } from "../components/panels/ArtifactGraphSearch";
@@ -191,6 +191,20 @@ LIMIT 50`,
 
 export function ArtifactsDemo() {
   const [log, setLog] = useState<string[]>([]);
+  // The share panel is a popover now, so the demo has to give it
+  // something to hang off — the frame it used to sit inside.
+  const shareAnchor = useRef<HTMLDivElement>(null);
+  const [shareAt, setShareAt] = useState<{
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const box = shareAnchor.current?.getBoundingClientRect();
+    if (box) setShareAt({ left: box.left, right: box.right, top: box.top, bottom: box.bottom });
+  }, []);
 
   const note = (line: string) =>
     setLog((prev) => [...prev.slice(-11), line]);
@@ -237,11 +251,15 @@ export function ArtifactsDemo() {
           “anyone whose account email shares yours” is — and this is one click
           that can put a document in front of a company.
         </p>
-        <div className="demo-frame">
+        <div className="demo-frame" ref={shareAnchor}>
+          {/* Anchored to this frame rather than to a control: the
+              demo has nothing that opens it, and a popover with
+              nothing to point at renders nothing at all. */}
           <ArtifactShareDialog
             client={client}
             artifactId="826de04b1ae70098"
             name="Auth model"
+            at={shareAt}
             onClose={() => note("share: closed")}
           />
         </div>

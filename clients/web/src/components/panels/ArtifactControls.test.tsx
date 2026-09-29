@@ -25,6 +25,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ArtifactShareDialog } from "./ArtifactShareDialog";
+
+/** Somewhere to hang the popover. It is anchored to whatever opened
+ *  it, and a test that passes null would render nothing at all. */
+const ANCHOR = { left: 100, right: 400, top: 80, bottom: 100 };
 import { ArtifactStaleReview } from "./ArtifactStaleReview";
 
 afterEach(cleanup);
@@ -96,6 +100,7 @@ describe("the share dialog", () => {
         client={client}
         artifactId="a1"
         name="Auth model"
+        at={ANCHOR}
         onClose={() => {}}
       />,
     );
@@ -117,7 +122,13 @@ describe("the share dialog", () => {
       error: "",
     }));
     render(
-      <ArtifactShareDialog client={client} artifactId="a1" name="Auth" onClose={() => {}} />,
+      <ArtifactShareDialog
+        client={client}
+        artifactId="a1"
+        name="Auth"
+        at={ANCHOR}
+        onClose={() => {}}
+      />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: /publish/i }));
@@ -135,7 +146,13 @@ describe("the share dialog", () => {
       error: "",
     }));
     render(
-      <ArtifactShareDialog client={client} artifactId="a1" name="Auth" onClose={() => {}} />,
+      <ArtifactShareDialog
+        client={client}
+        artifactId="a1"
+        name="Auth"
+        at={ANCHOR}
+        onClose={() => {}}
+      />,
     );
 
     fireEvent.click(screen.getByLabelText(/everyone at my company/i));
@@ -152,7 +169,13 @@ describe("the share dialog", () => {
   it("will not publish to named people with nobody named", async () => {
     const { client, rpc } = fakeClient(async () => null);
     render(
-      <ArtifactShareDialog client={client} artifactId="a1" name="Auth" onClose={() => {}} />,
+      <ArtifactShareDialog
+        client={client}
+        artifactId="a1"
+        name="Auth"
+        at={ANCHOR}
+        onClose={() => {}}
+      />,
     );
 
     fireEvent.click(screen.getByLabelText(/specific people/i));
@@ -170,7 +193,13 @@ describe("the share dialog", () => {
       error: "",
     }));
     render(
-      <ArtifactShareDialog client={client} artifactId="a1" name="Auth" onClose={() => {}} />,
+      <ArtifactShareDialog
+        client={client}
+        artifactId="a1"
+        name="Auth"
+        at={ANCHOR}
+        onClose={() => {}}
+      />,
     );
 
     fireEvent.click(screen.getByLabelText(/specific people/i));
@@ -194,7 +223,13 @@ describe("the share dialog", () => {
       error: "",
     }));
     render(
-      <ArtifactShareDialog client={client} artifactId="a1" name="Auth" onClose={() => {}} />,
+      <ArtifactShareDialog
+        client={client}
+        artifactId="a1"
+        name="Auth"
+        at={ANCHOR}
+        onClose={() => {}}
+      />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: /publish/i }));
@@ -209,7 +244,13 @@ describe("the share dialog", () => {
       error: "Sharing needs a signed-in igni account.",
     }));
     render(
-      <ArtifactShareDialog client={client} artifactId="a1" name="Auth" onClose={() => {}} />,
+      <ArtifactShareDialog
+        client={client}
+        artifactId="a1"
+        name="Auth"
+        at={ANCHOR}
+        onClose={() => {}}
+      />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: /publish/i }));
@@ -372,5 +413,87 @@ describe("the stale review", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Login flow" }));
     expect(opened).toEqual(["a1"]);
+  });
+});
+
+describe("the share panel opens on how the document is shared", () => {
+  it("opens on private for a document nobody has shared", async () => {
+    // The narrowest answer, and the right default for a decision this
+    // consequential.
+    const { client } = fakeClient(async () => ({ url: "", version: 0, error: "" }));
+    render(
+      <ArtifactShareDialog
+        client={client}
+        artifactId="a1"
+        name="Auth"
+        at={ANCHOR}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(
+      (screen.getByRole("radio", { name: /only me/i }) as HTMLInputElement).checked,
+    ).toBe(true);
+  });
+
+  it("opens on what the document actually is", async () => {
+    // It opened on "Only me" whatever the document was. Survivable
+    // while this was a page; wrong the moment it became a popover
+    // hanging off a line that reads "Anyone with the link".
+    const { client } = fakeClient(async () => ({ url: "", version: 0, error: "" }));
+    render(
+      <ArtifactShareDialog
+        client={client}
+        artifactId="a1"
+        name="Auth"
+        at={ANCHOR}
+        reach="public"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(
+      (screen.getByRole("radio", { name: /anyone with the link/i }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+  });
+
+  it("brings the addresses it already names", async () => {
+    // Otherwise publishing again from here drops everybody who was on
+    // it, which is an unshare nobody asked for.
+    const { client, rpc } = fakeClient(async () => ({ url: "u", version: 1, error: "" }));
+    render(
+      <ArtifactShareDialog
+        client={client}
+        artifactId="a1"
+        name="Auth"
+        at={ANCHOR}
+        reach="users"
+        listed={["dana@acme.test", "sam@acme.test"]}
+        onClose={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /publish|update/i }));
+    await waitFor(() => expect(rpc).toHaveBeenCalled());
+    expect(rpc).toHaveBeenCalledWith(
+      "artifact_share",
+      expect.objectContaining({ audience: ["dana@acme.test", "sam@acme.test"] }),
+    );
+  });
+
+  it("draws nothing with nothing to hang off", () => {
+    const { client } = fakeClient(async () => ({ url: "", version: 0, error: "" }));
+    const { container } = render(
+      <ArtifactShareDialog
+        client={client}
+        artifactId="a1"
+        name="Auth"
+        at={null}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(container.querySelector(".kb-share")).toBeNull();
   });
 });

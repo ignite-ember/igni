@@ -1,8 +1,23 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+
 import type { IgniClient } from "../../protocol/client";
 
 /**
  * Choose who can open a document, and publish it.
+ *
+ * **A popover, not a page.** It was a view: picking Share replaced
+ * the document with a form and put "Share Release checklist" in the
+ * breadcrumbs, so deciding who could read a paragraph meant leaving
+ * the paragraph. Everything this asks is *about* the document on
+ * screen — which makes reading the answer beside it, rather than
+ * instead of it, the whole point.
+ *
+ * Anchored to whatever opened it, which is either the three-dot menu
+ * or the line under the title that says who can see this today.
+ * Portalled and fixed for the reason every other popup in this panel
+ * is: the header sits in a column that scrolls, and a panel clipped
+ * to that column is a panel with its buttons cut off.
  *
  * This is where `domain` and `public` become reachable by a person.
  * Until this existed they could only be set by a tool call, which
@@ -40,22 +55,89 @@ const OPTIONS: { value: Visibility; label: string; reach: string }[] = [
   { value: "public", label: "Anyone with the link", reach: "No sign-in required — treat as published to the world" },
 ];
 
+/** A stable key for a list of addresses, so the effect above does
+ *  not re-run on every render for an array rebuilt each time. */
+function listedKey(listed: string[] | undefined): string {
+  return (listed ?? []).join("\u0000");
+}
+
+/** Where a popover hangs, in viewport coordinates. */
+export interface Anchor {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+/** Roughly how tall the panel gets, for deciding above or below. */
+const PANEL_HEIGHT = 330;
+const PANEL_WIDTH = 340;
+
 export function ArtifactShareDialog({
   client,
   artifactId,
   name,
+  at,
+  reach,
+  listed,
   onClose,
 }: {
   client: IgniClient;
   artifactId: string;
   name: string;
+  /** What it hangs off. Null renders nothing — there is no sensible
+   *  place to put a popover with nothing to point at. */
+  at: Anchor | null;
+  /** How the document is shared today, if it has been. The panel
+   *  opens on it rather than on a default — see below. */
+  reach?: Visibility;
+  listed?: string[];
   onClose: () => void;
 }) {
-  const [visibility, setVisibility] = useState<Visibility>("private");
-  const [audience, setAudience] = useState("");
+  // Seeded from how the document is shared *now*, not from a default.
+  //
+  // It opened on "Only me" whatever the document was, which was
+  // survivable while this was a page you navigated to and actively
+  // wrong the moment it became a popover: it hangs off a line that
+  // says "Anyone with the link", and pressing that line to be told
+  // "Only me" reads as the panel having lost the setting — or worse,
+  // gets published without being looked at, which quietly unshares a
+  // document from everybody who had it.
+  //
+  // A document never shared has no reach and still opens on
+  // ``private``, which is the narrowest answer and the right default
+  // for a decision this consequential.
+  const [visibility, setVisibility] = useState<Visibility>(reach ?? "private");
+  const [audience, setAudience] = useState((listed ?? []).join(", "));
   const [result, setResult] = useState<ShareResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const panel = useRef<HTMLDivElement>(null);
+
+  // Re-seeded when the panel opens on a different document, or when
+  // the one it is on has been shared since. Not on every render: the
+  // choice being made is the reader's from the moment they open it,
+  // and an effect that reset it would fight them as they clicked.
+  useEffect(() => {
+    setVisibility(reach ?? "private");
+    setAudience((listed ?? []).join(", "));
+    setResult(null);
+  }, [artifactId, reach, listedKey(listed)]);
+
+  // Escape closes, from anywhere inside it. Captured on the window
+  // rather than on the panel, because the first thing focused here is
+  // a radio and a keyboard user who changes their mind should not
+  // have to find the Cancel button to say so.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
 
   const recipients = useMemo(
     () =>
@@ -97,8 +179,31 @@ export function ArtifactShareDialog({
     });
   }, [result]);
 
-  return (
-    <div className="kb-share">
+  if (!at) return null;
+
+  // Below when there is room, above when there is not, and pinned to
+  // the right edge of whatever opened it — the trigger is near the
+  // right of the header, so a panel that grew rightwards would grow
+  // off the window.
+  const below = window.innerHeight - at.bottom > PANEL_HEIGHT;
+  const left = Math.max(12, Math.min(at.right - PANEL_WIDTH, window.innerWidth - PANEL_WIDTH - 12));
+
+  return createPortal(
+    <>
+      {/* Outside click closes it, the same way the overflow menu's
+          backdrop does. */}
+      <div className="kb-share-backdrop" onClick={onClose} />
+      <div
+        ref={panel}
+        className="kb-share"
+        role="dialog"
+        aria-label={`Share ${name}`}
+        style={{
+          left,
+          top: below ? at.bottom + 6 : at.top - 6,
+          transform: below ? undefined : "translateY(-100%)",
+        }}
+      >
       <h3 className="kb-share-title">Share “{name}”</h3>
       <p className="kb-share-sub">
         A snapshot of the current version is published. Later revisions do not
@@ -176,6 +281,8 @@ export function ArtifactShareDialog({
           {busy ? "Publishing…" : result?.url ? "Update" : "Publish"}
         </button>
       </div>
-    </div>
+      </div>
+    </>,
+    document.body,
   );
 }
