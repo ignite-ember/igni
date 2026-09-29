@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import type { IgniClient } from "../../protocol/client";
+import { formatExact, formatRelative } from "../../utils/when";
 
 /**
  * Talking to the agent about the document you are reading, on the page.
@@ -949,7 +950,18 @@ export function DocumentComment({
         error: "",
         turns: [
           ...t.turns,
-          { key: mine, who: "me", body: text, activity: "", phase: "done", error: "" },
+          {
+            key: mine,
+            who: "me",
+            body: text,
+            activity: "",
+            phase: "done",
+            error: "",
+            // Stamped here rather than waiting for the store to hand
+            // it back: until a reload, a comment just written would
+            // be the one turn in the thread with no date on it.
+            at: new Date().toISOString(),
+          },
           // The waiting turn only exists when something is coming. A
           // spinner under a remark to a colleague promises an answer
           // nobody is writing.
@@ -962,6 +974,7 @@ export function DocumentComment({
                   activity: "",
                   phase: "running" as const,
                   error: "",
+                  at: new Date().toISOString(),
                 },
               ]
             : []),
@@ -1893,11 +1906,26 @@ function TurnView({ turn }: { turn: Turn }) {
     <span className="doc-conv-by">{shortName(turn.author)}</span>
   ) : null;
 
+  // When it was said. A thread is an argument in order, and without
+  // dates the order is the only thing carrying it — which breaks the
+  // moment a passage is commented on twice a month apart and the two
+  // remarks sit next to each other looking like one exchange.
+  //
+  // Relative in the rail and exact on hover: "3d ago" is the right
+  // length for a column this narrow and the wrong amount of detail
+  // for somebody working out what happened in what order.
+  const when = turn.at ? (
+    <time className="doc-conv-when" dateTime={turn.at} title={formatExact(turn.at)}>
+      {formatRelative(turn.at)}
+    </time>
+  ) : null;
+
   if (turn.who === "me") {
     return (
       <p className="doc-conv-body">
         {byline}
         {turn.body}
+        {when}
       </p>
     );
   }
@@ -1913,6 +1941,7 @@ function TurnView({ turn }: { turn: Turn }) {
           part of whatever was said above it. */}
       <ReplyHook />
       <span className="doc-conv-by doc-conv-by-agent">igni</span>
+      {when}
       {turn.phase === "failed" ? (
         <div className="msg-error">{turn.error || "That run did not finish."}</div>
       ) : turn.body ? (

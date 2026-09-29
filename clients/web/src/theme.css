@@ -10513,6 +10513,23 @@ button {
   color: var(--fg-muted);
 }
 
+/* When it was said. Quiet and after the words rather than before
+   them: the remark is what the reader came for, and a date at the
+   start of every line makes a thread read like a log file. */
+.doc-conv-when {
+  margin-left: 7px;
+  font-size: 10px;
+  color: var(--fg-faint);
+  white-space: nowrap;
+}
+
+/* The agent's turn opens with a name and its body is a block below,
+   so the stamp belongs beside the name rather than after several
+   paragraphs of answer. */
+.doc-conv-reply > .doc-conv-when {
+  margin-left: 6px;
+}
+
 /* Which version, and where the thread got to. */
 .doc-conv-meta {
   display: flex;

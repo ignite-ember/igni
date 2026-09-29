@@ -1814,3 +1814,85 @@ describe("which turn an answer is drawn back to", () => {
     expect(personBefore(host.children[0])).toBeNull();
   });
 });
+
+describe("when each turn was written", () => {
+  // A thread is an argument in order, and without dates the order is
+  // the only thing carrying it — which breaks the moment a passage is
+  // commented on twice a month apart and the two remarks sit next to
+  // each other looking like one exchange.
+  const stored = (over: Record<string, unknown> = {}) => ({
+    comment_id: "c1",
+    thread_id: "t1",
+    parent_id: "",
+    origin: "web",
+    quote: "The service issues a signed JWT on sign-in.",
+    quote_start: -1,
+    body: "What does it mean?",
+    status: "open",
+    author: "maya@acme.test",
+    at: "2026-09-27T16:11:09.000Z",
+    n: 2,
+    ...over,
+  });
+
+  async function withTurns(rows: Record<string, unknown>[]) {
+    const harness = fakeClient();
+    harness.rpc.mockImplementation(async (method: string) =>
+      method === "artifact_comments" ? rows : { ok: true, prompt: "P", message: "" },
+    );
+    const { ref } = mountBody();
+    render(<DocumentComment client={harness.client} artifactId="a1" n={2} bodyRef={ref} />);
+    await screen.findByText("What does it mean?");
+    return harness;
+  }
+
+  const stamps = () =>
+    [...document.querySelectorAll(".doc-conv-when")] as HTMLTimeElement[];
+
+  it("dates a comment read back from the store", async () => {
+    await withTurns([stored()]);
+
+    expect(stamps()).toHaveLength(1);
+    expect(stamps()[0].dateTime).toBe("2026-09-27T16:11:09.000Z");
+  });
+
+  it("dates the agent's answer too", async () => {
+    // The agent's turn is the one with no author, and an earlier
+    // version of this hung the whole byline row on the author field.
+    await withTurns([
+      stored(),
+      stored({
+        comment_id: "c2",
+        parent_id: "c1",
+        origin: "agent",
+        author: "",
+        body: "It checks on refresh only.",
+        at: "2026-09-27T16:12:00.000Z",
+      }),
+    ]);
+
+    expect(stamps()).toHaveLength(2);
+    expect(stamps()[1].dateTime).toBe("2026-09-27T16:12:00.000Z");
+  });
+
+  it("carries the exact moment for hovering", async () => {
+    // "3d ago" is the right length for a rail and the wrong amount
+    // of detail for working out what happened in what order.
+    await withTurns([stored()]);
+
+    expect(stamps()[0].title).toMatch(/2026/);
+  });
+
+  it("dates a comment the moment it is written", async () => {
+    // Not left blank until a reload. A comment just sent would
+    // otherwise be the one turn in the thread with no date on it.
+    setup();
+    newThread();
+    type("Fresh.");
+    ask();
+
+    await screen.findByText("Fresh.");
+    expect(stamps().length).toBeGreaterThan(0);
+    expect(stamps()[0].dateTime).toBeTruthy();
+  });
+});

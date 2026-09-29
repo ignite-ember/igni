@@ -13,6 +13,7 @@ import { Drawer } from "./Drawer";
 import { OverflowMenu } from "../OverflowMenu";
 import { MarkdownInline } from "../MarkdownInline";
 import { DocumentComment } from "./DocumentComment";
+import { formatRelative } from "../../utils/when";
 import { DriftBanner, type StaleSource } from "./DocumentDrift";
 import { DriftReviewPage } from "./DriftReviewPage";
 import { ExportBanner, type ExportOutcome } from "./ExportBanner";
@@ -160,22 +161,6 @@ function formatBytes(n: number): string {
     i++;
   }
   return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
-}
-
-function formatRelative(iso: string): string {
-  if (!iso) return "";
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return iso;
-  const secs = Math.floor((Date.now() - t) / 1000);
-  if (secs < 60) return "just now";
-  const m = Math.floor(secs / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  if (d < 30) return `${d}d ago`;
-  const mo = Math.floor(d / 30);
-  return `${mo}mo ago`;
 }
 
 // ── Main panel ───────────────────────────────────────────────────
