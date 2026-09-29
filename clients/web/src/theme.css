@@ -4410,6 +4410,19 @@ button {
   gap: 8px;
   padding: 6px 18px 12px;
   border-bottom: 1px solid var(--border-soft);
+  /* Air below the rule, not above the thing under it.
+     ``--page-chrome-h`` already says this header is 82px tall — more
+     than the box measures — and the difference is exactly this gap:
+     the hierarchy docks at that number and so clears the rule
+     comfortably, while the content in the flow below had only what
+     ``--doc-air`` gave it. That was six pixels when the air was 12,
+     and one pixel once a document needed less of it, which put the
+     search field's focus ring on the rule.
+
+     Here rather than on each view, because all four of them — the
+     list, the comments queue, Ask and Add — sit under this same
+     header and were all one pixel clear of it. */
+  margin-bottom: 12px;
 }
 
 .page-title {
