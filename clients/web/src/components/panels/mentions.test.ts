@@ -13,10 +13,13 @@ import {
   accessNotice,
   cannotRead,
   handleFor,
+  IGNI,
   insertMention,
   mentionSpan,
   namedIn,
+  offersIgni,
   unknownHandles,
+  withAgent,
   writtenHandles,
   type Person,
 } from "./mentions";
@@ -219,5 +222,46 @@ describe("names the composer has not looked up yet", () => {
 
   it("asks about nothing when nobody is named", () => {
     expect(unknownHandles("just a remark", [])).toEqual([]);
+  });
+});
+
+describe("igni in the list", () => {
+  it("is offered before anything is typed", () => {
+    // It is the mention the composer's own hint recommends. A menu
+    // that offered every colleague and omitted that one would read as
+    // igni not being mentionable at all.
+    expect(withAgent([], "").map((p) => p.name)).toEqual(["igni"]);
+  });
+
+  it("is offered while its name is being typed", () => {
+    expect(offersIgni("ig")).toBe(true);
+    expect(offersIgni("igni")).toBe(true);
+  });
+
+  it("goes away once what is typed cannot be it", () => {
+    expect(offersIgni("sam")).toBe(false);
+    expect(withAgent([person()], "sam").map((p) => p.name)).toEqual(["Sam Patel"]);
+  });
+
+  it("comes first, and stays first", () => {
+    // Its position must not move as a directory answer arrives
+    // underneath it: a list whose top entry changes between one
+    // keystroke and the next cannot be pressed Enter on without
+    // looking.
+    expect(withAgent([person()], "i").map((p) => p.name)).toEqual(["igni", "Sam Patel"]);
+  });
+
+  it("is written as the word the agent answers to", () => {
+    // ``mentionsIgni`` looks for "@igni", and this is what puts it
+    // there — a handle that did not match would offer the agent and
+    // then not reach it.
+    expect(handleFor(IGNI, [person(), maya])).toBe("igni");
+  });
+
+  it("is never the subject of an access question", () => {
+    // It runs on the machine holding the document. "Can igni read
+    // this" is not a question, and a notice asking it would be
+    // nonsense with a button under it.
+    expect(cannotRead("@igni please fix this", [IGNI, person()])).toEqual([]);
   });
 });

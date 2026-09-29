@@ -25,6 +25,7 @@ import {
   type MentionOptions,
   type MentionSpan,
   unknownHandles,
+  withAgent,
   type Person,
 } from "./mentions";
 
@@ -2336,15 +2337,18 @@ function useMentions(
    *
    *  Empty while the answer in hand is for an older query. Showing
    *  the old list would be faster to look at and wrong to press. */
-  const people = useMemo(
-    () =>
-      current
-        ? (answer?.options.people ?? []).map((person) =>
-            allowed.includes(person.email) ? { ...person, has_access: true } : person,
-          )
-        : [],
-    [current, answer, allowed],
-  );
+  const people = useMemo(() => {
+    const found = current
+      ? (answer?.options.people ?? []).map((person) =>
+          allowed.includes(person.email) ? { ...person, has_access: true } : person,
+        )
+      : [];
+    // Offered even while a colleague lookup is still in flight. igni
+    // needs no directory: it is on this machine, and making the one
+    // mention that always works wait for a round trip would be the
+    // slowest way to offer the fastest answer.
+    return withAgent(found, span?.query ?? "");
+  }, [current, answer, allowed, span]);
 
   const write = (text: string, person: Person) => {
     if (!span) return null;

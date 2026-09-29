@@ -91,13 +91,23 @@ export function MentionMenu({
               }}
             >
               <span className="mention-who">
-                <span className="mention-name">{person.name}</span>
-                <span className="mention-email">{person.email}</span>
+                <span className={person.agent ? "mention-name is-agent" : "mention-name"}>
+                  {person.name}
+                </span>
+                {/* An address under a colleague's name, because two
+                    people called Sam are told apart by nothing else.
+                    Under igni, what it is for — it has no address,
+                    and "igni / igni" would be a row saying one thing
+                    twice. */}
+                <span className="mention-email">
+                  {person.agent ? "Ask it to change the document" : person.email}
+                </span>
               </span>
               {/* Only the people who cannot read it are marked. A tick
                   beside everybody else would make the ordinary case
-                  the noisy one. */}
-              {!person.has_access && (
+                  the noisy one — and the question does not apply to
+                  igni, which runs on this machine. */}
+              {!person.has_access && !person.agent && (
                 <span className="mention-locked" title="Cannot open this document">
                   <MenuIcon name="lock" />
                   No access

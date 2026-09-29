@@ -12309,6 +12309,15 @@ button {
   font-size: 12.5px;
 }
 
+/* igni reads differently from a colleague, because addressing it is
+   what turns a note into an instruction. The same orange the reply
+   picker already gives it, so it is recognisably the same name in
+   both places. */
+.mention-name.is-agent {
+  font-weight: 600;
+  color: var(--accent-orange-text, var(--fg));
+}
+
 .mention-email {
   overflow: hidden;
   font-size: 10.5px;

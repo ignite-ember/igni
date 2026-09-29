@@ -29,6 +29,52 @@ export interface Person {
   email: string;
   name: string;
   has_access: boolean;
+  /** Not a colleague — the agent. Drawn differently, and never the
+   *  subject of an access question. */
+  agent?: boolean;
+}
+
+/**
+ * igni, as an entry in the same list as everybody else.
+ *
+ * It belongs there because it is the mention that already worked, and
+ * the only one anybody had to be told about — the composer carried a
+ * line of hint text saying so. A menu that offered every colleague
+ * and silently omitted the one name the hint recommended would read
+ * as igni not being mentionable at all.
+ *
+ * It is not in the directory the server answers with, and should not
+ * be: that directory is people with accounts, and the question it
+ * answers about each of them — can they read this document — is not a
+ * question about the agent. It runs on the machine holding the
+ * document. So it is added here, client-side, where "who can I
+ * address" is being asked, rather than folded into the answer to
+ * "who works here".
+ */
+export const IGNI: Person = {
+  user_id: "igni",
+  email: "igni",
+  name: "igni",
+  has_access: true,
+  agent: true,
+};
+
+/** Whether what has been typed should offer igni. */
+export function offersIgni(query: string): boolean {
+  return "igni".startsWith(query.trim().toLowerCase());
+}
+
+/**
+ * The menu's list: igni first, then the colleagues.
+ *
+ * First because it is the most-used mention in this rail by a wide
+ * margin, and because its position should not move as a directory
+ * answer arrives underneath it — a list whose top entry changes
+ * between one keystroke and the next is a list you cannot press Enter
+ * on without looking.
+ */
+export function withAgent(people: Person[], query: string): Person[] {
+  return offersIgni(query) ? [IGNI, ...people] : people;
 }
 
 /** What the server answers when asked who could be named here. */
