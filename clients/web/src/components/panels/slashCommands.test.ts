@@ -16,17 +16,27 @@ import { describe, expect, it } from "vitest";
 import { DOCUMENT_EXTENSIONS, markdownOf } from "./documentMarkdown";
 import { SLASH_ITEMS, matching } from "./slashCommands";
 
-/** Type into the editor the way a person does, through input rules. */
+/**
+ * Type into the editor the way a person does, through input rules.
+ *
+ * One character at a time and through ``handleTextInput``, which is
+ * where ProseMirror runs them. Inserting the text directly — which
+ * is what ``execCommand`` amounts to — goes around the rules
+ * entirely, and makes working shortcuts look broken.
+ *
+ * The fifth argument is the default ProseMirror would have taken:
+ * the transaction that simply inserts the character. A rule that
+ * declines returns false and this falls back to dispatching it.
+ */
 function type(editor: Editor, text: string) {
   const { view } = editor;
   for (const char of text) {
     const { from, to } = view.state.selection;
+    const plain = () => view.state.tr.insertText(char, from, to);
     const handled = view.someProp("handleTextInput", (rule) =>
-      rule(view, from, to, char),
+      rule(view, from, to, char, plain),
     );
-    if (!handled) {
-      view.dispatch(view.state.tr.insertText(char, from, to));
-    }
+    if (!handled) view.dispatch(plain());
   }
 }
 
