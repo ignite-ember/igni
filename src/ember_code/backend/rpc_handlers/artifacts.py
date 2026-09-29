@@ -89,6 +89,18 @@ class ArtifactRpcHandler(RpcHandler):
             query=str(args.get("query") or ""),
         )
 
+    @rpc(RpcMethod.ARTIFACT_PEOPLE)
+    def artifact_people(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_people(artifact_id=args["artifact_id"])
+
+    @rpc(RpcMethod.ARTIFACT_WATCH_ROOM)
+    def artifact_watch_room(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_watch_room(artifact_id=args["artifact_id"])
+
+    @rpc(RpcMethod.ARTIFACT_LEAVE_ROOM)
+    def artifact_leave_room(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_leave_room()
+
     @rpc(RpcMethod.ARTIFACT_GRANT_VIEW)
     def artifact_grant_view(self, args: dict) -> Any:
         return self._ctx.backend.artifact_grant_view(

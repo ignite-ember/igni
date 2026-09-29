@@ -8,6 +8,8 @@ import { ArtifactSearch } from "./ArtifactSearch";
 import { ArtifactShareDialog } from "./ArtifactShareDialog";
 import { ArtifactCommentReview } from "./ArtifactCommentReview";
 import { ArtifactCompare } from "./ArtifactCompare";
+import { DocumentPeople } from "./DocumentPeople";
+import { useDocumentRoom } from "./useDocumentRoom";
 import { ArtifactStaleReview } from "./ArtifactStaleReview";
 import { Drawer } from "./Drawer";
 import { OverflowMenu } from "../OverflowMenu";
@@ -1063,6 +1065,15 @@ function DocumentDetail({
   // list below would be carried in as a passage.
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [provenance, setProvenance] = useState<Provenance | null>(null);
+  // Who this is shared with, and who has it open. Both come from the
+  // cloud copy through this machine's backend, so a document that was
+  // never shared simply has nobody on it.
+  //
+  // Up here with the other hooks, not beside the row it draws. This
+  // component returns early while a document is loading, and a hook
+  // below that return is a hook React sees on some renders and not
+  // others — which is not a subtle bug, it is a blank page.
+  const room = useDocumentRoom(client, id);
 
   // Derived above the early returns, because hooks cannot be called
   // conditionally and ``useDrift`` needs the source.
@@ -1302,6 +1313,11 @@ function DocumentDetail({
           {actions}
         </div>
         {attribution && <p className="kb-doc-attribution">{attribution}</p>}
+        {/* Under the byline, which is where "who" already lives on
+            this page. Above the document, because knowing who else is
+            in a document is something you want before reading it, not
+            after. */}
+        <DocumentPeople roster={room.roster} here={room.here} />
         {doc.source && doc.source !== doc.name && (
           <p className="kb-doc-origin">
             {/^https?:\/\//.test(doc.source) ? (

@@ -15,6 +15,7 @@ one of them goes through here.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from pathlib import Path, PurePosixPath
@@ -44,10 +45,12 @@ from ember_code.backend.schemas_artifacts import (
     ArtifactListEntry,
     ArtifactMentions,
     ArtifactOpenResult,
+    ArtifactPeople,
     ArtifactProvenance,
     ArtifactQueryResult,
     ArtifactRemoveResult,
     ArtifactRevised,
+    ArtifactRoom,
     ArtifactShareResult,
     ArtifactStaleRow,
     ArtifactStatus,
@@ -61,6 +64,7 @@ from ember_code.backend.schemas_artifacts import (
     MentionCandidate,
     ProvenanceMatchRow,
     ProvenancePassageRow,
+    RosterPerson,
 )
 from ember_code.core.artifacts import side_by_side
 from ember_code.core.artifacts.anchoring import RelevanceReview, surrounding, track_anchor
@@ -97,6 +101,7 @@ from ember_code.core.artifacts.threads import ThreadInstruction
 from ember_code.core.artifacts.tree import build as build_tree
 from ember_code.core.artifacts.tree import flatten as flatten_tree
 from ember_code.core.artifacts.tree import would_cycle
+from ember_code.core.broadcast_schema import BroadcastEvent
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
@@ -162,6 +167,11 @@ class ArtifactController:
         # rather than built per call, and for what invalidates it.
         self._sync: CollaborationSync | None = None
         self._sync_for: tuple[int, str, str] | None = None
+        # The document whose room this session is in, and the handles
+        # to get out of it. One at a time — see :meth:`watch_room`.
+        self._room_task: asyncio.Task[None] | None = None
+        self._room_stop: asyncio.Event | None = None
+        self._room_artifact: str | None = None
 
     # ── Overview ──────────────────────────────────────────────────────
 
@@ -2019,6 +2029,104 @@ class ArtifactController:
             logger.info("grant did not reach the server: %s", exc)
             return ArtifactViewGranted(error=f"Could not reach the server: {exc}")
         return ArtifactViewGranted(ok=True, identity=who, message=f"{who} can now read this.")
+
+    async def people(self, *, artifact_id: str) -> ArtifactPeople:
+        """Who this document is shared with.
+
+        Empty rather than an error for a document that was never
+        shared. A private draft has nobody on it for a good reason,
+        and the panel draws nothing at all in that case — reporting
+        it would put a failure under every unpublished document.
+        """
+        sync = self._collaboration()
+        if sync is None:
+            return ArtifactPeople()
+        try:
+            slug = await sync.slug_for(artifact_id)
+            if not slug:
+                return ArtifactPeople()
+            answer = await sync.roster(slug=slug)
+        except NotAllowed:
+            return ArtifactPeople()
+        except Exception as exc:  # noqa: BLE001 — network, auth
+            logger.info("roster lookup did not reach the server: %s", exc)
+            return ArtifactPeople(error=f"Could not reach the server: {exc}")
+        return ArtifactPeople(
+            people=[RosterPerson(**person) for person in answer.get("people") or []],
+            reach=str(answer.get("reach") or "private"),
+            domain=str(answer.get("domain") or ""),
+            can_manage=bool(answer.get("can_manage")),
+        )
+
+    # ── Presence ─────────────────────────────────────────────────────
+
+    async def watch_room(self, *, artifact_id: str) -> ArtifactRoom:
+        """Join the room for a document, and leave whichever we were in.
+
+        One room at a time, because a person looks at one document at a
+        time. Two would mean appearing to colleagues as present in a
+        document that closed ten minutes ago, which is the failure
+        presence exists to avoid rather than a bonus.
+
+        Returns as soon as the watch is started, not when the first
+        roster arrives. The roster comes through the broadcast bus,
+        like every other thing this process learns without being asked
+        — the caller wants to know it is watching, and waiting for a
+        round trip to say so would make opening a document slower to
+        report the same thing.
+        """
+        await self.leave_room()
+        sync = self._collaboration()
+        if sync is None:
+            return ArtifactRoom(error="Not signed in to a server.")
+        try:
+            slug = await sync.slug_for(artifact_id)
+        except Exception as exc:  # noqa: BLE001 — network, auth
+            logger.info("could not resolve %s for presence: %s", artifact_id, exc)
+            return ArtifactRoom(error=f"Could not reach the server: {exc}")
+        if not slug:
+            # Never shared, so there is no room and nobody else can be
+            # in it. Not an error: a private draft has an empty roster
+            # for a good reason, and saying so would put a warning
+            # under every document somebody has not published yet.
+            return ArtifactRoom(ok=True, shared=False)
+
+        stop = asyncio.Event()
+        self._room_stop = stop
+        self._room_artifact = artifact_id
+        self._room_task = asyncio.create_task(
+            sync.room(slug=slug, on_roster=lambda here: self._room_changed(artifact_id, here), stop=stop)
+        )
+        return ArtifactRoom(ok=True, shared=True)
+
+    async def leave_room(self) -> None:
+        """Stop holding a place, if we are holding one.
+
+        Awaits the task rather than cancelling and walking away: the
+        socket's close is what removes this reader from everybody
+        else's roster immediately, and not waiting for it means leaving
+        a ghost in the document until the server's expiry catches up.
+        """
+        stop, task = self._room_stop, self._room_task
+        self._room_stop = self._room_task = self._room_artifact = None
+        if stop is not None:
+            stop.set()
+        if task is not None:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await asyncio.wait_for(task, timeout=3.0)
+
+    def _room_changed(self, artifact_id: str, here: list[dict[str, Any]]) -> None:
+        """Push a new roster to whoever is drawing it.
+
+        Dropped if the document has moved on. A roster for a document
+        nobody is looking at would arrive after the panel had already
+        drawn a different one, and replace it.
+        """
+        if artifact_id != self._room_artifact:
+            return
+        self._session.broadcast_bus.emit(
+            BroadcastEvent(channel="artifact_room", payload={"artifact_id": artifact_id, "here": here})
+        )
 
     def _collaboration(self) -> CollaborationSync | None:
         """The sync client, built from the session's cloud credentials.

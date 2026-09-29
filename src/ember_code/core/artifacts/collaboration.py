@@ -28,7 +28,9 @@ worst possible answer to it.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -135,6 +137,11 @@ class CollaborationSync:
         #: object. A document's slug does not change once published,
         #: and the alternative is a listing request per comment.
         self._slugs: dict[str, str] = {}
+        #: How often the room wants to hear from us. Taken from the
+        #: server's greeting rather than agreed in advance, so the
+        #: interval and the expiry it guards against cannot drift
+        #: apart across a deployment.
+        self._beat_every: float = 15.0
 
     @property
     def is_configured(self) -> bool:
@@ -338,6 +345,130 @@ class CollaborationSync:
         await self._index.client.project_comments([comment])
         return comment
 
+    # ── Who is in the room ───────────────────────────────────────────
+    #
+    # The one long-lived connection in this class. Everything else here
+    # is a request and an answer; this stays open for as long as a
+    # document is on screen, because what it carries — who else has it
+    # open — is only ever true right now.
+    #
+    # **Held here rather than in the browser.** The page could open
+    # this socket itself, and then the cloud token would have to be in
+    # the browser to do it. It is not: every cloud call in this product
+    # goes through this process, which is where the credentials are, so
+    # the roster comes back the same way and the token stays put.
+
+    async def room(
+        self,
+        *,
+        slug: str,
+        on_roster: Callable[[list[dict[str, Any]]], Any],
+        stop: asyncio.Event,
+    ) -> None:
+        """Hold a place in a document until asked to leave.
+
+        Reconnects on its own, with a backoff, because a presence
+        connection that gives up after one dropped network is a feature
+        that works until the first time somebody closes their laptop
+        lid. Each attempt re-announces arrival, which is also how a
+        reader reappears to everybody else.
+
+        Returns only when ``stop`` is set. Every failure is a reason to
+        wait and try again, not a reason to return — there is nothing a
+        caller could do with "the presence socket died" except
+        reconnect, so it is done here.
+        """
+        url = self._room_url(slug)
+        if not url:
+            return
+        backoff = 1.0
+        while not stop.is_set():
+            try:
+                await self._attend(url, on_roster=on_roster, stop=stop)
+                backoff = 1.0
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — network, auth, server restart
+                logger.debug("presence for %s dropped: %s", slug, exc)
+            if stop.is_set():
+                return
+            # Capped, and the cap is low. This is a reconnect to a
+            # server the user is actively using, not a background sync
+            # — a minute of backoff would mean a minute of looking
+            # absent to colleagues after a two-second blip.
+            await self._wait(stop, backoff)
+            backoff = min(backoff * 2, 15.0)
+
+    async def _attend(
+        self,
+        url: str,
+        *,
+        on_roster: Callable[[list[dict[str, Any]]], Any],
+        stop: asyncio.Event,
+    ) -> None:
+        """One connection, from greeting to close."""
+        import websockets
+
+        async with websockets.connect(url, max_size=2**20) as socket:
+            await socket.send(json.dumps({"type": "auth", "token": self._access_token}))
+            beat = asyncio.create_task(self._heartbeat(socket, stop))
+            closing = asyncio.create_task(stop.wait())
+            try:
+                while True:
+                    reading = asyncio.create_task(socket.recv())
+                    done, _ = await asyncio.wait(
+                        {reading, closing}, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    if closing in done:
+                        reading.cancel()
+                        return
+                    message = json.loads(reading.result())
+                    if message.get("type") == "roster":
+                        on_roster(list(message.get("here") or []))
+                    elif message.get("type") == "hello":
+                        self._beat_every = float(message.get("heartbeat") or 15)
+            finally:
+                for task in (beat, closing):
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+
+    async def _heartbeat(self, socket: Any, stop: asyncio.Event) -> None:
+        """Say we are still here, until we are not.
+
+        The server expires a presence entry that stops being refreshed,
+        which is what clears out readers whose connection died without
+        anybody being told. That backstop only works if a live
+        connection keeps saying so.
+        """
+        while not stop.is_set():
+            await self._wait(stop, self._beat_every)
+            if stop.is_set():
+                return
+            with contextlib.suppress(Exception):
+                await socket.send(json.dumps({"type": "beat"}))
+
+    @staticmethod
+    async def _wait(stop: asyncio.Event, seconds: float) -> None:
+        """Sleep, unless asked to stop first."""
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=seconds)
+
+    def _room_url(self, slug: str) -> str:
+        """The socket address for a document's room.
+
+        Derived from the configured server rather than configured
+        separately: two settings that have to agree about which server
+        this is would eventually disagree, and the failure would be a
+        presence feature quietly pointing at the wrong deployment.
+        """
+        base = (self._server_url or "").rstrip("/")
+        if not base:
+            return ""
+        scheme = "wss" if base.startswith("https://") else "ws"
+        host = base.split("://", 1)[-1]
+        return f"{scheme}://{host}/v1/artifacts/shared/{slug}/room"
+
     # ── Naming somebody ──────────────────────────────────────────────
     #
     # Both halves of "@" come from the server and neither is cached.
@@ -358,6 +489,20 @@ class CollaborationSync:
         response = await self._request(
             "GET", f"/v1/artifacts/shared/{slug}/mentions", params={"q": query}
         )
+        if response.status_code == 404:
+            raise NotAllowed(slug)
+        response.raise_for_status()
+        return dict(response.json())
+
+    async def roster(self, *, slug: str) -> dict[str, Any]:
+        """Who a document is shared with.
+
+        Returned as the server sent it, like :meth:`mentionable` and
+        for the same reason: every field is on its way to being drawn,
+        and re-shaping it here would be a second definition of the
+        same thing between the server and the screen.
+        """
+        response = await self._request("GET", f"/v1/artifacts/shared/{slug}/people")
         if response.status_code == 404:
             raise NotAllowed(slug)
         response.raise_for_status()

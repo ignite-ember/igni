@@ -88,8 +88,10 @@ if TYPE_CHECKING:
         ArtifactLineageView,
         ArtifactMentions,
         ArtifactOpenResult,
+        ArtifactPeople,
         ArtifactProvenance,
         ArtifactQueryResult,
+        ArtifactRoom,
         ArtifactShareResult,
         ArtifactStaleRow,
         ArtifactStatus,
@@ -1026,6 +1028,18 @@ class BackendServer:
     async def artifact_grant_view(self, *, artifact_id: str, identity: str) -> ArtifactViewGranted:
         """See :meth:`ArtifactController.grant_view`."""
         return await self.artifacts.grant_view(artifact_id=artifact_id, identity=identity)
+
+    async def artifact_people(self, *, artifact_id: str) -> ArtifactPeople:
+        """See :meth:`ArtifactController.people`."""
+        return await self.artifacts.people(artifact_id=artifact_id)
+
+    async def artifact_watch_room(self, *, artifact_id: str) -> ArtifactRoom:
+        """See :meth:`ArtifactController.watch_room`."""
+        return await self.artifacts.watch_room(artifact_id=artifact_id)
+
+    async def artifact_leave_room(self) -> None:
+        """See :meth:`ArtifactController.leave_room`."""
+        await self.artifacts.leave_room()
 
     async def artifact_sync_comments(self) -> int:
         """See :meth:`ArtifactController.sync_comments`."""

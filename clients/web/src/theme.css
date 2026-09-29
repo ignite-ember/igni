@@ -10951,8 +10951,13 @@ button {
   position: sticky;
   top: 0;
   z-index: 3;
-  margin: calc(-1 * var(--doc-air)) -18px 20px;
-  padding: var(--doc-air) 18px 12px;
+  /* 20px of margin and 12px of padding used to sit between the header
+     and the first line, which was already generous and became a hole
+     once the row of faces was added under the byline — the document
+     started a third of the way down its own column. Eight and four,
+     so the first sentence is where the eye already is. */
+  margin: calc(-1 * var(--doc-air)) -18px 8px;
+  padding: var(--doc-air) 18px 4px;
   background: var(--bg);
 }
 
@@ -11003,6 +11008,110 @@ button {
   margin: 0;
   font-size: 11.5px;
   color: var(--fg-muted);
+}
+
+/* ── Who is on this document ───────────────────────────────────────
+   A row of faces under the byline, where "who" already lives on this
+   page. Presence is a ring on a face rather than a second row: being
+   shared with somebody and being in the room with them are different
+   facts about the same person, and two rows make the reader match
+   names across them to work that out. */
+
+.doc-people {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 0;
+}
+
+.doc-faces {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Overlapped, the way a row of faces reads as a group rather than a
+   list. The stacking is reversed so each face laps the one after it —
+   left-to-right, which is the direction they are read in. */
+.doc-faces > li {
+  margin-right: -6px;
+}
+
+.doc-faces > li:last-child {
+  margin-right: 0;
+}
+
+.doc-face {
+  display: flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg-muted);
+  background: var(--bg-inset);
+  /* The ring is always drawn, in the page's own background when
+     nobody is here. Adding the ring only on arrival would make every
+     face jump 4px sideways as a colleague opened the document. */
+  border: 2px solid var(--bg);
+  border-radius: 50%;
+  user-select: none;
+}
+
+.doc-face.is-owner {
+  color: var(--fg);
+}
+
+/* Here now. The colour is the one the server gave them, which is also
+   the colour their cursor carries — a face and a caret in the text
+   have to be recognisably one person. */
+.doc-face.is-here {
+  color: var(--fg);
+  background: var(--bg-raised);
+  border-color: var(--face-ring, var(--accent-blue));
+}
+
+/* Typing. A slow pulse rather than a badge: the point is peripheral
+   — "do not be surprised when this moves" — and a badge in a row of
+   faces is read as a notification to be dealt with. */
+.doc-face.is-editing {
+  animation: doc-face-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes doc-face-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--face-ring, currentColor) 30%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Still distinguishable, still not moving. */
+  .doc-face.is-editing {
+    animation: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--face-ring, currentColor) 30%, transparent);
+  }
+}
+
+.doc-people-note {
+  font-size: 11.5px;
+  color: var(--fg-faint);
+}
+
+.doc-people-manage {
+  padding: 0;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--accent-blue-text);
+  background: none;
+  border: 0;
+  cursor: pointer;
 }
 
 .kb-doc-origin {
@@ -12305,8 +12414,21 @@ button {
   gap: 1px;
 }
 
+.mention-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .mention-name {
   font-size: 12.5px;
+}
+
+/* The padlock sits on the name's line, at the name's size. */
+.mention-line svg {
+  width: 11px;
+  height: 11px;
+  color: var(--fg-muted);
 }
 
 /* igni reads differently from a colleague, because addressing it is
@@ -12330,17 +12452,9 @@ button {
    the only colour. Muted rather than red: being outside an audience
    is a state of the document, not a fault of theirs. */
 .mention-locked {
-  display: flex;
   flex: none;
-  align-items: center;
-  gap: 4px;
   font-size: 10.5px;
   color: var(--fg-muted);
-}
-
-.mention-locked svg {
-  width: 11px;
-  height: 11px;
 }
 
 .mention-empty {

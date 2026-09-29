@@ -588,6 +588,49 @@ class ArtifactViewGranted(BaseModel):
     error: str = ""
 
 
+class RosterPerson(BaseModel):
+    """One person a document names, and what they may do."""
+
+    identity: str = ""
+    user_id: str = ""
+    email: str = ""
+    name: str = ""
+    #: ``owner``, ``writer`` or ``reader``.
+    role: str = "reader"
+
+
+class ArtifactPeople(BaseModel):
+    """Who a document is shared with, and how far it reaches.
+
+    Empty is the ordinary answer for a document that was never
+    shared, which is why ``error`` is separate from "no people": one
+    means nothing to draw, the other means something went wrong, and
+    a panel that treated them alike would put a warning under every
+    private draft.
+    """
+
+    people: list[RosterPerson] = Field(default_factory=list)
+    reach: str = "private"
+    domain: str = ""
+    can_manage: bool = False
+    error: str = ""
+
+
+class ArtifactRoom(BaseModel):
+    """Whether this session is now watching a document's room.
+
+    ``shared`` is the interesting field. A document that was never
+    published has no room and nobody else can be in it, which is not
+    a failure — it is what a private draft looks like — so the panel
+    is told the difference rather than shown a warning under every
+    document somebody has not shared yet.
+    """
+
+    ok: bool = False
+    shared: bool = False
+    error: str = ""
+
+
 class ArtifactExportResult(BaseModel):
     """Where a local export landed, and as what."""
 

@@ -91,8 +91,17 @@ export function MentionMenu({
               }}
             >
               <span className="mention-who">
-                <span className={person.agent ? "mention-name is-agent" : "mention-name"}>
-                  {person.name}
+                <span className="mention-line">
+                  <span className={person.agent ? "mention-name is-agent" : "mention-name"}>
+                    {person.name}
+                  </span>
+                  {/* Beside the name, not at the far edge of the row.
+                      At the edge it reads as a column of statuses to
+                      scan; here it is part of reading the name, which
+                      is the moment the fact matters. */}
+                  {!person.has_access && !person.agent && (
+                    <MenuIcon name="lock" />
+                  )}
                 </span>
                 {/* An address under a colleague's name, because two
                     people called Sam are told apart by nothing else.
@@ -108,10 +117,7 @@ export function MentionMenu({
                   the noisy one — and the question does not apply to
                   igni, which runs on this machine. */}
               {!person.has_access && !person.agent && (
-                <span className="mention-locked" title="Cannot open this document">
-                  <MenuIcon name="lock" />
-                  No access
-                </span>
+                <span className="mention-locked">No access</span>
               )}
             </button>
           </li>
