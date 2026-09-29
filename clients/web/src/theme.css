@@ -12097,6 +12097,56 @@ button {
   background: var(--border-soft);
 }
 
+/* A letterform that looks like what it does. The point of showing
+   a B rather than an icon of a B is lost if the B is not bold. */
+.doc-tool-letter {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.doc-tool-letter.is-bold {
+  font-weight: 700;
+}
+
+.doc-tool-letter.is-italic {
+  font-family: Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-size: 14px;
+}
+
+.doc-tool-letter.is-strike {
+  text-decoration: line-through;
+}
+
+/* The heading levels read as one word, not a letter and a digit. */
+.doc-tool-letter.is-h1,
+.doc-tool-letter.is-h2,
+.doc-tool-letter.is-h3 {
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: -0.2px;
+}
+
+/* Square, so a row of them is a row rather than a ragged line. */
+.doc-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+}
+
+.doc-tool .menu-icon {
+  width: 15px;
+  height: 15px;
+  opacity: 0.85;
+}
+
+.doc-tool.is-on .menu-icon,
+.doc-tool:hover .menu-icon {
+  opacity: 1;
+}
+
 .doc-tool:disabled {
   opacity: 0.35;
   cursor: default;

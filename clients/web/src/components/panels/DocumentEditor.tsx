@@ -62,7 +62,11 @@ function ToolButton({ tool, editor }: { tool: EditorTool; editor: Editor }) {
           tool.run(editor);
         }}
       >
-        {tool.glyph}
+        {tool.icon ? (
+          <MenuIcon name={tool.icon} />
+        ) : (
+          <span className={`doc-tool-letter is-${tool.key}`}>{tool.glyph}</span>
+        )}
       </button>
     </Tooltip>
   );

@@ -31,6 +31,18 @@ const ALL: MenuIconName[] = [
   "outdent",
   "compare",
   "lineage",
+  "code",
+  "list-bullet",
+  "list-ordered",
+  "list-task",
+  "quote",
+  "code-block",
+  "table",
+  "divider",
+  "link",
+  "image",
+  "undo",
+  "redo",
 ];
 
 function drawing(name: MenuIconName): string {

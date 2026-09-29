@@ -21,12 +21,22 @@
  */
 import type { Editor } from "@tiptap/core";
 
+import type { MenuIconName } from "../MenuIcon";
+
 export interface EditorTool {
   key: string;
   /** Said in the tooltip and to a screen reader. */
   label: string;
-  /** What the button shows. Text, because these are typographic. */
-  glyph: string;
+  /** A drawn icon, for the tools that are about structure. */
+  icon?: MenuIconName;
+  /** A letterform, for the tools that are about type.
+   *
+   *  Bold, italic and the heading levels are shown as letters
+   *  because that is what they are — an icon of a bold letter B is
+   *  a picture of the letter it could simply be. They are styled to
+   *  look like what they do: the B is bold, the I is italic, the S
+   *  is struck through. */
+  glyph?: string;
   /** The keystroke, for the tooltip. Shown as written. */
   keys?: string;
   /** Whether it is currently on. */
@@ -44,13 +54,13 @@ export interface ToolGroup {
 const mark = (
   key: string,
   label: string,
-  glyph: string,
+  shown: { glyph?: string; icon?: MenuIconName },
   name: string,
   keys?: string,
 ): EditorTool => ({
   key,
   label,
-  glyph,
+  ...shown,
   keys,
   isOn: (editor) => editor.isActive(name),
   run: (editor) => editor.chain().focus().toggleMark(name).run(),
@@ -64,10 +74,10 @@ export const TOOL_GROUPS: ToolGroup[] = [
   {
     key: "marks",
     tools: [
-      mark("bold", "Bold", "B", "bold", "⌘B"),
-      mark("italic", "Italic", "I", "italic", "⌘I"),
-      mark("strike", "Strikethrough", "S", "strike"),
-      mark("code", "Inline code", "<>", "code", "⌘E"),
+      mark("bold", "Bold", { glyph: "B" }, "bold", "⌘B"),
+      mark("italic", "Italic", { glyph: "I" }, "italic", "⌘I"),
+      mark("strike", "Strikethrough", { glyph: "S" }, "strike"),
+      mark("code", "Inline code", { icon: "code" }, "code", "⌘E"),
     ],
   },
   {
@@ -88,21 +98,21 @@ export const TOOL_GROUPS: ToolGroup[] = [
       {
         key: "bulletList",
         label: "Bulleted list",
-        glyph: "•",
+        icon: "list-bullet",
         isOn: (editor) => editor.isActive("bulletList"),
         run: (editor) => editor.chain().focus().toggleBulletList().run(),
       },
       {
         key: "orderedList",
         label: "Numbered list",
-        glyph: "1.",
+        icon: "list-ordered",
         isOn: (editor) => editor.isActive("orderedList"),
         run: (editor) => editor.chain().focus().toggleOrderedList().run(),
       },
       {
         key: "taskList",
         label: "Checklist",
-        glyph: "☑",
+        icon: "list-task",
         isOn: (editor) => editor.isActive("taskList"),
         run: (editor) => editor.chain().focus().toggleTaskList().run(),
       },
@@ -114,21 +124,21 @@ export const TOOL_GROUPS: ToolGroup[] = [
       {
         key: "blockquote",
         label: "Quote",
-        glyph: "❝",
+        icon: "quote",
         isOn: (editor) => editor.isActive("blockquote"),
         run: (editor) => editor.chain().focus().toggleBlockquote().run(),
       },
       {
         key: "codeBlock",
         label: "Code block",
-        glyph: "{ }",
+        icon: "code-block",
         isOn: (editor) => editor.isActive("codeBlock"),
         run: (editor) => editor.chain().focus().toggleCodeBlock().run(),
       },
       {
         key: "table",
         label: "Table",
-        glyph: "▦",
+        icon: "table",
         isOn: (editor) => editor.isActive("table"),
         run: (editor) =>
           editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
@@ -136,7 +146,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
       {
         key: "rule",
         label: "Divider",
-        glyph: "—",
+        icon: "divider",
         isOn: () => false,
         run: (editor) => editor.chain().focus().setHorizontalRule().run(),
       },
@@ -148,7 +158,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
       {
         key: "undo",
         label: "Undo",
-        glyph: "↶",
+        icon: "undo",
         keys: "⌘Z",
         isOn: () => false,
         can: (editor) => editor.can().undo(),
@@ -157,7 +167,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
       {
         key: "redo",
         label: "Redo",
-        glyph: "↷",
+        icon: "redo",
         keys: "⇧⌘Z",
         isOn: () => false,
         can: (editor) => editor.can().redo(),
