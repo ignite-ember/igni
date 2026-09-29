@@ -11812,6 +11812,43 @@ button {
   pointer-events: none;
 }
 
+/* The glyph beside a menu item.
+   ``currentColor`` and no fill, so it dims with a disabled label and
+   turns red with a destructive one rather than sitting there at full
+   strength beside greyed-out text. Strokes rounded at the same
+   weight across the set: one filled glyph among stroked ones is the
+   most obvious way to make a menu look assembled from parts. */
+.menu-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  /* Quieter than the word it labels. The label says what the item
+     does; the icon is how it is found again. */
+  opacity: 0.72;
+}
+
+/* The items are a flex row already for the chevron's sake; this is
+   what puts a gap between the glyph and the word. */
+.overflow-item,
+.popup-item {
+  gap: 9px;
+}
+
+.overflow-item:hover .menu-icon,
+.overflow-item:focus-visible .menu-icon,
+.popup-item:hover .menu-icon {
+  opacity: 1;
+}
+
+.overflow-item:disabled .menu-icon {
+  opacity: 0.4;
+}
+
 /* What just happened, over the page rather than inside a column.
    Bottom centre: out of the way of both docked columns and of the
    document between them, and nowhere near the tree it is usually

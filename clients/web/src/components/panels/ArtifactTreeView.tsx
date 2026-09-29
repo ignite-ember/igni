@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { IgniClient } from "../../protocol/client";
+import { MenuIcon } from "../MenuIcon";
 import { TreeNotice } from "./TreeNotice";
 
 /**
@@ -642,6 +643,7 @@ export function ArtifactTreeView({
                       onCreateInside(id, menuNode.name);
                     }}
                   >
+                    <MenuIcon name="document" />
                     Document
                   </button>
                 </li>
@@ -656,6 +658,7 @@ export function ArtifactTreeView({
                       void addFolder(id);
                     }}
                   >
+                    <MenuIcon name="folder" />
                     Folder
                   </button>
                 </li>
@@ -674,6 +677,7 @@ export function ArtifactTreeView({
                         onOpen(id);
                       }}
                     >
+                      <MenuIcon name="open" />
                       Open
                     </button>
                   </li>
@@ -690,6 +694,7 @@ export function ArtifactTreeView({
                         setRenaming(menuNode.node_id);
                       }}
                     >
+                      <MenuIcon name="rename" />
                       Rename
                     </button>
                   </li>
@@ -706,6 +711,7 @@ export function ArtifactTreeView({
                         void act("artifact_move_node", { node_id: id, parent_id: "" });
                       }}
                     >
+                      <MenuIcon name="outdent" />
                       Move to top level
                     </button>
                   </li>
@@ -733,6 +739,7 @@ export function ArtifactTreeView({
                         void act("artifact_archive_node", { node_id: id, archived });
                       }}
                     >
+                      <MenuIcon name={menuNode.archived ? "restore" : "archive"} />
                       {menuNode.archived ? "Restore" : "Archive"}
                     </button>
                   </li>
@@ -750,6 +757,7 @@ export function ArtifactTreeView({
                         void removeDocument(node);
                       }}
                     >
+                      <MenuIcon name="remove" />
                       Delete
                     </button>
                   </li>
@@ -771,6 +779,7 @@ export function ArtifactTreeView({
                         void act("artifact_delete_folder", { folder_id: id });
                       }}
                     >
+                      <MenuIcon name="remove" />
                       Remove folder
                     </button>
                   </li>

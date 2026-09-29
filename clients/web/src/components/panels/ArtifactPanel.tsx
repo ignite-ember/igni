@@ -644,6 +644,7 @@ export function ArtifactPanel({
             actions={[
               {
                 key: "export",
+                icon: "export",
                 label: busy === "export" ? "Exporting…" : "Export",
                 title: "Write this document to a file next to the project",
                 disabled: busy === "export",
@@ -656,16 +657,25 @@ export function ArtifactPanel({
               },
               {
                 key: "share",
+                icon: "share",
                 label: "Share",
                 onSelect: () => setView("share"),
               },
               {
                 key: "archive",
+                // The two are opposite acts and get opposite arrows.
+                // A single box glyph for both left the menu saying
+                // the same thing whichever state it was in.
+                icon: openArchived ? "restore" : "archive",
                 label: openArchived ? "Restore" : "Archive",
                 onSelect: () => void archive(selected, !openArchived),
               },
               {
                 key: "remove",
+                // A bin, and deliberately the least box-like glyph
+                // in the set: Archive is the thing people mean to
+                // press, and these two sit next to each other.
+                icon: "remove",
                 label: "Remove",
                 danger: true,
                 onSelect: () => {

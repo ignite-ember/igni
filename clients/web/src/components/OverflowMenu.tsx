@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { MenuIcon, type MenuIconName } from "./MenuIcon";
 
 /**
  * A row of actions collapsed behind one button.
@@ -32,6 +33,12 @@ export interface OverflowAction {
   disabled?: boolean;
   /** Why you would pick this. Shown on hover, same as the buttons had. */
   title?: string;
+  /** The glyph beside the label.
+   *
+   *  Optional. A menu of five verbs reads as five equal options, and
+   *  picking the wrong one of Archive and Remove costs quite
+   *  differently — the shape is recognised before the word is read. */
+  icon?: MenuIconName;
 }
 
 /** Direct children only — a submenu's own items belong to its list. */
@@ -216,6 +223,7 @@ function Submenu({ action, onDone }: { action: OverflowAction; onDone: () => voi
           }
         }}
       >
+        {action.icon && <MenuIcon name={action.icon} />}
         {action.label}
         <svg
           className="overflow-chevron"
@@ -309,6 +317,7 @@ function Item({
         action.onSelect?.();
       }}
     >
+      {action.icon && <MenuIcon name={action.icon} />}
       {action.label}
     </button>
   );
