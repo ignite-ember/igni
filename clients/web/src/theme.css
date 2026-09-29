@@ -4327,8 +4327,23 @@ button {
   --page-chrome-h: 35px;
   --dock-top: var(--doc-air);
   /* The hierarchy, which shares the crumbs' gutter and so has to
-     start below them. */
-  --tree-dock-top: calc(var(--page-chrome-h) + var(--doc-air));
+     start below them.
+     
+     **One number for every page, deliberately not
+     ``--page-chrome-h``.** The hierarchy is the one thing on screen
+     that does not change when you open a document: the same tree,
+     the same rows, and you are usually about to click another of
+     them. Deriving its top from the chrome above it made it jump
+     forty-seven pixels every time — up on opening a document,
+     back down on returning to the list — while the rows under the
+     pointer stayed put, which is how a click lands on the wrong
+     document.
+     
+     So it is placed to clear the *tallest* thing that can sit above
+     it, which is the list's header. That leaves air above it on a
+     document, and air is the right price: the alternative is a
+     column that moves under the hand reaching for it. */
+  --tree-dock-top: calc(82px + var(--doc-air));
 }
 
 .page:has(> .page-head) {
