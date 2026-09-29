@@ -737,6 +737,27 @@ class Session:
             ledger=self._retrieval_ledger,
         )
         await index.start()  # no-op on neo4j (client is open)
+        # The server this index writes through. Attached after
+        # construction because the collaboration client is built
+        # *with* the index — one of the two has to exist first.
+        #
+        # Built unconditionally and asked later whether it is
+        # configured: the credentials can arrive after this runs (a
+        # sign-in mid-session), and a client constructed only when a
+        # token already existed would leave the index writing to the
+        # graph alone for the rest of the process.
+        from ember_code.core.artifacts.collaboration import (  # noqa: PLC0415 — cycle
+            CollaborationSync,
+        )
+
+        auth = getattr(self, "cloud_auth", None)
+        index.attach_shared(
+            CollaborationSync(
+                index,
+                server_url=getattr(auth, "server_url", "") or "",
+                access_token=getattr(auth, "access_token", None) or "",
+            )
+        )
         self.artifacts = index
         # ``artifact_mgr`` is constructed in __init__ against whatever
         # index existed then (usually ``None``); it caches the

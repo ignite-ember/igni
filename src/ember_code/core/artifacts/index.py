@@ -20,6 +20,7 @@ would silently lose a declared source.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,7 @@ from agno.knowledge.document.base import Document
 
 from ember_code.core.artifacts.capture import RetrievalLedger
 from ember_code.core.artifacts.chunking import NewlinePreservingChunker
+from ember_code.core.artifacts.collaboration import ChainDiverged
 from ember_code.core.artifacts.metadata_codec import ArtifactMetadataCodec
 from ember_code.core.artifacts.models import (
     ArtifactDeleteResult,
@@ -44,6 +46,7 @@ from ember_code.core.artifacts.models import (
 )
 from ember_code.core.artifacts.neo4j_client import Neo4jArtifactClient
 from ember_code.core.artifacts.reconcile import Reconciler
+from ember_code.core.artifacts.render import ArtifactRenderer, RenderRequest
 from ember_code.core.code_index.project import resolve_project_id
 from ember_code.core.paths import DEFAULT_DATA_DIR
 
@@ -96,6 +99,25 @@ class ArtifactIndex:
         self._codec = codec or ArtifactMetadataCodec()
         self._ledger = ledger or RetrievalLedger()
         self._reconciler = reconciler or Reconciler()
+        #: Where a version goes first. Attached after construction
+        #: because the thing that satisfies it is built *from* this
+        #: index — see :meth:`attach_shared`.
+        self._shared: Any | None = None
+
+    def attach_shared(self, shared: Any) -> None:
+        """Name the server this index writes through.
+
+        A late setter rather than a constructor argument, and not for
+        convenience: the collaboration client is constructed with this
+        index, so one of the two has to exist first. Nothing else
+        breaks the cycle without a third object whose only job is to
+        hold a reference.
+
+        Unattached — no account, artifacts running standalone — the
+        index writes to the graph alone, which is the old behaviour
+        and the only thing that works with no server to reach.
+        """
+        self._shared = shared
 
     @property
     def client(self) -> Neo4jArtifactClient:
@@ -300,6 +322,28 @@ class ArtifactIndex:
         embedding = vectors[0]
         chunk_embeddings = list(vectors[1:])
 
+        # The server first, when there is one.
+        #
+        # A document is a shared thing, so the copy everybody reads is
+        # the copy that decides. Writing the graph first and pushing
+        # afterwards produces the state this ordering exists to
+        # prevent: a version that exists on one machine and nowhere
+        # else, indistinguishable from a version that was saved.
+        #
+        # A failure here fails the write. Falling back to a local-only
+        # save would be the same split store arriving quietly instead
+        # of loudly.
+        shared_n = await self._write_shared(
+            artifact_id=artifact_id,
+            name=name,
+            content=content,
+            kind=kind or "note",
+            author=author,
+            pins=sources.pins,
+        )
+        if isinstance(shared_n, ArtifactWriteResult):
+            return shared_n
+
         outcome = await self._client.append_version(
             artifact_id=artifact_id,
             name=name,
@@ -392,6 +436,90 @@ class ArtifactIndex:
             previous_to = line_to
             cursor = found + max(len(needle) // 2, 1)
         return rows
+
+    async def _write_shared(
+        self,
+        *,
+        artifact_id: str,
+        name: str,
+        content: str,
+        kind: str,
+        author: str,
+        pins: list[Any],
+    ) -> int | ArtifactWriteResult:
+        """Put the version on the server. Answer its number, or why not.
+
+        An :class:`ArtifactWriteResult` coming back is a refusal the
+        caller must return unchanged — the write did not happen and
+        must not happen locally either.
+
+        No server attached is not a refusal: artifacts still run for
+        somebody with no account, and answering 0 lets the graph
+        assign the number as it always did.
+        """
+        shared = self._shared
+        if shared is None or not getattr(shared, "is_configured", False):
+            return 0
+
+        summary = await self._client.get_artifact(artifact_id)
+        base_n = int(getattr(summary, "head_n", 0) or 0)
+        page = self._render_for_share(
+            artifact_id=artifact_id, name=name, content=content, kind=kind, n=base_n + 1
+        )
+        try:
+            slug = await shared.ensure_shared(
+                artifact_id=artifact_id,
+                name=name,
+                kind=kind,
+                n=base_n + 1,
+                html=page,
+                author=author,
+            )
+            if not slug:
+                return ArtifactWriteResult.fail(
+                    f"The server did not give '{name}' a home to write to."
+                )
+            return await shared.push_content(
+                slug=slug, content=content, base_n=base_n, pins=pins, html=page
+            )
+        except ChainDiverged as diverged:
+            # Somebody else appended while this was being written. Not
+            # merged here: two people editing one document is a
+            # decision, and a version nobody wrote is the worst
+            # possible answer to it.
+            return ArtifactWriteResult.fail(
+                f"'{name}' has moved on since this was written — the server is at "
+                f"v{diverged.head_n} and this was written from v{base_n}. "
+                f"Read it again before revising."
+            )
+        except Exception as exc:  # noqa: BLE001 — network, auth, permissions
+            logger.info("shared write for %s failed: %s", artifact_id, exc)
+            return ArtifactWriteResult.fail(f"Could not reach the server to store '{name}': {exc}")
+
+    def _render_for_share(
+        self, *, artifact_id: str, name: str, content: str, kind: str, n: int
+    ) -> str:
+        """The page a recipient opens, built from the text in hand.
+
+        Rendered from values rather than fetched, because at this
+        point the version exists nowhere yet — which is the point of
+        writing the server first. ``RenderRequest`` takes everything
+        it needs as data, so nothing here consults the graph.
+
+        Without lineage: edges are settled after the version exists,
+        and a page claiming sources this version has not been given
+        would be wrong in the one direction that matters. The next
+        write refreshes the snapshot.
+        """
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        return ArtifactRenderer().render(
+            RenderRequest(
+                summary=ArtifactSummary(artifact_id=artifact_id, name=name, kind=kind, head_n=n),
+                version=ArtifactVersion(
+                    artifact_id=artifact_id, n=n, content=content, created_at=now
+                ),
+            )
+        )
 
     def _require_embedder(self) -> Any:
         if self._embedder is None:

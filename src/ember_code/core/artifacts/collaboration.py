@@ -32,16 +32,21 @@ import inspect
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from ember_code.core.artifacts.index import ArtifactIndex
 from ember_code.core.artifacts.models import (
     Comment,
     CommentStatus,
     SourceDeclaration,
 )
+
+if TYPE_CHECKING:  # pragma: no cover — the index imports this module back
+    # Annotation only. Imported for real, it is a cycle: the index
+    # writes through this client, and this client is constructed with
+    # the index.
+    from ember_code.core.artifacts.index import ArtifactIndex
 
 logger = logging.getLogger(__name__)
 
@@ -332,6 +337,105 @@ class CollaborationSync:
         comment = _to_comment(response.json())
         await self._index.client.project_comments([comment])
         return comment
+
+    async def ensure_shared(
+        self, *, artifact_id: str, name: str, kind: str, n: int, html: str, author: str = ""
+    ) -> str:
+        """The document's row on the server, making one if there is none.
+
+        Published **once**, not on every write. The publish endpoint
+        upserts on ``(owner, artifact_id)`` and overwrites
+        ``visibility`` as it goes, so calling it per version would
+        quietly return a document its author had shared with
+        colleagues to private the next time they edited it. Keeping
+        the snapshot current is :meth:`push_content`'s job, which
+        carries ``html`` and leaves the sharing alone.
+
+        Private at birth. A document exists on the server because it
+        was written, which is not the same as being shared with
+        anybody — that stays a deliberate, separate act.
+        """
+        slug = await self.slug_for(artifact_id)
+        if slug:
+            return slug
+        response = await self._request(
+            "POST",
+            "/v1/artifacts/shared",
+            json={
+                "artifact_id": artifact_id,
+                "title": name,
+                "kind": kind or "note",
+                "version": max(1, n),
+                "html": html,
+                "author": author,
+                "visibility": "private",
+                "audience": [],
+            },
+        )
+        response.raise_for_status()
+        slug = str(response.json().get("slug") or "")
+        if slug:
+            self._slugs[artifact_id] = slug
+        return slug
+
+    async def push_content(
+        self,
+        *,
+        slug: str,
+        content: str,
+        base_n: int,
+        pins: list[Any] | None = None,
+        html: str | None = None,
+    ) -> int:
+        """Append a version from the text in hand.
+
+        :meth:`push` reads the local head and mirrors it upward, which
+        assumes the version already exists here. This one takes the
+        content directly, so the server can be written *first* and the
+        local graph can be what mirrors it.
+
+        Raises :class:`ChainDiverged` when ``base_n`` is no longer the
+        server's head, carrying the versions to rebase onto.
+        """
+        payload: dict[str, Any] = {
+            "content": content,
+            "base_n": base_n,
+            # Confirmed edges only, as in :meth:`push`. A candidate is
+            # this machine's record that something was read; sending
+            # it would plant an unadjudicated edge in a colleague's
+            # graph that they never saw the evidence for.
+            "sources": {
+                "pins": [
+                    {"artifact_id": p.artifact_id, "n": p.n, "state": "confirmed"}
+                    for p in (pins or [])
+                ]
+            },
+        }
+        if html is not None:
+            payload["html"] = html
+        response = await self._request(
+            "POST", f"/v1/artifacts/shared/{slug}/versions", json=payload
+        )
+        if response.status_code == 409:
+            body = response.json()
+            raise ChainDiverged(
+                head_n=int(body.get("head_n") or 0),
+                missing=[
+                    RemoteVersion(
+                        n=int(r.get("n") or 0),
+                        base_n=int(r.get("base_n") or 0),
+                        content=str(r.get("content") or ""),
+                        sources=dict(r.get("sources") or {}),
+                        author_email=str(r.get("author_email") or ""),
+                        created_at=str(r.get("created_at") or ""),
+                    )
+                    for r in (body.get("missing") or [])
+                ],
+            )
+        if response.status_code == 404:
+            raise NotAllowed(slug)
+        response.raise_for_status()
+        return int(response.json().get("n") or 0)
 
     async def slug_for(self, artifact_id: str) -> str:
         """The server's name for a document this account has published.
