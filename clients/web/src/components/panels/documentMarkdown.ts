@@ -110,15 +110,15 @@ export function blocksOf(markdown: string): Block[] {
  * original.
  */
 export function sameContent(a: Block, b: Block): boolean {
-  const flat = (s: string) =>
-    s
+  const flat = (block: string) =>
+    block
       // A blockquote wraps with a marker on every line; the marker
       // is structure, the line break is not.
       .replace(/^>\s?/gm, "")
       .replace(/\s+/g, " ")
       .trim();
   // Fences compare literally: whitespace inside code is content.
-  const fenced = (s: string) => /^\s*(```|~~~)/.test(s);
+  const fenced = (block: string) => /^\s*(```|~~~)/.test(block);
   if (fenced(a) || fenced(b)) return a.trim() === b.trim();
   return flat(a) === flat(b);
 }
