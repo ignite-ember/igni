@@ -29,6 +29,9 @@ export interface Person {
   email: string;
   name: string;
   has_access: boolean;
+  /** Somebody has already asked for them to be let in. A different
+   *  offer from ``has_access``: there is nothing left to press. */
+  pending?: boolean;
   /** Not a colleague — the agent. Drawn differently, and never the
    *  subject of an access question. */
   agent?: boolean;
@@ -221,7 +224,39 @@ export function accessNotice(
   options: Pick<MentionOptions, "can_grant" | "owner_name">,
 ): string {
   const who = person.name || person.email;
+  if (person.pending) {
+    const owner = options.owner_name || "its owner";
+    return `${who} can’t open this document yet — ${owner} has been asked.`;
+  }
   if (options.can_grant) return `${who} can’t open this document yet.`;
   const owner = options.owner_name || "its owner";
   return `${who} can’t open this document. Only ${owner} can change that.`;
+}
+
+/**
+ * What pressing the padlock beside a name does.
+ *
+ * An owner lets them in; anybody else asks on their behalf. Two
+ * different acts behind one control, because from where the person
+ * typing sits they are the same intention — "this colleague should
+ * be able to read what I am writing to them" — and which of the two
+ * it turns into is a fact about the asker, not about the wish.
+ *
+ * ``null`` when there is nothing left to do, which is what makes the
+ * padlock stop being a button once somebody is waiting.
+ */
+export function lockAction(
+  person: Person,
+  options: Pick<MentionOptions, "can_grant">,
+): "grant" | "ask" | null {
+  if (person.has_access || person.agent || person.pending) return null;
+  return options.can_grant ? "grant" : "ask";
+}
+
+/** What the control says it will do. */
+export function lockLabel(action: "grant" | "ask" | null, pending: boolean): string {
+  if (pending) return "Access requested";
+  if (action === "grant") return "Give access";
+  if (action === "ask") return "Request access for them";
+  return "";
 }

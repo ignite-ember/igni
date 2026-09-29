@@ -15,6 +15,8 @@ import {
   handleFor,
   IGNI,
   insertMention,
+  lockAction,
+  lockLabel,
   mentionSpan,
   namedIn,
   offersIgni,
@@ -263,5 +265,48 @@ describe("igni in the list", () => {
     // this" is not a question, and a notice asking it would be
     // nonsense with a button under it.
     expect(cannotRead("@igni please fix this", [IGNI, person()])).toEqual([]);
+  });
+});
+
+describe("what the padlock does", () => {
+  it("offers an owner the grant", () => {
+    expect(lockAction(person(), { can_grant: true } as never)).toBe("grant");
+  });
+
+  it("offers everybody else the ask", () => {
+    // Same intention from where the person typing sits. Which of the
+    // two it becomes is a fact about the asker, not about the wish.
+    expect(lockAction(person(), { can_grant: false } as never)).toBe("ask");
+  });
+
+  it("offers nothing once somebody is waiting", () => {
+    // A second press would raise the same request again and fill the
+    // owner's queue with one person asking twice.
+    expect(lockAction(person({ pending: true }), { can_grant: false } as never)).toBeNull();
+  });
+
+  it("offers nothing to somebody who can already read it", () => {
+    expect(lockAction(person({ has_access: true }), { can_grant: true } as never)).toBeNull();
+  });
+
+  it("offers nothing about igni", () => {
+    // It runs on this machine. "Can igni read this" is not a question
+    // and there is nothing to grant.
+    expect(lockAction(IGNI, { can_grant: true } as never)).toBeNull();
+  });
+
+  it("says what it will do", () => {
+    expect(lockLabel("grant", false)).toBe("Give access");
+    expect(lockLabel("ask", false)).toBe("Request access for them");
+    expect(lockLabel(null, true)).toBe("Access requested");
+  });
+
+  it("tells somebody already asked for that the owner has been asked", () => {
+    const said = accessNotice(person({ pending: true }), {
+      can_grant: false,
+      owner_name: "Maya Okonkwo",
+    });
+
+    expect(said).toContain("Maya Okonkwo has been asked");
   });
 });

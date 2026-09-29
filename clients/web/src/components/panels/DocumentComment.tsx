@@ -1220,6 +1220,13 @@ export function DocumentComment({
           artifact_id: artifactId,
           identity,
         }),
+      // The same wish, routed differently for somebody who cannot
+      // grant it: the server records the ask and the owner decides.
+      ask: (identity) =>
+        client.rpc<{ ok: boolean; error: string }>("artifact_ask_access", {
+          artifact_id: artifactId,
+          identity,
+        }),
     }),
     [client, artifactId],
   );
@@ -2163,6 +2170,8 @@ const Mentions = createContext<MentionsApi | null>(null);
 export interface MentionsApi {
   lookup: (query: string) => Promise<MentionOptions>;
   grant: (identity: string) => Promise<{ ok: boolean; error: string }>;
+  /** Ask the owner to let somebody in, for those who cannot grant. */
+  ask: (identity: string) => Promise<{ ok: boolean; error: string }>;
 }
 
 /** How long to wait after a keystroke before asking the server.
@@ -2205,6 +2214,10 @@ function useMentions(
    *  named them arrived before the grant, so asking again is the only
    *  other way to stop the notice repeating what was just fixed. */
   const [allowed, setAllowed] = useState<string[]>([]);
+  /** Who has been asked for during this sitting. Same reason as
+   *  ``allowed``: the answer that named them came back before the
+   *  request, so without this the padlock offers to ask again. */
+  const [asked, setAsked] = useState<string[]>([]);
   const [granting, setGranting] = useState("");
   const [grantError, setGrantError] = useState("");
 
@@ -2339,16 +2352,14 @@ function useMentions(
    *  the old list would be faster to look at and wrong to press. */
   const people = useMemo(() => {
     const found = current
-      ? (answer?.options.people ?? []).map((person) =>
-          allowed.includes(person.email) ? { ...person, has_access: true } : person,
-        )
+      ? (answer?.options.people ?? []).map((person) => marked(person, allowed, asked))
       : [];
     // Offered even while a colleague lookup is still in flight. igni
     // needs no directory: it is on this machine, and making the one
     // mention that always works wait for a round trip would be the
     // slowest way to offer the fastest answer.
     return withAgent(found, span?.query ?? "");
-  }, [current, answer, allowed, span]);
+  }, [current, answer, allowed, asked, span]);
 
   const write = (text: string, person: Person) => {
     if (!span) return null;
@@ -2382,14 +2393,31 @@ function useMentions(
     return false;
   };
 
-  const grant = async (person: Person) => {
+  /**
+   * Let somebody in, or ask for them to be.
+   *
+   * One function for both because they are one intention from where
+   * the person typing sits — "this colleague should be able to read
+   * what I am writing to them" — and which of the two it becomes is a
+   * fact about the asker, not about the wish.
+   *
+   * The two outcomes are held differently, though. A grant is true
+   * immediately and the notice goes; an ask is somebody else's
+   * decision, so the notice stays and says who was asked.
+   */
+  const unlock = async (person: Person, action: "grant" | "ask" = "grant") => {
     if (!api) return;
     setGranting(person.email);
     setGrantError("");
     try {
-      const done = await api.grant(person.email);
-      if (done.ok) setAllowed((prev) => [...prev, person.email]);
-      else setGrantError(done.error || "That did not go through.");
+      const done = action === "grant" ? await api.grant(person.email) : await api.ask(person.email);
+      if (!done.ok) {
+        setGrantError(done.error || "That did not go through.");
+      } else if (action === "grant") {
+        setAllowed((prev) => [...prev, person.email]);
+      } else {
+        setAsked((prev) => [...prev, person.email]);
+      }
     } catch {
       setGrantError("Could not reach the server.");
     } finally {
@@ -2406,9 +2434,7 @@ function useMentions(
     people,
     /** Everyone seen this sitting, with grants made since. What the
      *  notice under the box reads from. */
-    known: known.map((person) =>
-      allowed.includes(person.email) ? { ...person, has_access: true } : person,
-    ),
+    known: known.map((person) => marked(person, allowed, asked)),
     active,
     // "Looking" covers both "nothing has come back yet" and "what came
     // back is about an older query" — to the person typing those are
@@ -2419,12 +2445,19 @@ function useMentions(
     close,
     handleKey,
     write,
-    grant,
+    unlock,
     granting,
     grantError,
     canGrant: !!authority?.canGrant,
     ownerName: authority?.ownerName ?? "",
   };
+}
+
+/** One person, with the grants and asks made since they were named. */
+function marked(person: Person, allowed: string[], asked: string[]): Person {
+  if (allowed.includes(person.email)) return { ...person, has_access: true, pending: false };
+  if (asked.includes(person.email)) return { ...person, pending: true };
+  return person;
 }
 
 /** One list of people, plus another, without duplicates. */
@@ -2475,7 +2508,10 @@ function MentionAccess({
               owner_name: naming.ownerName,
             })}
           </span>
-          {naming.canGrant && (
+          {/* An owner lets them in; anybody else asks. Once asked
+              there is nothing to press, and the sentence beside it
+              already says who was asked. */}
+          {!person.pending && (
             <button
               type="button"
               className="doc-mention-grant"
@@ -2483,9 +2519,15 @@ function MentionAccess({
               // Said plainly. "Grant permission" is the language of a
               // settings page; this is one person being let into one
               // document, which is a smaller thing.
-              onClick={() => void naming.grant(person)}
+              onClick={() =>
+                void naming.unlock(person, naming.canGrant ? "grant" : "ask")
+              }
             >
-              {naming.granting === person.email ? "Giving access…" : "Give access"}
+              {naming.granting === person.email
+                ? "…"
+                : naming.canGrant
+                  ? "Give access"
+                  : "Ask for them"}
             </button>
           )}
         </p>
@@ -2651,6 +2693,9 @@ function ThreadComposer({
         active={naming.active}
         at={naming.at}
         loading={naming.loading}
+        canGrant={naming.canGrant}
+        busy={naming.granting}
+        onUnlock={(person, action) => void naming.unlock(person, action)}
         onChoose={(person) => {
           const written = naming.write(body, person);
           if (!written) return;

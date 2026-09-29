@@ -556,6 +556,9 @@ class MentionCandidate(BaseModel):
     name: str = ""
     #: Whether they could open the document as it is shared today.
     has_access: bool = False
+    #: Somebody has already asked for them to be let in. A different
+    #: offer from ``has_access``: there is nothing left to press.
+    pending: bool = False
 
 
 class ArtifactMentions(BaseModel):
@@ -597,6 +600,53 @@ class RosterPerson(BaseModel):
     name: str = ""
     #: ``owner``, ``writer`` or ``reader``.
     role: str = "reader"
+
+
+class ArtifactLocked(BaseModel):
+    """What a document is, to somebody who cannot open it.
+
+    ``open`` true means they can read it after all, in which case
+    nothing else is filled in — the caller should be showing the
+    document rather than the door.
+    """
+
+    open: bool = False
+    title: str = ""
+    owner_name: str = ""
+    owner_email: str = ""
+    asked: bool = False
+    declined: bool = False
+    error: str = ""
+
+
+class AccessAsk(BaseModel):
+    """One person waiting to be let in."""
+
+    id: str = ""
+    identity: str = ""
+    name: str = ""
+    #: Who raised it, when somebody else did.
+    asked_by_name: str = ""
+    note: str = ""
+    created_at: str = ""
+
+
+class ArtifactAccessAsks(BaseModel):
+    """The queue waiting on one document."""
+
+    asks: list[AccessAsk] = Field(default_factory=list)
+    error: str = ""
+
+
+class ArtifactAccessAsked(BaseModel):
+    """The outcome of asking for access."""
+
+    ok: bool = False
+    #: Whom it was for, echoed — the popup that asked has usually
+    #: closed by the time this returns.
+    identity: str = ""
+    message: str = ""
+    error: str = ""
 
 
 class ArtifactPeople(BaseModel):

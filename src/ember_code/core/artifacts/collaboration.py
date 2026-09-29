@@ -508,6 +508,52 @@ class CollaborationSync:
         response.raise_for_status()
         return dict(response.json())
 
+    async def ask_access(self, *, slug: str, identity: str = "", note: str = "") -> dict[str, Any]:
+        """Ask to be let into a document — for yourself, or a colleague.
+
+        ``identity`` empty means the account this client is signed in
+        as. Naming somebody else is what a mention of a colleague
+        without access turns into, and the server refuses it from
+        anybody who cannot read the document themselves.
+        """
+        payload: dict[str, Any] = {}
+        if identity:
+            payload["identity"] = identity
+        if note:
+            payload["note"] = note
+        response = await self._request("POST", f"/v1/artifacts/shared/{slug}/access", json=payload)
+        if response.status_code == 404:
+            raise NotAllowed(slug)
+        response.raise_for_status()
+        return dict(response.json())
+
+    async def locked(self, *, slug: str) -> dict[str, Any]:
+        """What a document is, for somebody who cannot read it."""
+        response = await self._request("GET", f"/v1/artifacts/shared/{slug}/access")
+        if response.status_code == 404:
+            raise NotAllowed(slug)
+        response.raise_for_status()
+        return dict(response.json())
+
+    async def waiting_on(self, *, slug: str) -> list[dict[str, Any]]:
+        """Who is asking to be let in. Owner only."""
+        response = await self._request("GET", f"/v1/artifacts/shared/{slug}/access-requests")
+        if response.status_code == 404:
+            raise NotAllowed(slug)
+        response.raise_for_status()
+        return list(response.json().get("asks") or [])
+
+    async def settle_ask(self, *, slug: str, request_id: str, granted: bool) -> None:
+        """Let them in, or do not. Owner only."""
+        response = await self._request(
+            "POST",
+            f"/v1/artifacts/shared/{slug}/access-requests/{request_id}",
+            json={"granted": granted},
+        )
+        if response.status_code == 404:
+            raise NotAllowed(request_id)
+        response.raise_for_status()
+
     async def grant_view(self, *, slug: str, identity: str) -> None:
         """Let one more person read a document. Owner only.
 

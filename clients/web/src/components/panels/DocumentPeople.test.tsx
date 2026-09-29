@@ -9,8 +9,8 @@
  * on the wrong field shows a colleague twice, once greyed and once
  * lit, which reads as two people with the same name.
  */
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   DocumentPeople,
@@ -215,3 +215,32 @@ describe("what gets drawn", () => {
     expect(container.querySelector(".doc-people")).not.toBeNull();
   });
 });
+
+describe("changing who can see it", () => {
+  it("makes the reach note the control", () => {
+    // The sentence about reach is already the answer to "who can see
+    // this". Pressing it to change that reads as one thing; a Share
+    // button beside it says the same thing twice.
+    const manage = vi.fn();
+    render(
+      <DocumentPeople
+        roster={roster({ reach: "public" })}
+        here={[]}
+        onManage={manage}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Anyone with the link"));
+
+    expect(manage).toHaveBeenCalled();
+  });
+
+  it("leaves it as plain text for somebody who may not change it", () => {
+    // A control that opens a dialog whose every field is refused is
+    // worse than no control.
+    render(<DocumentPeople roster={roster({ reach: "public" })} here={[]} />);
+
+    expect(screen.queryByRole("button", { name: "Anyone with the link" })).toBeNull();
+    expect(screen.getByText("Anyone with the link")).toBeTruthy();
+  });
+})

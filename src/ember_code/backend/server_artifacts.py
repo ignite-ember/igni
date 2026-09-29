@@ -23,6 +23,9 @@ from typing import TYPE_CHECKING, Any
 
 from ember_code.backend.file_opener import FileOpener
 from ember_code.backend.schemas_artifacts import (
+    AccessAsk,
+    ArtifactAccessAsked,
+    ArtifactAccessAsks,
     ArtifactCandidateEvidence,
     ArtifactCandidateVerdict,
     ArtifactCommentAnchor,
@@ -43,6 +46,7 @@ from ember_code.backend.schemas_artifacts import (
     ArtifactLineageRow,
     ArtifactLineageView,
     ArtifactListEntry,
+    ArtifactLocked,
     ArtifactMentions,
     ArtifactOpenResult,
     ArtifactPeople,
@@ -2056,6 +2060,119 @@ class ArtifactController:
             reach=str(answer.get("reach") or "private"),
             domain=str(answer.get("domain") or ""),
             can_manage=bool(answer.get("can_manage")),
+        )
+
+    # ── Being let in ─────────────────────────────────────────────────
+
+    async def locked(self, *, artifact_id: str) -> ArtifactLocked:
+        """What this document is, for somebody who cannot read it.
+
+        ``open`` for anything this account can already read, and for
+        anything never shared — a local draft is not locked, it is
+        simply local, and drawing a request form over one would ask
+        somebody to petition themselves.
+        """
+        sync = self._collaboration()
+        if sync is None:
+            return ArtifactLocked(open=True)
+        try:
+            slug = await sync.slug_for(artifact_id)
+            if not slug:
+                return ArtifactLocked(open=True)
+            answer = await sync.locked(slug=slug)
+        except NotAllowed:
+            return ArtifactLocked(error="No such document.")
+        except Exception as exc:  # noqa: BLE001 — network, auth
+            logger.info("access check did not reach the server: %s", exc)
+            # Open, on a failure to ask. The document is on this
+            # machine and readable from it; a server we cannot reach
+            # is not grounds for putting a lock over work somebody
+            # already has.
+            return ArtifactLocked(open=True, error=f"Could not reach the server: {exc}")
+        return ArtifactLocked(
+            open=bool(answer.get("open")),
+            title=str(answer.get("title") or ""),
+            owner_name=str(answer.get("owner_name") or ""),
+            owner_email=str(answer.get("owner_email") or ""),
+            asked=bool(answer.get("asked")),
+            declined=bool(answer.get("declined")),
+        )
+
+    async def ask_access(
+        self, *, artifact_id: str, identity: str = "", note: str = ""
+    ) -> ArtifactAccessAsked:
+        """Ask to be let in — for yourself, or for somebody you named."""
+        sync = self._collaboration()
+        if sync is None:
+            return ArtifactAccessAsked(error="Not signed in to a server.")
+        try:
+            slug = await sync.slug_for(artifact_id)
+            if not slug:
+                return ArtifactAccessAsked(error="This document has not been shared.")
+            await sync.ask_access(slug=slug, identity=identity, note=note)
+        except NotAllowed:
+            return ArtifactAccessAsked(error="That is not yours to ask about.")
+        except Exception as exc:  # noqa: BLE001 — network, auth
+            logger.info("access request did not reach the server: %s", exc)
+            return ArtifactAccessAsked(error=f"Could not reach the server: {exc}")
+        who = identity.strip()
+        return ArtifactAccessAsked(
+            ok=True,
+            identity=who,
+            message=f"Asked for {who}." if who else "Asked.",
+        )
+
+    async def access_asks(self, *, artifact_id: str) -> ArtifactAccessAsks:
+        """Who is waiting on this document. Empty unless it is yours."""
+        sync = self._collaboration()
+        if sync is None:
+            return ArtifactAccessAsks()
+        try:
+            slug = await sync.slug_for(artifact_id)
+            if not slug:
+                return ArtifactAccessAsks()
+            rows = await sync.waiting_on(slug=slug)
+        except NotAllowed:
+            # Not the owner, or not shared. Neither is an error worth
+            # drawing: somebody who cannot settle requests has no use
+            # for the queue.
+            return ArtifactAccessAsks()
+        except Exception as exc:  # noqa: BLE001 — network, auth
+            logger.info("access queue did not reach the server: %s", exc)
+            return ArtifactAccessAsks(error=f"Could not reach the server: {exc}")
+        return ArtifactAccessAsks(
+            asks=[
+                AccessAsk(
+                    id=str(row.get("id") or ""),
+                    identity=str(row.get("identity") or ""),
+                    name=str(row.get("name") or ""),
+                    asked_by_name=str(row.get("asked_by_name") or ""),
+                    note=str(row.get("note") or ""),
+                    created_at=str(row.get("created_at") or ""),
+                )
+                for row in rows
+            ]
+        )
+
+    async def settle_access_ask(
+        self, *, artifact_id: str, request_id: str, granted: bool
+    ) -> ArtifactViewGranted:
+        """Let somebody in, or decline. Owner only."""
+        sync = self._collaboration()
+        if sync is None:
+            return ArtifactViewGranted(error="Not signed in to a server.")
+        try:
+            slug = await sync.slug_for(artifact_id)
+            if not slug:
+                return ArtifactViewGranted(error="This document has not been shared.")
+            await sync.settle_ask(slug=slug, request_id=request_id, granted=granted)
+        except NotAllowed:
+            return ArtifactViewGranted(error="That is not yours to decide.")
+        except Exception as exc:  # noqa: BLE001 — network, auth
+            logger.info("settling a request did not reach the server: %s", exc)
+            return ArtifactViewGranted(error=f"Could not reach the server: {exc}")
+        return ArtifactViewGranted(
+            ok=True, message="Let them in." if granted else "Declined."
         )
 
     # ── Presence ─────────────────────────────────────────────────────

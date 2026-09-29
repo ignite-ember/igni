@@ -93,6 +93,30 @@ class ArtifactRpcHandler(RpcHandler):
     def artifact_people(self, args: dict) -> Any:
         return self._ctx.backend.artifact_people(artifact_id=args["artifact_id"])
 
+    @rpc(RpcMethod.ARTIFACT_LOCKED)
+    def artifact_locked(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_locked(artifact_id=args["artifact_id"])
+
+    @rpc(RpcMethod.ARTIFACT_ASK_ACCESS)
+    def artifact_ask_access(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_ask_access(
+            artifact_id=args["artifact_id"],
+            identity=str(args.get("identity") or ""),
+            note=str(args.get("note") or ""),
+        )
+
+    @rpc(RpcMethod.ARTIFACT_ACCESS_ASKS)
+    def artifact_access_asks(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_access_asks(artifact_id=args["artifact_id"])
+
+    @rpc(RpcMethod.ARTIFACT_SETTLE_ACCESS_ASK)
+    def artifact_settle_access_ask(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_settle_access_ask(
+            artifact_id=args["artifact_id"],
+            request_id=args["request_id"],
+            granted=bool(args.get("granted")),
+        )
+
     @rpc(RpcMethod.ARTIFACT_WATCH_ROOM)
     def artifact_watch_room(self, args: dict) -> Any:
         return self._ctx.backend.artifact_watch_room(artifact_id=args["artifact_id"])

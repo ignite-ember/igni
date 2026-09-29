@@ -20,7 +20,7 @@ import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 
 import { MenuIcon } from "../MenuIcon";
-import type { Person } from "./mentions";
+import { lockAction, lockLabel, type MentionOptions, type Person } from "./mentions";
 
 /** Roughly how tall the list gets, for deciding above or below. */
 const MENU_HEIGHT = 220;
@@ -30,7 +30,10 @@ export function MentionMenu({
   active,
   at,
   loading,
+  canGrant,
+  busy,
   onChoose,
+  onUnlock,
 }: {
   people: Person[];
   /** Which row the keyboard is on. */
@@ -39,7 +42,14 @@ export function MentionMenu({
   at: { left: number; top: number; bottom: number } | null;
   /** The first answer has not arrived yet. */
   loading: boolean;
+  /** Whether the person reading this may widen the audience. Decides
+   *  whether the padlock grants or asks. */
+  canGrant: boolean;
+  /** Whose padlock is mid-flight. */
+  busy: string;
   onChoose: (person: Person) => void;
+  /** Press the padlock: let them in, or ask on their behalf. */
+  onUnlock: (person: Person, action: "grant" | "ask") => void;
 }) {
   const list = useRef<HTMLUListElement>(null);
 
@@ -98,9 +108,22 @@ export function MentionMenu({
                   {/* Beside the name, not at the far edge of the row.
                       At the edge it reads as a column of statuses to
                       scan; here it is part of reading the name, which
-                      is the moment the fact matters. */}
+                      is the moment the fact matters.
+
+                      And pressable, because seeing that somebody
+                      cannot read the document is immediately followed
+                      by wanting to do something about it. What it
+                      does depends on who is asking — an owner lets
+                      them in, anybody else asks on their behalf —
+                      which is a fact about the asker rather than
+                      about the wish. */}
                   {!person.has_access && !person.agent && (
-                    <MenuIcon name="lock" />
+                    <Padlock
+                      person={person}
+                      canGrant={canGrant}
+                      busy={busy === person.email}
+                      onUnlock={onUnlock}
+                    />
                   )}
                 </span>
                 {/* An address under a colleague's name, because two
@@ -117,7 +140,9 @@ export function MentionMenu({
                   the noisy one — and the question does not apply to
                   igni, which runs on this machine. */}
               {!person.has_access && !person.agent && (
-                <span className="mention-locked">No access</span>
+                <span className="mention-locked">
+                  {person.pending ? "Asked" : "No access"}
+                </span>
               )}
             </button>
           </li>
@@ -125,5 +150,63 @@ export function MentionMenu({
       )}
     </ul>,
     document.body,
+  );
+}
+
+/**
+ * The padlock beside a name, which is sometimes a button.
+ *
+ * Nested inside the row's own button, which is why it is a ``span``
+ * with a click handler rather than a ``<button>``: a button inside a
+ * button is invalid markup and browsers resolve it by dropping one of
+ * them, usually the one you wanted. The keyboard reaches it through
+ * the row it is in — the menu is driven by arrows and Enter, and Enter
+ * on a row inserts the mention, which is the right default.
+ *
+ * Stops the press reaching the row. Pressing the padlock means "let
+ * them in", not "write this name into my sentence", and doing both
+ * would insert a mention every time somebody granted access.
+ */
+function Padlock({
+  person,
+  canGrant,
+  busy,
+  onUnlock,
+}: {
+  person: Person;
+  canGrant: boolean;
+  busy: boolean;
+  onUnlock: (person: Person, action: "grant" | "ask") => void;
+}) {
+  const action = lockAction(person, { can_grant: canGrant } as MentionOptions);
+  const label = lockLabel(action, !!person.pending);
+
+  if (!action) {
+    // Waiting on somebody. The padlock stays — the state it reports
+    // has not changed — but there is nothing left to press, and a
+    // control that looks pressable and does nothing is worse than one
+    // that does not.
+    return (
+      <span className="mention-lock is-asked" title={label} aria-label={label}>
+        <MenuIcon name="lock" />
+      </span>
+    );
+  }
+
+  return (
+    <span
+      role="button"
+      tabIndex={-1}
+      className={busy ? "mention-lock is-busy" : "mention-lock"}
+      title={label}
+      aria-label={label}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!busy) onUnlock(person, action);
+      }}
+    >
+      <MenuIcon name="lock" />
+    </span>
   );
 }

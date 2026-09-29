@@ -171,12 +171,24 @@ export function DocumentPeople({
           </li>
         ))}
       </ul>
-      {note && <span className="doc-people-note">{note}</span>}
-      {onManage && (
-        <button type="button" className="doc-people-manage" onClick={onManage}>
-          Share
-        </button>
-      )}
+      {/* The sentence about reach *is* the control. "Anyone with the
+          link" is already the answer to "who can see this", so
+          pressing it to change that reads as one thing rather than as
+          a statement with a separate Share button next to it saying
+          the same thing again. */}
+      {note &&
+        (onManage ? (
+          <button
+            type="button"
+            className="doc-people-note is-pressable"
+            title="Change who can see this"
+            onClick={onManage}
+          >
+            {note}
+          </button>
+        ) : (
+          <span className="doc-people-note">{note}</span>
+        ))}
     </div>
   );
 }

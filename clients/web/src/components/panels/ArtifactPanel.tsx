@@ -9,6 +9,7 @@ import { ArtifactShareDialog } from "./ArtifactShareDialog";
 import { ArtifactCommentReview } from "./ArtifactCommentReview";
 import { ArtifactCompare } from "./ArtifactCompare";
 import { DocumentPeople } from "./DocumentPeople";
+import { LockedDocument, type LockedState } from "./LockedDocument";
 import { useDocumentRoom } from "./useDocumentRoom";
 import { ArtifactStaleReview } from "./ArtifactStaleReview";
 import { Drawer } from "./Drawer";
@@ -884,6 +885,7 @@ export function ArtifactPanel({
             setView("detail");
           }}
           onCompareClosed={() => setComparing(false)}
+          onShare={() => setView("share")}
           onVersionCount={setVersionCount}
           onArchivedChange={setOpenArchived}
           editing={editing}
@@ -1009,6 +1011,7 @@ function DocumentDetail({
   onArchivedChange,
   editing = false,
   onEditingChange,
+  onShare,
   reloadNonce = 0,
 }: {
   client: IgniClient;
@@ -1029,6 +1032,8 @@ function DocumentDetail({
   /** What you can do to this document, shown beside its name. */
   actions?: React.ReactNode;
   onCompareClosed: () => void;
+  /** Open the sharing controls. Absent for anybody who may not. */
+  onShare?: () => void;
   /** So the header knows whether there is anything to compare. */
   onVersionCount: (count: number) => void;
   /** Editing rather than reading. Owned by the panel, because the
@@ -1074,6 +1079,46 @@ function DocumentDetail({
   // below that return is a hook React sees on some renders and not
   // others — which is not a subtle bug, it is a blank page.
   const room = useDocumentRoom(client, id);
+  // Whether the shared copy is open to this account. Up here with
+  // every other hook, for the reason the one above learned the hard
+  // way: this component returns early while a document loads.
+  const [locked, setLocked] = useState<LockedState | null>(null);
+  const [asking, setAsking] = useState(false);
+
+  useEffect(() => {
+    if (!id) return;
+    let dropped = false;
+    void client
+      .rpc<LockedState>("artifact_locked", { artifact_id: id })
+      .then((answer) => {
+        if (!dropped) setLocked(answer ?? null);
+      })
+      .catch(() => {
+        // Open, on a failure to ask. A server we cannot reach is not
+        // grounds for putting a lock over work already on this
+        // machine.
+        if (!dropped) setLocked(null);
+      });
+    return () => {
+      dropped = true;
+    };
+  }, [client, id]);
+
+  const askForAccess = useCallback(
+    async (note: string) => {
+      setAsking(true);
+      try {
+        await client.rpc("artifact_ask_access", { artifact_id: id, note });
+        const again = await client.rpc<LockedState>("artifact_locked", { artifact_id: id });
+        setLocked(again ?? null);
+      } catch {
+        setLocked((prev) => (prev ? { ...prev, error: "Could not reach the server." } : prev));
+      } finally {
+        setAsking(false);
+      }
+    },
+    [client, id],
+  );
 
   // Derived above the early returns, because hooks cannot be called
   // conditionally and ``useDrift`` needs the source.
@@ -1275,6 +1320,14 @@ function DocumentDetail({
     />
   );
 
+  // Shut out of the shared copy. Drawn instead of the document
+  // rather than over it, and below every hook — the checks above
+  // must all have run by now, or the next render calls a different
+  // number of them.
+  if (locked && !locked.open) {
+    return <LockedDocument locked={locked} busy={asking} onAsk={(note) => void askForAccess(note)} />;
+  }
+
   // Attribution as a sentence, the way an artifact header reads:
   // who wrote it, which version, when. A row of chips makes three
   // facts look like three filters.
@@ -1312,12 +1365,24 @@ function DocumentDetail({
           <h2 className="kb-doc-title">{doc.name}</h2>
           {actions}
         </div>
-        {attribution && <p className="kb-doc-attribution">{attribution}</p>}
-        {/* Under the byline, which is where "who" already lives on
-            this page. Above the document, because knowing who else is
-            in a document is something you want before reading it, not
-            after. */}
-        <DocumentPeople roster={room.roster} here={room.here} />
+        {/* One line: who wrote it, which version, when — and then who
+            it is shared with and who is in it. All of it is the same
+            kind of fact about the document, and on two lines the
+            faces read as a second section with its own heading
+            missing. */}
+        {(attribution || room.roster) && (
+          <div className="kb-doc-meta">
+            {attribution && <p className="kb-doc-attribution">{attribution}</p>}
+                <DocumentPeople
+              roster={room.roster}
+              here={room.here}
+              // Only for somebody who could act on it. A control that
+              // opens a dialog whose every field is refused is worse
+              // than no control.
+              onManage={room.roster?.can_manage ? onShare : undefined}
+            />
+          </div>
+        )}
         {doc.source && doc.source !== doc.name && (
           <p className="kb-doc-origin">
             {/^https?:\/\//.test(doc.source) ? (

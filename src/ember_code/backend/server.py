@@ -74,6 +74,8 @@ from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
     from ember_code.backend.schemas_artifacts import (
+        ArtifactAccessAsked,
+        ArtifactAccessAsks,
         ArtifactCandidateEvidence,
         ArtifactCandidateVerdict,
         ArtifactCommentAnchor,
@@ -86,6 +88,7 @@ if TYPE_CHECKING:
         ArtifactDriftApplied,
         ArtifactExportResult,
         ArtifactLineageView,
+        ArtifactLocked,
         ArtifactMentions,
         ArtifactOpenResult,
         ArtifactPeople,
@@ -1032,6 +1035,30 @@ class BackendServer:
     async def artifact_people(self, *, artifact_id: str) -> ArtifactPeople:
         """See :meth:`ArtifactController.people`."""
         return await self.artifacts.people(artifact_id=artifact_id)
+
+    async def artifact_locked(self, *, artifact_id: str) -> ArtifactLocked:
+        """See :meth:`ArtifactController.locked`."""
+        return await self.artifacts.locked(artifact_id=artifact_id)
+
+    async def artifact_ask_access(
+        self, *, artifact_id: str, identity: str = "", note: str = ""
+    ) -> ArtifactAccessAsked:
+        """See :meth:`ArtifactController.ask_access`."""
+        return await self.artifacts.ask_access(
+            artifact_id=artifact_id, identity=identity, note=note
+        )
+
+    async def artifact_access_asks(self, *, artifact_id: str) -> ArtifactAccessAsks:
+        """See :meth:`ArtifactController.access_asks`."""
+        return await self.artifacts.access_asks(artifact_id=artifact_id)
+
+    async def artifact_settle_access_ask(
+        self, *, artifact_id: str, request_id: str, granted: bool
+    ) -> ArtifactViewGranted:
+        """See :meth:`ArtifactController.settle_access_ask`."""
+        return await self.artifacts.settle_access_ask(
+            artifact_id=artifact_id, request_id=request_id, granted=granted
+        )
 
     async def artifact_watch_room(self, *, artifact_id: str) -> ArtifactRoom:
         """See :meth:`ArtifactController.watch_room`."""

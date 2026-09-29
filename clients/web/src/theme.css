@@ -4309,8 +4309,18 @@ button {
      hierarchy forty pixels below the text or on top of the panel's
      own buttons — this file has had both bugs, so it is measured
      from what is actually on the page. */
-  --page-chrome-h: 35px;
-  --dock-top: calc(var(--page-chrome-h) + var(--doc-air));
+  /* The crumb row's height. Only the hierarchy pays it.
+     ``.page-crumbs`` is a full-width box holding text that ends
+     around 190px in, so treating its height as a band above
+     *everything* pushed the document and the conversation down for a
+     row they do not sit under — they sit beside it. So the crumbs
+     come out of the flow and this number is the offset for the one
+     column that really is underneath them. */
+  --page-chrome-h: 24px;
+  --dock-top: var(--doc-air);
+  /* The hierarchy, which shares the crumbs' gutter and so has to
+     start below them. */
+  --tree-dock-top: calc(var(--page-chrome-h) + var(--doc-air));
 }
 
 .page:has(> .page-head) {
@@ -4332,7 +4342,20 @@ button {
   align-items: center;
   flex-wrap: wrap;
   gap: 2px;
-  padding: 10px 18px 0 14px;
+  /* Was 10px of air above a 12.5px line, under a header that
+     already supplies its own. The band read as a gap rather than as
+     a row, and everything docked below it — the tree, the document,
+     the conversation — started lower than it needed to. */
+  /* Out of the flow: full-width in the layout it took a band off
+     the top of all three columns, when what it actually occupies is
+     the first 190 pixels of the first one. Absolute, so the document
+     and the conversation start level with it and only the hierarchy
+     — which is under it — is pushed down. */
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  padding: 0 18px 0 14px;
   font-size: 12.5px;
 }
 
@@ -4345,7 +4368,11 @@ button {
 .page-crumb {
   background: none;
   border: none;
-  padding: 2px 4px;
+  /* 1px, not 2. The row is the one thing between the header and the
+     document, and its height is what everything below it starts
+     under — so the padding a hover fill needs is worth exactly the
+     two pixels it costs and not one more. */
+  padding: 1px 4px;
   border-radius: var(--radius-sm);
   color: var(--fg-faint);
   font: inherit;
@@ -10956,7 +10983,7 @@ button {
      once the row of faces was added under the byline — the document
      started a third of the way down its own column. Eight and four,
      so the first sentence is where the eye already is. */
-  margin: calc(-1 * var(--doc-air)) -18px 8px;
+  margin: calc(-1 * var(--doc-air)) -18px 6px;
   padding: var(--doc-air) 18px 4px;
   background: var(--bg);
 }
@@ -11017,11 +11044,22 @@ button {
    facts about the same person, and two rows make the reader match
    names across them to work that out. */
 
+/* The byline and the faces on one line: "maya@acme.test · v7 · 2h
+   ago" and then who it is with. Wraps rather than squeezing, because
+   a long author address and eight faces will not share a line on a
+   narrow window and a row of faces cut in half says nothing. */
+.kb-doc-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
 .doc-people {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 8px 0 0;
+  margin: 0;
 }
 
 .doc-faces {
@@ -11100,8 +11138,25 @@ button {
 }
 
 .doc-people-note {
+  padding: 0;
+  font: inherit;
   font-size: 11.5px;
   color: var(--fg-faint);
+  background: none;
+  border: 0;
+}
+
+/* Underlined only on hover. A dotted or solid rule under it at rest
+   would make a line of metadata look like a link in the middle of a
+   byline, which is a thing to read rather than a thing to press. */
+.doc-people-note.is-pressable {
+  cursor: pointer;
+}
+
+.doc-people-note.is-pressable:hover {
+  color: var(--fg-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .doc-people-manage {
@@ -11898,7 +11953,7 @@ button {
      each take half of it, so changing it here moves the title, the
      hierarchy and the conversation together — which is the only way
      they stay level. */
-  --doc-air: 12px;
+  --doc-air: 2px;
 }
 
 /* The gutter the hierarchy lives in: against the left edge of the
@@ -11917,7 +11972,7 @@ button {
 .kb-tree-dock {
   position: absolute;
   left: 18px;
-  top: var(--dock-top);
+  top: var(--tree-dock-top);
   bottom: 0;
   width: var(--tree-width);
   /* Off, so the empty part of a full-height dock does not swallow
@@ -12509,6 +12564,88 @@ button {
   color: var(--fg-faint);
   cursor: default;
   text-decoration: none;
+}
+
+/* The padlock beside a name in the mention menu, which is a control
+   when there is something to press and a state when there is not. */
+.mention-lock {
+  display: inline-flex;
+  padding: 2px;
+  color: var(--fg-muted);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.mention-lock:hover {
+  color: var(--fg);
+  background: var(--bg-raised);
+}
+
+/* Already asked. Still drawn — the state it reports has not changed
+   — but not offered, because a control that looks pressable and does
+   nothing is worse than one that does not. */
+.mention-lock.is-asked,
+.mention-lock.is-busy {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.mention-lock.is-asked:hover,
+.mention-lock.is-busy:hover {
+  color: var(--fg-muted);
+  background: none;
+}
+
+/* ── A document you cannot open ────────────────────────────────────
+   Not an error page. Nothing has gone wrong; something has to be
+   asked for, and the page is the asking. */
+
+.doc-locked-body {
+  margin-top: 20px;
+  padding: 20px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+}
+
+.doc-locked-said {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.doc-locked-waiting {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.doc-locked-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.doc-locked-label {
+  font-size: 11.5px;
+  color: var(--fg-faint);
+}
+
+.doc-locked-actions {
+  display: flex;
+  margin-top: 2px;
+}
+
+/* The padlock on the byline, at the byline's size. */
+.kb-doc-locked .kb-doc-attribution {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.kb-doc-locked .kb-doc-attribution svg {
+  width: 12px;
+  height: 12px;
 }
 
 .doc-mention-error {
