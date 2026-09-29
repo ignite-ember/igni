@@ -1896,3 +1896,112 @@ describe("when each turn was written", () => {
     expect(stamps()[0].dateTime).toBeTruthy();
   });
 });
+
+describe("what the document is marked for, once the rail is narrowed", () => {
+  /**
+   * The marks are the other half of the filter's answer.
+   *
+   * Narrowing the rail to unresolved comments and leaving every
+   * passage lit says the filter did nothing. A reader who narrows is
+   * asking which passages still matter, not which ones ever did —
+   * and this went unnoticed with a green suite because nothing
+   * looked at the marks and the filter together.
+   */
+  function stubHighlights() {
+    const highlights = new Map<string, unknown>();
+    vi.stubGlobal("CSS", { highlights });
+    vi.stubGlobal(
+      "Highlight",
+      class {
+        constructor(...ranges: Range[]) {
+          Object.assign(this, { ranges, size: ranges.length });
+        }
+      },
+    );
+    return highlights;
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  const stored = (over: Record<string, unknown>) => ({
+    comment_id: "c",
+    thread_id: "t",
+    parent_id: "",
+    origin: "web",
+    quote: "",
+    quote_start: -1,
+    body: "…",
+    status: "open",
+    author: "maya@acme.test",
+    at: "2026-09-01T10:00:00Z",
+    n: 2,
+    ...over,
+  });
+
+  /** Two passages, one settled and one not. */
+  async function withTwo() {
+    const harness = fakeClient();
+    harness.rpc.mockImplementation(async (method: string) =>
+      method === "artifact_comments"
+        ? [
+            stored({
+              comment_id: "open1",
+              thread_id: "t1",
+              quote: "The service issues a signed JWT on sign-in.",
+              body: "Still open",
+              status: "open",
+            }),
+            stored({
+              comment_id: "done1",
+              thread_id: "t2",
+              quote: "The token is read on every request",
+              body: "Settled",
+              status: "accepted",
+            }),
+          ]
+        : { ok: true, prompt: "P", message: "" },
+    );
+    const { ref } = mountBody(
+      "The service issues a signed JWT on sign-in. The token is read on every request and is opaque.",
+    );
+    render(<DocumentComment client={harness.client} artifactId="a1" n={2} bodyRef={ref} />);
+    await screen.findByText("Still open");
+  }
+
+  /** How many passages the document is currently marked for. */
+  const marked = (highlights: Map<string, unknown>) => {
+    const mark = highlights.get("doc-comment-mark") as { ranges?: unknown[] } | undefined;
+    return mark?.ranges?.length ?? 0;
+  };
+
+  it("marks both passages before anything is filtered", async () => {
+    const highlights = stubHighlights();
+    await withTwo();
+
+    expect(marked(highlights)).toBe(2);
+  });
+
+  it("stops marking the passage whose comment was filtered away", async () => {
+    const highlights = stubHighlights();
+    await withTwo();
+
+    // Narrow to unresolved. The settled one leaves the rail, and
+    // its passage has to stop being lit with it.
+    fireEvent.click(screen.getByRole("button", { name: /Filter/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Unresolved/ }));
+
+    await waitFor(() => expect(marked(highlights)).toBe(1));
+  });
+
+  it("marks them both again when the filter is cleared", async () => {
+    const highlights = stubHighlights();
+    await withTwo();
+    fireEvent.click(screen.getByRole("button", { name: /Filter/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Unresolved/ }));
+    await waitFor(() => expect(marked(highlights)).toBe(1));
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Unresolved/ }));
+
+    await waitFor(() => expect(marked(highlights)).toBe(2));
+  });
+});

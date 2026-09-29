@@ -884,9 +884,33 @@ export function DocumentComment({
     [groups, shown],
   );
 
-  const orderedThreads = useMemo(() => ordered.map((o) => o.thread), [ordered]);
+  /**
+   * The threads the document should be marked for.
+   *
+   * What is on the rail, not what the document has. Filtering to
+   * "unresolved" and leaving every passage lit says the filter did
+   * nothing — the marks are the other half of the same answer, and
+   * a reader who narrows the rail is asking which passages still
+   * matter, not which ones ever did.
+   *
+   * Taken from the grouped and filtered list rather than filtered
+   * again here, so the rail and the document cannot disagree about
+   * what survived.
+   */
+  const markedThreads = useMemo(() => shown.flatMap((g) => g.threads), [shown]);
 
-  useMarks(bodyRef, hidden ? NO_THREADS : orderedThreads, focused, n, ranges);
+  useMarks(bodyRef, hidden ? NO_THREADS : markedThreads, focused, n, ranges);
+
+  // A selected thread that the filter has just hidden is a selection
+  // pointing at nothing: its card is gone from the rail and its
+  // passage is no longer lit, but the document still believes
+  // something is chosen — so the next click has to undo a selection
+  // nobody can see.
+  useEffect(() => {
+    if (!focused) return;
+    if (markedThreads.some((th) => th.key === focused)) return;
+    setFocused(null);
+  }, [focused, markedThreads]);
 
   /** Put the document's view on a thread's passage. */
   const revealPassage = useCallback((key: string) => {
