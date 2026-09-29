@@ -4309,14 +4309,22 @@ button {
      hierarchy forty pixels below the text or on top of the panel's
      own buttons — this file has had both bugs, so it is measured
      from what is actually on the page. */
-  /* The crumb row's height. Only the hierarchy pays it.
-     ``.page-crumbs`` is a full-width box holding text that ends
-     around 190px in, so treating its height as a band above
-     *everything* pushed the document and the conversation down for a
-     row they do not sit under — they sit beside it. So the crumbs
-     come out of the flow and this number is the offset for the one
-     column that really is underneath them. */
-  --page-chrome-h: 24px;
+  /* Where the hierarchy starts, and nothing else. ``.page-crumbs``
+     is a full-width box holding text that ends around 190px in, so
+     treating its height as a band above *everything* pushed the
+     document and the conversation down for a row they do not sit
+     under — they sit beside it. Those two are placed from
+     ``--doc-air`` now; this is the offset for the one column that
+     really is underneath the crumbs.
+
+     The crumb row measures about 23px, so the rest of this is the
+     air below it — the same air the header case leaves, which is
+     why ``82px`` there is larger than that header measures too. Cut
+     to the row's own height, the hierarchy cleared the crumbs by
+     three pixels on a document while clearing the rule by fourteen
+     on the list, and the same column looked like two different
+     columns depending on which page you came from. */
+  --page-chrome-h: 35px;
   --dock-top: var(--doc-air);
   /* The hierarchy, which shares the crumbs' gutter and so has to
      start below them. */
