@@ -146,6 +146,7 @@ class ArtifactIndex:
         author: str = "",
         session_id: str = "",
         metadata: dict[str, str] | None = None,
+        projecting: bool = False,
     ) -> ArtifactWriteResult:
         """Create a new artifact at v1.
 
@@ -173,6 +174,7 @@ class ArtifactIndex:
             author=author,
             session_id=session_id,
             metadata=metadata,
+            projecting=projecting,
         )
 
     async def revise(
@@ -184,6 +186,7 @@ class ArtifactIndex:
         author: str = "",
         session_id: str = "",
         metadata: dict[str, str] | None = None,
+        projecting: bool = False,
     ) -> ArtifactWriteResult:
         """Append a new version to an existing artifact.
 
@@ -218,6 +221,7 @@ class ArtifactIndex:
             author=author,
             session_id=session_id,
             metadata=metadata,
+            projecting=projecting,
         )
 
     async def _inherit_confirmed(
@@ -278,6 +282,7 @@ class ArtifactIndex:
         author: str,
         session_id: str,
         metadata: dict[str, str] | None,
+        projecting: bool = False,
     ) -> ArtifactWriteResult:
         if not content.strip():
             return ArtifactWriteResult.fail("Refusing to store an empty artifact.")
@@ -333,13 +338,24 @@ class ArtifactIndex:
         # A failure here fails the write. Falling back to a local-only
         # save would be the same split store arriving quietly instead
         # of loudly.
-        shared_n = await self._write_shared(
-            artifact_id=artifact_id,
-            name=name,
-            content=content,
-            kind=kind or "note",
-            author=author,
-            pins=sources.pins,
+        # Unless this version *came* from the server, in which case
+        # sending it back is at best a no-op and at worst a divergence
+        # — the push carries the base it was written from, and a
+        # version being mirrored was written from a base this machine
+        # has not reached yet. That is what ``projecting`` means: the
+        # server already has this, put it in the graph and nothing
+        # else.
+        shared_n = (
+            None
+            if projecting
+            else await self._write_shared(
+                artifact_id=artifact_id,
+                name=name,
+                content=content,
+                kind=kind or "note",
+                author=author,
+                pins=sources.pins,
+            )
         )
         if isinstance(shared_n, ArtifactWriteResult):
             return shared_n

@@ -237,6 +237,41 @@ class CollaborationSync:
             if remote.sources
             else SourceDeclaration(),
             author=remote.author_email,
+            # Mirroring, not authoring. Without this the write path
+            # pushes each version straight back at the server it came
+            # from, carrying a base this machine has not reached — so
+            # a pull of a two-version chain refused itself with
+            # "written from v0" and adopted nothing.
+            projecting=True,
+        )
+
+    async def first_version(self, *, slug: str) -> RemoteVersion:
+        """The opening version of a chain, for a reader who has none.
+
+        Fetched on its own so a document can be created locally before
+        :meth:`pull` runs, which needs somewhere to append to. Asking
+        for ``after=0`` and taking the first row rather than the head:
+        the chain is applied in order from the beginning, and starting
+        at the head would leave a local v1 holding the latest text
+        with every earlier version appended on top of it.
+        """
+        response = await self._request(
+            "GET", f"/v1/artifacts/shared/{slug}/versions", params={"after": 0}
+        )
+        if response.status_code == 404:
+            raise NotAllowed(slug)
+        response.raise_for_status()
+        rows = response.json().get("versions") or []
+        if not rows:
+            raise RuntimeError("that document has no versions yet")
+        row = rows[0]
+        return RemoteVersion(
+            n=int(row.get("n") or 0),
+            base_n=int(row.get("base_n") or 0),
+            content=str(row.get("content") or ""),
+            sources=dict(row.get("sources") or {}),
+            author_email=str(row.get("author_email") or ""),
+            created_at=str(row.get("created_at") or ""),
         )
 
     async def pull_comments(self, *, cursor: str | None = None) -> tuple[int, str | None]:

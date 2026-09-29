@@ -545,6 +545,13 @@ export default function App() {
     () => new URLSearchParams(window.location.search).get("dir") ?? "",
     [],
   );
+  // A shared document to open, from the link that opened this window.
+  // Read once: following a link is an arrival, and re-reading the URL
+  // later would reopen the document every time the app re-rendered.
+  const sharedSlug = useMemo(
+    () => new URLSearchParams(window.location.search).get("doc") ?? "",
+    [],
+  );
   const [sidebarOpen, setSidebarOpenState] = useState(window.innerWidth > 700);
   const setSidebarOpen = useCallback(
     (next: boolean | ((prev: boolean) => boolean)) => {
@@ -989,7 +996,16 @@ export default function App() {
             // yields an empty stack for anything it cannot read, so a
             // value written by an older release opens the chat rather
             // than failing the whole hydrate.
-            setPages(restorePages(clientState.get(PAGE_KEY)));
+            // A link wins over wherever this window was last. Somebody
+            // following one asked for a document; putting them back on
+            // the chat they had open a week ago answers a question
+            // nobody asked, and the document they came for is then two
+            // clicks away with no sign it is there.
+            setPages(
+              sharedSlug
+                ? [{ kind: "artifacts", label: "Artifacts" }]
+                : restorePages(clientState.get(PAGE_KEY)),
+            );
             // Adopt a session for this view. An already-bound
             // sessionId wins outright (reconnect mid-session — don't
             // churn it); otherwise the plan comes from the window's
@@ -3151,7 +3167,7 @@ export default function App() {
                 thing they were reading. The run still reaches this
                 chat — it is one session. */}
             {page.kind === "artifacts" && (
-              <ArtifactPanel client={client} onClose={goChat} />
+              <ArtifactPanel client={client} onClose={goChat} openSlug={sharedSlug} />
             )}
             {page.kind === "codeindex" && (
               <CodeIndexPanel client={client} onClose={goChat} />

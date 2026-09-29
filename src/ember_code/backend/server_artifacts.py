@@ -48,6 +48,7 @@ from ember_code.backend.schemas_artifacts import (
     ArtifactListEntry,
     ArtifactLocked,
     ArtifactMentions,
+    ArtifactOpened,
     ArtifactOpenResult,
     ArtifactPeople,
     ArtifactProvenance,
@@ -2062,6 +2063,110 @@ class ArtifactController:
             can_manage=bool(answer.get("can_manage")),
         )
 
+    # ── Arriving from a link ─────────────────────────────────────────
+
+    async def open_shared(self, *, slug: str) -> ArtifactOpened:
+        """Bring a shared document into this machine, and say where it is.
+
+        What happens when somebody follows a link. The document lives
+        on the server and belongs to whoever published it; this pulls
+        its chain into the local graph so it can be opened where the
+        reader's own documents are — with the tree beside it, the
+        conversation next to it, and the whole history answerable to
+        the same queries as anything they wrote themselves.
+
+        **Adopted, not copied.** The local chain is a mirror of the
+        server's, applied through the ordinary write path, so every
+        version is chunked, embedded and edge-attached exactly as a
+        locally authored one would be. A projection that skipped that
+        would be present in the graph and absent from every answer.
+
+        A reader who may not open it gets the locked state back rather
+        than an error, because "you need to ask for this" is an answer
+        and a 404 is not.
+        """
+        sync = self._collaboration()
+        if sync is None:
+            return ArtifactOpened(error="Not signed in to a server.")
+        try:
+            door = await sync.locked(slug=slug)
+        except NotAllowed:
+            return ArtifactOpened(error="No such document.")
+        except Exception as exc:  # noqa: BLE001 — network, auth
+            logger.info("could not open %s: %s", slug, exc)
+            return ArtifactOpened(error=f"Could not reach the server: {exc}")
+
+        title = str(door.get("title") or "")
+        if not door.get("open"):
+            # Shut out. The caller draws the door, which needs the
+            # title and the owner — both already in hand.
+            return ArtifactOpened(
+                locked=ArtifactLocked(
+                    open=False,
+                    title=title,
+                    owner_name=str(door.get("owner_name") or ""),
+                    owner_email=str(door.get("owner_email") or ""),
+                    asked=bool(door.get("asked")),
+                    declined=bool(door.get("declined")),
+                )
+            )
+
+        if self._session.artifacts is None:
+            return ArtifactOpened(error="Artifacts are disabled.")
+        index = self._session.artifacts
+        try:
+            artifact_id = await self._adopt(sync=sync, slug=slug, title=title)
+        except NotAllowed:
+            return ArtifactOpened(error="No such document.")
+        except Exception as exc:  # noqa: BLE001 — network, graph
+            logger.info("could not adopt %s: %s", slug, exc)
+            return ArtifactOpened(error=f"Could not open that document: {exc}")
+        del index
+        return ArtifactOpened(ok=True, artifact_id=artifact_id, title=title)
+
+    async def _adopt(self, *, sync: CollaborationSync, slug: str, title: str) -> str:
+        """Find or make the local artifact this slug belongs to, then sync it.
+
+        Matched by name rather than by the id on the shared row. That
+        id is the *author's* local identity for the document and means
+        nothing in anybody else's graph — adopting by it would create
+        rows whose ids collide with whatever the reader happens to
+        have at that address. A name is what both sides actually agree
+        on, and it is what the reader will search for later.
+        """
+        client = self._session.artifacts.client
+        existing = await client.find_by_name(title)
+        if existing is None:
+            # Created from the first remote version rather than empty:
+            # an artifact at v1 with no content is a row that exists
+            # and says nothing, and if the pull then fails the reader
+            # is left holding it.
+            first = await sync.first_version(slug=slug)
+            written = await self._session.artifacts.create(
+                name=title,
+                content=first.content,
+                sources=SourceDeclaration(),
+                author=first.author_email,
+                # The server has this already — it is where it came
+                # from. Publishing it back would claim the reader
+                # wrote somebody else's first draft.
+                projecting=True,
+            )
+            # ``success``, not ``ok``. ``ArtifactWriteResult.ok`` is the
+            # classmethod that *builds* a successful one, so reading it
+            # as a flag gets a bound method — always truthy, so a
+            # refused create read as a good one and the failure only
+            # surfaced two lines later as a missing id.
+            if not written.success or not written.artifact_id:
+                raise RuntimeError(written.error or written.message or "could not create it here")
+            ref = written.artifact_id
+        else:
+            ref = str(existing.artifact_id)
+
+        # The rest of the chain, and the conversation with it.
+        await sync.pull(slug=slug, ref=ref)
+        return ref
+
     # ── Being let in ─────────────────────────────────────────────────
 
     async def locked(self, *, artifact_id: str) -> ArtifactLocked:
@@ -2099,14 +2204,21 @@ class ArtifactController:
         )
 
     async def ask_access(
-        self, *, artifact_id: str, identity: str = "", note: str = ""
+        self, *, artifact_id: str = "", slug: str = "", identity: str = "", note: str = ""
     ) -> ArtifactAccessAsked:
-        """Ask to be let in — for yourself, or for somebody you named."""
+        """Ask to be let in — for yourself, or for somebody you named.
+
+        Named by either the local artifact or the slug. The slug is
+        what somebody arriving from a link has: the document is not in
+        their graph, which is the whole reason they are asking, so
+        there is no local id to name it by.
+        """
         sync = self._collaboration()
         if sync is None:
             return ArtifactAccessAsked(error="Not signed in to a server.")
         try:
-            slug = await sync.slug_for(artifact_id)
+            if not slug:
+                slug = await sync.slug_for(artifact_id)
             if not slug:
                 return ArtifactAccessAsked(error="This document has not been shared.")
             await sync.ask_access(slug=slug, identity=identity, note=note)

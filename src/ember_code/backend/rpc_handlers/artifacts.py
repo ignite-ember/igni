@@ -93,6 +93,10 @@ class ArtifactRpcHandler(RpcHandler):
     def artifact_people(self, args: dict) -> Any:
         return self._ctx.backend.artifact_people(artifact_id=args["artifact_id"])
 
+    @rpc(RpcMethod.ARTIFACT_OPEN_SHARED)
+    def artifact_open_shared(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_open_shared(slug=args["slug"])
+
     @rpc(RpcMethod.ARTIFACT_LOCKED)
     def artifact_locked(self, args: dict) -> Any:
         return self._ctx.backend.artifact_locked(artifact_id=args["artifact_id"])
@@ -100,7 +104,8 @@ class ArtifactRpcHandler(RpcHandler):
     @rpc(RpcMethod.ARTIFACT_ASK_ACCESS)
     def artifact_ask_access(self, args: dict) -> Any:
         return self._ctx.backend.artifact_ask_access(
-            artifact_id=args["artifact_id"],
+            artifact_id=str(args.get("artifact_id") or ""),
+            slug=str(args.get("slug") or ""),
             identity=str(args.get("identity") or ""),
             note=str(args.get("note") or ""),
         )

@@ -619,6 +619,24 @@ class ArtifactLocked(BaseModel):
     error: str = ""
 
 
+class ArtifactOpened(BaseModel):
+    """Where a shared document ended up after following a link.
+
+    Three outcomes, and the caller draws a different thing for each:
+    it opened and is now local (``artifact_id``), it is shut and can
+    be asked for (``locked``), or something went wrong (``error``).
+    """
+
+    ok: bool = False
+    #: The local id, once the chain has been pulled in.
+    artifact_id: str = ""
+    title: str = ""
+    #: Filled instead of ``artifact_id`` when the reader may not open
+    #: it. The caller draws the door.
+    locked: ArtifactLocked | None = None
+    error: str = ""
+
+
 class AccessAsk(BaseModel):
     """One person waiting to be let in."""
 

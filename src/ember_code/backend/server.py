@@ -90,6 +90,7 @@ if TYPE_CHECKING:
         ArtifactLineageView,
         ArtifactLocked,
         ArtifactMentions,
+        ArtifactOpened,
         ArtifactOpenResult,
         ArtifactPeople,
         ArtifactProvenance,
@@ -1036,16 +1037,20 @@ class BackendServer:
         """See :meth:`ArtifactController.people`."""
         return await self.artifacts.people(artifact_id=artifact_id)
 
+    async def artifact_open_shared(self, *, slug: str) -> ArtifactOpened:
+        """See :meth:`ArtifactController.open_shared`."""
+        return await self.artifacts.open_shared(slug=slug)
+
     async def artifact_locked(self, *, artifact_id: str) -> ArtifactLocked:
         """See :meth:`ArtifactController.locked`."""
         return await self.artifacts.locked(artifact_id=artifact_id)
 
     async def artifact_ask_access(
-        self, *, artifact_id: str, identity: str = "", note: str = ""
+        self, *, artifact_id: str = "", slug: str = "", identity: str = "", note: str = ""
     ) -> ArtifactAccessAsked:
         """See :meth:`ArtifactController.ask_access`."""
         return await self.artifacts.ask_access(
-            artifact_id=artifact_id, identity=identity, note=note
+            artifact_id=artifact_id, slug=slug, identity=identity, note=note
         )
 
     async def artifact_access_asks(self, *, artifact_id: str) -> ArtifactAccessAsks:

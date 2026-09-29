@@ -284,6 +284,7 @@ class RpcMethod(StrEnum):
     ARTIFACT_MENTIONS = "artifact_mentions"
     ARTIFACT_PEOPLE = "artifact_people"
     ARTIFACT_LOCKED = "artifact_locked"
+    ARTIFACT_OPEN_SHARED = "artifact_open_shared"
     ARTIFACT_ASK_ACCESS = "artifact_ask_access"
     ARTIFACT_ACCESS_ASKS = "artifact_access_asks"
     ARTIFACT_SETTLE_ACCESS_ASK = "artifact_settle_access_ask"

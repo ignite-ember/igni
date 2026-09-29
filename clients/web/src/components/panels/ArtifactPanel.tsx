@@ -191,9 +191,15 @@ const DOC_FENCES = {
 export function ArtifactPanel({
   client,
   onClose,
+  openSlug = "",
 }: {
   client: IgniClient;
   onClose: () => void;
+  /** A document to open on arrival, named by the slug in a shared
+   *  link rather than by a local id — the whole point is that the
+   *  reader has never seen this document, so their own graph has no
+   *  name for it until it has been pulled in. */
+  openSlug?: string;
 }) {
   const [status, setStatus] = useState<ArtifactStatus | null>(null);
   const [docs, setDocs] = useState<ArtifactsDoc[] | null>(null);
@@ -230,6 +236,11 @@ export function ArtifactPanel({
    *  Null when it is shut. An object rather than a boolean because it
    *  is anchored to whichever of two controls opened it. */
   const [sharing, setSharing] = useState<ShareOpening | null>(null);
+  /** Following a link: what came of it. Null until the slug has been
+   *  asked about, and then either a local id to open or a door to
+   *  draw. */
+  const [arrival, setArrival] = useState<Arrival | null>(null);
+  const [askingIn, setAskingIn] = useState(false);
   /** How the document on screen is shared, as last reported by the
    *  detail view. A ref, not state: the overflow menu reads it at the
    *  moment it is pressed, and making it state would re-render the
@@ -243,6 +254,69 @@ export function ArtifactPanel({
   const rememberSharing = useCallback((reach: ShareReach, listed: string[]) => {
     sharedNow.current = { reach, listed };
   }, []);
+
+  /**
+   * Bring in the document a link named, and open it.
+   *
+   * Runs once per slug. The pull applies the whole chain through the
+   * ordinary write path, so this is the slow part of following a link
+   * and the panel says so rather than sitting blank.
+   */
+  useEffect(() => {
+    if (!openSlug) return;
+    let dropped = false;
+    setArrival({ state: "arriving" });
+    void client
+      .rpc<OpenedShared>("artifact_open_shared", { slug: openSlug })
+      .then((answer) => {
+        if (dropped) return;
+        if (answer?.ok && answer.artifact_id) {
+          setArrival(null);
+          setSelected(answer.artifact_id);
+          setView("detail");
+        } else if (answer?.locked) {
+          setArrival({ state: "locked", locked: answer.locked });
+        } else {
+          setArrival({ state: "failed", why: answer?.error || "That link did not open." });
+        }
+      })
+      .catch(() => {
+        if (!dropped) {
+          setArrival({ state: "failed", why: "Could not reach the server." });
+        }
+      });
+    return () => {
+      dropped = true;
+    };
+  }, [client, openSlug]);
+
+  /** Ask for a document that is not in this graph, by its slug. */
+  const askForSlug = useCallback(
+    async (note: string) => {
+      setAskingIn(true);
+      try {
+        const done = await client.rpc<{ ok: boolean; error: string }>("artifact_ask_access", {
+          slug: openSlug,
+          note,
+        });
+        if (!done?.ok) return;
+        // Marked here rather than re-read. The request went through,
+        // which is the only thing the page reports, and a second
+        // round trip to be told what we just did is a wait for
+        // nothing.
+        setArrival((was) =>
+          was?.state === "locked"
+            ? { state: "locked", locked: { ...was.locked, asked: true, declined: false } }
+            : was,
+        );
+      } catch {
+        /* Left as it was. The form is still there to try again. */
+      } finally {
+        setAskingIn(false);
+      }
+    },
+    [client, openSlug],
+  );
   /**
    * Whether the document on screen is archived.
    *
@@ -827,7 +901,23 @@ export function ArtifactPanel({
           </div>
         )}
         <div className="kb-shell-body">
-      {status === null ? (
+      {/* Arriving from a link comes first: whatever view the panel
+          would otherwise draw is about documents this reader already
+          has, and the one they followed a link to is not among them
+          yet. */}
+      {arrival?.state === "arriving" ? (
+        <ArtifactsSkeleton />
+      ) : arrival?.state === "locked" ? (
+        <LockedDocument
+          locked={arrival.locked}
+          busy={askingIn}
+          onAsk={(note) => void askForSlug(note)}
+        />
+      ) : arrival?.state === "failed" ? (
+        <div className="kb-empty">
+          <p className="kb-hint">{arrival.why}</p>
+        </div>
+      ) : status === null ? (
         <ArtifactsSkeleton />
       ) : view === "comments" ? (
         <ArtifactCommentReview
@@ -962,6 +1052,26 @@ export function ArtifactPanel({
       )}
     </Drawer>
   );
+}
+
+/** What came of following a link.
+ *
+ *  Three states and no more, because there are three things to draw:
+ *  a wait, a door, and a reason it did not work. Opening successfully
+ *  is not one of them — that ends with a document selected and this
+ *  back to null. */
+type Arrival =
+  | { state: "arriving" }
+  | { state: "locked"; locked: LockedState }
+  | { state: "failed"; why: string };
+
+/** The answer to "open this slug". */
+interface OpenedShared {
+  ok: boolean;
+  artifact_id: string;
+  title: string;
+  locked: LockedState | null;
+  error: string;
 }
 
 /** How the document on screen is shared, and where to hang the panel
