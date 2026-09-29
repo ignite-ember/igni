@@ -348,29 +348,51 @@ export function ArtifactTreeView({
       {/* No filter here. The centre column already searches the
           documents, and a second box over the same names is two
           places to look for one answer. */}
+      {/* Three glyphs where three sentences used to be. The bar sat
+          above the tree in two wrapped rows — two labelled buttons
+          and a toggle whose wording changed under the pointer — and
+          it cost more vertical room than several folders. These are
+          the verbs a file tree has; they do not need explaining
+          every time the column is looked at, and the tooltip is
+          there for the once they do. */}
       <div className="kb-tree-bar">
         <button
           type="button"
-          className="btn btn-xs kb-tree-new"
+          className="kb-tree-act"
+          title="New document"
+          aria-label="New document"
           onClick={() => onCreateInside("", "")}
         >
-          New document
+          <MenuIcon name="document-add" />
         </button>
         <button
           type="button"
-          className="btn btn-xs kb-tree-new"
+          className="kb-tree-act"
+          title="New folder"
+          aria-label="New folder"
           onClick={() => void addFolder("")}
         >
-          New folder
+          <MenuIcon name="folder-add" />
         </button>
+        <span className="kb-tree-bar-gap" />
         <button
           type="button"
-          className={showArchived ? "kb-tree-archived is-on" : "kb-tree-archived"}
+          className={showArchived ? "kb-tree-act is-on" : "kb-tree-act"}
+          // A toggle, said as one. ``aria-pressed`` is what makes the
+          // state readable without the label having to change from
+          // "Show archived" to "Hide archived" — wording that moves
+          // under the pointer is wording you have to read twice to
+          // work out which way it is about to go.
           aria-pressed={showArchived}
-          title="Archived documents are kept, and still resolve for anything built on them"
+          title={
+            showArchived
+              ? "Hide archived documents"
+              : "Show archived documents — they are kept, and still resolve for anything built on them"
+          }
+          aria-label="Show archived documents"
           onClick={() => setShowArchived((on) => !on)}
         >
-          {showArchived ? "Hide archived" : "Show archived"}
+          <MenuIcon name="archive" />
         </button>
       </div>
 

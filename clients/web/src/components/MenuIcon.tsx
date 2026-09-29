@@ -29,7 +29,9 @@ export type MenuIconName =
   | "restore"
   | "remove"
   | "document"
+  | "document-add"
   | "folder"
+  | "folder-add"
   | "outdent"
   | "compare"
   | "lineage";
@@ -52,7 +54,14 @@ const PATHS: Record<MenuIconName, string> = {
   remove: "M2.8 4.3h10.4M6.4 4.3V2.9a.7.7 0 0 1 .7-.7h1.8a.7.7 0 0 1 .7.7v1.4M4.2 4.3l.6 8.5a.9.9 0 0 0 .9.8h4.6a.9.9 0 0 0 .9-.8l.6-8.5M6.7 6.8v4.2M9.3 6.8v4.2",
   // A page. The same shape as ``open`` without the action.
   document: "M9 1.5H4.5A1.5 1.5 0 0 0 3 3v10a1.5 1.5 0 0 0 1.5 1.5h7A1.5 1.5 0 0 0 13 13V5.5zM9 1.5V5.5h4M5.5 8.5h5M5.5 11h3",
+  // The same page and folder, with the plus that makes one. Drawn
+  // from the same outlines rather than new shapes: "new document"
+  // and "document" should be recognisably the same noun.
+  "document-add":
+    "M8.4 1.5H4.5A1.5 1.5 0 0 0 3 3v10a1.5 1.5 0 0 0 1.5 1.5h3.2M8.4 1.5V5.5h3.6M11.8 8.8v4.6M9.5 11.1h4.6",
   folder: "M1.8 4.2a1 1 0 0 1 1-1h3.1l1.4 1.6h5.9a1 1 0 0 1 1 1v6.4a1 1 0 0 1-1 1H2.8a1 1 0 0 1-1-1z",
+  "folder-add":
+    "M1.8 4.2a1 1 0 0 1 1-1h3.1l1.4 1.6h5.9a1 1 0 0 1 1 1v1.5M1.8 4.2v8.4a1 1 0 0 0 1 1h4.9M11.4 8.8v4.6M9.1 11.1h4.6",
   // Up and to the left: out of where it is, to the level above.
   outdent: "M13 4H6M13 8H8.5M13 12H6M4.5 5.5 2 8l2.5 2.5",
   // Two columns, side by side.

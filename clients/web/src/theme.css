@@ -12028,19 +12028,60 @@ button {
   flex: none;
 }
 
-/* Nudged down onto the title's baseline. Equal box tops are not equal
-   levels when the boxes are different heights: a 22px pill of 10.5px
-   text beside a 25px line of 19px text puts the label about five
-   pixels above the title's baseline, and the pill's border makes that
-   gap something you see rather than something you measure.
+/* The verbs a file tree has, as glyphs. Sized like a control rather
+   than like text: they sit in a row above the tree and the row has
+   to read as a toolbar, not as three words somebody left there. */
+.kb-tree-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--fg-muted);
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
 
-   A visual offset and not margin or padding, so the row underneath —
-   which already lines up with the document's ``v6 · 1d ago`` — does
-   not move with it. */
-.kb-tree-new {
-  white-space: nowrap;
-  position: relative;
-  top: 5px;
+.kb-tree-act:hover {
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
+/* Pressed, and saying so in the colour as well as in aria-pressed —
+   "archived are showing" is a state somebody needs to see at a
+   glance, because it explains why the tree is longer than they left
+   it. */
+.kb-tree-act.is-on {
+  color: var(--accent-blue-text, #8eb9f9);
+  background: color-mix(in srgb, var(--accent-blue, #4a7dff) 14%, transparent);
+}
+
+.kb-tree-act .menu-icon {
+  width: 15px;
+  height: 15px;
+  opacity: 1;
+}
+
+/* Pushes the archive toggle to the far end: making and hiding are
+   different kinds of act, and a row of three identical buttons
+   invites pressing the third by accident. */
+.kb-tree-bar-gap {
+  flex: 1;
+  min-width: 8px;
+}
+
+/* The bar stands as tall as the document's title line, so the two
+   centre on each other. Icons have no baseline to share — what the
+   eye compares across a row of a glyph and a heading is the middle
+   of each, and equal top edges put a 20px toolbar two pixels above
+   the centre of a 25px line. The text buttons this replaced were
+   nudged onto the title's *baseline*, which was the right answer for
+   text and is the wrong one now. */
+.kb-tree-bar {
+  min-height: 25px;
 }
 
 .kb-tree-note {
