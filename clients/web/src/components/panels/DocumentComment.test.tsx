@@ -17,6 +17,7 @@ import { createRef, useState } from "react";
 import {
   DocumentComment,
   findText,
+  personBefore,
   offsetWithin,
   quoteStillPresent,
   threadAtPoint,
@@ -1755,5 +1756,61 @@ describe("telling igni's answer apart from a person's", () => {
     const mine = document.querySelector(".doc-conv-body");
     expect(mine?.querySelector(".doc-conv-hook")).toBeFalsy();
     expect(mine?.textContent).toContain("maya");
+  });
+});
+
+describe("which turn an answer is drawn back to", () => {
+  // Two agent answers to one question sit one after the other.
+  // Anchoring the line to whatever element is directly above makes
+  // the second reach back to the first one's last line: a stub
+  // joining igni to igni, beside a question neither appears to be
+  // about.
+  const thread = (...kinds: string[]) => {
+    const host = document.createElement("div");
+    for (const kind of kinds) {
+      const turn = document.createElement("div");
+      turn.className = kind === "me" ? "doc-conv-body" : "doc-conv-reply";
+      turn.textContent = kind;
+      host.appendChild(turn);
+    }
+    return host;
+  };
+
+  it("is the turn above, when a person asked it", () => {
+    const host = thread("me", "agent");
+
+    const answered = personBefore(host.children[1]);
+
+    expect(answered).toBe(host.children[0]);
+  });
+
+  it("walks back over the agent's own earlier answer", () => {
+    const host = thread("me", "agent", "agent");
+
+    const answered = personBefore(host.children[2]);
+
+    expect(answered).toBe(host.children[0]);
+  });
+
+  it("walks back over several of them", () => {
+    const host = thread("me", "agent", "agent", "agent");
+
+    expect(personBefore(host.children[3])).toBe(host.children[0]);
+  });
+
+  it("finds the nearest question when a thread has two", () => {
+    // Not simply the first. A second question later in the thread is
+    // what the answers after it are about.
+    const host = thread("me", "agent", "me", "agent");
+
+    expect(personBefore(host.children[3])).toBe(host.children[2]);
+  });
+
+  it("answers nothing when an agent turn opens the thread", () => {
+    // Possible for a thread projected back out of the store without
+    // the remark that prompted it. Nothing to draw to.
+    const host = thread("agent");
+
+    expect(personBefore(host.children[0])).toBeNull();
   });
 });

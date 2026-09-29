@@ -1772,7 +1772,13 @@ function ReplyHook() {
   useLayoutEffect(() => {
     const svg = hook.current;
     const mine = svg?.parentElement;
-    const answered = mine?.previousElementSibling;
+    // The turn this answers, which is the last thing a *person* said
+    // — not simply the element above. Two agent answers to one
+    // question sit one after the other, and anchoring to whatever is
+    // directly above makes the second one reach back to the first
+    // one's last line: a stub joining igni to igni, next to a
+    // question neither of them appears to be about.
+    const answered = personBefore(mine);
     if (!svg || !mine || !answered) return;
 
     const measure = () => {
@@ -1821,6 +1827,22 @@ function ReplyHook() {
       />
     </svg>
   );
+}
+
+/**
+ * The last turn a person took before this one.
+ *
+ * Walks back over the agent's own answers. ``null`` when there is
+ * nothing before it — an agent turn opening a thread, which happens
+ * when a comment is projected back out of the store without the
+ * remark that prompted it.
+ */
+export function personBefore(from: Element | null | undefined): Element | null {
+  let at = from?.previousElementSibling ?? null;
+  while (at && !at.classList.contains("doc-conv-body")) {
+    at = at.previousElementSibling;
+  }
+  return at;
 }
 
 /** Where the line lands: the middle of the byline it leads to. */
