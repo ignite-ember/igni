@@ -12043,6 +12043,25 @@ button {
   gap: 10px;
 }
 
+/* A rendered view inside a document, from a ``json-render`` fence.
+   Framed like the code block it is written as, so the page reads as
+   one document rather than a document with a widget dropped in. */
+.doc-spec {
+  margin: 14px 0;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-inset);
+  overflow-x: auto;
+}
+
+/* While the renderer is on its way. The source, not a spinner: a
+   spec is readable, and a box that says nothing for a moment reads
+   as a box that failed. */
+.doc-spec-loading {
+  opacity: 0.55;
+}
+
 /* Everything the editor can do, at the top, while editing.
    Sticky, because a document is longer than a screen and a toolbar
    you have to scroll back to is a toolbar you stop using. It wraps

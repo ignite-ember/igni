@@ -21,6 +21,7 @@ import { ExportBanner, type ExportOutcome } from "./ExportBanner";
 import { ProvenanceView, type CandidateOverlap, type Provenance } from "./ProvenanceView";
 import { DocumentCitations } from "./DocumentCitations";
 import { DocumentEditor } from "./DocumentEditor";
+import { MermaidBlock, SpecBlock, fenceInfo } from "../markdown/RichFences";
 import { ArtifactTreeView } from "./ArtifactTreeView";
 
 /** Where the reader's preference about the comment rail is kept. */
@@ -166,6 +167,23 @@ function formatBytes(n: number): string {
 }
 
 // ── Main panel ───────────────────────────────────────────────────
+
+/**
+ * What a fenced block becomes in a document.
+ *
+ * ```mermaid``` draws, ```json-render``` renders, everything else
+ * stays the code block it already was. Keyed on the language so
+ * adding a third kind is a line here rather than a branch somewhere
+ * in the renderer.
+ */
+const DOC_FENCES = {
+  pre: ({ children, ...rest }: { children?: React.ReactNode }) => {
+    const fence = fenceInfo(children);
+    if (fence?.lang === "mermaid") return <MermaidBlock source={fence.source} />;
+    if (fence?.lang === "json-render") return <SpecBlock source={fence.source} />;
+    return <pre {...rest}>{children}</pre>;
+  },
+};
 
 export function ArtifactPanel({
   client,
@@ -1402,7 +1420,11 @@ function DocumentDetail({
             />
           ) : (
           <div className="kb-doc-body markdown-body" ref={bodyRef}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeHighlight]}
+              components={DOC_FENCES}
+            >
               {doc.content || "_(empty)_"}
             </ReactMarkdown>
             {/* Where each passage came from, marked in the passage.
