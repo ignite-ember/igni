@@ -42,6 +42,7 @@ from ember_code.backend.schemas_artifacts import (
     ArtifactLineageRow,
     ArtifactLineageView,
     ArtifactListEntry,
+    ArtifactMentions,
     ArtifactOpenResult,
     ArtifactProvenance,
     ArtifactQueryResult,
@@ -54,8 +55,10 @@ from ember_code.backend.schemas_artifacts import (
     ArtifactTreeChanged,
     ArtifactTreeNode,
     ArtifactVersionRow,
+    ArtifactViewGranted,
     CandidateOverlapRow,
     DriftAffectedRow,
+    MentionCandidate,
     ProvenanceMatchRow,
     ProvenancePassageRow,
 )
@@ -154,6 +157,11 @@ class ArtifactController:
         # idempotent, and a stale cursor on disk is the one way to
         # *miss* something.
         self._comment_cursor: str | None = None
+        # The sync client, kept for its connection pool and its
+        # slug cache. See :meth:`_collaboration` for why it is held
+        # rather than built per call, and for what invalidates it.
+        self._sync: CollaborationSync | None = None
+        self._sync_for: tuple[int, str, str] | None = None
 
     # ── Overview ──────────────────────────────────────────────────────
 
@@ -1947,6 +1955,71 @@ class ArtifactController:
             comment_id=comment_id, status=status, content=content, sync=sync
         )
 
+    async def mentions(self, *, artifact_id: str, query: str = "") -> ArtifactMentions:
+        """Who could be named in a comment on this document.
+
+        Every answer comes from the server, including the access one.
+        Whether a colleague can read a shared document is not a fact
+        this machine holds — it is a property of how the document is
+        shared, which lives where the document is shared.
+
+        Failures are reported in ``error`` and never raised. This runs
+        on a keystroke behind a popup; a document that was never
+        published, an account that is signed out, and a server that is
+        down all mean the same thing to the person typing, which is
+        that no completions are coming.
+        """
+        sync = self._collaboration()
+        if sync is None:
+            return ArtifactMentions(error="Not signed in to a server.")
+        try:
+            slug = await sync.slug_for(artifact_id)
+            if not slug:
+                return ArtifactMentions(
+                    error="This document has not been shared, so there is nobody to mention yet."
+                )
+            answer = await sync.mentionable(slug=slug, query=query)
+        except NotAllowed:
+            return ArtifactMentions(error="This document is not yours to read.")
+        except Exception as exc:  # noqa: BLE001 — network, auth
+            logger.info("mention lookup did not reach the server: %s", exc)
+            return ArtifactMentions(error=f"Could not reach the server: {exc}")
+        return ArtifactMentions(
+            people=[MentionCandidate(**person) for person in answer.get("people") or []],
+            can_grant=bool(answer.get("can_grant")),
+            owner_name=str(answer.get("owner_name") or ""),
+            owner_email=str(answer.get("owner_email") or ""),
+        )
+
+    async def grant_view(self, *, artifact_id: str, identity: str) -> ArtifactViewGranted:
+        """Let one more person read a shared document.
+
+        Named by address rather than by id, because the address is
+        what was written into the comment and what the access rule
+        matches on — granting to an id the reader never saw would look
+        right here and fail to match the mention.
+        """
+        who = identity.strip()
+        if not who:
+            return ArtifactViewGranted(error="Nobody was named.")
+        sync = self._collaboration()
+        if sync is None:
+            return ArtifactViewGranted(error="Not signed in to a server.")
+        try:
+            slug = await sync.slug_for(artifact_id)
+            if not slug:
+                return ArtifactViewGranted(error="This document has not been shared.")
+            await sync.grant_view(slug=slug, identity=who)
+        except NotAllowed:
+            # Both "no such document" and "not yours" arrive here, and
+            # the server will not say which. The honest message covers
+            # both without guessing at the one it did not say.
+            return ArtifactViewGranted(error="This document is not yours to share.")
+        except Exception as exc:  # noqa: BLE001 — network, auth
+            logger.info("grant did not reach the server: %s", exc)
+            return ArtifactViewGranted(error=f"Could not reach the server: {exc}")
+        return ArtifactViewGranted(ok=True, identity=who, message=f"{who} can now read this.")
+
     def _collaboration(self) -> CollaborationSync | None:
         """The sync client, built from the session's cloud credentials.
 
@@ -1958,17 +2031,36 @@ class ArtifactController:
         them. The first cut asked the settings object and silently got
         nothing, so every sync reported zero and every resolve claimed
         the account was signed out.
+
+        **Kept, not rebuilt.** It was rebuilt on every call, which
+        threw away two things the client holds: its connection pool,
+        and ``slug_for``'s cache of which slug belongs to which
+        artifact. Resolving a slug means listing every shared document
+        this account has, so a fresh client per call turned that into
+        a full listing per operation — unnoticeable for filing, and
+        about a second per keystroke once the mention menu started
+        asking on every letter typed.
+
+        Rebuilt when the credentials change, which is the one thing
+        that makes the old client wrong: a cached client signed in as
+        the previous account would answer with their documents.
         """
         artifacts = self._session.artifacts
         if artifacts is None:
             return None
         auth = getattr(self._session, "cloud_auth", None)
-        sync = CollaborationSync(
-            artifacts,
-            server_url=getattr(auth, "server_url", "") or "",
-            access_token=getattr(auth, "access_token", None) or "",
-        )
-        return sync if sync.is_configured else None
+        server_url = getattr(auth, "server_url", "") or ""
+        access_token = getattr(auth, "access_token", None) or ""
+        credentials = (id(artifacts), server_url, access_token)
+        if self._sync is None or self._sync_for != credentials:
+            sync = CollaborationSync(
+                artifacts,
+                server_url=server_url,
+                access_token=access_token,
+            )
+            self._sync = sync if sync.is_configured else None
+            self._sync_for = credentials
+        return self._sync
 
     async def sync_comments(self) -> int:
         """Pull comment activity and project it. Returns how many landed."""

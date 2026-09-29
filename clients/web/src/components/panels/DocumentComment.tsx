@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -6,6 +15,18 @@ import remarkGfm from "remark-gfm";
 import type { IgniClient } from "../../protocol/client";
 import { MenuIcon } from "../MenuIcon";
 import { formatExact, formatRelative } from "../../utils/when";
+import { MentionMenu } from "./MentionMenu";
+import {
+  accessNotice,
+  cannotRead,
+  handleFor,
+  insertMention,
+  mentionSpan,
+  type MentionOptions,
+  type MentionSpan,
+  unknownHandles,
+  type Person,
+} from "./mentions";
 
 /**
  * Talking to the agent about the document you are reading, on the page.
@@ -466,6 +487,23 @@ export interface CommentFilter {
 /** Every facet, in the order they are offered. */
 const FACETS = ["status", "answer", "passage", "versions"] as const;
 
+/**
+ * What the rail is narrowed to before anybody narrows it.
+ *
+ * Comments whose passage has been rewritten out of the document are
+ * hidden to start with. They are the ones with nowhere to point: the
+ * sentence they were about is gone, so the quote in the card is the
+ * only copy of it left and there is no highlight to click through to.
+ * Left in the list they accumulate at the top of a long document and
+ * read as live remarks about text that is not there.
+ *
+ * A *default*, not a rule. It shows as a chip like any other
+ * restriction, with its own way off, because the alternative — comments
+ * silently missing from a rail that claims to show the conversation —
+ * is the thing a reader cannot recover from not knowing.
+ */
+export const DEFAULT_FILTER: CommentFilter = { passage: ["here"] };
+
 export function filterIsEmpty(f: CommentFilter): boolean {
   return FACETS.every((k) => !f[k]?.length);
 }
@@ -746,7 +784,7 @@ export function DocumentComment({
   /** The thread whose ruling is in flight, if any. */
   const [settling, setSettling] = useState<string | null>(null);
   /** What the rail is narrowed to, and whether the chooser is open. */
-  const [filter, setFilter] = useState<CommentFilter>({});
+  const [filter, setFilter] = useState<CommentFilter>(DEFAULT_FILTER);
   const [filtering, setFiltering] = useState(false);
   const [menu, setMenu] = useState<Anchor | null>(null);
   /** The thread the reader is on: lit in the rail and in the document. */
@@ -1160,6 +1198,31 @@ export function DocumentComment({
     [client, artifactId, n, started, onRevised],
   );
 
+  /**
+   * The two halves of "@", bound to this document.
+   *
+   * Both go to the server on every ask rather than being loaded once
+   * and cached. Who your colleagues are is not something this machine
+   * knows, and whether one of them can read this document changes the
+   * moment somebody is given access — which, since giving access is
+   * the other half of this object, happens rather often.
+   */
+  const naming = useMemo<MentionsApi>(
+    () => ({
+      lookup: (query) =>
+        client.rpc<MentionOptions>("artifact_mentions", {
+          artifact_id: artifactId,
+          query,
+        }),
+      grant: (identity) =>
+        client.rpc<{ ok: boolean; error: string }>("artifact_grant_view", {
+          artifact_id: artifactId,
+          identity,
+        }),
+    }),
+    [client, artifactId],
+  );
+
   /** Start a thread, on a passage or on the document. */
   /**
    * The conversation this document already has.
@@ -1378,6 +1441,7 @@ export function DocumentComment({
   }
 
   return (
+    <Mentions.Provider value={naming}>
     <aside className="doc-rail" aria-label="Comments">
       <header className="doc-rail-head">
         <h3 className="doc-rail-title">Comments</h3>
@@ -1525,6 +1589,7 @@ export function DocumentComment({
           of them is not on screen otherwise. */}
       <ThreadLine focused={focused} ranges={ranges} version={n} />
     </aside>
+    </Mentions.Provider>
   );
 }
 
@@ -2080,6 +2145,353 @@ function TurnView({ turn }: { turn: Turn }) {
 }
 
 /**
+ * The "@" lookup, handed down rather than passed through.
+ *
+ * ``ThreadComposer`` sits three components below the one holding the
+ * client, and none of the three in between has any other reason to
+ * know that mentions exist. Threading a prop through them would put a
+ * mention parameter on a passage group.
+ *
+ * ``null`` is the honest default: a document that was never shared
+ * has nobody to mention, and so does a composer rendered in a test
+ * that is about something else.
+ */
+const Mentions = createContext<MentionsApi | null>(null);
+
+/** Looking somebody up, and letting them in. */
+export interface MentionsApi {
+  lookup: (query: string) => Promise<MentionOptions>;
+  grant: (identity: string) => Promise<{ ok: boolean; error: string }>;
+}
+
+/** How long to wait after a keystroke before asking the server.
+ *
+ *  Long enough that typing a name is one request rather than six,
+ *  short enough that the list is there by the time somebody has
+ *  finished looking at what they typed. */
+const LOOKUP_DEBOUNCE = 140;
+
+/**
+ * The "@" popup, as a piece of state a composer can hold.
+ *
+ * Kept out of ``ThreadComposer`` because there are two composers —
+ * the one at the foot of a thread and the one for a new note on the
+ * whole document — and a mention menu that worked in one of them is
+ * the kind of half-finished feature nobody reports, they just stop
+ * using it in the place it does not work.
+ */
+function useMentions(
+  api: MentionsApi | null,
+  input: React.RefObject<HTMLTextAreaElement | null>,
+  /** What is in the box. Watched so a name that was finished without
+   *  the menu ever opening still gets looked up. */
+  body: string,
+) {
+  const [span, setSpan] = useState<MentionSpan | null>(null);
+  /** The last answer, *and the query it answers*.
+   *
+   *  Both, because a lookup takes a round trip and the letters keep
+   *  coming. Holding the answer alone left the previous query's
+   *  people on screen while the current one was in flight — and
+   *  Enter during that second inserted whoever happened to be at the
+   *  top of a list for something the writer had already typed past. */
+  const [answer, setAnswer] = useState<{ query: string; options: MentionOptions } | null>(null);
+  const [active, setActive] = useState(0);
+  const [loading, setLoading] = useState(false);
+  /** Who has been let in during this sitting.
+   *
+   *  Held here rather than re-read from the server: the answer that
+   *  named them arrived before the grant, so asking again is the only
+   *  other way to stop the notice repeating what was just fixed. */
+  const [allowed, setAllowed] = useState<string[]>([]);
+  const [granting, setGranting] = useState("");
+  const [grantError, setGrantError] = useState("");
+
+  /** Who may widen this document's audience, and whose it is.
+   *
+   *  Kept apart from the answer that carried it, because it is a fact
+   *  about the *document* while the list of people is a fact about
+   *  the query. Read from the answer, it was only known once the menu
+   *  had been opened — so a name finished in one go got the sentence
+   *  for somebody who cannot grant it, whoever was asking. */
+  const [authority, setAuthority] = useState<{ canGrant: boolean; ownerName: string } | null>(
+    null,
+  );
+
+  /** Take the document-wide half of any answer, whichever asked. */
+  const absorb = useCallback((options: MentionOptions) => {
+    setAuthority({ canGrant: options.can_grant, ownerName: options.owner_name });
+  }, []);
+
+  const close = () => setSpan(null);
+
+  const caretMoved = (text: string, caret: number) => {
+    if (!api) return;
+    const found = mentionSpan(text, caret);
+    // Kept as the *same object* when it says the same thing. Every
+    // keystroke fires both a change and a selection event, and a
+    // fresh-but-equal span from each of them re-ran the lookup effect
+    // — which cancels the debounce and starts it again, so the
+    // request went out only once the events stopped. Typing a name
+    // took about a second to complete rather than the debounce.
+    setSpan((was) =>
+      was?.start === found?.start && was?.query === found?.query ? was : found,
+    );
+    if (found) setActive(0);
+  };
+
+  // One request per pause, and the answer is dropped if the caret has
+  // moved on: a list that arrives after somebody has typed two more
+  // letters is a list of the wrong people.
+  useEffect(() => {
+    if (!api || !span) return;
+    let dropped = false;
+    setLoading(true);
+    const timer = window.setTimeout(() => {
+      void api
+        .lookup(span.query)
+        .then((options) => {
+          if (dropped) return;
+          setAnswer({ query: span.query, options });
+          absorb(options);
+        })
+        .catch(() => {
+          // A popup is not the place to report a network fault.
+          // Silence here means no completions, which is what somebody
+          // typing into a box they can still send needs to know.
+          if (!dropped) setAnswer(null);
+        })
+        .finally(() => {
+          if (!dropped) setLoading(false);
+        });
+    }, LOOKUP_DEBOUNCE);
+    return () => {
+      dropped = true;
+      window.clearTimeout(timer);
+    };
+  }, [api, span, absorb]);
+
+  /** Everybody this composer has been told about, across answers.
+   *
+   *  The menu shows one query's answer; the notice under the box is
+   *  about whoever the comment *names*, and a name typed three
+   *  letters ago is not in the current answer. Accumulating means the
+   *  notice stays put while the menu moves on, instead of blinking
+   *  out on each keystroke. */
+  const [known, setKnown] = useState<Person[]>([]);
+  /** Handles the directory had no answer for.
+   *
+   *  Remembered so the same fruitless question is not asked again on
+   *  every keystroke. Nothing is said about them: a handle nobody
+   *  recognises is usually a name half-typed, and "no such person" is
+   *  a rude thing to say about a word somebody is still writing. */
+  const [ghosts, setGhosts] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!answer) return;
+    setKnown((prev) => merged(prev, answer.options.people));
+  }, [answer]);
+
+  /**
+   * Resolve names already written, menu or no menu.
+   *
+   * The menu asks about what is being typed at the caret. This asks
+   * about what has been finished — pasted in, typed faster than the
+   * menu's pause, or written straight out by somebody who knows the
+   * address. Without it the quickest way to mention a colleague was
+   * also the one that said nothing about whether they would see it.
+   */
+  useEffect(() => {
+    if (!api) return;
+    const missing = unknownHandles(body, known).filter((h) => !ghosts.includes(h));
+    if (!missing.length) return;
+    let dropped = false;
+    const timer = window.setTimeout(() => {
+      void Promise.all(missing.slice(0, 4).map((handle) => api.lookup(handle)))
+        .then((answers) => {
+          if (dropped) return;
+          if (answers[0]) absorb(answers[0]);
+          const found = answers.flatMap((one) => one.people);
+          // Only if something came back. Writing an empty answer
+          // would re-run this effect against an unchanged ``known``
+          // on every keystroke, asking again for a handle that is
+          // nobody.
+          if (found.length) setKnown((prev) => merged(prev, found));
+          else setGhosts((prev) => [...new Set([...prev, ...missing])]);
+        })
+        .catch(() => {
+          /* Nothing to say. The comment can still be sent. */
+        });
+    }, LOOKUP_DEBOUNCE);
+    return () => {
+      dropped = true;
+      window.clearTimeout(timer);
+    };
+  }, [api, body, known, ghosts, absorb]);
+
+  /** Whether the answer in hand is about what is currently typed. */
+  const current = !!span && answer?.query === span.query;
+
+  /** Everyone the current answer offers, with grants made since.
+   *
+   *  Empty while the answer in hand is for an older query. Showing
+   *  the old list would be faster to look at and wrong to press. */
+  const people = useMemo(
+    () =>
+      current
+        ? (answer?.options.people ?? []).map((person) =>
+            allowed.includes(person.email) ? { ...person, has_access: true } : person,
+          )
+        : [],
+    [current, answer, allowed],
+  );
+
+  const write = (text: string, person: Person) => {
+    if (!span) return null;
+    return insertMention(text, span, handleFor(person, known));
+  };
+
+  /** Take the key if the menu navigates with it. */
+  const handleKey = (
+    event: React.KeyboardEvent,
+    choose: (person: Person) => void,
+  ): boolean => {
+    if (!span || !api) return false;
+    if (event.key === "Escape") {
+      close();
+      return true;
+    }
+    if (!people.length) return false;
+    if (event.key === "ArrowDown") {
+      setActive((at) => (at + 1) % people.length);
+      return true;
+    }
+    if (event.key === "ArrowUp") {
+      setActive((at) => (at - 1 + people.length) % people.length);
+      return true;
+    }
+    if (event.key === "Enter" || event.key === "Tab") {
+      choose(people[active]);
+      close();
+      return true;
+    }
+    return false;
+  };
+
+  const grant = async (person: Person) => {
+    if (!api) return;
+    setGranting(person.email);
+    setGrantError("");
+    try {
+      const done = await api.grant(person.email);
+      if (done.ok) setAllowed((prev) => [...prev, person.email]);
+      else setGrantError(done.error || "That did not go through.");
+    } catch {
+      setGrantError("Could not reach the server.");
+    } finally {
+      setGranting("");
+    }
+  };
+
+  return {
+    /** Where to draw it: under the box, which is where the caret is
+     *  within one line and never wrong by more than that. Measuring
+     *  the caret inside a textarea needs a mirrored copy of it, and a
+     *  two-line box in a rail does not earn one. */
+    at: span ? boxBelow(input.current) : null,
+    people,
+    /** Everyone seen this sitting, with grants made since. What the
+     *  notice under the box reads from. */
+    known: known.map((person) =>
+      allowed.includes(person.email) ? { ...person, has_access: true } : person,
+    ),
+    active,
+    // "Looking" covers both "nothing has come back yet" and "what came
+    // back is about an older query" — to the person typing those are
+    // the same state, and only one of them has an honest name.
+    loading: loading || !current,
+    span,
+    caretMoved,
+    close,
+    handleKey,
+    write,
+    grant,
+    granting,
+    grantError,
+    canGrant: !!authority?.canGrant,
+    ownerName: authority?.ownerName ?? "",
+  };
+}
+
+/** One list of people, plus another, without duplicates. */
+function merged(prev: Person[], extra: Person[]): Person[] {
+  const byId = new Map(prev.map((person) => [person.user_id, person]));
+  for (const person of extra) byId.set(person.user_id, person);
+  return [...byId.values()];
+}
+
+/** The rectangle a popup hangs off, in viewport coordinates. */
+function boxBelow(box: HTMLElement | null) {
+  if (!box) return null;
+  const rect = box.getBoundingClientRect();
+  return { left: rect.left, top: rect.top, bottom: rect.bottom };
+}
+
+/**
+ * What is said about somebody named who cannot read the document.
+ *
+ * One line per person, each with the single thing that can be done
+ * about it — and which thing that is depends on who is asking. An
+ * owner can let them in from here. Anybody else is told whose
+ * document it is, because "ask Maya" is a real next step and a
+ * disabled button is not.
+ *
+ * Nothing at all is said in the ordinary case. A composer that
+ * reassures you about every comment you write is one people stop
+ * reading, including on the day it has something to say.
+ */
+function MentionAccess({
+  naming,
+  body,
+}: {
+  naming: ReturnType<typeof useMentions>;
+  body: string;
+}) {
+  const shutOut = useMemo(() => cannotRead(body, naming.known), [body, naming.known]);
+  if (!shutOut.length) return null;
+
+  return (
+    <div className="doc-mention-access">
+      {shutOut.map((person) => (
+        <p key={person.user_id} className="doc-mention-locked">
+          <MenuIcon name="lock" />
+          <span className="doc-mention-said">
+            {accessNotice(person, {
+              can_grant: naming.canGrant,
+              owner_name: naming.ownerName,
+            })}
+          </span>
+          {naming.canGrant && (
+            <button
+              type="button"
+              className="doc-mention-grant"
+              disabled={naming.granting === person.email}
+              // Said plainly. "Grant permission" is the language of a
+              // settings page; this is one person being let into one
+              // document, which is a smaller thing.
+              onClick={() => void naming.grant(person)}
+            >
+              {naming.granting === person.email ? "Giving access…" : "Give access"}
+            </button>
+          )}
+        </p>
+      ))}
+      {naming.grantError && <p className="doc-mention-error">{naming.grantError}</p>}
+    </div>
+  );
+}
+
+/**
  * The foot of a thread, in its two states.
  *
  * At rest it is the word Reply. Open, it is the box and the two ways
@@ -2116,6 +2528,7 @@ function ThreadComposer({
   const [body, setBody] = useState("");
   const [open, setOpen] = useState(first);
   const input = useRef<HTMLTextAreaElement>(null);
+  const naming = useMentions(useContext(Mentions), input, body);
 
   // On opening, not only on mount: the point of pressing Reply is to
   // type, and a box that has to be clicked as well is a box that has
@@ -2182,8 +2595,38 @@ function ThreadComposer({
         placeholder={
           first ? "What should change, or what do you want to know?" : "Reply…"
         }
-        onChange={(e) => setBody(e.target.value)}
+        onChange={(e) => {
+          setBody(e.target.value);
+          naming.caretMoved(e.target.value, e.target.selectionStart ?? 0);
+        }}
+        // Arrow keys and clicks move the caret without changing the
+        // text, and the menu follows the caret rather than the end of
+        // the line — going back to fix an earlier name has to reopen
+        // it on *that* name.
+        onSelect={(e) => {
+          const box = e.target as HTMLTextAreaElement;
+          naming.caretMoved(box.value, box.selectionStart ?? 0);
+        }}
+        onBlur={naming.close}
         onKeyDown={(e) => {
+          // The menu gets first refusal on the keys it navigates with.
+          // Enter while a name is highlighted means "that one", not
+          // "send" — sending a half-typed handle is the mistake this
+          // ordering exists to prevent.
+          if (naming.handleKey(e, (person) => {
+            const written = naming.write(body, person);
+            if (!written) return;
+            setBody(written.text);
+            // After React has written the value: setting it here
+            // would be overwritten by the render that follows.
+            window.requestAnimationFrame(() => {
+              input.current?.setSelectionRange(written.caret, written.caret);
+              input.current?.focus();
+            });
+          })) {
+            e.preventDefault();
+            return;
+          }
           // Enter sends, because this is a message. Shift+Enter for a
           // newline, the same bargain the chat composer makes.
           if (e.key === "Enter" && !e.shiftKey) {
@@ -2199,6 +2642,27 @@ function ThreadComposer({
           }
         }}
       />
+      <MentionMenu
+        people={naming.people}
+        active={naming.active}
+        at={naming.at}
+        loading={naming.loading}
+        onChoose={(person) => {
+          const written = naming.write(body, person);
+          if (!written) return;
+          setBody(written.text);
+          naming.close();
+          window.requestAnimationFrame(() => {
+            input.current?.setSelectionRange(written.caret, written.caret);
+            input.current?.focus();
+          });
+        }}
+      />
+      {/* Between the box and the buttons, because it is about what is
+          in the box and it has to be read before Comment is pressed.
+          Said as a fact with a way out rather than as a warning: this
+          is the first half of giving somebody access, not a mistake. */}
+      <MentionAccess naming={naming} body={body} />
       {/* Under the box rather than beside it. Beside it the button
           had to align to one edge of a growing textarea and sat below
           its middle, and there was nowhere to say what it does. */}

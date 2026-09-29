@@ -10,7 +10,7 @@
  * and sometimes did not, depending on what happened to be selected,
  * made that difference invisible at the moment it was decided.
  */
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRef, useState } from "react";
 
@@ -1022,6 +1022,39 @@ describe("narrowing the rail", () => {
     expect(keeps({}, thread({ status: "rejected" }), false)).toBe(true);
   });
 
+  it("starts by hiding comments whose passage has been rewritten away", async () => {
+    // The rail opens narrowed. A comment quoting a sentence that is no
+    // longer in the document has no highlight to click through to and
+    // nothing to sit beside, so it reads as a live remark about text
+    // that is not there.
+    const { DEFAULT_FILTER, keeps } = await import("./DocumentComment");
+
+    expect(keeps(DEFAULT_FILTER, thread(), true)).toBe(true);
+    expect(keeps(DEFAULT_FILTER, thread(), false)).toBe(false);
+  });
+
+  it("says so rather than hiding silently", async () => {
+    // A default that produces no chip is a rail missing comments for
+    // no stated reason, which is the one thing a reader cannot
+    // recover from not knowing.
+    const { chipsOf, DEFAULT_FILTER } = await import("./DocumentComment");
+
+    expect(chipsOf(DEFAULT_FILTER).map((c) => c.label)).toEqual(["Passage still there"]);
+  });
+
+  it("leaves a whole-document comment alone", async () => {
+    // It quotes nothing, so there is no passage to have been
+    // rewritten — and a default that swept those away would hide the
+    // comments about the document as a whole on every document.
+    const { DEFAULT_FILTER, keeps, quoteStillPresent } = await import("./DocumentComment");
+    const body = document.createElement("div");
+    body.textContent = "Anything at all.";
+
+    expect(keeps(DEFAULT_FILTER, thread({ quote: "" }), quoteStillPresent(body, ""))).toBe(
+      true,
+    );
+  });
+
   it("asking for both sides of a question is the same as asking neither", async () => {
     // The reason a facet is a set and not a flag: a flag has no way
     // to say "either", so a reader who ticks both ends up with an
@@ -1372,6 +1405,18 @@ describe("the order the threads are listed in", () => {
       (c) => c.querySelector(".doc-conv-quote")?.textContent ?? "(document)",
     );
 
+  /** Take off the default "Passage still there" restriction.
+   *
+   *  The rail opens narrowed, so a test about where a *rewritten*
+   *  passage sorts has to widen it first — through the chip, which is
+   *  how a reader widens it too. */
+  async function showRewrittenToo() {
+    const chip = await screen.findByText("Passage still there");
+    await act(async () => {
+      fireEvent.click(chip);
+    });
+  }
+
   it("follows the document, not the clock", async () => {
     // A margin conversation is read alongside the text. Sorted by
     // recency, the card beside a sentence is nowhere near it, and a
@@ -1487,6 +1532,7 @@ describe("the order the threads are listed in", () => {
       ],
       "first line, then the last line.",
     );
+    await showRewrittenToo();
 
     await waitFor(() => expect(quotesShown()).toHaveLength(3));
     expect(quotesShown()).toEqual([
@@ -1506,6 +1552,7 @@ describe("the order the threads are listed in", () => {
       ],
       "first line, then the last line.",
     );
+    await showRewrittenToo();
 
     await waitFor(() =>
       expect(quotesShown()).toEqual(["last line", "a sentence since deleted"]),
@@ -2004,5 +2051,147 @@ describe("what the document is marked for, once the rail is narrowed", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /Unresolved/ }));
 
     await waitFor(() => expect(marked(highlights)).toBe(2));
+  });
+});
+
+describe("naming somebody in a comment", () => {
+  /** The rail, with a directory behind the "@". */
+  function withPeople(
+    people: Record<string, unknown>[],
+    over: { can_grant?: boolean; owner_name?: string } = {},
+  ) {
+    const answer = {
+      people,
+      can_grant: over.can_grant ?? true,
+      owner_name: over.owner_name ?? "Maya Okonkwo",
+      owner_email: "maya@acme.test",
+      error: "",
+    };
+    const harness = fakeClient();
+    harness.rpc.mockImplementation(async (method: string) => {
+      if (method === "artifact_comments") return [];
+      if (method === "artifact_mentions") return answer;
+      if (method === "artifact_grant_view") return { ok: true, error: "" };
+      return { ok: true, prompt: "P", message: "" };
+    });
+    const { ref } = mountBody();
+    render(<DocumentComment client={harness.client} artifactId="a1" n={2} bodyRef={ref} />);
+    return harness;
+  }
+
+  const sam = {
+    user_id: "u-sam",
+    email: "sam@acme.test",
+    name: "Sam Ortega",
+    has_access: false,
+  };
+
+  /** Open the composer and type into it, caret at the end. */
+  async function type(text: string) {
+    fireEvent.click(screen.getByText("New comment"));
+    const box = await screen.findByRole("textbox");
+    fireEvent.change(box, { target: { value: text, selectionStart: text.length } });
+    return box;
+  }
+
+  it("offers the directory when an @ is typed", async () => {
+    withPeople([sam]);
+
+    await type("@sa");
+
+    expect(await screen.findByText("Sam Ortega")).toBeTruthy();
+  });
+
+  it("asks the server about this document, not for a cached list", async () => {
+    // The access half of the answer is a property of how *this*
+    // document is shared, so the query goes with the document's id.
+    const harness = withPeople([sam]);
+
+    await type("@sa");
+
+    await waitFor(() =>
+      expect(
+        harness.rpc.mock.calls.some(
+          ([method, args]) =>
+            method === "artifact_mentions" &&
+            (args as { artifact_id?: string; query?: string }).artifact_id === "a1" &&
+            (args as { query?: string }).query === "sa",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("marks the ones who could not open the document", async () => {
+    // In the list, not after choosing: learning it once you have
+    // finished writing to somebody is learning it too late to have
+    // written something else.
+    withPeople([sam]);
+
+    await type("@sa");
+
+    expect(await screen.findByText("No access")).toBeTruthy();
+  });
+
+  it("says so under the box once they are named", async () => {
+    withPeople([sam]);
+
+    await type("@sam ");
+
+    expect(
+      await screen.findByText(/Sam Ortega can’t open this document yet/),
+    ).toBeTruthy();
+  });
+
+  it("says nothing about somebody who can read it", async () => {
+    withPeople([{ ...sam, has_access: true }]);
+
+    await type("@sam ");
+
+    await waitFor(() => expect(screen.queryByText("No access")).toBeNull());
+    expect(document.querySelector(".doc-mention-access")).toBeNull();
+  });
+
+  it("offers to let them in, when it is yours to offer", async () => {
+    withPeople([sam]);
+
+    await type("@sam ");
+
+    expect(await screen.findByText("Give access")).toBeTruthy();
+  });
+
+  it("names who to ask, when it is not", async () => {
+    // A disabled button is not a next step. "Ask Maya" is.
+    withPeople([sam], { can_grant: false });
+
+    await type("@sam ");
+
+    expect(
+      await screen.findByText(/Only Maya Okonkwo can change that/),
+    ).toBeTruthy();
+    expect(screen.queryByText("Give access")).toBeNull();
+  });
+
+  it("takes the notice away once access is given", async () => {
+    const harness = withPeople([sam]);
+    await type("@sam ");
+
+    fireEvent.click(await screen.findByText("Give access"));
+
+    await waitFor(() =>
+      expect(screen.queryByText(/can’t open this document/)).toBeNull(),
+    );
+    expect(
+      harness.rpc.mock.calls.filter(([m]) => m === "artifact_grant_view"),
+    ).toHaveLength(1);
+  });
+
+  it("does not open on an address somebody is writing down", async () => {
+    // Comments here are full of email addresses. A menu that appeared
+    // every time one was typed is a menu people learn to type around.
+    withPeople([sam]);
+
+    await type("write to sam@acme.test");
+
+    await waitFor(() => expect(document.querySelector(".mention-menu")).toBeNull());
   });
 });

@@ -548,6 +548,46 @@ class ArtifactCommentResolved(BaseModel):
     message: str = ""
 
 
+class MentionCandidate(BaseModel):
+    """One person a comment could name."""
+
+    user_id: str = ""
+    email: str = ""
+    name: str = ""
+    #: Whether they could open the document as it is shared today.
+    has_access: bool = False
+
+
+class ArtifactMentions(BaseModel):
+    """Who can be named on a document, and who can fix it if they cannot.
+
+    ``error`` rather than a raised exception for the same reason every
+    other result here carries one: this runs while somebody is typing,
+    and a completion popup that cannot reach the server should go
+    quiet, not interrupt the sentence being written.
+    """
+
+    people: list[MentionCandidate] = Field(default_factory=list)
+    #: Whether the person asking may widen the audience themselves.
+    can_grant: bool = False
+    #: Who to ask when they may not.
+    owner_name: str = ""
+    owner_email: str = ""
+    error: str = ""
+
+
+class ArtifactViewGranted(BaseModel):
+    """The outcome of letting one more person read a document."""
+
+    ok: bool = False
+    #: Who was let in, echoed back — the popup that asked has usually
+    #: closed by the time this returns, so the message has to name them
+    #: rather than rely on what is still on screen.
+    identity: str = ""
+    message: str = ""
+    error: str = ""
+
+
 class ArtifactExportResult(BaseModel):
     """Where a local export landed, and as what."""
 

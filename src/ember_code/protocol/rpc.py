@@ -281,6 +281,8 @@ class RpcMethod(StrEnum):
     ARTIFACT_ARCHIVE_NODE = "artifact_archive_node"
     ARTIFACT_DELETE_NODE = "artifact_delete_node"
     ARTIFACT_RESOLVE_COMMENT = "artifact_resolve_comment"
+    ARTIFACT_MENTIONS = "artifact_mentions"
+    ARTIFACT_GRANT_VIEW = "artifact_grant_view"
     ARTIFACT_SYNC_COMMENTS = "artifact_sync_comments"
     ARTIFACT_ASK = "artifact_ask"
     ARTIFACT_RUN_CYPHER = "artifact_run_cypher"

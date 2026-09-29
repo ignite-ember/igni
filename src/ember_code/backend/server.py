@@ -86,6 +86,7 @@ if TYPE_CHECKING:
         ArtifactDriftApplied,
         ArtifactExportResult,
         ArtifactLineageView,
+        ArtifactMentions,
         ArtifactOpenResult,
         ArtifactProvenance,
         ArtifactQueryResult,
@@ -95,6 +96,7 @@ if TYPE_CHECKING:
         ArtifactTree,
         ArtifactTreeChanged,
         ArtifactVersionRow,
+        ArtifactViewGranted,
     )
     from ember_code.backend.schemas_codeindex_rpc import (
         CodeIndexActivityEntry,
@@ -1016,6 +1018,14 @@ class BackendServer:
         return await self.artifacts.resolve_comment(
             comment_id=comment_id, status=status, content=content
         )
+
+    async def artifact_mentions(self, *, artifact_id: str, query: str = "") -> ArtifactMentions:
+        """See :meth:`ArtifactController.mentions`."""
+        return await self.artifacts.mentions(artifact_id=artifact_id, query=query)
+
+    async def artifact_grant_view(self, *, artifact_id: str, identity: str) -> ArtifactViewGranted:
+        """See :meth:`ArtifactController.grant_view`."""
+        return await self.artifacts.grant_view(artifact_id=artifact_id, identity=identity)
 
     async def artifact_sync_comments(self) -> int:
         """See :meth:`ArtifactController.sync_comments`."""

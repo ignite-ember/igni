@@ -338,6 +338,46 @@ class CollaborationSync:
         await self._index.client.project_comments([comment])
         return comment
 
+    # ── Naming somebody ──────────────────────────────────────────────
+    #
+    # Both halves of "@" come from the server and neither is cached.
+    # Who your colleagues are is not something this machine knows, and
+    # whether one of them can read a document is a question only the
+    # thing holding the document can answer — a local copy of either
+    # would be wrong exactly when it mattered, which is the moment
+    # somebody was just given access.
+
+    async def mentionable(self, *, slug: str, query: str = "") -> dict[str, Any]:
+        """Who could be named here, and whether they could read it.
+
+        Returned as the server sent it. This is a completion list on
+        its way to a popup, and every field in it is drawn — parsing it
+        into a local shape here would mean a second definition of the
+        same thing on the way to the same place.
+        """
+        response = await self._request(
+            "GET", f"/v1/artifacts/shared/{slug}/mentions", params={"q": query}
+        )
+        if response.status_code == 404:
+            raise NotAllowed(slug)
+        response.raise_for_status()
+        return dict(response.json())
+
+    async def grant_view(self, *, slug: str, identity: str) -> None:
+        """Let one more person read a document. Owner only.
+
+        ``NotAllowed`` covers both "no such document" and "not yours",
+        which the server deliberately does not tell apart — and the
+        caller should not either, because the honest message for both
+        is the same: this is not yours to widen.
+        """
+        response = await self._request(
+            "POST", f"/v1/artifacts/shared/{slug}/audience", json={"identity": identity}
+        )
+        if response.status_code == 404:
+            raise NotAllowed(slug)
+        response.raise_for_status()
+
     # ── Filing ───────────────────────────────────────────────────────
     #
     # The tree is authored state: nobody can work out from a document

@@ -82,6 +82,20 @@ class ArtifactRpcHandler(RpcHandler):
             content=str(args.get("content") or ""),
         )
 
+    @rpc(RpcMethod.ARTIFACT_MENTIONS)
+    def artifact_mentions(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_mentions(
+            artifact_id=args["artifact_id"],
+            query=str(args.get("query") or ""),
+        )
+
+    @rpc(RpcMethod.ARTIFACT_GRANT_VIEW)
+    def artifact_grant_view(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_grant_view(
+            artifact_id=args["artifact_id"],
+            identity=args["identity"],
+        )
+
     @rpc(RpcMethod.ARTIFACT_SYNC_COMMENTS)
     def artifact_sync_comments(self, args: dict) -> Any:
         return self._ctx.backend.artifact_sync_comments()

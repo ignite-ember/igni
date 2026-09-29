@@ -50,7 +50,8 @@ export type MenuIconName =
   | "undo"
   | "redo"
   | "resolve"
-  | "reopen";
+  | "reopen"
+  | "lock";
 
 /** The drawing for each name, on a 16×16 grid. */
 const PATHS: Record<MenuIconName, string> = {
@@ -113,6 +114,10 @@ const PATHS: Record<MenuIconName, string> = {
   resolve: "M8 1.6a6.4 6.4 0 1 1 0 12.8A6.4 6.4 0 0 1 8 1.6zM5.2 8.2l1.9 1.9 3.7-4",
   // The same circle, opened again: an arrow coming back round.
   reopen: "M13.4 8a5.4 5.4 0 1 1-1.9-4.1M13.6 2.4v3.4h-3.4",
+  // A padlock, shackle closed. Shown beside a colleague who cannot
+  // open the document — a state, not an action, which is why it is
+  // the only icon here that is never on a button of its own.
+  lock: "M4.2 7.2h7.6a.8.8 0 0 1 .8.8v5a.8.8 0 0 1-.8.8H4.2a.8.8 0 0 1-.8-.8V8a.8.8 0 0 1 .8-.8zM5.6 7.2V4.9a2.4 2.4 0 0 1 4.8 0v2.3",
   undo: "M4.2 6.6H10a3.4 3.4 0 0 1 0 6.8H6.6M4.2 6.6l2.6-2.6M4.2 6.6l2.6 2.6",
   redo: "M11.8 6.6H6a3.4 3.4 0 0 0 0 6.8h3.4M11.8 6.6 9.2 4M11.8 6.6 9.2 9.2",
   // A node with two feeding into it: what this was built on.
