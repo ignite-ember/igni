@@ -1179,8 +1179,17 @@ class ArtifactController:
         title = name.strip()
         if not title:
             return ArtifactTreeChanged(error="A folder needs a name.")
+        # The server names it, and the graph adopts that name. Two
+        # copies that each mint an id agree the folder exists and
+        # about nothing else, and every later operation addresses
+        # whichever one the caller happened to be looking at.
+        shared_id = await self._shared_folder(
+            lambda sync: sync.create_folder(name=title, parent_id=parent_id or "")
+        )
+        if isinstance(shared_id, ArtifactTreeChanged):
+            return shared_id
         folder_id = await self._session.artifacts.client.create_folder(
-            name=title, parent_id=parent_id or ""
+            name=title, parent_id=parent_id or "", folder_id=shared_id or ""
         )
         return ArtifactTreeChanged(ok=True, node_id=folder_id, message=f"Created {title}.")
 
@@ -1190,6 +1199,11 @@ class ArtifactController:
         title = name.strip()
         if not title:
             return ArtifactTreeChanged(error="A folder needs a name.")
+        refused = await self._shared_folder(
+            lambda sync: sync.update_folder(folder_id=folder_id, name=title)
+        )
+        if isinstance(refused, ArtifactTreeChanged):
+            return refused
         ok = await self._session.artifacts.client.rename_folder(folder_id=folder_id, name=title)
         if not ok:
             return ArtifactTreeChanged(error="No such folder.")
@@ -1205,6 +1219,9 @@ class ArtifactController:
         """
         if self._session.artifacts is None:
             return ArtifactTreeChanged(error="Artifacts are disabled.")
+        refused = await self._shared_folder(lambda sync: sync.delete_folder(folder_id=folder_id))
+        if isinstance(refused, ArtifactTreeChanged):
+            return refused
         moved = await self._session.artifacts.client.delete_folder(folder_id=folder_id)
         return ArtifactTreeChanged(
             ok=True,
@@ -1214,6 +1231,71 @@ class ArtifactController:
                 if moved
                 else "Folder removed."
             ),
+        )
+
+    async def _shared_folder(self, call: Any) -> Any:
+        """Do a filing operation on the server before doing it here.
+
+        Answers an :class:`ArtifactTreeChanged` when the server
+        refused, which the caller must return unchanged — the graph
+        must not be moved to a shape the shared copy rejected.
+        Anything else is the server's own answer, or ``None`` when
+        there is no server to ask.
+        """
+        sync = self._collaboration()
+        if sync is None:
+            return None
+        try:
+            return await call(sync)
+        except NotAllowed:
+            return ArtifactTreeChanged(error="No such folder.")
+        except Exception as exc:  # noqa: BLE001 — network, auth, permissions
+            logger.info("filing did not reach the server: %s", exc)
+            return ArtifactTreeChanged(error=f"Could not reach the server: {exc}")
+
+    async def _shared_place(
+        self,
+        *,
+        node_id: str,
+        parent_id: str | None = None,
+        to_top: bool = False,
+        archived: bool | None = None,
+    ) -> Any:
+        """The same, for something that may be a folder or a document.
+
+        The tree holds both and the caller has one id, so which
+        endpoint applies is decided by asking whether the id names a
+        document. A folder is what is left — checked in that direction
+        because a document has a shared identity to look up and a
+        folder's id is the same string on both sides.
+        """
+        sync = self._collaboration()
+        if sync is None:
+            return None
+        summary = await self._session.artifacts.client.get_artifact(node_id)
+        if summary is None:
+            return await self._shared_folder(
+                lambda s: s.update_folder(
+                    folder_id=node_id,
+                    parent_id=parent_id,
+                    to_top=to_top,
+                    archived=archived,
+                )
+            )
+        try:
+            slug = await sync.slug_for(node_id)
+        except Exception as exc:  # noqa: BLE001 — network, auth
+            logger.info("could not resolve %s on the server: %s", node_id, exc)
+            return ArtifactTreeChanged(error=f"Could not reach the server: {exc}")
+        if not slug:
+            # Never published. Nothing to file on the shared copy, and
+            # not an error: the next write gives it a home, and the
+            # local arrangement is what it has until then.
+            return None
+        return await self._shared_folder(
+            lambda s: s.place_document(
+                slug=slug, parent_id=parent_id, to_top=to_top, archived=archived
+            )
         )
 
     async def archive_node(self, *, node_id: str, archived: bool = True) -> ArtifactTreeChanged:
@@ -1227,6 +1309,9 @@ class ArtifactController:
         """
         if self._session.artifacts is None:
             return ArtifactTreeChanged(error="Artifacts are disabled.")
+        refused = await self._shared_place(node_id=node_id, archived=archived)
+        if isinstance(refused, ArtifactTreeChanged):
+            return refused
         moved = await self._session.artifacts.client.set_archived(
             artifact_id=node_id, archived=archived
         )
@@ -1344,6 +1429,13 @@ class ArtifactController:
         rows = await self._tree_rows()
         if would_cycle(rows, node_id=node_id, parent_id=parent_id or ""):
             return ArtifactTreeChanged(error="That would put a document inside itself.")
+        refused = await self._shared_place(
+            node_id=node_id,
+            parent_id=parent_id or None,
+            to_top=not parent_id,
+        )
+        if isinstance(refused, ArtifactTreeChanged):
+            return refused
         ok = await self._session.artifacts.client.set_parent(
             node_id=node_id, parent_id=parent_id or None
         )

@@ -338,6 +338,89 @@ class CollaborationSync:
         await self._index.client.project_comments([comment])
         return comment
 
+    # ── Filing ───────────────────────────────────────────────────────
+    #
+    # The tree is authored state: nobody can work out from a document
+    # that it was dragged into "Platform". So it is written to the
+    # server like a version is, and the graph mirrors it — with the
+    # server's own ids, or the two copies disagree about what a folder
+    # is called and every later operation addresses the wrong one.
+
+    async def create_folder(self, *, name: str, parent_id: str = "") -> str:
+        """Make a folder on the server. Answer the id it chose."""
+        payload: dict[str, Any] = {"name": name}
+        if parent_id:
+            payload["parent_id"] = parent_id
+        response = await self._request("POST", "/v1/artifacts/shared/folders", json=payload)
+        if response.status_code == 404:
+            raise NotAllowed(parent_id)
+        response.raise_for_status()
+        return str(response.json().get("id") or "")
+
+    async def update_folder(
+        self,
+        *,
+        folder_id: str,
+        name: str | None = None,
+        parent_id: str | None = None,
+        to_top: bool = False,
+        archived: bool | None = None,
+    ) -> None:
+        """Rename, move or archive one. ``to_top`` says which null.
+
+        ``parent_id=None`` means "leave the parent alone", because
+        every field here is optional. Moving something to top level is
+        also setting its parent to null, and the two collide on the
+        one field where it matters — so the move is said explicitly.
+        """
+        payload: dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if to_top:
+            payload["to_top"] = True
+        elif parent_id is not None:
+            payload["parent_id"] = parent_id
+        if archived is not None:
+            payload["archived"] = archived
+        if not payload:
+            return
+        response = await self._request(
+            "PATCH", f"/v1/artifacts/shared/folders/{folder_id}", json=payload
+        )
+        if response.status_code == 404:
+            raise NotAllowed(folder_id)
+        response.raise_for_status()
+
+    async def delete_folder(self, *, folder_id: str) -> None:
+        """Remove it. What was inside comes up a level, server-side."""
+        response = await self._request("DELETE", f"/v1/artifacts/shared/folders/{folder_id}")
+        if response.status_code == 404:
+            raise NotAllowed(folder_id)
+        response.raise_for_status()
+
+    async def place_document(
+        self,
+        *,
+        slug: str,
+        parent_id: str | None = None,
+        to_top: bool = False,
+        archived: bool | None = None,
+    ) -> None:
+        """File a document, or put it away."""
+        payload: dict[str, Any] = {}
+        if to_top:
+            payload["to_top"] = True
+        elif parent_id is not None:
+            payload["parent_id"] = parent_id
+        if archived is not None:
+            payload["archived"] = archived
+        if not payload:
+            return
+        response = await self._request("PATCH", f"/v1/artifacts/shared/{slug}/place", json=payload)
+        if response.status_code == 404:
+            raise NotAllowed(slug)
+        response.raise_for_status()
+
     async def ensure_shared(
         self, *, artifact_id: str, name: str, kind: str, n: int, html: str, author: str = ""
     ) -> str:

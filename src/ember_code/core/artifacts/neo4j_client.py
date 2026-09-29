@@ -1016,15 +1016,21 @@ class Neo4jArtifactClient:
             for r in records
         ]
 
-    async def create_folder(self, *, name: str, parent_id: str = "") -> str:
+    async def create_folder(self, *, name: str, parent_id: str = "", folder_id: str = "") -> str:
         """A place to put things, holding nothing itself.
 
         A separate label from ``:Artifact`` deliberately. A folder with
         that label would turn up in search, in lineage, in drift and in
         the vector index as a document with no text — every one of
         those keys on it.
+
+        ``folder_id`` is given when the server has already named it.
+        The graph mirrors the shared copy, and two copies that mint
+        their own ids agree about a folder's existence and about
+        nothing else — every later operation would address the wrong
+        one. Minted here only when nothing else has.
         """
-        folder_id = uuid.uuid4().hex[:16]
+        folder_id = folder_id or uuid.uuid4().hex[:16]
         async with self.session() as session:
             await session.run(
                 "CREATE (f:Folder {folder_id: $fid, project_hash: $proj, "
