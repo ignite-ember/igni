@@ -12038,24 +12038,103 @@ button {
   gap: 10px;
 }
 
-.doc-editor-bar {
+/* The toolbar, over the selection rather than above the document.
+   A permanent bar costs vertical room in a column already squeezed
+   between two docked panels, and it is furniture for the ninety per
+   cent of editing that is typing rather than formatting. */
+.doc-bubble {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 4px;
+  padding: 3px;
   border: 1px solid var(--border-soft);
-  border-radius: 7px;
-  background: var(--bg-inset);
-  position: sticky;
-  top: 0;
-  z-index: 2;
+  border-radius: 8px;
+  background: var(--bg-raised);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 32%);
 }
 
-.doc-editor-bar-gap {
+.doc-bubble-gap {
   width: 1px;
-  height: 18px;
-  margin: 0 6px;
+  height: 17px;
+  margin: 0 5px;
   background: var(--border-soft);
+}
+
+/* The grip for moving a block. Left of the text, in the gutter, and
+   only on the block under the pointer — a document at rest should
+   look like a document, not a list of handles. */
+.doc-drag-grip {
+  width: 18px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 4px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--fg-faint);
+  border-radius: 4px;
+  cursor: grab;
+}
+
+.doc-drag-grip:hover {
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
+.doc-drag-grip:active {
+  cursor: grabbing;
+}
+
+/* The list that opens on ``/``. */
+.slash-menu {
+  position: fixed;
+  z-index: 70;
+  margin: 0;
+  padding: 4px;
+  min-width: 13rem;
+  max-height: 15rem;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  box-shadow: 0 8px 26px rgb(0 0 0 / 34%);
+}
+
+.slash-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--fg);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+/* One highlight, driven by the keyboard. Hover does not also
+   highlight: two rows looking chosen while the keyboard means one of
+   them is how Enter inserts the wrong block. */
+.slash-item.is-active {
+  background: var(--bg-inset);
+}
+
+.slash-detail {
+  font-size: 10.5px;
+  color: var(--fg-faint);
+}
+
+.slash-empty {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--fg-muted);
 }
 
 .doc-tool {

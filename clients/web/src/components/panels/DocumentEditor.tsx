@@ -16,12 +16,15 @@
  * changing. The editor is not the place to discover that: the button
  * says so before it is pressed.
  */
+import DragHandle from "@tiptap/extension-drag-handle-react";
 import { EditorContent, useEditor } from "@tiptap/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { BubbleMenu } from "@tiptap/react/menus";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { MenuIcon } from "../MenuIcon";
-import { Tooltip } from "../Tooltip";
 import { DOCUMENT_EXTENSIONS, markdownOf, preserveWrapping } from "./documentMarkdown";
+import { SlashMenu } from "./SlashMenu";
+import { slashCommands, type SlashState } from "./slashCommands";
 
 export interface DocumentEditorProps {
   /** The markdown as it stands. */
@@ -74,9 +77,19 @@ export function DocumentEditor({
   const [dirty, setDirty] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
+  /** What the slash menu should be showing, or nothing. */
+  const [slash, setSlash] = useState<SlashState | null>(null);
+
+  // Built once. An extension list rebuilt on every render would
+  // rebuild the editor with it, which throws away the document and
+  // the cursor somebody is in the middle of using.
+  const extensions = useMemo(
+    () => [...DOCUMENT_EXTENSIONS, slashCommands({ onState: setSlash })],
+    [],
+  );
 
   const editor = useEditor({
-    extensions: DOCUMENT_EXTENSIONS,
+    extensions,
     content,
     editable: !frozen,
     // Focused on open, at the start. Somebody who pressed Edit is
@@ -149,49 +162,61 @@ export function DocumentEditor({
 
   return (
     <div className="doc-editor">
+      {/* The toolbar appears over the selection rather than above
+          the document. A permanent bar costs vertical room in a
+          column already squeezed between two docked panels, and it
+          is furniture for the ninety per cent of editing that is
+          typing rather than formatting. */}
       {!frozen && (
-        <div className="doc-editor-bar" role="toolbar" aria-label="Formatting">
+        <BubbleMenu editor={editor} className="doc-bubble">
           {TOOLS.map((tool) => (
-            <Tooltip key={tool.key} text={tool.label}>
-              <button
-                type="button"
-                className={editor.isActive(tool.mark) ? "doc-tool is-on" : "doc-tool"}
-                aria-label={tool.label}
-                aria-pressed={editor.isActive(tool.mark)}
-                onClick={() =>
-                  editor.chain().focus().toggleMark(tool.mark).run()
-                }
-              >
-                {tool.glyph}
-              </button>
-            </Tooltip>
+            <button
+              key={tool.key}
+              type="button"
+              className={editor.isActive(tool.mark) ? "doc-tool is-on" : "doc-tool"}
+              aria-label={tool.label}
+              aria-pressed={editor.isActive(tool.mark)}
+              title={tool.label}
+              onClick={() => editor.chain().focus().toggleMark(tool.mark).run()}
+            >
+              {tool.glyph}
+            </button>
           ))}
-          <span className="doc-editor-bar-gap" />
+          <span className="doc-bubble-gap" />
           {BLOCKS.map((block) => (
-            <Tooltip key={block.key} text={block.label}>
-              <button
-                type="button"
-                className={
-                  editor.isActive(block.node, block.attrs) ? "doc-tool is-on" : "doc-tool"
-                }
-                aria-label={block.label}
-                aria-pressed={editor.isActive(block.node, block.attrs)}
-                onClick={() =>
-                  editor
-                    .chain()
-                    .focus()
-                    .toggleNode(block.node, "paragraph", block.attrs)
-                    .run()
-                }
-              >
-                {block.glyph}
-              </button>
-            </Tooltip>
+            <button
+              key={block.key}
+              type="button"
+              className={
+                editor.isActive(block.node, block.attrs) ? "doc-tool is-on" : "doc-tool"
+              }
+              aria-label={block.label}
+              aria-pressed={editor.isActive(block.node, block.attrs)}
+              title={block.label}
+              onClick={() =>
+                editor.chain().focus().toggleNode(block.node, "paragraph", block.attrs).run()
+              }
+            >
+              {block.glyph}
+            </button>
           ))}
-        </div>
+        </BubbleMenu>
+      )}
+
+      {/* The grip for moving a block. Left of the text and only on
+          the block under the pointer, so a document at rest is a
+          document rather than a list of handles. */}
+      {!frozen && (
+        <DragHandle editor={editor}>
+          <div className="doc-drag-grip" aria-hidden="true">
+            ⠿
+          </div>
+        </DragHandle>
       )}
 
       <EditorContent className="doc-editor-body" editor={editor} />
+
+      <SlashMenu state={slash} />
 
       {error && <p className="msg-error doc-editor-error">{error}</p>}
 
