@@ -48,7 +48,9 @@ export type MenuIconName =
   | "link"
   | "image"
   | "undo"
-  | "redo";
+  | "redo"
+  | "resolve"
+  | "reopen";
 
 /** The drawing for each name, on a 16×16 grid. */
 const PATHS: Record<MenuIconName, string> = {
@@ -105,6 +107,12 @@ const PATHS: Record<MenuIconName, string> = {
   // A frame with a horizon and a sun: recognisable at this size in
   // a way a literal photograph is not.
   image: "M1.8 3.2h12.4v9.6H1.8zM1.8 10.4l3.4-3.2 3 2.8 2.2-2 3.8 3.4M10.6 5.6a.9.9 0 1 1 0 1.8.9.9 0 0 1 0-1.8z",
+  // A tick in a circle: settled, and closed. The checklist glyph
+  // was standing in for this and said the wrong thing — a checklist
+  // is a kind of list, not a ruling on a conversation.
+  resolve: "M8 1.6a6.4 6.4 0 1 1 0 12.8A6.4 6.4 0 0 1 8 1.6zM5.2 8.2l1.9 1.9 3.7-4",
+  // The same circle, opened again: an arrow coming back round.
+  reopen: "M13.4 8a5.4 5.4 0 1 1-1.9-4.1M13.6 2.4v3.4h-3.4",
   undo: "M4.2 6.6H10a3.4 3.4 0 0 1 0 6.8H6.6M4.2 6.6l2.6-2.6M4.2 6.6l2.6 2.6",
   redo: "M11.8 6.6H6a3.4 3.4 0 0 0 0 6.8h3.4M11.8 6.6 9.2 4M11.8 6.6 9.2 9.2",
   // A node with two feeding into it: what this was built on.

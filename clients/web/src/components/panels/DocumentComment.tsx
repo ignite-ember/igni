@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import type { IgniClient } from "../../protocol/client";
+import { MenuIcon } from "../MenuIcon";
 import { formatExact, formatRelative } from "../../utils/when";
 
 /**
@@ -121,6 +122,7 @@ export function threadsFrom(rows: StoredComment[]): Thread[] {
       // the backend mints ``local-thread-…`` for a new thread — so
       // sending that back joined the reply to nothing.
       id: ordered[0].thread_id || ordered[0].comment_id,
+      rootId: ordered[0].comment_id,
       quote: ordered[0].quote,
       // Carried through, because it is the only thing that tells two
       // identical sentences apart — without it a comment on the
@@ -151,6 +153,10 @@ export interface Thread {
   key: string;
   /** The server's id. Empty until the first turn lands. */
   id: string;
+  /** The *opening comment's* id, which is what a ruling is recorded
+   *  against — ``id`` above is the thread's, and the two are
+   *  different strings. Empty until the first turn lands. */
+  rootId: string;
   quote: string;
   /** Where the passage sat when the thread was started. A hint for
    *  picking between repeated lines, never the anchor. */
@@ -737,6 +743,8 @@ export function DocumentComment({
   const [threads, setThreads] = useState<Thread[]>([]);
   /** The conversation already on this document, read back on open. */
   const [stored, setStored] = useState<Thread[]>([]);
+  /** The thread whose ruling is in flight, if any. */
+  const [settling, setSettling] = useState<string | null>(null);
   /** What the rail is narrowed to, and whether the chooser is open. */
   const [filter, setFilter] = useState<CommentFilter>({});
   const [filtering, setFiltering] = useState(false);
@@ -947,6 +955,49 @@ export function DocumentComment({
     setFocused((key) => (key === thread.key ? null : key));
   }, []);
 
+  /**
+   * Record a ruling on a thread, where the thread is being read.
+   *
+   * The server decides a comment's status — it is the copy every
+   * collaborator sees — so this writes there and takes the answer
+   * back, rather than moving the badge here and hoping. A thread
+   * that has never reached the server has no id to rule on and is
+   * offered no button, which is why the caller checks ``rootId``.
+   */
+  const rule = useCallback(
+    async (thread: Thread, status: string) => {
+      if (!thread.rootId) return;
+      setSettling(thread.key);
+      const patch = (change: (th: Thread) => Thread) => {
+        setThreads((prev) => prev.map((th) => (th.key === thread.key ? change(th) : th)));
+        setStored((prev) => prev.map((th) => (th.key === thread.key ? change(th) : th)));
+      };
+      try {
+        const r = await client.rpc<{ ok?: boolean; status?: string; message?: string }>(
+          "artifact_resolve_comment",
+          { comment_id: thread.rootId, status },
+        );
+        if (!r?.ok) {
+          // Said on the thread rather than in a banner somewhere:
+          // the refusal is about this conversation, and the usual
+          // one — no signed-in account — is worth reading next to
+          // the button that provoked it.
+          patch((th) => ({ ...th, error: r?.message || "Could not record that." }));
+          return;
+        }
+        patch((th) => ({ ...th, status: r.status || status, error: "" }));
+      } catch (e) {
+        patch((th) => ({
+          ...th,
+          error: e instanceof Error ? e.message : String(e),
+        }));
+      } finally {
+        setSettling(null);
+      }
+    },
+    [client],
+  );
+
   const send = useCallback(
     async (threadKey: string, body: string) => {
       const text = body.trim();
@@ -1044,7 +1095,13 @@ export function DocumentComment({
       }
 
       const threadId = posted.thread_id || thread.id;
-      patchThread((t) => ({ ...t, id: threadId }));
+      patchThread((t) => ({
+        ...t,
+        id: threadId,
+        // Only the first turn opens a thread, so only the first
+        // turn's id is the one a ruling is recorded against.
+        rootId: t.rootId || posted.comment_id || "",
+      }));
 
       // Recorded, and that is all. A remark to the people in the
       // thread is not an instruction, and running a model on it would
@@ -1167,7 +1224,7 @@ export function DocumentComment({
       const key = `th${(seq.current += 1)}`;
       setThreads((prev) => [
         ...prev,
-        { key, id: "", quote, quoteStart, turns: [], error: "" },
+        { key, id: "", rootId: "", quote, quoteStart, turns: [], error: "" },
       ]);
       setFocused(key);
       setMenu(null);
@@ -1428,6 +1485,8 @@ export function DocumentComment({
                 }}
                 onSend={(key, body) => void send(key, body)}
                 onCancel={discard}
+                onResolve={(thread, status) => void rule(thread, status)}
+                settling={settling}
               />
             ))}
           </ol>
@@ -1644,6 +1703,8 @@ function PassageGroup({
   onFocus,
   onSend,
   onCancel,
+  onResolve,
+  settling,
 }: {
   group: { quote: string; threads: Thread[] };
   bodyRef: React.RefObject<HTMLElement | null>;
@@ -1651,6 +1712,9 @@ function PassageGroup({
   onFocus: (thread: Thread) => void;
   onSend: (threadKey: string, body: string) => void;
   onCancel: (thread: Thread) => void;
+  onResolve: (thread: Thread, status: string) => void;
+  /** Key of the thread currently being ruled on. */
+  settling: string | null;
 }) {
   // Checked on render rather than remembered: answering a comment
   // usually rewrites the very passage it was about, so the common
@@ -1691,6 +1755,10 @@ function PassageGroup({
           onFocus={() => onFocus(thread)}
           onSend={(body) => onSend(thread.key, body)}
           onCancel={() => onCancel(thread)}
+          // No id on the server is nothing to rule on, and a button
+          // that cannot work is worse than an absent one.
+          onResolve={thread.rootId ? (status) => onResolve(thread, status) : undefined}
+          settling={settling === thread.key}
         />
       ))}
     </li>
@@ -1704,12 +1772,17 @@ function ThreadView({
   onFocus,
   onSend,
   onCancel,
+  onResolve,
+  settling,
 }: {
   thread: Thread;
   focused: boolean;
   onFocus: () => void;
   onSend: (body: string) => void;
   onCancel: () => void;
+  /** Record a ruling against this thread. */
+  onResolve?: (status: string) => void;
+  settling?: boolean;
 }) {
   const running = isRunning(thread);
 
@@ -1758,14 +1831,34 @@ function ThreadView({
 
       {thread.error && <div className="msg-error">{thread.error}</div>}
 
-      {/* Settled threads are read, not continued. A reply box under
-          a decision invites reopening it by accident. */}
+      {/* A settled thread is read, not continued — a reply box under
+          a decision invites reopening it by accident. What it does
+          get is a way back, because "resolved" is a judgement and
+          judgements are sometimes wrong. */}
+      {thread.status && thread.status !== "open" ? (
+        onResolve && (
+          <div className="doc-thread-foot">
+            <button
+              type="button"
+              className="doc-thread-settle"
+              disabled={settling}
+              title="Put this back among the open conversations"
+              onClick={() => void onResolve("open")}
+            >
+              <MenuIcon name="reopen" />
+              {settling ? "Reopening…" : "Reopen"}
+            </button>
+          </div>
+        )
+      ) : null}
       {(!thread.status || thread.status === "open") && (
         <ThreadComposer
           busy={running}
           first={thread.turns.length === 0}
           onSend={onSend}
           onCancel={onCancel}
+          onResolve={onResolve}
+          settling={settling}
         />
       )}
     </div>
@@ -2005,6 +2098,8 @@ function ThreadComposer({
   first,
   onSend,
   onCancel,
+  onResolve,
+  settling = false,
 }: {
   busy: boolean;
   /** Nothing has been said yet, so this is the opening remark. */
@@ -2012,6 +2107,11 @@ function ThreadComposer({
   onSend: (body: string) => void;
   /** Backing out of the box. Discards the thread if it was empty. */
   onCancel: () => void;
+  /** Settle the thread. Absent when there is nothing to settle —
+   *  a thread with no id on the server cannot be ruled on. */
+  onResolve?: (status: string) => void;
+  /** A ruling is in flight. */
+  settling?: boolean;
 }) {
   const [body, setBody] = useState("");
   const [open, setOpen] = useState(first);
@@ -2053,6 +2153,18 @@ function ThreadComposer({
           <ReplyArrow />
           Reply
         </button>
+        {onResolve && (
+          <button
+            type="button"
+            className="doc-thread-settle"
+            disabled={settling}
+            title="Nothing more to do here. It stays readable and keeps its place in the document."
+            onClick={() => void onResolve("resolved")}
+          >
+            <MenuIcon name="resolve" />
+            {settling ? "Resolving…" : "Resolve"}
+          </button>
+        )}
       </div>
     );
   }

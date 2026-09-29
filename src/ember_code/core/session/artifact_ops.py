@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ember_code.backend.schemas_artifacts import ArtifactCommentResolved
-from ember_code.core.artifacts.collaboration import CollaborationSync
+from ember_code.core.artifacts.collaboration import CollaborationSync, NotAllowed
 from ember_code.core.artifacts.errors import SourcesRequired
 from ember_code.core.artifacts.index import ArtifactIndex
 from ember_code.core.artifacts.ingest import Ingester
@@ -527,6 +527,29 @@ class SessionArtifactManager:
                 comment_id=comment_id,
                 status=state,
                 resolved_in_n=applied_in or None,
+            )
+        except NotAllowed:
+            # A 404, not a network failure. The shared copy has never
+            # heard of this comment — which is the ordinary state of
+            # one written here before comments went to the server —
+            # and reporting it as unreachable sent people to check
+            # their connection over a comment that was never there.
+            #
+            # ``NotAllowed`` carries the comment id and nothing else,
+            # so its ``str()`` is a bare id: the old message read
+            # "Could not reach the server: local-cdcb975178854562".
+            logger.info("comment %s is not on the shared copy", comment_id)
+            return ArtifactCommentResolved(
+                ok=False,
+                status=state.value,
+                resolved_in_n=applied_in,
+                message=(
+                    f"Version {applied_in} was written, but this comment is not on the "
+                    "shared copy, so the ruling was not recorded."
+                    if applied_in
+                    else "This comment only exists on this machine — the shared copy has "
+                    "no record of it, so there is nothing to rule on yet."
+                ),
             )
         except Exception as exc:
             # The version is written and the server does not know. Say

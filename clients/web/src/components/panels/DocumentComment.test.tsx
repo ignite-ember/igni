@@ -1005,6 +1005,7 @@ describe("narrowing the rail", () => {
   const thread = (over: Partial<Thread> = {}): Thread => ({
     key: "k",
     id: "c",
+    rootId: "c",
     quote: "a passage",
     quoteStart: -1,
     turns: [{ key: "t", who: "me", body: "hi", activity: "", phase: "done", error: "" }],

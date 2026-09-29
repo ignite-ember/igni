@@ -209,3 +209,60 @@ class TestFrozenIsOnlyTheContent:
 
         assert not result.success
         assert client.writes == []
+
+
+class TestRulingOnACommentTheServerHasNeverSeen:
+    """A 404 is not a network failure.
+
+    ``NotAllowed`` carries the comment id and nothing else, so its
+    ``str()`` is a bare id — which made the refusal read "Could not
+    reach the server: local-cdcb975178854562" and sent people to
+    check their connection over a comment that was never there.
+
+    It is the ordinary state of a comment written before comments
+    went to the shared copy, so it has to say what is actually true.
+    """
+
+    @pytest.mark.asyncio
+    async def test_it_says_the_comment_is_not_on_the_shared_copy(self):
+        from ember_code.core.artifacts.collaboration import NotAllowed
+        from ember_code.core.session.artifact_ops import SessionArtifactManager
+
+        class Refusing:
+            async def resolve(self, **_):
+                raise NotAllowed("local-cdcb975178854562")
+
+        mgr = SessionArtifactManager.__new__(SessionArtifactManager)
+        mgr.artifacts = SimpleNamespace(client=SimpleNamespace())
+
+        result = await mgr.resolve_comment(
+            comment_id="local-cdcb975178854562",
+            status="resolved",
+            content="",
+            sync=Refusing(),
+        )
+
+        assert not result.ok
+        # The thing that was wrong: the id, presented as a reason.
+        assert "local-cdcb975178854562" not in (result.message or "")
+        assert "only exists on this machine" in (result.message or "")
+
+    @pytest.mark.asyncio
+    async def test_a_real_failure_still_reads_as_one(self):
+        # The distinction is only worth drawing if the other branch
+        # still says what it used to.
+        from ember_code.core.session.artifact_ops import SessionArtifactManager
+
+        class Broken:
+            async def resolve(self, **_):
+                raise RuntimeError("connection refused")
+
+        mgr = SessionArtifactManager.__new__(SessionArtifactManager)
+        mgr.artifacts = SimpleNamespace(client=SimpleNamespace())
+
+        result = await mgr.resolve_comment(
+            comment_id="c1", status="resolved", content="", sync=Broken()
+        )
+
+        assert not result.ok
+        assert "connection refused" in (result.message or "")

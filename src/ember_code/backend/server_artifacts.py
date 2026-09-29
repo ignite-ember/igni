@@ -1774,6 +1774,7 @@ class ArtifactController:
             quote_start=quote_start,
             quote_end=quote_end,
             parent_id=parent_id,
+            speaker=speaker,
         )
         if comment is not None:
             return await self._answer_for(comment, mgr=mgr, speaker=speaker)
@@ -1804,6 +1805,7 @@ class ArtifactController:
         quote_start: int,
         quote_end: int,
         parent_id: str,
+        speaker: CommentOrigin,
     ) -> Comment | None:
         """Write the comment to the shared copy, or answer ``None``.
 
@@ -1834,21 +1836,51 @@ class ArtifactController:
                 # because it was written, not because it was
                 # discussed.
                 return None
-            if parent_id:
-                return await sync.reply(comment_id=parent_id, body=body)
-            return await sync.comment(
-                slug=slug,
-                version=version,
-                body=body,
-                quote=quote,
-                quote_start=quote_start if quote_start >= 0 else None,
-                quote_end=quote_end if quote_end >= 0 else None,
+            written = (
+                await sync.reply(comment_id=parent_id, body=body)
+                if parent_id
+                else await sync.comment(
+                    slug=slug,
+                    version=version,
+                    body=body,
+                    quote=quote,
+                    quote_start=quote_start if quote_start >= 0 else None,
+                    quote_end=quote_end if quote_end >= 0 else None,
+                )
             )
+            return await self._keep_origin(written, speaker)
         except NotAllowed:
             raise
         except Exception as exc:  # noqa: BLE001 — network, auth, DNS, timeouts
             logger.info("comment on %s did not reach the server: %s", artifact_id, exc)
             return None
+
+    async def _keep_origin(
+        self, comment: Comment | None, speaker: CommentOrigin
+    ) -> Comment | None:
+        """Put back the origin the round trip lost.
+
+        Whether a comment is an *instruction* or a *remark* is the
+        load-bearing distinction in this model — it decides whether
+        the agent may act on it — and the shared copy cannot carry
+        it: ``artifact_comments`` has no such column, so everything
+        written there comes back as a remark. A comment written in
+        igni then stopped being something the agent could be asked
+        about, and posting one failed outright on the refusal in
+        ``prompt_for``.
+
+        Restored from what this machine *sent*, which is the only
+        place the answer exists. It survives locally and is lost
+        again on any pull — so this is a patch over a gap in the
+        server's schema, not a fix for it.
+        """
+        if comment is None or comment.origin is speaker:
+            return comment
+        corrected = comment.model_copy(update={"origin": speaker})
+        # Re-projected, or the graph keeps the server's answer and
+        # the distinction is lost on the next read instead of now.
+        await self._session.artifacts.client.project_comments([corrected])
+        return corrected
 
     async def _answer_for(
         self, comment: Comment, *, mgr: Any, speaker: CommentOrigin

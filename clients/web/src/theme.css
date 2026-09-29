@@ -13737,10 +13737,16 @@ button {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding-right: 18px;
-  /* The card's inset is gone with the card. The threads line up with
-     the heading above them and the version rows below. */
-  padding: 0;
+  /* The rail reaches past the window edge so its scrollbar sits
+     against it; the content takes that inset back here, so a card's
+     right border stops short of the edge instead of being sliced off
+     by it.
+
+     Written as one declaration on purpose. This was a padding-right
+     followed by a shorthand ``padding: 0``, which silently won —
+     leaving the cards running under the window edge with their
+     borders cut. */
+  padding: 0 18px 0 0;
 }
 
 .doc-rail-empty {
@@ -13998,6 +14004,39 @@ button {
   border: 0;
   border-radius: 4px;
   cursor: pointer;
+}
+
+/* Settling a thread, beside answering it. Quieter than Reply:
+   continuing a conversation is the common act and ending one is
+   the occasional, so the weights say which is which. */
+.doc-thread-settle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 10px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--fg-faint);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.doc-thread-settle:hover:not(:disabled) {
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
+.doc-thread-settle:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.doc-thread-settle .menu-icon {
+  width: 13px;
+  height: 13px;
 }
 
 .doc-thread-reply:hover {

@@ -43,6 +43,8 @@ const ALL: MenuIconName[] = [
   "image",
   "undo",
   "redo",
+  "resolve",
+  "reopen",
 ];
 
 function drawing(name: MenuIconName): string {
