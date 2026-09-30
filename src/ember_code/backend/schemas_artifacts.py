@@ -681,6 +681,8 @@ class ArtifactPeople(BaseModel):
     reach: str = "private"
     domain: str = ""
     can_manage: bool = False
+    #: The link to hand somebody, when the document has been shared.
+    url: str = ""
     error: str = ""
 
 

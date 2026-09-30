@@ -7829,6 +7829,81 @@ button {
   align-items: center;
 }
 
+/* ── The two verbs, said out loud ──────────────────────────────────
+   Edit and Share, out of the menu and into the header. They are the
+   two things anybody came to a document to do, and behind three dots
+   they were the same size as Export and one slip of the wrist above
+   Remove.
+
+   Bordered, where the view toggles beside them are not: those are
+   states you turn on and read off, these are actions you press. A
+   header where everything looked alike gave a reader no way to tell
+   the difference without trying one. */
+
+.doc-acts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.doc-act {
+  display: inline-flex;
+  height: 25px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--fg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 5px);
+  cursor: pointer;
+}
+
+.doc-act svg {
+  width: 13px;
+  height: 13px;
+}
+
+.doc-act:hover:not(:disabled) {
+  background: var(--bg-raised);
+}
+
+.doc-act:disabled {
+  color: var(--fg-faint);
+  cursor: default;
+}
+
+/* One control, two intentions: choose who can see this, and send it
+   to somebody. Joined so they read as one subject, divided so the
+   second is reachable without being asked the first again. */
+.doc-act-split {
+  display: inline-flex;
+}
+
+.doc-act-split > .doc-act:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.doc-act-split > .doc-act:last-child {
+  margin-left: -1px;
+  padding: 0 8px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+/* The pressed half sits above its neighbour, so the shared border
+   does not cut across its focus ring. */
+.doc-act-split > .doc-act:hover:not(:disabled),
+.doc-act-split > .doc-act:focus-visible {
+  position: relative;
+  z-index: 1;
+}
+
 .doc-view {
   height: 23px;
   padding: 0 9px;

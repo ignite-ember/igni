@@ -8,6 +8,7 @@ import { ArtifactSearch } from "./ArtifactSearch";
 import { ArtifactShareDialog, type Anchor } from "./ArtifactShareDialog";
 import { ArtifactCommentReview } from "./ArtifactCommentReview";
 import { ArtifactCompare } from "./ArtifactCompare";
+import { MenuIcon } from "../MenuIcon";
 import { DocumentPeople } from "./DocumentPeople";
 import { LockedDocument, type LockedState } from "./LockedDocument";
 import { useDocumentRoom } from "./useDocumentRoom";
@@ -245,15 +246,45 @@ export function ArtifactPanel({
    *  detail view. A ref, not state: the overflow menu reads it at the
    *  moment it is pressed, and making it state would re-render the
    *  whole panel every time a roster arrived. */
-  const sharedNow = useRef<{ reach: ShareReach; listed: string[] }>({
+  const sharedNow = useRef<{ reach: ShareReach; listed: string[]; url: string }>({
     reach: "private",
     listed: [],
+    url: "",
   });
+  /** The link was just copied. Shown on the control that did it,
+   *  because a copy with no acknowledgement is indistinguishable
+   *  from a copy that did not happen. */
+  const [copied, setCopied] = useState(false);
   // Stable, so the effect that reports the roster does not re-run on
   // every render of the panel above it.
-  const rememberSharing = useCallback((reach: ShareReach, listed: string[]) => {
-    sharedNow.current = { reach, listed };
-  }, []);
+  const rememberSharing = useCallback(
+    (reach: ShareReach, listed: string[], url: string) => {
+      sharedNow.current = { reach, listed, url };
+      // State as well as the ref, so the padlock and the link button
+      // redraw when the answer arrives. The ref is what the menu
+      // reads at the moment it is pressed; this is what the header
+      // renders from, and they are updated together so they cannot
+      // disagree.
+      setSharedReach(reach);
+      setShareUrl(url);
+    },
+    [],
+  );
+  const [sharedReach, setSharedReach] = useState<ShareReach>("private");
+  const [shareUrl, setShareUrl] = useState("");
+
+  const copyLink = useCallback(async () => {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      /* Clipboard refused. Nothing useful to say that the tooltip
+         does not already say, and a banner over a document because a
+         copy failed is worse than the failure. */
+    }
+  }, [shareUrl]);
 
   /**
    * Bring in the document a link named, and open it.
@@ -752,6 +783,79 @@ export function ArtifactPanel({
             </button>
           </div>
 
+          {/* The two things you do to a document, said out loud. They
+              were in the menu with Export and Remove, which read
+              tidily and hid the two verbs anybody actually came for
+              behind three dots — and put "Edit" one slip of the
+              wrist above the button that deletes the thing.
+
+              Share is a split: the left half opens the controls, the
+              right half copies the link. They are one subject and
+              two intentions — deciding who can see this, and sending
+              it to somebody — and a person who already shared it
+              wants the second one without being asked the first
+              again. */}
+          <div className="doc-acts">
+            <button
+              type="button"
+              className="doc-act"
+              disabled={openArchived}
+              title={
+                openArchived
+                  ? "Archived documents are frozen. Restore it to make changes."
+                  : "Edit this document and save it as a new version"
+              }
+              onClick={() => setEditing(true)}
+            >
+              <MenuIcon name="rename" />
+              {openArchived ? "Read only" : "Edit"}
+            </button>
+
+            <span className="doc-act-split">
+              <button
+                type="button"
+                className="doc-act"
+                title="Choose who can open this"
+                onClick={(e) =>
+                  setSharing({
+                    at: anchorOf(e.currentTarget.closest(".doc-act-split")),
+                    reach: sharedNow.current.reach,
+                    listed: sharedNow.current.listed,
+                  })
+                }
+              >
+                {/* Open or shut, from how the document is actually
+                    shared. A padlock that never changed would be
+                    decoration; this one is the shortest true sentence
+                    about the document that fits in a header. */}
+                <MenuIcon
+                  name={
+                    sharedReach === "domain" || sharedReach === "public"
+                      ? "unlock"
+                      : "lock"
+                  }
+                />
+                Share
+              </button>
+              <button
+                type="button"
+                className="doc-act doc-act-link"
+                disabled={!shareUrl}
+                title={
+                  shareUrl
+                    ? copied
+                      ? "Copied"
+                      : "Copy the link"
+                    : "Share it first — there is no link yet"
+                }
+                aria-label="Copy the link"
+                onClick={() => void copyLink()}
+              >
+                <MenuIcon name={copied ? "resolve" : "link"} />
+              </button>
+            </span>
+          </div>
+
           <OverflowMenu
             label="Document actions"
             actions={[
@@ -767,38 +871,6 @@ export function ArtifactPanel({
                   title: f.title,
                   onSelect: () => void exportDoc(selected, f.value),
                 })),
-              },
-              {
-                key: "edit",
-                icon: "rename",
-                // Named for what it produces, not for the mode it
-                // enters: this writes a version, and the version
-                // list next to it is how people read the document's
-                // history.
-                label: openArchived ? "Archived — read only" : "Edit",
-                title: openArchived
-                  ? "Archived documents are frozen. Restore it to make changes."
-                  : "Edit this document and save it as a new version",
-                disabled: openArchived,
-                onSelect: () => setEditing(true),
-              },
-              {
-                key: "share",
-                icon: "share",
-                label: "Share",
-                // Anchored to the menu that ran it. The item itself
-                // is gone by the time this fires — the menu closes on
-                // select — so the anchor is taken from the trigger,
-                // which is still there.
-                onSelect: () =>
-                  setSharing({
-                    at: anchorOf(document.querySelector(".kb-doc-head .overflow-menu")),
-                    // Whatever the detail view last reported. The
-                    // menu is in the header beside it, so it is
-                    // always the document on screen.
-                    reach: sharedNow.current.reach,
-                    listed: sharedNow.current.listed,
-                  }),
               },
               {
                 key: "archive",
@@ -996,7 +1068,11 @@ export function ArtifactPanel({
           }}
           onCompareClosed={() => setComparing(false)}
           onShare={(opening) => {
-            sharedNow.current = { reach: opening.reach, listed: opening.listed };
+            sharedNow.current = {
+              reach: opening.reach,
+              listed: opening.listed,
+              url: opening.url ?? sharedNow.current.url,
+            };
             setSharing(opening);
           }}
           onSharingChanged={rememberSharing}
@@ -1082,6 +1158,7 @@ export interface ShareOpening {
   at: Anchor | null;
   reach: ShareReach;
   listed: string[];
+  url?: string;
 }
 
 /** The rectangle an element occupies, for a popover to hang off. */
@@ -1208,7 +1285,7 @@ function DocumentDetail({
   /** How this document is shared, reported whenever it is learned —
    *  so the overflow menu, which sits outside this view, can open the
    *  share panel on the right answer rather than on a default. */
-  onSharingChanged?: (reach: ShareReach, listed: string[]) => void;
+  onSharingChanged?: (reach: ShareReach, listed: string[], url: string) => void;
   /** So the header knows whether there is anything to compare. */
   onVersionCount: (count: number) => void;
   /** Editing rather than reading. Owned by the panel, because the
@@ -1262,6 +1339,7 @@ function DocumentDetail({
     onSharingChanged?.(
       room.roster.reach as ShareReach,
       room.roster.people.filter((p) => p.role !== "owner").map((p) => p.identity),
+      room.roster.url ?? "",
     );
   }, [room.roster, onSharingChanged]);
   // Whether the shared copy is open to this account. Up here with
@@ -1569,6 +1647,7 @@ function DocumentDetail({
                   ? (at) =>
                       onShare({
                         at,
+                        url: room.roster?.url ?? "",
                         reach: (room.roster?.reach ?? "private") as ShareReach,
                         // The addresses the document names, which is
                         // what the audience box holds. The owner is

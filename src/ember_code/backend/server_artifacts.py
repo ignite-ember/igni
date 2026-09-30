@@ -177,6 +177,12 @@ class ArtifactController:
         self._room_task: asyncio.Task[None] | None = None
         self._room_stop: asyncio.Event | None = None
         self._room_artifact: str | None = None
+        # One adoption at a time per slug. Following a link fires the
+        # lookup from an effect, and React runs effects twice in
+        # development — two calls raced, both found nothing locally,
+        # and both created the document. Same name, so the same
+        # derived id, so one artifact written twice and listed twice.
+        self._adopting: dict[str, asyncio.Lock] = {}
 
     # ── Overview ──────────────────────────────────────────────────────
 
@@ -2061,6 +2067,7 @@ class ArtifactController:
             reach=str(answer.get("reach") or "private"),
             domain=str(answer.get("domain") or ""),
             can_manage=bool(answer.get("can_manage")),
+            url=str(answer.get("url") or ""),
         )
 
     # ── Arriving from a link ─────────────────────────────────────────
@@ -2133,7 +2140,20 @@ class ArtifactController:
         rows whose ids collide with whatever the reader happens to
         have at that address. A name is what both sides actually agree
         on, and it is what the reader will search for later.
+
+        One at a time per slug. The check for an existing document and
+        the write that follows it are not atomic, and two calls
+        arriving together both find nothing and both create — the name
+        is the same, so the derived id is the same, and the result is
+        one artifact written twice and listed twice. Two calls
+        arriving together is not exotic: following a link fires this
+        from an effect, and React runs effects twice in development.
         """
+        lock = self._adopting.setdefault(slug, asyncio.Lock())
+        async with lock:
+            return await self._adopt_once(sync=sync, slug=slug, title=title)
+
+    async def _adopt_once(self, *, sync: CollaborationSync, slug: str, title: str) -> str:
         client = self._session.artifacts.client
         existing = await client.find_by_name(title)
         if existing is None:

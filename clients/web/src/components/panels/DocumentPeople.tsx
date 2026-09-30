@@ -43,6 +43,8 @@ export interface Roster {
   reach: string;
   domain: string;
   can_manage: boolean;
+  /** The link to hand somebody, when it has been shared. */
+  url?: string;
 }
 
 /** A face, as one or two letters. */
