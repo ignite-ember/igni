@@ -105,6 +105,12 @@ class ArtifactRpcHandler(RpcHandler):
     def artifact_draft(self, args: dict) -> Any:
         return self._ctx.backend.artifact_draft(artifact_id=args["artifact_id"])
 
+    @rpc(RpcMethod.ARTIFACT_ROOM_SEND)
+    def artifact_room_send(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_room_send(
+            artifact_id=args["artifact_id"], frame=args.get("frame") or {}
+        )
+
     @rpc(RpcMethod.ARTIFACT_SAVE_DRAFT)
     def artifact_save_draft(self, args: dict) -> Any:
         return self._ctx.backend.artifact_save_draft(

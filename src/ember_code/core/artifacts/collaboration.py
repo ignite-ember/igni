@@ -399,8 +399,24 @@ class CollaborationSync:
         slug: str,
         on_roster: Callable[[list[dict[str, Any]]], Any],
         stop: asyncio.Event,
+        on_frame: Callable[[dict[str, Any]], Any] | None = None,
+        outbox: asyncio.Queue[dict[str, Any]] | None = None,
     ) -> None:
         """Hold a place in a document until asked to leave.
+
+        ``on_frame`` receives everything that is not a roster — the
+        draft as it stands on joining, each change somebody else
+        types, and the server asking for a snapshot. Nothing here
+        reads them: the changes are opaque, which is the whole design.
+        The server relays and stores blobs and never merges them, so
+        the only thing that can turn a pile of changes into a document
+        is the editor holding it, and that is in the browser.
+
+        ``outbox`` is how changes go the other way. A queue rather
+        than a method, because the socket is owned by this coroutine
+        and reconnects underneath: anything that wrote to the socket
+        directly would be writing to whichever one existed when it
+        looked, which during a reconnect is none.
 
         Reconnects on its own, with a backoff, because a presence
         connection that gives up after one dropped network is a feature
@@ -419,7 +435,9 @@ class CollaborationSync:
         backoff = 1.0
         while not stop.is_set():
             try:
-                await self._attend(url, on_roster=on_roster, stop=stop)
+                await self._attend(
+                    url, on_roster=on_roster, stop=stop, on_frame=on_frame, outbox=outbox
+                )
                 backoff = 1.0
             except asyncio.CancelledError:
                 raise
@@ -440,6 +458,8 @@ class CollaborationSync:
         *,
         on_roster: Callable[[list[dict[str, Any]]], Any],
         stop: asyncio.Event,
+        on_frame: Callable[[dict[str, Any]], Any] | None = None,
+        outbox: asyncio.Queue[dict[str, Any]] | None = None,
     ) -> None:
         """One connection, from greeting to close."""
         import websockets
@@ -447,6 +467,7 @@ class CollaborationSync:
         async with websockets.connect(url, max_size=2**20) as socket:
             await socket.send(json.dumps({"type": "auth", "token": self._access_token}))
             beat = asyncio.create_task(self._heartbeat(socket, stop))
+            sending = asyncio.create_task(self._send_from(socket, outbox, stop))
             closing = asyncio.create_task(stop.wait())
             try:
                 while True:
@@ -458,15 +479,43 @@ class CollaborationSync:
                         reading.cancel()
                         return
                     message = json.loads(reading.result())
-                    if message.get("type") == "roster":
+                    kind = message.get("type")
+                    if kind == "roster":
                         on_roster(list(message.get("here") or []))
-                    elif message.get("type") == "hello":
+                    elif kind == "hello":
                         self._beat_every = float(message.get("heartbeat") or 15)
+                        if on_frame is not None:
+                            on_frame(message)
+                    elif on_frame is not None:
+                        on_frame(message)
             finally:
-                for task in (beat, closing):
+                for task in (beat, sending, closing):
                     task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await task
+
+    @staticmethod
+    async def _send_from(
+        socket: Any, outbox: asyncio.Queue[dict[str, Any]] | None, stop: asyncio.Event
+    ) -> None:
+        """Put whatever is queued onto this connection.
+
+        A frame that cannot be sent is dropped rather than retried.
+        The socket is gone, which means a reconnect is coming, and a
+        reconnect re-reads the whole draft from the server — so a
+        keystroke held here to be re-sent afterwards would arrive
+        *after* the state that already contains it, out of order and
+        for no gain.
+        """
+        if outbox is None:
+            return
+        while not stop.is_set():
+            frame = await outbox.get()
+            try:
+                await socket.send(json.dumps(frame))
+            except Exception as exc:  # noqa: BLE001 — the socket died
+                logger.debug("a room frame did not get out: %s", exc)
+                return
 
     async def _heartbeat(self, socket: Any, stop: asyncio.Event) -> None:
         """Say we are still here, until we are not.

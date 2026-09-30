@@ -12,6 +12,7 @@ import { MenuIcon } from "../MenuIcon";
 import { DocumentPeople } from "./DocumentPeople";
 import { LockedDocument, type LockedState } from "./LockedDocument";
 import { useDocumentRoom } from "./useDocumentRoom";
+import { useSharedDraft } from "./useSharedDraft";
 import { ArtifactStaleReview } from "./ArtifactStaleReview";
 import { Drawer } from "./Drawer";
 import { OverflowMenu } from "../OverflowMenu";
@@ -1500,6 +1501,12 @@ function DocumentDetail({
   // below that return is a hook React sees on some renders and not
   // others — which is not a subtle bug, it is a blank page.
   const room = useDocumentRoom(client, id);
+  // The draft as a thing two people can type into at once. Only
+  // while the editor is open: a reader does not need a live copy of
+  // somebody else's half-finished sentence under the version they
+  // are reading, and holding the changes for one would mean holding
+  // a whole second document per open panel.
+  const shared = useSharedDraft(client, id, editing);
 
   // Tell the panel above how this document is shared, so a control
   // outside this view can open the share popover on it.
@@ -2119,13 +2126,14 @@ function DocumentDetail({
                version and had the draft arrive underneath would look
                like somebody else's edit landing on yours, and would
                put the cursor somewhere you did not leave it. */
-            !draftAsked ? (
+            !draftAsked || !shared.ready ? (
               <div className="kb-doc-body markdown-body">
                 <p className="kb-hint">Opening the draft…</p>
               </div>
             ) : (
               <DocumentEditor
                 content={draft?.content ?? doc.content}
+                shared={shared.doc}
                 frozen={doc.archived}
                 onChange={edited}
               />

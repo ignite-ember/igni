@@ -238,7 +238,14 @@ function readBackendVersionParams(): BackendVersionInfo | null {
 
 /** Context meter: a slim bar that fills as the conversation grows,
  *  color-graded (calm → warning → danger). The numeric readout sits
- *  next to it so the user can read both at a glance. */
+ *  next to it so the user can read both at a glance.
+ *
+ *  **Every number is checked before it is formatted.** The types say
+ *  they are numbers; they come off a status message from the
+ *  backend, where a field can be absent, and ``undefined`` has no
+ *  ``toLocaleString``. There is no error boundary above this, so one
+ *  status update without a token count did not degrade the meter —
+ *  it unmounted the application and left a blank window. */
 export function CtxMeter({
   tokens,
   max,
@@ -248,15 +255,17 @@ export function CtxMeter({
   max: number;
   pct: number;
 }) {
-  const safe = Math.min(100, Math.max(0, pct));
+  const used = Number.isFinite(tokens) ? tokens : 0;
+  const ceiling = Number.isFinite(max) ? max : 0;
+  const safe = Math.min(100, Math.max(0, Number.isFinite(pct) ? pct : 0));
   const tone = safe >= 85 ? "danger" : safe >= 60 ? "warn" : "ok";
   return (
     <span
       className={`ctx-meter tone-${tone}`}
       title={
-        max
-          ? `${tokens.toLocaleString()} of ${max.toLocaleString()} tokens used`
-          : `${tokens.toLocaleString()} tokens`
+        ceiling
+          ? `${used.toLocaleString()} of ${ceiling.toLocaleString()} tokens used`
+          : `${used.toLocaleString()} tokens`
       }
     >
       <span className="ctx-meter-label">ctx</span>
@@ -264,7 +273,7 @@ export function CtxMeter({
         <span className="ctx-meter-fill" style={{ width: `${safe}%` }} />
       </span>
       <span className="ctx-meter-text">
-        {fmtTokens(tokens)} <span className="ctx-meter-pct">· {safe}%</span>
+        {fmtTokens(used)} <span className="ctx-meter-pct">· {safe}%</span>
       </span>
     </span>
   );

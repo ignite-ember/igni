@@ -1053,6 +1053,10 @@ class BackendServer:
         """See :meth:`ArtifactController.draft`."""
         return await self.artifacts.draft(artifact_id=artifact_id)
 
+    async def artifact_room_send(self, *, artifact_id: str, frame: dict) -> ArtifactRoom:
+        """See :meth:`ArtifactController.send_to_room`."""
+        return await self.artifacts.send_to_room(artifact_id=artifact_id, frame=frame)
+
     async def artifact_save_draft(self, *, artifact_id: str, content: str) -> ArtifactDraftSaved:
         """See :meth:`ArtifactController.save_draft`."""
         return await self.artifacts.save_draft(artifact_id=artifact_id, content=content)

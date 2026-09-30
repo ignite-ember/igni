@@ -124,6 +124,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: How many changes to a local-only document are kept before the
+#: window that typed them is asked for the whole thing instead.
+#:
+#: The same trade the server makes on its own log, for the same
+#: reason: a list of changes grows without bound and a document does
+#: not. Larger than the server's, because nothing here is paying for
+#: Redis memory — only this process, for as long as it runs.
+ALONE_SNAPSHOT_EVERY = 200
+
 __all__ = [
     "ArtifactController",
     "ArtifactHit",
@@ -187,6 +196,14 @@ class ArtifactController:
         self._room_task: asyncio.Task[None] | None = None
         self._room_stop: asyncio.Event | None = None
         self._room_artifact: str | None = None
+        #: Where a keystroke goes on its way to the room socket. Held
+        #: rather than reached for, because the socket underneath
+        #: reconnects and a queue survives that.
+        self._room_outbox: asyncio.Queue[dict[str, Any]] | None = None
+        #: Changes to documents nobody has shared, per document. The
+        #: server's log, kept here, because a document with no shared
+        #: copy still has two windows open on it.
+        self._alone: dict[str, list[str]] = {}
         # One adoption at a time per slug. Following a link fires the
         # lookup from an effect, and React runs effects twice in
         # development — two calls raced, both found nothing locally,
@@ -2158,6 +2175,7 @@ class ArtifactController:
             return ArtifactDraftPublished(error="Artifacts are disabled.")
         try:
             n = await desk.publish(artifact_id)
+            self.forget_local_draft(artifact_id)
         except PublishedUnderneath as diverged:
             # Not an error the reader caused, and the draft is intact:
             # said as ``stale`` so the editor stays open on it rather
@@ -2434,21 +2452,126 @@ class ArtifactController:
             logger.info("could not resolve %s for presence: %s", artifact_id, exc)
             return ArtifactRoom(error=f"Could not reach the server: {exc}")
         if not slug:
-            # Never shared, so there is no room and nobody else can be
-            # in it. Not an error: a private draft has an empty roster
-            # for a good reason, and saying so would put a warning
-            # under every document somebody has not published yet.
+            # Never shared, so there is no room on any server and
+            # nobody at another desk can be in it. Not an error: a
+            # private draft has an empty roster for a good reason,
+            # and saying so would put a warning under every document
+            # somebody has not published yet.
+            #
+            # There is still a room, though — this machine. Two
+            # windows open on one document here are two editors of
+            # one draft, and they diverged silently: each wrote the
+            # whole text when its typing paused, and the last one to
+            # pause won. So the changes are kept and relayed here,
+            # exactly as the server would, and the only thing the
+            # document misses out on is other people.
+            self._room_artifact = artifact_id
+            self._room_frame(
+                artifact_id, {"type": "draft", "updates": list(self._alone_log(artifact_id))}
+            )
             return ArtifactRoom(ok=True, shared=False)
 
         stop = asyncio.Event()
+        outbox: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._room_stop = stop
         self._room_artifact = artifact_id
+        self._room_outbox = outbox
         self._room_task = asyncio.create_task(
             sync.room(
-                slug=slug, on_roster=lambda here: self._room_changed(artifact_id, here), stop=stop
+                slug=slug,
+                on_roster=lambda here: self._room_changed(artifact_id, here),
+                on_frame=lambda frame: self._room_frame(artifact_id, frame),
+                outbox=outbox,
+                stop=stop,
             )
         )
         return ArtifactRoom(ok=True, shared=True)
+
+    async def send_to_room(self, *, artifact_id: str, frame: dict[str, Any]) -> ArtifactRoom:
+        """Put one frame on the open room socket.
+
+        Everything about what is *in* the frame belongs to the editor
+        that made it. This is a post box: it knows which room is open
+        and refuses frames for any other, because a change typed into
+        one document must never be relayed into another.
+
+        **And straight back out to the windows here.** One machine
+        has one of these processes and one room socket, however many
+        windows are open on it; the server relays a change to every
+        socket *except* the one that sent it, which is correct and
+        which makes the other windows on this machine invisible to
+        each other. So a change is put on the local bus as well as on
+        the wire. Applying it twice costs nothing — these changes
+        commute and repeat harmlessly, which is the property the
+        whole design rests on — and the window that typed it ignores
+        its own echo.
+        """
+        if artifact_id != self._room_artifact:
+            # Not an error worth showing. The room opens a moment
+            # after the document does, and a keystroke in that moment
+            # is one the editor still holds — the next one carries the
+            # same state, because these are changes to a document, not
+            # a stream that can lose its place.
+            return ArtifactRoom(ok=False, shared=False)
+
+        kind = str(frame.get("type") or "")
+        update = str(frame.get("update") or "")
+        if self._room_outbox is None:
+            # A document nobody has shared: this machine is the whole
+            # room. The changes are kept here so a window that opens
+            # later can catch up, which is the same job the server's
+            # log does for a document that has readers elsewhere.
+            if kind == "snapshot" and update:
+                self._alone[artifact_id] = [update]
+            elif kind == "edit" and update:
+                log = self._alone.setdefault(artifact_id, [])
+                log.append(update)
+                if len(log) >= ALONE_SNAPSHOT_EVERY:
+                    # Ask for the whole document, of whoever just
+                    # typed. Nothing here can build one out of the
+                    # changes — that is as true on this machine as it
+                    # is on the server.
+                    self._room_frame(artifact_id, {"type": "snapshot"})
+                    self._alone[artifact_id] = log[-ALONE_SNAPSHOT_EVERY:]
+            if kind == "edit":
+                self._room_frame(artifact_id, frame)
+            return ArtifactRoom(ok=True, shared=False)
+
+        self._room_outbox.put_nowait(frame)
+        if kind == "edit":
+            self._room_frame(artifact_id, frame)
+        return ArtifactRoom(ok=True, shared=True)
+
+    def _alone_log(self, artifact_id: str) -> list[str]:
+        """What has been typed into a document only this machine has."""
+        return self._alone.get(artifact_id, [])
+
+    def forget_local_draft(self, artifact_id: str) -> None:
+        """Drop the local changes — the draft they described is gone.
+
+        Called when a draft becomes a version. Leaving them would put
+        the next window that opens the editor back into an edit of a
+        document that has already been published.
+        """
+        self._alone.pop(artifact_id, None)
+
+    def _room_frame(self, artifact_id: str, frame: dict[str, Any]) -> None:
+        """Pass a room frame through to whoever is drawing the document.
+
+        Unread on the way past. The draft is a pile of opaque changes
+        and the only thing that can make a document out of them is the
+        editor holding it — which is in the browser, not here. This
+        process is the part that holds the credentials, so it is the
+        part that holds the socket, and that is the whole of its
+        involvement.
+        """
+        if artifact_id != self._room_artifact:
+            return
+        self._session.broadcast_bus.emit(
+            BroadcastEvent(
+                channel="artifact_draft", payload={"artifact_id": artifact_id, "frame": frame}
+            )
+        )
 
     async def leave_room(self) -> None:
         """Stop holding a place, if we are holding one.
@@ -2460,6 +2583,7 @@ class ArtifactController:
         """
         stop, task = self._room_stop, self._room_task
         self._room_stop = self._room_task = self._room_artifact = None
+        self._room_outbox = None
         if stop is not None:
             stop.set()
         if task is not None:

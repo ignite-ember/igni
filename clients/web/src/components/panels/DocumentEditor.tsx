@@ -30,6 +30,7 @@
  * changing. The editor is not the place to discover that: the button
  * says so before it is pressed.
  */
+import Collaboration from "@tiptap/extension-collaboration";
 import DragHandle from "@tiptap/extension-drag-handle-react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
@@ -43,11 +44,26 @@ import { DOCUMENT_EXTENSIONS, markdownOf, preserveWrapping } from "./documentMar
 import { SELECTION_TOOLS, TOOL_GROUPS, type EditorTool } from "./editorTools";
 import { SlashMenu } from "./SlashMenu";
 import { slashCommands, type SlashState } from "./slashCommands";
+import { DRAFT_FIELD, seedOnce } from "./useSharedDraft";
+
+import type * as Y from "yjs";
 
 export interface DocumentEditorProps {
   /** The markdown as it stands — the draft when there is one, and
-   *  the current version when there is not. */
+   *  the current version when there is not.
+   *
+   *  When ``shared`` is given this is the *seed*: what the document
+   *  should say if nobody has started writing it. Once somebody has,
+   *  the shared document is the truth and this is ignored. */
   content: string;
+  /** The draft as a thing two people can type into at once.
+   *
+   *  Present means every keystroke goes to everybody else with the
+   *  document open, and theirs come back — so the editor's content
+   *  comes from here rather than from ``content``. Absent means an
+   *  ordinary editor on one machine, which is what a document nobody
+   *  has shared gets. */
+  shared?: Y.Doc | null;
   /** Frozen: archived documents do not take a new version. */
   frozen?: boolean;
   /** What is in the box, whenever it changes. The header holds the
@@ -89,6 +105,7 @@ function ToolButton({ tool, editor }: { tool: EditorTool; editor: Editor }) {
 
 export function DocumentEditor({
   content,
+  shared = null,
   frozen = false,
   onChange,
 }: DocumentEditorProps) {
@@ -103,42 +120,76 @@ export function DocumentEditor({
   // rebuild the editor with it, which throws away the document and
   // the cursor somebody is in the middle of using.
   const extensions = useMemo(
-    () => [...DOCUMENT_EXTENSIONS, slashCommands({ onState: setSlash })],
-    [],
+    () => [
+      ...DOCUMENT_EXTENSIONS,
+      slashCommands({ onState: setSlash }),
+      // Collaboration owns the document's history when it is on, so
+      // undo has to come from it rather than from the starter kit —
+      // two histories over one document undo each other's work.
+      ...(shared ? [Collaboration.configure({ document: shared, field: DRAFT_FIELD })] : []),
+    ],
+    [shared],
   );
 
-  const editor = useEditor({
-    extensions,
-    content,
-    editable: !frozen,
-    // Focused on open, at the start. Somebody who pressed Edit is
-    // about to type, and a click to begin is a click that says
-    // nothing.
-    autofocus: frozen ? false : "start",
-    // Dirty is computed from the text, not raised by the event.
-    // ProseMirror emits an update while it is still settling the
-    // document it was handed, so a flag set here is true before the
-    // first keystroke — which makes Save offer to write a version
-    // identical to the one on screen, and Cancel ask whether to
-    // throw away work nobody has done.
-    //
-    // Comparing also gets undo right: typing a word and taking it
-    // back leaves the document unchanged, and no event-based flag
-    // ever notices that.
-    onUpdate: ({ editor: live }) => {
-      const now = preserveWrapping(opened.current, markdownOf(live));
-      const changed = now.trim() !== opened.current.trim();
-      setDirty(changed);
-      onChange?.(now, changed);
+  const editor = useEditor(
+    {
+      extensions,
+      // Not when collaborating. The shared document *is* the
+      // content, and handing tiptap a second copy makes it insert
+      // the whole thing again — once per window that opens.
+      ...(shared ? {} : { content }),
+      editable: !frozen,
+      // Focused on open, at the start. Somebody who pressed Edit is
+      // about to type, and a click to begin is a click that says
+      // nothing.
+      autofocus: frozen ? false : "start",
+      // Dirty is computed from the text, not raised by the event.
+      // ProseMirror emits an update while it is still settling the
+      // document it was handed, so a flag set here is true before
+      // the first keystroke — which would offer to save a draft
+      // nobody has touched.
+      //
+      // Comparing also gets undo right: typing a word and taking it
+      // back leaves the document unchanged, and no event-based flag
+      // ever notices that.
+      onUpdate: ({ editor: live }) => {
+        const now = preserveWrapping(opened.current, markdownOf(live));
+        const changed = now.trim() !== opened.current.trim();
+        setDirty(changed);
+        onChange?.(now, changed);
+      },
     },
-  });
+    // Rebuilt when the shared document arrives, and only then. The
+    // extension list is what binds the editor to it, and an editor
+    // built before it existed is bound to nothing.
+    [shared],
+  );
 
-  // A version landing underneath — the agent answering a comment,
+  // The first words, when there are none.
+  //
+  // A shared document that nobody has edited yet is empty, and the
+  // text it should start from is the published version. Written
+  // through the editor because the editor is what turns markdown
+  // into nodes — and under the shared seeding id, so two windows
+  // opening at the same moment write the same change rather than two
+  // copies of the document. See ``seedOnce``.
+  useEffect(() => {
+    if (!editor || !shared || !content) return;
+    seedOnce(shared, () => {
+      editor.commands.setContent(content, { emitUpdate: false });
+    });
+  }, [editor, shared, content]);
+
+  // Text landing underneath — the agent answering a comment,
   // usually — replaces what is on screen only while nothing has been
   // typed into it. Overwriting somebody's unsaved paragraph with a
   // newer one is the one thing this must not do.
+  //
+  // Solo only. A shared document gets the same news as a change
+  // everybody receives, and writing it in from here as well would
+  // put the whole text in a second time, on every screen.
   useEffect(() => {
-    if (!editor || dirty) return;
+    if (!editor || dirty || shared) return;
     if (content === opened.current) return;
     // Not while the cursor is in it. ``setContent`` rebuilds the
     // document and puts the cursor back at the start, which to
@@ -147,7 +198,7 @@ export function DocumentEditor({
     if (editor.isFocused) return;
     opened.current = content;
     editor.commands.setContent(content, { emitUpdate: false });
-  }, [content, dirty, editor]);
+  }, [content, dirty, editor, shared]);
 
   useEffect(() => {
     editor?.setEditable(!frozen);
