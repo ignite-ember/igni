@@ -235,7 +235,6 @@ export function ArtifactPanel({
   openSlug = "",
   account = "",
   goHome = 0,
-  openArtifact,
 }: {
   client: IgniClient;
   onClose: () => void;
@@ -247,13 +246,6 @@ export function ArtifactPanel({
    *  "the list", which is what the sidebar link says — it was a dead
    *  click from any sub-view, because the route had not changed. */
   goHome?: number;
-  /** A document to select, named by its local id — how a
-   *  notification hands over the document its comment is about.
-   *
-   *  Carries a timestamp because the same document twice is still
-   *  two requests to open it, and a bare id that has not changed
-   *  looks like nothing happened. */
-  openArtifact?: { id: string; at: number };
 
   /** A document to open on arrival, named by the slug in a shared
    *  link rather than by a local id — the whole point is that the
@@ -363,15 +355,6 @@ export function ArtifactPanel({
     setSelected(null);
     setEditing(false);
   }, [goHome]);
-
-  // Arrived from a notification: open the document its comment was
-  // about. The panel may not have been on screen at all a moment
-  // ago, which is why this is a prop rather than a click.
-  useEffect(() => {
-    if (!openArtifact?.id) return;
-    setSelected(openArtifact.id);
-    setView("detail");
-  }, [openArtifact?.id, openArtifact?.at]);
 
   /**
    * Bring in the document a link named, and open it.

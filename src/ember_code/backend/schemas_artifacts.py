@@ -738,6 +738,49 @@ class ArtifactPeople(BaseModel):
     error: str = ""
 
 
+class ArtifactNotification(BaseModel):
+    """One thing that happened, as the server described it.
+
+    Passed through rather than reshaped: every field is on its way to
+    being drawn, and a second definition of a notification between
+    the server and the screen is a second thing to keep in step.
+    """
+
+    id: str = ""
+    #: The verb — ``comment``, ``mention``, ``access_requested`` and
+    #: the rest. The screen decides the wording from this.
+    kind: str = ""
+    actor_email: str = ""
+    slug: str = ""
+    title: str = ""
+    subject_id: str = ""
+    body: str = ""
+    created_at: str = ""
+    read: bool = False
+
+
+class ArtifactNotifications(BaseModel):
+    """What is waiting, and how much of it."""
+
+    ok: bool = False
+    #: Everything unread, not only what fitted in the list.
+    waiting: int = 0
+    notifications: list[ArtifactNotification] = Field(default_factory=list)
+    error: str = ""
+
+
+class ArtifactWaiting(BaseModel):
+    """What is waiting on this account, and whether it is being told.
+
+    ``ok`` false means there is no account to follow — a local-only
+    session, where nobody can leave a comment in the first place.
+    """
+
+    ok: bool = False
+    waiting: int = 0
+    error: str = ""
+
+
 class ArtifactRoom(BaseModel):
     """Whether this session is now watching a document's room.
 

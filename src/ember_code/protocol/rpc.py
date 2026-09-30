@@ -298,6 +298,9 @@ class RpcMethod(StrEnum):
     ARTIFACT_LEAVE_ROOM = "artifact_leave_room"
     ARTIFACT_GRANT_VIEW = "artifact_grant_view"
     ARTIFACT_SYNC_COMMENTS = "artifact_sync_comments"
+    ARTIFACT_WATCH_COMMENTS = "artifact_watch_comments"
+    ARTIFACT_NOTIFICATIONS = "artifact_notifications"
+    ARTIFACT_MARK_SEEN = "artifact_mark_seen"
     ARTIFACT_ASK = "artifact_ask"
     ARTIFACT_RUN_CYPHER = "artifact_run_cypher"
 

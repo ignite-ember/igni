@@ -214,3 +214,40 @@ class TestWhoIsWatching:
         joined = await controller.watch_room(artifact_id="doc-1", watcher="w2")
 
         assert joined.updates == ["abc"]
+
+
+class TestAnErrorWithNoWords:
+    """What the reader is shown when the call did not come back.
+
+    Several of the exceptions that reach these handlers stringify to
+    nothing at all — ``httpx.ReadError`` and its neighbours carry the
+    cause in their type and not in their message. Interpolated
+    directly, that rendered as "Could not reach the server: " with a
+    blank after the colon: the reader is told something went wrong
+    and given no word about what, which is worse than the class name
+    they could at least repeat to somebody.
+    """
+
+    def test_a_message_that_says_something_is_kept(self):
+        from ember_code.backend.server_artifacts import unreachable
+
+        said = unreachable(RuntimeError("the token expired"))
+
+        assert said == "Could not reach the server: the token expired"
+
+    def test_an_exception_with_no_message_still_names_itself(self):
+        import httpx
+
+        from ember_code.backend.server_artifacts import unreachable
+
+        said = unreachable(httpx.ReadError(""))
+
+        assert said.endswith("ReadError")
+        assert not said.endswith(": ")
+
+    def test_whitespace_is_not_a_message(self):
+        from ember_code.backend.server_artifacts import unreachable
+
+        said = unreachable(RuntimeError("   \n "))
+
+        assert said == "Could not reach the server: RuntimeError"

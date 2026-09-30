@@ -4785,6 +4785,117 @@ button {
   color: var(--fg-faint);
 }
 
+.notify-empty {
+  margin: 20px 4px;
+  font-size: 12.5px;
+  color: var(--fg-faint);
+}
+
+.notify-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notify-row {
+  border-bottom: 1px solid var(--border-faint, var(--border));
+}
+
+.notify-row:last-child {
+  border-bottom: none;
+}
+
+/* A row somebody has already looked at. Dimmed rather than removed:
+   "what did I see yesterday" is a question, and a queue that empties
+   itself cannot answer it. */
+.notify-row.is-read .notify-line,
+.notify-row.is-read .notify-excerpt {
+  color: var(--fg-muted);
+}
+
+.notify-open {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 8px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.notify-open:hover:not(:disabled) {
+  background: var(--bg-raised);
+}
+
+.notify-open:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* The monogram with the verb's glyph on its corner: who, and what
+   they did, in one object — so a queue of eight is read by shape
+   before any of it is read as words. */
+.notify-face {
+  position: relative;
+  flex: none;
+  width: 22px;
+  height: 22px;
+}
+
+.notify-verb-icon {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--bg-surface);
+  color: var(--fg-muted);
+}
+
+.notify-verb-icon svg {
+  width: 9px;
+  height: 9px;
+}
+
+.notify-said {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.notify-line {
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+/* What they wrote, when there is any. One line: the rest is in the
+   document, which is where it is worth reading.
+
+   Not ``.notify-body`` — that is the panel's scrolling container,
+   and two rules of that name would have given the excerpt ``flex:
+   1`` and the container ``white-space: nowrap``. */
+.notify-excerpt {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notify-when {
+  font-size: 10.5px;
+  color: var(--fg-faint);
+}
+
 .notify-body {
   flex: 1;
   min-height: 0;

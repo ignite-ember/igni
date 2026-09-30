@@ -171,6 +171,22 @@ class ArtifactRpcHandler(RpcHandler):
             identity=args["identity"],
         )
 
+    @rpc(RpcMethod.ARTIFACT_NOTIFICATIONS)
+    def artifact_notifications(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_notifications(
+            unread_only=bool(args.get("unread_only", True))
+        )
+
+    @rpc(RpcMethod.ARTIFACT_MARK_SEEN)
+    def artifact_mark_seen(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_mark_seen(
+            notification_id=args.get("notification_id") or ""
+        )
+
+    @rpc(RpcMethod.ARTIFACT_WATCH_COMMENTS)
+    def artifact_watch_comments(self, _args: dict) -> Any:
+        return self._ctx.backend.artifact_watch_comments()
+
     @rpc(RpcMethod.ARTIFACT_SYNC_COMMENTS)
     def artifact_sync_comments(self, args: dict) -> Any:
         return self._ctx.backend.artifact_sync_comments()

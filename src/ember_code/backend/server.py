@@ -94,6 +94,7 @@ if TYPE_CHECKING:
         ArtifactLineageView,
         ArtifactLocked,
         ArtifactMentions,
+        ArtifactNotifications,
         ArtifactOpened,
         ArtifactOpenResult,
         ArtifactPeople,
@@ -107,6 +108,7 @@ if TYPE_CHECKING:
         ArtifactTreeChanged,
         ArtifactVersionRow,
         ArtifactViewGranted,
+        ArtifactWaiting,
     )
     from ember_code.backend.schemas_codeindex_rpc import (
         CodeIndexActivityEntry,
@@ -1102,6 +1104,18 @@ class BackendServer:
     async def artifact_leave_room(self, *, artifact_id: str = "", watcher: str = "") -> None:
         """See :meth:`ArtifactController.leave_room`."""
         await self.artifacts.leave_room(artifact_id=artifact_id, watcher=watcher)
+
+    async def artifact_notifications(self, *, unread_only: bool = True) -> ArtifactNotifications:
+        """See :meth:`ArtifactController.waiting`."""
+        return await self.artifacts.waiting(unread_only=unread_only)
+
+    async def artifact_mark_seen(self, *, notification_id: str = "") -> ArtifactNotifications:
+        """See :meth:`ArtifactController.mark_seen`."""
+        return await self.artifacts.mark_seen(notification_id=notification_id)
+
+    async def artifact_watch_comments(self) -> ArtifactWaiting:
+        """See :meth:`ArtifactController.watch_comments`."""
+        return await self.artifacts.watch_comments()
 
     async def artifact_sync_comments(self) -> int:
         """See :meth:`ArtifactController.sync_comments`."""

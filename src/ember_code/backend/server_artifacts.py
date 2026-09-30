@@ -53,6 +53,8 @@ from ember_code.backend.schemas_artifacts import (
     ArtifactListEntry,
     ArtifactLocked,
     ArtifactMentions,
+    ArtifactNotification,
+    ArtifactNotifications,
     ArtifactOpened,
     ArtifactOpenResult,
     ArtifactPeople,
@@ -69,6 +71,7 @@ from ember_code.backend.schemas_artifacts import (
     ArtifactTreeNode,
     ArtifactVersionRow,
     ArtifactViewGranted,
+    ArtifactWaiting,
     CandidateOverlapRow,
     Colleague,
     DriftAffectedRow,
@@ -79,7 +82,11 @@ from ember_code.backend.schemas_artifacts import (
 )
 from ember_code.core.artifacts import side_by_side
 from ember_code.core.artifacts.anchoring import RelevanceReview, surrounding, track_anchor
-from ember_code.core.artifacts.collaboration import CollaborationSync, NotAllowed
+from ember_code.core.artifacts.collaboration import (
+    CollaborationSync,
+    NotAllowed,
+    WaitingStream,
+)
 from ember_code.core.artifacts.conversation import CommentConversation
 from ember_code.core.artifacts.cypher import ArtifactCypherService, CypherResult
 from ember_code.core.artifacts.draft_desk import (
@@ -133,6 +140,22 @@ logger = logging.getLogger(__name__)
 #: not. Larger than the server's, because nothing here is paying for
 #: Redis memory — only this process, for as long as it runs.
 ALONE_SNAPSHOT_EVERY = 200
+
+
+def unreachable(exc: Exception) -> str:
+    """The sentence shown when a call to the server did not come back.
+
+    Written through here rather than interpolated at each of the
+    dozen-odd call sites, because several of the exceptions that land
+    on those call sites stringify to **nothing**. ``httpx.ReadError``
+    and its neighbours carry the cause in their type and not in their
+    message, so ``unreachable(exc)`` renders as a
+    colon and a blank — a reader is told something went wrong and
+    given no word about what, which is worse than the raw class name
+    they would at least be able to repeat to somebody.
+    """
+    said = str(exc).strip()
+    return f"Could not reach the server: {said or type(exc).__name__}"
 
 
 @dataclass
@@ -220,6 +243,11 @@ class ArtifactController:
         #: past the last window that had them open — there is no
         #: server holding a log for these.
         self._alone: dict[str, list[str]] = {}
+        #: The server's comment channel, followed for as long as this
+        #: process runs. One per account — see :meth:`watch_comments`.
+        self._waiting_stream: WaitingStream | None = None
+        self._waiting_stream_task: asyncio.Task[None] | None = None
+        self._waiting_stream_for: tuple[str, str] | None = None
         # One adoption at a time per slug. Following a link fires the
         # lookup from an effect, and React runs effects twice in
         # development — two calls raced, both found nothing locally,
@@ -1368,7 +1396,7 @@ class ArtifactController:
             return ArtifactTreeChanged(error="No such folder.")
         except Exception as exc:  # noqa: BLE001 — network, auth, permissions
             logger.info("filing did not reach the server: %s", exc)
-            return ArtifactTreeChanged(error=f"Could not reach the server: {exc}")
+            return ArtifactTreeChanged(error=unreachable(exc))
 
     async def _shared_place(
         self,
@@ -1403,7 +1431,7 @@ class ArtifactController:
             slug = await sync.slug_for(node_id)
         except Exception as exc:  # noqa: BLE001 — network, auth
             logger.info("could not resolve %s on the server: %s", node_id, exc)
-            return ArtifactTreeChanged(error=f"Could not reach the server: {exc}")
+            return ArtifactTreeChanged(error=unreachable(exc))
         if not slug:
             # Never published. Nothing to file on the shared copy, and
             # not an error: the next write gives it a home, and the
@@ -2060,7 +2088,7 @@ class ArtifactController:
             return ArtifactMentions(error="This document is not yours to read.")
         except Exception as exc:  # noqa: BLE001 — network, auth
             logger.info("mention lookup did not reach the server: %s", exc)
-            return ArtifactMentions(error=f"Could not reach the server: {exc}")
+            return ArtifactMentions(error=unreachable(exc))
         return ArtifactMentions(
             people=[MentionCandidate(**person) for person in answer.get("people") or []],
             can_grant=bool(answer.get("can_grant")),
@@ -2094,7 +2122,7 @@ class ArtifactController:
             return ArtifactViewGranted(error="This document is not yours to share.")
         except Exception as exc:  # noqa: BLE001 — network, auth
             logger.info("grant did not reach the server: %s", exc)
-            return ArtifactViewGranted(error=f"Could not reach the server: {exc}")
+            return ArtifactViewGranted(error=unreachable(exc))
         return ArtifactViewGranted(ok=True, identity=who, message=f"{who} can now read this.")
 
     async def people(self, *, artifact_id: str) -> ArtifactPeople:
@@ -2117,7 +2145,7 @@ class ArtifactController:
             return ArtifactPeople()
         except Exception as exc:  # noqa: BLE001 — network, auth
             logger.info("roster lookup did not reach the server: %s", exc)
-            return ArtifactPeople(error=f"Could not reach the server: {exc}")
+            return ArtifactPeople(error=unreachable(exc))
         return ArtifactPeople(
             people=[RosterPerson(**person) for person in answer.get("people") or []],
             reach=str(answer.get("reach") or "private"),
@@ -2141,7 +2169,7 @@ class ArtifactController:
             found = await sync.colleagues(query=query)
         except Exception as exc:  # noqa: BLE001 — network, auth
             logger.info("colleague lookup did not reach the server: %s", exc)
-            return ArtifactColleagues(error=f"Could not reach the server: {exc}")
+            return ArtifactColleagues(error=unreachable(exc))
         return ArtifactColleagues(people=[Colleague(**person) for person in found])
 
     # ── The draft ────────────────────────────────────────────────────
@@ -2174,7 +2202,7 @@ class ArtifactController:
             return ArtifactDraft()
         except Exception as exc:  # noqa: BLE001 — network, auth
             logger.info("draft lookup did not reach the server: %s", exc)
-            return ArtifactDraft(error=f"Could not reach the server: {exc}")
+            return ArtifactDraft(error=unreachable(exc))
         return ArtifactDraft(
             exists=found.exists,
             content=found.content,
@@ -2196,7 +2224,7 @@ class ArtifactController:
             return ArtifactDraftSaved(error=str(refused))
         except Exception as exc:  # noqa: BLE001 — network, auth
             logger.info("draft save did not reach the server: %s", exc)
-            return ArtifactDraftSaved(error=f"Could not reach the server: {exc}")
+            return ArtifactDraftSaved(error=unreachable(exc))
         return ArtifactDraftSaved(ok=True)
 
     async def publish_draft(self, *, artifact_id: str) -> ArtifactDraftPublished:
@@ -2218,7 +2246,7 @@ class ArtifactController:
             return ArtifactDraftPublished(error=str(refused))
         except Exception as exc:  # noqa: BLE001 — network, auth
             logger.info("publishing a draft did not reach the server: %s", exc)
-            return ArtifactDraftPublished(error=f"Could not reach the server: {exc}")
+            return ArtifactDraftPublished(error=unreachable(exc))
         return ArtifactDraftPublished(ok=True, n=n, message=f"Published as v{n}.")
 
     # ── Arriving from a link ─────────────────────────────────────────
@@ -2252,7 +2280,7 @@ class ArtifactController:
             return ArtifactOpened(error="No such document.")
         except Exception as exc:  # noqa: BLE001 — network, auth
             logger.info("could not open %s: %s", slug, exc)
-            return ArtifactOpened(error=f"Could not reach the server: {exc}")
+            return ArtifactOpened(error=unreachable(exc))
 
         title = str(door.get("title") or "")
         if not door.get("open"):
@@ -2364,7 +2392,7 @@ class ArtifactController:
             # machine and readable from it; a server we cannot reach
             # is not grounds for putting a lock over work somebody
             # already has.
-            return ArtifactLocked(open=True, error=f"Could not reach the server: {exc}")
+            return ArtifactLocked(open=True, error=unreachable(exc))
         return ArtifactLocked(
             open=bool(answer.get("open")),
             title=str(answer.get("title") or ""),
@@ -2397,7 +2425,7 @@ class ArtifactController:
             return ArtifactAccessAsked(error="That is not yours to ask about.")
         except Exception as exc:  # noqa: BLE001 — network, auth
             logger.info("access request did not reach the server: %s", exc)
-            return ArtifactAccessAsked(error=f"Could not reach the server: {exc}")
+            return ArtifactAccessAsked(error=unreachable(exc))
         who = identity.strip()
         return ArtifactAccessAsked(
             ok=True,
@@ -2422,7 +2450,7 @@ class ArtifactController:
             return ArtifactAccessAsks()
         except Exception as exc:  # noqa: BLE001 — network, auth
             logger.info("access queue did not reach the server: %s", exc)
-            return ArtifactAccessAsks(error=f"Could not reach the server: {exc}")
+            return ArtifactAccessAsks(error=unreachable(exc))
         return ArtifactAccessAsks(
             asks=[
                 AccessAsk(
@@ -2453,7 +2481,7 @@ class ArtifactController:
             return ArtifactViewGranted(error="That is not yours to decide.")
         except Exception as exc:  # noqa: BLE001 — network, auth
             logger.info("settling a request did not reach the server: %s", exc)
-            return ArtifactViewGranted(error=f"Could not reach the server: {exc}")
+            return ArtifactViewGranted(error=unreachable(exc))
         return ArtifactViewGranted(ok=True, message="Let them in." if granted else "Declined.")
 
     # ── Presence ─────────────────────────────────────────────────────
@@ -2747,6 +2775,109 @@ class ArtifactController:
             self._sync = sync if sync.is_configured else None
             self._sync_for = credentials
         return self._sync
+
+    async def watch_comments(self) -> ArtifactWaiting:
+        """Follow the server's comment stream, and say what is waiting.
+
+        **The stream is what makes a notification a notification.** A
+        comment is written by somebody at another desk; without a
+        channel carrying that over, the only way to learn of it is to
+        ask, and a screen that only refreshes when you press a button
+        tells you nothing you did not already know by pressing it.
+
+        Asked for once, by whatever is drawing the count, and then
+        held for the life of the process. The stream itself is a
+        latency optimisation over :meth:`sync_comments` — it carries
+        a cursor and never a comment — so losing it costs freshness
+        and never correctness, which is why nothing here treats a
+        dropped connection as an error worth reporting.
+        """
+        sync = self._collaboration()
+        if sync is None:
+            return ArtifactWaiting()
+        credentials = (sync.server_url, sync.access_token)
+        if self._waiting_stream is not None and self._waiting_stream_for != credentials:
+            # Signed in as somebody else. The old stream is following
+            # the previous account's comments.
+            self._waiting_stream.stop()
+            self._waiting_stream = None
+        if self._waiting_stream is None:
+            stream = WaitingStream(sync)
+            self._waiting_stream = stream
+            self._waiting_stream_for = credentials
+            self._waiting_stream_task = asyncio.create_task(
+                stream.run(on_change=self._something_arrived)
+            )
+        return ArtifactWaiting(ok=True, waiting=await self._waiting_count())
+
+    async def _something_arrived(self, projected: int) -> None:
+        """Something happened elsewhere. Tell whoever is drawing a count.
+
+        Not only comments, despite ``projected`` being a count of
+        them: an access request, a document being shared, a version
+        published all arrive here with ``projected`` at zero, and the
+        badge and the notification panel both need to hear about them.
+
+        The channel is ``artifact_waiting`` rather than
+        ``artifact_comments`` — the old name is also the name of an
+        RPC method, so one string was doing two unrelated jobs, and
+        the one it described is no longer what this carries.
+        """
+        self._session.broadcast_bus.emit(
+            BroadcastEvent(
+                channel="artifact_waiting",
+                payload={"projected": projected, "waiting": await self._waiting_count()},
+            )
+        )
+
+    async def _waiting_count(self) -> int:
+        """How many things are waiting, from the server.
+
+        Read rather than projected, unlike comments. A comment is
+        part of a document's history and belongs in the store beside
+        it; a notification is a message to one person about a moment,
+        and a local mirror of it would go on saying somebody is
+        waiting after they have been dealt with somewhere else.
+        """
+        sync = self._collaboration()
+        if sync is None:
+            return 0
+        try:
+            return int((await sync.waiting()).get("waiting") or 0)
+        except Exception as exc:  # noqa: BLE001 — network, auth
+            logger.info("could not count what is waiting: %s", exc)
+            return 0
+
+    async def waiting(self, *, unread_only: bool = True) -> ArtifactNotifications:
+        """Everything waiting on this account, newest first."""
+        sync = self._collaboration()
+        if sync is None:
+            return ArtifactNotifications()
+        try:
+            answer = await sync.waiting(unread_only=unread_only)
+        except Exception as exc:  # noqa: BLE001 — network, auth
+            logger.info("could not read what is waiting: %s", exc)
+            return ArtifactNotifications(error=unreachable(exc))
+        return ArtifactNotifications(
+            ok=True,
+            waiting=int(answer.get("waiting") or 0),
+            notifications=[
+                ArtifactNotification(**{k: row.get(k) for k in ArtifactNotification.model_fields if k in row})
+                for row in (answer.get("notifications") or [])
+            ],
+        )
+
+    async def mark_seen(self, *, notification_id: str = "") -> ArtifactNotifications:
+        """Say one has been read, or all of them."""
+        sync = self._collaboration()
+        if sync is None:
+            return ArtifactNotifications()
+        try:
+            answer = await sync.mark_seen(notification_id=notification_id)
+        except Exception as exc:  # noqa: BLE001 — network, auth
+            logger.info("could not mark a notification seen: %s", exc)
+            return ArtifactNotifications(error=unreachable(exc))
+        return ArtifactNotifications(ok=True, waiting=int(answer.get("waiting") or 0))
 
     async def sync_comments(self) -> int:
         """Pull comment activity and project it. Returns how many landed."""

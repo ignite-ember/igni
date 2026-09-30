@@ -138,14 +138,6 @@ interface UpdateInfo {
  * it: places, not conversations. Three and not thirteen — the rest
  * keep their place in `TOOLS_MENU` below, and these are the ones you
  * go back to while working rather than configure once. */
-/** How often the header asks what is waiting.
- *
- * Two minutes. Comments are written by people in other windows on
- * other machines, so this is the only thing that brings the news
- * over — but nobody is waiting on the badge, and a tighter loop
- * would be a round trip a minute for something read once an hour. */
-const NOTIFY_POLL = 120_000;
-
 const SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
   { kind: "plugins", label: "Plugins" },
   { kind: "mcp", label: "MCPs" },
@@ -637,19 +629,24 @@ export default function App() {
   // looking for it. A queue you have to open to discover is empty is
   // a queue you stop opening.
   //
-  // Pulled, not pushed: there is no live channel for comments, and
-  // an indicator that only refreshed when you opened it would tell
-  // you nothing you did not already know. The sync is the server
-  // call; the count is a read of the local graph, which is where the
-  // review screen reads from too.
+  // Pushed, not polled. The backend follows the server's comment
+  // channel for as long as it runs and says so when something
+  // lands; this asks once, to start that and to learn where the
+  // count stands, and after that the news arrives on its own.
+  //
+  // A timer was the first version and it was wrong in both
+  // directions at once: two minutes is far too long to learn that
+  // somebody is waiting on you, and far too often to ask when
+  // nobody is.
   const [waiting, setWaiting] = useState(0);
   const [notifyNonce, setNotifyNonce] = useState(0);
   /** Bumped whenever a page is asked for from outside it — the
    *  sidebar, a link. A panel showing one of its own sub-views takes
    *  it as "back to your top level". */
   const [pageHome, setPageHome] = useState(0);
-  /** A document a notification asked to open, and when it asked. */
-  const [openArtifact, setOpenArtifact] = useState<{ id: string; at: number } | null>(null);
+  /** A document a notification asked to open, named by its slug —
+   *  the same door a shared link comes through. */
+  const [arrivingSlug, setArrivingSlug] = useState("");
 
   useEffect(() => {
     if (!status?.cloud_connected) {
@@ -657,24 +654,32 @@ export default function App() {
       return;
     }
     let dropped = false;
-    const count = async () => {
-      try {
-        await client.rpc("artifact_sync_comments");
-        const rows = await client.rpc<unknown[]>("artifact_comments", { open_only: true });
-        if (!dropped) setWaiting(Array.isArray(rows) ? rows.length : 0);
-      } catch {
+    void client
+      .rpc<{ waiting?: number }>("artifact_watch_comments")
+      .then((answer) => {
+        if (!dropped) setWaiting(answer?.waiting ?? 0);
+      })
+      .catch(() => {
         // Offline, or no artifacts. Neither is news worth a badge:
         // the count stays where it was rather than dropping to zero
         // and reading as "nothing is waiting".
-      }
-    };
-    void count();
-    const timer = window.setInterval(count, NOTIFY_POLL);
+      });
     return () => {
       dropped = true;
-      window.clearInterval(timer);
     };
   }, [client, status?.cloud_connected, notifyNonce]);
+
+  // And the news itself, whenever the server has some.
+  useEffect(() => {
+    return client.onEvent((message) => {
+      const push = message as unknown as {
+        channel?: string;
+        payload?: { waiting?: number };
+      };
+      if (push.channel !== "artifact_waiting") return;
+      setWaiting(push.payload?.waiting ?? 0);
+    });
+  }, [client]);
   // Live draft from another attached view (mirroring).
   // The directory this session is locked to (tools + shell cwd).
   const [projectDir, setProjectDir] = useState("");
@@ -3292,9 +3297,11 @@ export default function App() {
               <ArtifactPanel
                 client={client}
                 onClose={goChat}
-                openSlug={sharedSlug}
                 goHome={pageHome}
-                openArtifact={openArtifact ?? undefined}
+                /* A link that opened this window, or a notification
+                   pressed in it. Both name a document the same way —
+                   by the server's slug — so they come in one door. */
+                openSlug={arrivingSlug || sharedSlug}
                 /* Whose caret to draw in a shared draft. The same
                    name and colour the header shows, so the person
                    typing is recognisable as themselves. */
@@ -3552,9 +3559,12 @@ export default function App() {
       {panel.kind === "notifications" && (
         <NotificationsPanel
           client={client}
-          onOpenArtifact={(id) => {
+          onOpenSlug={(slug) => {
+            // By slug, which is what the server names a document in a
+            // notification — the local id is this machine's word for
+            // it and the server has never heard of it.
             goPage({ kind: "artifacts", label: "Artifacts" });
-            setOpenArtifact({ id, at: Date.now() });
+            setArrivingSlug(slug);
           }}
           onClose={() => {
             setPanel({ kind: "none" });

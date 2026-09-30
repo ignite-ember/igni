@@ -71,6 +71,15 @@ COMMENT_PAGE: int = 500
 RECONNECT_MIN_SECONDS: float = 1.0
 RECONNECT_MAX_SECONDS: float = 120.0
 
+#: Failures that mean "the connection you were handed was already
+#: dead", as opposed to "the server said no" or "the server is down".
+#:
+#: All three arrive when a pooled keep-alive outlives the server on
+#: the other end of it, and which one you get depends on how far the
+#: write got before the closed socket was noticed. None of them means
+#: the request was processed, which is what makes retrying it safe.
+STALE_CONNECTION = (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError)
+
 
 @dataclass(frozen=True)
 class RemoteVersion:
@@ -151,7 +160,7 @@ class CollaborationSync:
     def is_configured(self) -> bool:
         return bool(self._server_url and self._access_token)
 
-    # Read-only views for :class:`CommentStream`, which opens its own
+    # Read-only views for :class:`WaitingStream`, which opens its own
     # long-lived connection rather than borrowing ``_request`` — a
     # stream and a request want opposite timeouts.
     @property
@@ -169,6 +178,22 @@ class CollaborationSync:
     # ── Transport ────────────────────────────────────────────────────
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """One call to the server, with one retry for a dead keep-alive.
+
+        The retry is not a general one. It covers exactly the case
+        where the connection was already open and the server has since
+        gone — a deployment, a container restart, an idle socket the
+        other end reaped. The pool hands out a connection that looks
+        usable, the write succeeds into a closed socket, and the read
+        fails. Nothing was processed, so sending it again is safe for
+        any method; and without this, every screen in the app stays
+        broken after a server restart until the backend is restarted
+        too, which is not something a reader can be asked to do.
+
+        A connection *refused* is not retried: the server is down
+        rather than stale, and a second attempt a microsecond later
+        answers the same thing more slowly.
+        """
         if not self.is_configured:
             raise RuntimeError("Collaboration needs a signed-in igni account — run `igni login`.")
         client = self._client
@@ -176,12 +201,19 @@ class CollaborationSync:
         if client is None:
             client = httpx.AsyncClient(timeout=SYNC_TIMEOUT_SECONDS)
         try:
-            return await client.request(
-                method,
-                f"{self._server_url}{path}",
-                headers={"Authorization": f"Bearer {self._access_token}"},
-                **kwargs,
-            )
+            for attempt in (1, 2):
+                try:
+                    return await client.request(
+                        method,
+                        f"{self._server_url}{path}",
+                        headers={"Authorization": f"Bearer {self._access_token}"},
+                        **kwargs,
+                    )
+                except STALE_CONNECTION as exc:
+                    if attempt == 2:
+                        raise
+                    logger.debug("retrying %s %s after a dead connection: %r", method, path, exc)
+            raise AssertionError("unreachable")  # pragma: no cover
         finally:
             if owns:
                 await client.aclose()
@@ -682,6 +714,31 @@ class CollaborationSync:
         response.raise_for_status()
         return int(response.json().get("n") or 0)
 
+    # ── What is waiting on you ───────────────────────────────────────
+    #
+    # Read from the server rather than projected into the graph, and
+    # deliberately unlike comments. A comment is part of a document's
+    # history and belongs in the store beside it; a notification is a
+    # message to one person about a moment, true when it was written
+    # and never again — there is nothing for a local copy to be
+    # consistent with, and a queue that answered from a stale mirror
+    # would say somebody is waiting after they have been dealt with.
+
+    async def waiting(self, *, unread_only: bool = True) -> dict[str, Any]:
+        """Everything waiting on this account, newest first."""
+        response = await self._request(
+            "GET", "/v1/notifications", params={"unread_only": unread_only}
+        )
+        response.raise_for_status()
+        return dict(response.json())
+
+    async def mark_seen(self, *, notification_id: str = "") -> dict[str, Any]:
+        """Say one has been read, or all of them."""
+        params = {"notification_id": notification_id} if notification_id else None
+        response = await self._request("POST", "/v1/notifications/read", params=params)
+        response.raise_for_status()
+        return dict(response.json())
+
     async def colleagues(self, *, query: str = "") -> list[dict[str, Any]]:
         """Who this account could share something with.
 
@@ -1063,8 +1120,14 @@ def _to_comment(row: dict[str, Any]) -> Comment:
     )
 
 
-class CommentStream:
-    """Follow the server's live channel, pulling when it says to.
+class WaitingStream:
+    """Follow the server's live channel, reading when it says to.
+
+    Renamed from ``CommentStream`` with the thing it follows: the
+    channel now carries every kind of event that concerns somebody —
+    a comment, a reply, being named, being asked for access, being
+    given a document — and a class called after one of them would
+    have read as though the others were an afterthought.
 
     **The stream is a latency optimisation, not a delivery
     mechanism.** It carries a cursor and never a comment, and the only
@@ -1150,7 +1213,7 @@ class CommentStream:
             )
         try:
             async with client.stream(
-                "GET", f"{self._sync.server_url}/v1/artifacts/comments/stream", headers=headers
+                "GET", f"{self._sync.server_url}/v1/notifications/stream", headers=headers
             ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
@@ -1169,7 +1232,17 @@ class CommentStream:
                     projected, cursor = await self._sync.pull_comments(cursor=self._cursor)
                     if cursor:
                         self._cursor = cursor
-                    if projected and on_change is not None:
+                    # Every nudge, not only the ones that brought
+                    # comments with them. The guard used to be ``if
+                    # projected``, from when this followed the comment
+                    # channel and a nudge that projected nothing had
+                    # genuinely nothing to say. The channel now carries
+                    # somebody asking for access, somebody being given
+                    # a document, somebody publishing a version — none
+                    # of which are comments, all of which projected
+                    # zero and were therefore silently swallowed one
+                    # line before reaching the screen.
+                    if on_change is not None:
                         result = on_change(projected)
                         if inspect.isawaitable(result):
                             await result
