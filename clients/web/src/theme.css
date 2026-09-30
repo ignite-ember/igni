@@ -11184,15 +11184,26 @@ button {
    facts about the same person, and two rows make the reader match
    names across them to work that out. */
 
-/* The byline and the faces on one line: "maya@acme.test · v7 · 2h
-   ago" and then who it is with. Wraps rather than squeezing, because
-   a long author address and eight faces will not share a line on a
-   narrow window and a row of faces cut in half says nothing. */
+/* The byline, the faces, and — at the far end — the other ways of
+   looking at this document. "maya@acme.test · v7 · 2h ago", who it is
+   with, and then Compare versions.
+
+   Wraps rather than squeezing, because a long author address, eight
+   faces and two toggles will not share a line on a narrow window and
+   a row of faces cut in half says nothing. */
 .kb-doc-meta {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px 12px;
+}
+
+/* Against the opposite margin. The facts about the document read
+   from the left; these are not more of that sentence, and setting
+   them at the other end says so without needing a rule or a
+   heading. */
+.kb-doc-meta-views {
+  margin-left: auto;
 }
 
 .doc-people {

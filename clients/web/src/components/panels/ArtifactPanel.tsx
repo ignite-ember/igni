@@ -672,8 +672,59 @@ export function ArtifactPanel({
      than in the page header, next to the name they act on — the
      header was showing that name a second time, four lines above the
      one the document itself carries. */
+  /** The ways of *looking* at this document, which sit on the line
+   *  under its title rather than beside it.
+   *
+   *  Beside the title they shared a row with Edit and Share, and the
+   *  five of them read as one undifferentiated bar — a toggle you
+   *  turn on next to a button that writes a version. Below, at the
+   *  other end of the line that already says who wrote it and when,
+   *  they read as what they are: other ways to look at the thing
+   *  that line describes. */
+  let docViews: React.ReactNode = null;
   let docActions: React.ReactNode = null;
   if (view === "detail" && selected) {
+    docViews = confirmingRemove ? null : (
+          <div className="doc-views" role="group" aria-label="How to view this document">
+            {versionCount > 1 && (
+              <button
+                type="button"
+                className={comparing ? "doc-view is-on" : "doc-view"}
+                aria-pressed={comparing}
+                title={
+                  comparing
+                    ? "Back to reading the document"
+                    : "See what changed between two versions"
+                }
+                onClick={() => {
+                  // One at a time. Both replace the document body, and
+                  // entering one while the other is on would leave a
+                  // stale toggle lit beside the view that won.
+                  setTracing(false);
+                  setComparing((on) => !on);
+                }}
+              >
+                Compare versions
+              </button>
+            )}
+            <button
+              type="button"
+              className={tracing ? "doc-view is-on" : "doc-view"}
+              aria-pressed={tracing}
+              title={
+                tracing
+                  ? "Back to reading the document"
+                  : "Show which passage came from which part of its sources"
+              }
+              onClick={() => {
+                setComparing(false);
+                setTracing((on) => !on);
+              }}
+            >
+              Where this came from
+            </button>
+          </div>
+    );
     docActions = (
       <div className="kb-head-actions">
         {confirmingRemove ? (
@@ -743,45 +794,6 @@ export function ArtifactPanel({
              document. Out here they stay lit for as long as they are
              on, which is the whole job. */
           <>
-          <div className="doc-views" role="group" aria-label="How to view this document">
-            {versionCount > 1 && (
-              <button
-                type="button"
-                className={comparing ? "doc-view is-on" : "doc-view"}
-                aria-pressed={comparing}
-                title={
-                  comparing
-                    ? "Back to reading the document"
-                    : "See what changed between two versions"
-                }
-                onClick={() => {
-                  // One at a time. Both replace the document body, and
-                  // entering one while the other is on would leave a
-                  // stale toggle lit beside the view that won.
-                  setTracing(false);
-                  setComparing((on) => !on);
-                }}
-              >
-                Compare versions
-              </button>
-            )}
-            <button
-              type="button"
-              className={tracing ? "doc-view is-on" : "doc-view"}
-              aria-pressed={tracing}
-              title={
-                tracing
-                  ? "Back to reading the document"
-                  : "Show which passage came from which part of its sources"
-              }
-              onClick={() => {
-                setComparing(false);
-                setTracing((on) => !on);
-              }}
-            >
-              Where this came from
-            </button>
-          </div>
 
           {/* The two things you do to a document, said out loud. They
               were in the menu with Export and Remove, which read
@@ -1057,6 +1069,7 @@ export function ArtifactPanel({
           asideView={asideView}
           onAsideViewChange={chooseAsideView}
           actions={docActions}
+          views={docViews}
           onReviewDrift={(source) => {
             setReviewing(source);
             setView("drift");
@@ -1247,6 +1260,7 @@ function DocumentDetail({
   asideView = "both",
   onAsideViewChange,
   actions,
+  views,
   onOpenArtifact,
   onReviewDrift,
   onCompareClosed,
@@ -1275,6 +1289,9 @@ function DocumentDetail({
   onReviewDrift?: (source: StaleSource) => void;
   /** What you can do to this document, shown beside its name. */
   actions?: React.ReactNode;
+  /** Other ways to look at it, shown on the line below — at the far
+   *  end of the one that already says who wrote it and when. */
+  views?: React.ReactNode;
   onCompareClosed: () => void;
   /** Open the sharing controls, anchored to what was pressed, and
    *  carrying how the document is shared today — the detail view has
@@ -1661,6 +1678,12 @@ function DocumentDetail({
                   : undefined
               }
             />
+            {/* Pushed to the far end of the line. The facts about
+                this document read from the left; the other ways of
+                looking at it are not more of the same sentence, and
+                setting them against the opposite margin says so
+                without a rule or a heading. */}
+            {views && <div className="kb-doc-meta-views">{views}</div>}
           </div>
         )}
         {doc.source && doc.source !== doc.name && (
