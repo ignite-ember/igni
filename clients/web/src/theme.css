@@ -8512,6 +8512,78 @@ button {
   font-size: 11px;
 }
 
+/* Somebody else's cursor, in the text.
+   The line is theirs for as long as they are in that sentence; the
+   label is what turns "the paragraph changed" into "Sam is
+   rewriting this". Both take their colour from the person, set
+   inline by the extension — one person, one colour, everywhere. */
+.collaboration-carets__caret {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 1px solid;
+  border-right: 1px solid;
+  pointer-events: none;
+  word-break: normal;
+}
+
+/* Always shown, and quiet enough to live there.
+
+   It used to fade a couple of seconds after appearing, on the theory
+   that a name over the text is clutter. It is — but the decoration
+   is not rebuilt on every keystroke, so the fade ran once and the
+   label never came back: somebody could type a paragraph under a
+   caret nobody could put a name to, which is the one question this
+   exists to answer. */
+/* Always shown, and quiet enough to live there.
+
+   It faded a couple of seconds after appearing, on the theory that a
+   name over the text is clutter. It is — but the decoration is not
+   rebuilt on every keystroke, so the fade ran once and the label
+   never came back: somebody could type a paragraph under a caret
+   nobody could put a name to, which is the one question this exists
+   to answer. */
+.collaboration-carets__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  position: absolute;
+  top: -1.4em;
+  left: -1px;
+  padding: 1px 6px;
+  border-radius: 4px 4px 4px 0;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  color: #fff;
+  user-select: none;
+  /* Above the text it sits over, which is the line before theirs. */
+  z-index: 3;
+  /* Enough to read, little enough to read through. */
+  opacity: 0.82;
+  transition: opacity 120ms ease;
+}
+
+.collaboration-carets__caret:hover > .collaboration-carets__label {
+  opacity: 1;
+}
+
+/* Their initials, in the label. The same two letters the header and
+   the avatars row use, so one person reads as one person wherever
+   they turn up. */
+.collaboration-carets__face {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  font-size: 7px;
+  letter-spacing: 0.02em;
+  background: rgba(255, 255, 255, 0.28);
+}
+
 /* The draft, above the versions. Dashed because it is the only row
    in this list that is not yet a fact about the document — every
    other one was published and cannot change.
@@ -13023,6 +13095,11 @@ button {
 .doc-editor-body .ProseMirror {
   outline: none;
   min-height: 12rem;
+  /* Room for a caret label on the first line. It is drawn above the
+     text it points at, and without this the one place somebody is
+     most likely to be typing — the top — put their name behind the
+     toolbar. */
+  padding-top: 14px;
 }
 
 .doc-editor-error {

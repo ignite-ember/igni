@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -11,6 +11,7 @@ import { ArtifactCompare } from "./ArtifactCompare";
 import { MenuIcon } from "../MenuIcon";
 import { DocumentPeople } from "./DocumentPeople";
 import { LockedDocument, type LockedState } from "./LockedDocument";
+import { hexOf } from "../Monogram";
 import { useDocumentRoom } from "./useDocumentRoom";
 import { useSharedDraft } from "./useSharedDraft";
 import { ArtifactStaleReview } from "./ArtifactStaleReview";
@@ -233,9 +234,14 @@ export function ArtifactPanel({
   client,
   onClose,
   openSlug = "",
+  account = "",
 }: {
   client: IgniClient;
   onClose: () => void;
+  /** Whose caret to draw in a shared draft, and what to label it.
+   *  The header's name, so the person typing is recognisable as the
+   *  same person everywhere in the app. */
+  account?: string;
   /** A document to open on arrival, named by the slug in a shared
    *  link rather than by a local id — the whole point is that the
    *  reader has never seen this document, so their own graph has no
@@ -1204,6 +1210,7 @@ export function ArtifactPanel({
           onSharingChanged={rememberSharing}
           onVersionCount={setVersionCount}
           onArchivedChange={setOpenArchived}
+          account={account}
           editing={editing}
           onEditingChange={setEditing}
           editHandle={editRef}
@@ -1389,6 +1396,7 @@ function DocumentDetail({
   onCompareClosed,
   onVersionCount,
   onArchivedChange,
+  account = "",
   editing = false,
   onEditingChange,
   editHandle,
@@ -1434,6 +1442,8 @@ function DocumentDetail({
   /** Editing rather than reading. Owned by the panel, because the
    *  control that turns it on is in the header beside the other
    *  things you can do to a document. */
+  /** Whose caret to draw in the shared draft. */
+  account?: string;
   editing?: boolean;
   onEditingChange?: (editing: boolean) => void;
   /** Where to hang the editor's controls, so the header can press
@@ -1473,10 +1483,18 @@ function DocumentDetail({
   // the same text rather than two copies of it that one of them is
   // about to lose.
   const [draft, setDraft] = useState<ArtifactDraftView | null>(null);
-  /** Whether the draft has been asked for yet. The editor must not
-   *  open on the published text and then have the draft arrive
-   *  underneath it — that reads as somebody else's edit landing on
-   *  yours, and lands the cursor somewhere else. */
+  /** Whether we have an answer about the draft for *this document*.
+   *
+   *  The editor must not open on the published text and then have
+   *  the draft arrive underneath it — that reads as somebody else's
+   *  edit landing on yours, and puts the cursor somewhere you did
+   *  not leave it.
+   *
+   *  Kept across opening and closing the editor, and reset only when
+   *  the document changes. It used to reset on leaving, so pressing
+   *  Edit blocked on fetching a draft this component already had in
+   *  hand — about a second of "Opening the draft…" for an answer
+   *  that was already on screen in the version list. */
   const [draftAsked, setDraftAsked] = useState(false);
   /** The latest markdown, and whether it has reached the server.
    *  Refs, not state: they are read by callbacks the header holds,
@@ -1506,6 +1524,18 @@ function DocumentDetail({
   // somebody else's half-finished sentence under the version they
   // are reading, and holding the changes for one would mean holding
   // a whole second document per open panel.
+  // Who the other windows see typing. The same name the header
+  // shows and a colour derived from it, so one person is one colour
+  // on every machine and across restarts — a caret that changed
+  // colour per session would be decoration rather than recognition.
+  const me = useMemo(
+    // Hex, not ``hsl()``. The caret extension validates the colour
+    // against ``/^#[0-9a-fA-F]{6}$/`` and renders anything else
+    // transparent — which is a cursor that is present, correctly
+    // labelled, and invisible.
+    () => (account ? { name: account, colour: hexOf(account) } : null),
+    [account],
+  );
   const shared = useSharedDraft(client, id, editing);
 
   // Tell the panel above how this document is shared, so a control
@@ -1575,14 +1605,23 @@ function DocumentDetail({
   // which is on the server, but this component's copy of it. Keeping
   // it would mean re-entering the editor showed the words as unsaved
   // a second time and offered to write them again.
+  //
+  // ``draftAsked`` is deliberately not among them: it is about this
+  // document, not about this editing session, and clearing it made
+  // the next Edit wait on a round trip for an answer already held.
   useEffect(() => {
     if (editing) return;
-    setDraftAsked(false);
     setEditNote("");
     setEditDirty(false);
     unsaved.current = false;
     typed.current = "";
   }, [editing]);
+
+  // A different document, though, is a different draft.
+  useEffect(() => {
+    setDraftAsked(false);
+    setDraft(null);
+  }, [id]);
 
   /** Write what has been typed, if it has not been written already. */
   const keepDraft = useCallback(async () => {
@@ -2134,6 +2173,8 @@ function DocumentDetail({
               <DocumentEditor
                 content={draft?.content ?? doc.content}
                 shared={shared.doc}
+                awareness={shared.awareness}
+                me={me}
                 frozen={doc.archived}
                 onChange={edited}
               />

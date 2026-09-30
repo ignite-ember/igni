@@ -750,6 +750,12 @@ class ArtifactRoom(BaseModel):
 
     ok: bool = False
     shared: bool = False
+    #: Everything typed into this document so far — opaque changes,
+    #: oldest first. Answered here rather than waited for: the server
+    #: sends its log once, when the socket connects, and a window
+    #: that opens the editor later would be listening for a frame
+    #: that had already gone past.
+    updates: list[str] = Field(default_factory=list)
     error: str = ""
 
 

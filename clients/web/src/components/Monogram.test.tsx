@@ -12,7 +12,45 @@
  * "maya" and "acme".
  */
 import { describe, expect, it } from "vitest";
-import { hueOf, initialsOf } from "./Monogram";
+import { hexOf, hueOf, initialsOf } from "./Monogram";
+
+describe("hexOf", () => {
+  it("answers a six-digit hex, which is all the caret accepts", () => {
+    // The collaborative caret validates against this exact shape and
+    // renders anything else transparent — so a colour that is merely
+    // valid CSS is not enough.
+    expect(hexOf("maya@acme.test")).toMatch(/^#[0-9a-f]{6}$/);
+  });
+
+  it("gives the same person the same colour every time", () => {
+    expect(hexOf("sam@acme.test")).toBe(hexOf("sam@acme.test"));
+  });
+
+  it("gives different people different colours", () => {
+    expect(hexOf("maya@acme.test")).not.toBe(hexOf("sam@acme.test"));
+  });
+
+  it("agrees with the monogram's hue, so a caret matches its initials", () => {
+    const hex = hexOf("maya@acme.test").slice(1);
+    const [r, g, b] = [0, 2, 4].map((at) => parseInt(hex.slice(at, at + 2), 16) / 255);
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    let hue = 0;
+    if (max !== min) {
+      const d = max - min;
+      if (max === r) hue = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+      else if (max === g) hue = ((b - r) / d + 2) * 60;
+      else hue = ((r - g) / d + 4) * 60;
+    }
+    expect(Math.round(hue)).toBeCloseTo(hueOf("maya@acme.test"), -1);
+  });
+
+  it("stays in range for every hue", () => {
+    for (const name of ["a", "zz", "person@example.test", "Ada Byron", ""]) {
+      expect(hexOf(name)).toMatch(/^#[0-9a-f]{6}$/);
+    }
+  });
+});
 
 describe("initialsOf", () => {
   it("takes the first and last of a full name", () => {

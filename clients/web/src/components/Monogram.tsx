@@ -36,6 +36,40 @@ export function hueOf(name: string): number {
   return hash;
 }
 
+/**
+ * The same colour, written as ``#rrggbb``.
+ *
+ * For the places that cannot take ``hsl()``. The collaborative
+ * caret is one: it validates against ``/^#[0-9a-fA-F]{6}$/`` and
+ * quietly renders anything else transparent — a cursor that is
+ * there, labelled with the right name, and invisible.
+ *
+ * Derived from the same hue as the monogram, so somebody's caret and
+ * their initials are the same colour.
+ */
+export function hexOf(name: string, saturation = 0.62, lightness = 0.52): string {
+  const hue = hueOf(name) / 360;
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const second = chroma * (1 - Math.abs(((hue * 6) % 2) - 1));
+  const base = lightness - chroma / 2;
+  const sixth = Math.floor(hue * 6) % 6;
+  const [r, g, b] = (
+    [
+      [chroma, second, 0],
+      [second, chroma, 0],
+      [0, chroma, second],
+      [0, second, chroma],
+      [second, 0, chroma],
+      [chroma, 0, second],
+    ] as const
+  )[sixth];
+  const byte = (value: number) =>
+    Math.round((value + base) * 255)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${byte(r)}${byte(g)}${byte(b)}`;
+}
+
 export function Monogram({ name, size = 18 }: { name: string; size?: number }) {
   const hue = hueOf(name);
   return (

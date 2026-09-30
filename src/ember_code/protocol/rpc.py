@@ -286,6 +286,7 @@ class RpcMethod(StrEnum):
     ARTIFACT_COLLEAGUES = "artifact_colleagues"
     ARTIFACT_DRAFT = "artifact_draft"
     ARTIFACT_ROOM_SEND = "artifact_room_send"
+    ARTIFACT_ROOM_STATE = "artifact_room_state"
     ARTIFACT_SAVE_DRAFT = "artifact_save_draft"
     ARTIFACT_PUBLISH_DRAFT = "artifact_publish_draft"
     ARTIFACT_LOCKED = "artifact_locked"

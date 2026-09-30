@@ -1089,13 +1089,17 @@ class BackendServer:
             artifact_id=artifact_id, request_id=request_id, granted=granted
         )
 
-    async def artifact_watch_room(self, *, artifact_id: str) -> ArtifactRoom:
+    async def artifact_watch_room(self, *, artifact_id: str, watcher: str = "") -> ArtifactRoom:
         """See :meth:`ArtifactController.watch_room`."""
-        return await self.artifacts.watch_room(artifact_id=artifact_id)
+        return await self.artifacts.watch_room(artifact_id=artifact_id, watcher=watcher)
 
-    async def artifact_leave_room(self) -> None:
+    async def artifact_room_state(self, *, artifact_id: str) -> ArtifactRoom:
+        """See :meth:`ArtifactController.room_state`."""
+        return await self.artifacts.room_state(artifact_id=artifact_id)
+
+    async def artifact_leave_room(self, *, artifact_id: str = "", watcher: str = "") -> None:
         """See :meth:`ArtifactController.leave_room`."""
-        await self.artifacts.leave_room()
+        await self.artifacts.leave_room(artifact_id=artifact_id, watcher=watcher)
 
     async def artifact_sync_comments(self) -> int:
         """See :meth:`ArtifactController.sync_comments`."""

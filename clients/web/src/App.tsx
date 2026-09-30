@@ -3167,7 +3167,15 @@ export default function App() {
                 thing they were reading. The run still reaches this
                 chat — it is one session. */}
             {page.kind === "artifacts" && (
-              <ArtifactPanel client={client} onClose={goChat} openSlug={sharedSlug} />
+              <ArtifactPanel
+                client={client}
+                onClose={goChat}
+                openSlug={sharedSlug}
+                /* Whose caret to draw in a shared draft. The same
+                   name and colour the header shows, so the person
+                   typing is recognisable as themselves. */
+                account={accountName}
+              />
             )}
             {page.kind === "codeindex" && (
               <CodeIndexPanel client={client} onClose={goChat} />

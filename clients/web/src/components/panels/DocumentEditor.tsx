@@ -31,6 +31,7 @@
  * says so before it is pressed.
  */
 import Collaboration from "@tiptap/extension-collaboration";
+import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import DragHandle from "@tiptap/extension-drag-handle-react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
@@ -39,6 +40,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Editor } from "@tiptap/core";
 
 import { MenuIcon } from "../MenuIcon";
+import { initialsOf } from "../Monogram";
 import { Tooltip } from "../Tooltip";
 import { DOCUMENT_EXTENSIONS, markdownOf, preserveWrapping } from "./documentMarkdown";
 import { SELECTION_TOOLS, TOOL_GROUPS, type EditorTool } from "./editorTools";
@@ -46,6 +48,7 @@ import { SlashMenu } from "./SlashMenu";
 import { slashCommands, type SlashState } from "./slashCommands";
 import { DRAFT_FIELD, seedOnce } from "./useSharedDraft";
 
+import type { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
 
 export interface DocumentEditorProps {
@@ -64,6 +67,17 @@ export interface DocumentEditorProps {
    *  ordinary editor on one machine, which is what a document nobody
    *  has shared gets. */
   shared?: Y.Doc | null;
+  /** Where everybody's caret is. Drawn in the text with their name
+   *  beside it, which is the difference between "the paragraph
+   *  changed" and "Sam is rewriting this sentence". */
+  awareness?: Awareness | null;
+  /** Whose caret this one is.
+   *
+   *  Given to the extension rather than written into awareness from
+   *  outside: the extension puts its own default there when it
+   *  starts — a random "User: 660970056" — and whichever of the two
+   *  ran last was the name everybody else saw. */
+  me?: { name: string; colour: string } | null;
   /** Frozen: archived documents do not take a new version. */
   frozen?: boolean;
   /** What is in the box, whenever it changes. The header holds the
@@ -71,6 +85,38 @@ export interface DocumentEditorProps {
    *  is written from here rather than from a Save button that no
    *  longer exists. */
   onChange?: (markdown: string, dirty: boolean) => void;
+}
+
+/**
+ * Somebody else's cursor, as an element.
+ *
+ * The same two letters and the same colour the rest of the app uses
+ * for that person — the monogram in the header, the face on the
+ * avatars row, this. Recognising who is typing should not be a
+ * separate act of reading.
+ *
+ * Built by hand rather than rendered by React: this goes into a
+ * ProseMirror decoration, which owns its own DOM and would fight a
+ * React root mounted inside it.
+ */
+function caretFor(user: Record<string, unknown>): HTMLElement {
+  const name = String(user.name || "");
+  const colour = String(user.color || "");
+  const caret = document.createElement("span");
+  caret.className = "collaboration-carets__caret";
+  caret.style.borderColor = colour;
+
+  const label = document.createElement("span");
+  label.className = "collaboration-carets__label";
+  label.style.backgroundColor = colour;
+
+  const face = document.createElement("span");
+  face.className = "collaboration-carets__face";
+  face.textContent = initialsOf(name);
+  label.append(face, document.createTextNode(name));
+
+  caret.appendChild(label);
+  return caret;
 }
 
 /** One toolbar button, wherever it is drawn. */
@@ -106,6 +152,8 @@ function ToolButton({ tool, editor }: { tool: EditorTool; editor: Editor }) {
 export function DocumentEditor({
   content,
   shared = null,
+  awareness = null,
+  me = null,
   frozen = false,
   onChange,
 }: DocumentEditorProps) {
@@ -127,8 +175,20 @@ export function DocumentEditor({
       // undo has to come from it rather than from the starter kit —
       // two histories over one document undo each other's work.
       ...(shared ? [Collaboration.configure({ document: shared, field: DRAFT_FIELD })] : []),
+      // Only with both. The caret draws from awareness and positions
+      // against the shared document; one without the other is an
+      // extension with nothing to point at.
+      ...(shared && awareness
+        ? [
+            CollaborationCaret.configure({
+              provider: { awareness },
+              user: me ? { name: me.name, color: me.colour } : undefined,
+              render: caretFor,
+            }),
+          ]
+        : []),
     ],
-    [shared],
+    [shared, awareness, me?.name, me?.colour],
   );
 
   const editor = useEditor(
@@ -162,7 +222,7 @@ export function DocumentEditor({
     // Rebuilt when the shared document arrives, and only then. The
     // extension list is what binds the editor to it, and an editor
     // built before it existed is bound to nothing.
-    [shared],
+    [shared, awareness],
   );
 
   // The first words, when there are none.
@@ -203,6 +263,14 @@ export function DocumentEditor({
   useEffect(() => {
     editor?.setEditable(!frozen);
   }, [editor, frozen]);
+
+  // A name that arrives after the editor was built — the account
+  // resolving a moment late — updates in place. Rebuilding the
+  // editor over it would throw away the document and the cursor.
+  useEffect(() => {
+    if (!editor || !me || !awareness) return;
+    editor.commands.updateUser?.({ name: me.name, color: me.colour });
+  }, [editor, awareness, me?.name, me?.colour]);
 
   if (!editor) return null;
 

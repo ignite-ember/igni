@@ -142,6 +142,10 @@ class CollaborationSync:
         #: interval and the expiry it guards against cannot drift
         #: apart across a deployment.
         self._beat_every: float = 15.0
+        #: Held while the shared-document list is being fetched, so
+        #: the questions asked in parallel on opening a document
+        #: share one round trip instead of taking one each.
+        self._listing = asyncio.Lock()
 
     @property
     def is_configured(self) -> bool:
@@ -900,17 +904,45 @@ class CollaborationSync:
         Empty when this account has not published the document. That
         is a state, not a failure: it is how the caller knows there is
         no shared document to write to yet.
+
+        **One listing at a time.** Opening a document asks three
+        separate questions at once — is it locked, who is it shared
+        with, what is in its draft — and every one of them starts
+        here. On a cold cache each was fetching the whole list of
+        shared documents, so the answer to "can I edit this" waited
+        on three identical round trips queued behind each other.
+        They share one now, which is most of the second it used to
+        take to open an editor.
         """
         if artifact_id in self._slugs:
             return self._slugs[artifact_id]
-        response = await self._request("GET", "/v1/artifacts/shared")
-        response.raise_for_status()
-        rows = response.json().get("items") or []
-        for row in rows:
-            known = str(row.get("artifact_id") or "")
-            if known:
-                self._slugs[known] = str(row.get("slug") or "")
+        async with self._listing:
+            # Checked again inside the lock: whoever held it was
+            # almost certainly fetching the very list this needed.
+            if artifact_id in self._slugs:
+                return self._slugs[artifact_id]
+            response = await self._request("GET", "/v1/artifacts/shared")
+            response.raise_for_status()
+            rows = response.json().get("items") or []
+            for row in rows:
+                known = str(row.get("artifact_id") or "")
+                if known:
+                    self._slugs[known] = str(row.get("slug") or "")
+            # Remembered as "not shared" so a document nobody has
+            # published does not re-list on every question asked
+            # about it. ``forget_slugs`` is what makes sharing one
+            # visible.
+            self._slugs.setdefault(artifact_id, "")
         return self._slugs.get(artifact_id, "")
+
+    def forget_slugs(self) -> None:
+        """Ask the server again next time.
+
+        Called after publishing a document for the first time: until
+        then this cache holds the true answer that it had no shared
+        copy, and that answer has just stopped being true.
+        """
+        self._slugs.clear()
 
     async def comment(
         self,

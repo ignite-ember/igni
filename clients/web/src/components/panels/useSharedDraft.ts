@@ -36,10 +36,19 @@
  * seed differently and the trick above would produce two documents
  * instead of one.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from "y-protocols/awareness";
 import * as Y from "yjs";
 
 import type { IgniClient } from "../../protocol/client";
+
+/** How often a window re-announces where its caret is.
+ *
+ * Only a backstop — a caret is sent the moment it moves, and again
+ * whenever a new window turns up. This covers the cases neither can:
+ * a dropped frame, or a room socket that reconnected while nobody
+ * was typing. Slow, because a cursor nobody has moved is not news. */
+const CARET_HEARTBEAT = 15_000;
 
 /** The id every seeding transaction is written under. See above. */
 const SEED_CLIENT_ID = 1;
@@ -93,6 +102,8 @@ export function isEmpty(doc: Y.Doc): boolean {
 export interface SharedDraft {
   /** The document the editor binds to, or nothing while it loads. */
   doc: Y.Doc | null;
+  /** Who else is in it and where their cursor is. */
+  awareness: Awareness | null;
   /** True once the room's changes have been applied — before that,
    *  the document is empty and must not be shown as though it were
    *  the draft. */
@@ -116,6 +127,12 @@ export function useSharedDraft(
   // carries its whole history; reusing one across documents would
   // put the last document's sentences in this one.
   const doc = useMemo(() => (active && artifactId ? new Y.Doc() : null), [active, artifactId]);
+  // Where everybody's caret is. Deliberately separate from the
+  // document: a selection is true while somebody is looking at it
+  // and meaningless a moment later, so it is relayed and never
+  // stored — a caret kept in the change log would be replayed to
+  // the next window to open as though it were text.
+  const awareness = useMemo(() => (doc ? new Awareness(doc) : null), [doc]);
   const seeded = useRef(false);
 
   useEffect(() => {
@@ -123,11 +140,25 @@ export function useSharedDraft(
     return () => doc.destroy();
   }, [doc]);
 
+  useEffect(() => {
+    if (!awareness) return;
+    return () => awareness.destroy();
+  }, [awareness]);
+
+  // Who is typing is the editor's to say — it holds the caret
+  // extension, which writes its own default into awareness when it
+  // starts. Setting the name from here as well made the two race,
+  // and whichever ran last was the name everybody else read.
+
   // Everything arriving from the room.
   useEffect(() => {
     if (!doc || !artifactId) return;
     setReady(false);
     seeded.current = false;
+    // Set on the way out, so an answer that arrives after this
+    // document has been closed does not write into a Y.Doc the next
+    // one is already using.
+    let dropped = false;
 
     // Settled means "the room has told us what it has". Whether the
     // document needs seeding is then a question about the document,
@@ -137,6 +168,26 @@ export function useSharedDraft(
       seeded.current = true;
       setReady(true);
     };
+
+    // Everything typed so far, in one answer. The room sends its log
+    // once, when the socket connects — which is when the document
+    // opened, not when the editor did — so a window that waited for
+    // that frame would sit through a timeout and then seed a second
+    // copy of the document instead of joining the one being written.
+    let asked = false;
+    void client
+      .rpc<{ updates?: string[] }>("artifact_room_state", { artifact_id: artifactId })
+      .then((answer) => {
+        if (dropped) return;
+        for (const update of answer?.updates ?? []) {
+          Y.applyUpdate(doc, toBytes(update), "room");
+        }
+        asked = true;
+        settle();
+      })
+      .catch(() => {
+        if (!dropped) settle();
+      });
 
     const off = client.onEvent((message) => {
       const push = message as unknown as DraftPush;
@@ -154,6 +205,15 @@ export function useSharedDraft(
         settle();
       } else if (frame.type === "edit" && frame.update) {
         Y.applyUpdate(doc, toBytes(frame.update), "room");
+      } else if (frame.type === "cursor" && frame.update && awareness) {
+        const before = awareness.getStates().size;
+        applyAwarenessUpdate(awareness, toBytes(frame.update), "room");
+        // Somebody we had not seen. Say who we are, once, so they
+        // can draw our caret: awareness is relayed and never stored,
+        // so a window that joins after the typing started has no way
+        // to ask who is here — and the people already here have no
+        // reason to mention it again until they move.
+        if (awareness.getStates().size > before) announce();
       } else if (frame.type === "snapshot") {
         // The server asking for the whole document, because its list
         // of changes has grown long. It cannot build one itself —
@@ -172,13 +232,16 @@ export function useSharedDraft(
     // this machine's own log — so this only fires when the backend
     // cannot be reached at all, and then it settles empty so the
     // editor opens on the text rather than on nothing.
-    const alone = window.setTimeout(settle, 2000);
+    const alone = window.setTimeout(() => {
+      if (!asked) settle();
+    }, 2000);
 
     return () => {
+      dropped = true;
       off();
       window.clearTimeout(alone);
     };
-  }, [client, doc, artifactId]);
+  }, [client, doc, awareness, artifactId]);
 
   // Everything going the other way.
   useEffect(() => {
@@ -203,7 +266,62 @@ export function useSharedDraft(
     return () => doc.off("update", onUpdate);
   }, [client, doc, artifactId]);
 
-  return { doc, ready, live };
+  /** Say where our caret is, to whoever is listening. */
+  const announce = useCallback(() => {
+    if (!awareness || !artifactId) return;
+    void client
+      .rpc("artifact_room_send", {
+        artifact_id: artifactId,
+        frame: {
+          type: "cursor",
+          update: toBase64(encodeAwarenessUpdate(awareness, [awareness.clientID])),
+        },
+      })
+      .catch(() => {});
+  }, [client, awareness, artifactId]);
+
+  // And the caret, the same way. Sent on every change to anybody's
+  // awareness rather than on a timer: a cursor that lags is worse
+  // than no cursor, because it points at a word the person has
+  // already left.
+  useEffect(() => {
+    if (!awareness || !artifactId) return;
+    const onAware = (
+      { added, updated, removed }: { added: number[]; updated: number[]; removed: number[] },
+      origin: unknown,
+    ) => {
+      if (origin === "room") return;
+      const changed = [...added, ...updated, ...removed];
+      if (!changed.length) return;
+      void client
+        .rpc("artifact_room_send", {
+          artifact_id: artifactId,
+          frame: { type: "cursor", update: toBase64(encodeAwarenessUpdate(awareness, changed)) },
+        })
+        .catch(() => {
+          // A cursor nobody saw. Nothing is lost that matters —
+          // the next keystroke sends another.
+        });
+    };
+    awareness.on("update", onAware);
+    return () => awareness.off("update", onAware);
+  }, [client, awareness, artifactId]);
+
+  // On arrival, and slowly thereafter.
+  //
+  // The arrival is what puts this window's caret on everybody else's
+  // screen before it has typed anything. The heartbeat is the
+  // backstop for the case the arrival cannot cover — a relay that
+  // dropped a frame, or a room socket that reconnected — and it is
+  // deliberately slow, because a caret nobody has moved is not news.
+  useEffect(() => {
+    if (!ready) return;
+    announce();
+    const beat = window.setInterval(announce, CARET_HEARTBEAT);
+    return () => window.clearInterval(beat);
+  }, [ready, announce]);
+
+  return { doc, awareness, ready, live };
 }
 
 /**

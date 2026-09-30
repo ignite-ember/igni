@@ -105,6 +105,10 @@ class ArtifactRpcHandler(RpcHandler):
     def artifact_draft(self, args: dict) -> Any:
         return self._ctx.backend.artifact_draft(artifact_id=args["artifact_id"])
 
+    @rpc(RpcMethod.ARTIFACT_ROOM_STATE)
+    def artifact_room_state(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_room_state(artifact_id=args["artifact_id"])
+
     @rpc(RpcMethod.ARTIFACT_ROOM_SEND)
     def artifact_room_send(self, args: dict) -> Any:
         return self._ctx.backend.artifact_room_send(
@@ -148,11 +152,15 @@ class ArtifactRpcHandler(RpcHandler):
 
     @rpc(RpcMethod.ARTIFACT_WATCH_ROOM)
     def artifact_watch_room(self, args: dict) -> Any:
-        return self._ctx.backend.artifact_watch_room(artifact_id=args["artifact_id"])
+        return self._ctx.backend.artifact_watch_room(
+            artifact_id=args["artifact_id"], watcher=args.get("watcher") or ""
+        )
 
     @rpc(RpcMethod.ARTIFACT_LEAVE_ROOM)
     def artifact_leave_room(self, args: dict) -> Any:
-        return self._ctx.backend.artifact_leave_room()
+        return self._ctx.backend.artifact_leave_room(
+            artifact_id=args.get("artifact_id") or "", watcher=args.get("watcher") or ""
+        )
 
     @rpc(RpcMethod.ARTIFACT_GRANT_VIEW)
     def artifact_grant_view(self, args: dict) -> Any:
