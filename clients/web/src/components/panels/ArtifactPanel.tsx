@@ -155,7 +155,7 @@ interface ArtifactLineageView {
   citations: string[];
 }
 
-type View = "list" | "detail" | "add" | "ask" | "stale" | "comments" | "drift";
+type View = "list" | "detail" | "add" | "ask" | "stale" | "notifications" | "drift";
 type AddMode = "url" | "path" | "text";
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -235,6 +235,7 @@ export function ArtifactPanel({
   onClose,
   openSlug = "",
   account = "",
+  openNotifications = 0,
 }: {
   client: IgniClient;
   onClose: () => void;
@@ -242,6 +243,12 @@ export function ArtifactPanel({
    *  The header's name, so the person typing is recognisable as the
    *  same person everywhere in the app. */
   account?: string;
+  /** Bumped by the app header's bell to show what is waiting.
+   *
+   *  A counter rather than a flag: pressing the bell again while
+   *  already on the page should still mean "show me", and a boolean
+   *  that is already true says nothing the second time. */
+  openNotifications?: number;
   /** A document to open on arrival, named by the slug in a shared
    *  link rather than by a local id — the whole point is that the
    *  reader has never seen this document, so their own graph has no
@@ -343,6 +350,16 @@ export function ArtifactPanel({
          copy failed is worse than the failure. */
     }
   }, [shareUrl]);
+
+  // The bell in the app header, pressed. It opens this panel and
+  // then says which page of it to show, because the header has no
+  // business knowing this panel's views — only that one of them
+  // answers "what is waiting on me".
+  useEffect(() => {
+    if (!openNotifications) return;
+    setView("notifications");
+    setSelected(null);
+  }, [openNotifications]);
 
   /**
    * Bring in the document a link named, and open it.
@@ -638,8 +655,8 @@ export function ArtifactPanel({
           ? "Ask the graph"
           : view === "stale"
             ? "Needs attention"
-            : view === "comments"
-              ? "Comments"
+            : view === "notifications"
+              ? "Notifications"
             : null;
   const title: React.ReactNode = leaf ?? "Artifacts";
   // Two levels deep on the drift review: the document, then the
@@ -712,10 +729,10 @@ export function ArtifactPanel({
             dread rather than to use. */}
         <button
           className="btn btn-sm"
-          title="Comments people left on documents you published"
-          onClick={() => setView("comments")}
+          title="What is waiting on you — comments people left on documents you published"
+          onClick={() => setView("notifications")}
         >
-          Comments
+          Notifications
         </button>
         <button
           className="btn btn-sm"
@@ -1136,7 +1153,7 @@ export function ArtifactPanel({
         </div>
       ) : status === null ? (
         <ArtifactsSkeleton />
-      ) : view === "comments" ? (
+      ) : view === "notifications" ? (
         <ArtifactCommentReview
           client={client}
           onOpenArtifact={(id) => {

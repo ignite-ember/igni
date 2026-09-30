@@ -52,7 +52,8 @@ export type MenuIconName =
   | "resolve"
   | "reopen"
   | "lock"
-  | "unlock";
+  | "unlock"
+  | "bell";
 
 /** The drawing for each name, on a 16×16 grid. */
 const PATHS: Record<MenuIconName, string> = {
@@ -126,6 +127,10 @@ const PATHS: Record<MenuIconName, string> = {
   undo: "M4.2 6.6H10a3.4 3.4 0 0 1 0 6.8H6.6M4.2 6.6l2.6-2.6M4.2 6.6l2.6 2.6",
   redo: "M11.8 6.6H6a3.4 3.4 0 0 0 0 6.8h3.4M11.8 6.6 9.2 4M11.8 6.6 9.2 9.2",
   // A node with two feeding into it: what this was built on.
+  // A bell, drawn at the same weight as the rest: the clapper is a
+  // separate stroke so it reads at 14px, where a single outline
+  // closes up into a blob.
+  bell: "M8 2.2a3.8 3.8 0 0 0-3.8 3.8c0 3-1.1 4-1.1 4h9.8s-1.1-1-1.1-4A3.8 3.8 0 0 0 8 2.2zM9.3 12.2a1.5 1.5 0 0 1-2.6 0",
   lineage: "M3.6 4.2h3.1a2 2 0 0 1 2 2v3.6a2 2 0 0 0 2 2h1.7M3.6 11.8h3.1M1.4 2.8a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8zM1.4 10.4a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8zM13.2 10.4a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8z",
 };
 

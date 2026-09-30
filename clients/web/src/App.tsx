@@ -76,6 +76,9 @@ import {
   FolderIcon,
   MenuIcon,
 } from "./components/Icons";
+// Aliased: ``Icons`` exports a ``MenuIcon`` too, and that one is the
+// hamburger. This is the glyph set the panels draw from.
+import { MenuIcon as Glyph } from "./components/MenuIcon";
 import { ScrollIndicator } from "./components/ScrollIndicator";
 import { Sidebar, type SessionEntry } from "./components/Sidebar";
 import { AgentsPanel } from "./components/panels/AgentsPanel";
@@ -130,6 +133,14 @@ interface UpdateInfo {
  * it: places, not conversations. Three and not thirteen — the rest
  * keep their place in `TOOLS_MENU` below, and these are the ones you
  * go back to while working rather than configure once. */
+/** How often the header asks what is waiting.
+ *
+ * Two minutes. Comments are written by people in other windows on
+ * other machines, so this is the only thing that brings the news
+ * over — but nobody is waiting on the badge, and a tighter loop
+ * would be a round trip a minute for something read once an hour. */
+const NOTIFY_POLL = 120_000;
+
 const SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
   { kind: "plugins", label: "Plugins" },
   { kind: "mcp", label: "MCPs" },
@@ -590,6 +601,46 @@ export default function App() {
   // this header ever showed, which is the bug.
   const accountName =
     cloudName || status?.cloud_email || status?.cloud_org || "Account";
+
+  // ── What is waiting on you ──────────────────────────────────────
+  //
+  // Comments colleagues left on documents this account published,
+  // counted here so the answer is on screen before anybody goes
+  // looking for it. A queue you have to open to discover is empty is
+  // a queue you stop opening.
+  //
+  // Pulled, not pushed: there is no live channel for comments, and
+  // an indicator that only refreshed when you opened it would tell
+  // you nothing you did not already know. The sync is the server
+  // call; the count is a read of the local graph, which is where the
+  // review screen reads from too.
+  const [waiting, setWaiting] = useState(0);
+  const [notifyNonce, setNotifyNonce] = useState(0);
+
+  useEffect(() => {
+    if (!status?.cloud_connected) {
+      setWaiting(0);
+      return;
+    }
+    let dropped = false;
+    const count = async () => {
+      try {
+        await client.rpc("artifact_sync_comments");
+        const rows = await client.rpc<unknown[]>("artifact_comments", { open_only: true });
+        if (!dropped) setWaiting(Array.isArray(rows) ? rows.length : 0);
+      } catch {
+        // Offline, or no artifacts. Neither is news worth a badge:
+        // the count stays where it was rather than dropping to zero
+        // and reading as "nothing is waiting".
+      }
+    };
+    void count();
+    const timer = window.setInterval(count, NOTIFY_POLL);
+    return () => {
+      dropped = true;
+      window.clearInterval(timer);
+    };
+  }, [client, status?.cloud_connected, notifyNonce]);
   // Live draft from another attached view (mirroring).
   // The directory this session is locked to (tools + shell cwd).
   const [projectDir, setProjectDir] = useState("");
@@ -2845,6 +2896,31 @@ export default function App() {
               </span>
             </button>
           )}
+          {status?.cloud_connected && (
+            <button
+              className={waiting ? "chip chip-bell has-waiting" : "chip chip-bell"}
+              title={
+                waiting
+                  ? `${waiting} ${waiting === 1 ? "comment is" : "comments are"} waiting on you`
+                  : "Nothing is waiting on you"
+              }
+              aria-label="Notifications"
+              onClick={() => {
+                goPage({ kind: "artifacts", label: "Artifacts" });
+                setNotifyNonce((n) => n + 1);
+              }}
+            >
+              <Glyph name="bell" />
+              {/* The count, not a dot. "Three people are waiting" and
+                  "somebody is waiting" are different amounts of
+                  urgency and the difference costs one character. */}
+              {!!waiting && (
+                <span className="chip-bell-count">
+                  {waiting > 99 ? "99+" : waiting}
+                </span>
+              )}
+            </button>
+          )}
           {status?.cloud_connected ? (
             <button
               className="chip"
@@ -3171,6 +3247,7 @@ export default function App() {
                 client={client}
                 onClose={goChat}
                 openSlug={sharedSlug}
+                openNotifications={notifyNonce}
                 /* Whose caret to draw in a shared draft. The same
                    name and colour the header shows, so the person
                    typing is recognisable as themselves. */

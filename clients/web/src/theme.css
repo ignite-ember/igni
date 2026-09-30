@@ -11984,6 +11984,47 @@ button {
 /* The same half of the air the article takes, so the list's first row
    and a document's title sit the same distance down and one
    ``--dock-top`` can place the hierarchy beside either. */
+/* The bell, beside the account. Square, because it holds a glyph
+   rather than a word — the chips next to it are as wide as their
+   text and this one would read as an empty one. */
+.chip-bell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  position: relative;
+  width: 30px;
+  padding: 0;
+}
+
+.chip-bell svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* Lit only when something is actually waiting. A bell that is always
+   coloured is a bell nobody looks at. */
+.chip-bell.has-waiting {
+  color: var(--accent-orange-text);
+}
+
+.chip-bell-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--ember-gradient);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .afs {
   display: flex;
   flex-direction: column;
