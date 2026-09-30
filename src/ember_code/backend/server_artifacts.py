@@ -2557,8 +2557,14 @@ class ArtifactController:
         kind = str(frame.get("type") or "")
         update = str(frame.get("update") or "")
         self._remember(held, kind, update)
-        if kind == "edit":
-            self._room_frame(artifact_id, frame)
+        # Changes *and* carets. The wire carries both and the server
+        # sends neither back to the socket that produced it — which
+        # is right, and which makes every window on this machine
+        # invisible to every other, because they share that socket.
+        # Only changes were echoed here, so two windows edited one
+        # document while showing each other no cursor at all.
+        if kind in ("edit", "cursor"):
+            self._tell_windows(artifact_id, frame)
         if held.outbox is None:
             return ArtifactRoom(ok=True, shared=False)
         held.outbox.put_nowait(frame)
@@ -2582,7 +2588,7 @@ class ArtifactController:
         elif kind == "edit" and update:
             room.log.append(update)
             if len(room.log) >= ALONE_SNAPSHOT_EVERY:
-                self._room_frame(room.artifact_id, {"type": "snapshot"})
+                self._tell_windows(room.artifact_id, {"type": "snapshot"})
                 room.log = room.log[-ALONE_SNAPSHOT_EVERY:]
         if room.outbox is None:
             # A document only this machine has: its log has to outlive
@@ -2602,13 +2608,19 @@ class ArtifactController:
             held.log = []
 
     def _room_frame(self, artifact_id: str, frame: dict[str, Any]) -> None:
-        """Pass a room frame through to whoever is drawing the document.
+        """A frame off the wire: write it down, then pass it on.
 
-        Unread on the way past — except to be written down. The draft
-        is a pile of opaque changes and the only thing that can make
-        a document out of them is the editor holding it, which is in
+        Unread on the way past — except to be counted. The draft is a
+        pile of opaque changes and the only thing that can make a
+        document out of them is the editor holding it, which is in
         the browser. This process holds the credentials, so it holds
         the socket, and that is the whole of its involvement.
+
+        Only for frames that *arrive*. What this machine sends is
+        written down by :meth:`send_to_room` before it goes; recording
+        it here as well put every local keystroke in the log twice,
+        which doubled what a joining window had to apply and tripped
+        the snapshot threshold at half the intended length.
         """
         held = self._rooms.get(artifact_id)
         if held is None:
@@ -2621,6 +2633,15 @@ class ArtifactController:
             held.log = [str(u) for u in (frame.get("updates") or [])]
         elif kind == "edit":
             self._remember(held, "edit", str(frame.get("update") or ""))
+        # A cursor is passed straight through and written down
+        # nowhere — see ``_remember``, which knows about changes and
+        # snapshots and deliberately not about this.
+        self._tell_windows(artifact_id, frame)
+
+    def _tell_windows(self, artifact_id: str, frame: dict[str, Any]) -> None:
+        """Put a frame in front of every window drawing this document."""
+        if artifact_id not in self._rooms:
+            return
         self._session.broadcast_bus.emit(
             BroadcastEvent(
                 channel="artifact_draft", payload={"artifact_id": artifact_id, "frame": frame}
