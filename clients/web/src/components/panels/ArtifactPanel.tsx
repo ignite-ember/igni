@@ -1682,6 +1682,37 @@ function DocumentDetail({
     };
   }, [editHandle, keepDraft, client, id, onEditingChange, onPublished]);
 
+  /** Go and read a version, from wherever we are.
+   *
+   * The version list stays live while somebody is editing, and it
+   * used to do nothing: the editor shows the draft, so picking v6
+   * swapped a document nobody could see and left the same text on
+   * screen. Reading an old version is a perfectly ordinary thing to
+   * want mid-edit — usually *because* of the edit — so it does what
+   * it says and leaves the editor.
+   *
+   * The draft is written first and stays written. That is the whole
+   * point of it: stopping editing is not losing anything, so this
+   * needs no confirmation and offers none. If the draft cannot be
+   * saved, the editor stays open and says why — leaving would be the
+   * one way to lose the words.
+   */
+  const readVersion = useCallback(
+    async (n: number) => {
+      if (editing) {
+        window.clearTimeout(idle.current);
+        try {
+          await keepDraft();
+        } catch {
+          return;
+        }
+        onEditingChange?.(false);
+      }
+      setVersion(n);
+    },
+    [editing, keepDraft, onEditingChange],
+  );
+
   // Tell the header what to say. Up here rather than in the render,
   // because the header belongs to another component and setting its
   // state during this one's render is a React warning and a loop.
@@ -2179,12 +2210,13 @@ function DocumentDetail({
               <VersionSwitcher
                 versions={versions}
                 draft={draft}
+                draftIsOpen={editing}
                 onOpenDraft={() => onEditingChange?.(true)}
                 current={doc.n ?? 0}
                 full={asideView === "versions"}
                 limit={asideView === "both" ? VERSIONS_IN_BOTH : 0}
                 onShowAll={() => onAsideViewChange?.("versions")}
-                onPick={(n) => setVersion(n)}
+                onPick={(n) => void readVersion(n)}
               />
             )}
             {asideView === "both" && versions.length > 1 && (
@@ -2279,6 +2311,7 @@ function AsideSwitch({
 function VersionSwitcher({
   versions,
   draft,
+  draftIsOpen = false,
   onOpenDraft,
   current,
   limit = 0,
@@ -2292,6 +2325,11 @@ function VersionSwitcher({
    *  the document has not changed since yesterday is asking a
    *  question the list is the natural place to answer. */
   draft?: ArtifactDraftView | null;
+  /** Whether the draft is what the page is showing — i.e. somebody is
+   *  editing. Marked like any other current row: it is a list of
+   *  what you could be reading, and the one you *are* reading has to
+   *  be in it. */
+  draftIsOpen?: boolean;
   onOpenDraft?: () => void;
   current: number;
   limit?: number;
@@ -2319,26 +2357,48 @@ function VersionSwitcher({
       <h3 className="kb-lineage-heading">Versions</h3>
       <ul className="kb-lineage-rows">
         {draft?.exists && (
-          <li className="kb-row kb-row-draft">
+          <li
+            className={
+              draftIsOpen ? "kb-row kb-row-draft kb-row-current" : "kb-row kb-row-draft"
+            }
+          >
             <button
               type="button"
               className="kb-version-btn kb-version-draft"
+              aria-current={draftIsOpen}
               onClick={() => onOpenDraft?.()}
-              title="Open the draft and go on writing it"
+              title={
+                draftIsOpen
+                  ? "You are editing this"
+                  : "Open the draft and go on writing it"
+              }
             >
               <span className="kb-draft-chip">Draft</span>
             </button>
             <span className="kb-row-when">
-              {draft.updated_by ? "being written" : "unpublished"}
+              {draftIsOpen
+                ? "you are editing this"
+                : draft.updated_by
+                  ? "being written"
+                  : "unpublished"}
             </span>
             {/* Behind the head means somebody published while this
                 was being written, and publishing it will be refused
                 until it has been read against theirs. Better said
-                here than discovered at the moment of pressing. */}
+                here than discovered at the moment of pressing.
+
+                Said in words, not in version numbers. The draft's
+                base counts the *shared* chain, which numbers its
+                versions separately from the local one — so a draft
+                written from the current text sat in this list saying
+                "from v2" beside a row labelled v8, which reads as
+                six versions of somebody else's work about to be
+                overwritten. Ahead or behind is the whole of what a
+                reader can act on. */}
             <span className="kb-row-note">
               {(draft.head_n ?? 0) > (draft.base_n ?? 0)
-                ? `from v${draft.base_n} · behind v${draft.head_n}`
-                : `from v${draft.base_n}`}
+                ? "written before the current version"
+                : "not published"}
             </span>
           </li>
         )}
