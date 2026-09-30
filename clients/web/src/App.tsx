@@ -79,6 +79,7 @@ import {
 // Aliased: ``Icons`` exports a ``MenuIcon`` too, and that one is the
 // hamburger. This is the glyph set the panels draw from.
 import { MenuIcon as Glyph } from "./components/MenuIcon";
+import { NotificationsPanel } from "./components/NotificationsPanel";
 import { ScrollIndicator } from "./components/ScrollIndicator";
 import { Sidebar, type SessionEntry } from "./components/Sidebar";
 import { AgentsPanel } from "./components/panels/AgentsPanel";
@@ -118,7 +119,11 @@ import { countOf } from "./lib/plural";
  * ``hitlSlot`` inside the Composer, anchored to the run it is asking
  * about.
  */
-type PanelState = { kind: "none" } | { kind: "login" } | { kind: "dir-picker" };
+type PanelState =
+  | { kind: "none" }
+  | { kind: "login" }
+  | { kind: "dir-picker" }
+  | { kind: "notifications" };
 
 interface UpdateInfo {
   available: boolean;
@@ -616,6 +621,8 @@ export default function App() {
   // review screen reads from too.
   const [waiting, setWaiting] = useState(0);
   const [notifyNonce, setNotifyNonce] = useState(0);
+  /** A document a notification asked to open, and when it asked. */
+  const [openArtifact, setOpenArtifact] = useState<{ id: string; at: number } | null>(null);
 
   useEffect(() => {
     if (!status?.cloud_connected) {
@@ -2905,10 +2912,13 @@ export default function App() {
                   : "Nothing is waiting on you"
               }
               aria-label="Notifications"
-              onClick={() => {
-                goPage({ kind: "artifacts", label: "Artifacts" });
-                setNotifyNonce((n) => n + 1);
-              }}
+              onClick={() =>
+                setPanel((open) =>
+                  open.kind === "notifications"
+                    ? { kind: "none" }
+                    : { kind: "notifications" },
+                )
+              }
             >
               <Glyph name="bell" />
               {/* The count, not a dot. "Three people are waiting" and
@@ -3247,7 +3257,8 @@ export default function App() {
                 client={client}
                 onClose={goChat}
                 openSlug={sharedSlug}
-                openNotifications={notifyNonce}
+                openArtifact={openArtifact ?? undefined}
+                onNotifications={() => setPanel({ kind: "notifications" })}
                 /* Whose caret to draw in a shared draft. The same
                    name and colour the header shows, so the person
                    typing is recognisable as themselves. */
@@ -3500,6 +3511,22 @@ export default function App() {
           initialPath={projectDir}
           onSelect={(dir) => void attachInFolder(dir)}
           onCancel={() => setPanel({ kind: "none" })}
+        />
+      )}
+      {panel.kind === "notifications" && (
+        <NotificationsPanel
+          client={client}
+          onOpenArtifact={(id) => {
+            goPage({ kind: "artifacts", label: "Artifacts" });
+            setOpenArtifact({ id, at: Date.now() });
+          }}
+          onClose={() => {
+            setPanel({ kind: "none" });
+            // Whatever was resolved while it was open should leave
+            // the count. Asked once on the way out rather than on a
+            // timer, because this is the moment it can have changed.
+            setNotifyNonce((n) => n + 1);
+          }}
         />
       )}
       {panel.kind === "login" && (
