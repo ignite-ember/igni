@@ -1413,10 +1413,22 @@ class ArtifactController:
         document. A folder is what is left — checked in that direction
         because a document has a shared identity to look up and a
         folder's id is the same string on both sides.
+
+        The destination is back-filled first. A folder made on this
+        machine while it was signed out exists here and nowhere else,
+        and asking the server to file something into it answers "no
+        such folder" — which used to refuse the move outright, local
+        half included. So the person dragged a document into a folder
+        they were looking straight at, nothing moved, and the reason
+        given was that the folder did not exist.
         """
         sync = self._collaboration()
         if sync is None:
             return None
+        if parent_id and not to_top:
+            refused = await self._shared_ancestry(parent_id)
+            if refused is not None:
+                return refused
         summary = await self._session.artifacts.client.get_artifact(node_id)
         if summary is None:
             return await self._shared_folder(
@@ -1442,6 +1454,80 @@ class ArtifactController:
                 slug=slug, parent_id=parent_id, to_top=to_top, archived=archived
             )
         )
+
+    async def _shared_ancestry(self, folder_id: str) -> ArtifactTreeChanged | None:
+        """Make sure a folder and everything above it exist on the server.
+
+        Answers an :class:`ArtifactTreeChanged` when the server
+        refused, which the caller returns unchanged; ``None`` when
+        there is nothing to do or it is done.
+
+        **Outermost first.** A folder cannot be created inside a
+        parent the server has not got, so the chain is walked up from
+        the destination and then created downwards. Anything already
+        there is skipped — the server answers an existing folder of
+        this owner's rather than failing, so a half-finished
+        back-fill from a dropped connection simply finishes.
+
+        Silent on the way past a folder that is not local either: the
+        id may name something this machine has never seen, and a
+        filing operation that has to report on the shape of the whole
+        ancestry is a filing operation nobody can read the result of.
+        The server has the last word, and refuses the place itself.
+        """
+        sync = self._collaboration()
+        if sync is None or self._session.artifacts is None:
+            return None
+        local = {
+            str(row.get("node_id") or ""): row
+            for row in await self._session.artifacts.client.folders()
+        }
+
+        chain: list[dict[str, Any]] = []
+        at = folder_id
+        # ``seen`` guards a cycle that is already in the data. Moves
+        # are checked for loops before they are written, so this
+        # should not happen — and walking forever is a request that
+        # never returns rather than an error anybody can read.
+        seen: set[str] = set()
+        while at and at in local and at not in seen:
+            seen.add(at)
+            chain.append(local[at])
+            at = str(local[at].get("parent_id") or "")
+        if not chain:
+            return None
+
+        for row in reversed(chain):
+            node_id = str(row.get("node_id") or "")
+            parent = str(row.get("parent_id") or "")
+            made = await self._shared_folder(
+                lambda s, row=row, parent=parent, node_id=node_id: s.create_folder(
+                    name=str(row.get("name") or ""),
+                    # Only a parent this walk has just made sure of.
+                    # The outermost link may name a folder this
+                    # machine does not have, and asking the server to
+                    # create something inside an id neither side knows
+                    # answers "no such folder" — about the wrong
+                    # folder, which is the confusing failure this whole
+                    # method exists to remove.
+                    parent_id=parent if parent in seen else "",
+                    folder_id=node_id,
+                )
+            )
+            if isinstance(made, ArtifactTreeChanged):
+                return made
+            if made and str(made) != node_id:
+                # The id was taken by another account, so the server
+                # minted its own and the two copies now disagree about
+                # what this folder is called. Filing into it would
+                # fail again, one call later and less legibly. Said
+                # here instead, where the folder in question is the
+                # one the message names.
+                logger.info("folder %s exists on the server as %s", node_id, made)
+                return ArtifactTreeChanged(
+                    error=f"“{row.get('name') or 'That folder'}” could not be filed on the server."
+                )
+        return None
 
     async def archive_node(self, *, node_id: str, archived: bool = True) -> ArtifactTreeChanged:
         """Put a document away, or bring it back.

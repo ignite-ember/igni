@@ -774,11 +774,20 @@ class CollaborationSync:
     # server's own ids, or the two copies disagree about what a folder
     # is called and every later operation addresses the wrong one.
 
-    async def create_folder(self, *, name: str, parent_id: str = "") -> str:
-        """Make a folder on the server. Answer the id it chose."""
+    async def create_folder(self, *, name: str, parent_id: str = "", folder_id: str = "") -> str:
+        """Make a folder on the server. Answer the id it chose.
+
+        ``folder_id`` proposes one, for a folder this machine already
+        has — made while it was signed out, so its id came first. The
+        server keeps it when it can and mints its own when it cannot,
+        which is why the answer is the id to use rather than the id
+        that was asked for.
+        """
         payload: dict[str, Any] = {"name": name}
         if parent_id:
             payload["parent_id"] = parent_id
+        if folder_id:
+            payload["folder_id"] = folder_id
         response = await self._request("POST", "/v1/artifacts/shared/folders", json=payload)
         if response.status_code == 404:
             raise NotAllowed(parent_id)

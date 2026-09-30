@@ -35,8 +35,14 @@ from ember_code.core.artifacts.models import ArtifactSummary
 class FakeGraph:
     """The local mirror, recording what it was told to do."""
 
-    def __init__(self, documents: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        documents: set[str] | None = None,
+        folders: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.documents = documents or set()
+        #: The local tree's folders, as ``folders()`` answers them.
+        self.folders_here = folders or []
         self.created: list[dict[str, Any]] = []
         self.renamed: list[tuple[str, str]] = []
         self.deleted: list[str] = []
@@ -75,15 +81,29 @@ class FakeGraph:
     async def list_folders(self, **_: Any) -> list[Any]:
         return []
 
+    async def folders(self) -> list[dict[str, Any]]:
+        return list(self.folders_here)
+
 
 class FakeServer:
     """The shared copy, recording what reached it."""
 
     is_configured = True
 
-    def __init__(self, *, folder_id: str = "server-abc", fail: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        folder_id: str = "server-abc",
+        fail: Exception | None = None,
+        holds: set[str] | None = None,
+        strict: bool = False,
+    ) -> None:
         self._folder_id = folder_id
         self._fail = fail
+        #: Folder ids this server has. ``strict`` makes filing into
+        #: anything else answer the way the real one does.
+        self.holds = holds if holds is not None else set()
+        self._strict = strict
         self.created: list[dict[str, Any]] = []
         self.updated: list[dict[str, Any]] = []
         self.deleted: list[str] = []
@@ -94,10 +114,14 @@ class FakeServer:
         if self._fail is not None:
             raise self._fail
 
-    async def create_folder(self, *, name: str, parent_id: str = "") -> str:
+    async def create_folder(self, *, name: str, parent_id: str = "", folder_id: str = "") -> str:
         self._maybe_fail()
-        self.created.append({"name": name, "parent_id": parent_id})
-        return self._folder_id
+        if self._strict and parent_id and parent_id not in self.holds:
+            raise NotAllowed(parent_id)
+        self.created.append({"name": name, "parent_id": parent_id, "folder_id": folder_id})
+        chosen = folder_id or self._folder_id
+        self.holds.add(chosen)
+        return chosen
 
     async def update_folder(self, **kwargs: Any) -> None:
         self._maybe_fail()
@@ -109,14 +133,39 @@ class FakeServer:
 
     async def place_document(self, **kwargs: Any) -> None:
         self._maybe_fail()
+        parent = kwargs.get("parent_id") or ""
+        if self._strict and parent and parent not in self.holds:
+            # What the real server answers: it has no such folder, and
+            # says so about the document it was asked to move.
+            raise NotAllowed(parent)
         self.placed.append(kwargs)
 
     async def slug_for(self, artifact_id: str) -> str:
         return self.slugs.get(artifact_id, "")
 
 
+class FakeManager:
+    """Just enough of the session manager for the cycle check.
+
+    ``move_node`` assembles the whole tree before it writes anything,
+    to refuse a move that would close a loop. The documents come from
+    here and the folders from the graph.
+    """
+
+    def __init__(self, graph: FakeGraph) -> None:
+        self._graph = graph
+
+    async def list_artifacts(self, **_: Any) -> list[ArtifactSummary]:
+        return [
+            ArtifactSummary(artifact_id=doc, name=doc, head_n=1)
+            for doc in sorted(self._graph.documents)
+        ]
+
+
 def controller(graph: FakeGraph, server: FakeServer | None) -> ArtifactController:
-    session = SimpleNamespace(artifact_mgr=None, artifacts=SimpleNamespace(client=graph))
+    session = SimpleNamespace(
+        artifact_mgr=FakeManager(graph), artifacts=SimpleNamespace(client=graph)
+    )
     ctl = ArtifactController(session)
     # The controller builds its own client from session credentials,
     # which a test has none of. Replaced wholesale so the seam under
@@ -132,7 +181,7 @@ class TestAFolderIsNamedByTheServer:
 
         await controller(graph, server).create_folder(name="Platform")
 
-        assert server.created == [{"name": "Platform", "parent_id": ""}]
+        assert server.created == [{"name": "Platform", "parent_id": "", "folder_id": ""}]
 
     @pytest.mark.asyncio
     async def test_and_the_graph_adopts_the_id_the_server_chose(self):
@@ -241,3 +290,151 @@ class TestWithNoAccount:
 
         assert result.ok
         assert graph.created[0]["name"] == "Platform"
+
+
+class TestAFolderTheServerHasNeverHeardOf:
+    """Filing into a folder that was made while this machine was signed out.
+
+    The reported symptom was simply "moving an article in the
+    hierarchy does not update its position". Underneath: the folder
+    existed here and nowhere else, filing asked the server to put a
+    published document inside it, the server answered that there is no
+    such folder — and the refusal stopped the local move as well. So
+    the document did not move, and the reason given named a folder the
+    person was looking straight at.
+
+    The tree is not allowed to diverge, so the answer is not to skip
+    the server. It is to give the server the folder.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_folder_is_made_on_the_server_first(self):
+        graph = FakeGraph(
+            documents={"doc-1"},
+            folders=[{"node_id": "f-local", "name": "Platform", "parent_id": ""}],
+        )
+        server = FakeServer(strict=True)
+
+        result = await controller(graph, server).move_node(node_id="doc-1", parent_id="f-local")
+
+        assert result.ok
+        assert server.created == [{"name": "Platform", "parent_id": "", "folder_id": "f-local"}]
+        assert server.placed == [
+            {"slug": "s1", "parent_id": "f-local", "to_top": False, "archived": None}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_and_the_document_actually_moves_here(self):
+        # The symptom, restated as an assertion.
+        graph = FakeGraph(
+            documents={"doc-1"},
+            folders=[{"node_id": "f-local", "name": "Platform", "parent_id": ""}],
+        )
+
+        await controller(graph, FakeServer(strict=True)).move_node(
+            node_id="doc-1", parent_id="f-local"
+        )
+
+        assert graph.moved == [("doc-1", "f-local")]
+
+    @pytest.mark.asyncio
+    async def test_the_whole_ancestry_is_made_outermost_first(self):
+        # A folder cannot be created inside a parent the server has
+        # not got, so the order is not an implementation detail.
+        graph = FakeGraph(
+            documents={"doc-1"},
+            folders=[
+                {"node_id": "inner", "name": "Auth", "parent_id": "outer"},
+                {"node_id": "outer", "name": "Platform", "parent_id": ""},
+            ],
+        )
+        server = FakeServer(strict=True)
+
+        await controller(graph, server).move_node(node_id="doc-1", parent_id="inner")
+
+        assert [f["folder_id"] for f in server.created] == ["outer", "inner"]
+        assert server.created[1]["parent_id"] == "outer"
+
+    @pytest.mark.asyncio
+    async def test_a_folder_the_server_already_has_is_not_made_twice(self):
+        graph = FakeGraph(
+            documents={"doc-1"},
+            folders=[{"node_id": "f-known", "name": "Platform", "parent_id": ""}],
+        )
+        # The server answers an existing folder of this owner's rather
+        # than failing, so the call is harmless — and the one that
+        # matters is the place.
+        server = FakeServer(strict=True, holds={"f-known"}, folder_id="f-known")
+
+        result = await controller(graph, server).move_node(node_id="doc-1", parent_id="f-known")
+
+        assert result.ok
+        assert server.placed[0]["parent_id"] == "f-known"
+
+    @pytest.mark.asyncio
+    async def test_moving_to_top_level_needs_no_folder_at_all(self):
+        graph = FakeGraph(documents={"doc-1"})
+        server = FakeServer(strict=True)
+
+        result = await controller(graph, server).move_node(node_id="doc-1", parent_id="")
+
+        assert result.ok
+        assert server.created == []
+        assert graph.moved == [("doc-1", None)]
+
+    @pytest.mark.asyncio
+    async def test_an_id_the_server_renames_is_reported_rather_than_half_done(self):
+        # The id was taken by another account, so the server minted
+        # its own and the two copies now disagree about what this
+        # folder is. Filing would fail one call later and less
+        # legibly; it is said here, where the message can name the
+        # folder it is about.
+        graph = FakeGraph(
+            documents={"doc-1"},
+            folders=[{"node_id": "f-local", "name": "Platform", "parent_id": ""}],
+        )
+        server = FakeServer(strict=True, folder_id="taken-elsewhere")
+
+        async def rename_on_create(*, name, parent_id="", folder_id=""):
+            server.created.append({"name": name, "parent_id": parent_id, "folder_id": folder_id})
+            return "somebody-elses-id"
+
+        server.create_folder = rename_on_create  # type: ignore[assignment]
+
+        result = await controller(graph, server).move_node(node_id="doc-1", parent_id="f-local")
+
+        assert not result.ok
+        assert "Platform" in result.error
+        assert graph.moved == []
+
+    @pytest.mark.asyncio
+    async def test_a_document_that_was_never_published_still_moves(self):
+        # Nothing to file on the shared copy, so nothing to back-fill
+        # either — and the local arrangement is what it has until the
+        # next write gives it a home.
+        graph = FakeGraph(
+            documents={"doc-unpublished"},
+            folders=[{"node_id": "f-local", "name": "Platform", "parent_id": ""}],
+        )
+        server = FakeServer(strict=True)
+        server.slugs = {}
+
+        result = await controller(graph, server).move_node(
+            node_id="doc-unpublished", parent_id="f-local"
+        )
+
+        assert result.ok
+        assert graph.moved == [("doc-unpublished", "f-local")]
+
+    @pytest.mark.asyncio
+    async def test_a_destination_this_machine_does_not_have_is_left_to_the_server(self):
+        # The id names nothing local, so there is nothing to
+        # back-fill. The server has the last word and refuses the
+        # place itself, which is the honest answer.
+        graph = FakeGraph(documents={"doc-1"})
+        server = FakeServer(strict=True)
+
+        result = await controller(graph, server).move_node(node_id="doc-1", parent_id="nowhere")
+
+        assert not result.ok
+        assert graph.moved == []
