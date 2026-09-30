@@ -133,6 +133,8 @@ export function ArtifactTreeView({
   reloadKey,
   onOpen,
   onCreateInside,
+  onSync,
+  syncing = false,
   onChanged,
 }: {
   client: IgniClient;
@@ -145,6 +147,12 @@ export function ArtifactTreeView({
    *  text — the tree only says where it goes, and what that place is
    *  called, so the form can say so rather than filing it silently. */
   onCreateInside: (parentId: string, parentName: string) => void;
+  /** Pull in what other machines have shared through git. A verb
+   *  about the collection, which is what this bar is for — it used
+   *  to be a button on the search field, where the page opened with
+   *  a row of controls instead of with the documents. */
+  onSync?: () => void;
+  syncing?: boolean;
   /**
    * The set of documents changed from in here.
    *
@@ -377,6 +385,19 @@ export function ArtifactTreeView({
             <MenuIcon name="folder-add" />
           </button>
         </Tooltip>
+        {onSync && (
+          <Tooltip text={syncing ? "Syncing…" : "Sync git-shared artifacts"}>
+            <button
+              type="button"
+              className="kb-tree-act"
+              aria-label="Sync git-shared artifacts"
+              disabled={syncing}
+              onClick={onSync}
+            >
+              <MenuIcon name="reopen" />
+            </button>
+          </Tooltip>
+        )}
         <span className="kb-tree-bar-gap" />
         <Tooltip
           text={

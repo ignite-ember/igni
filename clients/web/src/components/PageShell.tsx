@@ -96,10 +96,20 @@ export function PageShell({
   // and so does an open overflow menu: this listener is on the capture
   // phase, so without the check it would navigate away before the menu
   // ever saw the key that was meant to close it.
+  //
+  // Every overlay has to be in that list, which is the cost of
+  // catching the key first. The notifications panel was not, and the
+  // symptom was not "Escape does nothing" — it was Escape closing
+  // the *page underneath* while the panel stayed open, because this
+  // handler ran, navigated, and swallowed the key.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (document.querySelector(".file-preview, .modal-overlay, .overflow-list"))
+      if (
+        document.querySelector(
+          ".file-preview, .modal-overlay, .overflow-list, .notify-panel",
+        )
+      )
         return;
       e.stopPropagation();
       back();

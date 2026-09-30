@@ -136,7 +136,16 @@ export function ArtifactShareDialog({
   // rather than on the panel, because the first thing focused here is
   // a radio and a keyboard user who changes their mind should not
   // have to find the Cancel button to say so.
+  //
+  // **Only while it is open.** This component is mounted for as long
+  // as a document is selected and returns ``null`` below when it has
+  // no anchor — but a render that draws nothing still runs its
+  // effects, so this was capturing Escape on every document page and
+  // stopping it dead. Nothing visible happened, which is the worst
+  // version: Escape did not close the panel it was aimed at, did not
+  // go back a level as the page intended, and left no sign why.
   useEffect(() => {
+    if (!at) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.stopPropagation();
@@ -145,7 +154,7 @@ export function ArtifactShareDialog({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+  }, [at, onClose]);
 
   const blocked = visibility === "users" && recipients.length === 0;
 

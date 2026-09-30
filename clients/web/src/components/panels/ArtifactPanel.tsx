@@ -234,8 +234,8 @@ export function ArtifactPanel({
   onClose,
   openSlug = "",
   account = "",
+  goHome = 0,
   openArtifact,
-  onNotifications,
 }: {
   client: IgniClient;
   onClose: () => void;
@@ -243,6 +243,10 @@ export function ArtifactPanel({
    *  The header's name, so the person typing is recognisable as the
    *  same person everywhere in the app. */
   account?: string;
+  /** Bumped when somebody asks for this page from outside it. Means
+   *  "the list", which is what the sidebar link says — it was a dead
+   *  click from any sub-view, because the route had not changed. */
+  goHome?: number;
   /** A document to select, named by its local id — how a
    *  notification hands over the document its comment is about.
    *
@@ -250,10 +254,7 @@ export function ArtifactPanel({
    *  two requests to open it, and a bare id that has not changed
    *  looks like nothing happened. */
   openArtifact?: { id: string; at: number };
-  /** Show what is waiting, wherever the app shows that. Absent means
-   *  there is nowhere to show it, and the button is not offered —
-   *  better than a control that does nothing. */
-  onNotifications?: () => void;
+
   /** A document to open on arrival, named by the slug in a shared
    *  link rather than by a local id — the whole point is that the
    *  reader has never seen this document, so their own graph has no
@@ -355,6 +356,13 @@ export function ArtifactPanel({
          copy failed is worse than the failure. */
     }
   }, [shareUrl]);
+
+  useEffect(() => {
+    if (!goHome) return;
+    setView("list");
+    setSelected(null);
+    setEditing(false);
+  }, [goHome]);
 
   // Arrived from a notification: open the document its comment was
   // about. The panel may not have been on screen at all a moment
@@ -682,85 +690,15 @@ export function ArtifactPanel({
     },
   };
 
-  // ── What you can do to the collection ───────────────────────────
+  // The collection's verbs are not on this page.
   //
-  // On the search bar, not in a bar of their own. The list used to
-  // open with a row carrying the word "Artifacts" — which the trail
-  // above it already says — a refresh, and three buttons, and the
-  // search sat a line below it. Folded into the search bar, the
-  // first thing on the page is the thing the page is for, and it
-  // starts where a document's first line starts.
-  let listActions: React.ReactNode = null;
-  if (view === "list" && status) {
-    listActions = (
-      <>
-        <button
-          className="kb-icon-btn"
-          title={busy === "sync" ? "Syncing…" : "Sync git-shared artifacts"}
-          disabled={busy === "sync" || !status.enabled}
-          onClick={() => void sync()}
-        >
-          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-            <path
-              d="M2.5 8a5.5 5.5 0 0 1 9.4-3.9M13.5 8a5.5 5.5 0 0 1-9.4 3.9"
-              stroke="currentColor"
-              strokeWidth="1.3"
-              strokeLinecap="round"
-            />
-            <path
-              d="M12 1.5V5h-3.5M4 14.5V11h3.5"
-              stroke="currentColor"
-              strokeWidth="1.3"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
-        {!!status.stale_count && (
-          <button
-            className="btn btn-sm btn-warn"
-            title="Documents whose sources have changed since they were written"
-            onClick={() => setView("stale")}
-          >
-            {status.stale_count} out of date
-          </button>
-        )}
-        {/* Always offered, not gated on a count. "Nothing is waiting
-            on you" is worth being able to confirm, and a button that
-            appears only when there is bad news is one people learn to
-            dread rather than to use. */}
-        {onNotifications && (
-          <button
-            className="btn btn-sm"
-            title="What is waiting on you — comments people left on documents you published"
-            onClick={onNotifications}
-          >
-            Notifications
-          </button>
-        )}
-        <button
-          className="btn btn-sm"
-          disabled={!status.enabled}
-          title="Ask a question about how these documents relate"
-          onClick={() => setView("ask")}
-        >
-          Ask
-        </button>
-        <button
-          className="btn btn-sm btn-primary"
-          disabled={!status.enabled}
-          onClick={() => {
-            setAddError("");
-            setAddParent("");
-            setAddParentName("");
-            setView("add");
-          }}
-        >
-          + Add
-        </button>
-      </>
-    );
-  }
+  // They were a row of their own, then a cluster on the search bar,
+  // and each time the first thing the page showed was a set of
+  // controls rather than the documents. They have homes: **New
+  // document** is the ⊕ at the top of the hierarchy and opens the
+  // same Add view this button did, and **Notifications** is the bell
+  // in the app header. What the page opens with now is the search
+  // and the documents under it.
 
   /* The document's own actions. Rendered inside the article rather
      than in the page header, next to the name they act on — the
@@ -1129,6 +1067,8 @@ export function ArtifactPanel({
               setDetailNonce((v) => v + 1);
               void refresh();
             }}
+            onSync={() => void sync()}
+            syncing={busy === "sync"}
             onCreateInside={(parentId, parentName) => {
               setAddError("");
               setAddParent(parentId);
@@ -1252,7 +1192,6 @@ export function ArtifactPanel({
       ) : (
         <ArtifactSearch
           client={client}
-          actions={listActions}
           docs={(docs || []).map((d) => ({
             id: d.id,
             name: d.name,

@@ -568,6 +568,29 @@ export default function App() {
     () => new URLSearchParams(window.location.search).get("doc") ?? "",
     [],
   );
+
+  // And taken out of the address bar once it has been read.
+  //
+  // A link is an arrival, not a place. Left in the URL it went on
+  // being true for ever: every reload read it again and put the
+  // window back on that document, so navigating anywhere else and
+  // refreshing undid the navigation — the app appeared to have one
+  // page it always returned to. Reading it once was not enough while
+  // the thing being read was still there.
+  //
+  // ``replaceState`` rather than a push: the URL with the parameter
+  // is not a step in this window's history, it is how the window
+  // opened, and a Back that returned to it would reopen the
+  // document.
+  //
+  // Only ``doc``. ``dir`` says which folder this window belongs to,
+  // which stays true for as long as the window does.
+  useEffect(() => {
+    if (!sharedSlug) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("doc");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [sharedSlug]);
   const [sidebarOpen, setSidebarOpenState] = useState(window.innerWidth > 700);
   const setSidebarOpen = useCallback(
     (next: boolean | ((prev: boolean) => boolean)) => {
@@ -621,6 +644,10 @@ export default function App() {
   // review screen reads from too.
   const [waiting, setWaiting] = useState(0);
   const [notifyNonce, setNotifyNonce] = useState(0);
+  /** Bumped whenever a page is asked for from outside it — the
+   *  sidebar, a link. A panel showing one of its own sub-views takes
+   *  it as "back to your top level". */
+  const [pageHome, setPageHome] = useState(0);
   /** A document a notification asked to open, and when it asked. */
   const [openArtifact, setOpenArtifact] = useState<{ id: string; at: number } | null>(null);
 
@@ -1644,7 +1671,16 @@ export default function App() {
   );
 
   const goPage = useCallback(
-    (route: PageRoute) => navigate(openRoot(route)),
+    (route: PageRoute) => {
+      navigate(openRoot(route));
+      // "Take me to X" means the top of X, even when X is already on
+      // screen showing one of its own sub-views. Without this the
+      // sidebar link for the page you are on is a control that does
+      // nothing: the route has not changed, so nothing re-renders,
+      // and Add source or a document you were reading stays exactly
+      // where it was.
+      setPageHome((n) => n + 1);
+    },
     [navigate],
   );
   const goBack = useCallback(() => navigate(popPage(pages)), [navigate, pages]);
@@ -3257,8 +3293,8 @@ export default function App() {
                 client={client}
                 onClose={goChat}
                 openSlug={sharedSlug}
+                goHome={pageHome}
                 openArtifact={openArtifact ?? undefined}
-                onNotifications={() => setPanel({ kind: "notifications" })}
                 /* Whose caret to draw in a shared draft. The same
                    name and colour the header shows, so the person
                    typing is recognisable as themselves. */
