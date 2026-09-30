@@ -148,7 +148,7 @@ export function ArtifactSearch({
         />
         <button
           type="button"
-          className="btn btn-sm"
+          className="afs-go"
           onClick={() => void runSearch()}
           disabled={busy || !query.trim()}
           title="Search by meaning, not spelling"

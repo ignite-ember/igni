@@ -12127,16 +12127,46 @@ button {
   margin-left: 10px;
 }
 
-.afs-input {
-  flex: 1;
-  min-width: 0;
+/* The field and the button it belongs to are one control split in
+   two, so they are sized together rather than each from its own
+   scale. Search was a ``btn-sm`` — 24px against the field's 37 — and
+   read as a label that had drifted onto the same line. */
+.afs-input,
+.afs-go {
   padding: 7px 10px;
   font: inherit;
   font-size: 12.5px;
-  color: var(--fg);
-  background: var(--bg-inset);
+  line-height: 1.65;
   border: 1px solid var(--border);
   border-radius: 6px;
+}
+
+.afs-input {
+  flex: 1;
+  min-width: 0;
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
+/* Wider than the field's padding: a word is read at its edges, and
+   the same 10px that frames a caret crowds one. */
+.afs-go {
+  flex: none;
+  padding-left: 16px;
+  padding-right: 16px;
+  color: var(--fg);
+  background: var(--bg-surface);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.afs-go:hover:not(:disabled) {
+  background: var(--bg-raised);
+}
+
+.afs-go:disabled {
+  color: var(--fg-faint);
+  cursor: default;
 }
 
 .afs-input:focus {
