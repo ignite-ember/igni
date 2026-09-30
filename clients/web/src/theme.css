@@ -11965,7 +11965,13 @@ button {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding-top: calc(var(--doc-air) / 2);
+  /* Level with a document's title, by its *text* rather than by its
+     box. The field is a 37px bordered rectangle and a title is 25px
+     of letters; started at the same pixel, the rectangle's edge sits
+     well above the first letter on the other page and the search
+     reads as too high. This is the difference between the two, so
+     what the eye lands on is in the same place either way. */
+  padding-top: calc(var(--doc-air) / 2 + 8px);
 }
 
 .afs-bar {
