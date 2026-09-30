@@ -23,6 +23,7 @@ import type { IgniClient } from "../protocol/client";
 export function NotificationsPanel({
   client,
   onOpenSlug,
+  onWaitingChanged,
   onClose,
 }: {
   client: IgniClient;
@@ -31,6 +32,14 @@ export function NotificationsPanel({
    *  the reason for going, so leaving the panel over the document it
    *  pointed at would cover the answer. */
   onOpenSlug?: (slug: string) => void;
+  /** How many are left, every time this learns it.
+   *
+   *  The bell outside keeps its own count, fed by the server's
+   *  pushes. Nothing is pushed when *you* deal with something — the
+   *  server has nothing to tell you that you did not just do — so
+   *  marking everything seen emptied this panel and left the bell
+   *  reading six, with nothing behind it. */
+  onWaitingChanged?: (waiting: number) => void;
   onClose: () => void;
 }) {
   const [rows, setRows] = useState<Notification[]>([]);
@@ -47,6 +56,7 @@ export function NotificationsPanel({
       if (answer?.error) throw new Error(answer.error);
       setRows(answer?.notifications ?? []);
       setWaiting(answer?.waiting ?? 0);
+      onWaitingChanged?.(answer?.waiting ?? 0);
       setFailed("");
     } catch (e) {
       // The list is left alone. Emptying it because one read failed
@@ -54,7 +64,7 @@ export function NotificationsPanel({
       // panel must not give wrongly.
       setFailed(e instanceof Error ? e.message : String(e));
     }
-  }, [client]);
+  }, [client, onWaitingChanged]);
 
   useEffect(() => {
     void load();
@@ -124,7 +134,9 @@ export function NotificationsPanel({
               // Marked on the way out: opening it is what seeing it
               // means, and a row that stays bold after you have dealt
               // with it makes the count a number nobody believes.
-              void client.rpc("artifact_mark_seen", { notification_id: id }).catch(() => {});
+              void client
+                .rpc("artifact_mark_seen", { notification_id: id })
+                .catch(() => {});
               onOpenSlug?.(slug);
               onClose();
             }}

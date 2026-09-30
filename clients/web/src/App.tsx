@@ -3559,6 +3559,12 @@ export default function App() {
       {panel.kind === "notifications" && (
         <NotificationsPanel
           client={client}
+          // The bell is fed by the server's pushes, and the server
+          // pushes nothing when you deal with something yourself —
+          // it has nothing to tell you that you did not just do. So
+          // the panel reports what it read, and marking everything
+          // seen empties the bell as well as the list.
+          onWaitingChanged={setWaiting}
           onOpenSlug={(slug) => {
             // By slug, which is what the server names a document in a
             // notification — the local id is this machine's word for
