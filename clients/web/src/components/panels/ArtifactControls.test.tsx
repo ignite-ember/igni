@@ -131,7 +131,7 @@ describe("the share dialog", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /publish/i }));
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
     await waitFor(() => expect(rpc).toHaveBeenCalled());
     expect(rpc).toHaveBeenCalledWith(
       "artifact_share",
@@ -156,7 +156,7 @@ describe("the share dialog", () => {
     );
 
     fireEvent.click(screen.getByLabelText(/everyone at my company/i));
-    fireEvent.click(screen.getByRole("button", { name: /publish/i }));
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
 
     await waitFor(() =>
       expect(rpc).toHaveBeenCalledWith(
@@ -179,7 +179,7 @@ describe("the share dialog", () => {
     );
 
     fireEvent.click(screen.getByLabelText(/specific people/i));
-    expect(screen.getByRole("button", { name: /publish/i })).toHaveProperty(
+    expect(screen.getByRole("button", { name: /save/i })).toHaveProperty(
       "disabled",
       true,
     );
@@ -214,7 +214,7 @@ describe("the share dialog", () => {
     fireEvent.click(screen.getByLabelText(/specific people/i));
     fireEvent.click(await screen.findByText("Ana Diaz"));
     fireEvent.click(await screen.findByText("Sam Ortega"));
-    fireEvent.click(screen.getByRole("button", { name: /publish/i }));
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
 
     await waitFor(() =>
       expect(rpc).toHaveBeenCalledWith(
@@ -224,10 +224,15 @@ describe("the share dialog", () => {
     );
   });
 
-  it("shows the link and which version it holds", async () => {
+  it("closes once the change is saved", async () => {
+    // The panel used to stay open and relabel itself Done and Update
+    // — four labels for two controls, reporting a state it no longer
+    // needed to be open to show. The link is on the header, where it
+    // is reachable without opening anything.
+    const closed = vi.fn();
     const { client } = fakeClient(async () => ({
-      url: "https://igni.test/a/abc123",
-      version: 4,
+      url: "https://igni.test/a/abc",
+      version: 3,
       error: "",
     }));
     render(
@@ -236,13 +241,64 @@ describe("the share dialog", () => {
         artifactId="a1"
         name="Auth"
         at={ANCHOR}
+        onClose={closed}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => expect(closed).toHaveBeenCalled());
+  });
+
+  it("says what was saved, so the header can change with it", async () => {
+    const shared = vi.fn();
+    const { client } = fakeClient(async () => ({
+      url: "https://igni.test/a/abc",
+      version: 3,
+      error: "",
+    }));
+    render(
+      <ArtifactShareDialog
+        client={client}
+        artifactId="a1"
+        name="Auth"
+        at={ANCHOR}
+        reach="public"
+        onShared={shared}
         onClose={() => {}}
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /publish/i }));
-    expect(await screen.findByDisplayValue("https://igni.test/a/abc123")).toBeTruthy();
-    expect(screen.getByText(/shared as v4/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() =>
+      expect(shared).toHaveBeenCalledWith("public", [], "https://igni.test/a/abc"),
+    );
+  });
+
+  it("stays open on a refusal, with the reason", async () => {
+    // A panel that closed on a refusal would report the change as
+    // made.
+    const closed = vi.fn();
+    const { client } = fakeClient(async () => ({
+      url: "",
+      version: 0,
+      error: "Refused.",
+    }));
+    render(
+      <ArtifactShareDialog
+        client={client}
+        artifactId="a1"
+        name="Auth"
+        at={ANCHOR}
+        onClose={closed}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    expect(await screen.findByText("Refused.")).toBeTruthy();
+    expect(closed).not.toHaveBeenCalled();
   });
 
   it("surfaces a refusal instead of claiming success", async () => {
@@ -261,7 +317,7 @@ describe("the share dialog", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /publish/i }));
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
     expect(await screen.findByText(/signed-in igni account/i)).toBeTruthy();
   });
 });
@@ -482,7 +538,7 @@ describe("the share panel opens on how the document is shared", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /publish|update/i }));
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
     await waitFor(() => expect(rpc).toHaveBeenCalled());
     expect(rpc).toHaveBeenCalledWith(
       "artifact_share",

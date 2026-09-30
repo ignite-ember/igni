@@ -1136,6 +1136,13 @@ export function ArtifactPanel({
           at={sharing?.at ?? null}
           reach={sharing?.reach}
           listed={sharing?.listed}
+          // What was just saved, so the padlock and the link beside
+          // it change with it. The roster will say the same thing on
+          // its next fetch; waiting for that would leave the header
+          // describing the document as it was a moment ago.
+          onShared={(reach, listed, url) => {
+            rememberSharing(reach as ShareReach, listed, url || shareUrl);
+          }}
           onClose={() => setSharing(null)}
         />
       )}

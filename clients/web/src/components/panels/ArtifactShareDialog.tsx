@@ -81,6 +81,7 @@ export function ArtifactShareDialog({
   at,
   reach,
   listed,
+  onShared,
   onClose,
 }: {
   client: IgniClient;
@@ -93,6 +94,9 @@ export function ArtifactShareDialog({
    *  opens on it rather than on a default — see below. */
   reach?: Visibility;
   listed?: string[];
+  /** Told what was saved, so the header's padlock and link can change
+   *  without waiting for the roster to be fetched again. */
+  onShared?: (reach: Visibility, listed: string[], url: string) => void;
   onClose: () => void;
 }) {
   // Seeded from how the document is shared *now*, not from a default.
@@ -116,7 +120,6 @@ export function ArtifactShareDialog({
   const [recipients, setRecipients] = useState<string[]>(listed ?? []);
   const [result, setResult] = useState<ShareResult | null>(null);
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
 
   // Re-seeded when the panel opens on a different document, or when
@@ -155,7 +158,14 @@ export function ArtifactShareDialog({
         visibility,
         audience: recipients,
       });
-      setResult(r);
+      if (r?.error) {
+        // Left open, with the reason. A panel that closed on a
+        // refusal would report the change as made.
+        setResult(r);
+        return;
+      }
+      onShared?.(visibility, recipients, r?.url ?? "");
+      onClose();
     } catch (e) {
       setResult({
         url: "",
@@ -167,13 +177,6 @@ export function ArtifactShareDialog({
     }
   }, [client, artifactId, visibility, recipients]);
 
-  const copy = useCallback(() => {
-    if (!result?.url) return;
-    void navigator.clipboard?.writeText(result.url).then(() => {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1600);
-    });
-  }, [result]);
 
   if (!at) return null;
 
@@ -236,31 +239,24 @@ export function ArtifactShareDialog({
 
       {result?.error && <div className="msg-error">{result.error}</div>}
 
-      {result?.url && (
-        <div className="kb-share-link">
-          <div className="kb-share-link-label">
-            Shared as v{result.version}
-          </div>
-          <div className="kb-share-link-row">
-            <input readOnly value={result.url} onFocus={(e) => e.target.select()} />
-            <button className="btn btn-sm" onClick={copy}>
-              {copied ? "Copied" : "Copy"}
-            </button>
-          </div>
-        </div>
-      )}
-
+      {/* Two buttons, always the same two. It used to say Publish and
+          then Update, and Cancel and then Done — four labels for two
+          controls, changing under the hand that was about to press
+          one, to report a state the panel no longer needed to be open
+          to show. Publishing applies the change and closes; the link
+          is on the header where it is reachable without opening
+          anything. */}
       <div className="kb-share-actions">
-        <button className="btn btn-sm" onClick={onClose}>
-          {result?.url ? "Done" : "Cancel"}
+        <button className="btn btn-sm" onClick={onClose} disabled={busy}>
+          Cancel
         </button>
         <button
           className="btn btn-sm btn-primary"
           onClick={() => void share()}
           disabled={busy || blocked}
-          title={blocked ? "List at least one address" : undefined}
+          title={blocked ? "Pick at least one person" : undefined}
         >
-          {busy ? "Publishing…" : result?.url ? "Update" : "Publish"}
+          {busy ? "Saving…" : "Save"}
         </button>
       </div>
       </div>

@@ -44,23 +44,23 @@ describe("who the list shows, and in what order", () => {
     expect(shown.filter((p) => p.email === "sam@acme.co")).toHaveLength(1);
   });
 
-  it("narrows the chosen along with everybody else", () => {
-    // Searching narrows the *whole* list, chosen included. The
-    // alternative — pinning everybody ticked to the top whatever is
-    // typed — means searching for Sam shows you Dana, which is not
-    // what you asked. Nobody is lost by it: the count underneath
-    // always says how many are in the audience.
+  it("shows exactly the search result while a search is running", () => {
+    // One matching rule, and it is the server's. Filtering the chosen
+    // here as well meant two: the server matches a prefix, the client
+    // matched anywhere inside, so "am" showed nothing from the
+    // directory and kept a ticked "sam@acme.co" on screen.
     const shown = ordered([dana], ["sam@acme.co"], "dan");
 
     expect(shown.map((p) => p.email)).toEqual(["dana@acme.co"]);
   });
 
-  it("keeps a chosen name while the search still matches it", () => {
-    // Which is the case that matters while somebody is picking: tick
-    // a name, carry on typing the same name, and it stays put.
-    const shown = ordered([], ["sam@acme.co"], "sam");
+  it("still ticks a chosen name that the search found", () => {
+    // The search result is the list; being in the audience is a
+    // property of a row rather than a reason to add one.
+    const shown = ordered([sam], ["sam@acme.co"], "sam");
 
     expect(shown.map((p) => p.email)).toEqual(["sam@acme.co"]);
+    expect(isChosen(["sam@acme.co"], shown[0].email)).toBe(true);
   });
 
   it("shows an address with no account behind it", () => {
@@ -124,5 +124,21 @@ describe("sharing with somebody outside the directory", () => {
 
   it("ignores case and surrounding space", () => {
     expect(offerableAddress("  Rita@Contractor.io ", [])).toBe("rita@contractor.io");
+  });
+});
+
+describe("not offering to add somebody twice", () => {
+  it("says nothing about an address already in the audience", () => {
+    // They may be absent from the list — searching narrows to the
+    // directory, and an address with no account is in neither — so
+    // without this the picker offers to add somebody it has already
+    // added, which reads as the first add not having worked.
+    expect(offerableAddress("rita@contractor.io", [], ["rita@contractor.io"])).toBe("");
+  });
+
+  it("still offers one that is not", () => {
+    expect(offerableAddress("rita@contractor.io", [], ["ana@acme.co"])).toBe(
+      "rita@contractor.io",
+    );
   });
 });

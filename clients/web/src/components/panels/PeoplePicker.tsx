@@ -53,12 +53,15 @@ export function ordered(
   chosen: string[],
   query: string,
 ): Colleague[] {
-  const picked = new Set(chosen.map((one) => one.toLowerCase()));
   const known = new Map(directory.map((one) => [one.email.toLowerCase(), one]));
   const asked = query.trim().toLowerCase();
 
-  const first = chosen
-    .filter((identity) => !asked || identity.toLowerCase().includes(asked))
+  // Only when nothing is being searched. While a search is running
+  // the server's answer *is* the list, and filtering the chosen here
+  // as well meant two matching rules in one list: the server matches
+  // a prefix, this matched anywhere inside, so "am" showed nothing
+  // from the directory and kept a ticked "sam@acme.test" on screen.
+  const first = (asked ? [] : chosen)
     .map(
       (identity) =>
         known.get(identity.toLowerCase()) ?? {
@@ -69,7 +72,9 @@ export function ordered(
           name: identity,
         },
     );
-  const rest = directory.filter((one) => !picked.has(one.email.toLowerCase()));
+  const rest = directory.filter(
+    (one) => !first.some((chose) => chose.email.toLowerCase() === one.email.toLowerCase()),
+  );
   return [...first, ...rest];
 }
 
@@ -92,9 +97,19 @@ export function isChosen(chosen: string[], email: string): boolean {
  * new hire who has neither. Offered only once it looks like an
  * address, so the row does not appear under every half-typed name.
  */
-export function offerableAddress(query: string, shown: Colleague[]): string {
+export function offerableAddress(
+  query: string,
+  shown: Colleague[],
+  chosen: string[] = [],
+): string {
   const typed = query.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(typed)) return "";
+  // Not for somebody already in the audience. They may be absent
+  // from the list — searching narrows to the directory, and an
+  // address with no account is in neither — and offering to add
+  // somebody who is already added reads as the first add not having
+  // worked.
+  if (chosen.some((one) => one.toLowerCase() === typed)) return "";
   return shown.some((one) => one.email.toLowerCase() === typed) ? "" : typed;
 }
 
@@ -143,7 +158,10 @@ export function PeoplePicker({
     () => ordered(directory, chosen, query),
     [directory, chosen, query],
   );
-  const typedAddress = useMemo(() => offerableAddress(query, shown), [query, shown]);
+  const typedAddress = useMemo(
+    () => offerableAddress(query, shown, chosen),
+    [query, shown, chosen],
+  );
 
   const pick = useCallback(
     (email: string) => {
