@@ -4498,24 +4498,47 @@ button {
 
 /* And the conversation's width on the other side, so the document
    centres between the two of them rather than in the whole window
-   with a docked column sitting on top of it. */
-.page-body:has(.kb-shell-with-tree):not(:has(.kb-doc-comparing)):not(
+   with a docked column sitting on top of it.
+
+   **Only when that column is there.** It is the document's own
+   conversation — pinned outside the measure, like the tree — and it
+   exists on the document view and nowhere else. Keyed on the panel
+   instead, the list reserved 430px for a column it does not have and
+   read in a 331px gutter beside an empty half-window. */
+.page-body:has(.kb-doc-aside):not(:has(.kb-doc-comparing)):not(
     :has(.kb-doc-tracing)
   ) {
   padding-right: var(--rail-width);
 }
 
+/* The conversation's width is only worth reserving while all three
+   columns still fit: the tree, a readable measure, and the
+   conversation behind the page. Below that, reserving it takes more
+   from the measure than the conversation was ever going to use —
+   at 1040px it left the list 331px wide with 430px of nothing
+   beside it.
+
+   The number is what the three of them need: the tree's column,
+   ``min(756px, 100%)`` of text, and the rail. */
 @media (max-width: 64rem) {
-  .page-body:has(.kb-shell-with-tree) {
+  /* The same selector as the rule it overrides, not a shorter one.
+     That rule carries three ``:has()`` clauses and therefore more
+     specificity than ``.page-body:has(.kb-shell-with-tree)`` — so
+     the narrow-window override never applied at all, whichever
+     order the two were written in. */
+  .page-body:has(.kb-doc-aside):not(:has(.kb-doc-comparing)):not(
+      :has(.kb-doc-tracing)
+    ) {
     padding-right: 0;
   }
 }
 
-@media (max-width: 78rem) {
-  .page-body:has(.kb-shell-with-tree) {
-    padding-left: 0;
-  }
-}
+/* The left column is reserved at every width, because the tree is
+   docked at every width. This used to zero it below 78rem, where the
+   tree left its column and rejoined the flow — remove one without
+   the other and the tree floats over a page that has made no room
+   for it, which is what the list view looked like: two sets of words
+   in the same place. */
 
 /* The measure. Wider than the drawer's 620px, but not the full width
    of a 27-inch display — these are lists and forms, and a line of
