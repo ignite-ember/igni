@@ -44,7 +44,10 @@ ROUTING: str = (
     "This document lives in the project's artifact store, not on disk. "
     "The archivist agent holds the tools for reading and revising it — "
     "hand this to the archivist rather than searching the filesystem, "
-    "and pass it the artifact id above."
+    "and pass it the artifact id above. If the request is to change "
+    "the document, the change goes in its draft "
+    "(``artifact_edit_draft``) and not into a new version: whoever "
+    "asked decides when it is published."
 )
 
 

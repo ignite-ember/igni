@@ -120,6 +120,11 @@ class ArtifactIndex:
         self._shared = shared
 
     @property
+    def shared(self) -> Any | None:
+        """The server this index writes through, if there is one."""
+        return self._shared
+
+    @property
     def client(self) -> Neo4jArtifactClient:
         return self._client
 

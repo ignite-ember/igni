@@ -189,6 +189,45 @@ const DOC_FENCES = {
   },
 };
 
+/** How long the typing has to stop before the draft is written.
+ *
+ * Long enough that ordinary typing is one request rather than sixty,
+ * short enough that stepping away from the keyboard for a moment
+ * leaves the words somewhere other than this tab. The keystrokes
+ * themselves do not wait for this — they go to everybody else with
+ * the document open over the room socket, which is a different
+ * question from where the words are kept. */
+const DRAFT_IDLE = 900;
+
+/** The draft as the backend describes it. */
+export interface ArtifactDraftView {
+  exists?: boolean;
+  content?: string;
+  /** Which version it was written from. */
+  base_n?: number;
+  /** Which version is current. Behind it means somebody published. */
+  head_n?: number;
+  updated_by?: string;
+  error?: string;
+}
+
+/** What the header can ask the open editor to do. */
+export interface DocumentEditing {
+  /** Stop editing. Writes whatever is unsaved to the draft first. */
+  done: () => Promise<void>;
+  /** Turn the draft into a version. */
+  publish: () => Promise<void>;
+}
+
+/** What the header says about it while it happens. */
+export interface EditingState {
+  busy: "" | "save" | "publish";
+  /** Typed since the last write to the draft. */
+  dirty: boolean;
+  /** Something worth saying — a refusal, usually. */
+  note: string;
+}
+
 export function ArtifactPanel({
   client,
   onClose,
@@ -217,6 +256,18 @@ export function ArtifactPanel({
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   /** Reading, or editing. One document at a time, so a boolean. */
   const [editing, setEditing] = useState(false);
+  // What the open editor can be told to do, and what it is doing.
+  // The controls for editing are in the header — where Edit and
+  // Share are when nobody is editing — and the text they act on is
+  // three components down, so the header holds a handle to it rather
+  // than a copy of it. A copy would be the older of the two the
+  // moment anybody typed.
+  const editRef = useRef<DocumentEditing | null>(null);
+  const [editState, setEditState] = useState<EditingState>({
+    busy: "",
+    dirty: false,
+    note: "",
+  });
   /** Why the delete was refused: the documents it is joined to. */
   const [removeBlocked, setRemoveBlocked] = useState<
     { artifact_id: string; name: string; direction: string }[] | null
@@ -684,7 +735,12 @@ export function ArtifactPanel({
   let docViews: React.ReactNode = null;
   let docActions: React.ReactNode = null;
   if (view === "detail" && selected) {
-    docViews = confirmingRemove ? null : (
+    // Nothing to compare against while you are writing. Comparing two
+    // versions and tracing where a sentence came from are both ways
+    // of reading a document that is finished; offered mid-sentence
+    // they are two ways to lose your place, and the second of them
+    // replaces the body you are typing into.
+    docViews = confirmingRemove || editing ? null : (
           <div className="doc-views" role="group" aria-label="How to view this document">
             {versionCount > 1 && (
               <button
@@ -779,6 +835,62 @@ export function ArtifactPanel({
               </button>
             </>
           )
+        ) : editing ? (
+          /* Editing, so the header is about editing.
+
+             Edit and Share are the two things you do to a document
+             you are reading, and neither is what somebody halfway
+             through a paragraph reached for. The controls that
+             matter were at the bottom of the document — which is
+             fine at three paragraphs and absurd at fifty, where the
+             way to stop editing is to scroll to the end of your own
+             writing.
+
+             Two of them, and no third. There used to be Discard, and
+             it was safe exactly as long as an edit was private: the
+             draft is shared now, so throwing it away throws away
+             whatever the other person just wrote in it. Leaving the
+             editor leaves the draft where it is, which is where they
+             are already looking.
+
+             **Done** stops editing. **Publish** makes the version.
+             They are deliberately not the same button — a version is
+             what other documents are built on and other people have
+             read, and an afternoon of saving should not make forty of
+             them. */
+          <div className="doc-acts doc-acts-edit">
+            {/* Said rather than pressed. Whether the words are safe
+                is the question somebody editing has all the time,
+                and a button they must press to find out is a worse
+                answer than a line that already knows. */}
+            <span className="doc-edit-state" role="status">
+              {editState.busy === "save"
+                ? "Saving…"
+                : editState.busy === "publish"
+                  ? "Publishing…"
+                  : editState.note || (editState.dirty ? "Not saved yet" : "Saved to the draft")}
+            </span>
+            <button
+              type="button"
+              className="doc-act"
+              disabled={!!editState.busy}
+              title="Stop editing. What is written stays in the draft."
+              onClick={() => void editRef.current?.done()}
+            >
+              <MenuIcon name="resolve" />
+              Done
+            </button>
+            <button
+              type="button"
+              className="doc-act doc-act-go"
+              disabled={!!editState.busy}
+              title="Turn the draft into a new version everybody reads"
+              onClick={() => void editRef.current?.publish()}
+            >
+              <MenuIcon name="export" />
+              Publish
+            </button>
+          </div>
         ) : (
           /* Two groups, and the split between them is what each kind
              of control does. On the left, the ways of *looking* at
@@ -1093,6 +1205,9 @@ export function ArtifactPanel({
           onArchivedChange={setOpenArchived}
           editing={editing}
           onEditingChange={setEditing}
+          editHandle={editRef}
+          onEditState={setEditState}
+          onPublished={() => setDetailNonce((n) => n + 1)}
           reloadNonce={detailNonce}
         />
       ) : !status.enabled ? (
@@ -1275,6 +1390,9 @@ function DocumentDetail({
   onArchivedChange,
   editing = false,
   onEditingChange,
+  editHandle,
+  onEditState,
+  onPublished,
   onShare,
   onSharingChanged,
   reloadNonce = 0,
@@ -1317,6 +1435,13 @@ function DocumentDetail({
    *  things you can do to a document. */
   editing?: boolean;
   onEditingChange?: (editing: boolean) => void;
+  /** Where to hang the editor's controls, so the header can press
+   *  them. The header is the panel's; the text is this view's. */
+  editHandle?: React.MutableRefObject<DocumentEditing | null>;
+  /** What the header should say while editing. */
+  onEditState?: (state: EditingState) => void;
+  /** A version was just made, so the page should read it again. */
+  onPublished?: () => void;
   /** Whether this document is frozen, for the page's own menu. */
   onArchivedChange: (archived: boolean) => void;
   /** Bumped by the page when it archived or restored this document. */
@@ -1339,8 +1464,28 @@ function DocumentDetail({
   // at 0 — "whatever head is" — so nothing would refetch and the
   // page would sit on the text the comment was about.
   const [docNonce, setDocNonce] = useState(0);
-  /** A save is in flight. The editor says so and refuses a second. */
-  const [saving, setSaving] = useState(false);
+  // ── The draft ────────────────────────────────────────────────────
+  //
+  // What is typed goes here and nowhere else until somebody
+  // publishes. One draft per document, shared by everybody who can
+  // read it, so two people editing the same paragraph are editing
+  // the same text rather than two copies of it that one of them is
+  // about to lose.
+  const [draft, setDraft] = useState<ArtifactDraftView | null>(null);
+  /** Whether the draft has been asked for yet. The editor must not
+   *  open on the published text and then have the draft arrive
+   *  underneath it — that reads as somebody else's edit landing on
+   *  yours, and lands the cursor somewhere else. */
+  const [draftAsked, setDraftAsked] = useState(false);
+  /** The latest markdown, and whether it has reached the server.
+   *  Refs, not state: they are read by callbacks the header holds,
+   *  and a stale closure here would save the paragraph before last. */
+  const typed = useRef("");
+  const unsaved = useRef(false);
+  const idle = useRef(0);
+  const [editBusy, setEditBusy] = useState<"" | "save" | "publish">("");
+  const [editNote, setEditNote] = useState("");
+  const [editDirty, setEditDirty] = useState(false);
   // Handed to the comment composer so only text inside the document
   // can be quoted — without it, selecting a version number in the
   // list below would be carried in as a passage.
@@ -1390,6 +1535,159 @@ function DocumentDetail({
       dropped = true;
     };
   }, [client, id]);
+
+  // Ask what is already being written, on opening the editor. A
+  // document somebody left half-rewritten yesterday should open on
+  // their words, not on the version they were rewriting.
+  useEffect(() => {
+    if (!id) return;
+    let dropped = false;
+    void client
+      .rpc<ArtifactDraftView>("artifact_draft", { artifact_id: id })
+      .then((answer) => {
+        if (dropped) return;
+        setDraft(answer?.exists ? answer : null);
+        setDraftAsked(true);
+      })
+      .catch(() => {
+        // No draft we could read is not the same as no draft, but it
+        // is the same thing to do: open on the published text. The
+        // save that follows will be refused too, and say so then.
+        if (!dropped) setDraftAsked(true);
+      });
+    return () => {
+      dropped = true;
+    };
+    // Asked while reading as well as while editing: an unpublished
+    // draft belongs in the version list whether or not the person
+    // looking at it is the one who wrote it. Re-asked on ``docNonce``
+    // so publishing, or the agent writing one, is reflected there.
+  }, [client, id, editing, docNonce]);
+
+  // Leaving the editor forgets what was being typed — not the draft,
+  // which is on the server, but this component's copy of it. Keeping
+  // it would mean re-entering the editor showed the words as unsaved
+  // a second time and offered to write them again.
+  useEffect(() => {
+    if (editing) return;
+    setDraftAsked(false);
+    setEditNote("");
+    setEditDirty(false);
+    unsaved.current = false;
+    typed.current = "";
+  }, [editing]);
+
+  /** Write what has been typed, if it has not been written already. */
+  const keepDraft = useCallback(async () => {
+    if (!unsaved.current) return;
+    const words = typed.current;
+    setEditBusy("save");
+    try {
+      const r = await client.rpc<{ ok?: boolean; error?: string }>("artifact_save_draft", {
+        artifact_id: id,
+        content: words,
+      });
+      if (r?.error || !r?.ok) throw new Error(r?.error || "Could not save that.");
+      // Only if nothing was typed while this was in flight, or the
+      // keystrokes that arrived meanwhile would be marked saved
+      // without ever having been sent.
+      if (typed.current === words) {
+        unsaved.current = false;
+        setEditDirty(false);
+      }
+      setEditNote("");
+    } catch (e) {
+      setEditNote(e instanceof Error ? e.message : String(e));
+      throw e;
+    } finally {
+      setEditBusy("");
+    }
+  }, [client, id]);
+
+  /** Typed in the editor. Held here, and written when the typing
+   *  stops — a save per keystroke is a request per keystroke, and
+   *  the keystrokes themselves already go to whoever else has this
+   *  document open, over the room socket. */
+  const edited = useCallback(
+    (markdown: string, changed: boolean) => {
+      typed.current = markdown;
+      if (!changed) return;
+      unsaved.current = true;
+      setEditDirty(true);
+      window.clearTimeout(idle.current);
+      idle.current = window.setTimeout(() => {
+        void keepDraft().catch(() => {
+          // Said in the header by the line above. Nothing is lost:
+          // the words are still in the editor and still unsaved, so
+          // Done will try again.
+        });
+      }, DRAFT_IDLE);
+    },
+    [keepDraft],
+  );
+
+  useEffect(() => () => window.clearTimeout(idle.current), []);
+
+  // What the header presses. Assigned rather than passed down,
+  // because the controls are up there and the text is down here.
+  useEffect(() => {
+    if (!editHandle) return;
+    editHandle.current = {
+      done: async () => {
+        window.clearTimeout(idle.current);
+        try {
+          await keepDraft();
+        } catch {
+          // Still editing, still unsaved, and the header says why.
+          // Closing on a failed save is the one way to lose the
+          // words, since the draft is where they were going.
+          return;
+        }
+        onEditingChange?.(false);
+      },
+      publish: async () => {
+        window.clearTimeout(idle.current);
+        try {
+          await keepDraft();
+        } catch {
+          return;
+        }
+        setEditBusy("publish");
+        try {
+          const r = await client.rpc<{
+            ok?: boolean;
+            n?: number;
+            stale?: boolean;
+            message?: string;
+            error?: string;
+          }>("artifact_publish_draft", { artifact_id: id });
+          if (r?.error || r?.stale || !r?.ok) {
+            // A conflict keeps the editor open on purpose: the draft
+            // is the only copy of what was written from the older
+            // version, and it now needs reading against the newer.
+            setEditNote(r?.message || r?.error || "Could not publish that.");
+            return;
+          }
+          setEditNote("");
+          onEditingChange?.(false);
+          setDocNonce((n) => n + 1);
+          onPublished?.();
+        } finally {
+          setEditBusy("");
+        }
+      },
+    };
+    return () => {
+      editHandle.current = null;
+    };
+  }, [editHandle, keepDraft, client, id, onEditingChange, onPublished]);
+
+  // Tell the header what to say. Up here rather than in the render,
+  // because the header belongs to another component and setting its
+  // state during this one's render is a React warning and a loop.
+  useEffect(() => {
+    onEditState?.({ busy: editBusy, dirty: editDirty, note: editNote });
+  }, [onEditState, editBusy, editDirty, editNote]);
 
   const askForAccess = useCallback(
     async (note: string) => {
@@ -1784,31 +2082,23 @@ function DocumentDetail({
               scroll on its own without dragging the text along. */}
           <div className="kb-doc-scroll">
           {editing ? (
-            <DocumentEditor
-              content={doc.content}
-              frozen={doc.archived}
-              busy={saving}
-              onSave={async (markdown) => {
-                setSaving(true);
-                try {
-                  const r = await client.rpc<{ ok?: boolean; n?: number; error?: string }>(
-                    "artifact_revise",
-                    { id, content: markdown },
-                  );
-                  // Thrown, not returned: the editor keeps the words
-                  // on screen when a save is refused, and the only
-                  // way to tell it so is for this to fail.
-                  if (r?.error || !r?.ok) {
-                    throw new Error(r?.error || "Could not save that.");
-                  }
-                  onEditingChange?.(false);
-                  setDocNonce((n) => n + 1);
-                } finally {
-                  setSaving(false);
-                }
-              }}
-              onCancel={() => onEditingChange?.(false)}
-            />
+            /* Opened on the draft when there is one, and on the
+               published text when there is not — and not at all
+               until we know which. An editor that opened on the
+               version and had the draft arrive underneath would look
+               like somebody else's edit landing on yours, and would
+               put the cursor somewhere you did not leave it. */
+            !draftAsked ? (
+              <div className="kb-doc-body markdown-body">
+                <p className="kb-hint">Opening the draft…</p>
+              </div>
+            ) : (
+              <DocumentEditor
+                content={draft?.content ?? doc.content}
+                frozen={doc.archived}
+                onChange={edited}
+              />
+            )
           ) : (
           <div className="kb-doc-body markdown-body" ref={bodyRef}>
             <ReactMarkdown
@@ -1888,6 +2178,8 @@ function DocumentDetail({
             {asideView !== "comments" && (
               <VersionSwitcher
                 versions={versions}
+                draft={draft}
+                onOpenDraft={() => onEditingChange?.(true)}
                 current={doc.n ?? 0}
                 full={asideView === "versions"}
                 limit={asideView === "both" ? VERSIONS_IN_BOTH : 0}
@@ -1986,6 +2278,8 @@ function AsideSwitch({
  */
 function VersionSwitcher({
   versions,
+  draft,
+  onOpenDraft,
   current,
   limit = 0,
   full = false,
@@ -1993,6 +2287,12 @@ function VersionSwitcher({
   onPick,
 }: {
   versions: ArtifactVersionRow[];
+  /** What is being written and has not been published. It belongs in
+   *  this list: it is the next version, and somebody wondering why
+   *  the document has not changed since yesterday is asking a
+   *  question the list is the natural place to answer. */
+  draft?: ArtifactDraftView | null;
+  onOpenDraft?: () => void;
   current: number;
   limit?: number;
   /** Showing the whole history, so this section takes the column and
@@ -2001,7 +2301,10 @@ function VersionSwitcher({
   onShowAll?: () => void;
   onPick: (n: number) => void;
 }) {
-  if (versions.length < 2) return null;
+  // A single version and a draft is still a history worth showing —
+  // it says the document has an unpublished next version, which is
+  // exactly what somebody who cannot find their edits needs to read.
+  if (versions.length < 2 && !draft?.exists) return null;
   // The one being read stays on the list even when it is older than
   // the cut — a picker that hides the current selection is a picker
   // that looks broken.
@@ -2015,6 +2318,30 @@ function VersionSwitcher({
     <section className={full ? "kb-lineage kb-lineage-full" : "kb-lineage"}>
       <h3 className="kb-lineage-heading">Versions</h3>
       <ul className="kb-lineage-rows">
+        {draft?.exists && (
+          <li className="kb-row kb-row-draft">
+            <button
+              type="button"
+              className="kb-version-btn kb-version-draft"
+              onClick={() => onOpenDraft?.()}
+              title="Open the draft and go on writing it"
+            >
+              <span className="kb-draft-chip">Draft</span>
+            </button>
+            <span className="kb-row-when">
+              {draft.updated_by ? "being written" : "unpublished"}
+            </span>
+            {/* Behind the head means somebody published while this
+                was being written, and publishing it will be refused
+                until it has been read against theirs. Better said
+                here than discovered at the moment of pressing. */}
+            <span className="kb-row-note">
+              {(draft.head_n ?? 0) > (draft.base_n ?? 0)
+                ? `from v${draft.base_n} · behind v${draft.head_n}`
+                : `from v${draft.base_n}`}
+            </span>
+          </li>
+        )}
         {rows.map((v) => (
           <li key={v.n} className={v.n === current ? "kb-row kb-row-current" : "kb-row"}>
             <button

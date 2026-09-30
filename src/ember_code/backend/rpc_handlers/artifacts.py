@@ -101,6 +101,20 @@ class ArtifactRpcHandler(RpcHandler):
     def artifact_colleagues(self, args: dict) -> Any:
         return self._ctx.backend.artifact_colleagues(query=str(args.get("query") or ""))
 
+    @rpc(RpcMethod.ARTIFACT_DRAFT)
+    def artifact_draft(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_draft(artifact_id=args["artifact_id"])
+
+    @rpc(RpcMethod.ARTIFACT_SAVE_DRAFT)
+    def artifact_save_draft(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_save_draft(
+            artifact_id=args["artifact_id"], content=args["content"]
+        )
+
+    @rpc(RpcMethod.ARTIFACT_PUBLISH_DRAFT)
+    def artifact_publish_draft(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_publish_draft(artifact_id=args["artifact_id"])
+
     @rpc(RpcMethod.ARTIFACT_LOCKED)
     def artifact_locked(self, args: dict) -> Any:
         return self._ctx.backend.artifact_locked(artifact_id=args["artifact_id"])

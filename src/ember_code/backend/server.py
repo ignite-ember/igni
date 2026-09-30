@@ -85,6 +85,9 @@ if TYPE_CHECKING:
         ArtifactCommentReplied,
         ArtifactCommentResolved,
         ArtifactCommentRow,
+        ArtifactDraft,
+        ArtifactDraftPublished,
+        ArtifactDraftSaved,
         ArtifactDrift,
         ArtifactDriftApplied,
         ArtifactExportResult,
@@ -1045,6 +1048,18 @@ class BackendServer:
     async def artifact_colleagues(self, *, query: str = "") -> ArtifactColleagues:
         """See :meth:`ArtifactController.colleagues`."""
         return await self.artifacts.colleagues(query=query)
+
+    async def artifact_draft(self, *, artifact_id: str) -> ArtifactDraft:
+        """See :meth:`ArtifactController.draft`."""
+        return await self.artifacts.draft(artifact_id=artifact_id)
+
+    async def artifact_save_draft(self, *, artifact_id: str, content: str) -> ArtifactDraftSaved:
+        """See :meth:`ArtifactController.save_draft`."""
+        return await self.artifacts.save_draft(artifact_id=artifact_id, content=content)
+
+    async def artifact_publish_draft(self, *, artifact_id: str) -> ArtifactDraftPublished:
+        """See :meth:`ArtifactController.publish_draft`."""
+        return await self.artifacts.publish_draft(artifact_id=artifact_id)
 
     async def artifact_locked(self, *, artifact_id: str) -> ArtifactLocked:
         """See :meth:`ArtifactController.locked`."""

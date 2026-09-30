@@ -1,14 +1,28 @@
 /**
- * Editing a document in place, and saving it as a version.
+ * Editing a document in place.
  *
- * **Save is explicit, and one save is one version.** The store is
+ * **What is typed goes to the draft.** Not a version: the store is
  * append-only and the version list is on screen beside this, so an
- * autosaving editor would put forty versions into an afternoon's
- * typing and make that list useless. Nothing is written until Save.
+ * editor that wrote one per save would put forty into an afternoon
+ * and make that list useless. A version is what publishing the draft
+ * makes, and nothing else makes one.
  *
- * **Cancel is safe.** It puts back the text that was loaded, not the
- * text on screen, so the answer to "did I just lose that?" is always
- * no — and it asks first when there is something to lose.
+ * **There is nothing to discard.** Cancel used to put back the text
+ * that was loaded, which is safe while an edit is only yours and
+ * wrong the moment somebody else is editing the same paragraph — the
+ * draft is shared, so throwing it away throws away their work too.
+ * Leaving the editor leaves the draft where it is.
+ *
+ * **Nothing here goes read-only while the draft saves.** It did, and
+ * it cost the editor its focus every time: ``setEditable(false)``
+ * blurs, so a save on a pause in typing put the cursor out of the
+ * document a second after every word. Saving is a background fact,
+ * not something that happens to the person typing.
+ *
+ * **The controls are in the header**, where Edit and Share were.
+ * While somebody is editing, those two are not what they need and
+ * the two that matter should not be at the bottom of a five-thousand
+ * pixel document.
  *
  * **An archived document opens read-only.** Archiving is what this
  * app offers instead of deleting something the lineage depends on,
@@ -19,7 +33,7 @@
 import DragHandle from "@tiptap/extension-drag-handle-react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { Editor } from "@tiptap/core";
 
@@ -31,15 +45,16 @@ import { SlashMenu } from "./SlashMenu";
 import { slashCommands, type SlashState } from "./slashCommands";
 
 export interface DocumentEditorProps {
-  /** The markdown as it stands. */
+  /** The markdown as it stands — the draft when there is one, and
+   *  the current version when there is not. */
   content: string;
   /** Frozen: archived documents do not take a new version. */
   frozen?: boolean;
-  /** Saving is in flight; the buttons say so and do nothing twice. */
-  busy?: boolean;
-  /** Write a new version. Rejecting leaves the editor open and dirty. */
-  onSave: (markdown: string) => Promise<void> | void;
-  onCancel: () => void;
+  /** What is in the box, whenever it changes. The header holds the
+   *  controls now, so it needs the text they act on — and the draft
+   *  is written from here rather than from a Save button that no
+   *  longer exists. */
+  onChange?: (markdown: string, dirty: boolean) => void;
 }
 
 /** One toolbar button, wherever it is drawn. */
@@ -75,17 +90,12 @@ function ToolButton({ tool, editor }: { tool: EditorTool; editor: Editor }) {
 export function DocumentEditor({
   content,
   frozen = false,
-  busy = false,
-  onSave,
-  onCancel,
+  onChange,
 }: DocumentEditorProps) {
-  // The text this editor was opened on. Cancel goes back to *this*,
-  // and Save diffs against it so untouched paragraphs keep the
-  // wrapping they arrived with.
+  // The text this editor was opened on. Diffed against, so untouched
+  // paragraphs keep the wrapping they arrived with.
   const opened = useRef(content);
   const [dirty, setDirty] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [error, setError] = useState("");
   /** What the slash menu should be showing, or nothing. */
   const [slash, setSlash] = useState<SlashState | null>(null);
 
@@ -117,7 +127,9 @@ export function DocumentEditor({
     // ever notices that.
     onUpdate: ({ editor: live }) => {
       const now = preserveWrapping(opened.current, markdownOf(live));
-      setDirty(now.trim() !== opened.current.trim());
+      const changed = now.trim() !== opened.current.trim();
+      setDirty(changed);
+      onChange?.(now, changed);
     },
   });
 
@@ -128,6 +140,11 @@ export function DocumentEditor({
   useEffect(() => {
     if (!editor || dirty) return;
     if (content === opened.current) return;
+    // Not while the cursor is in it. ``setContent`` rebuilds the
+    // document and puts the cursor back at the start, which to
+    // somebody mid-sentence is indistinguishable from the editor
+    // throwing their place away.
+    if (editor.isFocused) return;
     opened.current = content;
     editor.commands.setContent(content, { emitUpdate: false });
   }, [content, dirty, editor]);
@@ -135,37 +152,6 @@ export function DocumentEditor({
   useEffect(() => {
     editor?.setEditable(!frozen);
   }, [editor, frozen]);
-
-  const save = useCallback(async () => {
-    if (!editor || busy || frozen) return;
-    setError("");
-    const next = preserveWrapping(opened.current, markdownOf(editor));
-    if (next.trim() === opened.current.trim()) {
-      // Nothing changed. Writing a version that says the same as the
-      // one before it is noise in a list people read to find out
-      // what changed.
-      onCancel();
-      return;
-    }
-    try {
-      await onSave(next);
-    } catch (e) {
-      // Left open and still dirty: the words are in this box and
-      // nowhere else, and closing would be the only way to lose them.
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, [editor, busy, frozen, onSave, onCancel]);
-
-  const cancel = useCallback(() => {
-    if (dirty && !confirming) {
-      setConfirming(true);
-      return;
-    }
-    editor?.commands.setContent(opened.current, { emitUpdate: false });
-    setDirty(false);
-    setConfirming(false);
-    onCancel();
-  }, [dirty, confirming, editor, onCancel]);
 
   if (!editor) return null;
 
@@ -213,53 +199,15 @@ export function DocumentEditor({
 
       <SlashMenu state={slash} />
 
-      {error && <p className="msg-error doc-editor-error">{error}</p>}
-
-      <div className="doc-editor-foot">
-        {frozen ? (
-          <>
-            <MenuIcon name="archive" />
-            <span className="kb-hint">
-              This document is archived. Restore it to make changes — everything built on
-              it goes on resolving either way.
-            </span>
-          </>
-        ) : confirming ? (
-          <>
-            <span className="kb-hint">Throw away what you have written?</span>
-            <button type="button" className="btn btn-sm btn-danger" onClick={cancel}>
-              Discard
-            </button>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => setConfirming(false)}
-            >
-              Keep editing
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              type="button"
-              className="btn btn-sm btn-primary"
-              disabled={busy || !dirty}
-              onClick={() => void save()}
-            >
-              {busy ? "Saving…" : "Save as a new version"}
-            </button>
-            <button type="button" className="btn btn-sm" onClick={cancel}>
-              Cancel
-            </button>
-            {/* Said before saving, not after. A version is a thing
-                other documents can be built on, so it is worth
-                knowing that is what the button makes. */}
-            <span className="kb-hint">
-              {dirty ? "Saving writes a new version." : "No changes yet."}
-            </span>
-          </>
-        )}
-      </div>
+      {frozen && (
+        <div className="doc-editor-foot">
+          <MenuIcon name="archive" />
+          <span className="kb-hint">
+            This document is archived. Restore it to make changes — everything built on
+            it goes on resolving either way.
+          </span>
+        </div>
+      )}
     </div>
   );
 }

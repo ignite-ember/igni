@@ -20,6 +20,7 @@ from pathlib import Path
 
 from ember_code.backend.schemas_artifacts import ArtifactCommentResolved
 from ember_code.core.artifacts.collaboration import CollaborationSync, NotAllowed
+from ember_code.core.artifacts.draft_desk import DraftDesk, DraftRefused
 from ember_code.core.artifacts.errors import SourcesRequired
 from ember_code.core.artifacts.index import ArtifactIndex
 from ember_code.core.artifacts.ingest import Ingester
@@ -140,6 +141,55 @@ class SessionArtifactManager:
         if result.success and self.share_enabled():
             await self._mirror_to_yaml()
         return result
+
+    # ── Editing through the draft ────────────────────────────────────
+    #
+    # The same two acts the editor uses, so a change asked for in a
+    # comment lands where a change typed into the document lands.
+    # Otherwise the agent answering "reword this paragraph" publishes
+    # a version while the person who asked is still deciding, and the
+    # draft they had open is suddenly behind a version they did not
+    # make.
+
+    def draft_desk(self) -> DraftDesk | None:
+        """Where an edit goes before it is a version."""
+        if self.artifacts is None:
+            return None
+        return DraftDesk(self.artifacts, author=self.author)
+
+    async def write_draft(self, *, ref: str, content: str) -> ArtifactWriteResult:
+        """Put a change in the draft without making a version."""
+        desk = self.draft_desk()
+        if desk is None:
+            return ArtifactWriteResult.fail(self.disabled_message)
+        found = await self.artifacts.resolve(ref)
+        if found is None:
+            return ArtifactWriteResult.fail(f"No artifact matches {ref!r}.")
+        try:
+            await desk.save(found.artifact_id, content)
+        except (DraftRefused, NotAllowed) as refused:
+            return ArtifactWriteResult.fail(str(refused) or "Could not write that draft.")
+        return ArtifactWriteResult.ok(
+            "Written to the draft, not to a version. Whoever asked for this "
+            "publishes it when they are happy with it.",
+            artifact_id=found.artifact_id,
+        )
+
+    async def publish_draft(self, *, ref: str) -> ArtifactWriteResult:
+        """Turn the draft into a version."""
+        desk = self.draft_desk()
+        if desk is None:
+            return ArtifactWriteResult.fail(self.disabled_message)
+        found = await self.artifacts.resolve(ref)
+        if found is None:
+            return ArtifactWriteResult.fail(f"No artifact matches {ref!r}.")
+        try:
+            n = await desk.publish(found.artifact_id)
+        except (DraftRefused, NotAllowed) as refused:
+            return ArtifactWriteResult.fail(str(refused) or "Could not publish that draft.")
+        if self.share_enabled():
+            await self._mirror_to_yaml()
+        return ArtifactWriteResult.ok(f"Published as v{n}.", artifact_id=found.artifact_id, n=n)
 
     def _declare(
         self,
@@ -518,8 +568,13 @@ class SessionArtifactManager:
                     f"{target.author or 'a collaborator'}; sources unchanged."
                 ),
             )
-            if not written.ok:
-                return ArtifactCommentResolved(ok=False, message=written.message)
+            # ``success``, not ``ok``. ``ok`` is the classmethod that
+            # builds one of these, so it is a bound method here and
+            # always truthy — the refusal branch below could not be
+            # reached, and a failed write was reported to the
+            # commenter as their suggestion having been applied.
+            if not written.success:
+                return ArtifactCommentResolved(ok=False, message=written.error or written.message)
             applied_in = written.n
 
         try:

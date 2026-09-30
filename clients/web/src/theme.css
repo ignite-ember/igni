@@ -7904,6 +7904,41 @@ button {
   z-index: 1;
 }
 
+/* Editing. Publish is the one button on this page that makes
+   something everybody else will read, so it is the only one drawn
+   as a decision; Done is an ordinary way out and looks like one. */
+.doc-acts-edit {
+  gap: 8px;
+}
+
+.doc-edit-state {
+  font-size: 11px;
+  color: var(--fg-faint);
+  white-space: nowrap;
+  /* Long enough for a refusal to be readable, short enough that it
+     cannot push the two buttons off the end of the header. */
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.doc-act-go {
+  color: #fff;
+  background: var(--ember-gradient);
+  border-color: transparent;
+}
+
+.doc-act-go:hover:not(:disabled) {
+  background: var(--ember-gradient);
+  box-shadow: 0 4px 12px rgba(249, 115, 22, 0.28);
+}
+
+.doc-act-go:disabled {
+  opacity: 0.6;
+  color: rgba(255, 255, 255, 0.85);
+  background: var(--ember-gradient);
+}
+
 .doc-view {
   height: 23px;
   padding: 0 9px;
@@ -8475,6 +8510,27 @@ button {
 .kb-row-note {
   color: var(--fg-muted);
   font-size: 11px;
+}
+
+/* The draft, above the versions. Dashed because it is the only row
+   in this list that is not yet a fact about the document — every
+   other one was published and cannot change.
+
+   The dashes go round the word, not round the button: the button
+   stretches so the times on every row line up, and a border on it
+   drew a box the width of the column. */
+.kb-draft-chip {
+  display: inline-block;
+  padding: 0 5px;
+  color: var(--accent-orange-text);
+  border: 1px dashed var(--accent-orange-text);
+  border-radius: 4px;
+  background: transparent;
+}
+
+.kb-row-draft .kb-row-when,
+.kb-row-draft .kb-row-note {
+  font-style: italic;
 }
 
 .kb-row-current {

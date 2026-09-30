@@ -314,6 +314,40 @@ class ArtifactTools(Toolkit):
             return _sources_required_message(exc)
         return result.message if result.success else f"Error: {result.error}"
 
+    async def artifact_edit_draft(self, ref: str, content: str) -> str:
+        """Change a document without making a version of it.
+
+        **This is how to change a document somebody asked you to
+        change.** The edit goes to the draft — one per document,
+        shared by everybody who can read it — and the person who
+        asked decides when it becomes a version. Use it for anything
+        that came from a comment or a request: they are still
+        thinking about the wording, and a version published under
+        them is one they did not agree to.
+
+        Writing the draft again replaces it. There is only ever one.
+
+        Args:
+            ref: Artifact id or name to edit.
+            content: The full new body (not a patch).
+        """
+        result = await self._mgr.write_draft(ref=ref, content=content)
+        return result.message if result.success else f"Error: {result.error}"
+
+    async def artifact_publish_draft(self, ref: str) -> str:
+        """Turn a document's draft into a new version.
+
+        Only when you were asked to publish it. Writing the draft and
+        publishing it are two acts on purpose: the second one is a
+        decision about what everybody reads, and it belongs to
+        whoever asked for the change.
+
+        Args:
+            ref: Artifact id or name whose draft to publish.
+        """
+        result = await self._mgr.publish_draft(ref=ref)
+        return result.message if result.success else f"Error: {result.error}"
+
     async def artifact_revise(
         self,
         ref: str,
@@ -321,7 +355,13 @@ class ArtifactTools(Toolkit):
         sources: list[str],
         no_sources_reason: str = "",
     ) -> str:
-        """Add a new version of an existing artifact.
+        """Add a new version of an existing artifact, immediately.
+
+        For your own records — a note you keep, a document you are
+        revising because you learned something, with nobody waiting
+        on the wording. **If somebody asked for the change, use
+        ``artifact_edit_draft`` instead**, so they publish it rather
+        than finding it published.
 
         The previous version is kept and stays addressable — this
         appends, it does not overwrite. Declare the sources *this

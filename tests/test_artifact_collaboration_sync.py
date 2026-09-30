@@ -20,6 +20,7 @@ socket is replaced.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from pathlib import Path
 
@@ -84,6 +85,8 @@ class Server:
         self.conflict: dict | None = None
         self.requests: list[httpx.Request] = []
         self.status_overrides: dict[str, int] = {}
+        #: The one draft this document has, once somebody writes it.
+        self.draft: dict | None = None
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -98,6 +101,30 @@ class Server:
             if self.conflict is not None:
                 return httpx.Response(409, json=self.conflict)
             return httpx.Response(200, json={"n": self.head_n + 1, "head_n": self.head_n + 1})
+        if path.endswith("/draft") and request.method == "GET":
+            if self.draft is None:
+                return httpx.Response(
+                    200, json={"exists": False, "content": "", "base_n": 0, "head_n": self.head_n}
+                )
+            return httpx.Response(200, json={**self.draft, "head_n": self.head_n})
+        if path.endswith("/draft") and request.method == "PUT":
+            body = json.loads(request.content or b"{}")
+            self.draft = {
+                "exists": True,
+                "content": body["content"],
+                "base_n": body["base_n"],
+                "updated_by": "sam@acme.test",
+            }
+            return httpx.Response(204)
+        if path.endswith("/draft/publish"):
+            if self.conflict is not None:
+                return httpx.Response(409, json=self.conflict)
+            if self.draft is None:
+                return httpx.Response(409, json={"detail": "There is nothing to publish."})
+            self.head_n += 1
+            self.versions.append(version_payload(self.head_n, self.draft["content"]))
+            self.draft = None
+            return httpx.Response(200, json={"n": self.head_n})
         if path == "/v1/artifacts/comments/sync":
             return httpx.Response(
                 200,
@@ -484,3 +511,132 @@ class TestTheLiveChannel:
         await asyncio.sleep(0.05)
         stream.stop()
         await asyncio.wait_for(task, timeout=5)
+
+
+class TestEditingThroughTheDraft:
+    """A shared document keeps its draft where everybody can see it.
+
+    The local file is for documents nobody has shared — see
+    ``test_an_edit_waits_in_the_draft.py``. Here the question is the
+    other one: that a document *with* a shared copy puts its draft on
+    the server rather than on the machine that happened to type it,
+    because a draft only one person can read is an unsaved editor
+    with extra steps.
+    """
+
+    @pytest.fixture
+    def desk(self, index, sync):
+        from ember_code.core.artifacts.draft_desk import DraftDesk
+
+        return DraftDesk(index, sync=sync, author="maya@acme.test")
+
+    @pytest.fixture(autouse=True)
+    def shared(self, index, server, monkeypatch, sync):
+        """This document has a shared copy called ``s1``."""
+        server.head_n = 1
+        server.versions = [version_payload(1, "Auth is a session cookie.")]
+
+        async def slug_for(_ref: str) -> str:
+            return "s1"
+
+        monkeypatch.setattr(sync, "slug_for", slug_for)
+
+    async def test_the_draft_goes_to_the_server(self, desk, server):
+        await desk.save(CODEC.artifact_id("Auth model"), "Being rewritten.")
+
+        assert server.draft is not None
+        assert server.draft["content"] == "Being rewritten."
+
+    async def test_no_version_is_made(self, desk, server):
+        await desk.save(CODEC.artifact_id("Auth model"), "Being rewritten.")
+
+        assert server.head_n == 1
+
+    async def test_it_is_written_from_the_current_head(self, desk, server):
+        # Not from whatever the editor remembered when it opened: a
+        # base that is already behind is a conflict at publish time
+        # over a version nobody disagreed with.
+        server.head_n = 4
+        await desk.save(CODEC.artifact_id("Auth model"), "From wherever we are.")
+
+        assert server.draft["base_n"] == 4
+
+    async def test_reading_it_back_says_who_touched_it(self, desk):
+        # The thing a local draft cannot answer, and the reason a
+        # shared one is worth the round trip.
+        await desk.save(CODEC.artifact_id("Auth model"), "Mine for now.")
+
+        draft = await desk.read(CODEC.artifact_id("Auth model"))
+        assert draft.updated_by == "sam@acme.test"
+
+    async def test_publishing_makes_the_version_there(self, desk, server):
+        await desk.save(CODEC.artifact_id("Auth model"), "Auth is a signed JWT.")
+
+        n = await desk.publish(CODEC.artifact_id("Auth model"))
+
+        assert n == 2
+        assert server.head_n == 2
+
+    async def test_the_local_chain_mirrors_it(self, desk, index):
+        # Published means published everywhere. A version that exists
+        # on the server and not here would come back on the next pull
+        # and read as somebody else's work.
+        await desk.save(CODEC.artifact_id("Auth model"), "Auth is a signed JWT.")
+        await desk.publish(CODEC.artifact_id("Auth model"))
+
+        head = await index.version("Auth model", 0)
+        assert head is not None
+        assert "signed JWT" in head.content
+
+    async def test_the_mirror_is_not_pushed_back(self, desk, server):
+        await desk.save(CODEC.artifact_id("Auth model"), "Auth is a signed JWT.")
+        await desk.publish(CODEC.artifact_id("Auth model"))
+
+        pushes = [
+            r
+            for r in server.requests
+            if r.method == "POST" and r.url.path.endswith("/versions")
+        ]
+        assert pushes == [], "the server already has it; pushing would carry a stale base"
+
+    async def test_publishing_clears_it(self, desk, server):
+        await desk.save(CODEC.artifact_id("Auth model"), "Done.")
+        await desk.publish(CODEC.artifact_id("Auth model"))
+
+        assert server.draft is None
+
+    async def test_there_is_nothing_to_publish_without_a_draft(self, desk):
+        from ember_code.core.artifacts.draft_desk import DraftRefused
+
+        with pytest.raises(DraftRefused):
+            await desk.publish(CODEC.artifact_id("Auth model"))
+
+    async def test_somebody_publishing_first_is_said_plainly(self, desk, server):
+        from ember_code.core.artifacts.draft_desk import PublishedUnderneath
+
+        await desk.save(CODEC.artifact_id("Auth model"), "Written from v1.")
+        server.conflict = {"detail": "Somebody published v2.", "head_n": 2}
+
+        with pytest.raises(PublishedUnderneath):
+            await desk.publish(CODEC.artifact_id("Auth model"))
+
+    async def test_a_refused_publish_keeps_the_draft(self, desk, server):
+        # The moment the draft matters most: it is the only copy of
+        # what was written from the older version.
+        from ember_code.core.artifacts.draft_desk import PublishedUnderneath
+
+        await desk.save(CODEC.artifact_id("Auth model"), "Written from v1.")
+        server.conflict = {"detail": "Somebody published v2.", "head_n": 2}
+
+        with contextlib.suppress(PublishedUnderneath):
+            await desk.publish(CODEC.artifact_id("Auth model"))
+
+        assert server.draft is not None
+        assert server.draft["content"] == "Written from v1."
+
+    async def test_nothing_is_written_locally_until_it_is_published(self, desk, index):
+        await desk.save(CODEC.artifact_id("Auth model"), "Still being written.")
+
+        head = await index.version("Auth model", 0)
+        assert head is not None
+        assert "session cookie" in head.content

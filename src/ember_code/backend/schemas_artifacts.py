@@ -617,6 +617,43 @@ class ArtifactColleagues(BaseModel):
     error: str = ""
 
 
+class ArtifactDraft(BaseModel):
+    """The edit in progress on a document.
+
+    ``exists`` is separate from an empty ``content``: no draft and a
+    draft somebody has deleted every word from are different states,
+    and only the second is a thing to publish.
+    """
+
+    exists: bool = False
+    content: str = ""
+    #: The version it was started from. Behind ``head_n`` means
+    #: somebody has published since and it needs rebasing.
+    base_n: int = 0
+    head_n: int = 0
+    updated_by: str = ""
+    error: str = ""
+
+
+class ArtifactDraftSaved(BaseModel):
+    """The outcome of writing a draft. No version was made."""
+
+    ok: bool = False
+    error: str = ""
+
+
+class ArtifactDraftPublished(BaseModel):
+    """The version a draft became."""
+
+    ok: bool = False
+    n: int = 0
+    #: Somebody published while this was being written. The draft is
+    #: still there; this is a thing to read and act on, not a failure.
+    stale: bool = False
+    message: str = ""
+    error: str = ""
+
+
 class ArtifactLocked(BaseModel):
     """What a document is, to somebody who cannot open it.
 

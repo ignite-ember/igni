@@ -589,6 +589,46 @@ class CollaborationSync:
             raise NotAllowed(request_id)
         response.raise_for_status()
 
+    # ── The draft ────────────────────────────────────────────────────
+    #
+    # Where an edit lands. A version is what publishing a draft makes,
+    # and nothing else makes one — so these three are the whole of
+    # editing a shared document.
+
+    async def draft(self, *, slug: str) -> dict[str, Any]:
+        """What is being written on this document right now."""
+        response = await self._request("GET", f"/v1/artifacts/shared/{slug}/draft")
+        if response.status_code == 404:
+            raise NotAllowed(slug)
+        response.raise_for_status()
+        return dict(response.json())
+
+    async def save_draft(self, *, slug: str, content: str, base_n: int) -> None:
+        """Store the edit in progress. Never makes a version."""
+        response = await self._request(
+            "PUT",
+            f"/v1/artifacts/shared/{slug}/draft",
+            json={"content": content, "base_n": base_n},
+        )
+        if response.status_code == 404:
+            raise NotAllowed(slug)
+        response.raise_for_status()
+
+    async def publish_draft(self, *, slug: str) -> int:
+        """Turn the draft into a version, and answer which one.
+
+        409 is a conflict rather than a failure: somebody published
+        while this was being written, the draft is still there, and
+        the caller needs to say so rather than retry.
+        """
+        response = await self._request("POST", f"/v1/artifacts/shared/{slug}/draft/publish")
+        if response.status_code == 404:
+            raise NotAllowed(slug)
+        if response.status_code == 409:
+            raise ChainDiverged(0, [])
+        response.raise_for_status()
+        return int(response.json().get("n") or 0)
+
     async def colleagues(self, *, query: str = "") -> list[dict[str, Any]]:
         """Who this account could share something with.
 

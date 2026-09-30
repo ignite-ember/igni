@@ -36,6 +36,9 @@ from ember_code.backend.schemas_artifacts import (
     ArtifactCommentResolved,
     ArtifactCommentRow,
     ArtifactDependent,
+    ArtifactDraft,
+    ArtifactDraftPublished,
+    ArtifactDraftSaved,
     ArtifactDrift,
     ArtifactDriftApplied,
     ArtifactExportResult,
@@ -78,6 +81,11 @@ from ember_code.core.artifacts.anchoring import RelevanceReview, surrounding, tr
 from ember_code.core.artifacts.collaboration import CollaborationSync, NotAllowed
 from ember_code.core.artifacts.conversation import CommentConversation
 from ember_code.core.artifacts.cypher import ArtifactCypherService, CypherResult
+from ember_code.core.artifacts.draft_desk import (
+    DraftDesk,
+    DraftRefused,
+    PublishedUnderneath,
+)
 from ember_code.core.artifacts.drift import (
     AffectedPassage,
     Divergence,
@@ -1886,9 +1894,7 @@ class ArtifactController:
             logger.info("comment on %s did not reach the server: %s", artifact_id, exc)
             return None
 
-    async def _keep_origin(
-        self, comment: Comment | None, speaker: CommentOrigin
-    ) -> Comment | None:
+    async def _keep_origin(self, comment: Comment | None, speaker: CommentOrigin) -> Comment | None:
         """Put back the origin the round trip lost.
 
         Whether a comment is an *instruction* or a *remark* is the
@@ -2089,6 +2095,82 @@ class ArtifactController:
             logger.info("colleague lookup did not reach the server: %s", exc)
             return ArtifactColleagues(error=f"Could not reach the server: {exc}")
         return ArtifactColleagues(people=[Colleague(**person) for person in found])
+
+    # ── The draft ────────────────────────────────────────────────────
+
+    def _draft_desk(self) -> DraftDesk | None:
+        """Where an edit goes before it is a version.
+
+        Given this controller's own sync client rather than the one
+        the index holds: that one is built when the index is, and a
+        sign-in part-way through a session would leave it writing as
+        whoever was signed in before.
+        """
+        index = self._session.artifacts
+        if index is None:
+            return None
+        return DraftDesk(index, sync=self._collaboration(), author=self._local_author())
+
+    async def draft(self, *, artifact_id: str) -> ArtifactDraft:
+        """What is being written on this document right now."""
+        desk = self._draft_desk()
+        if desk is None:
+            return ArtifactDraft()
+        try:
+            found = await desk.read(artifact_id)
+        except NotAllowed:
+            # Not ours to read. Answered as "no draft" rather than as
+            # an error: the document itself is on screen, and a lock
+            # drawn over the version list says nothing the reader can
+            # act on.
+            return ArtifactDraft()
+        except Exception as exc:  # noqa: BLE001 — network, auth
+            logger.info("draft lookup did not reach the server: %s", exc)
+            return ArtifactDraft(error=f"Could not reach the server: {exc}")
+        return ArtifactDraft(
+            exists=found.exists,
+            content=found.content,
+            base_n=found.base_n,
+            head_n=found.head_n,
+            updated_by=found.updated_by,
+        )
+
+    async def save_draft(self, *, artifact_id: str, content: str) -> ArtifactDraftSaved:
+        """Store an edit without making a version."""
+        desk = self._draft_desk()
+        if desk is None:
+            return ArtifactDraftSaved(error="Artifacts are disabled.")
+        try:
+            await desk.save(artifact_id, content)
+        except NotAllowed:
+            return ArtifactDraftSaved(error="This document is not yours to edit.")
+        except DraftRefused as refused:
+            return ArtifactDraftSaved(error=str(refused))
+        except Exception as exc:  # noqa: BLE001 — network, auth
+            logger.info("draft save did not reach the server: %s", exc)
+            return ArtifactDraftSaved(error=f"Could not reach the server: {exc}")
+        return ArtifactDraftSaved(ok=True)
+
+    async def publish_draft(self, *, artifact_id: str) -> ArtifactDraftPublished:
+        """Turn the draft into a version."""
+        desk = self._draft_desk()
+        if desk is None:
+            return ArtifactDraftPublished(error="Artifacts are disabled.")
+        try:
+            n = await desk.publish(artifact_id)
+        except PublishedUnderneath as diverged:
+            # Not an error the reader caused, and the draft is intact:
+            # said as ``stale`` so the editor stays open on it rather
+            # than closing over the only copy.
+            return ArtifactDraftPublished(stale=True, message=str(diverged))
+        except NotAllowed:
+            return ArtifactDraftPublished(error="This document is not yours to publish.")
+        except DraftRefused as refused:
+            return ArtifactDraftPublished(error=str(refused))
+        except Exception as exc:  # noqa: BLE001 — network, auth
+            logger.info("publishing a draft did not reach the server: %s", exc)
+            return ArtifactDraftPublished(error=f"Could not reach the server: {exc}")
+        return ArtifactDraftPublished(ok=True, n=n, message=f"Published as v{n}.")
 
     # ── Arriving from a link ─────────────────────────────────────────
 
@@ -2323,9 +2405,7 @@ class ArtifactController:
         except Exception as exc:  # noqa: BLE001 — network, auth
             logger.info("settling a request did not reach the server: %s", exc)
             return ArtifactViewGranted(error=f"Could not reach the server: {exc}")
-        return ArtifactViewGranted(
-            ok=True, message="Let them in." if granted else "Declined."
-        )
+        return ArtifactViewGranted(ok=True, message="Let them in." if granted else "Declined.")
 
     # ── Presence ─────────────────────────────────────────────────────
 
@@ -2364,7 +2444,9 @@ class ArtifactController:
         self._room_stop = stop
         self._room_artifact = artifact_id
         self._room_task = asyncio.create_task(
-            sync.room(slug=slug, on_roster=lambda here: self._room_changed(artifact_id, here), stop=stop)
+            sync.room(
+                slug=slug, on_roster=lambda here: self._room_changed(artifact_id, here), stop=stop
+            )
         )
         return ArtifactRoom(ok=True, shared=True)
 
@@ -2394,7 +2476,9 @@ class ArtifactController:
         if artifact_id != self._room_artifact:
             return
         self._session.broadcast_bus.emit(
-            BroadcastEvent(channel="artifact_room", payload={"artifact_id": artifact_id, "here": here})
+            BroadcastEvent(
+                channel="artifact_room", payload={"artifact_id": artifact_id, "here": here}
+            )
         )
 
     def _collaboration(self) -> CollaborationSync | None:
