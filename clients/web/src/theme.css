@@ -4340,9 +4340,32 @@ button {
      document.
      
      So it is placed to clear the *tallest* thing that can sit above
-     it, which is the list's header. That leaves air above it on a
-     document, and air is the right price: the alternative is a
-     column that moves under the hand reaching for it. */
+     it, and air is the right price for whatever is shorter: the
+     alternative is a column that moves under the hand reaching for
+     it.
+
+     What that tallest thing is, is the whole question. It used to be
+     the list's header — a row carrying the page's own name and its
+     buttons, 82px of it — so 82px is what this was. That row is
+     gone; the trail is now the only thing above the hierarchy on
+     every page of this panel, and 82px left sixty-one pixels of
+     nothing between them.
+
+     Derived rather than retyped, so the next row that comes or goes
+     moves the column with it instead of stranding it. */
+  --crumb-row-h: 23px;
+  --tree-dock-top: calc(var(--crumb-row-h) + var(--tree-dock-air));
+  /* The gap between the trail and the first thing in the column.
+     Wider than ``--doc-air`` because this one is read as a gap —
+     two different things, one under the other — where the air
+     beside the text is read as a margin. */
+  --tree-dock-air: 8px;
+}
+
+/* A page that still has a header row is still cleared by it. Nothing
+   in this panel does any more; a page that grows one will not have
+   to remember why its hierarchy overlaps its buttons. */
+.page:has(> .page-head) {
   --tree-dock-top: calc(82px + var(--doc-air));
 }
 
