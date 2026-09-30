@@ -65,12 +65,24 @@ class ExportScope:
 
 @dataclass
 class RenderRequest:
-    """Everything the page needs, already fetched."""
+    """Everything the page needs, already fetched.
+
+    No version history. An export is one version of a document —
+    the one that was asked for — and a list of the others below the
+    text was neither the document nor a way to reach them: it
+    rendered as rows of "v3 · 12 March · 4820 chars", none of them a
+    link, in a file that has no other version beside it to link to.
+    Somebody sent the export to somebody else, and what arrived was
+    the document with an inventory of drafts stapled underneath.
+
+    Where the other versions genuinely are reachable — the app, the
+    shared document page — there is a picker that knows how to fetch
+    them, which is the thing this was a paper imitation of.
+    """
 
     summary: ArtifactSummary
     version: ArtifactVersion
     lineage: ArtifactLineage | None = None
-    history: list[ArtifactVersion] = field(default_factory=list)
     scope: ExportScope = field(default_factory=ExportScope.local)
     title_suffix: str = ""
 
@@ -95,7 +107,6 @@ class ArtifactRenderer:
             '<main class="page">',
             self._header(request),
             self._body(version),
-            self._history(request),
             self._lineage(request),
             "</main>",
             "</body>",
@@ -143,29 +154,6 @@ class ArtifactRenderer:
 
     def _body(self, version: ArtifactVersion) -> str:
         return f'<article class="content">{_markdownish(version.content)}</article>'
-
-    def _history(self, request: RenderRequest) -> str:
-        """The version switcher.
-
-        Rendered as plain anchors to sibling files rather than a
-        script-driven picker: the page has to work from disk and
-        inside a PDF, where nothing runs.
-        """
-        if len(request.history) < 2:
-            return ""
-        rows = []
-        for v in request.history:
-            classes = "row current" if v.n == request.version.n else "row"
-            when = _date(v.created_at) if v.created_at else ""
-            rows.append(
-                f'<li class="{classes}"><span class="n">v{v.n}</span>'
-                f'<span class="when">{_esc(when)}</span>'
-                f'<span class="size">{len(v.content)} chars</span></li>'
-            )
-        return (
-            '<section class="history"><h2>Versions</h2>'
-            f'<ul class="rows">{"".join(rows)}</ul></section>'
-        )
 
     def _lineage(self, request: RenderRequest) -> str:
         lineage = request.lineage
@@ -281,66 +269,288 @@ def _date(raw: str) -> str:
     return f"{match.group(1)} {match.group(2)}" if match else text[:16]
 
 
+#: A fence, and the language written after it.
+_FENCE = re.compile(r"^(?P<mark>```+|~~~+)[ \t]*(?P<info>[^\s`]*)")
+#: ``- x``, ``* x``, ``+ x``, ``1. x``, ``1) x`` — with its indent.
+_ITEM = re.compile(r"^(?P<indent>[ \t]*)(?P<mark>[-*+]|\d{1,9}[.)])[ \t]+(?P<text>.*)$")
+#: ``- [x] done`` / ``- [ ] not yet``.
+_TASK = re.compile(r"^\[(?P<state>[ xX])\][ \t]+(?P<text>.*)$")
+#: ``---``, ``***``, ``___`` on their own.
+_RULE = re.compile(r"^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$")
+#: The row under a table header: ``|---|:--:|``.
+_TABLE_RULE = re.compile(r"^[ \t]*\|?[ \t]*:?-{1,}:?[ \t]*(\|[ \t]*:?-{1,}:?[ \t]*)*\|?[ \t]*$")
+
+#: How many spaces one level of list indentation is worth. Tabs are
+#: expanded to this too, so a document written with either nests the
+#: same way.
+_INDENT = 2
+
+
 def _markdownish(content: str) -> str:
-    """Render the small subset of Markdown artifacts actually use.
+    """Render the Markdown these documents are actually written in.
 
     A full Markdown library would be a dependency in the export path,
-    and the export has to stay self-contained with no runtime. Headings,
-    fenced code, lists and paragraphs cover what these documents are;
-    anything else survives as escaped text rather than being mangled.
+    and the export has to stay self-contained with no runtime — so
+    this stays hand-written. What it covers is not a taste decision
+    though: it is what turned up in real documents, and everything
+    listed here was at some point rendered as literal text in an
+    exported PDF somebody sent to somebody else.
+
+    The worst of it was **paragraphs**. Markdown ends a paragraph at a
+    blank line; this used to end one at every newline, so prose
+    wrapped at eighty columns came out as one short paragraph per
+    line, with a gap between each. Every document written the normal
+    way looked shredded, and it looked like a font problem rather
+    than a parser problem, which is why it survived so long.
+
+    Kept deliberately small: no HTML passthrough, no reference links,
+    no footnotes, no nested block quotes. Anything not handled ends up
+    escaped in a paragraph, which is wrong in a way a reader can see
+    and recover from rather than wrong in a way that eats the text.
     """
-    lines = str(content or "").replace("\r\n", "\n").split("\n")
+    lines = [
+        line.replace("\t", " " * _INDENT)
+        for line in str(content or "").replace("\r\n", "\n").split("\n")
+    ]
     out: list[str] = []
-    in_code = False
-    in_list = False
+    at = 0
 
-    def close_list() -> None:
-        nonlocal in_list
-        if in_list:
-            out.append("</ul>")
-            in_list = False
-
-    for line in lines:
-        if line.strip().startswith("```"):
-            close_list()
-            out.append("</code></pre>" if in_code else "<pre><code>")
-            in_code = not in_code
-            continue
-        if in_code:
-            out.append(_esc(line))
-            continue
+    while at < len(lines):
+        line = lines[at]
         stripped = line.strip()
-        if not stripped:
-            close_list()
+
+        fence = _FENCE.match(stripped)
+        if fence:
+            at = _fenced_code(lines, at, fence, out)
             continue
-        heading = re.match(r"^(#{1,6})\s+(.*)$", stripped)
+        if not stripped:
+            at += 1
+            continue
+        if _RULE.match(line):
+            out.append("<hr>")
+            at += 1
+            continue
+        heading = re.match(r"^ {0,3}(#{1,6})[ \t]+(.*?)[ \t]*#*$", line)
         if heading:
-            close_list()
+            # One level down: the document's own title is the ``h1``
+            # on the page, so its top-level headings are ``h2``.
             level = min(len(heading.group(1)) + 1, 6)
             out.append(f"<h{level}>{_inline(heading.group(2))}</h{level}>")
+            at += 1
             continue
-        bullet = re.match(r"^[-*+]\s+(.*)$", stripped)
-        if bullet:
-            if not in_list:
-                out.append("<ul>")
-                in_list = True
-            out.append(f"<li>{_inline(bullet.group(1))}</li>")
+        if stripped.startswith(">"):
+            at = _quote(lines, at, out)
             continue
-        close_list()
-        out.append(f"<p>{_inline(stripped)}</p>")
+        if _ITEM.match(line):
+            at = _list(lines, at, out)
+            continue
+        if "|" in stripped and at + 1 < len(lines) and _TABLE_RULE.match(lines[at + 1]):
+            at = _table(lines, at, out)
+            continue
+        at = _paragraph(lines, at, out)
 
-    close_list()
-    if in_code:
-        out.append("</code></pre>")
     return "\n".join(out)
 
 
+def _fenced_code(lines: list[str], at: int, fence: re.Match[str], out: list[str]) -> int:
+    """A fenced block, ending at a fence of the same kind or the text.
+
+    The info string is kept as ``language-x``. It used to be dropped,
+    which mattered more than it sounds: a ``json-render`` fence is a
+    panel in the app and raw JSON in an export, and without the
+    language on it the reader was shown a wall of braces with nothing
+    saying what it was or where it came from.
+    """
+    mark = fence.group("mark")[0] * 3
+    info = fence.group("info")
+    body: list[str] = []
+    at += 1
+    while at < len(lines):
+        closing = _FENCE.match(lines[at].strip())
+        if closing and closing.group("mark").startswith(mark) and not closing.group("info"):
+            at += 1
+            break
+        body.append(_esc(lines[at]))
+        at += 1
+    opening = f'<pre><code class="language-{_esc(info)}">' if info else "<pre><code>"
+    out.append(f"{opening}{chr(10).join(body)}</code></pre>")
+    return at
+
+
+def _quote(lines: list[str], at: int, out: list[str]) -> int:
+    """A block quote, rendered by re-reading its contents as Markdown.
+
+    Recursive because a quote holds blocks — a paragraph that wraps
+    over three lines is one paragraph inside the quote too, and the
+    rule that joins them is the one above.
+    """
+    inner: list[str] = []
+    while at < len(lines) and lines[at].strip().startswith(">"):
+        inner.append(re.sub(r"^[ \t]*>[ \t]?", "", lines[at]))
+        at += 1
+    out.append(f"<blockquote>{_markdownish(chr(10).join(inner))}</blockquote>")
+    return at
+
+
+def _list(lines: list[str], at: int, out: list[str]) -> int:
+    """One list, however deeply it nests.
+
+    Depth comes from indentation, held on a stack so that closing a
+    level closes exactly the tags it opened. The flat version put
+    every item at the top level, which turned a two-level checklist
+    into one long undifferentiated list — legible, and not what was
+    written.
+    """
+    # Each entry: (indent, tag).
+    stack: list[tuple[int, str]] = []
+
+    def close_to(indent: int) -> None:
+        while stack and stack[-1][0] > indent:
+            out.append(f"</{stack.pop()[1]}>")
+
+    while at < len(lines):
+        item = _ITEM.match(lines[at])
+        if item is None:
+            if lines[at].strip():
+                break
+            # A blank line inside a list is allowed, as long as the
+            # list carries on after it.
+            if at + 1 < len(lines) and _ITEM.match(lines[at + 1]):
+                at += 1
+                continue
+            break
+
+        indent = len(item.group("indent"))
+        tag = "ol" if item.group("mark")[-1] in ".)" else "ul"
+        close_to(indent)
+        if not stack or stack[-1][0] < indent:
+            stack.append((indent, tag))
+            out.append(f"<{tag}>")
+        elif stack[-1][1] != tag:
+            # The marker changed at the same depth, which is a new
+            # list rather than a continuation of this one.
+            out.append(f"</{stack.pop()[1]}>")
+            stack.append((indent, tag))
+            out.append(f"<{tag}>")
+
+        text = item.group("text")
+        task = _TASK.match(text)
+        if task:
+            # Rendered rather than left as "[x]". Disabled because a
+            # PDF is not somewhere a box can be ticked, and a control
+            # that looks live and is not is worse than a mark.
+            done = task.group("state").lower() == "x"
+            box = f'<input type="checkbox" disabled{" checked" if done else ""}>'
+            out.append(f'<li class="task">{box} {_inline(task.group("text"))}</li>')
+        else:
+            out.append(f"<li>{_inline(text)}</li>")
+        at += 1
+
+    close_to(-1)
+    return at
+
+
+def _table(lines: list[str], at: int, out: list[str]) -> int:
+    """A pipe table. The header row, the rule, then the body."""
+
+    def cells(row: str) -> list[str]:
+        return [c.strip() for c in row.strip().strip("|").split("|")]
+
+    header = cells(lines[at])
+    at += 2  # the header and the rule under it
+    head = "".join(f"<th>{_inline(c)}</th>" for c in header)
+    body: list[str] = []
+    while at < len(lines) and "|" in lines[at] and lines[at].strip():
+        row = cells(lines[at])
+        # Padded to the header's width rather than dropped: a short
+        # row is a typo in one cell, and losing the rest of it hides
+        # the data instead of showing the gap.
+        row += [""] * (len(header) - len(row))
+        body.append(
+            "<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in row[: len(header)]) + "</tr>"
+        )
+        at += 1
+    rows = "".join(body)
+    out.append(f"<table><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table>")
+    return at
+
+
+def _paragraph(lines: list[str], at: int, out: list[str]) -> int:
+    """Consecutive lines, as one paragraph.
+
+    The fix for the shredding. A paragraph runs to a blank line or to
+    whatever starts the next block, and the lines in it are joined
+    with a space — which is what a newline means inside a Markdown
+    paragraph.
+    """
+    body: list[str] = []
+    while at < len(lines):
+        line = lines[at]
+        stripped = line.strip()
+        if not stripped or _FENCE.match(stripped) or _RULE.match(line):
+            break
+        if stripped.startswith(">") or _ITEM.match(line):
+            break
+        if re.match(r"^ {0,3}#{1,6}[ \t]", line):
+            break
+        body.append(stripped)
+        at += 1
+    if body:
+        out.append(f"<p>{_inline(' '.join(body))}</p>")
+    return at
+
+
+#: A run of backticks, the shortest thing it can close around, and a
+#: matching run. Written as one alternation so a longer run wins
+#: before a shorter one gets a chance — ```` ``` ```` inside prose
+#: used to be chewed into three separate code spans by a pattern that
+#: only knew about single backticks.
+_CODE_SPAN = re.compile(r"(?P<ticks>`+)(?P<body>.+?)(?P=ticks)(?!`)", re.DOTALL)
+#: ``[text](url)``. The URL is checked before it is used — see
+#: :func:`_link`.
+_LINK = re.compile(r"\[(?P<text>[^\]]*)\]\((?P<href>[^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)")
+#: Schemes a link in a document may point at. Anything else keeps its
+#: brackets and goes nowhere: an export is opened from disk and from
+#: a mail client, and ``javascript:`` in a document that renders as a
+#: page is a hole, not a feature.
+_SAFE_SCHEMES = ("http://", "https://", "mailto:", "#", "/")
+
+
 def _inline(text: str) -> str:
-    """Escape first, then re-introduce the few inline marks we support."""
+    """Escape first, then re-introduce the inline marks we support.
+
+    Order matters. Code spans are taken out before anything else and
+    put back afterwards, so ``**`` inside backticks stays two
+    asterisks rather than turning the rest of the line bold.
+    """
     escaped = _esc(text)
-    escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
-    escaped = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", escaped)
-    return escaped
+
+    spans: list[str] = []
+
+    def stash(match: re.Match[str]) -> str:
+        spans.append(f"<code>{match.group('body')}</code>")
+        return f"\x00{len(spans) - 1}\x00"
+
+    escaped = _CODE_SPAN.sub(stash, escaped)
+    escaped = _LINK.sub(_link, escaped)
+    escaped = re.sub(r"~~(?=\S)(.+?)(?<=\S)~~", r"<del>\1</del>", escaped)
+    escaped = re.sub(r"\*\*(?=\S)(.+?)(?<=\S)\*\*", r"<strong>\1</strong>", escaped)
+    escaped = re.sub(r"__(?=\S)(.+?)(?<=\S)__", r"<strong>\1</strong>", escaped)
+    # Single marks last, and only around non-space, so a lone
+    # asterisk in prose and ``snake_case_names`` are left alone.
+    escaped = re.sub(r"(?<![\w*])\*(?=\S)([^*]+?)(?<=\S)\*(?![\w*])", r"<em>\1</em>", escaped)
+    escaped = re.sub(r"(?<![\w_])_(?=\S)([^_]+?)(?<=\S)_(?![\w_])", r"<em>\1</em>", escaped)
+
+    return re.sub(r"\x00(\d+)\x00", lambda m: spans[int(m.group(1))], escaped)
+
+
+def _link(match: re.Match[str]) -> str:
+    """One link, or the text of one if its destination is not safe."""
+    href = match.group("href")
+    text = match.group("text") or href
+    if not href.lower().startswith(_SAFE_SCHEMES):
+        return f"[{text}]({href})"
+    return f'<a href="{href}">{text}</a>'
 
 
 # Both colour schemes ship because the page is read in a browser, a
@@ -366,23 +576,47 @@ header h1 { font-size:1.9rem; line-height:1.2; margin:0 0 .4rem; }
 .content { border-top:1px solid var(--line); padding-top:1.75rem; }
 .content h2 { font-size:1.3rem; margin:2rem 0 .6rem; }
 .content h3 { font-size:1.08rem; margin:1.6rem 0 .5rem; }
+.content h4 { font-size:.98rem; margin:1.4rem 0 .45rem; }
 .content p { margin:0 0 1rem; }
-.content ul { margin:0 0 1rem; padding-left:1.3rem; }
+.content ul, .content ol { margin:0 0 1rem; padding-left:1.3rem; }
+.content li > ul, .content li > ol { margin:.25rem 0 .35rem; }
+.content li { margin:.15rem 0; }
+.content li.task { list-style:none; margin-left:-1.15rem; }
+.content li.task input { margin-right:.4rem; }
+.content a { color:var(--accent); }
+.content hr { border:0; border-top:1px solid var(--line); margin:2rem 0; }
+blockquote { margin:0 0 1rem; padding:.1rem 0 .1rem 1rem;
+  border-left:3px solid var(--line); color:var(--muted); }
+blockquote p:last-child { margin-bottom:0; }
+table { border-collapse:collapse; width:100%; margin:0 0 1.25rem; font-size:.93rem;
+  display:block; overflow-x:auto; }
+th, td { border:1px solid var(--line); padding:.4rem .6rem; text-align:left;
+  vertical-align:top; }
+th { background:var(--code); font-weight:600; }
 pre { background:var(--code); border:1px solid var(--line); border-radius:.5rem;
-  padding:.85rem 1rem; overflow-x:auto; font-size:.86rem; }
+  padding:.85rem 1rem; overflow-x:auto; font-size:.86rem;
+  /* A fenced block in a PDF cannot be scrolled, so it wraps. On
+     screen the horizontal scroll above still applies to what is
+     genuinely too wide. */
+  white-space:pre-wrap; word-break:break-word; }
 code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.9em; }
-p code, li code { background:var(--code); padding:.1rem .3rem; border-radius:.25rem; }
-.history, .lineage { margin-top:2.5rem; }
-.history h2, .lineage h2 { font-size:.8rem; letter-spacing:.07em;
+p code, li code, td code { background:var(--code); padding:.1rem .3rem; border-radius:.25rem; }
+.lineage { margin-top:2.5rem; }
+.lineage h2 { font-size:.8rem; letter-spacing:.07em;
   text-transform:uppercase; color:var(--muted); margin:0 0 .6rem; }
 .rows { list-style:none; margin:0; padding:0; }
 .row { display:flex; gap:.85rem; align-items:baseline; padding:.45rem 0;
   border-bottom:1px solid var(--line); font-size:.92rem; }
 .row .name { flex:1; }
 .row .n { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.84rem; }
-.row .when, .row .size, .row .note { color:var(--muted); font-size:.84rem; }
-.row.current { font-weight:600; }
+.row .when, .row .note { color:var(--muted); font-size:.84rem; }
 .row.stale .note { color:var(--accent); font-weight:600; }
 @media print { .page { max-width:none; padding:0; }
-  .banner { border:1px solid #999; } }
+  .banner { border:1px solid #999; }
+  /* Keep a heading with what it introduces, and do not split a
+     block across a page break where the two halves read as
+     unrelated. */
+  h1, h2, h3, h4 { break-after:avoid; }
+  pre, blockquote, table, li { break-inside:avoid; }
+  thead { display:table-header-group; } }
 """

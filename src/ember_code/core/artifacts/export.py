@@ -154,12 +154,15 @@ class ArtifactExporter:
         if target is None:
             return None
         lineage = await self._artifacts.lineage(summary.artifact_id, target.n)
-        history = await self._artifacts.versions(summary.artifact_id)
+        # The other versions are deliberately not fetched. See
+        # ``RenderRequest``: an export is one version of a document,
+        # and the list of the others used to render below the text as
+        # rows nobody could click, in a file with no siblings to click
+        # through to.
         request = RenderRequest(
             summary=summary,
             version=target,
             lineage=lineage,
-            history=history,
             scope=scope or ExportScope.local(),
         )
         return ExportBundle(

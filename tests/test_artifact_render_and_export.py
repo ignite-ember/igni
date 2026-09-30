@@ -144,14 +144,30 @@ class TestTheStaleBanner:
 
 
 class TestVersionHistory:
-    def test_a_single_version_renders_no_switcher(self):
-        html = render(RenderRequest(summary=summary(), version=version(), history=[version()]))
-        assert "Versions" not in html
+    """An export is one version, and says so by containing one.
 
-    def test_multiple_versions_are_listed(self):
-        history = [version(n=2), version(n=1, head=False, version_id="a1::1")]
-        html = render(RenderRequest(summary=summary(), version=version(), history=history))
-        assert "Versions" in html and "v1" in html and "v2" in html
+    The page used to end with a "Versions" list — a row per version
+    giving its number, its date and its length. None of the rows was
+    a link, and a file on somebody else's disk has no siblings to
+    link to, so it read as an inventory of drafts stapled under the
+    document. Where the other versions are actually reachable, in the
+    app and on the shared document page, there is a picker that can
+    fetch them.
+    """
+
+    def test_the_page_does_not_end_with_a_list_of_versions(self):
+        html = render(RenderRequest(summary=summary(), version=version()))
+
+        assert "Versions" not in html
+        assert 'class="history"' not in html
+
+    def test_the_version_it_is_still_says_which_one(self):
+        # Removing the list must not remove the fact. Which version
+        # this is belongs in the header, and is the one thing a
+        # reader needs to know about the others existing.
+        html = render(RenderRequest(summary=summary(), version=version(n=3)))
+
+        assert "v3" in html
 
 
 class TestTheExportProjection:
@@ -392,3 +408,173 @@ class TestPublishing:
         )
         with pytest.raises(RuntimeError, match="no URL"):
             await publisher.publish(self._bundle())
+
+
+def md(text: str) -> str:
+    """The markdown body of a rendered page, without the chrome."""
+    page = render(RenderRequest(summary=summary(), version=version(content=text)))
+    return page.split('<article class="content">', 1)[1].split("</article>")[0]
+
+
+class TestParagraphsAreNotShredded:
+    """The defect that made every exported document look wrong.
+
+    Markdown ends a paragraph at a blank line. The renderer ended one
+    at every newline, so prose wrapped at eighty columns — which is
+    how all of these documents are written — came out as one short
+    paragraph per line with a gap between each. It read as a broken
+    font rather than a broken parser, which is why it lasted.
+    """
+
+    def test_wrapped_lines_are_one_paragraph(self):
+        body = md(
+            "Everything below is markdown. Every panel here is a\nfenced code block,\nwhich is the trick."
+        )
+
+        assert body.count("<p>") == 1
+        assert "a fenced code block, which is the trick." in body
+
+    def test_a_blank_line_starts_a_new_one(self):
+        body = md("First thing.\n\nSecond thing.")
+
+        assert body.count("<p>") == 2
+
+    def test_a_heading_ends_the_paragraph_without_a_blank_line(self):
+        body = md("Some prose.\n## Next section\nMore prose.")
+
+        assert "<p>Some prose.</p>" in body
+        assert "<h3>Next section</h3>" in body
+
+
+class TestListsKeepTheirShape:
+    def test_a_numbered_list_is_a_numbered_list(self):
+        # These rendered as "<p>1. edit frames go in the log.</p>" —
+        # the numbers were the author's, not the browser's, and the
+        # list was not a list.
+        body = md(
+            "1. `edit` frames go in the log.\n2. `cursor` frames never do.\n3. Publishing reads the text."
+        )
+
+        assert "<ol>" in body
+        assert body.count("<li>") == 3
+
+    def test_a_bulleted_list_is_still_a_bulleted_list(self):
+        body = md("- one\n- two")
+
+        assert "<ul>" in body and body.count("<li>") == 2
+
+    def test_indentation_nests(self):
+        body = md("- outer\n  - inner\n- outer again")
+
+        assert body.index("<ul>") < body.index("inner")
+        assert body.count("<ul>") == 2
+
+    def test_a_checklist_is_drawn_rather_than_left_as_brackets(self):
+        body = md("- [x] Markdown and panels in one file\n- [ ] Your turn")
+
+        assert "[x]" not in body and "[ ]" not in body
+        assert body.count('<input type="checkbox" disabled') == 2
+        assert "checked" in body
+
+    def test_a_tick_box_cannot_be_ticked(self):
+        # A live-looking control in a PDF is worse than a mark.
+        body = md("- [ ] Not yet")
+
+        assert "disabled" in body
+
+
+class TestTheOtherBlocksThatWereLiteralText:
+    def test_a_quote_is_a_quote(self):
+        body = md("> A list of changes and a document are not\n> interchangeable.")
+
+        assert "<blockquote>" in body
+        assert "&gt;" not in body
+        # And the wrapped lines inside it are one paragraph, by the
+        # same rule that applies outside it.
+        assert body.count("<p>") == 1
+
+    def test_a_table_is_a_table(self):
+        body = md("| Frame | Logged |\n| --- | --- |\n| edit | yes |\n| cursor | no |")
+
+        assert "<table>" in body
+        assert body.count("<tr>") == 3
+        assert "<th>Frame</th>" in body
+
+    def test_a_short_row_is_padded_rather_than_dropped(self):
+        body = md("| A | B |\n| --- | --- |\n| only one |")
+
+        assert "<td>only one</td><td></td>" in body
+
+    def test_a_rule_is_a_rule(self):
+        body = md("Above.\n\n---\n\nBelow.")
+
+        assert "<hr>" in body
+
+    def test_a_link_is_a_link(self):
+        body = md("See [the decision](https://igni.test/decisions/3).")
+
+        assert '<a href="https://igni.test/decisions/3">the decision</a>' in body
+
+    def test_a_link_that_is_not_safe_to_follow_stays_text(self):
+        # An export is opened from disk and out of a mail client.
+        body = md("[press me](javascript:alert(1))")
+
+        assert "<a" not in body
+        assert "javascript" in body
+
+
+class TestFencesSayWhatTheyAre:
+    def test_the_language_survives(self):
+        # A json-render fence is a panel in the app and raw JSON in an
+        # export. Without the language the reader gets a wall of
+        # braces and nothing saying what it is.
+        body = md('```json-render\n{"root": "a"}\n```')
+
+        assert 'class="language-json-render"' in body
+
+    def test_what_is_inside_a_fence_is_not_read_as_markdown(self):
+        body = md("```\n# not a heading\n- not a list\n```")
+
+        assert "<h" not in body.split("<pre>")[1].split("</pre>")[0]
+        assert "# not a heading" in body
+
+    def test_an_unclosed_fence_still_closes_the_document(self):
+        body = md("```\nstill open")
+
+        assert body.count("<pre>") == 1 and body.count("</pre>") == 1
+
+
+class TestInlineMarks:
+    def test_a_run_of_backticks_is_one_code_span(self):
+        # ```` ```json-render ```` in prose used to be chewed into
+        # three separate code spans by a pattern that only knew about
+        # single backticks.
+        body = md("a ```` ```json-render ```` fence")
+
+        assert body.count("<code>") == 1
+        assert "```json-render" in body
+
+    def test_marks_inside_code_stay_literal(self):
+        body = md("Use `**kwargs` here.")
+
+        assert "<strong>" not in body
+        assert "<code>**kwargs</code>" in body
+
+    def test_bold_and_italic_and_struck_through(self):
+        body = md("**bold** and *thin* and ~~gone~~")
+
+        assert "<strong>bold</strong>" in body
+        assert "<em>thin</em>" in body
+        assert "<del>gone</del>" in body
+
+    def test_an_underscore_inside_a_word_is_not_emphasis(self):
+        # ``snake_case_names`` are everywhere in these documents.
+        body = md("The artifact_id and version_id columns.")
+
+        assert "<em>" not in body
+
+    def test_html_in_the_source_is_shown_not_run(self):
+        body = md("A <script>alert(1)</script> in the text.")
+
+        assert "<script>" not in body
+        assert "&lt;script&gt;" in body
