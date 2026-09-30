@@ -162,12 +162,24 @@ export function PageShell({
               <span className="page-crumb-sep" aria-hidden="true">
                 /
               </span>
+              {/* ``title`` on both: these are document names, which
+                  are the one crumb that can be any length and so the
+                  one that gets cut. The whole of it stays a hover
+                  away. */}
               {last ? (
-                <span className="page-crumb current" aria-current="page">
+                <span
+                  className="page-crumb page-crumb-name current"
+                  aria-current="page"
+                  title={label}
+                >
                   {label}
                 </span>
               ) : (
-                <button className="page-crumb" onClick={() => levels?.onTruncate(i)}>
+                <button
+                  className="page-crumb page-crumb-name"
+                  title={label}
+                  onClick={() => levels?.onTruncate(i)}
+                >
                   {label}
                 </button>
               )}

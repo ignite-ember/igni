@@ -4420,6 +4420,27 @@ button {
   gap: 2px;
 }
 
+/* A document's name, which is the only crumb that can be any
+   length. "Chat" and the destination above it are fixed words; this
+   one is whatever somebody called the thing, and left to itself it
+   pushed the trail across the window. Cut with the full name a
+   hover away.
+
+   In ``ch`` rather than pixels: what has to fit is a number of
+   characters, and the two stop agreeing the moment the type scale
+   moves. */
+.page-crumb-name {
+  display: inline-block;
+  max-width: 15ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* The box now has a height of its own, so it needs saying where
+     the baseline sits — an inline-block among inline text otherwise
+     rides on its bottom edge. */
+  vertical-align: bottom;
+}
+
 .page-crumb {
   background: none;
   border: none;
