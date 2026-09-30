@@ -78,6 +78,7 @@ if TYPE_CHECKING:
         ArtifactAccessAsks,
         ArtifactCandidateEvidence,
         ArtifactCandidateVerdict,
+        ArtifactColleagues,
         ArtifactCommentAnchor,
         ArtifactCommentPosted,
         ArtifactCommentRelevance,
@@ -1040,6 +1041,10 @@ class BackendServer:
     async def artifact_open_shared(self, *, slug: str) -> ArtifactOpened:
         """See :meth:`ArtifactController.open_shared`."""
         return await self.artifacts.open_shared(slug=slug)
+
+    async def artifact_colleagues(self, *, query: str = "") -> ArtifactColleagues:
+        """See :meth:`ArtifactController.colleagues`."""
+        return await self.artifacts.colleagues(query=query)
 
     async def artifact_locked(self, *, artifact_id: str) -> ArtifactLocked:
         """See :meth:`ArtifactController.locked`."""

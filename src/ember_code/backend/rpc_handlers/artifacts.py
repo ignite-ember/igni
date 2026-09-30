@@ -97,6 +97,10 @@ class ArtifactRpcHandler(RpcHandler):
     def artifact_open_shared(self, args: dict) -> Any:
         return self._ctx.backend.artifact_open_shared(slug=args["slug"])
 
+    @rpc(RpcMethod.ARTIFACT_COLLEAGUES)
+    def artifact_colleagues(self, args: dict) -> Any:
+        return self._ctx.backend.artifact_colleagues(query=str(args.get("query") or ""))
+
     @rpc(RpcMethod.ARTIFACT_LOCKED)
     def artifact_locked(self, args: dict) -> Any:
         return self._ctx.backend.artifact_locked(artifact_id=args["artifact_id"])

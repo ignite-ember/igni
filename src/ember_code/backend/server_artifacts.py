@@ -28,6 +28,7 @@ from ember_code.backend.schemas_artifacts import (
     ArtifactAccessAsks,
     ArtifactCandidateEvidence,
     ArtifactCandidateVerdict,
+    ArtifactColleagues,
     ArtifactCommentAnchor,
     ArtifactCommentPosted,
     ArtifactCommentRelevance,
@@ -65,6 +66,7 @@ from ember_code.backend.schemas_artifacts import (
     ArtifactVersionRow,
     ArtifactViewGranted,
     CandidateOverlapRow,
+    Colleague,
     DriftAffectedRow,
     MentionCandidate,
     ProvenanceMatchRow,
@@ -2069,6 +2071,24 @@ class ArtifactController:
             can_manage=bool(answer.get("can_manage")),
             url=str(answer.get("url") or ""),
         )
+
+    async def colleagues(self, *, query: str = "") -> ArtifactColleagues:
+        """Who this account could share a document with.
+
+        Empty rather than an error when there is no server to ask.
+        A picker with nothing in it says "nobody to pick" on its own,
+        and a failure drawn over a sharing dialog reads as the sharing
+        having failed.
+        """
+        sync = self._collaboration()
+        if sync is None:
+            return ArtifactColleagues()
+        try:
+            found = await sync.colleagues(query=query)
+        except Exception as exc:  # noqa: BLE001 — network, auth
+            logger.info("colleague lookup did not reach the server: %s", exc)
+            return ArtifactColleagues(error=f"Could not reach the server: {exc}")
+        return ArtifactColleagues(people=[Colleague(**person) for person in found])
 
     # ── Arriving from a link ─────────────────────────────────────────
 

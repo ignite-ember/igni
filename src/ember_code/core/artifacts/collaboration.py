@@ -589,6 +589,18 @@ class CollaborationSync:
             raise NotAllowed(request_id)
         response.raise_for_status()
 
+    async def colleagues(self, *, query: str = "") -> list[dict[str, Any]]:
+        """Who this account could share something with.
+
+        No document in the question, unlike :meth:`mentionable`. That
+        one needs a slug, and a document being shared for the first
+        time does not have one — which is exactly when a list of
+        colleagues is wanted.
+        """
+        response = await self._request("GET", "/v1/colleagues", params={"q": query})
+        response.raise_for_status()
+        return list(response.json().get("people") or [])
+
     async def grant_view(self, *, slug: str, identity: str) -> None:
         """Let one more person read a document. Owner only.
 

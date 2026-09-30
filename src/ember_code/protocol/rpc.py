@@ -283,6 +283,7 @@ class RpcMethod(StrEnum):
     ARTIFACT_RESOLVE_COMMENT = "artifact_resolve_comment"
     ARTIFACT_MENTIONS = "artifact_mentions"
     ARTIFACT_PEOPLE = "artifact_people"
+    ARTIFACT_COLLEAGUES = "artifact_colleagues"
     ARTIFACT_LOCKED = "artifact_locked"
     ARTIFACT_OPEN_SHARED = "artifact_open_shared"
     ARTIFACT_ASK_ACCESS = "artifact_ask_access"

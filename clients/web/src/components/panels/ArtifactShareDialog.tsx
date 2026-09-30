@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import type { IgniClient } from "../../protocol/client";
+import { PeoplePicker } from "./PeoplePicker";
 
 /**
  * Choose who can open a document, and publish it.
@@ -108,7 +109,11 @@ export function ArtifactShareDialog({
   // ``private``, which is the narrowest answer and the right default
   // for a decision this consequential.
   const [visibility, setVisibility] = useState<Visibility>(reach ?? "private");
-  const [audience, setAudience] = useState((listed ?? []).join(", "));
+  // A list, not a line of text. It was a comma-separated string
+  // somebody typed from memory, which made "who can read this" a
+  // spelling test — and made the audience impossible to *show*,
+  // because the control held the only copy of it.
+  const [recipients, setRecipients] = useState<string[]>(listed ?? []);
   const [result, setResult] = useState<ShareResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -120,7 +125,7 @@ export function ArtifactShareDialog({
   // and an effect that reset it would fight them as they clicked.
   useEffect(() => {
     setVisibility(reach ?? "private");
-    setAudience((listed ?? []).join(", "));
+    setRecipients(listed ?? []);
     setResult(null);
   }, [artifactId, reach, listedKey(listed)]);
 
@@ -138,15 +143,6 @@ export function ArtifactShareDialog({
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [onClose]);
-
-  const recipients = useMemo(
-    () =>
-      audience
-        .split(/[\s,;]+/)
-        .map((s) => s.trim())
-        .filter(Boolean),
-    [audience],
-  );
 
   const blocked = visibility === "users" && recipients.length === 0;
 
@@ -235,21 +231,7 @@ export function ArtifactShareDialog({
       </fieldset>
 
       {visibility === "users" && (
-        <div className="kb-share-audience">
-          <label htmlFor="kb-audience">Email addresses</label>
-          <textarea
-            id="kb-audience"
-            rows={2}
-            value={audience}
-            placeholder="ana@acme.co, sam@acme.co"
-            onChange={(e) => setAudience(e.target.value)}
-          />
-          <span className="kb-hint">
-            {recipients.length
-              ? `${recipients.length} recipient${recipients.length === 1 ? "" : "s"}`
-              : "Separate with commas or spaces"}
-          </span>
-        </div>
+        <PeoplePicker client={client} chosen={recipients} onChange={setRecipients} />
       )}
 
       {result?.error && <div className="msg-error">{result.error}</div>}

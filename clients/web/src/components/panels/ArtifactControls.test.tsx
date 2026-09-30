@@ -186,12 +186,21 @@ describe("the share dialog", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("splits addresses on commas and spaces", async () => {
-    const { client, rpc } = fakeClient(async () => ({
-      url: "https://igni.test/a/abc",
-      version: 1,
-      error: "",
-    }));
+  it("sends the people who were ticked", async () => {
+    // The audience used to be a line of text somebody typed from
+    // memory, which made "who can read this" a spelling test. It is
+    // a list of people and a tick beside each now, so the thing
+    // published is the thing on screen.
+    const { client, rpc } = fakeClient(async (method) =>
+      method === "artifact_colleagues"
+        ? {
+            people: [
+              { user_id: "u1", email: "ana@acme.co", name: "Ana Diaz" },
+              { user_id: "u2", email: "sam@acme.co", name: "Sam Ortega" },
+            ],
+          }
+        : { url: "https://igni.test/a/abc", version: 1, error: "" },
+    );
     render(
       <ArtifactShareDialog
         client={client}
@@ -203,9 +212,8 @@ describe("the share dialog", () => {
     );
 
     fireEvent.click(screen.getByLabelText(/specific people/i));
-    fireEvent.change(screen.getByLabelText(/email addresses/i), {
-      target: { value: "ana@acme.co, sam@acme.co" },
-    });
+    fireEvent.click(await screen.findByText("Ana Diaz"));
+    fireEvent.click(await screen.findByText("Sam Ortega"));
     fireEvent.click(screen.getByRole("button", { name: /publish/i }));
 
     await waitFor(() =>

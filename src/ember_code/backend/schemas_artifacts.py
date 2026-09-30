@@ -602,6 +602,21 @@ class RosterPerson(BaseModel):
     role: str = "reader"
 
 
+class Colleague(BaseModel):
+    """One person this account could share something with."""
+
+    user_id: str = ""
+    email: str = ""
+    name: str = ""
+
+
+class ArtifactColleagues(BaseModel):
+    """The directory, for a picker to draw."""
+
+    people: list[Colleague] = Field(default_factory=list)
+    error: str = ""
+
+
 class ArtifactLocked(BaseModel):
     """What a document is, to somebody who cannot open it.
 
