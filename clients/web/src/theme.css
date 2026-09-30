@@ -11970,7 +11970,19 @@ button {
 
 .afs-bar {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+/* The collection's own actions, at the end of the bar. Separated
+   from Search by a wider gap than the one holding Search to the
+   field: Search acts on what has been typed, these do not, and
+   evenly spaced they read as four buttons that all might. */
+.afs-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
 }
 
 .afs-input {

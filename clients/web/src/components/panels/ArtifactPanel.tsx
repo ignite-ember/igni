@@ -663,11 +663,18 @@ export function ArtifactPanel({
     },
   };
 
-  // ── Header extras: per-view actions ─────────────────────────────
-  let headerExtras: React.ReactNode = null;
+  // ── What you can do to the collection ───────────────────────────
+  //
+  // On the search bar, not in a bar of their own. The list used to
+  // open with a row carrying the word "Artifacts" — which the trail
+  // above it already says — a refresh, and three buttons, and the
+  // search sat a line below it. Folded into the search bar, the
+  // first thing on the page is the thing the page is for, and it
+  // starts where a document's first line starts.
+  let listActions: React.ReactNode = null;
   if (view === "list" && status) {
-    headerExtras = (
-      <div className="kb-head-actions">
+    listActions = (
+      <>
         <button
           className="kb-icon-btn"
           title={busy === "sync" ? "Syncing…" : "Sync git-shared artifacts"}
@@ -730,7 +737,7 @@ export function ArtifactPanel({
         >
           + Add
         </button>
-      </div>
+      </>
     );
   }
 
@@ -1046,8 +1053,7 @@ export function ArtifactPanel({
       title={title}
       levels={levels}
       onClose={onClose}
-      headerExtras={headerExtras}
-      titleInBody={view === "detail"}
+      titleInBody
     >
       {notice && (
         <div className="kb-notice" role="status" onClick={() => setNotice("")}>
@@ -1233,6 +1239,7 @@ export function ArtifactPanel({
       ) : (
         <ArtifactSearch
           client={client}
+          actions={listActions}
           docs={(docs || []).map((d) => ({
             id: d.id,
             name: d.name,

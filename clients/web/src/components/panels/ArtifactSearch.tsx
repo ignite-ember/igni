@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type React from "react";
 import { MarkdownInline } from "../MarkdownInline";
 import type { IgniClient } from "../../protocol/client";
 
@@ -55,12 +56,19 @@ export function ArtifactSearch({
   client,
   docs,
   staleIds,
+  actions,
   onOpen,
   onAsk,
 }: {
   client: IgniClient;
   docs: SearchableDoc[];
   staleIds: Set<string>;
+  /** What you can do to the collection — sync, comments, ask, add.
+   *  On this bar rather than in a row of their own above it: the
+   *  page already says it is the artifacts, and a second line
+   *  repeating that pushed the only thing anybody came here to use
+   *  down the page. */
+  actions?: React.ReactNode;
   onOpen: (artifactId: string) => void;
   onAsk: (question: string) => void;
 }) {
@@ -147,6 +155,7 @@ export function ArtifactSearch({
         >
           {busy ? "Searching…" : "Search"}
         </button>
+        {actions && <span className="afs-actions">{actions}</span>}
       </div>
 
       {kinds.length > 1 && !showingSearch && (
