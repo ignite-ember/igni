@@ -264,13 +264,25 @@ class ArtifactController:
             for r in response.results
         ]
 
-    async def add(self, source: str, parent_id: str = "") -> msg.Info:
+    async def add(self, source: str, parent_id: str = "", kind: str = "") -> msg.Info:
         """Add content from the panel.
 
         A URL or path is ingestion — the source is self-evident and no
         declaration is asked for. Pasted text is a new artifact with
         no antecedent, which the panel states rather than inventing
         one.
+
+        **``kind`` is what the person chose**, and it is believed. The
+        panel has three buttons — URL, path, paste — and used to send
+        only the string, leaving this to guess from the characters in
+        it. The guess was "contains a slash, so it is a path", which
+        is true of most prose: pasting a paragraph with a date, a
+        fraction or a fenced ``json-render`` block in it tried to open
+        a file and failed with "file name too long", quoting the
+        paragraph back.
+
+        Empty still guesses, for callers that have nothing better to
+        say.
 
         ``parent_id`` is where it goes in the tree, and it is passed at
         creation rather than moved afterwards: a document that appears
@@ -279,9 +291,12 @@ class ArtifactController:
         somewhere nobody asked for.
         """
         mgr = self._session.artifact_mgr
-        if source.startswith(("http://", "https://")):
+        asked = (kind or "").strip().lower()
+        looks_like_url = source.startswith(("http://", "https://"))
+        looks_like_path = "/" in source or source.startswith(".")
+        if asked == "url" or (not asked and looks_like_url):
             result = await mgr.add_url(source)
-        elif "/" in source or source.startswith("."):
+        elif asked == "path" or (not asked and looks_like_path):
             result = await mgr.add_path(source)
         else:
             first_line = next(

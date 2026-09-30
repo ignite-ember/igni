@@ -23,7 +23,9 @@ class ArtifactRpcHandler(RpcHandler):
 
     @rpc(RpcMethod.ARTIFACT_ADD)
     def artifact_add(self, args: dict) -> Any:
-        return self._ctx.backend.artifact_add(args["source"], args.get("parent_id", ""))
+        return self._ctx.backend.artifact_add(
+            args["source"], args.get("parent_id", ""), args.get("kind", "")
+        )
 
     @rpc(RpcMethod.ARTIFACT_REVISE)
     def artifact_revise(self, args: dict) -> Any:

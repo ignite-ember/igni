@@ -12434,26 +12434,28 @@ button {
   gap: 8px;
 }
 
-/* No room to pin it: below this width the centred measure reaches the
-   edge and a fixed tree would sit on top of the text. It rejoins the
-   flow above the content, which is wrong for a wide window and right
-   for a narrow one. */
+/* Narrower, never elsewhere.
+
+   It used to rejoin the flow above the content below this width, on
+   the grounds that a pinned tree would sit on top of the text. It
+   cannot: the page reserves the left column from ``--tree-width``,
+   so the measure starts where the tree ends however narrow the
+   window is. What the fallback actually did was move the hierarchy
+   somewhere it is not — above a document is not where you look for
+   the list of documents — and make the page's shape depend on how
+   wide the window happened to be.
+
+   So it stays where it is and takes less room. The document gets a
+   shorter measure, which is what a narrow window means. */
 @media (max-width: 78rem) {
-  .kb-tree-dock {
-    position: static;
-    width: auto;
-    pointer-events: auto;
-    margin-bottom: 18px;
+  :root {
+    --tree-width: 11.5rem;
   }
+}
 
-  /* Rejoined the flow above the content, where a vertical rule would
-     cut across nothing. */
-  .kb-tree-dock::after {
-    display: none;
-  }
-
-  .kb-tree {
-    max-height: none;
+@media (max-width: 56rem) {
+  :root {
+    --tree-width: 9.5rem;
   }
 }
 

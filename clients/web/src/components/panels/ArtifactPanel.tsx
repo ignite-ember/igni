@@ -595,12 +595,20 @@ export function ArtifactPanel({
     }
   };
 
-  const tryAdd = async (source: string): Promise<boolean> => {
+  const tryAdd = async (source: string, kind: AddMode): Promise<boolean> => {
     if (!source.trim()) return false;
     setBusy("add");
     setAddError("");
     try {
-      await client.rpc("artifact_add", { source: source.trim(), parent_id: addParent });
+      // Which button was pressed, said out loud. Without it the
+      // backend guessed from the characters — "contains a slash, so
+      // it is a path" — and pasting a paragraph with a date or a
+      // fenced block in it tried to open a file.
+      await client.rpc("artifact_add", {
+        source: source.trim(),
+        parent_id: addParent,
+        kind,
+      });
       setAddParent("");
       setAddParentName("");
       void refresh();
@@ -2992,7 +3000,7 @@ function AddSource({
   error: string;
   /** The document or folder this will be filed under, if any. */
   into: string;
-  onAdd: (s: string) => Promise<boolean>;
+  onAdd: (s: string, kind: AddMode) => Promise<boolean>;
   onCancel: () => void;
 }) {
   const [mode, setMode] = useState<AddMode>("url");
@@ -3000,7 +3008,7 @@ function AddSource({
 
   const submit = async () => {
     if (!value.trim()) return;
-    await onAdd(value.trim());
+    await onAdd(value.trim(), mode);
   };
 
   return (
