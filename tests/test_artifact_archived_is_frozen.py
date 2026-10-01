@@ -36,6 +36,7 @@ from ember_code.core.artifacts.models import (
     VersionPin,
 )
 from ember_code.core.code_index.embedder import HashEmbedder
+from evals.archivist.store import FakeSharedServer
 
 
 class FakeClient:
@@ -50,6 +51,13 @@ class FakeClient:
 
     async def find_by_name(self, name: str) -> ArtifactSummary | None:
         return self._summary
+
+
+def _signed_in(index: ArtifactIndex) -> ArtifactIndex:
+    """Artifacts are a cloud service, so an unattached index refuses
+    every write — which would pass these tests for the wrong reason."""
+    index.attach_shared(FakeSharedServer())
+    return index
 
 
 def index_for(summary: ArtifactSummary | None) -> tuple[ArtifactIndex, FakeClient]:
@@ -158,7 +166,7 @@ class RecordingClient:
 def recording_index(**archived: bool) -> tuple[ArtifactIndex, RecordingClient]:
     client = RecordingClient(archived=archived)
     return (
-        ArtifactIndex(project="/tmp/p", neo4j_client=client, embedder=HashEmbedder()),
+        _signed_in(ArtifactIndex(project="/tmp/p", neo4j_client=client, embedder=HashEmbedder())),
         client,
     )
 

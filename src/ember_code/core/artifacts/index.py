@@ -113,9 +113,9 @@ class ArtifactIndex:
         breaks the cycle without a third object whose only job is to
         hold a reference.
 
-        Unattached — no account, artifacts running standalone — the
-        index writes to the graph alone, which is the old behaviour
-        and the only thing that works with no server to reach.
+        Unattached, the index refuses writes. Artifacts are a cloud
+        service and there is no standalone mode — see
+        :meth:`_write_shared`.
         """
         self._shared = shared
 
@@ -474,13 +474,20 @@ class ArtifactIndex:
         caller must return unchanged — the write did not happen and
         must not happen locally either.
 
-        No server attached is not a refusal: artifacts still run for
-        somebody with no account, and answering 0 lets the graph
-        assign the number as it always did.
+        **No account is a refusal.** Artifacts are a cloud service:
+        a document that cannot reach the server is not one that was
+        saved somewhere slightly worse, it is one that does not
+        exist. Writing it to the graph alone would produce exactly
+        what the ordering below exists to prevent — a version on this
+        machine and nowhere else, indistinguishable from a version
+        everybody has.
         """
         shared = self._shared
         if shared is None or not getattr(shared, "is_configured", False):
-            return 0
+            return ArtifactWriteResult.fail(
+                f"'{name}' was not saved: artifacts live on the server and this "
+                f"session is not signed in to one. Sign in and write it again."
+            )
 
         summary = await self._client.get_artifact(artifact_id)
         base_n = int(getattr(summary, "head_n", 0) or 0)
@@ -500,27 +507,16 @@ class ArtifactIndex:
                 return ArtifactWriteResult.fail(
                     f"The server did not give '{name}' a home to write to."
                 )
-            try:
-                return await shared.push_content(
-                    slug=slug, content=content, base_n=base_n, pins=pins, html=page
-                )
-            except ChainDiverged as diverged:
-                # An *empty* chain is not a divergence. A document
-                # written here before it had a shared copy arrives
-                # with a local history the server has never seen, so
-                # the first push is from v6 onto nothing — which is
-                # refused by the same check that protects against a
-                # colleague appending underneath.
-                #
-                # Distinguished by the server's own head. Zero means
-                # there is nothing to collide with; anything else
-                # means somebody wrote something, and that still has
-                # to be refused rather than overwritten.
-                if diverged.head_n:
-                    raise
-                return await shared.push_content(
-                    slug=slug, content=content, base_n=0, pins=pins, html=page
-                )
+            # Pushed straight through. There was a retry here for an
+            # *empty* chain — a document written locally before it had
+            # a shared copy arrives with a history the server has never
+            # seen, so its first push is from v6 onto nothing. That
+            # cannot happen now: every version goes to the server as it
+            # is written, and a session with no account writes none, so
+            # local history the server has not got has no way in.
+            return await shared.push_content(
+                slug=slug, content=content, base_n=base_n, pins=pins, html=page
+            )
         except ChainDiverged as diverged:
             # Somebody else appended while this was being written. Not
             # merged here: two people editing one document is a

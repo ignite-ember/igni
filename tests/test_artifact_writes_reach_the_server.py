@@ -36,6 +36,7 @@ from ember_code.core.artifacts.collaboration import ChainDiverged
 from ember_code.core.artifacts.index import ArtifactIndex
 from ember_code.core.artifacts.models import ArtifactSummary, SourceDeclaration
 from ember_code.core.code_index.embedder import HashEmbedder
+from evals.archivist.store import FakeSharedServer as FakeServer
 
 
 @dataclass
@@ -68,34 +69,6 @@ class FakeGraph:
 
     async def record_candidates(self, **_: Any) -> int:
         return 0
-
-
-class FakeServer:
-    """A shared copy that records what it was asked to do."""
-
-    is_configured = True
-
-    def __init__(self, *, slug: str = "s1", fail: Exception | None = None) -> None:
-        self._slug = slug
-        self._fail = fail
-        self.published: list[dict[str, Any]] = []
-        self.pushed: list[dict[str, Any]] = []
-        #: Set once published, the way the real client's cache is.
-        self.known: dict[str, str] = {}
-
-    async def ensure_shared(self, **kwargs: Any) -> str:
-        artifact_id = kwargs["artifact_id"]
-        if artifact_id in self.known:
-            return self.known[artifact_id]
-        self.published.append(kwargs)
-        self.known[artifact_id] = self._slug
-        return self._slug
-
-    async def push_content(self, **kwargs: Any) -> int:
-        if self._fail is not None:
-            raise self._fail
-        self.pushed.append(kwargs)
-        return int(kwargs["base_n"]) + 1
 
 
 def index_for(graph: FakeGraph, server: Any | None) -> ArtifactIndex:
@@ -224,19 +197,27 @@ class TestARefusedWriteIsNotStored:
 
 
 class TestWithNoAccount:
+    """There is no standalone mode. Artifacts are a cloud service.
+
+    A write that cannot reach the server is refused rather than kept
+    here. Keeping it would produce the one state the server-first
+    ordering exists to prevent: a version on this machine and nowhere
+    else, looking exactly like a version everybody has.
+    """
+
     @pytest.mark.asyncio
-    async def test_a_write_still_works_with_no_server_attached(self):
+    async def test_no_server_attached_is_a_refusal(self):
         graph = FakeGraph()
 
         result = await write(index_for(graph, None))
 
-        assert result.success
-        assert len(graph.writes) == 1
+        assert not result.success
+        assert graph.writes == []
 
     @pytest.mark.asyncio
-    async def test_a_signed_out_client_is_not_a_refusal(self):
-        # ``is_configured`` false is "no credentials yet", which is a
-        # supported way to run and must not fail every write.
+    async def test_a_signed_out_client_is_a_refusal_too(self):
+        # Attached but holding no credentials is the same thing as
+        # far as a document is concerned: nowhere to write it.
         class SignedOut:
             is_configured = False
 
@@ -244,33 +225,28 @@ class TestWithNoAccount:
 
         result = await write(index_for(graph, SignedOut()))
 
-        assert result.success
-        assert len(graph.writes) == 1
-
-
-class TestAChainTheServerHasNeverSeen:
-    """A document written here before it had a shared copy.
-
-    Its local history — v1 to v6, say — exists nowhere else, so the
-    first push arrives claiming a base the server has no record of.
-    That is the same shape as a colleague appending underneath, and
-    the check that refuses one refuses the other. It has to tell them
-    apart by the server's own head: zero is an empty chain and there
-    is nothing there to overwrite.
-    """
+        assert not result.success
+        assert graph.writes == []
 
     @pytest.mark.asyncio
-    async def test_a_first_push_seeds_the_chain_instead_of_refusing(self):
-        graph = FakeGraph(ArtifactSummary(artifact_id="a1", name="Rate limiting", head_n=6))
-        server = DivergingServer(head_n=0)
-        index = index_for(graph, server)
-        server.known["a1"] = "s1"
+    async def test_the_refusal_names_the_document_and_what_to_do(self):
+        result = await write(index_for(FakeGraph(), None))
 
-        result = await index.revise(ref="a1", content="v7 text", sources=SourceDeclaration())
+        assert "Rate limiting" in result.error
+        assert "not signed in" in result.error
+        assert "Sign in" in result.error
 
-        assert result.success, result.error
-        # Retried from nothing rather than from the local head.
-        assert [p["base_n"] for p in server.pushed] == [0]
+
+class TestADivergedChain:
+    """Somebody appended while this was being written.
+
+    There was a sibling case here — a document written locally before
+    it had a shared copy, whose first push claims a base the server
+    has no record of, retried from zero rather than refused. It
+    cannot happen now: every version goes to the server as it is
+    written and a session with no account writes none, so local
+    history the server has not got has no way in.
+    """
 
     @pytest.mark.asyncio
     async def test_a_real_divergence_is_still_refused(self):

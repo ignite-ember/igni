@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any
 
 from ember_code.core.artifacts.metadata_codec import ArtifactMetadataCodec
 from ember_code.core.artifacts.models import (
@@ -511,3 +512,38 @@ class EvalEmbedder:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+class FakeSharedServer:
+    """The cloud side, in memory, for the same reason as the store above.
+
+    Artifacts are a cloud service: a session with no account writes
+    nothing, so anything exercising a write needs a server for it to
+    reach. Records what arrived and answers the way the real client
+    does — a slug per artifact, kept once minted, and a version
+    number one past the base it was given.
+    """
+
+    is_configured = True
+
+    def __init__(self, *, slug: str = "s1", fail: Exception | None = None) -> None:
+        self._slug = slug
+        self._fail = fail
+        self.published: list[dict[str, Any]] = []
+        self.pushed: list[dict[str, Any]] = []
+        #: Set once published, the way the real client's cache is.
+        self.known: dict[str, str] = {}
+
+    async def ensure_shared(self, **kwargs: Any) -> str:
+        artifact_id = kwargs["artifact_id"]
+        if artifact_id in self.known:
+            return self.known[artifact_id]
+        self.published.append(kwargs)
+        self.known[artifact_id] = self._slug
+        return self._slug
+
+    async def push_content(self, **kwargs: Any) -> int:
+        if self._fail is not None:
+            raise self._fail
+        self.pushed.append(kwargs)
+        return int(kwargs["base_n"]) + 1

@@ -303,7 +303,7 @@ class ArtifactController:
             for r in response.results
         ]
 
-    async def add(self, source: str, parent_id: str = "", kind: str = "") -> msg.Info:
+    async def add(self, source: str, parent_id: str = "", kind: str = "") -> msg.Info | msg.Error:
         """Add content from the panel.
 
         A URL or path is ingestion — the source is self-evident and no
@@ -349,7 +349,13 @@ class ArtifactController:
                 no_sources_reason="added by hand from the artifacts panel",
             )
         if not result.success:
-            return msg.Info(text=result.error or "Add failed.")
+            # ``Error``, not ``Info``. The two are indistinguishable
+            # to a caller that only reads ``text``, and the panel read
+            # neither — so a refused write returned to the list as
+            # though it had worked, with the reason on the floor. A
+            # document that was not saved must not look like one that
+            # was.
+            return msg.Error(text=result.error or "Add failed.")
 
         placed = ""
         if parent_id and result.artifact_id and self._session.artifacts is not None:

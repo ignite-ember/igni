@@ -610,11 +610,18 @@ export function ArtifactPanel({
       // backend guessed from the characters — "contains a slash, so
       // it is a path" — and pasting a paragraph with a date or a
       // fenced block in it tried to open a file.
-      await client.rpc("artifact_add", {
-        source: source.trim(),
-        parent_id: addParent,
-        kind,
-      });
+      const answer = await client.rpc<{ type?: string; text?: string }>(
+        "artifact_add",
+        { source: source.trim(), parent_id: addParent, kind },
+      );
+      // A refusal comes back as an ``error`` message rather than an
+      // exception. Returning to the list on one would show a document
+      // that was never written as though it had been, and drop the
+      // only sentence saying why.
+      if (answer?.type === "error") {
+        setAddError(answer.text || "Could not add that.");
+        return false;
+      }
       setAddParent("");
       setAddParentName("");
       void refresh();

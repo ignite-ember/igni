@@ -35,7 +35,7 @@ from pathlib import Path
 from ember_code.core.artifacts.index import ArtifactIndex
 from ember_code.core.artifacts.metadata_codec import ArtifactMetadataCodec
 from ember_code.core.artifacts.models import EdgeState, SourceDeclaration, VersionPin
-from evals.archivist.store import EvalEmbedder, FakeArtifactStore
+from evals.archivist.store import EvalEmbedder, FakeArtifactStore, FakeSharedServer
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,9 @@ def build_index(work_dir: Path) -> ArtifactIndex:
         neo4j_client=store,  # type: ignore[arg-type]
         embedder=EvalEmbedder(),
     )
+    # Signed in. Artifacts are a cloud service and an unattached
+    # index refuses every write, so a seeded store needs one.
+    index.attach_shared(FakeSharedServer())
     _patch_cypher_driver(store)
     return index
 

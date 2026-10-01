@@ -37,7 +37,7 @@ from ember_code.core.artifacts.index import ArtifactIndex
 from ember_code.core.artifacts.metadata_codec import ArtifactMetadataCodec
 from ember_code.core.artifacts.models import CommentStatus, SourceDeclaration
 from ember_code.core.code_index.embedder import HashEmbedder
-from evals.archivist.store import FakeArtifactStore
+from evals.archivist.store import FakeArtifactStore, FakeSharedServer
 
 CODEC = ArtifactMetadataCodec()
 SERVER = "https://igni.example"
@@ -152,6 +152,7 @@ async def index(tmp_path: Path) -> ArtifactIndex:
         neo4j_client=FakeArtifactStore(),  # type: ignore[arg-type]
         embedder=HashEmbedder(),
     )
+    index.attach_shared(FakeSharedServer())
     await index.create(
         name="Auth model",
         content="Auth is a session cookie.",
