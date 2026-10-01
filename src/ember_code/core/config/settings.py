@@ -38,7 +38,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from ember_code.core.config.models import CliOverrides
@@ -153,14 +153,7 @@ class Settings(BaseModel):
     context: ContextConfig = Field(default_factory=ContextConfig)
     orchestration: OrchestrationConfig = Field(default_factory=OrchestrationConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
-    # ``knowledge`` is accepted as an input alias so a config file
-    # written before the rename still loads — the section was renamed,
-    # not removed, and silently dropping a user's settings because a
-    # key moved is not an acceptable upgrade path.
-    artifacts: ArtifactsConfig = Field(
-        default_factory=ArtifactsConfig,
-        validation_alias=AliasChoices("artifacts", "knowledge"),
-    )
+    artifacts: ArtifactsConfig = Field(default_factory=ArtifactsConfig)
     learning: LearningConfig = Field(default_factory=LearningConfig)
     reasoning: ReasoningConfig = Field(default_factory=ReasoningConfig)
     guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig)

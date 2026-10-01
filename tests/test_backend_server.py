@@ -250,7 +250,7 @@ class TestBackendServerRealConstruction:
         # off settings flags.
         settings = settings.model_copy(
             update={
-                "knowledge": settings.artifacts.model_copy(update={"enabled": False}),
+                "artifacts": settings.artifacts.model_copy(update={"enabled": False}),
             }
         )
 
@@ -288,7 +288,7 @@ class TestBackendServerRealConstruction:
         settings = load_settings(project_dir=tmp_path)
         settings = settings.model_copy(
             update={
-                "knowledge": settings.artifacts.model_copy(update={"enabled": False}),
+                "artifacts": settings.artifacts.model_copy(update={"enabled": False}),
             }
         )
         backend = BackendServer(settings, project_dir=tmp_path)

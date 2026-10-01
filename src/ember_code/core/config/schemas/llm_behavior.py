@@ -49,15 +49,6 @@ class ArtifactsConfig(BaseModel):
     warn_on_stale: bool = True
 
 
-class KnowledgeConfig(ArtifactsConfig):
-    """Deprecated alias for :class:`ArtifactsConfig`.
-
-    Kept so a config file written before the rename still loads. It
-    is a subclass rather than an assignment so ``isinstance`` checks
-    in third-party plugins keep working.
-    """
-
-
 class LearningConfig(BaseModel):
     enabled: bool = True
     # Auto-extraction blobs that Agno's LearningMachine fires *after*
