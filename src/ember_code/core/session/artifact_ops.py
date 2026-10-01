@@ -1,8 +1,13 @@
 """Session artifact operations — wraps :class:`ArtifactIndex` for the session.
 
-Folds in YAML mirroring on write, returns the higher-level result
-models the tools and CLI consume, and exposes the URL/path ingestion
-path.
+Returns the higher-level result models the tools and CLI consume, and
+exposes the URL/path ingestion path.
+
+It used to mirror every write into ``.igni/artifacts.yaml`` as well.
+A document's home is the cloud: the version chain, the declaration
+each collaborator rebuilds their edges from, and the filing all live
+there, and a second copy in the repository was a second thing to keep
+in step with no reader that needed it.
 
 The one policy that lives here rather than in the index:
 **a write must declare what it was built on.** The index will happily
@@ -30,7 +35,6 @@ from ember_code.core.artifacts.models import (
     ArtifactSearchResponse,
     ArtifactStatus,
     ArtifactSummary,
-    ArtifactSyncResult,
     ArtifactVersion,
     ArtifactWriteResult,
     Comment,
@@ -40,7 +44,6 @@ from ember_code.core.artifacts.models import (
     SourceDeclaration,
     StaleDependent,
 )
-from ember_code.core.artifacts.sync import ArtifactSyncer
 from ember_code.core.config.settings import Settings
 
 # ``SourcesRequired`` is re-exported because callers reach for it from
@@ -74,16 +77,6 @@ class SessionArtifactManager:
 
     # ── Config surface ────────────────────────────────────────────────
 
-    def share_enabled(self) -> bool:
-        return (
-            self.settings.artifacts.enabled
-            and self.settings.artifacts.share
-            and self.artifacts is not None
-        )
-
-    def file_path(self) -> Path:
-        return self.project_dir / self.settings.artifacts.share_file
-
     @property
     def disabled_message(self) -> str:
         return "Artifacts are not enabled. Set artifacts.enabled=true in config."
@@ -113,8 +106,6 @@ class SessionArtifactManager:
             session_id=self.session_id,
             metadata=metadata,
         )
-        if result.success and self.share_enabled():
-            await self._mirror_to_yaml()
         return result
 
     async def revise(
@@ -138,8 +129,6 @@ class SessionArtifactManager:
             session_id=self.session_id,
             metadata=metadata,
         )
-        if result.success and self.share_enabled():
-            await self._mirror_to_yaml()
         return result
 
     # ── Editing through the draft ────────────────────────────────────
@@ -187,8 +176,6 @@ class SessionArtifactManager:
             n = await desk.publish(found.artifact_id)
         except (DraftRefused, NotAllowed) as refused:
             return ArtifactWriteResult.fail(str(refused) or "Could not publish that draft.")
-        if self.share_enabled():
-            await self._mirror_to_yaml()
         return ArtifactWriteResult.ok(f"Published as v{n}.", artifact_id=found.artifact_id, n=n)
 
     def _declare(
@@ -647,8 +634,6 @@ class SessionArtifactManager:
             author=self.author,
             session_id=self.session_id,
         )
-        if result.success and content and self.share_enabled():
-            await self._mirror_to_yaml()
         return result
 
     async def confirm_source(self, *, ref: str, source_ref: str) -> bool:
@@ -665,8 +650,6 @@ class SessionArtifactManager:
         if self.artifacts is None:
             return False
         deleted = await self.artifacts.delete(ref)
-        if deleted and self.share_enabled():
-            await self._mirror_to_yaml()
         return deleted
 
     async def status(self) -> ArtifactStatus:
@@ -690,44 +673,3 @@ class SessionArtifactManager:
             pending_candidates=candidates,
             embedder="sentence-transformers:all-MiniLM-L6-v2",
         )
-
-    # ── YAML sync ─────────────────────────────────────────────────────
-
-    async def sync_from_file(self) -> ArtifactSyncResult:
-        if not self.share_enabled():
-            return ArtifactSyncResult(
-                direction="file_to_db", message="Artifact sharing is not enabled."
-            )
-        try:
-            return await ArtifactSyncer(
-                file_path=self.file_path(), artifacts=self.artifacts
-            ).sync_file_to_db()
-        except Exception as exc:
-            return ArtifactSyncResult(direction="file_to_db", error=str(exc))
-
-    async def sync_to_file(self) -> ArtifactSyncResult:
-        if not self.share_enabled():
-            return ArtifactSyncResult(
-                direction="db_to_file", message="Artifact sharing is not enabled."
-            )
-        try:
-            return await ArtifactSyncer(
-                file_path=self.file_path(), artifacts=self.artifacts
-            ).sync_db_to_file()
-        except Exception as exc:
-            return ArtifactSyncResult(direction="db_to_file", error=str(exc))
-
-    async def sync_bidirectional(self) -> list[ArtifactSyncResult]:
-        return [await self.sync_from_file(), await self.sync_to_file()]
-
-    async def _mirror_to_yaml(self) -> None:
-        """Rewrite the shared file from the store's heads.
-
-        A full rewrite rather than an append: the file carries head
-        content only, so after a revision the row that is already
-        there is the *stale* one, and appending would leave both.
-        """
-        try:
-            await self.sync_to_file()
-        except Exception as exc:
-            logger.warning("Artifact YAML mirror failed: %s", exc)

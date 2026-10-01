@@ -165,9 +165,6 @@ class RpcMethod(StrEnum):
     # FE uses this to render a picker / status chip.
     GET_OUTPUT_STYLES = "get_output_styles"
 
-    # ── Knowledge ─────────────────────────────────────────────────
-    AUTO_SYNC_ARTIFACTS = "auto_sync_artifacts"
-
     # ── Attachments (drag/drop, paste, OS picker) ────────────────
     UPLOAD_ATTACHMENT = "upload_attachment"
 

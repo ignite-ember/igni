@@ -111,9 +111,7 @@ class KnowledgeDisabledTip(ContextualTip):
 
 class KnowledgeNoShareTip(ContextualTip):
     id: str = "artifacts_no_share"
-    message: str = (
-        'Turn on "artifacts.share: true" to sync knowledge to git so your team gets it too.'
-    )
+    message: str = ()
 
     def matches(self, ctx: TipContext) -> bool:
         k = ctx.settings.artifacts
@@ -191,7 +189,6 @@ class TipRegistry(BaseModel):
         "The Orchestrator picks the best team mode automatically. Just describe your task.",
         'Use "--verbose" to see which agents and team mode the Orchestrator picks.',
         'Use "/artifacts add <url|path|text>" to add content to your artifact store.',
-        'Use "/sync-artifacts" to manually sync knowledge between git and the vector DB.',
         "Agents can spawn sub-teams on the fly — no depth limit.",
         'Resume a previous session with "ignite-ember --resume".',
         'Use "/sessions" to browse and resume past sessions.',

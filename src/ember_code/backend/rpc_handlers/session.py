@@ -80,10 +80,6 @@ class SessionRpcHandler(RpcHandler):
     def fire_session_start_hook(self, args: dict) -> Any:
         return self._ctx.backend.fire_session_start_hook()
 
-    @rpc(RpcMethod.AUTO_SYNC_ARTIFACTS)
-    def auto_sync_artifacts(self, args: dict) -> Any:
-        return self._ctx.backend.auto_sync_artifacts()
-
     @rpc(RpcMethod.GET_PROJECT_DIR)
     def get_project_dir(self, args: dict) -> str:
         return str(self._ctx.backend.project_dir)

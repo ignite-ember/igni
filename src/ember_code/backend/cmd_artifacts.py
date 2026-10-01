@@ -1,4 +1,4 @@
-"""``/artifacts`` and ``/sync-artifacts`` slash command implementations.
+"""``/artifacts`` slash command implementations.
 
 Sibling of :mod:`cmd_memory` — the two commands share the
 "artifact store surface" concept but do not share the memory /
@@ -14,15 +14,11 @@ Sub-commands handled here:
 * ``/artifacts search`` — open the panel; the panel's input
   field IS the search UI, so any positional argument is ignored
   by design (documented on :meth:`ArtifactsCommand.search`).
-* ``/sync-artifacts`` (no args, separate slash command) —
-  bidirectional cloud sync when ``knowledge.share=true``.
-
 Architecture mirrors :mod:`cmd_codeindex` / :mod:`cmd_memory` —
 :class:`ArtifactsCommand` is Session-injected, holds no
 cross-invocation state, and every verb is a bound method. The
-public shims (:func:`cmd_artifacts` and
-:func:`cmd_sync_artifacts`) are two-liners that construct the
-coordinator and delegate to the right method so
+public shim (:func:`cmd_artifacts`) is a two-liner that constructs
+the coordinator and delegates to the right method so
 :mod:`ember_code.backend.command_handler`'s dispatch table stays
 wire-compatible.
 """
@@ -30,13 +26,10 @@ wire-compatible.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, ClassVar
-
-from pydantic import BaseModel, ConfigDict, Field
+from typing import TYPE_CHECKING
 
 from ember_code.backend.command_result import CommandResult
 from ember_code.backend.subsystem_status import ARTIFACTS, SubsystemState
-from ember_code.core.artifacts.models import ArtifactSyncResult
 from ember_code.protocol.messages import CommandAction
 
 if TYPE_CHECKING:
@@ -46,37 +39,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ArtifactSyncCommandView(BaseModel):
-    """Typed view for the ``/sync-artifacts`` chat output.
-
-    Wraps the ``list[ArtifactSyncResult]`` returned by
-    :meth:`SessionArtifactManager.sync_bidirectional` and renders
-    each row as ``[<direction>] <summary>``, newline-joined.
-
-    The join contract is byte-identical to the pre-refactor free
-    function so downstream consumers (users' scrollback,
-    integration tests that assert on the string) don't shift.
-    """
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    results: list[ArtifactSyncResult] = Field(default_factory=list)
-
-    DISABLED_MESSAGE: ClassVar[str] = (
-        "Knowledge sharing is not enabled. Set knowledge.share=true in config."
-    )
-
-    def to_command_result(self) -> CommandResult:
-        lines = [f"[{r.direction}] {r.summary}" for r in self.results]
-        return CommandResult.info("\n".join(lines))
-
-    @classmethod
-    def disabled(cls) -> CommandResult:
-        return CommandResult.info(cls.DISABLED_MESSAGE)
-
-
 class ArtifactsCommand:
-    """Coordinator for the ``/artifacts`` and ``/sync-artifacts``
+    """Coordinator for the ``/artifacts``
     slash-command families.
 
     Session-injected — no ``handler._session`` reach-in from
@@ -197,15 +161,6 @@ class ArtifactsCommand:
             "Artifact store is disabled. Set knowledge.enabled=true in config."
         )
 
-    async def sync(self) -> CommandResult:
-        """Run a bidirectional cloud sync (``file_to_db`` +
-        ``db_to_file``) when ``knowledge.share`` is enabled."""
-        mgr = self._session.artifact_mgr
-        if not mgr.share_enabled():
-            return ArtifactSyncCommandView.disabled()
-        results = await mgr.sync_bidirectional()
-        return ArtifactSyncCommandView(results=results).to_command_result()
-
 
 async def cmd_artifacts(handler: CommandHandler, args: str) -> CommandResult:
     """Handle ``/artifacts`` commands.
@@ -216,14 +171,3 @@ async def cmd_artifacts(handler: CommandHandler, args: str) -> CommandResult:
     :class:`ArtifactsCommand`.
     """
     return await ArtifactsCommand(handler.session).dispatch(args)
-
-
-async def cmd_sync_artifacts(handler: CommandHandler) -> CommandResult:
-    """Handle ``/sync-artifacts`` — bidirectional cloud sync.
-
-    Two-line shim so :mod:`ember_code.backend.command_handler`
-    keeps importing ``cmd_sync_artifacts`` by name and calling it
-    with ``(self,)`` — no args. All real work lives on
-    :meth:`ArtifactsCommand.sync`.
-    """
-    return await ArtifactsCommand(handler.session).sync()

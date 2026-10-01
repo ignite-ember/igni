@@ -51,7 +51,6 @@ const GROUPS: { title: string; blurb: string; commands: string[] }[] = [
       "/config",
       "/memory",
       "/output-style",
-      "/sync-artifacts",
       "/bug",
     ],
   },

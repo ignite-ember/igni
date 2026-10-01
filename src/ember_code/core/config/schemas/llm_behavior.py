@@ -10,8 +10,6 @@ from __future__ import annotations
 from agno.learn.config import LearningMode, UserMemoryConfig
 from pydantic import BaseModel
 
-from ember_code.core.paths import CONFIG_DIR
-
 
 class MemoryConfig(BaseModel):
     add_memories_to_context: bool = True
@@ -25,15 +23,19 @@ class ArtifactsConfig(BaseModel):
     on the next write. Turning it off does not disable lineage — it
     only means nothing is proposed, and every derivation has to be
     cited by hand or is lost.
+
+    There were three settings here for mirroring artifacts into
+    ``.igni/artifacts.yaml`` so a repository carried them. They are
+    gone with the file: a document's home is the cloud, which holds
+    the version chain, the source declaration each client rebuilds
+    its edges from, and the filing — and the file could carry only
+    head content, so it was never the copy anything could be restored
+    from. What it did reliably produce was a diff on every edit.
     """
 
     enabled: bool = True
     collection_name: str = "igni_artifacts"
     max_results: int = 10
-    # ── Git-shared artifacts ──────────────────────────────────────
-    share: bool = True  # enable git-synced artifact sharing
-    share_file: str = f"{CONFIG_DIR}/artifacts.yaml"  # relative to project root
-    auto_sync: bool = True  # auto-sync on session start/end
     # ── Lineage ───────────────────────────────────────────────────
     capture_reads: bool = True
     # Unconfirmed candidates older than this are pruned. Capture is

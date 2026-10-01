@@ -19,10 +19,8 @@ from __future__ import annotations
 
 import logging
 from enum import Enum
-from pathlib import Path
 from typing import Any
 
-import yaml
 from pydantic import BaseModel, Field
 
 from ember_code.core.artifacts.metadata_codec import ArtifactMetadataCodec
@@ -531,42 +529,6 @@ class ArtifactStatus(BaseModel):
     embedder: str = ""
 
 
-class ArtifactSyncResult(BaseModel):
-    """Result of a YAML sync.
-
-    ``errors`` accumulates per-entry insert failures so partial
-    failures have a real error surface instead of a swallowed
-    ``except Exception: log``.
-    """
-
-    direction: str = ""  # "file_to_db" or "db_to_file"
-    new_entries: int = 0
-    existing_entries: int = 0
-    total_entries: int = 0
-    message: str = ""
-    error: str | None = None
-    errors: list[str] = Field(default_factory=list)
-
-    @property
-    def summary(self) -> str:
-        if self.error:
-            return f"Sync error: {self.error}"
-        base = (
-            f"Already in sync ({self.total_entries} entries)"
-            if self.new_entries == 0
-            else (
-                f"Synced {self.new_entries} new entries "
-                f"({self.existing_entries} existing, {self.total_entries} total)"
-            )
-        )
-        if self.errors:
-            return f"{base} — {len(self.errors)} error(s)"
-        return base
-
-
-# ── Ingestion ─────────────────────────────────────────────────────────
-
-
 class IngestResult(BaseModel):
     """Result of a single ingestion call (URL or file path).
 
@@ -648,99 +610,6 @@ class IngestedContent(BaseModel):
 
 
 # ── Git-shared file ───────────────────────────────────────────────────
-
-
-class ArtifactEntry(BaseModel):
-    """A single entry in ``.igni/artifacts.yaml``.
-
-    Head content only — version history is local graph state. The
-    alternative (writing the chain to the repo) makes every artifact
-    edit produce a diff nobody can review, and the file stops being
-    worth having. Consequence, stated plainly: a fresh clone has
-    artifacts but no lineage and no history.
-    """
-
-    id: str
-    content: str
-    source: str = ""
-    added_at: str = ""
-    name: str = ""
-    kind: str = "note"
-    n: int = 1
-    sources: list[str] = Field(default_factory=list)
-
-    @classmethod
-    def from_content(
-        cls,
-        content: str,
-        *,
-        source: str = "",
-        name: str = "",
-        kind: str = "note",
-        codec: ArtifactMetadataCodec | None = None,
-    ) -> ArtifactEntry:
-        codec = codec or ArtifactMetadataCodec()
-        return cls(
-            id=codec.content_hash(content),
-            content=content,
-            source=source,
-            name=name,
-            kind=kind,
-            added_at=codec.now_iso(),
-        )
-
-
-class ArtifactYamlFile(BaseModel):
-    """On-disk YAML shape for ``.igni/artifacts.yaml``."""
-
-    version: int = 2
-    synced_at: str = ""
-    entries: list[ArtifactEntry] = Field(default_factory=list)
-
-    @classmethod
-    def load_from(cls, path: Path) -> list[ArtifactEntry]:
-        """Read an artifacts YAML, returning ``[]`` on any parse failure.
-
-        File-missing, yaml-parse error and wrong-shape all surface as
-        ``[]`` plus a warning — a sync should still complete against a
-        corrupt file rather than taking the session down with it.
-        """
-        if not path.exists():
-            return []
-        try:
-            with open(path) as f:
-                data = yaml.safe_load(f)
-        except Exception:
-            logger.warning("Failed to load artifacts file: %s", path)
-            return []
-        if not isinstance(data, dict):
-            return []
-        try:
-            return cls.model_validate(data).entries
-        except Exception:
-            logger.warning("artifacts file at %s has unexpected shape — ignoring", path)
-            return []
-
-    @classmethod
-    def write_to(
-        cls,
-        path: Path,
-        entries: list[ArtifactEntry],
-        *,
-        codec: ArtifactMetadataCodec | None = None,
-    ) -> None:
-        """Write entries to ``path`` — creates parent dirs as needed."""
-        codec = codec or ArtifactMetadataCodec()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = cls(synced_at=codec.now_iso(), entries=entries).model_dump()
-        with open(path, "w") as f:
-            yaml.dump(
-                payload,
-                f,
-                default_flow_style=False,
-                sort_keys=False,
-                allow_unicode=True,
-            )
 
 
 class ArtifactProvenance(BaseModel):

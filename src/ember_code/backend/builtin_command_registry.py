@@ -27,7 +27,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from ember_code.backend.cmd_agents import cmd_agents
-from ember_code.backend.cmd_artifacts import cmd_artifacts, cmd_sync_artifacts
+from ember_code.backend.cmd_artifacts import cmd_artifacts
 from ember_code.backend.cmd_auth import cmd_login, cmd_logout, cmd_whoami
 from ember_code.backend.cmd_codeindex import cmd_codeindex
 from ember_code.backend.cmd_config import cmd_config
@@ -120,9 +120,6 @@ class BuiltinCommandRegistry:
         async def _ctx_wrapper(handler: CommandHandler, _args: str) -> CommandResult:
             return await cmd_ctx(handler)
 
-        async def _sync_artifacts_wrapper(handler: CommandHandler, _args: str) -> CommandResult:
-            return await cmd_sync_artifacts(handler)
-
         async def _clear_wrapper(handler: CommandHandler, _args: str) -> CommandResult:
             return await cmd_clear(handler)
 
@@ -187,11 +184,6 @@ class BuiltinCommandRegistry:
             ),
             BuiltinCommand("/bug", "Open a bug report", cmd_bug),
             BuiltinCommand("/evals", "Run evaluation suites", cmd_evals),
-            BuiltinCommand(
-                "/sync-artifacts",
-                "Sync the artifact store with git",
-                _sync_artifacts_wrapper,
-            ),
         ]
 
     # ── Public API ─────────────────────────────────────────────

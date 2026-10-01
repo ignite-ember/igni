@@ -186,6 +186,7 @@ class OpenRoom:
     #: is nowhere further for it to go.
     outbox: asyncio.Queue[dict[str, Any]] | None = None
 
+
 __all__ = [
     "ArtifactController",
     "ArtifactHit",
@@ -2642,9 +2643,7 @@ class ArtifactController:
 
     # ── Presence ─────────────────────────────────────────────────────
 
-    async def watch_room(
-        self, *, artifact_id: str, watcher: str = ""
-    ) -> ArtifactRoom:
+    async def watch_room(self, *, artifact_id: str, watcher: str = "") -> ArtifactRoom:
         """Join the room for a document, and answer with what is in it.
 
         **One room per document, not one room per machine.** It used
@@ -2722,7 +2721,9 @@ class ArtifactController:
         """
         held = self._rooms.get(artifact_id)
         if held is None:
-            return ArtifactRoom(ok=False, shared=False, updates=list(self._alone.get(artifact_id, ())))
+            return ArtifactRoom(
+                ok=False, shared=False, updates=list(self._alone.get(artifact_id, ()))
+            )
         return ArtifactRoom(ok=True, shared=held.outbox is not None, updates=list(held.log))
 
     async def send_to_room(self, *, artifact_id: str, frame: dict[str, Any]) -> ArtifactRoom:
@@ -3018,7 +3019,9 @@ class ArtifactController:
             ok=True,
             waiting=int(answer.get("waiting") or 0),
             notifications=[
-                ArtifactNotification(**{k: row.get(k) for k in ArtifactNotification.model_fields if k in row})
+                ArtifactNotification(
+                    **{k: row.get(k) for k in ArtifactNotification.model_fields if k in row}
+                )
                 for row in (answer.get("notifications") or [])
             ],
         )
@@ -3261,18 +3264,6 @@ class ArtifactController:
             return ArtifactRemoveResult(removed=removed)
         except Exception as exc:
             return ArtifactRemoveResult(removed=False, error=str(exc))
-
-    async def auto_sync(self) -> str | None:
-        """Sync the shared file on startup. Returns a status message."""
-        if self._session.artifacts is None:
-            return None
-        try:
-            result = await self._session.artifact_mgr.sync_from_file()
-            if result:
-                return f"Artifacts synced: {result.summary}"
-        except Exception as exc:
-            logger.debug("artifact sync_from_file failed (%s)", exc)
-        return None
 
     async def _resolve(self, ref: str) -> ArtifactSummary | None:
         artifacts = self._session.artifacts

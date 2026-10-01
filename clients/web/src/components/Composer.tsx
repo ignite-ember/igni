@@ -67,10 +67,6 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/whoami", description: "Show the signed-in account" },
   { name: "/output-style", description: "Switch the agent's output style" },
   { name: "/plugin", description: "Install, update, remove plugins" },
-  {
-    name: "/sync-artifacts",
-    description: "Push project artifacts to igni Cloud",
-  },
   { name: "/evals", description: "Run an evaluation suite" },
   { name: "/bug", description: "Open the bug report form" },
   { name: "/quit", description: "Exit the session" },

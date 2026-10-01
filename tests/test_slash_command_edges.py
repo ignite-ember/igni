@@ -42,7 +42,6 @@ def _make_session():
     session.settings.artifacts.enabled = False
     session.settings.orchestration.max_total_agents = 20
     session.settings.orchestration.max_nesting_depth = 3
-    session.artifact_mgr.share_enabled.return_value = False
     # status() is async — give the mock a proper AsyncMock for it.
     from ember_code.core.artifacts.models import ArtifactStatus
 

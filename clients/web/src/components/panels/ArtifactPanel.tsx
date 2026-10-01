@@ -506,16 +506,6 @@ export function ArtifactPanel({
     }
   }, [view, selected]);
 
-  const sync = async () => {
-    setBusy("sync");
-    try {
-      await client.rpc("auto_sync_artifacts");
-      void refresh();
-    } finally {
-      setBusy("");
-    }
-  };
-
   /**
    * Delete from the document's own menu, through the same gate as the
    * tree's.
@@ -1054,8 +1044,6 @@ export function ArtifactPanel({
               setDetailNonce((v) => v + 1);
               void refresh();
             }}
-            onSync={() => void sync()}
-            syncing={busy === "sync"}
             onCreateInside={(parentId, parentName) => {
               setAddError("");
               setAddParent(parentId);

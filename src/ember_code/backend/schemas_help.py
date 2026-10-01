@@ -204,7 +204,6 @@ class HelpTopicCatalog(BaseModel):
                         "- `/artifacts add <path>` — add a file or directory\n"
                         "- `/artifacts add <text>` — add inline text\n"
                         "- `/artifacts search <query>` — search the artifact store\n"
-                        "- `/sync-artifacts` — sync between git file and vector DB"
                     ),
                 ),
                 HelpTopic(

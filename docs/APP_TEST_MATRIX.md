@@ -328,7 +328,6 @@ What the agent is told to remember.
 | `artifact_ask` | A question the graph cannot answer; a model that writes a query the guard rejects. Sweep: **answers** (default run). | `answers` |
 | `artifact_run_cypher` | A hand-edited query that writes; one with a syntax error. Sweep: **answers** (default run). | `answers` |
 | `get_artifact_status` | Never synced. Sweep: **answers** (default run). | `answers` |
-| `auto_sync_artifacts` | Sync with no source configured. Sweep: **answers** (`--mutating`). | `answers` |
 | `extract_learnings` | A session with nothing worth extracting. Sweep: **answers** (`--mutating`). | `answers` |
 
 ## Files, dirs & attachments
