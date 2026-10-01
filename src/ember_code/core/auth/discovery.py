@@ -13,10 +13,18 @@ a product whose claim is that nothing leaves the customer's
 infrastructure. It would also put a third party in the path of every
 login, including the air-gapped ones.
 
-What a customer publishes, once::
+A customer publishes one of these, once::
 
     https://acme.example/.well-known/igni.json
     {"api_url": "https://igni.acme.example"}
+
+    _igni.acme.example.  TXT  "api_url=https://igni.acme.example"
+
+Both, because organisations rarely have both abilities to hand: one
+needs a file at the email domain's web root, the other needs DNS
+access, and most customers find one of the two easy and the other a
+ticket. The file is tried first — it carries a content type, it is
+easier to inspect, and a wrong answer there is easier to see.
 
 Whoever controls the domain decides where its people sign in. That is
 the same trust the address itself carries, so it is the right party —
@@ -45,6 +53,8 @@ import logging
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+import dns.asyncresolver
+import dns.exception
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -59,6 +69,10 @@ TIMEOUT_SECONDS = 4.0
 #: A generous ceiling for a document with two keys in it. Stops a
 #: discovery fetch being a way to stream a gigabyte into the client.
 MAX_BYTES = 64 * 1024
+
+#: The TXT record's name, prefixed to the email domain. Underscored
+#: so it cannot collide with a host somebody wants to run.
+DNS_LABEL = "_igni"
 
 #: Hosts allowed to speak plaintext, for developing against a local
 #: deployment. Nothing else: see the module docstring.
@@ -152,6 +166,46 @@ def _read(payload: bytes) -> Discovered:
     return Discovered(api_url=api_url, portal_url=portal_url, source="well-known")
 
 
+def _read_txt(text: str) -> Discovered:
+    """Turn ``api_url=… portal_url=…`` into an answer, or a reason."""
+    fields: dict[str, str] = {}
+    for part in text.split():
+        key, sep, value = part.partition("=")
+        if sep:
+            fields[key.strip()] = value.strip()
+
+    api_url = fields.get("api_url", "").rstrip("/")
+    portal_url = fields.get("portal_url", "").rstrip("/")
+    if not api_url:
+        return Discovered(reason="The record there does not name an api_url.")
+    if not is_safe_url(api_url):
+        return Discovered(reason=f"The record there names {api_url!r}, which is not an https URL.")
+    if portal_url and not is_safe_url(portal_url):
+        logger.info("discovery: ignoring unsafe portal_url %r", portal_url)
+        portal_url = ""
+    return Discovered(api_url=api_url, portal_url=portal_url, source="dns")
+
+
+async def _from_dns(domain: str) -> Discovered:
+    """The TXT record in the customer's zone, if there is one."""
+    name = f"{DNS_LABEL}.{domain}"
+    try:
+        answer = await dns.asyncresolver.resolve(name, "TXT", lifetime=TIMEOUT_SECONDS)
+    except Exception as exc:  # noqa: BLE001 — NXDOMAIN, timeout, no nameservers
+        logger.debug("discovery: %s has no TXT record: %r", name, exc)
+        return Discovered(reason=f"{domain} has no igni record published.")
+
+    for record in answer:
+        # A TXT record is a list of character-strings and a long value
+        # is split across them; joined rather than taking the first,
+        # because an URL longer than 255 bytes arrives in pieces.
+        text = b"".join(getattr(record, "strings", [])).decode("utf-8", "replace")
+        found = _read_txt(text)
+        if found.found:
+            return found
+    return Discovered(reason=f"{domain} has no igni record published.")
+
+
 async def discover(email: str) -> Discovered:
     """Where this address's organisation runs igni.
 
@@ -173,11 +227,16 @@ async def discover(email: str) -> Discovered:
         ) as client:
             response = await client.get(url, headers={"Accept": "application/json"})
     except Exception as exc:  # noqa: BLE001 — DNS, TLS, timeouts, refusals
+        # No web root, or none that answers. The zone may still say.
         logger.debug("discovery: %s did not answer: %r", url, exc)
-        return Discovered(reason=f"{domain} did not answer.")
+        return await _from_dns(domain)
 
     if response.status_code != 200:
-        return Discovered(reason=f"{domain} has no igni record published.")
+        return await _from_dns(domain)
     if len(response.content) > MAX_BYTES:
         return Discovered(reason=f"The record at {domain} is too large to be one.")
-    return _read(response.content)
+    found = _read(response.content)
+    # A file that is there but unusable is worth saying so about
+    # rather than silently trying the other way: somebody published
+    # it, and "no record" would send them looking in the wrong place.
+    return found

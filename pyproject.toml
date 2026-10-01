@@ -77,6 +77,12 @@ dependencies = [
     "websockets~=16.0",
     "neo4j~=5.27.0",
     "weasyprint>=70.0",
+    # Server discovery reads a TXT record in the customer's own zone,
+    # for deployments that would rather publish DNS than serve a file
+    # at their email domain's web root. Pure Python, no system
+    # resolver dependency, and the async resolver matters: a blocking
+    # lookup here would hold the sign-in screen.
+    "dnspython~=2.8.0",
 ]
 
 [project.urls]

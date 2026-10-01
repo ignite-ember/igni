@@ -41,11 +41,42 @@ def _record(**fields) -> httpx.Response:
     return httpx.Response(200, content=json.dumps(fields).encode())
 
 
+class _Txt:
+    """One TXT record, as dnspython hands it over."""
+
+    def __init__(self, *strings: bytes) -> None:
+        self.strings = list(strings)
+
+
+def _zone(*records: _Txt):
+    """Make the TXT lookup answer with these."""
+
+    async def resolve(name, rdtype, **kw):
+        return list(records)
+
+    discovery.dns.asyncresolver.resolve = resolve  # type: ignore[misc]
+
+
+def _no_zone(exc: Exception | None = None):
+    """Make the TXT lookup find nothing, the way a bare domain does."""
+
+    async def resolve(name, rdtype, **kw):
+        raise exc or Exception("NXDOMAIN")
+
+    discovery.dns.asyncresolver.resolve = resolve  # type: ignore[misc]
+
+
 @pytest.fixture(autouse=True)
 def _restore():
     original = httpx.AsyncClient
+    resolver = discovery.dns.asyncresolver.resolve
+    # No test reaches the real network or the real DNS. A suite that
+    # resolves `acme.example` for real is a suite whose results depend
+    # on somebody else's nameserver.
+    _no_zone()
     yield
     discovery.httpx.AsyncClient = original  # type: ignore[misc]
+    discovery.dns.asyncresolver.resolve = resolver  # type: ignore[misc]
 
 
 class TestReadingTheAddress:
@@ -202,7 +233,7 @@ class TestItNeverRaises:
             httpx.ConnectTimeout("slow"),
         ],
     )
-    async def test_a_domain_that_does_not_answer_is_a_reason_not_a_crash(self, boom):
+    async def test_a_domain_that_answers_nowhere_is_a_reason_not_a_crash(self, boom):
         def handler(request):
             raise boom
 
@@ -212,7 +243,7 @@ class TestItNeverRaises:
 
         assert isinstance(found, Discovered)
         assert not found.found
-        assert "did not answer" in found.reason
+        assert "no igni record" in found.reason
 
     @pytest.mark.asyncio
     async def test_a_record_that_is_not_json_is_a_reason(self):
@@ -234,6 +265,113 @@ class TestItNeverRaises:
         _answering(handler)
 
         assert "does not look like an email" in (await discover("not-an-address")).reason
+
+
+class TestTheZoneWhenThereIsNoFile:
+    """The other half: a TXT record instead of a served file.
+
+    Organisations rarely have both abilities to hand — one needs a
+    file at the email domain's web root, the other needs DNS access,
+    and most find one easy and the other a ticket. So both are read,
+    the file first.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_txt_record_answers_when_no_file_is_served(self):
+        _answering(lambda r: httpx.Response(404))
+        _zone(_Txt(b"api_url=https://igni.acme.example"))
+
+        found = await discover("sam@acme.example")
+
+        assert found.api_url == "https://igni.acme.example"
+        assert found.source == "dns"
+
+    @pytest.mark.asyncio
+    async def test_it_is_asked_at_the_underscored_name(self):
+        # Underscored so it cannot collide with a host somebody wants
+        # to run.
+        asked: list[str] = []
+
+        async def resolve(name, rdtype, **kw):
+            asked.append(f"{name}/{rdtype}")
+            return [_Txt(b"api_url=https://igni.acme.example")]
+
+        _answering(lambda r: httpx.Response(404))
+        discovery.dns.asyncresolver.resolve = resolve
+
+        await discover("sam@acme.example")
+
+        assert asked == ["_igni.acme.example/TXT"]
+
+    @pytest.mark.asyncio
+    async def test_a_portal_url_rides_along(self):
+        _answering(lambda r: httpx.Response(404))
+        _zone(_Txt(b"api_url=https://igni.acme.example portal_url=https://portal.acme.example"))
+
+        found = await discover("sam@acme.example")
+
+        assert found.portal_url == "https://portal.acme.example"
+
+    @pytest.mark.asyncio
+    async def test_a_value_split_across_strings_is_rejoined(self):
+        # TXT holds character-strings of at most 255 bytes, so a long
+        # URL arrives in pieces. Taking the first would truncate it.
+        _answering(lambda r: httpx.Response(404))
+        _zone(_Txt(b"api_url=https://igni.acme", b".example"))
+
+        assert (await discover("sam@acme.example")).api_url == "https://igni.acme.example"
+
+    @pytest.mark.asyncio
+    async def test_an_unrelated_txt_record_is_skipped(self):
+        # A zone has SPF, verification strings and whatever else at
+        # that name; ours is the one that names an api_url.
+        _answering(lambda r: httpx.Response(404))
+        _zone(_Txt(b"v=spf1 include:example.net ~all"), _Txt(b"api_url=https://igni.acme.example"))
+
+        assert (await discover("sam@acme.example")).api_url == "https://igni.acme.example"
+
+    @pytest.mark.asyncio
+    async def test_a_plaintext_server_in_dns_is_refused_too(self):
+        # The same check as the file. How it arrived does not change
+        # what it is.
+        _answering(lambda r: httpx.Response(404))
+        _zone(_Txt(b"api_url=http://igni.acme.example"))
+
+        assert not (await discover("sam@acme.example")).found
+
+    @pytest.mark.asyncio
+    async def test_the_file_wins_when_both_exist(self):
+        _answering(lambda r: _record(api_url="https://from-the-file.acme.example"))
+        _zone(_Txt(b"api_url=https://from-the-zone.acme.example"))
+
+        found = await discover("sam@acme.example")
+
+        assert found.api_url == "https://from-the-file.acme.example"
+        assert found.source == "well-known"
+
+    @pytest.mark.asyncio
+    async def test_a_served_file_that_is_wrong_is_not_papered_over_by_dns(self):
+        # Somebody published it. Falling through to the zone would
+        # send them looking in the wrong place for the mistake.
+        _answering(lambda r: _record(api_url="http://insecure.acme.example"))
+        _zone(_Txt(b"api_url=https://igni.acme.example"))
+
+        found = await discover("sam@acme.example")
+
+        assert not found.found
+        assert "not an https URL" in found.reason
+
+    @pytest.mark.asyncio
+    async def test_a_zone_that_refuses_is_a_reason_not_a_crash(self):
+        import dns.exception
+
+        _answering(lambda r: httpx.Response(404))
+        _no_zone(dns.exception.Timeout())
+
+        found = await discover("sam@acme.example")
+
+        assert isinstance(found, Discovered)
+        assert not found.found
 
 
 class TestWritingTheServerDown:
