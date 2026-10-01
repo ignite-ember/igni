@@ -141,6 +141,16 @@ logger = logging.getLogger(__name__)
 #: Redis memory — only this process, for as long as it runs.
 ALONE_SNAPSHOT_EVERY = 200
 
+#: What a destination the server does not have is called.
+#:
+#: A parent in this tree is a folder **or a document** — a page holds
+#: its sub-pages — so the one place something can be dropped has two
+#: kinds, and "No such folder." named the wrong one every time
+#: somebody dragged a page onto a page. The server says the same
+#: sentence back; they are deliberately identical, so the reader is
+#: not told two different things about one refusal.
+_NO_SUCH_PLACE = "No such folder or document."
+
 
 def unreachable(exc: Exception) -> str:
     """The sentence shown when a call to the server did not come back.
@@ -1318,21 +1328,31 @@ class ArtifactController:
         return ArtifactRevised(ok=True, n=result.n, message=result.message)
 
     async def create_folder(self, *, name: str, parent_id: str = "") -> ArtifactTreeChanged:
-        """A place to put things."""
+        """A place to put things, at the top or inside something else."""
         if self._session.artifacts is None:
             return ArtifactTreeChanged(error="Artifacts are disabled.")
         title = name.strip()
         if not title:
             return ArtifactTreeChanged(error="A folder needs a name.")
-        # The server names it, and the graph adopts that name. Two
-        # copies that each mint an id agree the folder exists and
-        # about nothing else, and every later operation addresses
-        # whichever one the caller happened to be looking at.
-        shared_id = await self._shared_folder(
-            lambda sync: sync.create_folder(name=title, parent_id=parent_id or "")
-        )
-        if isinstance(shared_id, ArtifactTreeChanged):
-            return shared_id
+        shared_id: Any = None
+        # Where it is going has to be somewhere the server can file
+        # into, the same as any other move — a folder made offline, or
+        # a page that has never been published, is a destination this
+        # machine can see and that one cannot.
+        ready = await self._shared_destination(parent_id) if parent_id else True
+        if isinstance(ready, ArtifactTreeChanged):
+            return ready
+        if ready:
+            # The server names it, and the graph adopts that name. Two
+            # copies that each mint an id agree the folder exists and
+            # about nothing else, and every later operation addresses
+            # whichever one the caller happened to be looking at.
+            shared_id = await self._shared_folder(
+                lambda sync: sync.create_folder(name=title, parent_id=parent_id or ""),
+                missing=_NO_SUCH_PLACE,
+            )
+            if isinstance(shared_id, ArtifactTreeChanged):
+                return shared_id
         folder_id = await self._session.artifacts.client.create_folder(
             name=title, parent_id=parent_id or "", folder_id=shared_id or ""
         )
@@ -1378,7 +1398,7 @@ class ArtifactController:
             ),
         )
 
-    async def _shared_folder(self, call: Any) -> Any:
+    async def _shared_folder(self, call: Any, *, missing: str = "No such folder.") -> Any:
         """Do a filing operation on the server before doing it here.
 
         Answers an :class:`ArtifactTreeChanged` when the server
@@ -1386,6 +1406,13 @@ class ArtifactController:
         must not be moved to a shape the shared copy rejected.
         Anything else is the server's own answer, or ``None`` when
         there is no server to ask.
+
+        ``missing`` is what a 404 is called, because the same refusal
+        means different things to the person reading it. Renaming
+        something that is gone is about a folder; filing something is
+        about a destination that may equally have been a document, and
+        saying "no such folder" there named the wrong thing — about an
+        id nobody had mentioned, for a page they were looking at.
         """
         sync = self._collaboration()
         if sync is None:
@@ -1393,7 +1420,7 @@ class ArtifactController:
         try:
             return await call(sync)
         except NotAllowed:
-            return ArtifactTreeChanged(error="No such folder.")
+            return ArtifactTreeChanged(error=missing)
         except Exception as exc:  # noqa: BLE001 — network, auth, permissions
             logger.info("filing did not reach the server: %s", exc)
             return ArtifactTreeChanged(error=unreachable(exc))
@@ -1414,21 +1441,27 @@ class ArtifactController:
         because a document has a shared identity to look up and a
         folder's id is the same string on both sides.
 
-        The destination is back-filled first. A folder made on this
-        machine while it was signed out exists here and nowhere else,
-        and asking the server to file something into it answers "no
-        such folder" — which used to refuse the move outright, local
-        half included. So the person dragged a document into a folder
-        they were looking straight at, nothing moved, and the reason
-        given was that the folder did not exist.
+        **Both ends may be either kind.** A document holds its
+        sub-pages here the way a folder holds documents, so the
+        destination is a node and not necessarily a folder — see
+        :meth:`_shared_destination`, which is what makes sure it is
+        somewhere the server can file into before anything is moved.
         """
         sync = self._collaboration()
         if sync is None:
             return None
         if parent_id and not to_top:
-            refused = await self._shared_ancestry(parent_id)
-            if refused is not None:
-                return refused
+            ready = await self._shared_destination(parent_id)
+            if isinstance(ready, ArtifactTreeChanged):
+                return ready
+            if not ready:
+                # The destination is on this machine and nowhere else.
+                # The local move still happens; the shared copy keeps
+                # the arrangement it had, and gains this one when the
+                # destination is published. Refusing instead would
+                # mean a page cannot be dragged under a page that has
+                # not been shared with anybody, which is most of them.
+                return None
         summary = await self._session.artifacts.client.get_artifact(node_id)
         if summary is None:
             return await self._shared_folder(
@@ -1437,7 +1470,8 @@ class ArtifactController:
                     parent_id=parent_id,
                     to_top=to_top,
                     archived=archived,
-                )
+                ),
+                missing=_NO_SUCH_PLACE,
             )
         try:
             slug = await sync.slug_for(node_id)
@@ -1452,8 +1486,44 @@ class ArtifactController:
         return await self._shared_folder(
             lambda s: s.place_document(
                 slug=slug, parent_id=parent_id, to_top=to_top, archived=archived
-            )
+            ),
+            missing=_NO_SUCH_PLACE,
         )
+
+    async def _shared_destination(self, parent_id: str) -> Any:
+        """Make sure the place something is being filed into is there.
+
+        Answers ``True`` to go ahead, ``False`` when the destination
+        cannot exist on the server yet and the move is this machine's
+        alone, or an :class:`ArtifactTreeChanged` the caller returns
+        unchanged.
+
+        The two kinds are missing for different reasons and neither is
+        the person's mistake. A **folder** made while this machine was
+        signed out exists here and nowhere else, so it is created
+        there first, outermost link down — otherwise filing into a
+        folder somebody is looking straight at answers "no such
+        folder". A **document** cannot be back-filled the same way:
+        its shared identity is minted when it is published, and until
+        then there is nothing on the server for a sub-page to point
+        at. So the local arrangement stands on its own, which is the
+        same answer this gives for a document being moved that has
+        never been published.
+        """
+        if self._session.artifacts is None:
+            return True
+        summary = await self._session.artifacts.client.get_artifact(parent_id)
+        if summary is None:
+            refused = await self._shared_ancestry(parent_id)
+            return True if refused is None else refused
+        sync = self._collaboration()
+        if sync is None:
+            return False
+        try:
+            return bool(await sync.slug_for(parent_id))
+        except Exception as exc:  # noqa: BLE001 — network, auth
+            logger.info("could not resolve the destination %s: %s", parent_id, exc)
+            return ArtifactTreeChanged(error=unreachable(exc))
 
     async def _shared_ancestry(self, folder_id: str) -> ArtifactTreeChanged | None:
         """Make sure a folder and everything above it exist on the server.

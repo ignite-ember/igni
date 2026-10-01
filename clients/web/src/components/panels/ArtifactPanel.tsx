@@ -263,6 +263,10 @@ export function ArtifactPanel({
    *  the top level, which is also where the panel's own Add starts. */
   const [addParent, setAddParent] = useState("");
   const [addParentName, setAddParentName] = useState("");
+  /** Which way of making a document the form opens on. Whoever
+   *  pressed "Write a document" has already said; making them pick
+   *  Text again on the next screen asks the same question twice. */
+  const [addMode, setAddMode] = useState<AddMode>("url");
   /** Bumped when the documents changed, to make the tree re-read. */
   const [treeVersion, setTreeVersion] = useState(0);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
@@ -1122,6 +1126,7 @@ export function ArtifactPanel({
           busy={busy === "add"}
           error={addError}
           into={addParentName}
+          start={addMode}
           onAdd={tryAdd}
           onCancel={() => {
             setAddParent("");
@@ -1171,7 +1176,16 @@ export function ArtifactPanel({
       ) : !status.enabled ? (
         <DisabledState />
       ) : docs && docs.length === 0 ? (
-        <EmptyHero onAdd={() => setView("add")} embedder={status.embedder} />
+        <EmptyHero
+          onWrite={() => {
+            setAddMode("text");
+            setView("add");
+          }}
+          onAdd={() => {
+            setAddMode("url");
+            setView("add");
+          }}
+        />
       ) : (
         <ArtifactSearch
           client={client}
@@ -1274,7 +1288,7 @@ function DisabledState() {
       <div className="kb-empty-title">Artifacts disabled</div>
       <div className="kb-empty-hint">
         Semantic search is off because <code>artifacts.enabled = false</code> in{" "}
-        <code>~/.ember/config.yaml</code>. Set it to <code>true</code> and reopen the app.
+        <code>~/.igni/config.yaml</code>. Set it to <code>true</code> and reopen the app.
         The first launch after that downloads a local database (~500 MB, one time).
       </div>
     </div>
@@ -1283,47 +1297,61 @@ function DisabledState() {
 
 // ── Empty hero ───────────────────────────────────────────────────
 
-function EmptyHero({
-  onAdd,
-  embedder,
-}: {
-  onAdd: () => void;
-  embedder: string;
-}) {
+/** The first screen of a panel with nothing in it yet.
+ *
+ * It used to open with a folder, call the things inside it *sources*,
+ * and promise that "the agent will use it when answering questions" —
+ * a description of the reading pile this panel began as. An artifact
+ * is a document now: it is written, it keeps every version, it
+ * records what it was built on, it is commented on and shared, and it
+ * is filed in a tree people arrange by hand. None of that is a source
+ * being indexed, and an empty state is where somebody forms their
+ * idea of what the thing is for.
+ *
+ * So: a page, not a folder. "Write one" first, because writing is
+ * what this is; bringing one in from a URL or a file is still here
+ * and is now the second button rather than the whole offer.
+ *
+ * The embedding model is gone from the foot. It named machinery at
+ * the one moment the reader is asking what this screen is *for*, and
+ * a model identifier is not an answer to that.
+ */
+function EmptyHero({ onWrite, onAdd }: { onWrite: () => void; onAdd: () => void }) {
   return (
     <div className="kb-empty">
       <div className="kb-empty-icon">
         <svg viewBox="0 0 48 48" width="48" height="48" fill="none">
+          {/* A page with a turned corner, and the stack of the
+              versions behind it — what a document here is. */}
           <path
-            d="M10 14h28v22a4 4 0 0 1-4 4H14a4 4 0 0 1-4-4V14z"
+            d="M15 9h12l9 9v21a3 3 0 0 1-3 3H15a3 3 0 0 1-3-3V12a3 3 0 0 1 3-3z"
             stroke="currentColor"
             strokeWidth="1.6"
-            opacity="0.6"
+            opacity="0.7"
           />
+          <path d="M27 9v9h9" stroke="currentColor" strokeWidth="1.6" opacity="0.5" />
           <path
-            d="M14 8h20l4 6H10z"
+            d="M18 25h12M18 31h8"
             stroke="currentColor"
             strokeWidth="1.6"
-            opacity="0.4"
-          />
-          <path
-            d="M24 22v12M18 28h12"
-            stroke="currentColor"
-            strokeWidth="1.8"
             strokeLinecap="round"
+            opacity="0.6"
           />
         </svg>
       </div>
-      <div className="kb-empty-title">Nothing in the artifacts yet</div>
+      <div className="kb-empty-title">No documents yet</div>
       <div className="kb-empty-hint">
-        Add a URL, file, or paste text — the agent will use it when answering questions.
+        A document here keeps every version, what it was built on, and the
+        conversation about it. Write one, or bring one in from somewhere else.
       </div>
-      <button className="btn btn-primary kb-empty-cta" onClick={onAdd}>
-        + Add source
-      </button>
-      {embedder && (
-        <div className="kb-empty-foot">Indexed with <code>{embedder}</code></div>
-      )}
+      <div className="kb-empty-actions">
+        <button className="btn btn-primary" onClick={onWrite}>
+          Write a document
+        </button>
+        <button className="btn" onClick={onAdd}>
+          Add from a URL or file
+        </button>
+      </div>
     </div>
   );
 }
@@ -2935,6 +2963,7 @@ function AddSource({
   busy,
   error,
   into,
+  start = "url",
   onAdd,
   onCancel,
 }: {
@@ -2942,10 +2971,12 @@ function AddSource({
   error: string;
   /** The document or folder this will be filed under, if any. */
   into: string;
+  /** Which way in was chosen on the way here. */
+  start?: AddMode;
   onAdd: (s: string, kind: AddMode) => Promise<boolean>;
   onCancel: () => void;
 }) {
-  const [mode, setMode] = useState<AddMode>("url");
+  const [mode, setMode] = useState<AddMode>(start);
   const [value, setValue] = useState("");
 
   const submit = async () => {

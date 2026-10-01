@@ -8558,19 +8558,15 @@ button {
   color: var(--fg-muted);
 }
 
-.kb-empty-cta {
+/* Two ways in, side by side: writing a document, and bringing one in
+   from somewhere else. They wrap rather than squeeze, because this
+   panel is a column somebody can drag narrow. */
+.kb-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
   margin-top: 18px;
-}
-
-.kb-empty-foot {
-  margin-top: 16px;
-  font-size: 11px;
-  color: var(--fg-faint);
-}
-
-.kb-empty-foot code {
-  font-family: var(--font-mono);
-  color: var(--fg-muted);
 }
 
 /* ── Knowledge: add-source page ────────────────────────────────── */

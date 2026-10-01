@@ -48,6 +48,11 @@ class FakeGraph:
         self.deleted: list[str] = []
         self.archived: list[tuple[str, bool]] = []
         self.moved: list[tuple[str, str | None]] = []
+        #: Where each document ended up. Kept, not only recorded, so
+        #: the loop check has a tree to walk — a page may hold other
+        #: pages, so a cycle can run through documents alone and a
+        #: fake that forgot every move could not express one.
+        self.parents: dict[str, str] = {}
 
     async def get_artifact(self, artifact_id: str) -> ArtifactSummary | None:
         if artifact_id in self.documents:
@@ -73,6 +78,7 @@ class FakeGraph:
 
     async def set_parent(self, *, node_id: str, parent_id: str | None) -> bool:
         self.moved.append((node_id, parent_id))
+        self.parents[node_id] = parent_id or ""
         return True
 
     async def list_artifacts(self, **_: Any) -> list[Any]:
@@ -114,9 +120,17 @@ class FakeServer:
         if self._fail is not None:
             raise self._fail
 
+    def _is_a_place(self, parent_id: str) -> bool:
+        """What the real server resolves a destination against.
+
+        A folder it has, or a document it has — the two namespaces it
+        looks in, in that order, when a client names one parent.
+        """
+        return parent_id in self.holds or parent_id in self.slugs
+
     async def create_folder(self, *, name: str, parent_id: str = "", folder_id: str = "") -> str:
         self._maybe_fail()
-        if self._strict and parent_id and parent_id not in self.holds:
+        if self._strict and parent_id and not self._is_a_place(parent_id):
             raise NotAllowed(parent_id)
         self.created.append({"name": name, "parent_id": parent_id, "folder_id": folder_id})
         chosen = folder_id or self._folder_id
@@ -134,9 +148,10 @@ class FakeServer:
     async def place_document(self, **kwargs: Any) -> None:
         self._maybe_fail()
         parent = kwargs.get("parent_id") or ""
-        if self._strict and parent and parent not in self.holds:
-            # What the real server answers: it has no such folder, and
-            # says so about the document it was asked to move.
+        if self._strict and parent and not self._is_a_place(parent):
+            # What the real server answers: it has nothing filed under
+            # that id, and says so about the document it was asked to
+            # move.
             raise NotAllowed(parent)
         self.placed.append(kwargs)
 
@@ -157,7 +172,12 @@ class FakeManager:
 
     async def list_artifacts(self, **_: Any) -> list[ArtifactSummary]:
         return [
-            ArtifactSummary(artifact_id=doc, name=doc, head_n=1)
+            ArtifactSummary(
+                artifact_id=doc,
+                name=doc,
+                head_n=1,
+                parent_id=self._graph.parents.get(doc, ""),
+            )
             for doc in sorted(self._graph.documents)
         ]
 
@@ -438,3 +458,109 @@ class TestAFolderTheServerHasNeverHeardOf:
 
         assert not result.ok
         assert graph.moved == []
+
+
+class TestADocumentDroppedOnADocument:
+    """A page holds its sub-pages, and the server has to be told so.
+
+    The tree here has always had two kinds of parent — a document may
+    hold other documents the way a page holds sub-pages — and the
+    shared copy had one. So dragging a page onto a page looked the
+    destination up among folders, found nothing, and reported "No such
+    folder": a refusal about a folder nobody had mentioned, for an
+    arrangement this side was already drawing.
+
+    The other half is a destination that *cannot* be on the server
+    yet. A document's shared identity is minted when it is published,
+    so a page nobody has shared has nothing for a sub-page to point
+    at — and refusing on that basis would mean most pages cannot be
+    dragged under most pages. The local move stands alone instead.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_page_it_was_dropped_on_is_the_parent_sent_up(self):
+        graph = FakeGraph(documents={"doc-1", "doc-2"})
+        server = FakeServer(strict=True)
+        server.slugs = {"doc-1": "s1", "doc-2": "s2"}
+
+        result = await controller(graph, server).move_node(node_id="doc-2", parent_id="doc-1")
+
+        assert result.ok
+        # Addressed by the slug of the page being moved, and naming
+        # the page it was moved under by the id this side uses.
+        assert server.placed == [
+            {"slug": "s2", "parent_id": "doc-1", "to_top": False, "archived": None}
+        ]
+        assert graph.moved == [("doc-2", "doc-1")]
+
+    @pytest.mark.asyncio
+    async def test_a_page_the_server_has_never_seen_is_still_a_place_here(self):
+        # The destination exists on this machine and nowhere else, and
+        # unlike a folder it cannot be back-filled: publishing is what
+        # gives a document its shared identity.
+        graph = FakeGraph(documents={"doc-1", "doc-unshared"})
+        server = FakeServer(strict=True)
+        server.slugs = {"doc-1": "s1"}
+
+        result = await controller(graph, server).move_node(
+            node_id="doc-1", parent_id="doc-unshared"
+        )
+
+        assert result.ok
+        assert server.placed == []
+        assert graph.moved == [("doc-1", "doc-unshared")]
+
+    @pytest.mark.asyncio
+    async def test_a_folder_can_be_made_inside_a_page(self):
+        graph = FakeGraph(documents={"doc-1"})
+        server = FakeServer(strict=True)
+
+        result = await controller(graph, server).create_folder(name="Decisions", parent_id="doc-1")
+
+        assert result.ok
+        assert server.created == [{"name": "Decisions", "parent_id": "doc-1", "folder_id": ""}]
+
+    @pytest.mark.asyncio
+    async def test_a_folder_inside_an_unpublished_page_is_made_here_only(self):
+        graph = FakeGraph(documents={"doc-unshared"})
+        server = FakeServer(strict=True)
+        server.slugs = {}
+
+        result = await controller(graph, server).create_folder(
+            name="Decisions", parent_id="doc-unshared"
+        )
+
+        assert result.ok
+        assert server.created == []
+        assert graph.created[0]["parent_id"] == "doc-unshared"
+
+    @pytest.mark.asyncio
+    async def test_a_refusal_names_both_kinds(self):
+        # The sentence the person reads when the destination really is
+        # not there. It used to say "No such folder." about a page.
+        graph = FakeGraph(documents={"doc-1"})
+        server = FakeServer(strict=True)
+
+        result = await controller(graph, server).move_node(node_id="doc-1", parent_id="nowhere")
+
+        assert result.error == "No such folder or document."
+        assert graph.moved == []
+
+    @pytest.mark.asyncio
+    async def test_a_page_cannot_be_dropped_into_its_own_sub_page(self):
+        # Refused before anything is written, here and on the server
+        # both. A cycle does not error: the branch simply detaches
+        # from every root and everything on it leaves the tree.
+        graph = FakeGraph(documents={"doc-1", "doc-2"})
+        server = FakeServer(strict=True)
+        server.slugs = {"doc-1": "s1", "doc-2": "s2"}
+        ctl = controller(graph, server)
+        await ctl.move_node(node_id="doc-2", parent_id="doc-1")
+
+        result = await ctl.move_node(node_id="doc-1", parent_id="doc-2")
+
+        assert not result.ok
+        assert "inside itself" in result.error
+        # Refused before the server was told, not reported after.
+        assert graph.moved == [("doc-2", "doc-1")]
+        assert len(server.placed) == 1
