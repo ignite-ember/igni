@@ -876,6 +876,14 @@ class BackendServer:
         """See :meth:`AuthController.clear_cloud_credentials`."""
         return self.auth.clear_cloud_credentials()
 
+    async def discover_server(self, email: str) -> dict[str, str]:
+        """See :meth:`AuthController.discover_server`."""
+        return await self.auth.discover_server(email)
+
+    def set_server(self, api_url: str, portal_url: str = "") -> dict[str, str]:
+        """See :meth:`AuthController.set_server`."""
+        return self.auth.set_server(api_url, portal_url)
+
     async def get_cloud_plan(self) -> CloudPlan | None:
         """See :meth:`AuthController.get_cloud_plan`."""
         return await self.auth.get_cloud_plan()

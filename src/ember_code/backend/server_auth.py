@@ -37,8 +37,10 @@ from ember_code.core.auth.credentials import (
     Credentials,
     CredentialsStore,
 )
+from ember_code.core.auth.discovery import discover, is_safe_url
 from ember_code.core.auth.portal_client import PortalClient
 from ember_code.core.auth.schemas import JwtClaims
+from ember_code.core.config.user_config_store import UserConfigStore
 from ember_code.protocol import messages as msg
 
 logger = logging.getLogger(__name__)
@@ -399,3 +401,63 @@ class AuthController:
         if not result.ok or result.user is None:
             return None
         return CloudPlan.from_user_info(result.user)
+
+    # ── Which server this install talks to ───────────────────────────
+
+    async def discover_server(self, email: str) -> dict[str, str]:
+        """Where this address's organisation runs igni.
+
+        Read from a record the organisation publishes on its own
+        domain — see
+        :mod:`ember_code.core.auth.discovery` for why nothing
+        vendor-run is asked.
+
+        Never raises, and "nothing published" is not a failure: most
+        domains have no record, and the screen offers an address field
+        instead. ``reason`` is there for when somebody asks why.
+        """
+        found = await discover(email)
+        return {
+            "api_url": found.api_url,
+            "portal_url": found.portal_url,
+            "source": found.source,
+            "reason": found.reason,
+        }
+
+    def set_server(self, api_url: str, portal_url: str = "") -> dict[str, str]:
+        """Write the server down, so the next launch knows it.
+
+        Refused unless the URL is one discovery would have accepted.
+        This is reachable with a hand-typed address — the fallback for
+        a deployment that publishes no record — and "the user typed it"
+        is not a reason to write a plaintext host into a config file
+        that decides where sign-in codes are sent.
+
+        ``portal_url`` is optional and empty means "derive it", which
+        is right wherever the derivation was right before.
+        """
+        chosen = (api_url or "").strip().rstrip("/")
+        portal = (portal_url or "").strip().rstrip("/")
+        if not chosen:
+            return {"error": "Name the server to connect to."}
+        if not is_safe_url(chosen):
+            return {"error": f"{chosen} is not an https address."}
+        if portal and not is_safe_url(portal):
+            return {"error": f"{portal} is not an https address."}
+
+        store = UserConfigStore()
+        config = store.read()
+        config["api_url"] = chosen
+        if portal:
+            config["portal_url"] = portal
+        store.write(config)
+        # The settings object this controller was built with is the
+        # one every later call reads, so it has to learn too — a
+        # config file the running process disagrees with is the
+        # confusing half of this operation.
+        self._settings.api_url = chosen
+        if portal:
+            self._settings.portal_url = portal
+        self._portal = PortalClient(api_url=chosen, portal_url=portal or None)
+        logger.info("server set to %s", chosen)
+        return {"api_url": chosen, "portal_url": portal}

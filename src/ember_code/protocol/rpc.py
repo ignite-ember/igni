@@ -181,6 +181,11 @@ class RpcMethod(StrEnum):
 
     # ── Auth / models / config ───────────────────────────────────
     LOGIN = "login"
+    # Where this address's organisation runs igni, read from a record
+    # the organisation publishes on its own domain.
+    DISCOVER_SERVER = "discover_server"
+    # Write that server down, so the next launch knows it.
+    SET_SERVER = "set_server"
     RELOAD_CLOUD_CREDENTIALS = "reload_cloud_credentials"
     CLEAR_CLOUD_CREDENTIALS = "clear_cloud_credentials"
     SWITCH_MODEL = "switch_model"

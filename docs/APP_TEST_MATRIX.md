@@ -178,6 +178,8 @@ Which model, and who you are.
 | `get_model_registry` | An empty registry — the state that produced "not in models.registry". | `verified` |
 | `switch_model` | Switching mid-run; switching to a model the deployment does not serve. Sweep: **answers** (`--mutating`). | `answers` |
 | `login` | Cancelling the browser round-trip; an expired code. Sweep: **never called** — irreversible or blocking — never called. | `todo` |
+| `discover_server` | A domain with no record; one serving a plaintext `api_url`; a redirect to another host; an address that is not one. Sweep: **answers** (read-only). | `answers` |
+| `set_server` | A plaintext URL typed by hand; an existing config whose other keys must survive. Sweep: **never called** — writes the file that decides where sign-in codes go. | `todo` |
 | `reload_cloud_credentials` | Credentials file missing or unreadable. Sweep: **never called** — irreversible or blocking — never called. | `todo` |
 | `clear_cloud_credentials` | Clearing while a run is in flight. Sweep: **never called** — irreversible or blocking — never called. | `todo` |
 | `check_for_update` | Offline; a newer version available. Sweep: **answers** (`--mutating`). | `answers` |
