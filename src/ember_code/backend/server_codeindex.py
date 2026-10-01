@@ -182,7 +182,9 @@ class CodeIndexController:
 
     def install(self) -> CodeIndexInstallResult:
         """Return the URL of the Ember portal's repositories page."""
-        return CodeIndexInstallResult.from_api_url(self._session.settings.api_url)
+        return CodeIndexInstallResult.from_api_url(
+            self._session.settings.api_url, self._session.settings.portal_url
+        )
 
     # ── Private helpers ──────────────────────────────────────────
 
@@ -241,7 +243,9 @@ class CodeIndexController:
         the portal's job rather than the client's.
         """
         try:
-            return CodeIndexInstallResult.from_api_url(self._session.settings.api_url).install_url
+            return CodeIndexInstallResult.from_api_url(
+                self._session.settings.api_url, self._session.settings.portal_url
+            ).install_url
         except Exception:  # pragma: no cover — no api url configured
             return ""
 

@@ -97,6 +97,24 @@ class Settings(BaseModel):
     # and igni's routing disappears, at which point there is nothing to
     # default to.
     api_url: str = ""
+    # Where a **person** goes: the portal that serves the sign-in page
+    # and the repository list. Empty means "work it out from
+    # ``api_url``", which is right for the deployments that run both
+    # under one name and tell them apart by a label —
+    # ``api.acme.example`` and ``acme.example``.
+    #
+    # It is not right for the deployments that tell them apart by
+    # **port**, and that includes the one this repository ships: the
+    # API on 7777 and the portal on 3000. The derivation only ever
+    # rewrote host labels, so it handed back the API host unchanged,
+    # and signing in sent people to ``:7777/cli-auth`` — a 404 on a
+    # server that has no such page, with no setting anywhere that
+    # could have corrected it. ``PortalClient`` has accepted a
+    # ``portal_url`` argument the whole time; nothing ever passed one.
+    #
+    # DEC-14 made the wrong *default* configurable. This is the other
+    # half: a way to say so when the guess is wrong.
+    portal_url: str = ""
     # Seconds between update checks. ``0`` disables them entirely, and
     # is what an air-gapped deployment should set. See DP-5 in
     # ember-server's docs/COMPLIANCE_TRACKER.md.

@@ -115,7 +115,15 @@ class AuthController:
         # URLs are read once from ``settings`` and reused across
         # login / plan-fetch calls instead of threading them through
         # every free-function default.
-        self._portal = PortalClient(api_url=self._settings.api_url)
+        # ``portal_url`` is passed through rather than left to the
+        # derivation, which only rewrites host labels and so cannot
+        # express a portal that differs from the API by port. Empty
+        # keeps the derivation, which is right wherever it was right
+        # before.
+        self._portal = PortalClient(
+            api_url=self._settings.api_url,
+            portal_url=self._settings.portal_url or None,
+        )
         # One :class:`CredentialsStore` per controller so the login
         # write + the :class:`CloudCredentials` read below share a
         # single path source (previously two independent free-function
