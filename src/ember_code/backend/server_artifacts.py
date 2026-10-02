@@ -977,6 +977,13 @@ class ArtifactController:
             total_passages=evidence.total_passages,
         )
 
+        # Asked before the call: Agno swallows the placeholder's
+        # exception and reports "Unknown model error", which names
+        # nothing somebody can act on. See ``_no_model``.
+        silent = self._no_model()
+        if silent:
+            return ArtifactCandidateVerdict(error=silent)
+
         try:
             from agno.agent import Agent  # noqa: PLC0415 — heavy, and rarely reached
 
@@ -1097,6 +1104,11 @@ class ArtifactController:
             suggested_text=found.suggested_text or "",
         )
 
+        # Asked before the call; see ``_no_model``.
+        silent = self._no_model()
+        if silent:
+            return ArtifactCommentRelevance(error=silent)
+
         try:
             from agno.agent import Agent  # noqa: PLC0415 — heavy, and rarely reached
 
@@ -1208,6 +1220,13 @@ class ArtifactController:
             from agno.agent import Agent  # noqa: PLC0415 — heavy, and rarely reached
 
             from ember_code.core.config.models import ModelRegistry  # noqa: PLC0415
+
+            if silent := self._no_model():
+                # The reply itself was posted; only the agent's
+                # follow-up is unavailable, and saying which is the
+                # difference between "it failed" and "part of it did".
+                result.message = f"Replied. {silent}"
+                return result
 
             agent = Agent(
                 name="_artifact_thread_agent",
@@ -1937,6 +1956,9 @@ class ArtifactController:
             from agno.agent import Agent  # noqa: PLC0415 — heavy, and rarely reached
 
             from ember_code.core.config.models import ModelRegistry  # noqa: PLC0415
+
+            if silent := self._no_model():
+                return ArtifactDriftApplied(error=silent)
 
             agent = Agent(
                 name="_artifact_drift_updater",
@@ -3180,6 +3202,29 @@ class ArtifactController:
         from ember_code.core.config.models import ModelRegistry
 
         return ModelRegistry(self._session.settings).get_model()
+
+    def _no_model(self) -> str:
+        """Why a model call cannot be made, or empty if it can.
+
+        Asked *before* the call, because asking afterwards does not
+        work. When nothing is configured the registry hands back a
+        :class:`NoModelConfigured` placeholder whose every invocation
+        raises a sentence saying exactly that — and Agno does not
+        propagate exceptions out of a run. It catches, marks the run
+        ERROR, and puts its own words in ``content``. So the message
+        that reached the screen was "Unknown model error", on a
+        deployment whose actual problem was that nobody had run
+        ``/login``.
+
+        Checked here instead: the placeholder is recognisable by its
+        type, and its own ``ERROR_MESSAGE`` is the thing worth
+        showing. Also saves a round trip to a host named
+        ``placeholder.invalid``.
+        """
+        from ember_code.core.config.null_model import NoModelConfigured
+
+        model = self._model_for_planning()
+        return str(model.ERROR_MESSAGE) if isinstance(model, NoModelConfigured) else ""
 
     # ── Export and share ──────────────────────────────────────────────
 
