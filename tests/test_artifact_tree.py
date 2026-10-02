@@ -119,8 +119,41 @@ class TestNothingIsLost:
         rows = [doc("p", "Secret"), doc("c", "Visible", parent="p")]
         roots = build(rows, visible={"c"})
         assert roots[0].placeholder
-        assert roots[0].name == "Secret" or roots[0].name == "A document you cannot open"
         assert [c.name for c in roots[0].children] == ["Visible"]
+
+    def test_the_placeholder_does_not_name_what_it_hides(self):
+        # This asserted `"Secret" or "A document you cannot open"`,
+        # which is a test declining to decide — and the code took the
+        # first branch. A tree that hides a document and captions the
+        # gap with its title has not hidden it: "Acquisition terms" is
+        # most of what that document was going to say.
+        rows = [doc("p", "Acquisition terms"), doc("c", "Visible", parent="p")]
+
+        roots = build(rows, visible={"c"})
+
+        assert roots[0].name == "A document you cannot open"
+
+    def test_nor_whether_it_was_a_folder(self):
+        # "A folder you cannot open" with a folder icon still says
+        # there is a body of work here and you are outside it.
+        rows = [folder("f", "Project Hydra"), doc("c", "Visible", parent="f")]
+
+        roots = build(rows, visible={"c"})
+
+        assert roots[0].name == "A document you cannot open"
+        assert roots[0].is_folder is False
+
+    def test_a_parent_the_reader_may_see_but_which_is_absent_keeps_its_name(self):
+        # The other half, and the reason the name is not simply always
+        # withheld: a parent that is merely missing — deleted, not yet
+        # synced — is not a secret, and naming it is how somebody
+        # works out what happened.
+        rows = [doc("p", "Platform"), doc("c", "Visible", parent="p")]
+
+        roots = build(rows, visible={"p", "c"})
+
+        assert [n.name for n in roots] == ["Platform"]
+        assert not roots[0].placeholder
 
     def test_several_orphans_share_one_placeholder(self):
         rows = [doc("a", "One", parent="gone"), doc("b", "Two", parent="gone")]

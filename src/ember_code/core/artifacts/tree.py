@@ -90,11 +90,24 @@ def build(rows: list[dict], *, visible: set[str] | None = None) -> list[TreeNode
     so with ``is_folder``. ``visible`` optionally restricts what the
     reader may see.
 
-    **Nothing is ever dropped.** A node whose parent is missing —
-    deleted, not yet synced, or not visible — surfaces under a
-    placeholder rather than disappearing. A navigation tree that
-    silently omits something is worse than one with an odd-looking
-    branch: the document still exists and nobody can find it.
+    **Nothing the reader may see is ever dropped.** A node whose
+    parent is missing — deleted, not yet synced, or not visible —
+    surfaces under a placeholder rather than disappearing. A
+    navigation tree that silently omits something is worse than one
+    with an odd-looking branch: the document still exists and nobody
+    can find it.
+
+    **A placeholder says nothing about what it stands for.** It used
+    to be named from the row, falling back to "a document you cannot
+    open" only when the row was absent entirely — so the one case
+    ``visible`` exists for, a node the reader may *not* see, was
+    rendered with its real title. A tree that hides a document and
+    captions the gap with its name has not hidden it: "Acquisition
+    terms" is most of what the document was going to say.
+
+    So the name comes from ``visible``, not from the rows: a parent
+    the reader is allowed to see but which is simply absent keeps its
+    name, and one they are not allowed to see is unnamed.
     """
     known = {r["node_id"]: r for r in rows}
     nodes: dict[str, TreeNode] = {
@@ -129,11 +142,17 @@ def build(rows: list[dict], *, visible: set[str] | None = None) -> list[TreeNode
             continue
 
         if parent_id not in placeholders:
-            missing = known.get(parent_id)
+            # Named only when the reader is allowed to know it. The
+            # row may be in ``rows`` and still be something they may
+            # not see — that is exactly what ``visible`` means — and
+            # reading the name from it would caption the gap with the
+            # title being withheld.
+            allowed = visible is None or parent_id in visible
+            missing = known.get(parent_id) if allowed else None
             placeholders[parent_id] = TreeNode(
                 node_id=parent_id,
                 name=(missing or {}).get("name") or "A document you cannot open",
-                is_folder=bool((missing or {}).get("is_folder")),
+                is_folder=bool((missing or {}).get("is_folder")) if allowed else False,
                 placeholder=True,
             )
             roots.append(placeholders[parent_id])
