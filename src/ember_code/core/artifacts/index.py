@@ -582,12 +582,54 @@ class ArtifactIndex:
         panel and for delete-by-query, where a UI listing artifacts is
         not the agent learning from them.
         """
-        embedder = self._require_embedder()
-        query_vec = embedder.embed([query])[0]
-        hits = await self._client.search(query_embedding=query_vec, limit=limit)
+        shared = self._shared
+        if shared is None or not getattr(shared, "is_configured", False):
+            # Same refusal as writing, for the same reason: documents
+            # live on the server, so a session that cannot reach one
+            # has nothing to search rather than a local copy to fall
+            # back to. Searching the graph here would answer from
+            # whatever this machine happens to have pulled, which is
+            # indistinguishable from an authoritative empty result.
+            return []
+
+        rows = await shared.search(query=query, limit=limit)
+        if rows is None:
+            # The deployment has no graph or no embedder. Not an error
+            # and not "nothing matched" — see `CollaborationSync.search`.
+            logger.debug("document search is not configured on this server")
+            return []
+
+        hits = [self._hit_from_server(row) for row in rows]
         if record and hits:
             self._ledger.record([VersionPin(artifact_id=h.artifact_id, n=h.n) for h in hits])
         return hits
+
+    def _hit_from_server(self, row: dict[str, Any]) -> ArtifactSearchHit:
+        """One server hit, as the rest of this client expects it.
+
+        The server returns both identifiers — the slug a reader opens
+        and the ``artifact_id`` every client keys on — because it
+        stores both. Walking the local slug map backwards would have
+        been the alternative, and that map is empty until something
+        has been published, so a first search would have come back
+        unattributable.
+        """
+        slug = str(row.get("slug") or "")
+        return ArtifactSearchHit(
+            artifact_id=str(row.get("artifact_id") or ""),
+            name=str(row.get("title") or ""),
+            n=int(row.get("version_n") or 0),
+            content=str(row.get("text") or ""),
+            score=row.get("score"),
+            metadata={
+                # Kept because search now returns a *passage*, and
+                # where it sits is most of what makes one useful.
+                "line_from": str(row.get("line_from") or ""),
+                "line_to": str(row.get("line_to") or ""),
+                "slug": slug,
+            },
+        )
+
 
     async def resolve(self, ref: str) -> ArtifactSummary | None:
         """Turn an id, an ``id@n`` or a name into an artifact.

@@ -858,6 +858,34 @@ class CollaborationSync:
             raise NotAllowed(slug)
         response.raise_for_status()
 
+    async def search(self, *, query: str, limit: int = 5) -> list[dict[str, Any]] | None:
+        """Ask the server for passages matching ``query``.
+
+        Returns the raw hits, or ``None`` when this deployment has no
+        search configured — which is a different answer from an empty
+        list, and the caller says so differently. A deployment can run
+        without a graph or without an embedder on purpose.
+
+        **The server ranks, and the server decides what may be
+        ranked.** This used to happen here: the client embedded the
+        query with its own copy of the model and queried a local
+        Neo4j, which meant the result depended on what each developer
+        had indexed locally, and that a document shared with somebody
+        was searchable only by whoever had happened to pull it. The
+        access rule lives next to the documents now, where it already
+        was for every other read.
+        """
+        response = await self._request(
+            "GET",
+            "/v1/artifacts/shared/search",
+            params={"q": query, "limit": max(1, limit)},
+        )
+        response.raise_for_status()
+        body = response.json()
+        if not body.get("available", True):
+            return None
+        return list(body.get("hits") or [])
+
     async def ensure_shared(
         self, *, artifact_id: str, name: str, kind: str, n: int, html: str, author: str = ""
     ) -> str:

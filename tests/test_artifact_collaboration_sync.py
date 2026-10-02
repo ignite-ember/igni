@@ -213,15 +213,24 @@ class TestPullingTheChain:
         pull = next(r for r in server.requests if r.url.path.endswith("/versions"))
         assert pull.url.params["after"] == "1"
 
-    async def test_a_pulled_version_is_searchable(self, sync, index, server):
-        """A projected version that skipped the write path would be in
-        the graph and absent from every answer."""
+    async def test_a_pulled_version_goes_through_the_write_path(self, sync, index, server):
+        """A projection that inserted behind the write path would leave
+        a version with no passages — invisible to drift and to every
+        lineage question that reasons about paragraphs.
+
+        This used to assert it through ``index.search``, which no
+        longer measures it: search is the server's now, and a pulled
+        version is by definition one the server already has. Asserting
+        it that way would have been asserting the fake server.
+        """
         server.head_n = 2
         server.versions = [version_payload(2, "Tokens expire after fifteen minutes.")]
         await sync.pull(slug="s1", ref="Auth model")
 
-        hits = await index.search(query="fifteen minutes", limit=5, record=False)
-        assert any("fifteen minutes" in h.content for h in hits)
+        summary = await index.client.find_by_name("Auth model")
+        assert summary is not None
+        passages = await index.client.passages(artifact_id=summary.artifact_id, n=2)
+        assert any("fifteen minutes" in p.text for p in passages), passages
 
     async def test_a_forbidden_document_raises(self, sync, server):
         server.status_overrides["/v1/artifacts/shared/s1/versions"] = 404

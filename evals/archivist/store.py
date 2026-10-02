@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 
 from ember_code.core.artifacts.metadata_codec import ArtifactMetadataCodec
@@ -67,6 +68,13 @@ class _Version:
     metadata: dict = field(default_factory=dict)
     edges: list[_Edge] = field(default_factory=list)
     citations: list[Citation] = field(default_factory=list)
+    #: ``(text, line_from, line_to)`` per passage, as the chunker
+    #: produced them. Kept — the vectors still are not — because
+    #: "did this version go through the write path, or was it
+    #: inserted behind it" is a question about chunks, and a version
+    #: with none is invisible to drift and to every lineage question
+    #: that reasons about paragraphs.
+    chunks: list = field(default_factory=list)
 
     @property
     def version_id(self) -> str:
@@ -119,9 +127,9 @@ class FakeArtifactStore:
         kind: str | None = None,
         embedding: list[float] | None = None,
         chunks: list | None = None,
-        # Accepted and ignored: this store answers questions about
-        # lineage, and nothing here reads a vector. Present so the
-        # signature keeps matching the real client's.
+        # Accepted and ignored: nothing here reads a vector. Present so
+        # the signature keeps matching the real client's. ``chunks``
+        # above *is* kept — see ``_Version.chunks``.
         chunk_embeddings: list | None = None,
         metadata: dict | None = None,
         author: str = "",
@@ -159,6 +167,7 @@ class FakeArtifactStore:
             author=author,
             session_id=session_id,
             metadata=dict(metadata or {}),
+            chunks=list(chunks or []),
         )
         art.versions.append(version)
 
@@ -180,6 +189,27 @@ class FakeArtifactStore:
             edges_written=written,
             unresolved_pins=unresolved,
         )
+
+    async def passages(self, *, artifact_id: str, n: int) -> list[Any]:
+        """Every chunk of one version, in the order the chunker made them.
+
+        Returns lightweight stand-ins rather than the real ``Passage``
+        — the fields anything here reads are ``text``, ``line_from``
+        and ``line_to``.
+        """
+        version = self._version(artifact_id, n)
+        if version is None:
+            return []
+        return [
+            SimpleNamespace(
+                chunk_id=f"{version.version_id}::{ordinal}",
+                text=text,
+                line_from=line_from,
+                line_to=line_to,
+                ordinal=ordinal,
+            )
+            for ordinal, (text, line_from, line_to) in enumerate(version.chunks)
+        ]
 
     async def project_comments(self, comments: list[Comment]) -> int:
         """Mirror the real client, including the part that skips.
@@ -547,3 +577,14 @@ class FakeSharedServer:
             raise self._fail
         self.pushed.append(kwargs)
         return int(kwargs["base_n"]) + 1
+
+    #: What :meth:`search` answers with. ``None`` means this
+    #: deployment has no document search configured, which the real
+    #: server distinguishes from "nothing matched" and so does this.
+    hits: list[dict[str, Any]] | None = None
+
+    async def search(self, *, query: str, limit: int = 5) -> list[dict[str, Any]] | None:
+        self.searched = {"query": query, "limit": limit}
+        if self.hits is None:
+            return None
+        return self.hits[:limit]
