@@ -15851,3 +15851,112 @@ button {
   border: 1px solid var(--border-soft);
   vertical-align: top;
 }
+
+/* ── The sign-in wall ─────────────────────────────────────────────
+   A session with no account sees this and nothing else: igni is
+   self-hosted, so a session with nowhere to write has nothing to
+   show. Centred and narrow — there is one question on screen and
+   the layout should not imply there is more. */
+.wall {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg);
+  overflow-y: auto;
+}
+
+.wall-card {
+  width: 100%;
+  max-width: 420px;
+  text-align: center;
+}
+
+.wall-mark {
+  color: var(--accent, #e8613c);
+  margin-bottom: 18px;
+}
+
+.wall-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--fg);
+  margin: 0 0 8px;
+}
+
+.wall-lead {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--fg-muted);
+  margin: 0 0 20px;
+  /* Wraps to two lines and stays balanced rather than leaving one
+     word alone on the second. */
+  text-wrap: balance;
+}
+
+.wall-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wall-input {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--fg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+}
+
+.wall-input:focus {
+  outline: none;
+  border-color: var(--accent, #e8613c);
+}
+
+.wall-go {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+/* Quieter than the action above it, and still a real control: this
+   is the way back out of a wrong guess. */
+.wall-back {
+  margin-top: 14px;
+  padding: 4px 8px;
+  font-size: 12.5px;
+  color: var(--fg-faint);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.wall-back:hover {
+  color: var(--fg-muted);
+}
+
+.wall-error {
+  margin: 16px 0 0;
+  padding: 9px 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: left;
+  color: var(--danger, #e05c5c);
+  border: 1px solid color-mix(in srgb, var(--danger, #e05c5c) 40%, transparent);
+  background: color-mix(in srgb, var(--danger, #e05c5c) 10%, transparent);
+  border-radius: var(--radius-md, 8px);
+}
+
+.wall-foot {
+  margin: 26px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--fg-faint);
+}

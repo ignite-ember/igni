@@ -81,6 +81,7 @@ import {
 import { MenuIcon as Glyph } from "./components/MenuIcon";
 import { NotificationsPanel } from "./components/NotificationsPanel";
 import { ScrollIndicator } from "./components/ScrollIndicator";
+import { SignInWall } from "./components/SignInWall";
 import { Sidebar, type SessionEntry } from "./components/Sidebar";
 import { AgentsPanel } from "./components/panels/AgentsPanel";
 import { CodeIndexPanel } from "./components/panels/CodeIndexPanel";
@@ -621,6 +622,19 @@ export default function App() {
   // this header ever showed, which is the bug.
   const accountName =
     cloudName || status?.cloud_email || status?.cloud_org || "Account";
+
+  // ── Signed in, or nothing ───────────────────────────────────────
+  //
+  // igni is self-hosted: every document, version and comment lives on
+  // the server an organisation runs, so a session with no account has
+  // nowhere to put any of it. The app does not open behind a prompt
+  // that can be dismissed — there is nothing behind it to use.
+  //
+  // Waited on rather than assumed. ``status`` is null until the first
+  // push arrives, and treating that as signed-out would flash the
+  // wall at somebody who is signed in, on every launch.
+  const signedIn = Boolean(status?.cloud_email);
+  const knowYet = status !== null;
 
   // ── What is waiting on you ──────────────────────────────────────
   //
@@ -2775,6 +2789,34 @@ export default function App() {
         (status.context_tokens / Math.max(status.max_context, 1)) * 100,
       )
     : 0;
+
+  if (knowYet && !signedIn) {
+    return (
+      <>
+        <SignInWall client={client} onSignIn={() => setPanel({ kind: "login" })} />
+        {/* The login dialog belongs to this branch too. It is rendered
+            at the foot of the app below, which this return skips —
+            without it the Sign in button would set a state nothing
+            draws. */}
+        {panel.kind === "login" && (
+          <LoginPanel
+            client={client}
+            onDone={(ok, detail) => {
+              setPanel({ kind: "none" });
+              if (ok) {
+                // The wall is gated on ``status.cloud_email``, which
+                // arrives with the next push. Asked for rather than
+                // waited on, so the app opens as soon as it can.
+                void refreshStatus();
+              } else {
+                append(errorItem(`Login failed: ${detail}`));
+              }
+            }}
+          />
+        )}
+      </>
+    );
+  }
 
   return (
     <div className="shell">
