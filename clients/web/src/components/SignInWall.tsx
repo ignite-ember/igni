@@ -27,6 +27,7 @@
  */
 import { useState } from "react";
 
+import { FlameIcon } from "./Icons";
 import type { IgniClient } from "../protocol/client";
 
 type Found = {
@@ -122,15 +123,12 @@ export function SignInWall({
   return (
     <div className="wall">
       <div className="wall-card">
-        <div className="wall-mark" aria-hidden="true">
-          <svg viewBox="0 0 32 32" width="30" height="30" fill="none">
-            <path
-              d="M16 3c3 5 7 6.5 7 12a7 7 0 0 1-14 0c0-5.5 4-7 7-12z"
-              stroke="currentColor"
-              strokeWidth="1.7"
-              strokeLinejoin="round"
-            />
-          </svg>
+        {/* The product's own mark, not a flame drawn for this
+            screen. It is the same component the header uses, so the
+            thing somebody sees before signing in is the thing they
+            see afterwards. */}
+        <div className="wall-mark">
+          <FlameIcon size={30} />
         </div>
 
         {step === "email" && (

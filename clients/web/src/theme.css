@@ -15875,8 +15875,11 @@ button {
   text-align: center;
 }
 
+/* The mark carries its own colours — it is the product's, not a
+   glyph to be tinted by whatever is around it. */
 .wall-mark {
-  color: var(--accent, #e8613c);
+  display: flex;
+  justify-content: center;
   margin-bottom: 18px;
 }
 
@@ -15984,7 +15987,6 @@ button {
 }
 
 .pubdoc-mark {
-  color: var(--accent, #e8613c);
   display: flex;
 }
 
@@ -16041,6 +16043,32 @@ button {
   background: var(--bg-surface);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-md, 8px);
+}
+
+/* A quote is an aside, and without a mark it reads as a paragraph
+   somebody indented by accident. */
+.pubdoc-body blockquote {
+  margin: 0 0 1em;
+  padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--border);
+  color: var(--fg-muted);
+}
+
+.pubdoc-body blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+.pubdoc-body :not(pre) > code {
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+}
+
+.pubdoc-body a {
+  color: var(--accent, #e8613c);
 }
 
 .pubdoc-body table {

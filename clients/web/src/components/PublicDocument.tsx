@@ -28,6 +28,7 @@ import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { FlameIcon } from "./Icons";
 import type { IgniClient } from "../protocol/client";
 
 type Answer = {
@@ -67,15 +68,8 @@ export function PublicDocument({
   return (
     <div className="pubdoc">
       <header className="pubdoc-bar">
-        <span className="pubdoc-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
-            <path
-              d="M12 2.5c2.2 3.8 5.2 4.9 5.2 9a5.2 5.2 0 0 1-10.4 0c0-4.1 3-5.2 5.2-9z"
-              stroke="currentColor"
-              strokeWidth="1.6"
-              strokeLinejoin="round"
-            />
-          </svg>
+        <span className="pubdoc-mark">
+          <FlameIcon size={18} />
         </span>
         {/* Said plainly. Somebody reading this should know they are
             seeing a shared copy and not their own workspace. */}
