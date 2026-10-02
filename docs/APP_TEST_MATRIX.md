@@ -273,6 +273,7 @@ What the agent is told to remember.
 | Function | Edge cases | Status |
 |---|---|---|
 | `artifact_add` | Adding a duplicate; adding an empty document. Sweep: **answers** (`--mutating`). | `answers` |
+| `public_document` | A private slug; a revoked one; no server configured. Sweep: **answers** (read-only, and the one artifact call that carries no credentials). | `answers` |
 | `artifact_get` | A missing id. Sweep: **answers** (default run). | `answers` |
 | `artifact_list` | Empty. Sweep: **answers** (default run). | `answers` |
 | `artifact_remove` | Removing while a search is in flight. Sweep: **answers** (`--mutating`). | `answers` |

@@ -237,6 +237,8 @@ class RpcMethod(StrEnum):
     GET_ARTIFACT_STATUS = "get_artifact_status"
     ARTIFACT_SEARCH = "artifact_search"
     ARTIFACT_ADD = "artifact_add"
+    # A document somebody was sent a link to, read without an account.
+    PUBLIC_DOCUMENT = "public_document"
     ARTIFACT_LIST = "artifact_list"
     ARTIFACT_GET = "artifact_get"
     ARTIFACT_REMOVE = "artifact_remove"

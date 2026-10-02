@@ -27,6 +27,10 @@ class ArtifactRpcHandler(RpcHandler):
             args["source"], args.get("parent_id", ""), args.get("kind", "")
         )
 
+    @rpc(RpcMethod.PUBLIC_DOCUMENT)
+    def public_document(self, args: dict) -> Any:
+        return self._ctx.backend.public_document(args["slug"])
+
     @rpc(RpcMethod.ARTIFACT_REVISE)
     def artifact_revise(self, args: dict) -> Any:
         return self._ctx.backend.artifact_revise(args["id"], args["content"])

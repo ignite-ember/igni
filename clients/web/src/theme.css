@@ -15960,3 +15960,117 @@ button {
   line-height: 1.5;
   color: var(--fg-faint);
 }
+
+/* ── A public document, read without an account ───────────────────
+   The app's shell with almost nothing in it: somebody arriving on a
+   link has no workspace behind this page, so the chrome that would
+   navigate one is absent rather than disabled. */
+.pubdoc {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.pubdoc-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-surface);
+}
+
+.pubdoc-mark {
+  color: var(--accent, #e8613c);
+  display: flex;
+}
+
+.pubdoc-note {
+  font-size: 12.5px;
+  color: var(--fg-faint);
+  /* Pushes the sign-in button to the right edge. */
+  margin-right: auto;
+}
+
+.pubdoc-page {
+  flex: 1;
+  overflow-y: auto;
+  padding: 36px 24px 64px;
+}
+
+.pubdoc-wait {
+  text-align: center;
+  font-size: 13px;
+  color: var(--fg-faint);
+}
+
+/* Reading width, not window width: a document at 1600px is a wall of
+   text nobody finishes a paragraph of. */
+.pubdoc-body {
+  max-width: 68ch;
+  margin: 0 auto;
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--fg);
+}
+
+.pubdoc-body h1,
+.pubdoc-body h2,
+.pubdoc-body h3 {
+  line-height: 1.3;
+  margin: 1.6em 0 0.5em;
+  text-wrap: balance;
+}
+
+.pubdoc-body h1 {
+  margin-top: 0;
+}
+
+.pubdoc-body p,
+.pubdoc-body ul,
+.pubdoc-body ol {
+  margin: 0 0 1em;
+}
+
+.pubdoc-body pre {
+  padding: 12px 14px;
+  overflow-x: auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md, 8px);
+}
+
+.pubdoc-body table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.pubdoc-body th,
+.pubdoc-body td {
+  padding: 6px 10px;
+  border: 1px solid var(--border-soft);
+}
+
+.pubdoc-shut {
+  max-width: 420px;
+  margin: 10vh auto 0;
+  text-align: center;
+}
+
+.pubdoc-shut-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--fg);
+  margin: 0 0 8px;
+}
+
+.pubdoc-shut-why {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--fg-muted);
+  margin: 0 0 20px;
+}

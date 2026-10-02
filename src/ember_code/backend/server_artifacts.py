@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+import httpx
+
 from ember_code.backend.file_opener import FileOpener
 from ember_code.backend.schemas_artifacts import (
     AccessAsk,
@@ -1496,6 +1498,48 @@ class ArtifactController:
             ),
             missing=_NO_SUCH_PLACE,
         )
+
+    async def public_document(self, slug: str) -> dict[str, str]:
+        """A document somebody was sent a link to, read without an account.
+
+        The one artifact call that does **not** carry credentials, on
+        purpose: a public link is for a recipient who has igni and no
+        account on the sender's server, and asking them to sign in to
+        read something published to everybody is the wrong trade.
+
+        The server decides what a stranger is shown — the head
+        version, unnamed, and no comments — so this sends no token and
+        reads what comes back. It does not adopt the document into the
+        local graph: there is nowhere to put it and nothing to
+        reconcile it with, and a reader who later signs in gets the
+        real thing.
+
+        Never raises; every outcome is a sentence the screen can show.
+        """
+        base = (self._session.settings.api_url or "").rstrip("/")
+        if not base:
+            return {"error": "This copy of igni has no server configured."}
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                answer = await client.get(f"{base}/v1/artifacts/shared/{slug}/versions")
+        except Exception as exc:  # noqa: BLE001 — network, DNS, TLS
+            logger.info("could not read the public document %s: %r", slug, exc)
+            return {"error": unreachable(exc)}
+
+        if answer.status_code != 200:
+            # 404 covers "no such document" and "not public", which is
+            # the server refusing to confirm which — see the read
+            # path's note. Said the same way here.
+            return {"error": "That link did not open. It may be private, or it may have been revoked."}
+
+        versions = (answer.json() or {}).get("versions") or []
+        if not versions:
+            return {"error": "That link did not open. It may be private, or it may have been revoked."}
+
+        content = str(versions[-1].get("content") or "")
+        first = next((ln.strip().lstrip("# ").strip() for ln in content.splitlines() if ln.strip()), "")
+        return {"ok": "1", "title": first[:120] or "Shared document", "content": content}
 
     async def _shared_destination(self, parent_id: str) -> Any:
         """Make sure the place something is being filed into is there.

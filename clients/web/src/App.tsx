@@ -81,6 +81,7 @@ import {
 import { MenuIcon as Glyph } from "./components/MenuIcon";
 import { NotificationsPanel } from "./components/NotificationsPanel";
 import { ScrollIndicator } from "./components/ScrollIndicator";
+import { PublicDocument } from "./components/PublicDocument";
 import { SignInWall } from "./components/SignInWall";
 import { Sidebar, type SessionEntry } from "./components/Sidebar";
 import { AgentsPanel } from "./components/panels/AgentsPanel";
@@ -578,12 +579,18 @@ export default function App() {
   //
   // Only ``doc``. ``dir`` says which folder this window belongs to,
   // which stays true for as long as the window does.
+  //
+  // Kept while signed out, because then the link is not an arrival —
+  // it is the whole page. A recipient reading a public document has
+  // no workspace behind it to be returned to, and taking the slug
+  // out of the address bar meant a reload landed them on the sign-in
+  // wall having lost the document they were sent.
   useEffect(() => {
-    if (!sharedSlug) return;
+    if (!sharedSlug || !status?.cloud_email) return;
     const url = new URL(window.location.href);
     url.searchParams.delete("doc");
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
-  }, [sharedSlug]);
+  }, [sharedSlug, status?.cloud_email]);
   const [sidebarOpen, setSidebarOpenState] = useState(window.innerWidth > 700);
   const setSidebarOpen = useCallback(
     (next: boolean | ((prev: boolean) => boolean)) => {
@@ -2789,6 +2796,33 @@ export default function App() {
         (status.context_tokens / Math.max(status.max_context, 1)) * 100,
       )
     : 0;
+
+  // A link is not the same as opening igni with nothing to open. A
+  // public document was published to be read, and demanding an
+  // account on the *sender's* server before a recipient may read it
+  // makes the link not a link — so an arrival with a slug lands on
+  // the document, inside the app, rather than on the wall.
+  if (knowYet && !signedIn && sharedSlug) {
+    return (
+      <>
+        <PublicDocument
+          client={client}
+          slug={sharedSlug}
+          onSignIn={() => setPanel({ kind: "login" })}
+        />
+        {panel.kind === "login" && (
+          <LoginPanel
+            client={client}
+            onDone={(ok, detail) => {
+              setPanel({ kind: "none" });
+              if (ok) void refreshStatus();
+              else append(errorItem(`Login failed: ${detail}`));
+            }}
+          />
+        )}
+      </>
+    );
+  }
 
   if (knowYet && !signedIn) {
     return (
