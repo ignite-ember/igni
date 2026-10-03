@@ -38,7 +38,9 @@ from ember_code.core.artifacts.models import (
     ArtifactSummary,
     ArtifactVersion,
     ArtifactWriteResult,
+    Citation,
     EdgeState,
+    LineageEdge,
     ReconcilePlan,
     SourceDeclaration,
     StaleDependent,
@@ -261,6 +263,12 @@ class ArtifactIndex:
         except Exception:  # lineage is an optimisation here, never the point
             logger.warning("could not read lineage for %s; not inheriting", artifact_id)
             return sources
+        if lineage is None:
+            # No server, or a document it does not have. Nothing to
+            # inherit *from*, which is not the same as nothing to
+            # inherit: the declaration is handed back untouched rather
+            # than emptied.
+            return sources
         declared = {p.artifact_id for p in sources.pins}
         inherited = [
             VersionPin(artifact_id=e.to_artifact_id, n=e.pinned_n, state=EdgeState.CONFIRMED)
@@ -332,6 +340,22 @@ class ArtifactIndex:
         embedding = vectors[0]
         chunk_embeddings = list(vectors[1:])
 
+        # What the agent read but did not cite. Computed here rather
+        # than after the local write, because the server is where
+        # candidates are now reviewed and a candidate that never
+        # leaves this machine is one nobody can adjudicate. The same
+        # exclusions apply as below: never the declared sources, never
+        # the document itself — a revision reads its own previous
+        # version on almost every turn.
+        #
+        # ``getattr`` because this runs before every caller has
+        # normalised its argument: one path still hands in a bare
+        # list, and reading ``.pins`` off it raised rather than
+        # degrading. A missing exclusion captures a candidate that is
+        # already declared, which is noise; raising loses the write.
+        declared = [p.artifact_id for p in getattr(sources, "pins", [])]
+        candidates = self._ledger.candidates(exclude=[*declared, artifact_id])
+
         # The server first, when there is one.
         #
         # A document is a shared thing, so the copy everybody reads is
@@ -359,7 +383,7 @@ class ArtifactIndex:
                 content=content,
                 kind=kind or "note",
                 author=author,
-                pins=sources.pins,
+                pins=[*sources.pins, *candidates],
             )
         )
         if isinstance(shared_n, ArtifactWriteResult):
@@ -380,11 +404,9 @@ class ArtifactIndex:
             citations=sources.citations,
         )
 
-        # Candidates are attached after the version exists, and never
-        # include the declared sources or the artifact itself — a
-        # revision reads its own previous version on almost every turn.
-        declared = [p.artifact_id for p in sources.pins]
-        candidates = self._ledger.candidates(exclude=[*declared, artifact_id])
+        # Attached to the local graph after the version exists. The
+        # server already has them — see above — and this is the copy
+        # drift and candidate evidence read from.
         captured = 0
         if candidates:
             captured = await self._client.record_candidates(
@@ -688,13 +710,109 @@ class ArtifactIndex:
         return found
 
     async def lineage(self, ref: str, n: int = 0) -> ArtifactLineage | None:
+        """What this version was built on, from the server.
+
+        It used to come from the local graph, which made the answer a
+        property of this machine: a source somebody else had confirmed
+        was invisible here, and "has this been built on something that
+        since moved" had as many answers as there were laptops.
+
+        A session with no account gets nothing rather than the local
+        graph, for the same reason search does — an answer from
+        whatever this machine happens to have pulled is
+        indistinguishable from an authoritative one.
+        """
+        shared = self._shared
+        if shared is None or not getattr(shared, "is_configured", False):
+            return None
         summary = await self.resolve(ref)
         if summary is None:
             return None
-        return await self._client.lineage(summary.artifact_id, n)
+        slug = await shared.slug_for(summary.artifact_id)
+        if not slug:
+            return None
+        body = await shared.lineage(slug=slug, n=n)
+        if body is None:
+            return None
+        return self._lineage_from_server(summary.artifact_id, body)
+
+    def _lineage_from_server(self, artifact_id: str, body: dict[str, Any]) -> ArtifactLineage:
+        """The server reply, in the shape this client already renders.
+
+        ``hidden`` has nowhere to go in :class:`ArtifactLineage` and is
+        not silently dropped — it is logged, because "built on 3, 1 you
+        cannot see" becoming "built on 3" is the kind of quiet
+        shortening that reads as a complete answer.
+        """
+        if hidden := int(body.get("hidden") or 0):
+            logger.info("lineage: %d edge(s) hidden — the other end is not readable here", hidden)
+        return ArtifactLineage(
+            artifact_id=artifact_id,
+            n=int(body.get("n") or 0),
+            sources=[self._edge_from_server(e) for e in body.get("sources") or []],
+            dependents=[self._edge_from_server(e) for e in body.get("dependents") or []],
+            citations=[
+                Citation(
+                    url=str(c.get("url") or ""),
+                    kind=str(c.get("kind") or ""),
+                    title=str(c.get("title") or ""),
+                    fetched_at=str(c.get("fetched_at") or ""),
+                )
+                for c in body.get("citations") or []
+            ],
+        )
+
+    @staticmethod
+    def _edge_from_server(row: dict[str, Any]) -> LineageEdge:
+        """One edge, oriented the way this client reads them.
+
+        ``from`` is always the dependent and ``to`` always the source,
+        whichever direction it was fetched in — the server names both
+        ends explicitly, so the orientation is read rather than
+        inferred from which list it arrived in.
+        """
+        return LineageEdge(
+            # The *artifact* id, never the slug. `_inherit_confirmed`
+            # re-declares these when a revision is written, and the
+            # server resolves a declaration by artifact id — hand it a
+            # slug and the inherited source silently stops existing,
+            # which is the bug `test_artifact_revision_keeps_its_lineage`
+            # was written for.
+            from_artifact_id=str(row.get("dependent_artifact_id") or ""),
+            from_n=int(row.get("dependent_n") or 0),
+            from_name=str(row.get("dependent_title") or ""),
+            to_artifact_id=str(row.get("source_artifact_id") or ""),
+            to_n=int(row.get("pinned_n") or 0),
+            to_name=str(row.get("source_title") or ""),
+            state=EdgeState(str(row.get("state") or "candidate")),
+            pinned_n=int(row.get("pinned_n") or 0),
+            source_head_n=int(row.get("source_head_n") or 0),
+        )
 
     async def stale(self, *, limit: int = 100) -> list[StaleDependent]:
-        return await self._client.stale_dependents(limit=limit)
+        """Documents of mine standing on something that has moved.
+
+        The server's answer, for the reason lineage is: the local one
+        could only see what this machine had pulled, so a document
+        going stale elsewhere stayed invisible until somebody synced
+        it.
+        """
+        shared = self._shared
+        if shared is None or not getattr(shared, "is_configured", False):
+            return []
+        rows = await shared.stale(limit=limit)
+        return [
+            StaleDependent(
+                dependent_artifact_id=str(row.get("dependent_artifact_id") or ""),
+                dependent_name=str(row.get("dependent_title") or ""),
+                dependent_n=int(row.get("dependent_n") or 0),
+                source_artifact_id=str(row.get("source_artifact_id") or ""),
+                source_name=str(row.get("source_title") or ""),
+                pinned_n=int(row.get("pinned_n") or 0),
+                source_head_n=int(row.get("source_head_n") or 0),
+            )
+            for row in rows
+        ]
 
     async def count(self) -> int:
         return await self._client.count()
@@ -724,10 +842,34 @@ class ArtifactIndex:
         return await self._set_state(ref, source_ref, EdgeState.DISMISSED)
 
     async def _set_state(self, ref: str, source_ref: str, state: EdgeState) -> bool:
+        """Adjudicate one edge, on the server that holds it.
+
+        A decision made here and nowhere else is a decision nobody
+        else sees — the failure that moved edges to the server in the
+        first place. The local store is still updated after, because
+        drift and candidate evidence read from it and are still
+        answered from this machine.
+        """
         summary = await self.resolve(ref)
         source = await self.resolve(source_ref)
         if summary is None or source is None:
             return False
+
+        shared = self._shared
+        if shared is not None and getattr(shared, "is_configured", False):
+            slug = await shared.slug_for(summary.artifact_id)
+            body = await shared.lineage(slug=slug, n=0) if slug else None
+            edge_id = next(
+                (
+                    str(row.get("id"))
+                    for row in (body or {}).get("sources", [])
+                    if str(row.get("source_artifact_id") or "") == source.artifact_id
+                ),
+                "",
+            )
+            if edge_id:
+                await shared.decide_edge(edge_id=edge_id, state=state.value)
+
         return await self._client.set_edge_state(
             artifact_id=summary.artifact_id,
             n=summary.head_n,

@@ -886,6 +886,67 @@ class CollaborationSync:
             return None
         return list(body.get("hits") or [])
 
+    async def lineage(self, *, slug: str, n: int = 0) -> dict[str, Any] | None:
+        """What this version was built on, and what was built on it.
+
+        The server answers because the server owns the edges. It used
+        to be the local graph, which made lineage a property of
+        whichever laptop asked: a source one person confirmed was
+        invisible to everybody else.
+
+        The reply has a ``hidden`` count. Edges whose other end this
+        reader may not open are removed there — rendering a title
+        somebody cannot open discloses it — and the count is what
+        keeps "built on 3 documents, 1 you cannot see" honest rather
+        than silently short.
+        """
+        response = await self._request(
+            "GET", f"/v1/artifacts/shared/{slug}/lineage", params={"n": max(0, n)}
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return dict(response.json())
+
+    async def stale(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Documents of mine standing on something that has moved.
+
+        One person's queue. The local version could only see what this
+        machine had pulled, so a document going stale elsewhere was
+        invisible until somebody happened to sync it.
+        """
+        response = await self._request("GET", "/v1/artifacts/stale", params={"limit": max(1, limit)})
+        response.raise_for_status()
+        return list(response.json().get("rows") or [])
+
+    async def decide_edge(self, *, edge_id: str, state: str) -> dict[str, Any] | None:
+        """Confirm or dismiss one proposed source."""
+        response = await self._request(
+            "POST", f"/v1/artifacts/shared/edges/{edge_id}/decide", json={"state": state}
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return dict(response.json())
+
+    async def repin_edge(self, *, edge_id: str, to_n: int) -> dict[str, Any] | None:
+        """Move a confirmed source forward, having read the change."""
+        response = await self._request(
+            "POST", f"/v1/artifacts/shared/edges/{edge_id}/repin", json={"to_n": max(0, to_n)}
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return dict(response.json())
+
+    async def edge_evidence(self, *, edge_id: str) -> dict[str, Any] | None:
+        """The passages a write says it drew on, if any were cited."""
+        response = await self._request("GET", f"/v1/artifacts/shared/edges/{edge_id}/evidence")
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return dict(response.json())
+
     async def ensure_shared(
         self, *, artifact_id: str, name: str, kind: str, n: int, html: str, author: str = ""
     ) -> str:
@@ -948,9 +1009,14 @@ class CollaborationSync:
         payload: dict[str, Any] = {
             "content": content,
             "base_n": base_n,
-            # Confirmed edges only, as in :meth:`push`. A candidate
-            # is this machine's record that something was read, and
-            # the writer has not said it was a source.
+            # Candidates travel too, which they did not when edges
+            # lived in each collaborator's local graph: sending one
+            # then would have planted an unadjudicated edge in
+            # somebody else's store that they never saw the evidence
+            # for. The server is the review surface now, so a
+            # candidate kept here is one nobody can adjudicate — the
+            # queue would be empty on every machine but the one that
+            # happened to do the reading.
             #
             # ``passages`` is the part worth sending: the exact
             # paragraphs this write drew on, so the claim can be
@@ -962,7 +1028,7 @@ class CollaborationSync:
                     {
                         "artifact_id": p.artifact_id,
                         "n": p.n,
-                        "state": "confirmed",
+                        "state": getattr(p.state, "value", str(p.state)),
                         "passages": [
                             {"chunk_id": c.chunk_id, "quote": c.quote}
                             for c in getattr(p, "passages", [])

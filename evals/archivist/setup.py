@@ -182,6 +182,23 @@ async def _seed(index: ArtifactIndex) -> None:
             version_id=head.version_id,
             pins=[VersionPin(artifact_id=rates, n=1)],
         )
+        # And on the server, which is where candidates are reviewed.
+        # Writing it only to the local store left the review queue
+        # empty everywhere the reading had not happened — the exact
+        # state moving edges to the server was meant to end, quietly
+        # reproduced by a fixture.
+        shared = index.shared
+        if shared is not None and getattr(shared, "is_configured", False):
+            slug = await shared.slug_for(CODEC.artifact_id("Login flow"))
+            if slug:
+                shared.edges.setdefault((slug, head.n), []).append(
+                    {
+                        "artifact_id": rates,
+                        "n": 1,
+                        "state": EdgeState.CANDIDATE.value,
+                        "passages": [],
+                    }
+                )
 
     # Each case starts from what the *agent* has read, not from what
     # seeding touched.

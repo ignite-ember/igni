@@ -563,20 +563,58 @@ class FakeSharedServer:
         self.pushed: list[dict[str, Any]] = []
         #: Set once published, the way the real client's cache is.
         self.known: dict[str, str] = {}
+        #: Title per artifact id, as published.
+        self.titles: dict[str, str] = {}
+        #: Head version per slug, from what has been pushed.
+        self.heads: dict[str, int] = {}
+        #: Edges per ``(slug, n)``. Per *version*, like the real
+        #: server — see :meth:`push_content`.
+        self.edges: dict[tuple[str, int], list[dict[str, Any]]] = {}
+
 
     async def ensure_shared(self, **kwargs: Any) -> str:
         artifact_id = kwargs["artifact_id"]
         if artifact_id in self.known:
             return self.known[artifact_id]
         self.published.append(kwargs)
-        self.known[artifact_id] = self._slug
-        return self._slug
+        # A slug *per document*. This handed out one for all of them,
+        # which was harmless while nothing here was keyed by slug and
+        # is not once lineage is: every document's edges landed on the
+        # same key and overwrote each other. The first keeps the
+        # configured value so single-document tests still read `s1`.
+        self.known[artifact_id] = self._slug if not self.known else f"{self._slug}-{len(self.known)}"
+        # The real server answers lineage with *titles*, because that
+        # is what gets rendered. Returning an id here would have made
+        # every assertion about a document's name pass or fail on the
+        # fake's spelling rather than the product's.
+        self.titles[artifact_id] = str(kwargs.get("name") or artifact_id)
+        return self.known[artifact_id]
 
     async def push_content(self, **kwargs: Any) -> int:
         if self._fail is not None:
             raise self._fail
         self.pushed.append(kwargs)
-        return int(kwargs["base_n"]) + 1
+        n = int(kwargs["base_n"]) + 1
+        slug = str(kwargs.get("slug") or self._slug)
+        self.heads[slug] = max(self.heads.get(slug, 0), n)
+        # Edges hang off a *version*, so they are recorded per `n`.
+        # The real server does the same, and it is what makes a
+        # revision start with none unless its declaration re-states
+        # them — which is the behaviour `_inherit_confirmed` exists to
+        # supply and which these fakes have to reproduce or the
+        # inheritance tests measure nothing.
+        self.edges[(slug, n)] = [
+            {
+                "artifact_id": p.artifact_id,
+                "n": p.n,
+                "state": getattr(p.state, "value", str(p.state)),
+                "passages": [
+                    {"chunk_id": c.chunk_id, "quote": c.quote} for c in getattr(p, "passages", [])
+                ],
+            }
+            for p in (kwargs.get("pins") or [])
+        ]
+        return n
 
     #: What :meth:`search` answers with. ``None`` means this
     #: deployment has no document search configured, which the real
@@ -588,3 +626,124 @@ class FakeSharedServer:
         if self.hits is None:
             return None
         return self.hits[:limit]
+
+    #: Make slug lookup fail, the way an unreachable server does.
+    #: Set by tests of the paths that exist *for* that case — local
+    #: drafts, most of all. Explicit, because those tests used to get
+    #: there by accident: this class had no ``slug_for`` at all, the
+    #: caller caught the AttributeError, and the fallback ran for a
+    #: reason nobody had chosen.
+    slug_lookup_fails: bool = False
+
+    async def slug_for(self, artifact_id: str) -> str:
+        """The slug this artifact was published under, if any."""
+        if self.slug_lookup_fails:
+            raise ConnectionError("the server is not reachable")
+        return self.known.get(artifact_id, "")
+
+    def _head_of(self, artifact_id: str, fallback: int) -> int:
+        """Where a source has got to, from what has been pushed.
+
+        Derived rather than held in a second dict: a fixture that sets
+        heads by hand can disagree with what it pushed, and then a
+        staleness test passes against a state the product could not
+        produce.
+        """
+        return self.heads.get(self.known.get(artifact_id, ""), fallback)
+
+    def _artifact_of(self, slug: str) -> str:
+        for artifact_id, known in self.known.items():
+            if known == slug:
+                return artifact_id
+        return ""
+
+    async def lineage(self, *, slug: str, n: int = 0) -> dict[str, Any] | None:
+        """Sources of one version, answered from what was pushed.
+
+        Answers in the server's shape rather than the store's, because
+        that is what the client parses — including the `artifact_id`
+        on both ends. Returning a slug there is the mistake that
+        breaks inheritance silently: the revision re-declares its
+        sources by artifact id, a slug resolves to nothing, and the
+        document quietly stops saying what it stands on.
+        """
+        self.asked_lineage = {"slug": slug, "n": n}
+        if slug not in self.heads and slug != self._slug:
+            return None
+        asked = n or self.heads.get(slug, 0)
+        dependent = self._artifact_of(slug)
+        sources = [
+            {
+                "id": f"{slug}:{asked}:{pin['artifact_id']}",
+                "dependent_slug": slug,
+                "dependent_artifact_id": dependent,
+                "dependent_title": self.titles.get(dependent, dependent),
+                "dependent_n": asked,
+                "source_slug": self.known.get(pin["artifact_id"], pin["artifact_id"]),
+                "source_artifact_id": pin["artifact_id"],
+                "source_title": self.titles.get(pin["artifact_id"], pin["artifact_id"]),
+                "pinned_n": pin["n"],
+                "source_head_n": self._head_of(pin["artifact_id"], pin["n"]),
+                "state": pin["state"],
+                "is_stale": pin["state"] == "confirmed" and pin["n"] < self._head_of(pin["artifact_id"], pin["n"]),
+            }
+            for pin in self.edges.get((slug, asked), [])
+        ]
+        return {"n": asked, "sources": sources, "dependents": [], "citations": [], "hidden": 0}
+
+    async def decide_edge(self, *, edge_id: str, state: str) -> dict[str, Any] | None:
+        """Confirm or dismiss, by the id :meth:`lineage` handed out.
+
+        The id is ``slug:n:source``, so the edge it names can be found
+        without a second index — the real server has a row id and this
+        does not, and inventing one here would mean the fake and the
+        product disagreeing about what an edge id *is*.
+        """
+        slug, _, rest = edge_id.partition(":")
+        version, _, source = rest.partition(":")
+        try:
+            edges = self.edges.get((slug, int(version)), [])
+        except ValueError:
+            return None
+        for edge in edges:
+            if edge["artifact_id"] == source:
+                edge["state"] = state
+                return {"id": edge_id, "state": state}
+        return None
+
+    async def repin_edge(self, *, edge_id: str, to_n: int) -> dict[str, Any] | None:
+        slug, _, rest = edge_id.partition(":")
+        version, _, source = rest.partition(":")
+        try:
+            edges = self.edges.get((slug, int(version)), [])
+        except ValueError:
+            return None
+        for edge in edges:
+            if edge["artifact_id"] == source:
+                edge["n"] = to_n
+                return {"id": edge_id, "pinned_n": to_n}
+        return None
+
+    async def stale(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Every confirmed edge of the head whose source has moved."""
+        rows: list[dict[str, Any]] = []
+        for slug, head in self.heads.items():
+            body = await self.lineage(slug=slug, n=head)
+            rows += [
+                {
+                    "edge_id": row["id"],
+                    "dependent_slug": row["dependent_slug"],
+                    "dependent_artifact_id": row["dependent_artifact_id"],
+                    "dependent_title": row["dependent_title"],
+                    "dependent_n": row["dependent_n"],
+                    "source_slug": row["source_slug"],
+                    "source_artifact_id": row["source_artifact_id"],
+                    "source_title": row["source_title"],
+                    "pinned_n": row["pinned_n"],
+                    "source_head_n": row["source_head_n"],
+                    "behind": row["source_head_n"] - row["pinned_n"],
+                }
+                for row in (body or {}).get("sources", [])
+                if row["is_stale"]
+            ]
+        return rows[:limit]

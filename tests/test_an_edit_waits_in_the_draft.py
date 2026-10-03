@@ -44,7 +44,14 @@ async def index(tmp_path: Path) -> ArtifactIndex:
         neo4j_client=FakeArtifactStore(),  # type: ignore[arg-type]
         embedder=HashEmbedder(),
     )
-    index.attach_shared(FakeSharedServer())
+    # Unreachable, which is what the local-draft path exists for —
+    # see `DraftDesk._slug_of`. This used to be achieved by the fake
+    # simply not having `slug_for`: the call raised, the caller
+    # swallowed it, and these tests took the local path for a reason
+    # nobody had chosen. Stated now.
+    unreachable = FakeSharedServer()
+    unreachable.slug_lookup_fails = True
+    index.attach_shared(unreachable)
     await index.create(
         name="Auth model",
         content="Auth is a session cookie.",
