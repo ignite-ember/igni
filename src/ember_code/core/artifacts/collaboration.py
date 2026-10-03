@@ -948,13 +948,26 @@ class CollaborationSync:
         payload: dict[str, Any] = {
             "content": content,
             "base_n": base_n,
-            # Confirmed edges only, as in :meth:`push`. A candidate is
-            # this machine's record that something was read; sending
-            # it would plant an unadjudicated edge in a colleague's
-            # graph that they never saw the evidence for.
+            # Confirmed edges only, as in :meth:`push`. A candidate
+            # is this machine's record that something was read, and
+            # the writer has not said it was a source.
+            #
+            # ``passages`` is the part worth sending: the exact
+            # paragraphs this write drew on, so the claim can be
+            # checked by rendering them rather than taken on trust.
+            # A pin without them still records the document, which is
+            # the weaker, unverifiable form of the same statement.
             "sources": {
                 "pins": [
-                    {"artifact_id": p.artifact_id, "n": p.n, "state": "confirmed"}
+                    {
+                        "artifact_id": p.artifact_id,
+                        "n": p.n,
+                        "state": "confirmed",
+                        "passages": [
+                            {"chunk_id": c.chunk_id, "quote": c.quote}
+                            for c in getattr(p, "passages", [])
+                        ],
+                    }
                     for p in (pins or [])
                 ]
             },

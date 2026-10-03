@@ -616,6 +616,7 @@ class ArtifactIndex:
         """
         slug = str(row.get("slug") or "")
         return ArtifactSearchHit(
+            chunk_id=str(row.get("chunk_id") or ""),
             artifact_id=str(row.get("artifact_id") or ""),
             name=str(row.get("title") or ""),
             n=int(row.get("version_n") or 0),

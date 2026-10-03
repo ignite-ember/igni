@@ -46,12 +46,34 @@ class EdgeState(str, Enum):
     DISMISSED = "dismissed"
 
 
+class CitedPassage(BaseModel):
+    """One passage this write says it drew on.
+
+    `chunk_id` is the server's, quoted back verbatim from a search
+    result — opaque here on purpose, so the client never has to know
+    how a passage is identified.
+
+    The `quote` travels with it because it is what makes the citation
+    survive the source being rewritten: "you built this on a paragraph
+    that has since changed, and here is what it said" cannot be
+    answered from an id once the passage is gone.
+    """
+
+    chunk_id: str
+    quote: str = ""
+
+
 class VersionPin(BaseModel):
     """A reference to one exact version of one artifact.
 
     ``n`` is captured at read time and never updated in place —
     re-pinning after a reconcile writes a new value deliberately, via
     :meth:`ArtifactIndex.accept_reconcile`.
+
+    ``passages`` is the difference between a claim and evidence. A pin
+    naming only a document says "this was built on that", which nobody
+    can check. One naming passages says "built on *these paragraphs*",
+    which anybody can render and judge for themselves.
     """
 
     artifact_id: str
@@ -59,6 +81,7 @@ class VersionPin(BaseModel):
     state: EdgeState = EdgeState.CANDIDATE
     at: str = ""
     session_id: str = ""
+    passages: list[CitedPassage] = Field(default_factory=list)
 
     @property
     def ref(self) -> str:
@@ -75,10 +98,29 @@ class VersionPin(BaseModel):
         resolving it at the write is what keeps the pin honest.
         Returns ``None`` for input that isn't a reference at all, so
         the caller can route it to :class:`Citation` instead.
+
+        **A passage id is also accepted.** Search hands back
+        ``<document>::<n>::<ordinal>``; quoting one of those back is
+        the strongest thing the agent can say about a source, so it
+        parses here rather than being refused as a malformed ref. The
+        version comes from the id itself, which is the point: a
+        passage belongs to the version it was read from, not to
+        whatever the head happens to be at write time.
         """
         text = (raw or "").strip()
         if not text or "://" in text:
             return None
+        if text.count("::") == 2:
+            document_id, version, _ordinal = text.split("::")
+            try:
+                return cls(
+                    artifact_id=document_id.strip(),
+                    n=max(int(version), 0),
+                    state=state,
+                    passages=[CitedPassage(chunk_id=text)],
+                )
+            except ValueError:
+                return None
         artifact_id, _, suffix = text.partition("@")
         artifact_id = artifact_id.strip()
         if not artifact_id:
@@ -237,8 +279,17 @@ class ArtifactSummary(BaseModel):
 
 
 class ArtifactSearchHit(BaseModel):
-    """One head-version hit from the vector index."""
+    """One passage the server matched.
 
+    ``chunk_id`` is the citable one: quoting it back when writing says
+    "I drew on *this paragraph*", which anybody can render and judge.
+    Without it the strongest thing a write can say is "built on that
+    document", which nobody can check.
+    """
+
+    #: Opaque, and deliberately so — how the server identifies a
+    #: passage is not this client's business beyond repeating it.
+    chunk_id: str = ""
     artifact_id: str
     name: str = ""
     kind: str = ""

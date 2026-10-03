@@ -104,11 +104,16 @@ class ArtifactTools(Toolkit):
     # ── Reads ─────────────────────────────────────────────────────────
 
     async def artifact_search(self, query: str, limit: int = 5) -> str:
-        """Search the project's artifacts for relevant documents.
+        """Search the project's documents for relevant passages.
 
-        Returns the current version of each match. Every result is
-        recorded as something you read, so it can be offered back to
-        you as a candidate source next time you write.
+        Each result is one **passage**, with the id you cite if you
+        write from it. Pass that id in ``sources`` when you create or
+        revise a document: it records which paragraph you drew on, so
+        a reader can go and check your reasoning, and so you can be
+        told later if that exact paragraph changes.
+
+        Citing the document id alone still works and is weaker — it
+        says this was built on that, which nobody can verify.
 
         Args:
             query: Natural-language search query.
@@ -117,10 +122,16 @@ class ArtifactTools(Toolkit):
         response = await self._mgr.search(query, limit=limit)
         if not response.results:
             return f"No artifacts found for: {query}"
-        lines = [f"Found {response.total} artifact(s):"]
+        lines = [f"Found {response.total} passage(s):"]
         for i, r in enumerate(response.results, 1):
             body = _preview(r.content)
-            lines.append(f"\n{i}. {r.name or 'untitled'} [{r.ref}]\n{body}")
+            where = r.metadata.get("line_from", "")
+            at = f" lines {where}-{r.metadata.get('line_to', '')}" if where else ""
+            # The citable id on its own line and labelled, because the
+            # agent has to copy it exactly and a ref buried in a
+            # heading gets paraphrased.
+            cite = f"\n   cite as: {r.chunk_id}" if r.chunk_id else ""
+            lines.append(f"\n{i}. {r.name or 'untitled'} [{r.ref}]{at}{cite}\n{body}")
         return "\n".join(lines)
 
     async def artifact_read(self, ref: str, version: int = 0) -> str:
@@ -282,20 +293,27 @@ class ArtifactTools(Toolkit):
     ) -> str:
         """Create a new artifact, declaring what it was built on.
 
-        ``sources`` is required. List every artifact and external
-        document this content actually draws on — that list becomes
-        the provenance graph, and it is how anyone later finds out
-        that this document needs revisiting when one of its sources
+        ``sources`` is required. List every document and external
+        page this content actually draws on — that list becomes the
+        provenance record, and it is how anyone later finds out that
+        this document needs revisiting when one of its sources
         changes.
+
+        **Prefer the passage id.** ``artifact_search`` prints a
+        ``cite as:`` line per result; passing that cites the exact
+        paragraph you used, which a reader can render and judge. A
+        bare document id is accepted and says much less — that this
+        was built on that, with nothing to check.
 
         Args:
             name: Human-readable title. Also the artifact's identity —
                 reuse it with artifact_revise rather than creating a
                 near-duplicate name.
             content: The document body.
-            sources: Artifact refs (``id`` or ``id@n``) and full URLs
-                this was built on. Call artifact_pending_sources if
-                you are unsure what you read.
+            sources: Passage ids from ``artifact_search`` (preferred),
+                artifact refs (``id`` or ``id@n``), and full URLs this
+                was built on. Call artifact_pending_sources if you are
+                unsure what you read.
             kind: Free-form label, e.g. ``note``, ``design``,
                 ``decision``, ``summary``. Default ``note``.
             no_sources_reason: Required only when ``sources`` is empty

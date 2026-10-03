@@ -266,6 +266,7 @@ class SessionArtifactManager:
             return hit
         if isinstance(hit, dict):
             return ArtifactSearchHit(
+                chunk_id=hit.get("chunk_id", ""),
                 artifact_id=hit.get("artifact_id", ""),
                 name=hit.get("name", ""),
                 kind=hit.get("kind", ""),
