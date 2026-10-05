@@ -277,7 +277,7 @@ class ToolRegistry:
 
     @property
     def cloud_connected(self) -> bool:
-        """Whether Ember Cloud tools are available."""
+        """Whether igni server tools are available."""
         return self._cloud_token is not None
 
 

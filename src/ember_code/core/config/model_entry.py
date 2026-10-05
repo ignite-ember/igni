@@ -27,13 +27,13 @@ from ember_code.core.paths import DEFAULT_DATA_DIR
 logger = logging.getLogger(__name__)
 
 # Sentinel value on ``ModelRegistryEntry.api_key`` that means "resolve
-# to the stored Ember Cloud access token at call time". Kept as a
+# to the stored igni server access token at call time". Kept as a
 # named constant so the same magic string doesn't get spelled twice
 # (previously duplicated between ``resolve_api_key`` and the
 # cloud-discovery construction path in ``cloud_models.py``).
 CLOUD_TOKEN_SENTINEL = "cloud_token"
 
-# Production Ember Cloud gateway hostname — used by the migration
+# Production igni server gateway hostname — used by the migration
 # tier to identify rows that WE own and should replace with the
 # latest shipping defaults. Kept as a module-level constant next to
 # ``CLOUD_TOKEN_SENTINEL`` for consistency with the file's other
@@ -90,7 +90,7 @@ class ModelRegistryEntry(BaseModel):
            is replaced with the injected cloud token.
         2. Environment variable named by ``api_key_env``.
         3. Shell command specified by ``api_key_cmd``.
-        4. Ember Cloud token fallback for URLs pointing at the cloud
+        4. igni server token fallback for URLs pointing at the cloud
            gateway (previously a duplicate check inside
            ``ModelRegistry._resolve_api_key``).
 
@@ -172,7 +172,7 @@ class ModelRegistryEntry(BaseModel):
     # ── Cloud-gateway detection ────────────────────────────────────
 
     def matches_cloud_gateway(self) -> bool:
-        """True when this entry's URL points at the Ember Cloud
+        """True when this entry's URL points at the igni server
         gateway. Combined with ``api_key == 'cloud_token'`` this is
         the routing signal that the entry expects the stored login
         credentials rather than a per-entry key.
@@ -207,7 +207,7 @@ class ModelRegistryEntry(BaseModel):
             return False
 
     def needs_cloud_token(self) -> bool:
-        """True when the entry expects the stored Ember Cloud token
+        """True when the entry expects the stored igni server token
         — either via the ``cloud_token`` sentinel on ``api_key`` OR
         via the URL matching the cloud gateway with no explicit
         credentials of its own."""
@@ -230,7 +230,7 @@ class ModelRegistryEntry(BaseModel):
         All cloud entries route through ember-server's chat proxy
         (``{api_url}/v1``) — never at the upstream provider — and
         rely on the :data:`CLOUD_TOKEN_SENTINEL` on ``api_key`` so
-        :meth:`resolve_api_key` swaps in the stored Ember Cloud
+        :meth:`resolve_api_key` swaps in the stored igni server
         access token at call time.
 
         The ``source='cloud'`` tag rides in via ``model_config`` extras

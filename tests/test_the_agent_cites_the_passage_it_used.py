@@ -92,11 +92,19 @@ class TestTheAgentIsToldToCite:
     """
 
     def _tool_source(self) -> str:
+        """The tool text, with its wrapping removed.
+
+        Asserting on the raw source matches the editor's line breaks
+        rather than the sentence — a phrase that happens to wrap fails
+        a test about what the agent is told, which is a fact about
+        formatting and not about the product.
+        """
         import inspect
+        import re
 
         from ember_code.core.tools.artifacts import ArtifactTools
 
-        return inspect.getsource(ArtifactTools)
+        return re.sub(r'\s+', ' ', inspect.getsource(ArtifactTools))
 
     def test_search_prints_the_id_to_cite(self):
         assert 'cite as:' in self._tool_source()
@@ -106,6 +114,22 @@ class TestTheAgentIsToldToCite:
 
         assert 'Prefer the passage id' in body
         assert 'Passage ids from ``artifact_search``' in body
+
+    def test_it_asks_for_markers_in_the_text(self):
+        """The `sources` list is about the document; a marker is about
+        a paragraph. Only the second can say which of the agent's own
+        paragraphs came from which passage — the first cannot, and
+        inferring it afterwards is the guess this design avoids."""
+        body = self._tool_source()
+
+        assert '[cite:<passage id>]' in body
+        assert 'stripped when' in body
+
+    def test_it_states_the_newline_rule(self):
+        """A marker split across a line break is silently ignored
+        server-side. An agent that is not told will write one
+        eventually, and nothing will say why the citation vanished."""
+        assert 'split across a line break' in self._tool_source()
 
     def test_it_says_what_a_bare_document_id_costs(self):
         """An agent choosing the cheaper option should know what it is

@@ -59,6 +59,18 @@ class FakeStore:
         self.archived.append((artifact_id, archived))
         return self.children if archived else 0
 
+    async def get_artifact(self, artifact_id: str):
+        """Is this id a document, or a folder?
+
+        Asked before archiving, to decide which endpoint files the
+        shared copy. Answering for the ids this store knows keeps the
+        two questions consistent — a document that can be archived is
+        a document that exists.
+        """
+        if artifact_id not in self.known:
+            return None
+        return SimpleNamespace(artifact_id=artifact_id, name="A document")
+
 
 class FakeManager:
     def __init__(self) -> None:
@@ -75,7 +87,22 @@ def controller(store: FakeStore) -> tuple[ArtifactController, FakeManager]:
         artifact_mgr=mgr,
         artifacts=SimpleNamespace(client=store),
     )
-    return ArtifactController(session), mgr
+    ctl = ArtifactController(session)
+
+    # Signed in, with nothing published yet.
+    #
+    # Two things need the sync and they pull in opposite directions:
+    # `_unavailable()` refuses a session that cannot reach the server,
+    # so it must look configured; and `_shared_place` files the shared
+    # copy before archiving, which needs a slug. `slug_for` answering
+    # None is the "never published" case — the shared copy has nothing
+    # to file, which is true of every document in this file and is the
+    # arrangement these tests mean.
+    async def _never_published(_node_id: str) -> str | None:
+        return None
+
+    ctl._collaboration = lambda: SimpleNamespace(is_configured=True, slug_for=_never_published)
+    return ctl, mgr
 
 
 def tie(

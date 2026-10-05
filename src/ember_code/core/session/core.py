@@ -1072,7 +1072,7 @@ class Session:
 
     @property
     def cloud_connected(self) -> bool:
-        """Whether the session is authenticated with Ember Cloud."""
+        """Whether the session is authenticated with an igni server."""
         return self.cloud_auth.connected
 
     @property
@@ -1082,12 +1082,12 @@ class Session:
 
     @property
     def cloud_org_id(self) -> str | None:
-        """The organization ID from the Ember Cloud JWT."""
+        """The organization ID from the igni server JWT."""
         return self.cloud_auth.org_id
 
     @property
     def cloud_org_name(self) -> str | None:
-        """The organization display name from the Ember Cloud JWT."""
+        """The organization display name from the igni server JWT."""
         return self.cloud_auth.org_name
 
     def replace_cloud_credentials(self, creds: CloudCredentials) -> None:
@@ -1290,12 +1290,12 @@ class Session:
 
     @property
     def cloud_access_token(self) -> str | None:
-        """The Ember Cloud access token (``None`` when logged out)."""
+        """The igni server access token (``None`` when logged out)."""
         return self.cloud_auth.access_token
 
     @property
     def cloud_server_url(self) -> str:
-        """The Ember Cloud API root URL used by cloud-routed tools."""
+        """The igni server API root URL used by cloud-routed tools."""
         return self.cloud_auth.server_url
 
     @property

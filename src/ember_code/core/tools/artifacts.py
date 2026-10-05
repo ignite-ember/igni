@@ -305,11 +305,23 @@ class ArtifactTools(Toolkit):
         bare document id is accepted and says much less — that this
         was built on that, with nothing to check.
 
+        **Mark the text too.** Where a sentence draws on a passage,
+        write ``[cite:<passage id>]`` at the end of it. That records
+        which paragraph of *yours* came from which of theirs — the
+        ``sources`` list cannot, because it is about the document as a
+        whole. Readers never see the markers; they are stripped when
+        the document is shown.
+
+        Put a marker on the same line as the text it marks. One split
+        across a line break is not a citation and will be ignored.
+
         Args:
             name: Human-readable title. Also the artifact's identity —
                 reuse it with artifact_revise rather than creating a
                 near-duplicate name.
-            content: The document body.
+            content: The document body. May carry ``[cite:<passage
+                id>]`` markers where a sentence draws on a passage —
+                see above.
             sources: Passage ids from ``artifact_search`` (preferred),
                 artifact refs (``id`` or ``id@n``), and full URLs this
                 was built on. Call artifact_pending_sources if you are

@@ -161,7 +161,7 @@ class ManagedTier(Tier):
 
 
 class CloudMigrationTier(Tier):
-    """Override Ember Cloud rows with the shipping defaults so users
+    """Override igni server rows with the shipping defaults so users
     always get the latest model after upgrading. Runs after the
     other tiers so a fresh migration is visible in the final
     :class:`Settings`.

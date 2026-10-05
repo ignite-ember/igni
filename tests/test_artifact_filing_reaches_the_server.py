@@ -128,6 +128,39 @@ class FakeServer:
         """
         return parent_id in self.holds or parent_id in self.slugs
 
+    async def tree(self, *, include_archived: bool = False) -> dict[str, Any]:
+        """The filing, as the server knows it.
+
+        Answered from this fake's own state rather than the graph's,
+        because the tree is the server's now — the cycle check that
+        guards a move reads it, and answering from the local store
+        would check the shape of the wrong tree.
+        """
+        # The last placement wins, the way a server row does. Without
+        # this the tree reports every document at the top and a cycle
+        # is undetectable — which is the check this exists to serve.
+        parents: dict[str, str] = {}
+        for placement in self.placed:
+            slug = str(placement.get("slug") or "")
+            of = next((doc for doc, known in self.slugs.items() if known == slug), slug)
+            parents[of] = str(placement.get("parent_id") or "")
+        return {
+            "documents": [
+                {
+                    "artifact_id": doc,
+                    "slug": self.slugs.get(doc, doc),
+                    "title": doc,
+                    "version": 1,
+                    "parent_id": parents.get(doc, ""),
+                }
+                for doc in sorted(self.holds | set(self.slugs))
+            ],
+            "folders": [
+                {"id": f["folder_id"], "name": f["name"], "parent_id": f.get("parent_id") or ""}
+                for f in self.created
+            ],
+        }
+
     async def create_folder(self, *, name: str, parent_id: str = "", folder_id: str = "") -> str:
         self._maybe_fail()
         if self._strict and parent_id and not self._is_a_place(parent_id):
@@ -302,14 +335,36 @@ class TestTheTwoKindsOfNode:
 
 
 class TestWithNoAccount:
+    """Filing without a server is not a degraded mode — it is refused.
+
+    This used to assert the opposite: that a folder could still be
+    made locally with nobody signed in. That was the local-store
+    assumption wearing a reasonable face — a folder made here and
+    nowhere else is a tree one machine has, and the documents in it
+    are shared with people who cannot see it.
+
+    Documents live on the server. A session that cannot reach one has
+    nothing to file.
+    """
+
     @pytest.mark.asyncio
-    async def test_filing_still_works_with_no_server(self):
+    async def test_filing_is_refused_with_no_server(self):
         graph = FakeGraph()
 
         result = await controller(graph, None).create_folder(name="Platform")
 
-        assert result.ok
-        assert graph.created[0]["name"] == "Platform"
+        assert not result.ok
+        assert "Sign in" in (result.error or "")
+
+    @pytest.mark.asyncio
+    async def test_and_nothing_is_written_locally(self):
+        """The refusal has to come before the local write, or the
+        machine ends up holding a folder the server never accepted."""
+        graph = FakeGraph()
+
+        await controller(graph, None).create_folder(name="Platform")
+
+        assert graph.created == []
 
 
 class TestAFolderTheServerHasNeverHeardOf:

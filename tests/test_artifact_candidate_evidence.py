@@ -112,6 +112,13 @@ def controller(
     )
     ctl = ArtifactController(session)
     ctl._store = store  # so a test can see which versions were asked for
+    # Signed in. Every method here now asks `_unavailable()` first, and
+    # a session that cannot reach the server is refused before it reads
+    # anything — which is the point of that guard, but it is not what
+    # these tests are about. Without this the refusal happens first and
+    # the failure reads as "no versions were asked for", several layers
+    # from the cause.
+    ctl._collaboration = lambda: SimpleNamespace(is_configured=True)
     return ctl
 
 

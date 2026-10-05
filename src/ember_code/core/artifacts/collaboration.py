@@ -886,6 +886,29 @@ class CollaborationSync:
             return None
         return list(body.get("hits") or [])
 
+    async def tree(self, *, include_archived: bool = False) -> dict[str, Any]:
+        """Every document and folder this account can see.
+
+        Folders and documents in one answer, because a tree drawn from
+        two requests flickers — the folders arrive, render empty, and
+        the documents drop in a moment later.
+
+        This is the server's view, which is the point: the local graph
+        held what *this machine* had pulled, so a document shared with
+        you was missing from your tree until you happened to open it.
+        """
+        response = await self._request(
+            "GET", "/v1/artifacts/shared/tree", params={"include_archived": include_archived}
+        )
+        response.raise_for_status()
+        return dict(response.json())
+
+    async def documents(self, *, limit: int = 1000) -> list[dict[str, Any]]:
+        """The flat listing, for callers that do not want the filing."""
+        response = await self._request("GET", "/v1/artifacts/shared", params={"limit": limit})
+        response.raise_for_status()
+        return list(response.json().get("items") or [])
+
     async def lineage(self, *, slug: str, n: int = 0) -> dict[str, Any] | None:
         """What this version was built on, and what was built on it.
 

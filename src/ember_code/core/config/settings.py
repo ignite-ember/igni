@@ -168,7 +168,7 @@ class Settings(BaseModel):
 
     # TODO: Add telemetry config so users can wire their own Agno server or
     #       compatible telemetry endpoint (e.g. telemetry.enabled, telemetry.endpoint).
-    #       Ember Cloud does not collect CLI telemetry — usage is tracked server-side.
+    #       igni server does not collect CLI telemetry — usage is tracked server-side.
 
     @classmethod
     def defaults(cls) -> Settings:

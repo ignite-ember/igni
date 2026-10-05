@@ -596,8 +596,8 @@ class ArtifactController:
         stacked and one line on screen.
         """
         mgr = self._session.artifact_mgr
-        if self._session.artifacts is None:
-            return ArtifactProvenance(error="Artifacts are disabled.")
+        if reason := self._unavailable():
+            return ArtifactProvenance(error=reason)
 
         summary = await mgr.resolve_artifact(artifact_id)
         if summary is None:
@@ -746,8 +746,8 @@ class ArtifactController:
         did not end up here.
         """
         mgr = self._session.artifact_mgr
-        if self._session.artifacts is None:
-            return ArtifactCandidateEvidence(error="Artifacts are disabled.")
+        if reason := self._unavailable():
+            return ArtifactCandidateEvidence(error=reason)
 
         dependent = await mgr.resolve_artifact(artifact_id)
         source = await mgr.resolve_artifact(source_id)
@@ -1029,8 +1029,8 @@ class ArtifactController:
     async def _comment_and_versions(self, comment_id: str):
         """One comment, the version it was left on, and head."""
         mgr = self._session.artifact_mgr
-        if self._session.artifacts is None:
-            return None, None, None, "Artifacts are disabled."
+        if reason := self._unavailable():
+            return None, None, None, reason
         rows = await self._session.artifacts.client.comments(limit=10_000)
         found = next((c for c in rows if c.comment_id == comment_id), None)
         if found is None:
@@ -1270,32 +1270,82 @@ class ArtifactController:
         result.message = "Replied, and igni answered."
         return result
 
-    async def _tree_rows(self, *, include_archived: bool = False) -> list[dict[str, Any]]:
-        """Documents and folders as one set of rows.
+    def _unavailable(self) -> str:
+        """Why documents cannot be reached, or empty if they can.
 
-        The tree is the one place the two node kinds meet, so it is
-        the one place that assembles both.
+        Two reasons and they are not the same to a reader: the feature
+        is switched off, or nobody is signed in. Answering the second
+        with an empty list says "you have no documents", which is a
+        different claim and a wrong one — the documents exist, on a
+        server this session cannot reach.
+
+        Asked in one place so all of it moves together. The twenty-one
+        call sites that said "Artifacts are disabled." covered only the
+        first reason, and a client reaching the backend without an
+        account got an empty tree that looked like an empty account.
         """
-        mgr = self._session.artifact_mgr
-        docs = await mgr.list_artifacts(include_archived=include_archived)
+        if self._session.artifacts is None:
+            return "Artifacts are disabled."
+        # `_collaboration()`, not `index.shared`. This controller has
+        # exactly one way to reach the server and that is it — twenty
+        # four call sites. Asking a second accessor meant the guard
+        # consulted something no other path uses, and refused sessions
+        # that were perfectly well signed in.
+        shared = self._collaboration()
+        if shared is None or not getattr(shared, "is_configured", False):
+            return (
+                "Sign in to igni to read or write documents. They live on your "
+                "organisation's server, not on this machine."
+            )
+        return ""
+
+    async def _tree_rows(self, *, include_archived: bool = False) -> list[dict[str, Any]]:
+        """Documents and folders as one set of rows, from the server.
+
+        Documents live on the server, so the tree does too. It used to
+        be assembled from the local graph, which meant the panel
+        listed what *this machine* had pulled: a document somebody
+        shared with you was absent until you happened to open it, and
+        the lineage shown beside it — already the server's — could
+        name a source the tree did not show.
+
+        Both kinds in one request, because a tree drawn from two
+        flickers.
+        """
+        shared = self._collaboration()
+        if shared is None or not getattr(shared, "is_configured", False):
+            # Unreachable in practice — `tree` asks `_unavailable`
+            # first and refuses with a sentence. Kept so this cannot
+            # answer from nowhere if it ever gains a second caller.
+            return []
+
+        body = await shared.tree(include_archived=include_archived)
         rows: list[dict[str, Any]] = [
             {
-                "node_id": d.artifact_id,
-                "name": d.name or d.artifact_id,
-                "kind": d.kind or "note",
-                "head_n": int(d.head_n or 0),
-                "updated_at": d.updated_at or "",
-                "parent_id": getattr(d, "parent_id", "") or "",
-                "archived": bool(getattr(d, "archived", False)),
+                "node_id": str(d.get("artifact_id") or d.get("slug") or ""),
+                "name": str(d.get("title") or ""),
+                "kind": str(d.get("kind") or "note"),
+                "head_n": int(d.get("version") or 0),
+                "updated_at": str(d.get("updated_at") or ""),
+                "parent_id": str(d.get("parent_id") or d.get("parent_document_id") or ""),
+                "archived": bool(d.get("archived", False)),
                 "is_folder": False,
             }
-            for d in docs
+            for d in body.get("documents") or []
         ]
-        if self._session.artifacts is not None:
-            try:
-                rows.extend(await self._session.artifacts.client.folders())
-            except Exception as exc:  # noqa: BLE001 — a store without folders yet
-                logger.info("could not read folders: %s", exc)
+        rows += [
+            {
+                "node_id": str(f.get("id") or ""),
+                "name": str(f.get("name") or ""),
+                "kind": "folder",
+                "head_n": 0,
+                "updated_at": str(f.get("updated_at") or ""),
+                "parent_id": str(f.get("parent_id") or ""),
+                "archived": bool(f.get("archived", False)),
+                "is_folder": True,
+            }
+            for f in body.get("folders") or []
+        ]
         return rows
 
     async def tree(self, *, include_archived: bool = False) -> ArtifactTree:
@@ -1306,8 +1356,8 @@ class ArtifactController:
         they come back in the same tree rather than a separate screen,
         so restoring one is done where it will end up.
         """
-        if self._session.artifacts is None:
-            return ArtifactTree(error="Artifacts are disabled.")
+        if reason := self._unavailable():
+            return ArtifactTree(error=reason)
         rows = await self._tree_rows(include_archived=include_archived)
         nodes = build_tree(rows)
         return ArtifactTree(
@@ -1341,8 +1391,8 @@ class ArtifactController:
         also passes; a second copy would be a second thing to forget
         to update.
         """
-        if self._session.artifacts is None:
-            return ArtifactRevised(error="Artifacts are disabled.")
+        if reason := self._unavailable():
+            return ArtifactRevised(error=reason)
         if not content.strip():
             return ArtifactRevised(error="Refusing to save an empty document.")
         result = await self._session.artifacts.revise(
@@ -1357,8 +1407,8 @@ class ArtifactController:
 
     async def create_folder(self, *, name: str, parent_id: str = "") -> ArtifactTreeChanged:
         """A place to put things, at the top or inside something else."""
-        if self._session.artifacts is None:
-            return ArtifactTreeChanged(error="Artifacts are disabled.")
+        if reason := self._unavailable():
+            return ArtifactTreeChanged(error=reason)
         title = name.strip()
         if not title:
             return ArtifactTreeChanged(error="A folder needs a name.")
@@ -1387,8 +1437,8 @@ class ArtifactController:
         return ArtifactTreeChanged(ok=True, node_id=folder_id, message=f"Created {title}.")
 
     async def rename_folder(self, *, folder_id: str, name: str) -> ArtifactTreeChanged:
-        if self._session.artifacts is None:
-            return ArtifactTreeChanged(error="Artifacts are disabled.")
+        if reason := self._unavailable():
+            return ArtifactTreeChanged(error=reason)
         title = name.strip()
         if not title:
             return ArtifactTreeChanged(error="A folder needs a name.")
@@ -1410,8 +1460,8 @@ class ArtifactController:
         parent — said out loud in the message, because "deleted" next
         to a folder full of documents is a sentence people read twice.
         """
-        if self._session.artifacts is None:
-            return ArtifactTreeChanged(error="Artifacts are disabled.")
+        if reason := self._unavailable():
+            return ArtifactTreeChanged(error=reason)
         refused = await self._shared_folder(lambda sync: sync.delete_folder(folder_id=folder_id))
         if isinstance(refused, ArtifactTreeChanged):
             return refused
@@ -1580,9 +1630,12 @@ class ArtifactController:
         same answer this gives for a document being moved that has
         never been published.
         """
-        if self._session.artifacts is None:
+        if (index := self._session.artifacts) is None:
+            # A predicate, not an entry point — the callers above
+            # already refused. With no index there is nothing filed
+            # anywhere, so nothing above this is shared.
             return True
-        summary = await self._session.artifacts.client.get_artifact(parent_id)
+        summary = await index.client.get_artifact(parent_id)
         if summary is None:
             refused = await self._shared_ancestry(parent_id)
             return True if refused is None else refused
@@ -1678,8 +1731,8 @@ class ArtifactController:
         resolves. It leaves the tree and the list, which is the whole
         of what was asked for.
         """
-        if self._session.artifacts is None:
-            return ArtifactTreeChanged(error="Artifacts are disabled.")
+        if reason := self._unavailable():
+            return ArtifactTreeChanged(error=reason)
         refused = await self._shared_place(node_id=node_id, archived=archived)
         if isinstance(refused, ArtifactTreeChanged):
             return refused
@@ -1724,8 +1777,8 @@ class ArtifactController:
         hostage to an edge somebody already rejected would make the
         dismissal meaningless.
         """
-        if self._session.artifacts is None:
-            return ArtifactTreeChanged(error="Artifacts are disabled.")
+        if reason := self._unavailable():
+            return ArtifactTreeChanged(error=reason)
 
         store = self._session.artifacts.client
         try:
@@ -1795,8 +1848,8 @@ class ArtifactController:
         from, so the refusal happens before the write rather than being
         reported after it.
         """
-        if self._session.artifacts is None:
-            return ArtifactTreeChanged(error="Artifacts are disabled.")
+        if reason := self._unavailable():
+            return ArtifactTreeChanged(error=reason)
         rows = await self._tree_rows()
         if would_cycle(rows, node_id=node_id, parent_id=parent_id or ""):
             return ArtifactTreeChanged(error="That would put a document inside itself.")
@@ -1823,8 +1876,8 @@ class ArtifactController:
         expensive one.
         """
         mgr = self._session.artifact_mgr
-        if self._session.artifacts is None:
-            return ArtifactDrift(error="Artifacts are disabled.")
+        if reason := self._unavailable():
+            return ArtifactDrift(error=reason)
 
         dependent = await mgr.resolve_artifact(artifact_id)
         source = await mgr.resolve_artifact(source_id)
@@ -2082,8 +2135,8 @@ class ArtifactController:
         reported as such rather than looking like a successful post.
         """
         mgr = self._session.artifact_mgr
-        if self._session.artifacts is None:
-            return ArtifactCommentPosted(message="Artifacts are disabled.")
+        if reason := self._unavailable():
+            return ArtifactCommentPosted(message=reason)
         text = (body or "").strip()
         if not text:
             return ArtifactCommentPosted(message="A comment needs something in it.")
@@ -2442,6 +2495,8 @@ class ArtifactController:
 
     async def save_draft(self, *, artifact_id: str, content: str) -> ArtifactDraftSaved:
         """Store an edit without making a version."""
+        if reason := self._unavailable():
+            return ArtifactDraftSaved(error=reason)
         desk = self._draft_desk()
         if desk is None:
             return ArtifactDraftSaved(error="Artifacts are disabled.")
@@ -2458,6 +2513,8 @@ class ArtifactController:
 
     async def publish_draft(self, *, artifact_id: str) -> ArtifactDraftPublished:
         """Turn the draft into a version."""
+        if reason := self._unavailable():
+            return ArtifactDraftPublished(error=reason)
         desk = self._draft_desk()
         if desk is None:
             return ArtifactDraftPublished(error="Artifacts are disabled.")
@@ -2526,8 +2583,8 @@ class ArtifactController:
                 )
             )
 
-        if self._session.artifacts is None:
-            return ArtifactOpened(error="Artifacts are disabled.")
+        if reason := self._unavailable():
+            return ArtifactOpened(error=reason)
         index = self._session.artifacts
         try:
             artifact_id = await self._adopt(sync=sync, slug=slug, title=title)
@@ -3152,6 +3209,8 @@ class ArtifactController:
         server-side counterpart and there is not meant to be — the
         graph this reads does not exist anywhere but here.
         """
+        if reason := self._unavailable():
+            return ArtifactQueryResult(question=question, error=reason)
         planner = self._planner()
         if planner is None:
             return ArtifactQueryResult(question=question, error="Artifacts are disabled.")
@@ -3172,6 +3231,8 @@ class ArtifactController:
         it, and rewriting their query underneath them would be worse
         than showing them what the database said.
         """
+        if reason := self._unavailable():
+            return ArtifactQueryResult(cypher=cypher, error=reason)
         planner = self._planner()
         if planner is None:
             return ArtifactQueryResult(cypher=cypher, error="Artifacts are disabled.")
@@ -3237,8 +3298,8 @@ class ArtifactController:
     ) -> ArtifactExportResult:
         """Write the artifact to disk as HTML, Markdown or PDF."""
         artifacts = self._session.artifacts
-        if artifacts is None:
-            return ArtifactExportResult(error="Artifacts are disabled.")
+        if reason := self._unavailable():
+            return ArtifactExportResult(error=reason)
         try:
             chosen = ExportFormat.parse(fmt)
         except ValueError as exc:
@@ -3314,8 +3375,8 @@ class ArtifactController:
         only its author.
         """
         artifacts = self._session.artifacts
-        if artifacts is None:
-            return ArtifactShareResult(error="Artifacts are disabled.")
+        if reason := self._unavailable():
+            return ArtifactShareResult(error=reason)
         auth = getattr(self._session, "cloud_auth", None)
         publisher = ArtifactPublisher(
             server_url=getattr(auth, "server_url", "") or "",
@@ -3352,8 +3413,8 @@ class ArtifactController:
 
     async def remove(self, entry_id: str) -> ArtifactRemoveResult:
         """Delete one artifact and its version history."""
-        if self._session.artifacts is None:
-            return ArtifactRemoveResult(removed=False, error="Artifacts are disabled.")
+        if reason := self._unavailable():
+            return ArtifactRemoveResult(removed=False, error=reason)
         try:
             removed = await self._session.artifact_mgr.delete(entry_id)
             return ArtifactRemoveResult(removed=removed)
