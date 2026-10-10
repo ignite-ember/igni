@@ -623,6 +623,13 @@ class ArtifactIndex:
             return []
 
         hits = [self._hit_from_server(row) for row in rows]
+        for hit in hits:
+            # The passage id search tells the agent to cite opens with the
+            # SERVER's document id, not the artifact id this client keys
+            # on. Remembered here, where both arrive together, so a
+            # passage id quoted back to any tool resolves — see resolve().
+            if hit.chunk_id.count("::") == 2 and hit.artifact_id:
+                self._passage_owners()[hit.chunk_id.split("::", 1)[0]] = hit.artifact_id
         if record and hits:
             self._ledger.record([VersionPin(artifact_id=h.artifact_id, n=h.n) for h in hits])
         return hits
@@ -655,12 +662,30 @@ class ArtifactIndex:
         )
 
 
+    def _passage_owners(self) -> dict[str, str]:
+        """Server document id -> artifact id, learned from search hits."""
+        owners = getattr(self, "_passage_owner_map", None)
+        if owners is None:
+            owners = self._passage_owner_map = {}
+        return owners
+
     async def resolve(self, ref: str) -> ArtifactSummary | None:
-        """Turn an id, an ``id@n`` or a name into an artifact.
+        """Turn an id, an ``id@n``, a passage id or a name into an artifact.
+
+        A passage id (``<server document>::<n>::<ordinal>``) is what
+        search tells the agent to cite, so an agent naturally quotes it
+        back — to confirm a candidate, dismiss one, or read it. It used
+        to resolve to nothing, and confirm/dismiss answered "No captured
+        link" about links that existed: the candidates were there, under
+        the artifact id the passage id does not contain.
 
         Every agent-facing entry point goes through here, so the agent
         can refer to an artifact however it last saw it named.
         """
+        if ref.count("::") == 2:
+            owner = self._passage_owners().get(ref.split("::", 1)[0])
+            if owner:
+                return await self.resolve(owner)
         text = (ref or "").strip()
         if not text:
             return None

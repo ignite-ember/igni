@@ -1057,7 +1057,22 @@ class Neo4jRuntime:
             f"# resolves against NEO4J_HOME, which is shared.\n"
             f"server.directories.data={data_dir}\n"
             f"server.directories.logs={logs_dir}\n"
+            # The run directory holds the pid file, and was the one path
+            # left at its default — $NEO4J_HOME/run, shared by every
+            # instance. The launcher reads that pid file before starting,
+            # so whichever Neo4j started second refused with "Neo4j is
+            # already running": a session could not hold a code index and
+            # an artifact store at once, and two windows could not both
+            # have a store.
+            f"server.directories.run={self._run_dir_for(data_dir)}\n"
         )
+
+    @staticmethod
+    def _run_dir_for(data_dir: Path) -> Path:
+        """Per instance, beside its data, so pid files never collide."""
+        run_dir = data_dir.parent / "run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        return run_dir
 
     def _jdk_cache_root(self) -> Path:
         """Root of the JDK cache (under the neo4j data dir)."""
