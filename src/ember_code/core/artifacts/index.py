@@ -30,6 +30,7 @@ from agno.knowledge.document.base import Document
 from ember_code.core.artifacts.capture import RetrievalLedger
 from ember_code.core.artifacts.chunking import NewlinePreservingChunker
 from ember_code.core.artifacts.collaboration import ChainDiverged
+from ember_code.core.artifacts.errors import DeleteRefused
 from ember_code.core.artifacts.metadata_codec import ArtifactMetadataCodec
 from ember_code.core.artifacts.models import (
     ArtifactDeleteResult,
@@ -948,11 +949,41 @@ class ArtifactIndex:
     # ── Deletes ───────────────────────────────────────────────────────
 
     async def delete(self, ref: str) -> bool:
+        """Delete everywhere the document lives, server first.
+
+        It used to delete only this machine's graph. Writes go to the
+        server first precisely so a version cannot exist "on this
+        machine and nowhere else"; deletes did the inverse, so the tool
+        said "Deleted … and its version history" while the server kept
+        the document — still in search, still open to everyone it was
+        shared with, and not even archived. `artifact_read` then denied
+        it existed while `artifact_search` kept finding it.
+        """
         summary = await self.resolve(ref)
         if summary is None:
             return False
+        await self._revoke_on_server(summary.artifact_id, summary.name or ref)
         self._ledger.forget(summary.artifact_id)
         return await self._client.delete_artifact(summary.artifact_id)
+
+    async def _revoke_on_server(self, artifact_id: str, name: str) -> None:
+        """Remove the server's copy, or refuse the whole delete."""
+        shared = self._shared
+        if shared is None or not getattr(shared, "is_configured", False):
+            raise DeleteRefused(
+                f"'{name}' was not deleted: artifacts live on the server and this "
+                f"session is not signed in to one. Deleting only this machine's copy "
+                f"would leave it on the server. Sign in and delete it again."
+            )
+        try:
+            gone = await shared.revoke(artifact_id=artifact_id)
+        except Exception as exc:  # noqa: BLE001 — surfaced, not swallowed
+            raise DeleteRefused(
+                f"'{name}' was not deleted: the server did not remove it ({exc}). "
+                f"Nothing was deleted here either."
+            ) from exc
+        if not gone:
+            raise DeleteRefused(f"'{name}' was not deleted: the server refused.")
 
     async def delete_by_query(self, query: str, *, limit: int = 10) -> ArtifactDeleteResult:
         """Find artifacts matching ``query`` and delete them.
@@ -968,6 +999,7 @@ class ArtifactIndex:
         errors: list[str] = []
         for hit in hits:
             try:
+                await self._revoke_on_server(hit.artifact_id, hit.artifact_id)
                 if await self._client.delete_artifact(hit.artifact_id):
                     deleted += 1
                     self._ledger.forget(hit.artifact_id)

@@ -1131,6 +1131,24 @@ class CollaborationSync:
             self._slugs.setdefault(artifact_id, "")
         return self._slugs.get(artifact_id, "")
 
+    async def revoke(self, *, artifact_id: str) -> bool:
+        """Remove a document from the server. True if it is gone.
+
+        `DELETE /v1/artifacts/shared/{slug}` deletes the row and, with
+        it, everything search reads — verified: list and search both
+        drop it. A document never published has no slug and nothing to
+        remove, which is also "gone". 404 means somebody already did.
+        """
+        slug = await self.slug_for(artifact_id)
+        if not slug:
+            return True
+        response = await self._request("DELETE", f"/v1/artifacts/shared/{slug}")
+        if response.status_code in (204, 404):
+            self._slugs.pop(artifact_id, None)
+            return True
+        response.raise_for_status()
+        return False
+
     def forget_slugs(self) -> None:
         """Ask the server again next time.
 

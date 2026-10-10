@@ -22,3 +22,14 @@ class SourcesRequired(Exception):
     def __init__(self, message: str, *, candidates: list[str]) -> None:
         super().__init__(message)
         self.candidates = candidates
+
+
+class DeleteRefused(Exception):
+    """A delete that did not happen, with the sentence to tell the user.
+
+    Raised rather than returned as ``False`` because ``False`` already
+    means "no artifact matches", and these are a different answer: the
+    document exists, and removing only this machine's copy would tell
+    the user it was gone while it stayed on the server, searchable by
+    everyone it was shared with.
+    """

@@ -48,7 +48,7 @@ from typing import TYPE_CHECKING
 
 from agno.tools import Toolkit
 
-from ember_code.core.artifacts.errors import SourcesRequired
+from ember_code.core.artifacts.errors import DeleteRefused, SourcesRequired
 from ember_code.core.artifacts.models import EdgeState
 
 if TYPE_CHECKING:
@@ -92,6 +92,8 @@ class ArtifactTools(Toolkit):
         self.register(self.artifact_status)
         self.register(self.artifact_cypher)
         self.register(self.artifact_create)
+        self.register(self.artifact_edit_draft)
+        self.register(self.artifact_publish_draft)
         self.register(self.artifact_revise)
         self.register(self.artifact_pending_sources)
         self.register(self.artifact_confirm_source)
@@ -540,7 +542,10 @@ class ArtifactTools(Toolkit):
                 f"Preview mode: to delete '{ref}' and every version of it, "
                 f"call artifact_delete again with confirm=True."
             )
-        deleted = await self._mgr.delete(ref)
+        try:
+            deleted = await self._mgr.delete(ref)
+        except DeleteRefused as exc:
+            return f"Error: {exc}"
         if not deleted:
             return f"No artifact matches '{ref}'."
         return f"Deleted '{ref}' and its version history."

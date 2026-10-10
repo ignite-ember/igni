@@ -18,6 +18,8 @@ the moment to ask is while the agent still knows the answer.
 
 from __future__ import annotations
 
+from typing import Any
+
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -653,18 +655,38 @@ class SessionArtifactManager:
         deleted = await self.artifacts.delete(ref)
         return deleted
 
+    #: The most rows /v1/artifacts/stale will return (`le=200` server-side).
+    STALE_PAGE_MAX = 200
+
+    async def _stale_count(self) -> int:
+        return len(await self.artifacts.stale(limit=self.STALE_PAGE_MAX))
+
+    @staticmethod
+    async def _count_or_zero(label: str, fetch: Any) -> int:
+        """One status figure; a failure costs that figure, not the others."""
+        try:
+            return int(await fetch())
+        except Exception as exc:  # noqa: BLE001 — status must still render
+            logger.warning("Artifact status: %s count failed: %s", label, exc)
+            return 0
+
     async def status(self) -> ArtifactStatus:
         cfg = self.settings.artifacts
         if self.artifacts is None:
             return ArtifactStatus(enabled=False)
-        try:
-            count = await self.artifacts.count()
-            versions = await self.artifacts.version_count()
-            stale = len(await self.artifacts.stale(limit=500))
-            candidates = await self.artifacts.candidate_count()
-        except Exception as exc:
-            logger.warning("Artifact status failed: %s", exc)
-            count = versions = stale = candidates = 0
+        # Each figure is fetched on its own. They used to share one
+        # try/except, and the stale query asked the server for 500 rows
+        # where it accepts at most 200 (`le=200` on /v1/artifacts/stale).
+        # The 422 landed in the shared handler and zeroed all four, so a
+        # signed-in session always reported "Artifacts: 0, Versions: 0"
+        # beside a store that had documents in it — and an agent reading
+        # that concluded there was nothing filed.
+        count = await self._count_or_zero("documents", self.artifacts.count)
+        versions = await self._count_or_zero("versions", self.artifacts.version_count)
+        stale = await self._count_or_zero(
+            "stale", lambda: self._stale_count()
+        )
+        candidates = await self._count_or_zero("candidates", self.artifacts.candidate_count)
         return ArtifactStatus(
             enabled=True,
             collection_name=cfg.collection_name,
