@@ -33,8 +33,13 @@ import pytest
 from ember_code.core.prompts import load_prompt
 from ember_code.core.session.agent_builder.prompt_builder import PromptBuilder
 
-# The names the main-agent prompt uses for the artifact store.
-_KNOWLEDGE_TOOLS = ("artifact_add", "artifact_search")
+# Every artifact tool. The main agent holds none of them — only the
+# archivist gets the toolkit (agents/builder.py) — so none may appear in
+# the main prompt, store or no store.
+_ARTIFACT_TOOLS = (
+    "artifact_add", "artifact_create", "artifact_search", "artifact_read",
+    "artifact_revise", "artifact_delete", "artifact_status", "artifact_cypher",
+)
 
 
 class _Settings:
@@ -63,19 +68,28 @@ def _build(*, knowledge: bool, codeindex: bool = False, user_memory: bool = True
 
 @pytest.mark.parametrize("codeindex", [False, True], ids=["plain", "codeindex"])
 class TestTheTwoConditionsAgree:
-    def test_with_a_knowledge_base_the_tools_are_taught(self, codeindex):
+    def test_with_a_store_the_archivist_is_who_to_ask(self, codeindex):
+        """The store is reached through the archivist, so that is what the
+        prompt teaches: delegate to it, for reading and for writing."""
         prompt = _build(knowledge=True, codeindex=codeindex)
 
-        for tool in _KNOWLEDGE_TOOLS:
-            assert tool in prompt, f"{tool} is attached but no longer taught"
+        assert "archivist" in prompt
+        assert "spawn_agent" in prompt
 
-    def test_without_one_they_are_not_mentioned_at_all(self, codeindex):
-        """Not "mentioned more carefully" — absent. A hedged sentence still
-        puts the tool name in front of a model that cannot call it."""
+    def test_no_artifact_tool_is_ever_taught(self, codeindex):
+        """Not "mentioned more carefully" — absent. The main agent holds no
+        artifact tool in either case, and a sentence naming one puts it in
+        front of a model that cannot call it."""
+        for knowledge in (True, False):
+            prompt = _build(knowledge=knowledge, codeindex=codeindex)
+
+            offenders = [tool for tool in _ARTIFACT_TOOLS if tool in prompt]
+            assert not offenders, f"main prompt teaches {offenders} (store={knowledge})"
+
+    def test_without_a_store_the_archivist_is_not_offered(self, codeindex):
         prompt = _build(knowledge=False, codeindex=codeindex)
 
-        offenders = [tool for tool in _KNOWLEDGE_TOOLS if tool in prompt]
-        assert not offenders, f"prompt still teaches {offenders} with no knowledge base"
+        assert "archivist" not in prompt
 
     def test_the_user_memory_half_survives_either_way(self, codeindex):
         """The two surfaces are described together, so a crude cut would take
@@ -186,8 +200,7 @@ class TestTheUserMemoryToolIsTaughtOnlyWhenAttached:
         for user_memory in (True, False):
             prompt = _build(knowledge=True, codeindex=codeindex, user_memory=user_memory)
 
-            for tool in _KNOWLEDGE_TOOLS:
-                assert tool in prompt
+            assert "archivist" in prompt
 
     def test_with_neither_the_section_goes_too(self, codeindex):
         """Nothing to persist to, so "Persisting What You Learn" followed by
