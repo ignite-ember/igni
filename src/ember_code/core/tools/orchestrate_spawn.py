@@ -58,6 +58,7 @@ from ember_code.core.tools.orchestrate_events import (
     SubagentStopPayload,
     SubTeamBuildResult,
     TeamMode,
+    VIS_SPEC_PREFIX,
 )
 from ember_code.core.tools.orchestrate_sandbox import SpawnSandbox
 
@@ -152,13 +153,11 @@ class SpawnRunner:
         :meth:`_render_error` so the failure information is typed at
         the boundary even though the outer return is a string.
         """
-        # Cannot currently fire, and that is structural rather than a missing
-        # increment: ``OrchestrateTools`` is built in one place
-        # (``ToolsBuilder.orchestrate``) with ``current_depth=0``, and a
-        # sub-team's members are pool copies that never receive it — so a
-        # spawned agent has no spawn tools and depth never leaves 0. Kept
-        # because it becomes correct the moment nesting is made reachable;
-        # ``tests/test_nesting_depth_is_unreachable.py`` fails then and says so.
+        # Live since agents declaring ``can_orchestrate`` receive their own
+        # toolkit at ``current_depth + 1`` (see
+        # :meth:`AgentSpawn._grant_nested_orchestration`). Reaching it means a
+        # chain of delegations ran the config's depth out; the spawn budget
+        # caps the same recursion by total count, session-wide.
         if self._current_depth >= self._max_depth:
             return f"Error: Maximum nesting depth ({self._max_depth}) reached."
 
@@ -434,6 +433,7 @@ class AgentSpawn(SpawnRunner):
         agent = copy.copy(shared)
 
         defn = self._pool.get_definition(self._agent_name)
+        self._grant_nested_orchestration(agent, defn)
 
         # Plugin-shipped agents force their own isolation regardless
         # of what the caller asked for — CC parity row 37.
@@ -459,6 +459,56 @@ class AgentSpawn(SpawnRunner):
             sandbox=setup.sandbox,
             task=setup.task,
         )
+
+    def _grant_nested_orchestration(self, agent: Any, defn: Any) -> None:
+        """Give a spawned agent its own spawn tools, one level down.
+
+        ``can_orchestrate`` was declared in :class:`AgentDefinition`
+        and set deliberately across twenty agent files long before
+        anything read it — only a panel ever did, so an agent marked
+        ``true`` could not in fact delegate. This is the read.
+
+        The depth it is built at is ``current_depth + 1``, which is
+        what makes ``orchestration.max_nesting_depth`` start counting.
+        At the last level the grant is **withheld** rather than made
+        and refused: a manifest carrying a tool whose every call
+        returns "maximum nesting depth reached" is the same defect as
+        a prompt naming a tool that was never registered.
+
+        Nothing is appended in place. ``copy.copy`` above is shallow,
+        so ``agent.tools`` is still the list the pool's cached
+        instance holds — appending would hand the toolkit to every
+        later spawn of that agent, at this spawn's depth.
+        """
+        if defn is None or not getattr(defn, "can_orchestrate", False):
+            return
+        if self._current_depth + 1 >= self._max_depth:
+            return
+
+        # Deferred: ``orchestrate`` imports this module.
+        from ember_code.core.tools.orchestrate import OrchestrateTools
+
+        nested = OrchestrateTools(
+            pool=self._pool,
+            settings=self._settings,
+            current_depth=self._current_depth + 1,
+            hook_executor=self._hook_executor,
+            session_id=self._session_id,
+            hitl_coordinator=self._hitl_coordinator,
+            project_dir=self._project_dir,
+        )
+        # The three collaborators the session wires onto the top-level
+        # toolkit after construction. Without them a nested spawn runs
+        # invisibly — no progress card, nothing in the event log to
+        # replay on reload, and no registry entry, which means ESC
+        # does not reach it. The budget needs no wiring: it is looked
+        # up from the pool by ``session_id``, so every depth draws on
+        # the one session-wide cap.
+        nested.on_progress = self._on_progress
+        nested.event_appender = self._event_appender
+        nested.subagent_registry = self._subagent_registry
+
+        agent.tools = [*(agent.tools or []), nested]
 
     async def _execute(self) -> tuple[str, list[str]]:
         return await self._deps.agent_streamer(
@@ -500,7 +550,33 @@ class AgentSpawn(SpawnRunner):
                 "with the partial result if it's sufficient.\n" + "\n".join(run_errors)
             )
         worktree_footer = self._sandbox.finalize() if self._sandbox else ""
-        return f"{header}\n\nResponse:\n{result}{error_section}{worktree_footer}"
+        return (
+            f"{header}\n\nResponse:\n{result}"
+            f"{self._rendered_specs(activity)}{error_section}{worktree_footer}"
+        )
+
+    @staticmethod
+    def _rendered_specs(activity: list[str]) -> str:
+        """Any visualization the sub-agent drew, as a fence.
+
+        Fenced as ``json-render`` rather than handed over as bare
+        JSON because that is the form it has to end up in: a document
+        carrying this fence renders the chart in ``ArtifactPanel``,
+        and a caller that can copy the block through verbatim cannot
+        get the shape wrong on the way. The alternative asks a model
+        to re-serialise a forty-element spec from a description of
+        it, which is where invented data comes from.
+        """
+        specs = [
+            line[len(VIS_SPEC_PREFIX) :] for line in activity if line.startswith(VIS_SPEC_PREFIX)
+        ]
+        if not specs:
+            return ""
+        blocks = "\n\n".join(f"```json-render\n{spec}\n```" for spec in specs)
+        return (
+            "\n\nRendered for you — the block below is the visualization, "
+            "ready to paste into a document as-is:\n\n" + blocks
+        )
 
     def _header(self, elapsed: float) -> str:
         return (

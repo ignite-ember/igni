@@ -34,7 +34,13 @@ from ember_code.core.prompts import load_prompt
 from ember_code.core.session.agent_builder.prompt_builder import PromptBuilder
 
 # The names the main-agent prompt uses for the artifact store.
-_KNOWLEDGE_TOOLS = ("artifact_add", "artifact_search")
+# Every artifact tool. The main agent holds none of them — only the
+# archivist gets the toolkit (agents/builder.py) — so none may appear in
+# the main prompt, store or no store.
+_ARTIFACT_TOOLS = (
+    "artifact_add", "artifact_create", "artifact_search", "artifact_read",
+    "artifact_revise", "artifact_delete", "artifact_status", "artifact_cypher",
+)
 
 
 class _Settings:
@@ -53,7 +59,7 @@ def _build(*, knowledge: bool, codeindex: bool = False, user_memory: bool = True
         project_dir=Path("/nonexistent"),
         settings=_Settings,
         codeindex_available=codeindex,
-        knowledge_available=knowledge,
+        artifacts_available=knowledge,
         user_memory_available=user_memory,
         agent_catalog="- researcher: reads things",
         skill_descriptions="",
@@ -66,15 +72,17 @@ class TestTheTwoConditionsAgree:
     def test_with_a_knowledge_base_the_tools_are_taught(self, codeindex):
         prompt = _build(knowledge=True, codeindex=codeindex)
 
-        for tool in _KNOWLEDGE_TOOLS:
-            assert tool in prompt, f"{tool} is attached but no longer taught"
+        # The store is reached through the archivist, so that is what is
+        # taught — and never an artifact tool, which the main agent lacks.
+        assert "spawn_agent(\"archivist\"" in prompt
+        assert not [tool for tool in _ARTIFACT_TOOLS if tool in prompt]
 
     def test_without_one_they_are_not_mentioned_at_all(self, codeindex):
         """Not "mentioned more carefully" — absent. A hedged sentence still
         puts the tool name in front of a model that cannot call it."""
         prompt = _build(knowledge=False, codeindex=codeindex)
 
-        offenders = [tool for tool in _KNOWLEDGE_TOOLS if tool in prompt]
+        offenders = [tool for tool in _ARTIFACT_TOOLS if tool in prompt]
         assert not offenders, f"prompt still teaches {offenders} with no knowledge base"
 
     def test_the_user_memory_half_survives_either_way(self, codeindex):
@@ -88,7 +96,7 @@ class TestTheTwoConditionsAgree:
     def test_no_marker_reaches_the_model(self, codeindex):
         for knowledge in (True, False):
             prompt = _build(knowledge=knowledge, codeindex=codeindex)
-            assert "knowledge-base:" not in prompt
+            assert "artifacts:" not in prompt
             assert "<!--" not in prompt.replace("<!-- This file gives", "")
 
     def test_the_absent_branch_says_what_to_do_instead(self, codeindex):
@@ -97,7 +105,7 @@ class TestTheTwoConditionsAgree:
         silence, and the model invents something."""
         prompt = _build(knowledge=False, codeindex=codeindex)
 
-        assert "no knowledge base" in prompt.lower()
+        assert "document store is not enabled" in prompt
 
     def test_the_two_renders_actually_differ(self, codeindex):
         """Guards against the whole scheme quietly no-opping: if the markers
@@ -116,7 +124,7 @@ class TestTheResolverFailsLoudly:
             project_dir=Path("/nonexistent"),
             settings=_Settings,
             codeindex_available=False,
-            knowledge_available=knowledge,
+            artifacts_available=knowledge,
             user_memory_available=user_memory,
             agent_catalog="",
             skill_descriptions="",
@@ -126,7 +134,7 @@ class TestTheResolverFailsLoudly:
     def test_an_unclosed_span_raises(self):
         """The alternative is a prompt that silently loses everything after the
         opening marker, which is the exact class of bug this row is about."""
-        broken = "intro\n<!-- knowledge-base:only -->\nsome guidance\n"
+        broken = "intro\n<!-- artifacts:only -->\nsome guidance\n"
 
         with pytest.raises(ValueError, match="unbalanced"):
             self._builder(knowledge=True).resolve_conditionals(broken)
@@ -136,14 +144,14 @@ class TestTheResolverFailsLoudly:
         or `knowledge_add`". Dropping the clause must leave the sentence."""
         text = (
             "respond without calling `update_user_memory`"
-            "<!-- knowledge-base:only --> or `knowledge_add`<!-- /knowledge-base:only -->."
+            "<!-- artifacts:only --> or delegating to the archivist<!-- /artifacts:only -->."
         )
 
         assert self._builder(knowledge=False).resolve_conditionals(text) == (
             "respond without calling `update_user_memory`."
         )
         assert self._builder(knowledge=True).resolve_conditionals(text) == (
-            "respond without calling `update_user_memory` or `knowledge_add`."
+            "respond without calling `update_user_memory` or delegating to the archivist."
         )
 
 
@@ -186,8 +194,7 @@ class TestTheUserMemoryToolIsTaughtOnlyWhenAttached:
         for user_memory in (True, False):
             prompt = _build(knowledge=True, codeindex=codeindex, user_memory=user_memory)
 
-            for tool in _KNOWLEDGE_TOOLS:
-                assert tool in prompt
+            assert "spawn_agent(\"archivist\"" in prompt
 
     def test_with_neither_the_section_goes_too(self, codeindex):
         """Nothing to persist to, so "Persisting What You Learn" followed by
@@ -195,8 +202,10 @@ class TestTheUserMemoryToolIsTaughtOnlyWhenAttached:
         persist" bar only means anything next to a tool that could."""
         prompt = _build(knowledge=False, codeindex=codeindex, user_memory=False)
 
-        assert "Persisting What You Learn" not in prompt
         assert "When NOT to persist" not in prompt
+        assert "When to persist proactively" not in prompt
+        # What stays is the honest part: nothing can be filed, so say so.
+        assert "document store is not enabled" in prompt
 
     def test_the_absent_branch_says_what_to_do_instead(self, codeindex):
         """Same standard the knowledge-base absent branch is held to: removing
@@ -215,7 +224,7 @@ class TestTheUserMemoryToolIsTaughtOnlyWhenAttached:
                 prompt = _build(knowledge=knowledge, codeindex=codeindex, user_memory=user_memory)
 
                 assert "user-memory:" not in prompt
-                assert "knowledge-base:" not in prompt
+                assert "artifacts:" not in prompt
                 assert "<!--" not in prompt.replace("<!-- This file gives", "")
 
     def test_all_four_renders_differ(self, codeindex):

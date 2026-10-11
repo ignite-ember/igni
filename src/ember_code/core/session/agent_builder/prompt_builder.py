@@ -36,10 +36,12 @@ class PromptBuilder:
     named phases.
     """
 
-    #: Conditional spans in the prompt markdown. ``only`` survives when the
-    #: capability is present, ``absent`` when it is not; the markers themselves
-    #: never reach the model.
-    _CONDITIONALS: ClassVar[tuple[str, ...]] = ("knowledge-base", "user-memory")
+    #: Capability-conditional spans in the prompt markdown. ``only``
+    #: survives when the capability is present, ``absent`` when it is
+    #: not; the markers themselves never reach the model. Add a name
+    #: here and a matching entry in :meth:`_capabilities` to make a new
+    #: capability switchable.
+    _CONDITIONALS: ClassVar[tuple[str, ...]] = ("artifacts", "codeindex", "user-memory", "can-persist")
 
     def __init__(
         self,
@@ -47,16 +49,16 @@ class PromptBuilder:
         project_dir: Path,
         settings: Any,
         codeindex_available: bool,
-        knowledge_available: bool,
-        user_memory_available: bool,
         agent_catalog: str,
         skill_descriptions: str,
         prompt_loader: Callable[[str], str],
+        artifacts_available: bool = False,
+        user_memory_available: bool = True,
     ) -> None:
         self._project_dir = project_dir
         self._settings = settings
         self._codeindex_available = codeindex_available
-        self._knowledge_available = knowledge_available
+        self._artifacts_available = artifacts_available
         self._user_memory_available = user_memory_available
         self._agent_catalog = agent_catalog
         self._skill_descriptions = skill_descriptions
@@ -76,41 +78,63 @@ class PromptBuilder:
         name = "main_agent.codeindex" if self._codeindex_available else "main_agent"
         return self._prompt_loader(name)
 
+    def substitute_placeholders(self, prompt: str) -> str:
+        """Substitute ``{{AGENT_CATALOG}}``, ``{{CODEINDEX_TOOLS}}``,
+        ``{{PERSISTING}}``."""
+        catalog = self._agent_catalog or "(no agents loaded)"
+        prompt = prompt.replace("{{AGENT_CATALOG}}", catalog)
+        prompt = prompt.replace("{{CODEINDEX_TOOLS}}", "")
+        prompt = prompt.replace("{{PERSISTING}}", self._load_section("persisting"))
+        return prompt
+
+    def _load_section(self, stem: str) -> str:
+        """A prose section kept beside the prompt rather than inside it.
+
+        Used where a block is long enough that inlining it buries the
+        document's structure. The spans inside it are resolved by
+        :meth:`resolve_conditionals` along with everything else, so a
+        section file is a formatting choice and never a second
+        mechanism.
+        """
+        try:
+            return self._prompt_loader(stem).strip()
+        except (FileNotFoundError, OSError):
+            logger.warning("prompt section %r missing; omitting", stem)
+            return ""
+
     def resolve_conditionals(self, prompt: str) -> str:
         """Keep the spans that match this session and drop the rest.
 
-        The prompt taught ``knowledge_add`` / ``knowledge_search`` across ~30
-        lines unconditionally, while ``ToolsBuilder.knowledge()`` attaches the
-        toolkit only when an index is configured. Measured over the capture
-        corpus: 7,459 system prompts taught those four tools, 0 manifests
-        carried them, and the model called them 0 times — it had been told to
-        prefer a tool it could not reach, which is PRD-12's ``file_read``
-        failure at larger scale.
+        A capability that can be absent needs both branches written and
+        exactly one of them shown. ``<!-- artifacts:only -->`` survives
+        when the store is up, ``<!-- artifacts:absent -->`` when it is
+        not, and the markers themselves never reach the model.
 
-        Spans are marked in the markdown rather than split into separate files
-        because the guidance is interleaved with the user-memory guidance that
-        stays either way. A missing capability does not just remove paragraphs:
-        the ``absent`` branch says what to do with a project convention when
-        there is nowhere to file one, which is the part that keeps the prompt
-        coherent instead of merely shorter.
+        Spans live in the markdown rather than in separate per-state
+        files because the guidance is interleaved with guidance that
+        stays either way. Splitting by state duplicates everything
+        shared: the two halves of this section were briefly separate
+        files and measured 49% identical, with the common paragraphs
+        already drifting apart in wording after a single edit.
 
-        ``user-memory`` is the same defect one tool over: the prompt teaches
-        ``update_user_memory`` in six places, and agno attaches that tool only
-        when the session has a LearningMachine *and* ``learning.user_memory``
-        is on — so ``learning.enabled=false``, ``user_memory=false`` and any
-        session built without a db all get a prompt insisting on a tool that
-        is not in their manifest.
+        The failure being prevented is specific and has shipped twice.
+        ``knowledge_add`` / ``knowledge_search`` were taught across ~30
+        unconditional lines while the toolkit was attached only when an
+        index existed: 7,459 system prompts taught them, 0 manifests
+        carried them, 0 calls were ever made. When the versioned store
+        replaced the knowledge base the section was rewritten to
+        ``artifact_add`` — the same mistake under the name the new
+        subsystem introduced.
 
-        Unbalanced markers raise. A prompt that silently loses a section is the
-        failure this method exists to prevent. A capability with no markers in
-        the markdown is a no-op rather than an error — the spans are marked per
-        template, and a template that does not mention the tool has nothing to
-        gate.
+        A missing capability is not only a deletion. The ``absent``
+        branch says what to do with a project convention when there is
+        nowhere to file one, which is what keeps the prompt coherent
+        rather than merely shorter.
+
+        Unbalanced markers raise. A prompt that silently loses a
+        section is the failure this method exists to prevent.
         """
-        available = {
-            "knowledge-base": self._knowledge_available,
-            "user-memory": self._user_memory_available,
-        }
+        available = self._capabilities()
         for name in self._CONDITIONALS:
             keep, drop = ("only", "absent") if available[name] else ("absent", "only")
             for branch in (keep, drop):
@@ -134,12 +158,27 @@ class PromptBuilder:
         # Dropping a block span leaves the blank lines that surrounded it.
         return re.sub(r"\n{3,}", "\n\n", prompt).strip()
 
-    def substitute_placeholders(self, prompt: str) -> str:
-        """Substitute ``{{AGENT_CATALOG}}`` + ``{{CODEINDEX_TOOLS}}``."""
-        catalog = self._agent_catalog or "(no agents loaded)"
-        prompt = prompt.replace("{{AGENT_CATALOG}}", catalog)
-        prompt = prompt.replace("{{CODEINDEX_TOOLS}}", "")
-        return prompt
+    def _capabilities(self) -> dict[str, bool]:
+        """What this session has, keyed by conditional name.
+
+        One entry per name in :attr:`_CONDITIONALS`; adding a capability
+        is a line here and a pair of markers in the markdown.
+        """
+        return {
+            "artifacts": self._artifacts_available,
+            "codeindex": self._codeindex_available,
+            # agno attaches ``update_user_memory`` only when the session
+            # has a LearningMachine *and* ``learning.user_memory`` is on,
+            # so ``learning.enabled=false``, ``user_memory=false`` and any
+            # session built without a db were all told to call a tool that
+            # was not in their manifest.
+            "user-memory": self._user_memory_available,
+            # Derived: somewhere to persist *to*. The "when (not) to
+            # persist" rules only mean anything next to a surface that
+            # could take the fact; with neither they are a list of
+            # things not to do with a tool nobody has.
+            "can-persist": self._artifacts_available or self._user_memory_available,
+        }
 
     def append_project_map(self, prompt: str) -> str:
         """Append the per-commit Project Map (best-effort).
@@ -210,10 +249,17 @@ class PromptBuilder:
         )
 
     def render(self) -> str:
-        """Compose the full prompt through the five phases."""
+        """Compose the full prompt through the five phases.
+
+        Conditionals resolve *after* substitution, so a section pulled
+        in from its own file has its spans resolved too — otherwise a
+        block would behave differently depending on whether it happened
+        to be inlined or kept beside the prompt.
+        """
         prompt = self.load_base()
         prompt = self.resolve_conditionals(prompt)
         prompt = self.substitute_placeholders(prompt)
+        prompt = self.resolve_conditionals(prompt)
         prompt = self.append_project_map(prompt)
         prompt = self.append_skills(prompt)
         return prompt
