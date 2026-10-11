@@ -650,6 +650,9 @@ class Session:
         )
 
         self.subsystems = SubsystemRegistry()
+        # Which document project this working copy belongs to; set when the
+        # store attaches (see attach_artifacts_neo4j).
+        self.artifact_project = None
         self._knowledge_ready = threading.Event()
         self._knowledge_ready.set()
         if pre_artifacts is not None:
@@ -770,15 +773,21 @@ class Session:
         from ember_code.core.artifacts.collaboration import (  # noqa: PLC0415 — cycle
             CollaborationSync,
         )
+        from ember_code.core.artifacts.project import WorkingCopyProject  # noqa: PLC0415
 
         auth = getattr(self, "cloud_auth", None)
-        index.attach_shared(
-            CollaborationSync(
-                index,
-                server_url=getattr(auth, "server_url", "") or "",
-                access_token=getattr(auth, "access_token", None) or "",
-            )
+        sync = CollaborationSync(
+            index,
+            server_url=getattr(auth, "server_url", "") or "",
+            access_token=getattr(auth, "access_token", None) or "",
         )
+        # Every write and search carries this working copy's project, so a
+        # search here never returns another repository's documents. Checked
+        # before each call — a remote changed mid-session is caught on the
+        # next one. See core/artifacts/project.py.
+        self.artifact_project = WorkingCopyProject(self.project_dir, sync.resolve_project)
+        sync.project_provider = self.artifact_project.project_id
+        index.attach_shared(sync)
         self.artifacts = index
         # ``artifact_mgr`` is constructed in __init__ against whatever
         # index existed then (usually ``None``); it caches the

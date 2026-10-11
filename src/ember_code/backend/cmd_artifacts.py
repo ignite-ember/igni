@@ -62,6 +62,7 @@ class ArtifactsCommand:
 
         * ``add <url|path|text>`` → :meth:`add`
         * ``search`` (any positional arg ignored) → :meth:`search`
+        * ``project [link | use <id>]`` → :meth:`project`
         * no arg / anything else → :meth:`panel`
         """
         parts = args.strip().split(None, 1)
@@ -73,6 +74,8 @@ class ArtifactsCommand:
                 return await self.add(sub_args)
             case "search":
                 return self.search()
+            case "project":
+                return await self.project(sub_args)
             case _:
                 return await self.panel()
 
@@ -109,6 +112,61 @@ class ArtifactsCommand:
         if not result.success:
             return CommandResult.error(result.error)
         return CommandResult.info(result.message)
+
+    async def project(self, sub_args: str) -> CommandResult:
+        """Which document project this working copy uses, and why; or change it.
+
+        * no argument → the project, its remotes, and this working copy's remote
+        * ``link`` → point this working copy's remote at its current project,
+          moving it from whichever project had it (the fix for a conflict)
+        * ``use <project id>`` → make this working copy use another project
+        """
+        resolver = getattr(self._session, "artifact_project", None)
+        shared = getattr(getattr(self._session, "artifacts", None), "_shared", None)
+        if resolver is None or shared is None or not getattr(shared, "is_configured", False):
+            return CommandResult.error(
+                "No document store is connected to this session, so there is no project to show."
+            )
+        verb, _, rest = sub_args.partition(" ")
+        verb = verb.lower()
+
+        if verb == "use":
+            target = rest.strip()
+            if not target:
+                return CommandResult.error("Name the project: `/artifacts project use <project id>`.")
+            binding = await resolver.use(target)
+            if binding is None or binding.project_id != target:
+                return CommandResult.error(f"No project {target} in your organisation.")
+            return CommandResult.info(f"This working copy now uses '{binding.name}' ({binding.project_id}).")
+
+        binding = await resolver.binding(force=verb == "link")
+        if binding is None:
+            return CommandResult.error(
+                "Could not reach the document server to find this working copy's project; "
+                "documents are searched unscoped until it answers."
+            )
+
+        if verb == "link":
+            remote = resolver.remote()
+            if not remote:
+                return CommandResult.error("This working copy has no `origin` remote to link.")
+            linked = await shared.link_remote(project_id=binding.project_id, remote=remote)
+            if linked is None:
+                return CommandResult.error("The project is no longer there; run `/artifacts project` again.")
+            resolver.invalidate()
+            return CommandResult.info(
+                f"{linked.get('remote_key') or remote} now opens '{binding.name}' for everyone in your organisation."
+            )
+
+        remotes = ", ".join(binding.remotes) or "none yet"
+        lines = [
+            f"Document project: {binding.name} ({binding.project_id})",
+            f"Known remotes: {remotes}",
+            f"This working copy's remote: {resolver.remote() or 'none'}",
+        ]
+        if binding.notice and binding.status == "conflict":
+            lines.append(binding.notice)
+        return CommandResult.info("\n".join(lines))
 
     def search(self) -> CommandResult:
         """Open the TUI knowledge panel.

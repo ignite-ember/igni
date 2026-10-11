@@ -32,7 +32,7 @@ import contextlib
 import inspect
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -155,6 +155,55 @@ class CollaborationSync:
         #: the questions asked in parallel on opening a document
         #: share one round trip instead of taking one each.
         self._listing = asyncio.Lock()
+        #: Answers "which project is this working copy?" — see
+        #: :class:`~ember_code.core.artifacts.project.WorkingCopyProject`.
+        #: Asked before every publish and search, so a remote changed
+        #: mid-session is noticed on the next call. None (a test, the
+        #: training harness) means unscoped, which is what every call was
+        #: before projects existed.
+        self.project_provider: Callable[[], Awaitable[str | None]] | None = None
+
+    async def _project_id(self) -> str | None:
+        if self.project_provider is None:
+            return None
+        try:
+            return await self.project_provider()
+        except Exception as exc:  # noqa: BLE001 — unscoped beats failing the write
+            logger.info("artifact project unavailable (%s); unscoped", type(exc).__name__)
+            return None
+
+    async def resolve_project(
+        self, *, remote: str | None, remembered_project_id: str | None, name: str = ""
+    ) -> dict[str, Any] | None:
+        """Ask the server which project this working copy belongs to.
+
+        A remote the server cannot key (a local path) is answered 400;
+        the working copy is then resolved by what it remembers alone. A
+        server that predates projects answers 404, and this returns None
+        — every call stays unscoped, exactly as before.
+        """
+        if not self.is_configured:
+            return None
+        body: dict[str, Any] = {"remembered_project_id": remembered_project_id, "name": name}
+        response = await self._request(
+            "POST", "/v1/artifacts/projects/resolve", json={**body, "remote": remote}
+        )
+        if response.status_code == 400 and remote:
+            response = await self._request("POST", "/v1/artifacts/projects/resolve", json=body)
+        if response.status_code in (404, 405):
+            return None
+        response.raise_for_status()
+        return dict(response.json())
+
+    async def link_remote(self, *, project_id: str, remote: str) -> dict[str, Any] | None:
+        """Point ``remote`` at ``project_id`` on purpose, moving it from any other project."""
+        response = await self._request(
+            "POST", f"/v1/artifacts/projects/{project_id}/remotes", json={"remote": remote}
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return dict(response.json())
 
     @property
     def is_configured(self) -> bool:
@@ -875,11 +924,10 @@ class CollaborationSync:
         access rule lives next to the documents now, where it already
         was for every other read.
         """
-        response = await self._request(
-            "GET",
-            "/v1/artifacts/shared/search",
-            params={"q": query, "limit": max(1, limit)},
-        )
+        params: dict[str, Any] = {"q": query, "limit": max(1, limit)}
+        if project_id := await self._project_id():
+            params["project_id"] = project_id
+        response = await self._request("GET", "/v1/artifacts/shared/search", params=params)
         response.raise_for_status()
         body = response.json()
         if not body.get("available", True):
@@ -1017,6 +1065,7 @@ class CollaborationSync:
                 "author": author,
                 "visibility": "private",
                 "audience": [],
+                "project_id": await self._project_id(),
             },
         )
         response.raise_for_status()
