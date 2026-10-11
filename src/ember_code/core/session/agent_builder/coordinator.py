@@ -98,6 +98,12 @@ class MainAgentBuilder:
             project_dir=s.project_dir,
             settings=s.settings,
             codeindex_available=s.codeindex_available,
+            # ``s.artifacts`` is the store itself and is ``None``
+            # whenever the subsystem is off or failed to come up — the
+            # same value ``attach_artifact_manager`` is gated on, so the
+            # prompt and the toolkit cannot disagree about whether the
+            # archivist can do anything.
+            artifacts_available=s.artifacts is not None,
             agent_catalog=s.build_agent_catalog(),
             skill_descriptions=s.skill_pool.describe(),
             prompt_loader=self._prompt_loader,

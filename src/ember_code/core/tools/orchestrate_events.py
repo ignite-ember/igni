@@ -274,6 +274,27 @@ class AgnoRunnable(Protocol):
     async def aget_last_run_output(self, *, session_id: str) -> Any: ...
 
 
+# ── Visualizer spec hand-back ───────────────────────────────────────
+
+#: Activity-log prefix carrying a rendered ``json-render`` spec back
+#: to whoever spawned the visualizer.
+#:
+#: The spec is streamed to the client as a chat card, and the caller
+#: used to receive only the visualizer's prose — "Rendered a 6-element
+#: 'Database Migration' card". Fine for an orchestrator that just
+#: wanted the user to see something; useless to the archivist, which
+#: has to put the spec *in a document*, where ``ArtifactPanel``
+#: renders the fence live. A description of a chart cannot be stored
+#: as one.
+#:
+#: The activity log is the channel because it already exists and is
+#: already read this way: ``AgentSpawn.format_result`` scans it for
+#: ``RUN ERROR`` and lifts what it finds into the parent's result.
+#: This is the same move with a different prefix, which is why it
+#: needs no signature change anywhere.
+VIS_SPEC_PREFIX: str = "VISUALIZE SPEC "
+
+
 # ── Cancellation registry ───────────────────────────────────────────
 
 

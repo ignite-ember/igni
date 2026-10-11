@@ -33,6 +33,7 @@ from ember_code.core.tools.orchestrate_events import (
     SubAgentRegistry,
     ToolCompletedEvent,
     ToolStartedEvent,
+    VIS_SPEC_PREFIX,
     VisualizationDeltaEvent,
 )
 from ember_code.core.tools.orchestrate_preview import PREVIEWS
@@ -228,12 +229,20 @@ class SubAgentStreamHandler(BaseStreamHandler[SubAgentStreamState]):
         delta so the FE can transition the card out of "streaming"
         mode, and log to the session event log so a reload replays
         it.
+
+        The spec also goes to the activity log, which is how it
+        reaches the agent that asked for it — see
+        :data:`VIS_SPEC_PREFIX`. One line per ``visualize`` call; a
+        visualizer that renders twice hands back both, and the caller
+        picks.
         """
         state = self.state
+        spec_json = json.dumps(spec)
+        self._log_line(f"{VIS_SPEC_PREFIX}{spec_json}")
         final_event = VisualizationDeltaEvent(
             agent_path=state.agent_path_id,
             spec_id=state.vis_spec_id,
-            spec_json=json.dumps(spec),
+            spec_json=spec_json,
             final=True,
         )
         final_payload = final_event.model_dump(by_alias=True)
