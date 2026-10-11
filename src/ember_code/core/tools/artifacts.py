@@ -44,6 +44,7 @@ cross-agent hand-off to get right.
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from agno.tools import Toolkit
@@ -139,6 +140,13 @@ class ArtifactTools(Toolkit):
     async def artifact_read(self, ref: str, version: int = 0) -> str:
         """Read one artifact in full, at a specific version.
 
+        The current version comes marked with the id of each passage,
+        on a ``cite as:`` line where the passage starts — the same ids
+        search shows. Cite the passage you drew on, as from search.
+        Passages overlap, so a line may sit in two; either id is right.
+        Older versions keep their text but not their passages: cite one
+        as ``id@n``.
+
         Args:
             ref: Artifact id, ``id@n``, or name.
             version: Version number; 0 (default) reads the current one.
@@ -147,7 +155,36 @@ class ArtifactTools(Toolkit):
         if found is None:
             return f"No artifact matches '{ref}'."
         header = f"{found.ref} (v{found.n}{'  — current' if found.head else ''})"
+        if found.head:
+            marked = await self._with_passage_ids(ref, found.n)
+            if marked is not None:
+                return f"{header}\n\n{marked}"
+        else:
+            header += f" — an older version: cite it as {found.ref}"
         return f"{header}\n\n{found.content}"
+
+    async def _with_passage_ids(self, ref: str, n: int) -> str | None:
+        """The server's text of version `n`, a ``cite as:`` line before each passage.
+
+        The server's text, not this client's copy: the spans are lines
+        of what the server chunked, and marking another text with them
+        would put an id beside the wrong paragraph. None — the plain
+        read — when the server has no passages for exactly this
+        version, so an id is never shown for text it does not match.
+        """
+        body = await self._mgr.passages(ref)
+        if not body or int(body.get("n") or 0) != n or not body.get("passages"):
+            return None
+        lines = str(body.get("content") or "").split("\n")
+        starts: dict[int, list[str]] = {}
+        for passage in body["passages"]:
+            starts.setdefault(int(passage["line_from"]), []).append(str(passage["chunk_id"]))
+        out: list[str] = []
+        for number, line in enumerate(lines, start=1):
+            for chunk_id in starts.get(number, []):
+                out.append(f"[cite as: {chunk_id}]")
+            out.append(line)
+        return "\n".join(out)
 
     async def artifact_list(self, limit: int = 50) -> str:
         """List the project's artifacts with their current version.
@@ -337,7 +374,7 @@ class ArtifactTools(Toolkit):
         try:
             result = await self._mgr.create(
                 name=name,
-                content=content,
+                content=_without_read_markers(content),
                 sources=sources,
                 kind=kind,
                 no_sources_reason=no_sources_reason,
@@ -363,7 +400,7 @@ class ArtifactTools(Toolkit):
             ref: Artifact id or name to edit.
             content: The full new body (not a patch).
         """
-        result = await self._mgr.write_draft(ref=ref, content=content)
+        result = await self._mgr.write_draft(ref=ref, content=_without_read_markers(content))
         return result.message if result.success else f"Error: {result.error}"
 
     async def artifact_publish_draft(self, ref: str) -> str:
@@ -408,7 +445,7 @@ class ArtifactTools(Toolkit):
         try:
             result = await self._mgr.revise(
                 ref=ref,
-                content=content,
+                content=_without_read_markers(content),
                 sources=sources,
                 no_sources_reason=no_sources_reason,
             )
@@ -502,7 +539,7 @@ class ArtifactTools(Toolkit):
                 "document, call artifact_repin to move the pin forward and "
                 "leave the content alone."
             )
-        result = await self._mgr.accept_reconcile(plan=plan, content=updated_content)
+        result = await self._mgr.accept_reconcile(plan=plan, content=_without_read_markers(updated_content))
         return result.message if result.success else f"Error: {result.error}"
 
     async def artifact_repin(self, ref: str, source_ref: str = "") -> str:
@@ -567,6 +604,21 @@ class ArtifactTools(Toolkit):
                 f"Unconfirmed captured sources: {status.pending_candidates} (see artifact_lineage)"
             )
         return "\n".join(lines)
+
+
+#: The passage labels `artifact_read` puts in what it shows.
+_READ_MARKER = re.compile(r"^\[cite as: [^\]\n]+\]\n?", re.MULTILINE)
+
+
+def _without_read_markers(content: str) -> str:
+    """`content` without the ``[cite as: …]`` lines a read adds.
+
+    They label what the agent was shown and are not part of any
+    document. An agent revising a page often starts from the text it
+    read, and without this every revision would store the labels as
+    prose — where the next read would show them as the page's own.
+    """
+    return _READ_MARKER.sub("", content)
 
 
 def _preview(content: str) -> str:

@@ -259,6 +259,7 @@ class ArtifactIndex:
         ``artifact_dismiss_source`` — a decision somebody made, rather
         than an omission.
         """
+        sources = self._localise_passage_pins(sources)
         try:
             lineage = await self.lineage(artifact_id)
         except Exception:  # lineage is an optimisation here, never the point
@@ -323,6 +324,7 @@ class ArtifactIndex:
         # paths can produce one: a declared source naming the document
         # itself, an inherited edge carrying a previous mistake
         # forward, and the read ledger.
+        sources = self._localise_passage_pins(sources)
         self_pins = [p for p in sources.pins if p.artifact_id == artifact_id]
         if self_pins:
             logger.debug("dropping %d self-derivation pin(s) for %s", len(self_pins), artifact_id)
@@ -662,6 +664,36 @@ class ArtifactIndex:
         )
 
 
+    def _localise_passage_pins(self, sources: SourceDeclaration) -> SourceDeclaration:
+        """Passage pins, keyed by this client's artifact id; one pin per version.
+
+        A passage id opens with the SERVER's document id, and
+        :meth:`VersionPin.parse` takes it as the pin's artifact id. Both
+        the local graph and the server push look a pin up by the
+        client's artifact id, so every passage citation was skipped as
+        an unknown source — the strongest form of citation the tools
+        ask for had never once been recorded. The owner is known from
+        the search hit or read that showed the passage.
+
+        Two passages of one version are one edge carrying both, rather
+        than two pins for the same version.
+        """
+        if not isinstance(sources, SourceDeclaration):
+            return sources
+        owners = self._passage_owners()
+        merged: dict[tuple[str, int], VersionPin] = {}
+        for pin in sources.pins:
+            owner = owners.get(pin.artifact_id) if pin.passages else None
+            if owner:
+                pin = pin.model_copy(update={"artifact_id": owner})
+            key = (pin.artifact_id, pin.n)
+            if key in merged:
+                kept = merged[key]
+                merged[key] = kept.model_copy(update={"passages": [*kept.passages, *pin.passages]})
+            else:
+                merged[key] = pin
+        return sources.model_copy(update={"pins": list(merged.values())})
+
     def _passage_owners(self) -> dict[str, str]:
         """Server document id -> artifact id, learned from search hits."""
         owners = getattr(self, "_passage_owner_map", None)
@@ -734,6 +766,31 @@ class ArtifactIndex:
         if record and found is not None:
             self._ledger.record([VersionPin(artifact_id=found.artifact_id, n=found.n)])
         return found
+
+    async def passages(self, ref: str) -> dict[str, Any] | None:
+        """The head version's citable passages, from the server.
+
+        Also teaches :meth:`resolve` the server's id for this document,
+        as a search hit does, so a passage id copied out of a read
+        resolves when it is quoted back.
+        """
+        shared = self._shared
+        if shared is None or not getattr(shared, "is_configured", False):
+            return None
+        summary = await self.resolve(ref)
+        if summary is None:
+            return None
+        slug = await shared.slug_for(summary.artifact_id)
+        if not slug:
+            return None
+        body = await shared.passages(slug=slug)
+        if not body:
+            return None
+        for passage in body.get("passages") or []:
+            chunk_id = str(passage.get("chunk_id") or "")
+            if chunk_id.count("::") == 2:
+                self._passage_owners()[chunk_id.split("::", 1)[0]] = summary.artifact_id
+        return body
 
     async def lineage(self, ref: str, n: int = 0) -> ArtifactLineage | None:
         """What this version was built on, from the server.

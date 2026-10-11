@@ -54,6 +54,7 @@ class FakeManager:
         self.cypher_result = overrides.get("cypher_result")
         self.confirm_result = overrides.get("confirm_result", True)
         self.delete_result = overrides.get("delete_result", True)
+        self.passages_result = overrides.get("passages_result")
 
     def pending_sources(self):
         return self.pending
@@ -99,6 +100,10 @@ class FakeManager:
 
     async def lineage(self, ref, n=0):
         return self.lineage_result
+
+    async def passages(self, ref):
+        self.calls.append(("passages", ref))
+        return self.passages_result
 
     async def stale(self, *, limit=100):
         return self.stale_result
@@ -205,6 +210,54 @@ class TestReads:
         )
         out = await kit.artifact_read("a1")
         assert "full text" in out and "v2" in out
+
+    async def test_the_current_version_is_marked_with_passage_ids(self):
+        """A page read in full can be cited by paragraph, as from search.
+        The ids sit where each passage starts, over the server's text."""
+        kit, _ = tools(
+            version_result=ArtifactVersion(artifact_id="a1", version_id="a1::3", n=3, content="local copy", head=True),
+            passages_result={
+                "n": 3,
+                "content": "# Plan\n\nShip in May.\n\nRisks: none.",
+                "passages": [
+                    {"chunk_id": "doc::3::0", "line_from": 1, "line_to": 3},
+                    {"chunk_id": "doc::3::1", "line_from": 3, "line_to": 5},
+                ],
+            },
+        )
+        out = await kit.artifact_read("a1")
+        lines = out.split("\n")
+        assert lines[lines.index("[cite as: doc::3::0]") + 1] == "# Plan"
+        assert lines[lines.index("[cite as: doc::3::1]") + 1] == "Ship in May."
+        assert "local copy" not in out
+
+    async def test_passages_for_another_version_are_not_shown(self):
+        """Spans of a different text would label the wrong paragraph."""
+        kit, _ = tools(
+            version_result=ArtifactVersion(artifact_id="a1", version_id="a1::3", n=3, content="local copy", head=True),
+            passages_result={"n": 2, "content": "older", "passages": [{"chunk_id": "doc::2::0", "line_from": 1, "line_to": 1}]},
+        )
+        out = await kit.artifact_read("a1")
+        assert "local copy" in out and "cite as" not in out
+
+    async def test_an_older_version_says_how_to_cite_it(self):
+        kit, mgr = tools(
+            version_result=ArtifactVersion(artifact_id="a1", version_id="a1::1", n=1, content="old text", head=False)
+        )
+        out = await kit.artifact_read("a1", version=1)
+        assert "old text" in out and "a1@1" in out
+        assert not any(c[0] == "passages" for c in mgr.calls)
+
+    async def test_the_labels_a_read_adds_are_never_written_back(self):
+        """Revising from the text it read, an agent would otherwise store
+        the labels as the page's own prose."""
+        kit, mgr = tools()
+        await kit.artifact_revise(
+            ref="a1", content="[cite as: doc::3::0]\n# Plan\n[cite as: doc::3::1]\nShip in June.",
+            sources=["doc::3::1"],
+        )
+        written = next(c for c in mgr.calls if c[0] == "revise")[2]
+        assert written == "# Plan\nShip in June."
 
     async def test_artifact_read_of_a_missing_artifact_says_so(self):
         kit, _ = tools(version_result=None)
@@ -483,6 +536,71 @@ class TestOneToolkitOneAgent:
         from ember_code.core.tools.artifacts import ARCHIVIST
 
         assert ARCHIVIST == "archivist"
+
+
+class TestThePromptNamesOnlyToolsThatExist:
+    """Every tool the archivist is told to call is one it is given.
+
+    ``artifact_edit_draft`` and ``artifact_publish_draft`` were defined,
+    implemented all the way down to the RPC, and never registered — so
+    the whole draft workflow was prose. The prompt told the agent to
+    answer a comment with ``artifact_edit_draft``, and
+    ``conversation.py`` routed every comment to it, while the manifest
+    the model actually saw carried neither. The agent's only options
+    were to publish a version nobody approved or to say it could not.
+
+    A prompt that names a tool the manifest does not carry is not a
+    typo, it is the defect class that cost the training corpus ~11,000
+    repaired traces — 5,615 of them prompts denying a tool their own
+    manifest carried. Checked here because the prompt and the
+    registration list are edited by different hands, months apart.
+    """
+
+    #: Backticked ``artifact_*`` identifiers in the prompt that name a
+    #: graph property rather than a tool.
+    NOT_TOOLS = frozenset({"artifact_id"})
+
+    def _named_in(self, path) -> set[str]:
+        import re
+        from pathlib import Path
+
+        body = Path(path).read_text(encoding="utf-8")
+        return set(re.findall(r"``?(artifact_[a-z_]+)`", body)) - self.NOT_TOOLS
+
+    def _prompt_path(self):
+        from pathlib import Path
+
+        import ember_code
+
+        return Path(ember_code.__file__).parent / "bundled_agents" / "archivist.md"
+
+    def test_every_tool_the_prompt_names_is_registered(self):
+        registered = set(ArtifactTools(FakeManager()).async_functions)
+        named = self._named_in(self._prompt_path())
+
+        assert named, "the prompt names no tools — the regex stopped matching"
+        assert named <= registered, (
+            f"archivist.md tells the agent to call {sorted(named - registered)}, "
+            "which the toolkit never registers"
+        )
+
+    def test_the_comment_route_names_a_registered_tool(self):
+        """Every comment made in the app is routed through this text."""
+        from pathlib import Path
+
+        from ember_code.core.artifacts import conversation
+
+        registered = set(ArtifactTools(FakeManager()).async_functions)
+        named = self._named_in(Path(conversation.__file__))
+
+        assert named, "the routing text names no tools — did it move?"
+        assert named <= registered
+
+    def test_drafting_and_publishing_are_both_reachable(self):
+        """Named explicitly, so deleting the regex above cannot pass."""
+        names = set(ArtifactTools(FakeManager()).async_functions)
+
+        assert {"artifact_edit_draft", "artifact_publish_draft"} <= names
 
 
 class TestArtifactCypher:

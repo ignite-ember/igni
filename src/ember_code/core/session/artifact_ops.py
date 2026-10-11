@@ -372,6 +372,15 @@ class SessionArtifactManager:
             return None
         return await self.artifacts.lineage(ref, n)
 
+    async def passages(self, ref: str) -> dict[str, Any] | None:
+        if self.artifacts is None:
+            return None
+        try:
+            return await self.artifacts.passages(ref)
+        except Exception as exc:  # noqa: BLE001 — a read without ids is still a read
+            logger.debug("passages unavailable for %s: %s", ref, exc)
+            return None
+
     async def ask_graph(self, question: str) -> str:
         """Answer a question about the graph, as text for the agent.
 

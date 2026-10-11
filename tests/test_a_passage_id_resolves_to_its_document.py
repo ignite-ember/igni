@@ -47,3 +47,31 @@ async def test_a_passage_id_never_seen_in_search_still_resolves_to_nothing():
 @pytest.mark.asyncio
 async def test_plain_ids_are_unaffected():
     assert (await _index().resolve("88a3e6040ef8320d")).name == "Postmortem"
+
+
+def test_a_cited_passage_is_written_against_this_clients_document():
+    """A passage id opens with the server's document id, and a pin keyed
+    by it was skipped by both the local graph and the server push as an
+    unknown source — so no passage citation had ever been recorded."""
+    from ember_code.core.artifacts.models import SourceDeclaration, VersionPin
+
+    index = _index()
+    index._passage_owners()["3cfe8a81-fc2c"] = "88a3e6040ef8320d"
+    declared = SourceDeclaration(pins=[
+        VersionPin.parse("3cfe8a81-fc2c::2::0"),
+        VersionPin.parse("3cfe8a81-fc2c::2::4"),
+    ])
+
+    pins = index._localise_passage_pins(declared).pins
+
+    assert len(pins) == 1, "two passages of one version are one edge"
+    assert pins[0].artifact_id == "88a3e6040ef8320d" and pins[0].n == 2
+    assert [p.chunk_id for p in pins[0].passages] == ["3cfe8a81-fc2c::2::0", "3cfe8a81-fc2c::2::4"]
+
+
+def test_a_passage_from_an_unseen_document_is_left_alone():
+    from ember_code.core.artifacts.models import SourceDeclaration, VersionPin
+
+    declared = SourceDeclaration(pins=[VersionPin.parse("ffffffff-0000::1::0")])
+
+    assert _index()._localise_passage_pins(declared).pins[0].artifact_id == "ffffffff-0000"

@@ -931,6 +931,21 @@ class CollaborationSync:
         response.raise_for_status()
         return dict(response.json())
 
+    async def passages(self, *, slug: str) -> dict[str, Any] | None:
+        """The current version's text and its citable passages.
+
+        ``{"n", "content", "passages": [{"chunk_id", "line_from",
+        "line_to"}]}``. The ids are the ones search shows, so a page
+        read in full can be cited by paragraph rather than only as a
+        whole. None when the server has no such document for this
+        reader, or predates the endpoint.
+        """
+        response = await self._request("GET", f"/v1/artifacts/shared/{slug}/passages")
+        if response.status_code in (404, 405):
+            return None
+        response.raise_for_status()
+        return dict(response.json())
+
     async def stale(self, *, limit: int = 50) -> list[dict[str, Any]]:
         """Documents of mine standing on something that has moved.
 
