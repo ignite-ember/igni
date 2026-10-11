@@ -52,13 +52,20 @@ class ToolEventHookFactory:
         project_dir: Path,
         hook_executor_ref: Callable[[], HookExecutor],
         session_id_ref: Callable[[], str],
+        permission_evaluator: PermissionEvaluator | None = None,
     ) -> None:
         self._settings = settings
         self._rules_index = rules_index
         self._project_dir = project_dir
         self._hook_executor_ref = hook_executor_ref
         self._session_id_ref = session_id_ref
-        self._permission_evaluator: PermissionEvaluator | None = None
+        # Seed for the paths that replace the whole factory (plugin
+        # hot-reload rebuilds it to pick up the new hook executor).
+        # Without this the replacement starts with an empty cache and
+        # rebuilds the evaluator from ``settings.permissions.mode`` —
+        # silently dropping a user out of plan mode, i.e. out of "do not
+        # touch my tree", because they installed a plugin.
+        self._permission_evaluator: PermissionEvaluator | None = permission_evaluator
 
     @property
     def permission_evaluator(self) -> PermissionEvaluator:

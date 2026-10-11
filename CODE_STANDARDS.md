@@ -1,10 +1,21 @@
 # igni Code — how the code is supposed to be written
 
-Companion to `CODE_AUDIT.md`. That doc grades what exists; this one
-prescribes what to write. Concrete patterns, drawn from the A-tier
-subsystems already in this repo (`core/mcp/`, `core/code_index/`,
-`core/config/permission_eval.py`, `core/guardrails/`, `chat/observerBusy.ts`).
-Anti-patterns drawn from the D-tier files in the audit.
+This doc prescribes what to write. Concrete patterns, drawn from the
+A-tier subsystems already in this repo (`core/mcp/`,
+`core/code_index/`, `core/config/permission_eval/`, `core/guardrails/`,
+`clients/web/src/chat/observerBusy.ts`). Anti-patterns drawn from the
+D-tier files of the same grading pass.
+
+This used to open by naming `CODE_AUDIT.md` — the companion that held
+the grades — as if it were sitting next to this file. It isn't: it was
+deleted in `c9ec46c`, and `docs/` has no equivalent. The pointer is
+removed rather than repointed, because nothing in the repo grades files
+any more. What survives of that pass is `REFACTOR_PROGRESS.md` at the
+repo root: it lists the D- and C-tier targets by name and tracks the
+rewrite of each. It is the only place the tiers referenced below are
+still written down, and it has drifted too (its rows still name
+`frontend/tui/` files that no longer exist) — read it as a record of
+what the grading pass found, not as a map of the current tree.
 
 Not universal software-engineering advice. This is how *this codebase*
 should look — chosen because it's what the existing best modules
@@ -104,9 +115,28 @@ Surface the gap.
 
 `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
 
-A commit written by a person alone carries no such trailer. This is the
-only accepted one: if a commit has a `Co-Authored-By` line at all, it
-must be that.
+A commit written by a person alone carries no such trailer. That is the
+one an author writes.
+
+There is a second accepted trailer, and nobody writes it:
+
+`Co-authored-by: dmytrozezyk <dev@example.com>`
+
+GitHub appends it to every squash merge, naming the author of the
+commits being squashed. It is the forge's record of who wrote the
+branch, not a claim anyone made in a commit message, and it cannot be
+declined without giving up squash merges. So the rule accepts exactly
+these two and nothing else: **if a commit carries a `Co-Authored-By`
+line, its address is one of the two above.**
+
+`dev@example.com` is a placeholder — it is whatever `git config
+user.email` says on the machine the branches are written on, and it has
+never been set to a real address. Setting one is the better fix, and it
+lands here: change the identity, then change the line above, and the
+test reads the new address out of this section. Until then the rule
+names the placeholder rather than pretending the history is clean,
+because a rule that disagrees with every merge commit is the decorative
+kind this one replaced.
 
 **What this rule said before, and why it changed.** It said commits use
 `Co-Authored-By: Ignite Ember <noreply@igniteember.sh>` — "Not Claude."
@@ -127,11 +157,16 @@ searchable when somebody later asks which changes were AI-assisted.
 
 (The old line also used `igniteember.sh`, unhyphenated, which is not a
 domain this project owns — everything else says `ignite-ember.sh`. A
-rule that has never run does not get its typos found.)
+rule that has never run does not get its typos found. Both spellings are
+rejected; the history contains the hyphenated one, so checking only the
+typo would have caught nothing.)
 
-`tests/test_the_commit_convention_is_followed.py` reads the trailer out
-of this section and checks it against the history, so this paragraph and
-the commits cannot drift apart again. It compares the **address**, not
+`tests/test_the_commit_convention_is_followed.py` reads both accepted
+trailers out of this section and checks them against the history, so this
+paragraph and the commits cannot drift apart again. It runs with
+`fetch-depth: 0` on the `test` job — before that it skipped itself on
+every CI run, because a shallow checkout gives the merge commit no
+parents and there is no history to hold to a rule. It compares the **address**, not
 the whole line: the history holds the same model with and without a
 `(1M context)` label, and failing a correct commit over a parenthetical
 nobody can go back and edit is how a rule earns being ignored.
@@ -249,13 +284,15 @@ function cancel() {
 }
 ```
 
-The TUI's `run_controller.py` already does this (line 164:
-`_processing = False` immediately on cancel). The web's `App.tsx`
-diverged — same shape of bug, same fix pattern.
+`backend/run_controller.py` already does this. It holds a `RunPhase`
+enum (`backend/schemas_run.py`) behind a single `_transition_to`
+writer, and `is_processing()` derives from it rather than tracking a
+`_processing` bool of its own. The TUI that used to be cited here for
+the same pattern is gone; the pattern outlived it.
 
-Applies to server-side too: `BackendServer._processing` +
-`_current_run_task` + `_finalizing`-adjacent flags should be one
-Pydantic `RunPhase` field. Every derivation reads from it.
+Still to do on the server side: `BackendServer` keeps
+`_current_run_task` alongside the controller's phase. Anything that
+derives "is a run in flight" should read the phase.
 
 ### Pattern 2: typed events over dict payloads — the code_index model
 
@@ -267,8 +304,8 @@ what fields they'll see. Any producer change silently breaks consumers.
 constrained by `Literal`. Dispatch is `isinstance` or a match statement,
 not `event["type"] == "..."`.
 
-`core/code_index/delta.py` is the canonical example. One JSONL delta
-file with typed ops:
+`core/code_index/delta/ops.py` is the canonical example. One JSONL
+delta file with typed ops:
 
 ```python
 class CommitOp(BaseModel):
@@ -293,7 +330,7 @@ DeltaOp = CommitOp | UpsertItemOp | DeleteItemOp | ...
 Apply this to:
 - session event log (`session_data.event_log[]`) — one Pydantic
   subclass per event type
-- wire messages (`protocol/messages.py` already does this — keep going)
+- wire messages (`protocol/schemas/` already does this — keep going)
 - orchestrate progress events (currently untyped dicts — needs
   migration to `OrchestrateEvent` union)
 
@@ -308,7 +345,7 @@ missing, resource not found), return a `Result` model that carries
 the error. Reserve exceptions for programming bugs and truly
 exceptional cases.
 
-`core/code_index/sync_manager.py` and `fetcher.py` are the pattern:
+`core/code_index/sync/manager.py` and `fetcher.py` are the pattern:
 
 ```python
 class SyncResult(BaseModel):
@@ -431,7 +468,7 @@ Applies to both FE (React `useEffect` on phase change) and BE (an
 
 `core/code_index/` has this right: `schema/` holds Pydantic domain
 models (typed quality fields, categorical enums, no `tags` bag).
-`pg/` holds SQLAlchemy services (persistence). `delta.py` holds the
+`db/` holds SQLAlchemy services (persistence). `delta/ops.py` holds the
 wire format (JSONL ops). `index.py` orchestrates.
 
 The four layers don't share types. Wire message → parsed to schema
@@ -534,29 +571,37 @@ handle.
 
 When adding new code, model it on these files, not the D-tier ones.
 
+Four of the paths this section used to name are gone — all four in the
+same commit, `7909bcf`. Three were single modules that grew past
+Pattern 8's ~300-LoC line and were split into packages; the fourth
+(`pg/`) was a package that got renamed. That is the standard working,
+not the standard breaking, so each is repointed below at what it
+became rather than dropped. Every replacement was read before being
+cited here.
+
 ### For a new event type
-- **Model:** `core/code_index/delta.py` — typed op union.
-- **Wire:** `protocol/messages.py` — Pydantic messages with `type: Literal[...]`.
+- **Model:** `core/code_index/delta/ops.py` — typed op union. (Was `delta.py`; the module became the `delta/` package, and `ops.py` is the part that held the union. It is now a `Field(discriminator="op")` tagged union driven by one `TypeAdapter`, with the per-op behaviour as methods on the ops.)
+- **Wire:** `protocol/schemas/be_events.py` — Pydantic messages with `type: Literal[...]`. (`protocol/messages.py` still exists but is a re-export shim now; the schemas live in `protocol/schemas/`, split by direction and concern.)
 
 ### For a new small pure reducer
 - **Model:** `clients/web/src/chat/observerBusy.ts` — testable pure function, one thing.
 - **Model:** `clients/web/src/chat/visualizationStream.ts` — partial JSON reducer.
 
 ### For a new subsystem manager
-- **Model:** `core/mcp/client.py` — async client, async client class, no globals.
-- **Model:** `core/plugins/loader.py` — six-root discovery with priority, namespace-prefixed apply.
-- **Model:** `core/code_index/sync_manager.py` — single orchestration entry, `Result(error=...)` returns, no raises for expected failures.
+- **Model:** `core/mcp/client.py` — async client class, no globals; every concern a named collaborator, and `connect()` returns an explicit `MCPConnectResult`.
+- **Model:** `core/plugins/loader.py` — seven-root discovery with priority, namespace-prefixed apply.
+- **Model:** `core/code_index/sync/manager.py` — single orchestration entry, `SyncResult` returns, no raises for expected failures. (Was `sync_manager.py`, which survives only as a re-export shim — the coordinator plus its five domain classes live in `sync/`.)
 
 ### For a new eval/rule
-- **Model:** `core/config/permission_eval.py` — pure module, no I/O, no network, no interactive prompts. Rules parsed once, evaluation is a pure function.
+- **Model:** `core/config/permission_eval/` — pure package, no I/O, no network, no interactive prompts. Rules parsed once; `pipeline.py` walks the six evaluation steps and `strategies.py` holds one strategy subclass per mode instead of an `if/elif` ladder. (Was a single `permission_eval.py`.)
 - **Model:** `core/guardrails/injection.py` — regex list + `Guardrail` protocol implementation, ~50 LoC.
 
 ### For a new persistence layer
-- **Model:** `core/code_index/pg/*.py` — SQLAlchemy service per domain, indexed columns for real filter queries.
-- **Model:** `core/session/persistence.py` — `_upsert_session_data_key` chokepoint, atomic-replace semantics documented.
+- **Model:** `core/code_index/db/*.py` — SQLAlchemy service per domain, indexed columns for real filter queries. (Was `pg/`, deleted in `7909bcf`; `db/` was added in the same commit with the same file-per-domain shape — `commit_metadata.py`, `file_reference.py`, `models.py`. The name no longer claims Postgres: each service dispatches on its backend, SQLite or Neo4j.)
+- **Model:** `core/session/persistence/data_service.py` — `SessionDataService.read_key` / `write_key`, the single lock-held load-modify-write chokepoint over the Agno session blob, returning `LoadResult` / `PersistResult` rather than raising. (This is what the old `persistence.py` `_upsert_session_data_key` became.) Atomic-replace semantics are documented on the stores that compose it — `event_log_store.py`, `todos_store.py`.
 
 ### For a new tool
-- **Model:** `core/tools/edit.py` — 166 LoC, one class, one thing.
+- **Model:** `core/tools/edit.py` — 272 LoC: a toolkit, its `EditResult` model, and a `FileEditNotifier` that owns the edit-notification callback on an instance instead of a module-level mutable global.
 - **Model:** `core/tools/monitors.py` — read + control paths clearly separated, "agent cannot START a monitor that isn't declared" security note.
 
 ### For a new agent

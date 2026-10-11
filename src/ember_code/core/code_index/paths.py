@@ -8,10 +8,12 @@ Single source of truth for where state lives on disk:
         state.db                        # PROJECT: scheduler, sessions
         knowledge.chroma/               # LEGACY: pre-Neo4j knowledge
         code_index/
-          manifest.json                 # LEGACY
+          manifest.json                 # LIVE: head sha, commit list, branch pins
+          .neo4j_migrated               # the cutover's per-project marker
           <sha>.chroma/                 # LEGACY: pre-Neo4j code vectors
       neo4j/
-        state/<project_id>/.migrated    # the cutover's per-project marker
+        state/<project_id>-<sha>/       # PER-COMMIT: one Neo4j store per commit
+        state/<project_id>-knowledge/   # PER-PROJECT: the knowledge store
 
 The data root is configurable (``settings.storage.data_dir``); defaults
 to ``~/.igni``.
@@ -22,8 +24,9 @@ Nothing writes them. ``chromadb`` is not imported anywhere and is no
 longer a dependency; vectors live in the Neo4j sidecar. The helpers
 below survive because :mod:`ember_code.core.code_index.cutover` still
 has directories to delete — the cutover is **per-project and lazy**,
-gated on a sentinel under ``neo4j/state/``, so a project nobody has
-opened since it shipped still holds its old ones.
+gated on the sentinel that :func:`neo4j_migrated_marker_path` returns
+(in the project's own ``code_index/``), so a project nobody has opened
+since it shipped still holds its old ones.
 
 They are named ``legacy_`` for that reason: a caller reaching for one
 outside the cutover is almost certainly measuring or reading something
@@ -96,6 +99,23 @@ def neo4j_data_dir(data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
     return data_root(data_dir) / "neo4j"
 
 
+# The slug the backend runtime uses for the per-project knowledge store
+# (``<project_hash>-knowledge``). It sits in the same ``state/`` directory as
+# the per-commit slugs and is not a commit, so anything enumerating that
+# directory has to skip it — retention would otherwise read it as an untracked
+# commit and delete the project's knowledge graph.
+NEO4J_KNOWLEDGE_SLUG: str = "knowledge"
+
+
+def neo4j_state_root(data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
+    """Directory holding one sub-directory per Neo4j process.
+
+    Enumerable on purpose: this is where per-commit stores accumulate, and
+    retention needs to see the ones the manifest no longer tracks.
+    """
+    return neo4j_data_dir(data_dir) / "state"
+
+
 def neo4j_runtime_dir(
     project: str | Path, commit_sha: str, *, data_dir: str | Path = DEFAULT_DATA_DIR
 ) -> Path:
@@ -106,7 +126,7 @@ def neo4j_runtime_dir(
     own isolated Neo4j process/store.
     """
     slug = f"{resolve_project_id(project)}-{commit_sha}"
-    return neo4j_data_dir(data_dir) / "state" / slug
+    return neo4j_state_root(data_dir) / slug
 
 
 def neo4j_auth_file(

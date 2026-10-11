@@ -38,6 +38,8 @@ over-fetch and re-rank client-side.
 
 from __future__ import annotations
 
+import re
+
 # ── Single-DB schema ────────────────────────────────────────────────────
 
 
@@ -46,27 +48,6 @@ from __future__ import annotations
 # don't need (and on Community Edition, *can't*) issue
 # ``CREATE DATABASE``. Single constant, single source of truth.
 DEFAULT_DATABASE: str = "neo4j"
-
-
-# Prefix for the per-project logical DB identifier. Every project
-# is scoped by ``project_hash`` and conceptually lives in
-# ``codeindex_<project_hash>``. The "DB" is a scope / label on
-# the shared physical DB. On Enterprise Edition, this would map
-# 1:1 to a ``:USE codeindex_<proj>`` session; on Community
-# Edition, the ``project_hash`` property does the same job.
-PROJECT_DB_PREFIX: str = "codeindex_"
-
-
-def project_db_name(project_id: str) -> str:
-    """The logical DB name for one project's scope.
-
-    Used as a label / prefix in logs and the migration
-    metadata. On Enterprise Edition, this would also be the
-    real database name passed to ``session(database=...)``. On
-    Community Edition, all projects share the default DB and
-    this name is purely informational.
-    """
-    return f"{PROJECT_DB_PREFIX}{project_hash_short(project_id)}"
 
 
 COMMIT_SCHEMA_STATEMENTS: tuple[str, ...] = (
@@ -83,13 +64,19 @@ COMMIT_SCHEMA_STATEMENTS: tuple[str, ...] = (
     # (project_hash, id) is enforced at the MERGE layer.
     # Drop any pre-existing constraints first (index and constraint
     # share the name space; we migrated from constraints to indexes).
-    # Use new index names to avoid "equivalent already exists" conflicts.
+    # The new indexes carry new names (``*_idx``) so this never hits an
+    # "equivalent index already exists" conflict with the constraints'
+    # backing indexes. This DROP trio is the one-way constraints→indexes
+    # migration; everything below is IF NOT EXISTS and re-applies cleanly.
+    #
+    # Do NOT add "DROP INDEX item_idx/chunk_idx/entry_idx IF EXISTS" here.
+    # Those lines existed and could only ever drop the index the very next
+    # statement rebuilds — so every apply_schema() (once per Neo4j process
+    # start) tore down and re-populated the three hot-path lookups, and the
+    # two docstrings promising an idempotent, resumable apply were false.
     "DROP CONSTRAINT item_pk IF EXISTS",
     "DROP CONSTRAINT chunk_pk IF EXISTS",
     "DROP CONSTRAINT entry_pk IF EXISTS",
-    "DROP INDEX item_idx IF EXISTS",
-    "DROP INDEX chunk_idx IF EXISTS",
-    "DROP INDEX entry_idx IF EXISTS",
     "CREATE INDEX item_idx IF NOT EXISTS FOR (i:Item) ON (i.item_id)",
     "CREATE INDEX chunk_idx IF NOT EXISTS FOR (c:Chunk) ON (c.chunk_id)",
     "CREATE INDEX entry_idx IF NOT EXISTS FOR (e:Entry) ON (e.entry_id)",
@@ -266,22 +253,75 @@ ARTIFACT_SCHEMA_STATEMENTS: tuple[str, ...] = (
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
+# ── Index catalogue (rendered into the schema description) ───────────
+#
+# The "## Indexes" section of GRAPH_SCHEMA_DESCRIPTION is generated from
+# the DDL above instead of written by hand. The hand-written list drifted
+# into fiction: it named five indexes nothing creates (``item_pk``,
+# ``chunk_pk`` — which exist in this file only as DROP CONSTRAINT —
+# ``commit_pk``, ``meta_pk``, ``meta_project``) and omitted eighteen that
+# do exist, including every counted-fact index the ranking queries in the
+# same document tell the agent to ORDER BY. Generating it means a new
+# CREATE INDEX line reaches the agent's prompt without a second edit.
+
+_INDEX_DDL_RE = re.compile(
+    r"CREATE (?P<kind>VECTOR |FULLTEXT )?INDEX (?P<name>\w+) IF NOT EXISTS "
+    r"FOR (?P<target>\(\)-\[[^\]]*\]-\(\)|\([^)]*\)) ON (?:EACH )?"
+    r"(?P<props>\[[^\]]*\]|\([^)]*\))"
+)
+
+_INDEX_KIND_LABELS = {"": "B-tree", "VECTOR ": "vector", "FULLTEXT ": "full-text"}
+
+# Notes only where the name does not say it. Anything not listed renders
+# as "<kind> on :Label(property)", which is the whole story for it.
+_INDEX_NOTES: dict[str, str] = {
+    "item_idx": "the hot-path item lookup",
+    "chunk_embedding": "384-dim cosine HNSW — semantic search",
+    "entry_embedding": "384-dim cosine HNSW — knowledge search",
+    "item_project": "the scoping filter",
+    "chunk_text": "Lucene term search — the only one that can return nothing",
+    "commit_project_sha": "admin queries",
+    "commit_last_used": "retention",
+    "meta_project_key": "admin queries (head, branch pins)",
+}
 
 
-def project_hash_short(project_id: str) -> str:
-    """Truncate an already-hashed project id to 12 chars for log readability.
+def created_indexes() -> tuple[tuple[str, str, str, str], ...]:
+    """Every index the DDL creates, as ``(name, kind, target, properties)``.
 
-    ``resolve_project_id`` returns a 16-char SHA-256 prefix; this
-    helper takes the first 12 so log lines that include the hash
-    stay readable.
+    ``target`` is the Cypher-ish pattern the index is on — ``:Item`` for a
+    node index, ``[:REL]`` for a relationship one, so the rendered list
+    cannot be read as "MATCH (r:REL)". Parsed from the statement tuples so
+    the catalogue cannot disagree with what ``apply_schema`` actually builds.
     """
-    return project_id[:12]
+    out: list[tuple[str, str, str, str]] = []
+    for stmt in (*COMMIT_SCHEMA_STATEMENTS, *META_SCHEMA_STATEMENTS):
+        match = _INDEX_DDL_RE.search(stmt)
+        if match is None:
+            continue
+        label_match = re.search(r":(\w+)", match["target"])
+        label = label_match.group(1) if label_match else ""
+        target = f"[:{label}]" if match["target"].startswith("()-[") else f":{label}"
+        props = ", ".join(
+            part.strip().split(".")[-1] for part in match["props"].strip("()[]").split(",")
+        )
+        out.append((match["name"], _INDEX_KIND_LABELS[match["kind"] or ""], target, props))
+    return tuple(out)
+
+
+def _render_index_list() -> str:
+    lines = []
+    for name, kind, target, props in created_indexes():
+        note = _INDEX_NOTES.get(name)
+        suffix = f" — {note}" if note else ""
+        lines.append(f"- ``{name}`` — {kind} on ``{target}({props})``{suffix}")
+    return "\n".join(lines)
 
 
 # ── Graph schema description (for AI Cypher authors) ───────────────────
 
 
-GRAPH_SCHEMA_DESCRIPTION: str = """\
+_SCHEMA_PROLOGUE: str = """\
 # CodeIndex graph schema (Neo4j)
 
 ## Per-(project, commit) processes
@@ -298,13 +338,15 @@ commit-scoping properties on items or edges, no
 ## Nodes
 
 ### :Item
-- ``item_id`` (str, NODE KEY) — stable across commits
-- ``project_hash`` (str) — 16-char SHA-256 prefix of the project. **Do not
-  filter on it.** It is an opaque hash, not the repository's name, and the
-  per-(project, commit) process already scopes every query — a
-  ``WHERE i.project_hash STARTS WITH 'myrepo'`` matches nothing and returns an
-  empty result that looks like a real answer. Measured: agents wasted queries on
-  exactly this in 3 of 12 evaluation runs.
+- ``item_id`` (str, indexed) — stable across commits
+- ``project_hash`` (str) — 16-char SHA-256 prefix identifying the project.
+  **You do not need to filter on it** (see "Scoping rules"). If you do, the only
+  forms that work are ``{project_hash: $proj}`` and ``WHERE i.project_hash =
+  $proj``, and ``$proj`` is injected for you. **Never write a literal for it**:
+  it is an opaque hash, not the repository's name, so ``WHERE i.project_hash
+  STARTS WITH 'myrepo'`` matches nothing and returns an empty result that looks
+  like a real answer. Measured: agents wasted queries on exactly this in 3 of 12
+  evaluation runs.
 - ``name``, ``type``, ``kind``, ``entity_type``, ``parent_id``,
   ``file_extension``, ``repository_id``, ``path``, ``archived``,
   ``timestamp``, ``token_count``, ``line_from``, ``line_to``
@@ -468,7 +510,7 @@ is counted from the parse tree and the reference graph and is stable across runs
 - ``meta`` (map) — per-item metadata (line ranges, etc.)
 
 ### :Chunk
-- ``chunk_id`` (str, NODE KEY)
+- ``chunk_id`` (str, indexed)
 - ``parent_id`` (str) → :Item
 - ``embedding`` (list[float], 384-dim) — vector-indexed
 - ``text`` — full-text indexed (index name ``chunk_text``)
@@ -579,18 +621,18 @@ RETURN DISTINCT dep.path AS path LIMIT 200
 ```
 
 ### :Entry (knowledge)
-- ``entry_id`` (str, NODE KEY)
+- ``entry_id`` (str, indexed)
 - ``project_hash`` (str)
 - ``name``, ``source``, ``kind``, ``content``, ``created_at``
 - arbitrary metadata fields (whatever the cloud provides)
 
 ### :Commit
-- ``(project_hash, sha)`` (composite NODE KEY)
+- ``(project_hash, sha)`` (composite index)
 - ``created_at``, ``last_used_at``
 - One per process. Admin queries only.
 
 ### :Meta
-- ``(project_hash, key)`` (composite NODE KEY)
+- ``(project_hash, key)`` (composite index)
 - ``value``
 
 ## Edges
@@ -607,9 +649,29 @@ per-commit.
 
 ## Scoping rules
 
-**Project scope:** always pass ``project_hash`` on every query
-to scope to one project. (Multi-tenant queries without this
-filter would leak across projects.)
+**Project scope: you do not need it.** One process holds exactly
+one ``(project, commit)``, so the process boundary is what
+isolates you — the graph you are querying contains no other
+project's nodes, and a bare ``MATCH (i:Item)`` cannot reach one.
+Omitting the predicate is correct, not sloppy, and
+``cypher_guard`` does not check for it.
+
+Writing it is harmless, and ``$proj`` is bound for you. If you do,
+the only forms that work are ``{project_hash: $proj}`` and
+``WHERE i.project_hash = $proj``. **Never substitute a literal.**
+It is an opaque 16-char hash, not the repository's name, so
+``WHERE i.project_hash STARTS WITH 'myrepo'`` matches nothing and
+returns an empty result that reads like a real answer. Measured:
+agents lost queries to exactly that in 3 of 12 evaluation runs.
+
+**The project filter applies to ``:Item``, ``:Entry``, ``:Commit``
+and ``:Meta``.** ``:Chunk`` nodes carry **no** ``project_hash``
+property at all — they are reached through their parent, and that
+parent is what scopes them:
+``MATCH (i:Item {project_hash: $proj})-[:HAS_CHUNK]->(c:Chunk)``.
+Adding ``{project_hash: $proj}`` to a chunk ``MATCH``, or to the
+``WHERE`` after a ``chunk_text`` / ``chunk_embedding`` call, matches
+nothing and returns an empty result that reads like a real answer.
 
 **Commit scope:** handled by the process. You don't need to
 filter by ``commit_sha`` in queries — the process only has
@@ -618,20 +680,9 @@ one commit's data. If you do query by ``commit_sha`` on a
 
 ## Indexes
 
-- ``item_pk`` (NODE KEY on :Item.item_id) — the hot path lookup
-- ``chunk_pk`` (NODE KEY on :Chunk.chunk_id)
-- ``commit_pk`` (composite on :Commit) — admin queries
-- ``meta_pk`` (composite on :Meta) — admin queries
-- ``item_project`` (B-tree on :Item.project_hash) — cross-project
-- ``commit_project_sha`` (B-tree on :Commit) — admin
-- ``commit_last_used`` (B-tree on :Commit.last_used_at) — retention
-- ``item_path``, ``item_type``, ``item_kind``, ``item_parent``,
-  ``item_entity_type``, ``item_archived`` — typed filters
-- ``rel_kind`` (B-tree on :REL.kind) — relation kind filter
-- ``chunk_embedding`` / ``entry_embedding`` — vector indexes
-  (384-dim cosine, HNSW)
-- ``entry_project``, ``entry_kind``, ``entry_source``
-- ``meta_project``
+"""
+
+_SCHEMA_EPILOGUE: str = """\
 
 ## How AI should write custom Cypher
 
@@ -651,11 +702,16 @@ Example::
     for record in result:
         print(record['i'])
 
-Always pass ``project_hash`` to scope to one project. Use the
-indexes for performance (filter on indexed properties first).
-Do NOT try to scope by ``commit_sha`` — the process IS the
-scope, and there's no commit-scoping property on items.
+Scoping is the process, not a predicate: one process holds one
+``(project, commit)``, so neither ``project_hash`` nor
+``commit_sha`` needs to appear in your query. If you do write
+``project_hash``, ``$proj`` is bound for you and a literal
+matches nothing. Use the indexes for performance (filter on
+indexed properties first).
 """
+
+
+GRAPH_SCHEMA_DESCRIPTION: str = _SCHEMA_PROLOGUE + _render_index_list() + _SCHEMA_EPILOGUE
 
 
 def graph_schema() -> str:

@@ -47,7 +47,10 @@ const EDIT_TOOL_NAMES: ReadonlySet<string> = new Set([
  * When the agent asks about a file-edit tool and the session is in
  * default mode, an extra full-width button appears in its own row:
  * *"Accept all edits during this session"*. Clicking it confirms
- * every remaining requirement in the batch AND invokes
+ * every remaining *file-edit* requirement in the batch — anything
+ * else (a ``run_shell_command``, say) is left for the user to see
+ * and answer, because the dialog only ever renders the requirement
+ * at the cursor — AND invokes
  * ``onAcceptEditsThisRun`` so the parent can flip into acceptEdits
  * for the duration of the current run (the parent auto-reverts
  * when the agent finishes — see ``App.tsx``). Hidden when the
@@ -78,13 +81,31 @@ export function HitlDialog({
   const req = requirements[index];
   if (!req) return null;
 
+  /** Index of the next requirement the user still has to answer, or
+   *  ``-1`` when the batch is complete.
+   *
+   *  Skips anything already present in ``decided`` rather than just
+   *  stepping ``index + 1``: the acceptEdits shortcut answers the
+   *  edit-tool requirements *ahead* of the cursor in one go, so a
+   *  naive increment would re-prompt for a requirement that already
+   *  has a decision and submit it twice. */
+  const nextUndecided = (from: number, decided: HitlDecision[]) => {
+    const answered = new Set(decided.map((d) => d.requirement_id));
+    for (let i = from + 1; i < requirements.length; i++) {
+      const candidate = requirements[i];
+      if (candidate && !answered.has(candidate.requirement_id)) return i;
+    }
+    return -1;
+  };
+
   const decide = (action: "confirm" | "reject", choice: string) => {
     const next = [...decisions, { requirement_id: req.requirement_id, action, choice }];
-    if (index + 1 < requirements.length) {
-      setDecisions(next);
-      setIndex(index + 1);
-    } else {
+    const nextIdx = nextUndecided(index, next);
+    if (nextIdx === -1) {
       onResolve(next);
+    } else {
+      setDecisions(next);
+      setIndex(nextIdx);
     }
   };
 
@@ -111,13 +132,32 @@ export function HitlDialog({
       choice: "once",
       set_permission_mode: "acceptEdits",
     };
-    const rest = requirements.slice(index + 1).map((r) => ({
-      requirement_id: r.requirement_id,
-      action: "confirm" as const,
-      choice: "once",
-    }));
+    // ONLY the edit tools in the rest of the batch. The button says
+    // "Accept all EDITS"; a HITL batch is heterogeneous (the BE packs
+    // every pending requirement of the turn into one message), so an
+    // unfiltered blanket-confirm here would silently approve a
+    // ``run_shell_command`` the user never saw — ``HitlArgsView``
+    // only ever renders the requirement at ``index``, and resolving
+    // immediately meant the skipped ones were never drawn. The
+    // non-edit requirements stay unanswered and the dialog steps to
+    // the first of them below.
+    const rest = requirements
+      .slice(index + 1)
+      .filter((r) => EDIT_TOOL_NAMES.has(r.tool_name))
+      .map((r) => ({
+        requirement_id: r.requirement_id,
+        action: "confirm" as const,
+        choice: "once",
+      }));
+    const next = [...decisions, head, ...rest];
     onAcceptEditsThisRun?.();
-    onResolve([...decisions, head, ...rest]);
+    const nextIdx = nextUndecided(index, next);
+    if (nextIdx === -1) {
+      onResolve(next);
+    } else {
+      setDecisions(next);
+      setIndex(nextIdx);
+    }
   };
 
   return (

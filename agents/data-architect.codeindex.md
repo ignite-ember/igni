@@ -327,4 +327,4 @@ not belong in the answer.
 
 ## Trust the tags — surface, don't second-guess
 
-Quality dimensions come from an LLM analysis pass in ember-server; consistency + grounding validators keep them aligned with the narrative sections before they land in Neo4j. If `analysis_quality` is present and not `'ok'`, note that in your response — don't hide it. Do NOT override `security: critical` when the DB says so; the analyzer saw the code and made a call. When ambiguous, report the tag AND pull the `security_analysis` section so the caller can reconcile.
+Quality dimensions come from an LLM analysis pass in the igni server; consistency + grounding validators keep them aligned with the narrative sections before they land in Neo4j. If `analysis_quality` is present and not `'ok'`, note that in your response — don't hide it. Do NOT override `security: critical` when the DB says so; the analyzer saw the code and made a call. When ambiguous, report the tag AND pull the `security_analysis` section so the caller can reconcile.

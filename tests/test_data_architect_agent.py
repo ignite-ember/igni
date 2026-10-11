@@ -26,8 +26,60 @@ from ember_code.core.agents.schemas import AgentDefinition
 from ember_code.core.code_index.index import CodeIndex
 from ember_code.core.tools.codeindex.tool import CodeIndexTools
 
-AGENTS_DIR = Path(__file__).resolve().parent.parent / "agents"
+#: What ships — ``src/ember_code/bundled_agents/`` is what the wheel carries and
+#: what a user's session loads. The repo-root ``agents/`` directory is the
+#: editing copy, and this file used to pin that one: SWP-13 found the graph-
+#: schema placeholder present in ``agents/`` and absent from all eight bundled
+#: files, with a passing test over the copy nobody runs. Pinned to the shipped
+#: tree, with the two asserted identical so the drift cannot open again.
+AGENTS_DIR = Path(__file__).resolve().parent.parent / "src" / "ember_code" / "bundled_agents"
+REPO_AGENTS_DIR = Path(__file__).resolve().parent.parent / "agents"
 DATA_ARCH = AGENTS_DIR / "data-architect.codeindex.md"
+
+
+class TestTheShippedCopyIsTheOneTested:
+    def test_the_bundled_file_is_what_exists(self):
+        assert DATA_ARCH.is_file(), f"{DATA_ARCH} is what a session loads and it is missing"
+
+    def test_the_editing_copy_has_not_drifted_from_it(self):
+        """The two are maintained by hand. A test over only one of them is how
+        the schema placeholder came to be in the repo copy and in none of the
+        shipped ones."""
+        repo_copy = REPO_AGENTS_DIR / "data-architect.codeindex.md"
+        if not repo_copy.is_file():
+            return
+        assert repo_copy.read_text() == DATA_ARCH.read_text(), (
+            "agents/data-architect.codeindex.md and the bundled copy differ — "
+            "the bundled one is what ships"
+        )
+
+    def test_no_editing_copy_has_drifted(self):
+        """Pinning one file left the other sixteen free to rot, and they did.
+
+        Every ``agents/*.md`` with a bundled counterpart had drifted: all of
+        them still said ``grep_files`` / ``glob_files`` — retired in
+        ``0bdfc28`` — and ``ember.md`` / ``ember-code``, from before the rename.
+        Nothing is loaded from this directory (the loader reads
+        ``project_dir/.igni/agents``), so none of it reached a session; but
+        ``scripts/run_evals_smoke.py`` and
+        ``scripts/_repro_explorer_no_tool_calls.py`` read ``agents/editor.md``
+        and ``agents/explorer.md`` directly, and were measuring prompts that
+        teach tools the registry raises on.
+
+        Files that exist only in ``bundled_agents/`` are not required here —
+        the editing copy is allowed to be a subset. It is not allowed to
+        disagree.
+        """
+        drifted = [
+            shipped.name
+            for shipped in sorted(AGENTS_DIR.glob("*.md"))
+            if (REPO_AGENTS_DIR / shipped.name).is_file()
+            and (REPO_AGENTS_DIR / shipped.name).read_text() != shipped.read_text()
+        ]
+        assert not drifted, (
+            f"{len(drifted)} editing copies differ from what ships: {drifted}. "
+            "The bundled tree is authoritative — copy it over, don't edit here."
+        )
 
 
 class TestDataArchitectParsing:

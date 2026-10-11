@@ -38,9 +38,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from ember_code.core.config.group_policy import GroupPolicyPack
     from ember_code.core.config.models import CliOverrides
 
 from ember_code.core.config.model_entry import CLOUD_TOKEN_SENTINEL, ModelRegistryEntry
@@ -170,6 +173,23 @@ class Settings(BaseModel):
     #       compatible telemetry endpoint (e.g. telemetry.enabled, telemetry.endpoint).
     #       igni server does not collect CLI telemetry — usage is tracked server-side.
 
+    @model_validator(mode="after")
+    def _carry_confirm_commands_into_permissions(self) -> Settings:
+        """Hand ``safety.require_confirmation`` to the block that is read.
+
+        The list is documented in MIGRATION.md as where a Claude Code
+        ``"ask": ["Bash(git push *)"]`` rule goes, and no code in ``src`` read
+        it — the live permission path builds its evaluator from
+        ``settings.permissions`` alone, so the eight commands there (including
+        ``git push --force``, ``terraform apply`` and ``kubectl delete``) were
+        inert. Copied rather than merged into ``permissions.ask`` so the user's
+        own ask list stays exactly what the user wrote, and so the two can
+        still be told apart when something asks why a call prompted. See
+        ``PermissionsConfig._confirmation_ask_rules``.
+        """
+        self.permissions.confirm_commands = list(self.safety.require_confirmation)
+        return self
+
     @classmethod
     def defaults(cls) -> Settings:
         """Return a fresh ``Settings`` populated entirely from the
@@ -251,6 +271,7 @@ class Settings(BaseModel):
 def load_settings(
     cli_overrides: CliOverrides | dict[str, Any] | None = None,
     project_dir: Path | None = None,
+    group_policy_fetcher: Callable[[], GroupPolicyPack | None] | None = None,
 ) -> Settings:
     """Load settings by merging the 5-tier precedence stack.
 
@@ -274,8 +295,23 @@ def load_settings(
     the entry point onto the class only would break those tests
     silently. This is the ONLY surviving module-level function; every
     other former shim now lives as a method on a class.
+
+    ``group_policy_fetcher`` returns the org's
+    :class:`~ember_code.core.config.group_policy.GroupPolicyPack`, whose
+    ``settings`` entries become the tier between CLI and managed policy.
+    :meth:`SettingsLoader.load` has taken one since the tier was written; this
+    facade dropped it, and this facade is what production calls — so an admin
+    publishing ``{"code_index": {"enabled": false}}`` could not have it applied
+    even by a caller that wanted to. Production now passes
+    :class:`~ember_code.core.config.group_policy.CachedSettingsFetcher` from
+    ``BackendApp.run`` and ``load_settings_from_options``; callers that want no
+    org policy (tests, tooling) simply leave it ``None``.
     """
-    return SettingsLoader.load(cli_overrides=cli_overrides, project_dir=project_dir)
+    return SettingsLoader.load(
+        cli_overrides=cli_overrides,
+        project_dir=project_dir,
+        group_policy_fetcher=group_policy_fetcher,
+    )
 
 
 __all__ = [

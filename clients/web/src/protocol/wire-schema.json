@@ -423,6 +423,7 @@
       "resources",
       "tool_descriptions",
       "tool_names",
+      "tools_disabled",
       "transport"
     ],
     "pending_message": [

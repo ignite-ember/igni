@@ -24,6 +24,7 @@ working without touching call sites.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -33,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 from agno.agent import Agent
 
 from ember_code.core.config.models import ModelRegistry
+from ember_code.core.config.schemas.llm_behavior import EvalsConfig
 from ember_code.core.evals.agno_adapter import AgnoResponseAdapter
 from ember_code.core.evals.assertion_runner import (
     AssertionContext,
@@ -75,6 +77,13 @@ class CaseRunner:
     ``response.messages`` with tool calls from earlier cases. The
     reliability check then sees a mishmash of tools and reports false
     failures. Pass a fresh UUID per case to isolate.
+
+    ``default_timeout`` is the fallback wall-clock budget (seconds) for
+    the whole case — the agent run *and* every assertion driver. The
+    case's own ``case_timeout:`` wins when set; ``None``/``0`` on both
+    means no timeout. Exceeding it yields a failed :class:`CaseResult`
+    with a ``case_timeout:`` error, never a raised exception — a hung
+    case must not take the rest of the suite down with it.
     """
 
     def __init__(
@@ -87,6 +96,7 @@ class CaseRunner:
         catalog: ToolNameCatalog | None = None,
         assertion_runner: CaseAssertionRunner | None = None,
         allow_additional_tool_calls: bool = False,
+        default_timeout: float | None = None,
     ) -> None:
         self._case = case
         self._agent = agent
@@ -96,19 +106,54 @@ class CaseRunner:
         self._catalog = catalog or DEFAULT_CATALOG
         self._assertion_runner = assertion_runner or CaseAssertionRunner()
         self._allow_additional_tool_calls = allow_additional_tool_calls
+        self._default_timeout = default_timeout
+
+    @property
+    def timeout(self) -> float | None:
+        """Effective per-case budget in seconds, or ``None`` for unbounded.
+
+        Per-case override wins: long tasks-mode / multi-specialist cases
+        pin a bigger ``case_timeout`` in their YAML rather than inflating
+        the default for everyone.
+        """
+        raw = self._case.case_timeout or self._default_timeout
+        if raw is None or raw <= 0:
+            return None
+        return float(raw)
 
     async def run(self) -> CaseResult:
         """Execute the case end-to-end and return the populated result."""
         result = CaseResult(case=self._case)
         start = time.monotonic()
+        timeout = self.timeout
 
+        try:
+            if timeout is None:
+                await self._run_checked(result)
+            else:
+                # ``asyncio.timeout`` cancels the body with a
+                # ``CancelledError`` (a BaseException), so it slips past
+                # the ``except Exception`` handlers inside
+                # ``_run_checked`` and only surfaces here, re-raised as
+                # ``TimeoutError`` on context exit. That's why the inner
+                # handlers need no timeout-specific guard.
+                async with asyncio.timeout(timeout):
+                    await self._run_checked(result)
+        except TimeoutError:
+            result.passed = False
+            result.error = f"case_timeout: exceeded {timeout:.0f}s"
+
+        result.elapsed = time.monotonic() - start
+        return result
+
+    async def _run_checked(self, result: CaseResult) -> None:
+        """Run the agent then every assertion driver, filling ``result``."""
         try:
             try:
                 adapter = await self._execute_arun()
             except Exception as run_exc:
                 result.error = f"agent.arun failed: {run_exc}"
-                result.elapsed = time.monotonic() - start
-                return result
+                return
 
             result.response_text = adapter.output_text
             result.tool_trace = adapter.tool_trace()
@@ -129,9 +174,6 @@ class CaseRunner:
         except Exception as exc:
             result.error = str(exc)
             result.passed = False
-
-        result.elapsed = time.monotonic() - start
-        return result
 
     async def _execute_arun(self) -> AgnoResponseAdapter:
         """Fire the agent's ``arun`` for the case then normalise the response.
@@ -186,6 +228,17 @@ class SuiteRunner:
         self._settings = settings
         self._project_dir = project_dir
         self._catalog = catalog or DEFAULT_CATALOG
+        self._evals_config = self.evals_config(settings)
+
+    @staticmethod
+    def evals_config(settings: Settings | None) -> EvalsConfig:
+        """Return the ``evals:`` config block, or the schema defaults.
+
+        ``Settings`` stubs in tests (and older configs) may not carry an
+        ``evals`` attribute at all, so this never assumes one.
+        """
+        cfg = getattr(settings, "evals", None)
+        return cfg if isinstance(cfg, EvalsConfig) else EvalsConfig()
 
     async def run(self) -> SuiteResult:
         """Run every case in the suite; return the aggregated result."""
@@ -255,6 +308,7 @@ class SuiteRunner:
                 catalog=self._catalog,
                 allow_additional_tool_calls=self._suite.allow_additional_tool_calls,
                 session_id=f"eval-{self._suite.agent}-{case.name}-{run_tag}",
+                default_timeout=self._evals_config.timeout_per_case,
             )
             case_result = await case_runner.run()
             elapsed = time.monotonic() - t0
@@ -296,9 +350,7 @@ class SuiteRunner:
         """Load the configured judge model, or ``None`` if unavailable."""
         try:
             registry = ModelRegistry(self._settings)
-            judge_cfg = getattr(self._settings, "evals", None)
-            judge_name = getattr(judge_cfg, "judge_model", None) if judge_cfg else None
-            return registry.get_model(judge_name)
+            return registry.get_model(self._evals_config.judge_model)
         except Exception as exc:
             logger.debug("Could not load judge model: %s", exc)
             return None
@@ -313,7 +365,10 @@ class SuiteRunner:
         catalog: ToolNameCatalog | None = None,
     ) -> list[SuiteResult]:
         """Load and run every discovered suite; optionally filter by agent name."""
-        suites = EvalSuite.load_all(project_dir)
+        # Pass the config down so per-case ``num_iterations`` /
+        # ``accuracy_threshold`` fall back to the user's ``evals:`` block
+        # rather than literals baked into the parser.
+        suites = EvalSuite.load_all(project_dir, cls.evals_config(settings))
         if not suites:
             return []
 

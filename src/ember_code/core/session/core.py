@@ -253,10 +253,7 @@ class Session:
         self._init_agent_and_skill_pools(settings)
 
         # ── Context window (for compaction threshold, capped by setting) ──
-        self._context_window = min(
-            ModelRegistry(settings).get_context_window(),
-            settings.models.max_context_window,
-        )
+        self._context_window = self._resolve_context_window()
 
         # ── Cloud auth coordinator (owns creds + rebuild-team invariant) ─
         # Composed BEFORE ``main_team`` so the first agent build can
@@ -414,8 +411,12 @@ class Session:
             pending_reminders_drain=self._reminder_queue.drain,
             compact_hook=self.compact_if_needed,
             ensure_mcp=self.ensure_mcp,
-            session_id=self.session_id,
-            context_window=self._context_window,
+            # Both by-reference, not by-value: ``/clear`` and ``/fork``
+            # rotate the session id and ``/model`` changes the context
+            # window, and the handler outlives both (it is built once here
+            # and never rebuilt).
+            session_id_ref=lambda: self.session_id,
+            context_window_ref=lambda: self._context_window,
             latch_input_tokens=self.latch_input_tokens,
             extract_response_text=lambda resp: extract_response_text(resp),
         )
@@ -551,6 +552,12 @@ class Session:
             self.settings,
             project_dir=self.project_dir,
             code_index=new_index,
+            # Same callback the constructor wires (see ``_init_code_index``).
+            # Dropping it here was how the neo4j path lost its only
+            # mid-session signal: the sync that finally populates the graph
+            # would finish and nothing would tell the session, so the agent
+            # kept the prompt and toolset it booted with.
+            on_sync_complete=lambda: self.refresh_codeindex_availability(),
         )
 
         existing_runtime = getattr(self.code_index, "_neo4j_runtime", None)
@@ -561,11 +568,17 @@ class Session:
         self.code_index_sync = new_sync
 
         if self._codeindex_refresher is not None:
-            self._codeindex_refresher._code_index = new_index
-            self._codeindex_refresher._code_index_sync = new_sync
+            self._codeindex_refresher.retarget(code_index=new_index, code_index_sync=new_sync)
 
-        new_head = new_sync.current_sha()
-        self._codeindex_available = bool(new_head and new_index.has_commit(new_head))
+        # Go through the refresher rather than writing the flag. Availability
+        # is not just a boolean: ``_resolve_main_tool_names`` appends the
+        # CodeIndex tool at build time and ``PromptBuilder`` picks
+        # ``main_agent.codeindex.md`` at build time, so a bare write left the
+        # session claiming CodeIndex was available while the running agent
+        # held the plain prompt and a tool list without it. ``refresh`` flips
+        # the flag AND rebuilds the pool + main team, and it also honours the
+        # ``code_index.enabled`` kill-switch the bare write ignored.
+        self.refresh_codeindex_availability()
         logger.info("CodeIndex: switched to neo4j backend (project=%s)", self.project_dir)
 
     def _init_mcp_client_manager(self) -> None:
@@ -630,7 +643,11 @@ class Session:
         # One record with a state, a reason and a fix, instead of a
         # private boolean per subsystem per failure mode — see
         # :mod:`ember_code.backend.subsystem_status`.
-        from ember_code.backend.subsystem_status import SubsystemRegistry
+        from ember_code.backend.subsystem_status import (
+            ARTIFACTS,
+            SubsystemRegistry,
+            SubsystemState,
+        )
 
         self.subsystems = SubsystemRegistry()
         self._knowledge_ready = threading.Event()
@@ -650,25 +667,29 @@ class Session:
         # an index at construction pass a ``pre_artifacts`` (or
         # a ``neo4j_client`` via ``pre_artifacts=``).
         self.artifacts = None
-        # Say *why* there is no index, in words a user can act on.
+        # Say *why* there is no index, in words a user can act on, and say
+        # it where the readers look.
         #
-        # ``_knowledge_error`` was set to ``None`` here and assigned
-        # nowhere else in the codebase, which made
-        # ``ArtifactsCommand.panel``'s "Knowledge failed to load:
-        # {err}" branch unreachable — a diagnostic that existed, was
-        # documented, and could not fire. Every user hit the fallback
-        # instead: "Artifact store failed to initialize.", which names
-        # no cause and is not even true. Nothing failed. The index is
-        # deferred by design and this session never got the runtime it
-        # was deferred for.
-        # Annotated, because ``attach_artifacts_neo4j`` clears it back to
-        # ``None`` once the runtime arrives — without this, the first
-        # assignment narrows the attribute to ``str`` and that clear is a
-        # type error.
-        self._knowledge_error: str | None = (
-            "no Neo4j runtime has attached to this session. The knowledge "
-            "index is created when CodeIndex's Neo4j comes up — open "
-            "/codeindex and check that it is running and synced."
+        # The reason used to be written to a private ``_knowledge_error``
+        # attribute, which nothing read: the panel and
+        # ``Session.knowledge_error`` both go through :attr:`subsystems`.
+        # So every deferred session fell through to "Artifact store failed
+        # to initialize." — a sentence that names no cause and is not even
+        # true. Nothing failed; the index is deferred by design and this
+        # session never got the runtime it was deferred for.
+        #
+        # PREPARING, not FAILED: waiting on a runtime that has not
+        # attached yet is the ordinary startup case, and the orchestrator
+        # overwrites PREPARING freely once it knows better (it only
+        # declines to overwrite FAILED / DISABLED).
+        self.subsystems.set(
+            ARTIFACTS,
+            SubsystemState.PREPARING,
+            reason=(
+                "no Neo4j runtime has attached to this session yet. The "
+                "artifact store is created when CodeIndex's Neo4j comes up"
+            ),
+            fix="Open /codeindex and check that it is running and synced.",
         )
         logger.info(
             "Artifacts: deferred (no neo4j runtime at construction); "
@@ -773,11 +794,20 @@ class Session:
         # reported the store unreachable, which is exactly what it
         # looked like from the outside.
         self.pool.attach_artifact_manager(self.artifact_mgr)
-        # The deferred-state explanation set in the constructor is no
+        # The deferred-state explanation recorded in the constructor is no
         # longer true. Leaving it would have ``/artifacts`` telling a
         # working session to go and start the runtime it is already
-        # using.
-        self._knowledge_error = None
+        # using. (The backend's orchestrator also records READY; this
+        # covers the embedded / test callers that attach a runtime
+        # directly.)
+        from ember_code.backend.subsystem_status import ARTIFACTS, SubsystemState  # noqa: PLC0415
+
+        self.subsystems.set(ARTIFACTS, SubsystemState.READY)
+        # The pool hands each agent its tools when the team is built, so
+        # attaching the manager changes nothing for the team already
+        # built — rebuild it, or the archivist keeps the toolkit-less
+        # agent it was constructed as.
+        self._rebuild_main_team()
         logger.info("Artifacts: switched to neo4j backend (project=%s)", project_id)
 
     def group_dir_for(self, kind: str) -> Path:
@@ -975,10 +1005,23 @@ class Session:
             read_claude=settings.rules.cross_tool_support,
             group_dir=self.group_root("output-styles"),
         )
-        if "default" in self.output_styles:
-            self._active_output_style = "default"
-        elif self.output_styles:
-            self._active_output_style = sorted(self.output_styles)[0]
+        # Keep the style the user chose if the rediscovered set still
+        # has it. This method also runs on plugin hot-reload, and an
+        # unconditional reset meant installing a plugin silently put
+        # the session back on ``default`` — the style is a live user
+        # choice, not a boot-time default, once ``set_output_style``
+        # has been called.
+        current = getattr(self, "_active_output_style", "")
+        if current not in self.output_styles:
+            if "default" in self.output_styles:
+                self._active_output_style = "default"
+            elif self.output_styles:
+                self._active_output_style = sorted(self.output_styles)[0]
+            else:
+                # The style is gone and there is nothing to fall back
+                # to — better an empty name than one that names a file
+                # this reload just found missing.
+                self._active_output_style = ""
 
         # ── Hooks ────────────────────────────────────────────────────
         self._hook_loader = HookLoader(
@@ -1025,9 +1068,17 @@ class Session:
             rewake_callback=self._reminder_queue.queue,
         )
         # Rebuild the tool-hook factory so it points at the new
-        # executor. The factory caches the ``PermissionEvaluator``
-        # so a mode flip performed via :class:`RuntimeModeCoordinator`
-        # survives a ``reload_hooks``.
+        # executor, carrying the live ``PermissionEvaluator`` across.
+        # The factory caches the evaluator so a mode flip performed via
+        # :class:`RuntimeModeCoordinator` survives a ``reload_hooks``
+        # — but this method REPLACES the factory, and a replacement
+        # with an empty cache rebuilds the evaluator from
+        # ``settings.permissions.mode``. That is how ``/plugin install``
+        # used to take a session out of plan mode with no message: the
+        # next ``_build_main_agent`` asked the new factory for an
+        # evaluator, got a default-mode one, and the FE badge (which
+        # reads the same object) flipped with it.
+        _prev_hook_factory = getattr(self, "_tool_hook_factory", None)
         self._tool_hook_factory = ToolEventHookFactory(
             settings=settings,
             # The fallback is only reached when this runs before
@@ -1042,6 +1093,9 @@ class Session:
             project_dir=self.project_dir,
             hook_executor_ref=lambda: self.hook_executor,
             session_id_ref=lambda: self.session_id,
+            permission_evaluator=(
+                _prev_hook_factory.permission_evaluator if _prev_hook_factory is not None else None
+            ),
         )
 
     # ── Cloud auth accessors (forward to SessionCloudAuth) ─────
@@ -1102,11 +1156,33 @@ class Session:
         """Delegate to :meth:`SessionCloudAuth.refresh_models`."""
         return self.cloud_auth.refresh_models()
 
+    def _resolve_context_window(self) -> int:
+        """Effective context window for the *current* default model,
+        capped by ``models.max_context_window``.
+
+        Same expression the agent builder uses for the compression
+        threshold — kept as one method because it is read twice (once
+        at construction, once per rebuild) and the two drifting apart
+        would mean compacting against a window the model does not have.
+        """
+        return min(
+            ModelRegistry(self.settings).get_context_window(),
+            self.settings.models.max_context_window,
+        )
+
     # ── Plugin hot-reload ──────────────────────────────────────
 
     def _rebuild_main_team(self) -> None:
-        """Assign a freshly-built main team to ``self.main_team``."""
+        """Assign a freshly-built main team to ``self.main_team``.
+
+        Re-resolves the context window too: ``/model`` swaps the default
+        model and comes through here, and the compaction threshold was
+        computed once in ``__init__`` and never again — switching from a
+        200k model to a 32k one left auto-compaction waiting for a limit
+        the new model blows past six times over.
+        """
         self.main_team = self._build_main_agent()
+        self._context_window = self._resolve_context_window()
 
     def rebuild_main_team(self) -> None:
         """Public wrapper over :meth:`_rebuild_main_team`."""

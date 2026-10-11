@@ -4,182 +4,77 @@ Guide for contributing to igni and understanding the codebase.
 
 ## Project Structure
 
+Packages, not files. A tree that names every module is wrong the week
+after it is written — the last one listed 19 top-level paths and all 19
+had been deleted. What follows is the set of directories that have
+survived the refactors, with one line on what each is *for*. For the
+current file list inside any of them, `ls` it.
+
 ```
 ember-code/
-├── QUICKSTART.md                      # Getting started guide (project root)
-├── docs/                              # Documentation
-│   ├── ARCHITECTURE.md
-│   ├── AGENTS.md
-│   ├── SKILLS.md
-│   ├── ONBOARDING.md
-│   ├── TOOLS.md
-│   ├── MCP.md
-│   ├── CONFIGURATION.md
-│   ├── CODEINDEX.md
-│   ├── EVALS.md
-│   ├── HOOKS.md
-│   ├── MIGRATION.md
-│   ├── SECURITY.md
-│   └── DEVELOPMENT.md
-├── agents/                            # Built-in agent definitions (.md)
-│   ├── architect.md            # plans + designs (always first)
-│   ├── editor.md               # code + git safety
-│   ├── data-architect.codeindex.md
-│   ├── explorer.md
-│   ├── reviewer.md
-│   ├── simplifier.md
-│   ├── security.md
-│   ├── qa.md
-│   ├── debugger.md
-│   └── docs.md
-│   # plus .codeindex.md variants for the most-used agents
-├── skills/                            # Built-in skills (SKILL.md)
-│   ├── commit/SKILL.md
-│   ├── resolve-issues/SKILL.md
-│   ├── explain/SKILL.md
-│   ├── simplify/SKILL.md
-│   └── update-docs/SKILL.md
-├── src/
-│   └── ember_code/
-│       ├── __init__.py                # Package root, version string
-│       ├── __main__.py                # Entry point (ignite-ember)
-│       ├── cli.py                     # Click CLI (flags, subcommands, pipe mode)
-│       ├── init.py                    # First-run initialization (config, agents, skills)
-│       ├── engine.py                  # Execution engine: message → response pipeline
-│       ├── events.py                  # Event dataclasses for TUI/engine communication
-│       ├── queue_hook.py              # Queue hook for Agno event streaming
-│       ├── session/
-│       │   ├── __init__.py            # Re-exports Session, run_session_interactive
-│       │   ├── core.py                # Session class: subsystem wiring, main team building
-│       │   ├── commands.py            # Slash command dispatch
-│       │   ├── interactive.py         # Interactive REPL loop
-│       │   ├── runner.py              # Single-message execution
-│       │   ├── persistence.py         # Session listing, naming, history
-│       │   ├── memory_ops.py          # Memory retrieval and optimization
-│       │   ├── artifact_ops.py       # Knowledge add/search/sync
-│       │   └── ide_context.py         # IDE context enrichment
-│       ├── auth/
-│       │   ├── __init__.py
-│       │   ├── client.py              # Device-flow authentication (browser login + polling)
-│       │   └── credentials.py         # Credential storage (~/.igni/credentials.json + config)
-│       ├── pool.py                    # AgentPool: load/parse .md agent definitions
-│       ├── learn.py                   # LearningMachine integration
-│       ├── init.py                    # Project initialization (copy agents, skills, hooks)
-│       ├── config/
-│       │   ├── __init__.py
-│       │   ├── settings.py            # Settings (Pydantic), ArtifactsConfig,
-│       │   │                          # LearningConfig, ReasoningConfig, GuardrailsConfig,
-│       │   │                          # SchedulerConfig
-│       │   ├── models.py              # ModelRegistry, BYOM resolution
-│       │   ├── api_keys.py            # API key resolution (direct, env, cmd)
-│       │   ├── permissions.py         # PermissionGuard, allowlists
-│       │   ├── tool_permissions.py    # Tool-level permission mapping
-│       │   └── defaults.py            # Default configuration values (single source of truth)
-│       ├── tools/
-│       │   ├── __init__.py
-│       │   ├── registry.py            # Tool name → Agno toolkit mapping
-│       │   ├── edit.py                # EmberEditTools (string-replacement editing)
-│       │   ├── search.py              # GrepTools, GlobTools
-│       │   ├── web.py                 # WebTools (URL fetching)
-│       │   └── orchestrate.py         # OrchestrateTools (sub-team spawning)
-│       ├── knowledge/
-│       │   ├── __init__.py
-│       │   ├── manager.py             # ArtifactManager, ChromaDB + Agno Knowledge
-│       │   ├── embedder.py            # EmberEmbedder (custom Agno Embedder, 384-dim)
-│       │   ├── embedder_registry.py   # EmbedderRegistry (BYOM for embeddings)
-│       │   ├── models.py              # Pydantic: ArtifactWriteResult, KnowledgeFilter,
-│       │   │                          # ArtifactSearchResponse, ArtifactStatus,
-│       │   │                          # ArtifactSyncResult
-│       │   └── sync.py               # Git-shared knowledge sync (YAML ↔ ChromaDB)
-│       ├── memory/
-│       │   ├── __init__.py
-│       │   └── manager.py             # Agno SqliteDb/Memory setup
-│       ├── hooks/
-│       │   ├── __init__.py
-│       │   ├── loader.py              # Hook discovery from settings
-│       │   ├── executor.py            # Hook execution (command/HTTP)
-│       │   └── events.py              # HookEvent definitions
-│       ├── skills/
-│       │   ├── __init__.py
-│       │   ├── loader.py              # Skill discovery (SKILL.md files)
-│       │   ├── parser.py              # YAML frontmatter parsing
-│       │   └── executor.py            # Skill invocation (inline/forked)
-│       ├── mcp/
-│       │   ├── __init__.py
-│       │   ├── server.py              # MCP server (ignite-ember mcp serve)
-│       │   ├── client.py              # MCP client (consume external servers)
-│       │   ├── tools.py               # MCP → Agno tool integration
-│       │   ├── config.py              # .mcp.json loading
-│       │   ├── transport.py           # Transport layer (stdio, HTTP)
-│       │   └── approval.py           # First-use MCP server approval
-│       ├── backend/
-│       │   ├── __main__.py            # Backend entry point
-│       │   ├── server.py              # Backend server
-│       │   └── command_handler.py     # CommandHandler — slash command dispatch
-│       ├── tui/
-│       │   ├── __init__.py            # Exports EmberApp
-│       │   ├── app.py                 # EmberApp — thin Textual shell, scheduler integration
-│       │   ├── conversation_view.py   # ConversationView — widget append/clear
-│       │   ├── run_controller.py      # RunController — execution pipeline, streaming, cancel
-│       │   ├── status_tracker.py      # StatusTracker — tokens, context, status bar
-│       │   ├── hitl_handler.py        # HITLHandler — confirmation/input dialogs
-│       │   ├── session_manager.py     # SessionManager — session picker, switching
-│       │   ├── input_handler.py       # InputHandler — history, autocomplete
-│       │   ├── backend_client.py      # BackendClient — communicates with backend server
-│       │   ├── process_manager.py     # ProcessManager — backend process lifecycle
-│       │   └── widgets/               # Custom Textual widgets
-│       │       ├── __init__.py
-│       │       ├── _chrome.py         # StatusBar, SpinnerWidget, QueuePanel, TipBar, etc.
-│       │       ├── _constants.py      # Spinner frames, visual constants
-│       │       ├── _dialogs.py        # LoginWidget, PermissionDialog, SessionPicker, ModelPicker
-│       │       ├── _input.py          # PromptInput, InputHistory
-│       │       ├── _messages.py       # MessageWidget, ToolCallWidget, AgentTreeWidget, etc.
-│       │       ├── _tokens.py         # TokenBadge, RunStatsWidget
-│       │       ├── _tasks.py          # TaskPanel
-│       │       ├── _task_progress.py  # TaskProgressWidget — live task visualization
-│       │       ├── _activity.py       # AgentActivityWidget
-│       │       └── _formatting.py     # Rich formatting utilities
-│       ├── evals/
-│       │   ├── __init__.py            # Public API exports
-│       │   ├── loader.py              # YAML eval file parser → EvalSuite/EvalCase
-│       │   ├── assertions.py          # File and tool-call assertions
-│       │   ├── runner.py              # Eval orchestration (Agno ReliabilityEval + AccuracyEval)
-│       │   └── reporter.py            # Terminal output formatting
-│       ├── scheduler/
-│       │   ├── __init__.py
-│       │   ├── runner.py              # SchedulerRunner — bounded concurrency, timeout
-│       │   ├── parser.py              # Time expression parsing (in 30m, daily, etc.)
-│       │   └── store.py               # Task store (SQLite-backed)
-│       └── utils/
-│           ├── __init__.py
-│           ├── context.py             # Project context loading (igni.md)
-│           ├── display.py             # Rich terminal formatting
-│           ├── audit.py               # Audit logging (JSON lines)
-│           ├── response.py            # Response formatting utilities
-│           ├── tips.py                # Contextual tips: analyze config/project state,
-│           │                          # suggest features not yet enabled
-│           └── update_checker.py      # Check for newer ignite-ember versions
-├── tests/
-│   ├── conftest.py                    # Shared fixtures
-│   ├── test_pool.py                   # Agent pool and .md parsing
-│   ├── test_backend_server.py          # BackendServer commands, protocol
-│   ├── test_permission_flows.py       # HITL flows, permission persistence
-│   ├── test_tools.py                  # Tool registry, edit, search, glob
-│   ├── test_knowledge.py              # Knowledge, embedder, learning, reasoning, guardrails
-│   ├── test_hooks.py                  # Hook events, loader, executor
-│   ├── test_skills.py                 # Skill parser, loader, pool
-│   ├── test_settings.py               # Config loading and merging
-│   ├── test_permissions.py            # Permission guard
-│   ├── test_models.py                 # Model registry resolution
-│   ├── test_context.py                # Context utilities
-│   ├── test_widgets.py                # TUI widgets
-│   └── test_tui_handlers.py           # TUI handlers and commands
-├── Makefile                           # Build commands (see below)
-├── pyproject.toml                     # Package metadata, deps, tool config
-├── igni.md                           # Project instructions for self-use
+├── src/ember_code/         # the Python package (import name stays `ember_code`)
+│   ├── __main__.py         # entry point behind `igni`, `ignite-ember`, `python -m ember_code`
+│   ├── cli/                # non-interactive command surface: flags, `-m`, pipe mode, resume
+│   ├── backend/            # the long-lived server the GUI clients speak to — slash-command
+│   │   │                   # and RPC dispatch, run streaming, HITL, session pool, panels
+│   │   ├── panels/         # data behind the clients' agents / skills / hooks panels
+│   │   └── rpc_handlers/   # one handler module per RPC domain (auth, mcp, loop, knowledge, …)
+│   ├── core/               # everything that is not CLI, wire format, or server plumbing
+│   │   ├── agents/         # agent `.md` discovery, frontmatter parsing, AgentPool, agent build
+│   │   ├── auth/           # browser login, local callback server, credential storage
+│   │   ├── code_index/     # CodeIndex: changeset fetch, JSONL delta apply, Neo4j/SQLite store
+│   │   ├── config/         # Settings, model registry, permission evaluation, policy tiers
+│   │   ├── db/             # SQLAlchemy engine + sessionmaker cache, migration entry point
+│   │   ├── evals/          # YAML eval loading, assertions, runner, reporter
+│   │   ├── guardrails/     # one rule per file (PII, injection, moderation) behind one runner
+│   │   ├── hooks/          # hook discovery, matcher, executor, tool-event pipeline
+│   │   ├── init/           # first-run and per-project initialization, hook provisioning
+│   │   ├── artifacts/      # the artifact store client: versions, lineage, passages, sync with the server
+│   │   ├── loop/           # `/loop` state — caps, stored prompt, per-iteration tool results
+│   │   ├── lsp/            # language-server client and per-project manager
+│   │   ├── mcp/            # MCP client, transports, `.mcp.json` config, approval, tool filter
+│   │   ├── memory/         # Agno memory / DB setup
+│   │   ├── monitors/       # plugin-declared background monitors (config, supervisor, handles)
+│   │   ├── output_styles/  # output-style catalog loading
+│   │   ├── plugins/        # plugin + marketplace discovery, install, enable/disable state
+│   │   ├── prompts/        # the main-agent and plan-mode system prompts (`.md`)
+│   │   ├── scheduler/      # `/schedule`: time-expression parsing, recurrence, store, runner
+│   │   ├── session/        # the Session — wiring, run loop, persistence, compaction, commands
+│   │   ├── skills/         # `SKILL.md` discovery, frontmatter parsing, invocation
+│   │   ├── tools/          # every agent tool: edit, shell/process, orchestrate, plan, todo, web
+│   │   └── utils/          # project context (`igni.md`), audit log, display, mentions, tips
+│   ├── protocol/           # the BE↔FE wire contract — Pydantic message models under `schemas/`
+│   ├── transport/          # how those messages move: unix socket, websocket, in-process, NDJSON
+│   ├── bundled_agents/     # the agent `.md` files that ship inside the wheel
+│   ├── bundled_skills/     # the `SKILL.md` directories that ship inside the wheel
+│   ├── migrations/         # Alembic environment + `versions/`
+│   └── jvm/                # JDK bootstrap so the clients can start Neo4j
+├── clients/                # the front-ends: `web`, `tauri`, `vscode`, `jetbrains`
+├── agents/                 # repo-root copies of most agent `.md` files, read by a few
+│                           # scripts and one parity test. `bundled_agents/` is what ships,
+│                           # and the two have already drifted apart.
+├── skills/                 # repo-root copies of the bundled skill directories
+├── docs/                   # this file and its siblings — `ls docs/` is the list
+├── evals/                  # YAML eval suites and their fixtures
+├── scripts/                # dev + ops scripts: profiling, eval drivers, client builds
+├── tests/                  # ~313 files, flat, one per behaviour.
+│   │                       # Not listed here: a hand-kept sample reads as the
+│   │                       # whole suite and goes stale silently — the last one
+│   │                       # still named test_knowledge.py, test_permissions.py,
+│   │                       # test_widgets.py and test_tui_handlers.py long after
+│   │                       # all four were deleted. `ls tests/` is the list.
+│   └── conftest.py         # Shared fixtures; .env loading; the `integration`
+│                           # marker and its skip
+├── Makefile                # Build commands (see below)
+├── pyproject.toml          # Package metadata, deps, tool config
+├── igni.md                 # Project instructions for self-use
 ├── README.md
 └── LICENSE
 ```
+
+There is no `tui/` package. The Textual TUI was removed; interactive
+chat lives in the React clients under `clients/`, which talk to the
+backend started by `python -m ember_code.backend`.
 
 ## Setup
 
@@ -194,7 +89,11 @@ source .venv/bin/activate
 
 # Install with all extras
 make install
-# or: pip install -e ".[dev,mcp,knowledge,web]"
+# or: pip install -e ".[dev,mcp,web]"
+# The extras are whatever `[project.optional-dependencies]` in
+# pyproject.toml defines. `knowledge` was listed here for a long time
+# after it was removed; pip only warns about an extra that does not
+# exist, so the line kept working and kept installing nothing.
 
 # Verify
 ignite-ember --version
@@ -233,9 +132,10 @@ The `make check` target is the single command to verify everything is clean befo
 - `pydantic` — Settings and data models
 - `httpx` — HTTP client (embeddings, web tools)
 
-**Optional:**
-- `chromadb` — Vector knowledge base (`pip install ember-code[knowledge]`)
+**Optional** — one bullet per extra in `[project.optional-dependencies]`, and no others. There is no `knowledge` extra: the vector knowledge base is core (Neo4j sidecar + a local sentence-transformers model), and `chromadb` has not been a dependency since the vectors moved.
+
 - `mcp` — Model Context Protocol (`pip install ember-code[mcp]`)
+- `google-genai` — Gemini models (`pip install ember-code[gemini]`)
 - `duckduckgo-search` — Web search (`pip install ember-code[web]`)
 
 **Dev:**
@@ -279,19 +179,22 @@ class EmberEmbedder(Embedder):
 
 `ArtifactManager` creates an Agno `Knowledge` with ChromaDB as the vector store. All data models are Pydantic: `ArtifactWriteResult`, `ArtifactSearchResponse`, `KnowledgeFilter`, `ArtifactStatus`.
 
-### 5. TUI Architecture (tui/)
+### 5. Backend Architecture (backend/)
 
-The TUI follows a clean separation of concerns:
+The Textual TUI this section used to describe no longer exists. Its
+separation-of-concerns shape survived the move: the backend server is a
+thin shell that delegates to focused classes, and the interactive
+surface is now the React clients under `clients/`.
 
 | Class | File | Responsibility |
 |---|---|---|
-| `EmberApp` | `app.py` | Textual shell: compose, mount, keybindings, event routing, scheduler |
-| `ConversationView` | `conversation_view.py` | Widget append/clear operations |
-| `RunController` | `run_controller.py` | Execution pipeline, streaming, cancellation, task visualization |
-| `StatusTracker` | `status_tracker.py` | Token/context tracking, status bar |
-| `HITLHandler` | `hitl_handler.py` | Confirmation dialogs, user input |
-| `SessionManager` | `session_manager.py` | Session picker, switching, clearing |
-| `InputHandler` | `input_handler.py` | History, autocomplete |
+| `BackendApp` | `backend/app.py` | Process shell: transport setup, wiring, lifecycle |
+| `SessionPool` | `backend/session_pool.py` | Per-project `SessionRuntime` instances, switching |
+| `RunController` | `backend/run_controller.py` | Execution pipeline, streaming, cancellation |
+| `StreamEventDispatcher` | `backend/stream_event_dispatcher.py` | Agno run events → wire messages |
+| `MessageDispatcher` | `backend/message_dispatcher.py` | Inbound FE action routing |
+| `CommandHandler` | `backend/command_handler.py` | Slash-command dispatch |
+| `HitlController` | `backend/hitl_controller.py` | Permission prompts, confirmations, user input |
 
 ### 6. Model Resolver (config/models.py)
 
@@ -323,7 +226,7 @@ make test            # verify tests still pass
 
 ### Test Strategy
 
-- **Unit tests** — agent pool, .md parsing, tool registry, config merging, knowledge models, TUI handlers
+- **Unit tests** — agent pool, .md parsing, tool registry, config merging, knowledge models, backend server
 - **Integration tests** — Orchestrator decisions, team assembly, AgnoFeatures application
 - **Mock LLM calls** — mock model responses to test orchestration logic
 - **Agent definition tests** — validate all built-in `.md` files parse correctly
@@ -397,9 +300,16 @@ A fixed Router → Agent hierarchy forces you to pre-decide what agents exist an
 - **Transparency** — read the file, understand exactly what the agent does
 - **Claude Code compatibility** — same YAML frontmatter format, easy migration
 
-### Why a TUI with separate manager classes?
+### Why a backend server with separate controller classes?
 
-The TUI is the default interface — `ignite-ember` launches `EmberApp` unless `--no-tui` is passed. The Textual app (`EmberApp`) is a thin shell that delegates to focused classes. This keeps each class testable in isolation and avoids a god-class. Textual requires `action_*` methods and `@on` decorators on the App, but the logic lives in the managers.
+The interactive surface is a GUI client, not a terminal app — `igni`
+and `ignite-ember` are the non-interactive CLI, and chat happens in the
+clients under `clients/`, which connect to the server started by
+`python -m ember_code.backend`. Splitting the front-end out means the
+same backend serves four clients (web, tauri, vscode, jetbrains) over
+one wire protocol. Inside the backend, `BackendApp` is a thin shell that
+delegates to the controllers listed above; each stays testable in
+isolation and none of them becomes the god-class.
 
 ## Roadmap
 

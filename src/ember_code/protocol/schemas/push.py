@@ -13,7 +13,12 @@ each callsite owns its own typed model and dumps at the seam).
 
 What this module DOES give:
 
-* :class:`PushChannel` typed ``channel`` field — was a free string.
+* :class:`PushChannel` — a catalogue of the channels we know about,
+  so the producer sites we control reference a symbol instead of a
+  literal. It is NOT a closed set: ``channel`` stays a raw ``str``
+  on the wire (see the field comment) because ``push_bridge`` and
+  the session broadcast bus forward channel strings this module
+  never sees.
 * Factory helpers :func:`push_scheduler_started`,
   :func:`push_login_status`, :func:`push_permission_mode_changed`,
   etc. — collapse the ``PushNotification(channel="foo",
@@ -37,7 +42,9 @@ class PushNotification(Message):
 
     The ``channel`` field discriminates which producer emitted the
     push; the FE routes on ``channel`` to render / dispatch. See
-    :class:`PushChannel` for the closed set of channels.
+    :class:`PushChannel` for the catalogue of known channels — the
+    producer set is open, so treat anything unlisted as a channel
+    this module simply hasn't catalogued yet, not as invalid.
 
     Producers should prefer the :func:`push_*` factory helpers over
     hand-building the class — they take a typed payload model and

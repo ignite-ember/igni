@@ -1,4 +1,4 @@
-"""Cloud auth RPCs — login, credential reload/clear, plan fetch.
+"""Cloud auth RPCs — login, credential reload/clear.
 
 Exposes a single class, :class:`AuthController`, constructed with
 ``(session, settings, status_provider)``:
@@ -8,16 +8,12 @@ Exposes a single class, :class:`AuthController`, constructed with
   :class:`CloudCredentials` on the session (post-login) and rebuild
   the main team.
 * :meth:`AuthController.clear_cloud_credentials` — logout inverse.
-* :meth:`AuthController.get_cloud_plan` — hit ``/portal/me`` for
-  the user's tier + org name.
 
-Wire schemas :class:`~ember_code.backend.schemas_rpc.CloudPlan` +
-:class:`~ember_code.backend.schemas_rpc.LoginResult` live in
-``schemas_rpc.py`` beside the sibling :class:`LoginStarted` — every
-backend wire shape belongs in ``schemas_*.py``. They are re-exported
-from this module to preserve the ``from ember_code.backend.server_auth
-import CloudPlan`` import path for the ``server.py`` TYPE_CHECKING
-consumer.
+Wire schema :class:`~ember_code.backend.schemas_rpc.LoginResult` lives
+in ``schemas_rpc.py`` beside the sibling :class:`LoginStarted` — every
+backend wire shape belongs in ``schemas_*.py``. It is re-exported from
+this module to preserve the ``from ember_code.backend.server_auth
+import LoginResult`` import path.
 """
 
 from __future__ import annotations
@@ -51,9 +47,8 @@ logger = logging.getLogger(__name__)
 #: startup on a slow network would undo it.
 _NEW_DIALOGUE_REVALIDATE_TIMEOUT = 3.0
 
-# Re-exported so ``from ember_code.backend.server_auth import CloudPlan``
-# keeps working (server.py TYPE_CHECKING import) — the canonical
-# definition now lives in ``schemas_rpc``.
+# Re-exported so ``from ember_code.backend.server_auth import LoginResult``
+# keeps working — the canonical definition lives in ``schemas_rpc``.
 __all__ = ["AuthController", "CloudPlan", "LoginResult"]
 
 

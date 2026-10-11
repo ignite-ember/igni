@@ -61,13 +61,23 @@ from ember_code.core.tools.tool_result import LLMResultBuffer
 # moved to :mod:`process_registry` in the OOP split, but callers
 # that ``from ember_code.core.tools.process_supervisor import
 # ProcessRegistry`` should keep working.
-__all__ = ["DEFAULT_FINISHED_PROCESS_TTL_SECONDS", "ProcessRegistry", "ProcessSupervisor"]
+__all__ = [
+    "DEFAULT_FINISHED_PROCESS_TTL_SECONDS",
+    "NO_OUTPUT_PLACEHOLDER",
+    "ProcessRegistry",
+    "ProcessSupervisor",
+]
 
 if TYPE_CHECKING:
     from ember_code.core.tools.managed_process import ManagedProcess
     from ember_code.core.tools.process_log import ProcessLogStore
 
 logger = logging.getLogger(__name__)
+
+#: Stand-in for a command that succeeded without writing a byte. Returned
+#: instead of ``""`` because an empty tool result is indistinguishable
+#: from a tool that failed to run at all.
+NO_OUTPUT_PLACEHOLDER = "(no output)"
 
 
 class ProcessSupervisor:
@@ -254,9 +264,15 @@ class ProcessSupervisor:
         rc = proc.returncode
         self.registry.remove(pid)
 
+        # ``mkdir -p``, ``cd``, ``true`` and friends succeed silently, and
+        # the empty string is not a tool result — Agno hands the model a
+        # blank turn, which reads as "the tool did nothing" and invites a
+        # pointless retry. Say that it ran and printed nothing.
         if rc != 0:
-            return self._result_buffer.truncate(f"Command exited with code {rc}:\n{output}")
-        return self._result_buffer.truncate(output)
+            return self._result_buffer.truncate(
+                f"Command exited with code {rc}:\n{output or NO_OUTPUT_PLACEHOLDER}"
+            )
+        return self._result_buffer.truncate(output or NO_OUTPUT_PLACEHOLDER)
 
     # ── Test / shutdown helpers ─────────────────────────────────
 

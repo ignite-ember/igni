@@ -22,7 +22,6 @@ import {
   shouldSkipTruncateRpc,
   shellItem,
   userItem,
-  visualizationItem,
   workflowItem,
   type ChatItem,
   type OrchestrateEvent,
@@ -201,25 +200,6 @@ function findAssistantTextForStats(
     if (it.kind === "assistant") return it.text;
   }
   return undefined;
-}
-
-/** Pretty label for ``Tier`` values from ember-server
- *  (lite / pro / max / codeindex). The DB stores lowercase, the UI
- *  wants title-case; ``codeindex`` is the special-purpose CodeIndex-
- *  only tier so we spell it out for clarity. */
-function formatPlanName(tier: string): string {
-  switch (tier.toLowerCase()) {
-    case "lite":
-      return "Lite";
-    case "pro":
-      return "Pro";
-    case "max":
-      return "Max";
-    case "codeindex":
-      return "CodeIndex";
-    default:
-      return tier;
-  }
 }
 
 export default function App() {
@@ -616,12 +596,9 @@ export default function App() {
     null,
   );
   const [accountMenu, setAccountMenu] = useState(false);
-  // Plan tier (``lite`` / ``pro`` / ``max`` / ``codeindex``) fetched
-  // on demand whenever the account popover opens — the BE calls
-  // ``/portal/me`` on the cloud and returns the tier from the user's
-  // active org membership. Refreshing on each open ensures the UI
-  // reflects seat-tier reassignments without an app restart.
-  const [cloudPlan, setCloudPlan] = useState<string | null>(null);
+  // The signed-in person's display name, fetched when the account
+  // popover opens (the BE proxies ``/portal/me``). Billing tiers are
+  // retired, so nothing else from that call is shown.
   const [cloudName, setCloudName] = useState<string>("");
   // Best thing we can currently say about who is signed in, in
   // descending order of how much it sounds like a person. The org is
@@ -1590,59 +1567,6 @@ export default function App() {
                 : it,
             ),
           );
-        } else if (m.channel === "visualization") {
-          // Visualizer sub-agent emitted a json-render spec via
-          // ``VisualizeTools.visualize``. Payload shape:
-          // ``{ spec: {...}, spec_id: str, title?: string, source_agent?: string }``.
-          //
-          // Dedup by ``spec_id``: the visualizer's toolkit generates a
-          // stable id per sub-agent run, so repeated calls within a
-          // single run UPDATE the same card instead of appending a
-          // new one. That's the on-ramp for streaming — one card per
-          // stream, updated in place as data arrives.
-          const p = m.payload as {
-            spec?: unknown;
-            spec_id?: unknown;
-            title?: unknown;
-            source_agent?: unknown;
-          };
-          const spec = p.spec;
-          if (
-            spec &&
-            typeof spec === "object" &&
-            "root" in (spec as Record<string, unknown>) &&
-            "elements" in (spec as Record<string, unknown>)
-          ) {
-            const specId =
-              typeof p.spec_id === "string" && p.spec_id ? p.spec_id : "";
-            const title = typeof p.title === "string" ? p.title : "";
-            const sourceAgent =
-              typeof p.source_agent === "string"
-                ? p.source_agent
-                : "visualizer";
-            setItems((prev) => {
-              // Find an existing visualization card with the same
-              // spec_id; if present, replace its spec/title in place.
-              const idx = specId
-                ? prev.findIndex(
-                    (it) => it.kind === "visualization" && it.specId === specId,
-                  )
-                : -1;
-              if (idx >= 0) {
-                const next = prev.slice();
-                const existing = next[idx] as Extract<
-                  ChatItem,
-                  { kind: "visualization" }
-                >;
-                next[idx] = { ...existing, spec, title, sourceAgent };
-                return next;
-              }
-              return [
-                ...prev,
-                visualizationItem(spec, title, sourceAgent, specId),
-              ];
-            });
-          }
         }
       } else {
         // Cross-view busy-indicator update. The state machine —
@@ -3066,14 +2990,15 @@ export default function App() {
                       email?: string | null;
                     } | null>("get_cloud_plan")
                     .then((info) => {
-                      setCloudPlan(info?.tier ?? null);
                       // The display name only exists on the cloud, so
                       // it arrives here. Until it does the chip shows
                       // the address, which is on disk and correct —
                       // rather than nothing while a request is out.
                       if (info?.full_name) setCloudName(info.full_name);
                     })
-                    .catch(() => setCloudPlan(null));
+                    .catch(() => {
+                      // Offline: the chip keeps showing the address.
+                    });
                 }
               }}
             >
@@ -3129,16 +3054,6 @@ export default function App() {
                     {status?.cloud_org ? ` · ${status.cloud_org}` : ""}
                   </span>
                 </div>
-                {cloudPlan && (
-                  <div className="popup-item" style={{ cursor: "default" }}>
-                    <span className="desc">
-                      Plan:{" "}
-                      <span style={{ color: "var(--fg)", fontWeight: 500 }}>
-                        {formatPlanName(cloudPlan)}
-                      </span>
-                    </span>
-                  </div>
-                )}
                 <div
                   className="popup-item"
                   onClick={() => {

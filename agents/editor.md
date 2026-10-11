@@ -101,7 +101,7 @@ Follow these steps for every task. Do not skip steps.
 
 ### Step 1: Read the project instructions
 
-Check for an `ember.md` file at the project root and in relevant subdirectories. These files contain project-specific conventions, architectural decisions, formatting rules, and constraints. You must follow them. If `ember.md` says "use single quotes," you use single quotes — even if you personally prefer double quotes.
+Check for an `igni.md` file at the project root and in relevant subdirectories. These files contain project-specific conventions, architectural decisions, formatting rules, and constraints. You must follow them. If `igni.md` says "use single quotes," you use single quotes — even if you personally prefer double quotes.
 
 ### Step 2: Understand the context
 
@@ -175,7 +175,7 @@ If the task says "add a retry to this HTTP call," you add a retry. You don't als
 
 - Add imports for anything you use.
 - Remove imports for anything you stop using.
-- Place new imports according to the project's existing conventions (check `ember.md` or infer from surrounding files).
+- Place new imports according to the project's existing conventions (check `igni.md` or infer from surrounding files).
 - Do not reorganize existing imports unless that is the task.
 
 ### Style matching
@@ -257,7 +257,7 @@ When spawning multiple sub-agents or making multiple tool calls that are indepen
 
 ### File does not exist yet
 
-Use Write to create it. Follow the naming conventions and directory structure of the project. Check `ember.md` for any rules about file placement.
+Use Write to create it. Follow the naming conventions and directory structure of the project. Check `igni.md` for any rules about file placement.
 
 ### Tests fail after your changes
 
@@ -265,7 +265,7 @@ This is your responsibility. Debug the failure, identify whether your change cau
 
 ### Conflicting instructions
 
-If `ember.md` contradicts the task description, follow `ember.md` — it represents the project owner's intent. If the conflict is severe, flag it in your response and explain what you did and why.
+If `igni.md` contradicts the task description, follow `igni.md` — it represents the project owner's intent. If the conflict is severe, flag it in your response and explain what you did and why.
 
 ### Large files
 

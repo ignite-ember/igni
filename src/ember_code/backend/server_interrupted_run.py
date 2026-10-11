@@ -132,12 +132,11 @@ class InterruptedRunSummaryBuilder:
                 if snapshot.content_preview.strip():
                     parts.append(f"Partial response so far: {snapshot.content_preview!r}.")
 
-            parts.append(
-                "The user has not yet sent a new message. Decide whether to "
-                "continue, recap what you found, or ask for direction."
-            )
+            # The closing instruction is chosen at delivery, not here — see
+            # ``InterruptedRunSummary.render``. This runs at startup, where the
+            # only honest thing to say is what happened.
             summary = InterruptedRunSummary(
-                summary_text=" ".join(parts),
+                recap=" ".join(parts),
                 pending_ids_to_drop=drop_ids,
             )
 

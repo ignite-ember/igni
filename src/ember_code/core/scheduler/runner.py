@@ -8,6 +8,7 @@ configurable. Each task has a timeout to prevent runaway executions.
 import asyncio
 import logging
 from collections.abc import Callable, Coroutine
+from datetime import datetime
 from typing import Any
 
 from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
@@ -128,27 +129,42 @@ class SchedulerRunner:
         if self._on_task_started:
             self._on_task_started(task_id, description)
 
+        # ``unless_cancelled`` on every terminal write: a cancel issued
+        # while the task was running used to be overwritten here, so the
+        # user was told the recurring schedule had stopped and the next
+        # occurrence was created anyway.
         try:
             result = await asyncio.wait_for(
                 self._execute_fn(description),
                 timeout=self._task_timeout,
             )
-            await self._store.update_status(task_id, TaskStatus.completed, result=result)
+            succeeded, detail = True, str(result)
+            written = await self._store.update_status(
+                task_id, TaskStatus.completed, result=result, unless_cancelled=True
+            )
             logger.info("Task %s completed", task_id)
-            if self._on_task_completed:
-                self._on_task_completed(task_id, description, True, str(result))
         except asyncio.TimeoutError:
-            error_msg = f"Task timed out after {self._task_timeout:.0f}s"
-            await self._store.update_status(task_id, TaskStatus.failed, error=error_msg)
+            succeeded, detail = False, f"Task timed out after {self._task_timeout:.0f}s"
+            written = await self._store.update_status(
+                task_id, TaskStatus.failed, error=detail, unless_cancelled=True
+            )
             logger.error("Task %s timed out after %.0fs", task_id, self._task_timeout)
-            if self._on_task_completed:
-                self._on_task_completed(task_id, description, False, error_msg)
         except Exception as e:
-            error_msg = str(e)
-            await self._store.update_status(task_id, TaskStatus.failed, error=error_msg)
-            logger.error("Task %s failed: %s", task_id, error_msg)
-            if self._on_task_completed:
-                self._on_task_completed(task_id, description, False, error_msg)
+            succeeded, detail = False, str(e)
+            written = await self._store.update_status(
+                task_id, TaskStatus.failed, error=detail, unless_cancelled=True
+            )
+            logger.error("Task %s failed: %s", task_id, detail)
+
+        if written is False:
+            # The terminal write lost to a cancel. Neither notifying a
+            # completion nor rescheduling is honest here — the user was
+            # told the schedule had stopped.
+            logger.info("Task %s was cancelled while running — not rescheduling", task_id)
+            return
+
+        if self._on_task_completed:
+            self._on_task_completed(task_id, description, succeeded, detail)
 
         # Reschedule recurring tasks (even after failure — the schedule continues)
         await self._reschedule_if_recurring(task_id)
@@ -158,12 +174,20 @@ class SchedulerRunner:
         task = await self._store.get(task_id)
         if not task or not task.recurrence:
             return
+        if task.status == TaskStatus.cancelled:
+            logger.info("Task %s cancelled — recurrence stopped", task_id)
+            return
 
         recurrence = task.recurrence_obj
         if recurrence is None:
             logger.warning("Could not compute next occurrence for task %s", task_id)
             return
-        next_at = recurrence.next_after(task.scheduled_at)
+        # ``not_before=now`` collapses the occurrences that elapsed while
+        # igni was closed. Anchoring purely on ``scheduled_at`` meant a
+        # weekend offline with an hourly task came back as ~48 immediately
+        # due occurrences, each replayed as a full unattended agent turn
+        # with the main toolset. One catch-up run, then back on phase.
+        next_at = recurrence.next_after(task.scheduled_at, not_before=datetime.now())
 
         next_task = ScheduledTask.new(
             description=task.description,

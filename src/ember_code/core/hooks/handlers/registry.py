@@ -74,6 +74,13 @@ class HookHandlerRegistry:
         """
         return hook_type in self._handlers
 
+    def known_types(self) -> list[str]:
+        """Every type that has a handler — what a settings file may
+        legally say. Used to name the alternatives when a hook
+        declares a type nothing implements.
+        """
+        return [str(t) for t in self._handlers]
+
     async def run(
         self,
         hook: HookDefinition,

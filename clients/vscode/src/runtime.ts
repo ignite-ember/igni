@@ -80,6 +80,92 @@ export interface BackendInstall {
   source: BackendSource;
 }
 
+/** Which rule won in [resolveInterpreter]. */
+export type InterpreterOrigin = "dev_env" | "configured_setting" | "managed_venv";
+
+/** The outcome of the interpreter-precedence rules — see
+ *  [resolveInterpreter]. */
+export interface InterpreterResolution {
+  /** The interpreter the backend is launched with. */
+  python: string;
+  /** Which rule picked [python]. */
+  origin: InterpreterOrigin;
+  /** The ``BackendInstall.source`` this origin maps to. */
+  source: BackendSource;
+  /** Where the managed venv's interpreter lives, whoever won. */
+  managedVenvPython: string;
+  /** ``IGNI_DEV_BACKEND``'s value when it was set but *not*
+   *  acknowledged via ``IGNITE_EMBER_DEV`` — i.e. genuinely
+   *  ignored. ``undefined`` when the env var is absent or honored. */
+  ignoredDevBackend?: string;
+}
+
+/**
+ * The single source of truth for "which Python actually runs the
+ * backend". [ensureBackendPython] launches what this returns, and
+ * the extension's "Diagnose Backend" report describes what this
+ * returns — neither re-derives the precedence, because two copies of
+ * this rule is exactly how the doctor ended up naming the managed
+ * venv while ``igni.pythonPath`` was what really ran.
+ *
+ * Precedence, highest first:
+ *
+ *   1. ``IGNI_DEV_BACKEND`` — but only with the ``IGNITE_EMBER_DEV``
+ *      ack. Env vars travel through ``~/.zshenv`` / ``launchctl
+ *      setenv`` / macOS plists, so a value set years ago can silently
+ *      redirect today's plugin to a stale interpreter — exactly how
+ *      the v0.3.8 Homebrew M2.5 bug happened. Without the ack the
+ *      value is reported via [ignoredDevBackend] and skipped.
+ *   2. ``igni.pythonPath`` — a VSCODE SETTING, so it only ever comes
+ *      from user/workspace ``settings.json``: a deliberate edit, with
+ *      no ambient path that could set it accidentally. No ack
+ *      required; honored as-is.
+ *   3. The managed venv under ``cacheDir``.
+ *
+ * Pure and synchronous: no disk access, no subprocess. Callers that
+ * need the installed version probe separately.
+ */
+export function resolveInterpreter(opts: {
+  cacheDir: string;
+  configuredPython?: string;
+}): InterpreterResolution {
+  const managedVenvPython = path.join(
+    opts.cacheDir,
+    "venv",
+    isWindows() ? "Scripts/python.exe" : "bin/python",
+  );
+  const devBackend = process.env.IGNI_DEV_BACKEND?.trim();
+  const configured = opts.configuredPython?.trim();
+
+  if (devBackend && isDevAcked()) {
+    return {
+      python: devBackend,
+      origin: "dev_env",
+      source: "dev_override",
+      managedVenvPython,
+    };
+  }
+  // Reached only when the ack is missing — an acked override
+  // returned above, so anything left here really was ignored.
+  const ignoredDevBackend = devBackend || undefined;
+  if (configured) {
+    return {
+      python: configured,
+      origin: "configured_setting",
+      source: "dev_override",
+      managedVenvPython,
+      ignoredDevBackend,
+    };
+  }
+  return {
+    python: managedVenvPython,
+    origin: "managed_venv",
+    source: "managed_venv",
+    managedVenvPython,
+    ignoredDevBackend,
+  };
+}
+
 /**
  * Resolve a Python interpreter with ``ignite-ember`` installed AND
  * the sentence-transformer embedding model pre-warmed. Bootstraps on
@@ -94,70 +180,42 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
 
   // ── Dev / user overrides ──
   //
-  // Two different threat models here:
-  //
-  //   * ``IGNI_DEV_BACKEND`` is an ENV VAR. Env vars travel
-  //     through ``~/.zshenv`` / ``launchctl setenv`` / macOS
-  //     plists — a value set years ago can silently redirect
-  //     today's plugin to a stale interpreter, which is
-  //     exactly how the v0.3.8 Homebrew M2.5 bug happened.
-  //     Gate this behind an explicit ``IGNITE_EMBER_DEV=1``
-  //     ack so ambient state can't hijack the plugin.
-  //
-  //   * ``igni.pythonPath`` is a VSCODE SETTING. It only
-  //     ever comes from ``settings.json`` — user or workspace
-  //     — which means the user made an explicit deliberate
-  //     edit through the UI or hand-crafted JSON. There's no
-  //     ambient path that could set it accidentally, so
-  //     we don't require the extra ack. We still probe the
-  //     interpreter and log any version drift so the reader
-  //     sees what they're running.
-  const devAck = isDevAcked();
-  const devBackend = process.env.IGNI_DEV_BACKEND?.trim();
-  const configured = opts.configuredPython?.trim();
+  // The precedence itself lives in [resolveInterpreter] so the
+  // diagnostics command can report the same answer we act on.
+  const resolution = resolveInterpreter({
+    cacheDir: opts.cacheDir,
+    configuredPython: opts.configuredPython,
+  });
 
-  if (devBackend) {
-    if (devAck) {
-      const actual = await probeCliVersion(devBackend);
-      if (actual && actual !== expected) {
-        console.warn(
-          `IGNI_DEV_BACKEND at ${devBackend} runs ignite-ember ${actual}, ` +
-            `plugin pinned to ${expected}. Continuing (dev mode).`,
-        );
-      }
-      return {
-        python: devBackend,
-        env: { ...proxyEnv },
-        actualCliVersion: actual,
-        expectedCliVersion: expected,
-        source: "dev_override",
-      };
-    } else {
-      console.warn(
-        `IGNI_DEV_BACKEND=${devBackend} detected but IGNITE_EMBER_DEV is unset — ` +
-          "ignoring override and using the managed venv. " +
-          "Set IGNITE_EMBER_DEV=1 to opt in to the dev-mode override.",
-      );
-    }
+  if (resolution.ignoredDevBackend) {
+    console.warn(
+      `IGNI_DEV_BACKEND=${resolution.ignoredDevBackend} detected but IGNITE_EMBER_DEV is unset — ` +
+        "ignoring override. " +
+        "Set IGNITE_EMBER_DEV=1 to opt in to the dev-mode override.",
+    );
   }
-  if (configured) {
-    // Setting-based override — no ack required (see comment
-    // above). Still probe + log if drift so the reader can see
-    // when their pinned interpreter is at a different version
-    // than the extension expects.
-    const actual = await probeCliVersion(configured);
+
+  if (resolution.origin !== "managed_venv") {
+    // Overrides skip every download + install step. Still probe +
+    // log any drift so the reader sees when the interpreter they
+    // pinned is at a different version than the extension expects.
+    const actual = await probeCliVersion(resolution.python);
     if (actual && actual !== expected) {
+      const label =
+        resolution.origin === "dev_env"
+          ? `IGNI_DEV_BACKEND at ${resolution.python}`
+          : `igni.pythonPath="${resolution.python}"`;
       console.warn(
-        `igni.pythonPath="${configured}" runs ignite-ember ${actual}, ` +
+        `${label} runs ignite-ember ${actual}, ` +
           `extension pinned to ${expected}. Continuing.`,
       );
     }
     return {
-      python: configured,
+      python: resolution.python,
       env: { ...proxyEnv },
       actualCliVersion: actual,
       expectedCliVersion: expected,
-      source: "dev_override",
+      source: resolution.source,
     };
   }
 
@@ -171,10 +229,7 @@ export async function ensureBackendPython(opts: RuntimeOptions): Promise<Backend
   const uvPath = path.join(opts.cacheDir, isWindows() ? "uv.exe" : "uv");
   const markerPath = path.join(opts.cacheDir, INSTALL_MARKER);
   const venvDir = path.join(opts.cacheDir, "venv");
-  const venvPython = path.join(
-    venvDir,
-    isWindows() ? "Scripts/python.exe" : "bin/python",
-  );
+  const venvPython = resolution.managedVenvPython;
 
   const wantMarker = JSON.stringify({
     uv: UV_VERSION,

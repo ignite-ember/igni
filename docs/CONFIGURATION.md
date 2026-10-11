@@ -410,7 +410,7 @@ evals:
   judge_model: "MiniMax-M2.7"       # Model for AccuracyEval LLM-as-judge
   num_iterations: 3                  # Default AccuracyEval iterations per case
   accuracy_threshold: 7.0            # Default passing score (0-10 scale)
-  timeout_per_case: 30               # Seconds per eval case
+  timeout_per_case: 600              # Seconds per eval case; 0 disables
 
 # Display
 display:

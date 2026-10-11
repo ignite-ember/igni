@@ -2,13 +2,12 @@
 
 First-launch one-shot. Replaces the per-project SQLite
 ``code_index_*`` tables + every per-commit ``<sha>.chroma/`` dir +
-the ``knowledge.chroma`` dir + ``manifest.json`` with a Neo4j
-sidecar.
+the ``knowledge.chroma`` dir with a Neo4j sidecar.
 
-The cutover is gated on a sentinel file at
-``<data_dir>/neo4j/state/<project_id>/.migrated``. The marker
-is written LAST, so a crash mid-cutover re-runs cleanly on the
-next BE startup.
+The cutover is gated on a sentinel file — see
+:func:`~ember_code.core.code_index.paths.neo4j_migrated_marker_path`
+for the one spelling of its location. The marker is written LAST,
+so a crash mid-cutover re-runs cleanly on the next BE startup.
 
 Run order:
 
@@ -17,12 +16,20 @@ Run order:
    from ``state.db``. Other tables (agno, loop, scheduler, …) stay.
 3. ``rmtree`` every ``<sha>.chroma/`` under ``code_index/``.
 4. ``rmtree`` every project's ``knowledge.chroma/``.
-5. Delete ``manifest.json``.
-6. Create the sentinel file with the ISO timestamp as content.
+5. Create the sentinel file with the ISO timestamp as content.
 
-Steps 2-5 are individually idempotent (DROP TABLE IF EXISTS,
-rmtree with ignore_errors, unlink-missing). Step 6 is the
-completion signal.
+Steps 2-4 are individually idempotent (DROP TABLE IF EXISTS,
+rmtree with ignore_errors). Step 5 is the completion signal.
+
+**``manifest.json`` is not touched.** A ``_drop_manifest_json`` step
+used to delete it here as "no longer authoritative"; it is in fact the
+live head pointer — :mod:`code_index.index` reads and writes it on every
+``upsert_commit`` / ``set_head`` / ``touch``, and
+``session.agent_builder.prompt_builder`` reads ``head`` from it to build
+every session's project map. ``maybe_cutover`` runs on every BE boot, so
+that step deleted the current HEAD of any project whose sentinel was
+missing. Re-add the deletion only once ``Neo4jMetaClient`` is the head /
+last_used / branch-pin store and ``index.py`` reads from it.
 
 The function is conservative — it never raises on the destructive
 steps. A partial failure leaves the system in a "cutover in
@@ -41,7 +48,6 @@ from sqlalchemy import text
 from ember_code.core.code_index.paths import (
     code_index_dir,
     legacy_artifact_index_path,
-    manifest_path,
     neo4j_migrated_marker_path,
 )
 from ember_code.core.code_index.project import resolve_project_id
@@ -83,7 +89,8 @@ async def maybe_cutover(
     await _drop_legacy_tables(project_path, data_dir)
     _rmtree_chroma_dirs(project_path, data_dir)
     _rmtree_knowledge_chroma(project_path, data_dir)
-    _drop_manifest_json(project_path, data_dir)
+    # manifest.json is deliberately left alone — it is the live head
+    # pointer, not a legacy artifact. See the module docstring.
 
     marker_path.parent.mkdir(parents=True, exist_ok=True)
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -151,21 +158,3 @@ def _rmtree_knowledge_chroma(project: Path, data_dir: str | Path) -> None:
         return
     shutil.rmtree(path, ignore_errors=True)
     logger.info("removed knowledge.chroma at %s", path)
-
-
-def _drop_manifest_json(project: Path, data_dir: str | Path) -> None:
-    """Delete the legacy ``manifest.json`` file.
-
-    The head pointer + last_used + branch_pins now live in the
-    meta DB; the JSON file is no longer authoritative.
-    """
-    path = manifest_path(project, data_dir=data_dir)
-    if not path.exists():
-        logger.debug("no manifest.json at %s; skipping", path)
-        return
-    try:
-        path.unlink()
-    except OSError as exc:
-        logger.warning("failed to delete %s: %s", path, exc)
-        return
-    logger.info("removed manifest.json at %s", path)

@@ -7,13 +7,22 @@ Every enum here replaces a previously free-string field on a
 ``"quit"`` are unaffected, but producers gain autocomplete +
 typo-checking.
 
-Every enum here also carries a ``UNKNOWN`` safety-valve member
-(matching the ``CommandAction.UNKNOWN`` pattern already used
-elsewhere in the codebase). The ``_missing_`` override on each
-enum maps unrecognised wire strings to ``UNKNOWN`` rather than
-raising ``ValueError`` — critical for forward-compat when a newer
-BE emits a value this client doesn't recognise, and for surviving
-the persisted event log when replayed after an upgrade.
+The *ingest-side* enums — the ones parsed from a wire string or a
+replayed event-log row — carry a ``UNKNOWN`` safety-valve member
+plus a ``_missing_`` override that maps unrecognised strings to it
+rather than raising ``ValueError``. That is
+:class:`OrchestrationTaskStatus`, :class:`HITLAction`,
+:class:`HITLChoice`, :class:`SchedulerEventType`,
+:class:`PermissionModeName` and :class:`PushChannel` — critical for
+forward-compat when a newer BE emits a value this client doesn't
+recognise, and for surviving the persisted event log when replayed
+after an upgrade.
+
+:class:`CommandResultKind` and :class:`CommandAction` deliberately
+do NOT: a ``CommandResult`` is built in-process by this backend's
+own command handlers and never parsed back off the wire here, so an
+unlisted value is a producer bug that should fail loudly at
+construction, not degrade to ``UNKNOWN`` and render as blank text.
 
 Behaviour lives on the enum itself (``is_terminal`` / ``is_active``
 / ``is_confirm`` / ``is_persistent``) so dispatch sites never
@@ -59,12 +68,13 @@ class CommandAction(StrEnum):
     (Pydantic serialises enum values to their strings) while
     giving the dispatch sites a single authoritative list.
 
-    ``UNKNOWN`` is the safety valve for forward compatibility: a
-    newer BE could emit an action this client doesn't recognise.
-    Comparisons against the enum still work via ``StrEnum``'s
-    string equality, but the dispatcher's ``else`` branch should
-    handle the unknown case (typically: fall through to rendering
-    ``content`` as info text).
+    There is deliberately no ``UNKNOWN`` member and no ``_missing_``
+    override here (unlike the ingest-side enums — see the module
+    docstring). Every ``CommandAction`` is stamped in-process by this
+    backend's own command handlers; nothing parses one back off the
+    wire on the Python side, so an unlisted value means a producer
+    typo and should raise at construction rather than degrade into a
+    silent no-op. ``NONE`` (``""``) is the real "no action" value.
     """
 
     NONE = ""  # default — no action, just render content
@@ -272,9 +282,9 @@ class PermissionModeName(StrEnum):
 
 
 class PushChannel(StrEnum):
-    """Closed set of channels a
+    """The known channels a
     :class:`~ember_code.protocol.messages.PushNotification` can
-    carry.
+    carry — a *catalogue*, not a closed set.
 
     Was the free-string ``channel`` field with a
     ``"scheduler_event", "orchestrate_progress", "login_status"``
@@ -284,10 +294,24 @@ class PushChannel(StrEnum):
     ``session_named`` / ``permission_mode_changed`` /
     ``file_edited`` / ``process_started`` / etc.).
 
-    Keeping every channel here as a single authoritative list
-    means adding a new push channel is a schema-first change; the
-    producer sites reference the enum member and the FE routers
-    key on the wire string as before.
+    The producer set is genuinely open, and this docstring used to
+    deny it: besides the :func:`~ember_code.protocol.schemas.push`
+    factories, ``push_bridge`` forwards raw channel strings and
+    bridges the whole session broadcast bus into pushes, and
+    :class:`~ember_code.core.broadcast_schema.BroadcastEvent`
+    documents its ``channel`` as producer-open so a new tool can
+    introduce one without a schema change. Claiming closure here
+    bought nothing and went stale — six live channels
+    (``workflow_event``, ``todos_updated``, ``plan_decided``,
+    ``http_retry_attempt``, ``http_retry_succeeded``,
+    ``visualization_action_dispatched``) were missing from the
+    "authoritative" list while the FE routed on all of them.
+
+    So: ``PushNotification.channel`` stays a raw ``str`` on the wire,
+    ``_missing_`` maps anything unlisted to ``UNKNOWN``, and this
+    enum's job is to give the producer sites we *do* control a
+    symbol to reference. Add a member when you add a channel; the
+    wire keeps working either way.
     """
 
     SCHEDULER_STARTED = "scheduler_started"
@@ -306,7 +330,17 @@ class PushChannel(StrEnum):
     PROCESS_LINE = "process_line"
     PROCESS_EXITED = "process_exited"
     BACKGROUND_PROCESS_DONE = "background_process_done"
-    VISUALIZATION = "visualization"
+    # Bridged from the session broadcast bus / workflow runner rather
+    # than a ``push_*`` factory — which is exactly why they were
+    # missing while the FE routed on every one of them.
+    WORKFLOW_EVENT = "workflow_event"  # backend/workflow_runner.py
+    TODOS_UPDATED = "todos_updated"  # core/tools/todo.py
+    PLAN_DECIDED = "plan_decided"  # core/session/plan_ops.py
+    HTTP_RETRY_ATTEMPT = "http_retry_attempt"  # core/tools/http_fetcher.py
+    HTTP_RETRY_SUCCEEDED = "http_retry_succeeded"  # core/tools/http_fetcher.py
+    VISUALIZATION_ACTION_DISPATCHED = (
+        "visualization_action_dispatched"  # backend/visualization_action_bus.py
+    )
     UNKNOWN = "unknown"
 
     @classmethod

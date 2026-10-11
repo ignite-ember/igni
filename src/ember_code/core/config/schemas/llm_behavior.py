@@ -104,7 +104,23 @@ class GuardrailsConfig(BaseModel):
 
 
 class EvalsConfig(BaseModel):
+    """Defaults the eval loader / runner apply when a case omits a value.
+
+    Every field here is read: ``judge_model`` by
+    :meth:`SuiteRunner._lookup_judge_model`, ``num_iterations`` and
+    ``accuracy_threshold`` by the YAML loader (as the per-case
+    fallbacks), and ``timeout_per_case`` by :class:`CaseRunner` as the
+    fallback for a case with no ``case_timeout:`` of its own.
+    """
+
     judge_model: str = "MiniMax-M2.7"
     num_iterations: int = 3
     accuracy_threshold: float = 7.0
-    timeout_per_case: int = 30
+    # Fallback per-case wall-clock budget, in seconds. The old value
+    # here was 30, which nothing read — every committed suite that
+    # cares pins ``case_timeout:`` between 120 and 900. Now that the
+    # runner honours this field, 30 would abort essentially every real
+    # agent case before it finished, so the default is the order of
+    # magnitude those suites actually live at. Set to 0 to disable the
+    # default timeout entirely (per-case ``case_timeout`` still applies).
+    timeout_per_case: int = 600

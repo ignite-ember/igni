@@ -14,9 +14,9 @@ import pytest
 
 from ember_code.core.code_index.cutover import (
     _LEGACY_CODE_INDEX_TABLES,
-    _drop_manifest_json,
     _rmtree_chroma_dirs,
     _rmtree_knowledge_chroma,
+    maybe_cutover,
 )
 from ember_code.core.code_index.paths import (
     code_index_dir,
@@ -94,31 +94,33 @@ def test_rmtree_knowledge_chroma_skips_when_missing(project_tree) -> None:
     _rmtree_knowledge_chroma(project, data_dir)
 
 
-def test_drop_manifest_json_deletes_file(project_tree) -> None:
+async def test_the_cutover_does_not_delete_the_manifest(project_tree) -> None:
+    """manifest.json is the live head pointer, not a legacy artifact.
+
+    A ``_drop_manifest_json`` step deleted it as "no longer authoritative"
+    while ``index.py`` still wrote it on every ``set_head`` and the session
+    prompt builder still read ``head`` from it — and ``maybe_cutover`` runs
+    on every BE boot, so any project without the sentinel lost its HEAD.
+    """
     project, data_dir = project_tree
     manifest = manifest_path(project, data_dir=data_dir)
-    assert manifest.exists()
-    _drop_manifest_json(project, data_dir)
-    assert not manifest.exists()
+    manifest.write_text('{"head": "deadbeef", "commits": []}')
+
+    assert await maybe_cutover(project=project, data_dir=data_dir) is True
+
+    assert manifest.exists(), "the cutover deleted the live head pointer"
+    assert "deadbeef" in manifest.read_text()
 
 
-def test_drop_manifest_json_skips_when_missing(project_tree) -> None:
+async def test_full_cutover_sweep_cleans_every_legacy_artifact(project_tree) -> None:
+    """Run the real entry point — every legacy artifact gone, manifest kept."""
     project, data_dir = project_tree
-    manifest_path(project, data_dir=data_dir).unlink()
-    # No raise.
-    _drop_manifest_json(project, data_dir)
-
-
-def test_full_cutover_sweep_cleans_every_legacy_artifact(project_tree) -> None:
-    """Run the destructive steps in order — every legacy artifact gone."""
-    project, data_dir = project_tree
-    _rmtree_chroma_dirs(project, data_dir)
-    _rmtree_knowledge_chroma(project, data_dir)
-    _drop_manifest_json(project, data_dir)
+    await maybe_cutover(project=project, data_dir=data_dir)
     base = code_index_dir(project, data_dir=data_dir)
     assert not (base / "deadbeef.chroma").exists()
     assert not legacy_artifact_index_path(project, data_dir=data_dir).exists()
-    assert not manifest_path(project, data_dir=data_dir).exists()
+    # The live head pointer, not a legacy artifact — see cutover.py.
+    assert manifest_path(project, data_dir=data_dir).exists()
 
 
 def test_resolve_project_id_is_deterministic(project_tree) -> None:

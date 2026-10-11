@@ -65,6 +65,18 @@ class CodeIndexAvailabilityRefresher:
         self._get_availability = get_availability
         self._set_availability = set_availability
 
+    def retarget(self, *, code_index: Any, code_index_sync: Any) -> None:
+        """Point the refresher at a replacement index + sync manager.
+
+        Called by ``Session.attach_codeindex_neo4j`` when the chroma
+        backend is swapped for a neo4j one. A public seam rather than
+        two writes to ``_code_index`` / ``_code_index_sync`` from the
+        outside, so the next :meth:`refresh` cannot be left reading
+        the discarded backend.
+        """
+        self._code_index = code_index
+        self._code_index_sync = code_index_sync
+
     def refresh(self) -> RefreshAvailabilityResult:
         """Re-derive the availability flag and rebuild if it flipped.
 

@@ -40,9 +40,30 @@ class ToolNameResolver:
         "save_file": "Write",
         "edit_file": "Edit",
         "replace_in_file": "Edit",
-        "web_fetch": "WebFetch",
-        "duckduckgo_search": "WebSearch",
-        "duckduckgo_news": "WebSearch",
+        # The web rows are taken from the specs that build the
+        # toolkits, not from memory: ``WebFetchSpec`` registers
+        # ``fetch_url`` / ``fetch_json`` (``WebTools``) and
+        # ``WebSearchSpec`` registers ``web_search`` / ``search_news``
+        # (``DuckDuckGoTools``). They used to read ``web_fetch``,
+        # ``duckduckgo_search``, ``duckduckgo_news`` — three names no
+        # toolkit has ever registered, and none of the three real ones.
+        # So every web call arrived with a func_name the table did not
+        # know, ``resolve`` fell back to the func_name itself, and HITL
+        # "always"/"allow similar" wrote ``fetch_url(...)`` into
+        # settings.json: a rule the evaluator, which matches catalog
+        # names, can never hit again. The user answered the prompt and
+        # got prompted anyway, forever.
+        #
+        # Same failure as the ``WebSearchSpec`` confirmation gate
+        # (see its docstring): a name list that drifted from the
+        # function registry, with a test underneath encoding the dead
+        # name. ``tests/test_web_permission_names_are_real.py`` now
+        # asserts these keys against the specs rather than restating
+        # them.
+        "fetch_url": "WebFetch",
+        "fetch_json": "WebFetch",
+        "web_search": "WebSearch",
+        "search_news": "WebSearch",
         "notebook_read": "NotebookEdit",
         "notebook_read_cell": "NotebookEdit",
         "notebook_edit_cell": "NotebookEdit",

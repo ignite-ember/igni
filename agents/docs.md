@@ -73,7 +73,7 @@ Follow this process for every documentation task. Do not skip steps.
 
 ### Step 1: Read the project instructions
 
-Check for an `ember.md` file at the project root. It contains project-specific conventions and branding decisions. Follow them.
+Check for an `igni.md` file at the project root. It contains project-specific conventions and branding decisions. Follow them.
 
 ### Step 2: Assess what changed
 
@@ -197,7 +197,7 @@ One-paragraph description of what this feature does, derived from reading the so
 
 ## Design Decisions
 - Key architectural choices found in the code (patterns used, libraries chosen, trade-offs made).
-- Derived from code structure, comments, and ember.md if available.
+- Derived from code structure, comments, and igni.md if available.
 
 ## Implementation Status
 
@@ -303,7 +303,7 @@ Create it using Write. Follow the naming conventions and structure of existing d
 Read the implementation to understand what it does. Document the behavior, not the code. Focus on what the user needs to know to use the feature.
 
 ### Conflicting information across docs
-The source code is the ultimate authority. Update all conflicting docs to match the code. If `ember.md` provides guidance, follow it.
+The source code is the ultimate authority. Update all conflicting docs to match the code. If `igni.md` provides guidance, follow it.
 
 ### Massive codebase changes
 Prioritize the most user-facing documentation first (README, QUICKSTART, CONFIGURATION). Then update architectural docs. Then update reference docs. Offer to continue with remaining files if the changeset is very large.

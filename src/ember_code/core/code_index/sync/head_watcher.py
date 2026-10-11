@@ -37,8 +37,9 @@ class HeadWatcher:
 
     Two trigger conditions for calling ``run_sync``:
 
-    - HEAD moved: the new sha hasn't been synced yet and isn't
-      already the sha we're polling in_progress.
+    - HEAD moved: the new sha hasn't been synced yet, isn't
+      already the sha we're polling in_progress, and isn't inside
+      the backoff window of an attempt that already failed.
     - Retry due: the interval on
       :class:`InProgressRetryLedger` elapsed for the current
       in_progress sha (still equal to HEAD).
@@ -94,11 +95,16 @@ class HeadWatcher:
         self._task = None
 
     def _should_sync(self, sha: str, *, now: float) -> bool:
-        """Compose the HEAD-changed / retry-due predicates."""
-        head_changed = (
-            sha != self._last_synced_sha_getter() and sha != self._retry_ledger.in_progress_sha
-        )
-        return head_changed or self._retry_ledger.should_retry(sha, now=now)
+        """Compose the HEAD-changed / retry-due / backing-off predicates."""
+        if self._retry_ledger.should_retry(sha, now=now):
+            return True
+        # A sha we already tried and that neither landed nor started indexing
+        # still looks "changed" forever — nothing updates ``last_synced_sha``
+        # on failure. Without this gate the loop re-ran the full sync, server
+        # preflight included, once per poll tick.
+        if self._retry_ledger.is_backing_off(sha, now=now):
+            return False
+        return sha != self._last_synced_sha_getter() and sha != self._retry_ledger.in_progress_sha
 
     async def _loop(self) -> None:
         """1Hz local poll on git HEAD.
@@ -115,9 +121,9 @@ class HeadWatcher:
                 if not sha:
                     continue
 
-                # HEAD moved away from the in_progress sha → drop retry state.
-                if self._retry_ledger.in_progress_sha and not self._retry_ledger.matches(sha):
-                    self._retry_ledger.clear()
+                # HEAD moved away → every wait we were holding was about a
+                # sha nobody is looking at any more.
+                self._retry_ledger.forget_unless(sha)
 
                 if not self._should_sync(sha, now=loop.time()):
                     continue
@@ -126,7 +132,17 @@ class HeadWatcher:
                 if result.in_progress:
                     self._retry_ledger.mark(sha, now=loop.time())
                 else:
-                    self._retry_ledger.clear()
+                    if sha == self._last_synced_sha_getter():
+                        self._retry_ledger.clear()
+                    else:
+                        # The sync ran and the sha still is not indexed: no
+                        # auth, no server configured, repo not linked, or the
+                        # commonest one — the server has never heard of this
+                        # sha because you committed locally a moment ago.
+                        # Nothing about the next tick differs, so re-running at
+                        # the poll cadence is a 1 Hz preflight round trip to the
+                        # igni API for the life of the session.
+                        self._retry_ledger.mark_failed(sha, now=loop.time())
                     if self._on_sync_complete is not None:
                         # Inside the try: a refresh that raises must not kill
                         # the poll loop, and the outer handler logs it.

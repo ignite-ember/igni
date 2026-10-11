@@ -98,6 +98,18 @@ class MainAgentBuilder:
             project_dir=s.project_dir,
             settings=s.settings,
             codeindex_available=s.codeindex_available,
+            # Same condition ``ToolsBuilder.knowledge()`` attaches on, read off
+            # the same attribute: the prompt teaches those tools exactly when
+            # the session has them.
+            knowledge_available=s.artifacts is not None,
+            # The exact condition under which ``update_user_memory`` is
+            # attached: agno adds the learning-store tools only when
+            # ``agent._learning is not None`` (``agno/agent/_tools.py``),
+            # and the user-memory store only contributes that tool when
+            # ``learning.user_memory`` is on (``to_user_memory_input``
+            # returns ``False`` otherwise). ``learning.enabled=false`` or a
+            # session with no db both leave ``s.learning`` None.
+            user_memory_available=s.learning is not None and s.settings.learning.user_memory,
             agent_catalog=s.build_agent_catalog(),
             skill_descriptions=s.skill_pool.describe(),
             prompt_loader=self._prompt_loader,

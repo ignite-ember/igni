@@ -153,8 +153,10 @@ class Neo4jClient:
     async def apply_schema(self) -> None:
         """Apply the schema to the default ``neo4j`` DB.
 
-        Idempotent — every statement uses ``IF NOT EXISTS`` so a
-        partially-built DB picks up where it left off.
+        Re-applies cleanly: every ``CREATE`` uses ``IF NOT EXISTS``, so a
+        partially-built DB picks up where it left off and a fully-built one
+        is untouched. The leading ``DROP CONSTRAINT`` trio is the one-way
+        constraints→indexes migration and is a no-op after it has run once.
         """
         async with self.session() as session:
             for stmt in COMMIT_SCHEMA_STATEMENTS:

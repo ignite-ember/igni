@@ -240,4 +240,23 @@ def load_settings_from_options(options: CliOptions) -> Settings:
     # NOT a free function) keeps the assertion shape stable while
     # still going through the typed encoder.
     payload = overrides.to_settings_payload()
-    return _settings_module.load_settings(cli_overrides=payload)
+
+    # Loaded twice, and the second is the one returned. ``-m`` and the pipe
+    # mode run a real session in this process, so an admin's group policy has
+    # to apply here too — otherwise ``{"code_index": {"enabled": false}}``
+    # would hold in the app and not on the command line, which is the kind of
+    # half-enforcement a policy cannot have. The cache it is read from lives
+    # under ``storage.data_dir``, which is itself a setting, so the first pass
+    # answers "which directory" from local configuration alone. Both passes
+    # read a handful of small files; neither touches the network.
+    #
+    # The fetcher reads what the backend's ``AuthController`` last cached — a
+    # CLI invocation has no token of its own at settings-load time and must
+    # not stall on a portal call. See ``CachedSettingsFetcher``.
+    from ember_code.core.config.group_policy import CachedSettingsFetcher
+
+    local_only = _settings_module.load_settings(cli_overrides=payload)
+    return _settings_module.load_settings(
+        cli_overrides=payload,
+        group_policy_fetcher=CachedSettingsFetcher(local_only.storage.data_dir),
+    )

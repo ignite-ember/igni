@@ -27,6 +27,7 @@ import logging
 import os
 import re
 import signal
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,95 @@ from ember_code.backend.schemas_lockfile import LockfilePayload
 from ember_code.backend.schemas_rpc import LifecyclePhase
 
 logger = logging.getLogger(__name__)
+
+
+class ParentProcessProbe:
+    """Is this pid still alive? — one answer per platform.
+
+    POSIX: ``os.kill(pid, 0)`` is the textbook probe. It validates
+    the pid and our permission to signal it and delivers nothing.
+
+    Windows: it is not a probe at all. CPython's ``os.kill`` treats
+    signal 0 as ``CTRL_C_EVENT`` (they are the same integer) and
+    takes the console branch — the call becomes
+    ``GenerateConsoleCtrlEvent(CTRL_C_EVENT, pid)``. That either
+    fails with a plain ``OSError`` (never ``ProcessLookupError``,
+    which is the only exception the watchdog was reading), or, when
+    the pid happens to name a console process group, delivers a
+    Ctrl-C to the very FE we were only asking about. So on Windows
+    the watchdog could not fire, and the watchdog is the only
+    cleanup path there (``install_signal_handlers`` degrades to
+    nothing and the FE cannot kill a process group): that is the
+    shape of the 11-day-old runaway BE that burned 117 hours of CPU.
+
+    The Windows branch asks the kernel directly instead —
+    ``OpenProcess`` + a zero-timeout ``WaitForSingleObject``, which
+    distinguishes "signalled" (exited) from ``WAIT_TIMEOUT`` (still
+    running) without the ``STILL_ACTIVE``-vs-exit-code-259 ambiguity
+    of ``GetExitCodeProcess``.
+    """
+
+    #: ``WaitForSingleObject`` return meaning "not signalled yet" —
+    #: i.e. the process object is still running.
+    _WAIT_TIMEOUT = 0x00000102
+    _SYNCHRONIZE = 0x00100000
+    _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    #: ``OpenProcess`` failed because the pid resolves to a process
+    #: we are not allowed to open — it exists, so it is alive.
+    _ERROR_ACCESS_DENIED = 5
+
+    def __init__(self, *, windows: bool | None = None) -> None:
+        # Injectable so the Windows branch is testable from a POSIX
+        # CI box (the whole defect was platform-gated and untested).
+        self._windows = sys.platform == "win32" if windows is None else windows
+
+    def is_alive(self, pid: int) -> bool:
+        if pid <= 0:
+            return False
+        if self._windows:
+            return self._windows_is_alive(pid)
+        return self._posix_is_alive(pid)
+
+    @staticmethod
+    def _posix_is_alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)  # signal 0 = liveness probe only (POSIX)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            # PID exists but isn't ours — treat as alive.
+            return True
+        return True
+
+    def _windows_is_alive(self, pid: int) -> bool:
+        import ctypes  # noqa: PLC0415 — Windows-only, never imported on POSIX
+
+        try:
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+            # Handles are pointer-sized. ctypes defaults every
+            # restype to C ``int``, which truncates a 64-bit HANDLE
+            # and turns CloseHandle into a wild close; declare them.
+            kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+            kernel32.OpenProcess.restype = ctypes.c_void_p
+            kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+            kernel32.WaitForSingleObject.restype = ctypes.c_uint32
+            kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+            handle = kernel32.OpenProcess(
+                self._SYNCHRONIZE | self._PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+            )
+            if not handle:
+                return ctypes.get_last_error() == self._ERROR_ACCESS_DENIED
+            try:
+                return bool(kernel32.WaitForSingleObject(handle, 0) == self._WAIT_TIMEOUT)
+            finally:
+                kernel32.CloseHandle(handle)
+        except (AttributeError, OSError) as exc:
+            # Probe itself is broken (no kernel32, sandboxed API).
+            # Report alive: a false "dead" would kill a healthy BE
+            # out from under a working FE, which is worse than the
+            # watchdog going quiet.
+            logger.warning("parent liveness probe unavailable (%s); assuming parent alive", exc)
+            return True
 
 
 class BackendSupervisor:
@@ -59,6 +149,7 @@ class BackendSupervisor:
         self._shutdown_event = asyncio.Event()
         self._phase = LifecyclePhase.BOOTING
         self._parent_pid = self._resolve_parent_pid()
+        self._parent_probe = ParentProcessProbe()
         self._pool: Any = None
         self._backend: Any = None  # fallback shutdown target if pool is absent
         # Task handles — kept as strong refs so the loop doesn't GC them.
@@ -111,12 +202,27 @@ class BackendSupervisor:
         Windows — the asyncio Proactor / Selector loops don't
         implement POSIX signals. On Windows we fall back to Ctrl-C
         propagating out of ``asyncio.run`` + the parent-PID watchdog.
+
+        ``SIGUSR1`` needs a second guard, and the missing one cost the
+        whole platform. It is POSIX-only, so on Windows it does not
+        exist as an attribute at all: ``signal.SIGUSR1`` raises
+        ``AttributeError`` while the *argument* is being evaluated,
+        before ``add_signal_handler`` is ever entered, so the
+        suppression around the call never sees it. The backend died
+        here on every Windows start — ``app.run`` → this line →
+        traceback — and the nightly onboarding smoke had been red on
+        that one job for eight consecutive days. ``SIGTERM`` and
+        ``SIGINT`` exist on Windows, which is why only this line
+        failed and why the bug reads as platform-specific rather than
+        as the one-attribute mistake it is.
         """
         for sig in (signal.SIGTERM, signal.SIGINT):
             with contextlib.suppress(NotImplementedError):
                 self._loop.add_signal_handler(sig, self._on_terminate_signal)
-        with contextlib.suppress(NotImplementedError):
-            self._loop.add_signal_handler(signal.SIGUSR1, self._on_release_signal)
+        release_signal = getattr(signal, "SIGUSR1", None)
+        if release_signal is not None:
+            with contextlib.suppress(NotImplementedError):
+                self._loop.add_signal_handler(release_signal, self._on_release_signal)
 
     def start_parent_watchdog(self) -> None:
         self._parent_watch_task = asyncio.create_task(self._watch_parent_loop())
@@ -248,26 +354,36 @@ class BackendSupervisor:
         if parent_pid <= 0:
             return
         while not self._shutdown_event.is_set():
-            try:
-                os.kill(parent_pid, 0)  # signal 0 = liveness probe only
-            except ProcessLookupError:
+            if not self._parent_probe.is_alive(parent_pid):
                 logger.warning("Parent FE (pid=%s) died; BE shutting down", parent_pid)
                 self._shutdown_event.set()
-                # Nudge the receive loop: SIGTERM so
-                # ``transport.receive()`` unblocks even if no more FE
-                # messages arrive.
-                with contextlib.suppress(ProcessLookupError):
-                    os.kill(os.getpid(), signal.SIGTERM)
+                self._nudge_receive_loop()
                 # Last-resort escape hatch: if graceful shutdown
                 # stalls, hard-exit after a grace period so we never
                 # linger as a zombie burning CPU.
                 await asyncio.sleep(5)
                 logger.error("BE failed to shut down 5s after parent death; forcing exit")
                 os._exit(1)
-            except PermissionError:
-                # PID exists but isn't ours — treat as alive.
-                pass
             await asyncio.sleep(2)
+
+    def _nudge_receive_loop(self) -> None:
+        """Unblock ``transport.receive()`` after the parent died.
+
+        POSIX: SIGTERM to ourselves lands on the handler installed by
+        :meth:`install_signal_handlers` and the graceful path runs.
+
+        Windows has no signal delivery — ``os.kill(os.getpid(),
+        SIGTERM)`` there is a raw ``TerminateProcess`` on ourselves,
+        so the pool would never be shut down and the discovery
+        lockfile would stay on disk for the next boot to trip over.
+        The transport-close watcher (armed off the same shutdown
+        event, see :meth:`_close_transport_on_shutdown`) is what
+        unblocks ``receive()`` on that platform.
+        """
+        if sys.platform == "win32":
+            return
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(os.getpid(), signal.SIGTERM)
 
     async def _close_transport_on_shutdown(self) -> None:
         """SIGTERM/SIGINT only set ``shutdown_event`` — the main loop
