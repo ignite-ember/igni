@@ -85,13 +85,6 @@ class CodeIndexConfig(BaseModel):
     #:
     #:     {"code_index": {"enabled": false}}
     #:
-    #: **That path does not run today.** ``GroupPolicyTier`` is never
-    #: constructed in production and the pack's ``settings`` entries are never
-    #: written to the on-disk cache, so an admin publishing the block above
-    #: changes nothing on the client and nothing says so. See the "Nothing
-    #: constructs this in production yet" note on
-    #: :class:`~ember_code.core.config.merge_plan.GroupPolicyTier`.
-    #:
     #: **This alone does not remove Neo4j.** ``artifacts.enabled`` is
     #: backed by the same sidecar, and the sidecar is only skipped when
     #: neither feature wants it. A deployment that wants no graph
