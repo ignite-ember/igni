@@ -119,7 +119,7 @@ a comparison, not a stored flag:
     RETURN src.name AS source, d.pinned_n AS pinned_to, src.head_n AS now_at
     LIMIT 50
 
-**What would be affected if a document changed**
+**What would be affected if a document changed** — directly
 
     MATCH (src:Artifact {name: 'Auth model'})-[:HAS_VERSION]->(sv:Version)
     MATCH (dv:Version)-[d:DERIVED_FROM]->(sv)
@@ -127,6 +127,40 @@ a comparison, not a stored flag:
     WHERE dv.head AND d.state = 'confirmed'
     RETURN DISTINCT dep.name AS affected, dep.head_n AS version
     LIMIT 50
+
+**Everything downstream of a document** — what a change could reach
+
+One hop finds what cites the document; the pages built on *those* are
+affected too, and no passage anywhere says so. A variable-length
+match follows the chain. Start from every version of the source, not
+just its head: a dependent pinned to an older version is still built
+on it.
+
+    MATCH (src:Artifact {name: 'Auth model'})-[:HAS_VERSION]->(:Version)
+          <-[:DERIVED_FROM*1..10]-(v:Version)<-[:HAS_VERSION]-(dep:Artifact)
+    WHERE v.head
+    RETURN DISTINCT dep.name AS affected
+    LIMIT 100
+
+Reverse the arrow for **everything a document ultimately rests on**:
+
+    MATCH (a:Artifact {name: 'Release plan'})-[:HAS_VERSION]->(v:Version {head: true})
+          -[:DERIVED_FROM*1..10]->(:Version)<-[:HAS_VERSION]-(src:Artifact)
+    RETURN DISTINCT src.name AS rests_on
+    LIMIT 100
+
+Results are printed 40 rows at a time. When the answer may be larger,
+count first — `RETURN count(DISTINCT dep) AS n` — so a truncated list
+is never reported as the whole answer. An empty traversal from a
+document that has dependents is a wrong query, not an answer: check
+the name and the arrow direction.
+
+**Documents written from nothing** — no sources at all
+
+    MATCH (a:Artifact)-[:HAS_VERSION]->(v:Version {head: true})
+    WHERE NOT (v)-[:DERIVED_FROM]->()
+    RETURN a.name AS unsourced
+    LIMIT 100
 
 **Documents nothing was built on — the leaves**
 
