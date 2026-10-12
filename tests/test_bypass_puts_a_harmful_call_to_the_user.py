@@ -418,3 +418,41 @@ def test_a_nested_resume_takes_over_the_relay():
         assert queue.get_nowait() is other and queue.empty()
 
     asyncio.run(scenario())
+
+
+class TestTheDialogSaysWhy:
+    """The person reads what the call does and that the safety check stopped it on purpose.
+
+    The dialog once showed a bare fragment ("force-pushes, rewriting
+    shared history") under "Requested by safety check".
+    """
+
+    def test_a_rule_reads_as_a_sentence(self):
+        from ember_code.core.hooks.bypass_guard import Verdict, explain
+
+        text = explain(
+            "run_shell_command",
+            Verdict(needs_approval=True, reason="force-pushes, rewriting shared history"),
+        )
+        assert text.startswith("This command force-pushes, rewriting shared history.")
+        assert "Bypass mode skips approvals" in text
+
+    def test_the_model_says_it_judged_and_how_strongly(self):
+        from ember_code.core.hooks.bypass_guard import Verdict, explain
+
+        text = explain(
+            "write_file",
+            Verdict(
+                needs_approval=True,
+                reason="might delete or overwrite data",
+                score=0.83,
+                judged=True,
+            ),
+        )
+        assert text.startswith("This file write might delete or overwrite data")
+        assert "safety model's judgment" in text and "0.83" in text
+
+    def test_the_explanation_reaches_the_person(self, project):
+        ask = Asker(True)
+        _run(_guard(project, ask=ask), "run_shell_command", command="git push --force origin main")
+        assert ask.asked[0][1].startswith("This command force-pushes")

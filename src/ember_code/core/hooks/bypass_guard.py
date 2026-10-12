@@ -147,6 +147,8 @@ class Verdict(BaseModel):
     needs_approval: bool
     reason: str = ""
     score: float | None = None
+    #: True when the reason is the model's judgment rather than a rule's.
+    judged: bool = False
 
 
 Ask = Callable[[str, dict[str, Any], str, list[str]], Awaitable[bool | None]]
@@ -272,7 +274,7 @@ class BypassGuard:
             return None
 
         answer = (
-            await self._ask(tool_name, args, verdict.reason, list(agent_path or []))
+            await self._ask(tool_name, args, explain(tool_name, verdict), list(agent_path or []))
             if self._ask
             else None
         )
@@ -310,8 +312,9 @@ class BypassGuard:
         if probability >= self._config.threshold:
             return Verdict(
                 needs_approval=True,
-                reason=f"{_PLAIN[question]} (safety check {probability:.2f})",
+                reason=_PLAIN[question],
                 score=probability,
+                judged=True,
             )
         return Verdict(needs_approval=False, score=probability)
 
@@ -325,6 +328,31 @@ class BypassGuard:
         if tool_name in ("fetch_url", "fetch_json"):
             return flag_url(str(args.get("url") or ""))
         return None
+
+
+def explain(tool_name: str, verdict: Verdict) -> str:
+    """What the person reads in the dialog: what the call does, who flagged it, and why it stopped.
+
+    The bare reason ("force-pushes, rewriting shared history") under
+    "Requested by safety check" left them to work out that Bypass had
+    paused on purpose and on what grounds.
+    """
+    if tool_name in _SHELL_TOOLS:
+        subject = "This command"
+    elif tool_name in _WRITE_TOOLS:
+        subject = "This file write"
+    elif tool_name in ("fetch_url", "fetch_json"):
+        subject = "This request"
+    else:
+        subject = "This call"
+    if verdict.judged and verdict.score is not None:
+        grounds = (
+            f"{subject} {verdict.reason}, in the safety model's judgment "
+            f"(risk score {verdict.score:.2f} of 1)."
+        )
+    else:
+        grounds = f"{subject} {verdict.reason}."
+    return f"{grounds} Bypass mode skips approvals, but the safety check stops here so you decide."
 
 
 def _describe(tool_name: str, args: dict[str, Any]) -> str:
