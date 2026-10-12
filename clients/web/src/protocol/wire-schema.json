@@ -338,6 +338,7 @@
       "has_markup",
       "id",
       "is_error",
+      "is_rejected",
       "parent_run_id",
       "run_id",
       "session_id",

@@ -106,6 +106,19 @@ describe("applyEvent", () => {
     expect(tool.status).toBe("error");
   });
 
+  it("shows a call rejected in the approval dialog as rejected, not done or failed", () => {
+    const items = play([
+      toolStarted,
+      {
+        ...toolCompleted,
+        full_result: "Not run: the user rejected this call when asked to approve it.",
+        is_rejected: true,
+      } as ServerMessage,
+    ]);
+    const tool = items[0] as Extract<ChatItem, { kind: "tool" }>;
+    expect(tool.status).toBe("rejected");
+  });
+
   // ── tool_error event (separate from tool_completed{is_error}) ──
   // ``tool_error`` is the dedicated error event the BE emits when
   // a tool raises rather than returning a result. Walks back the
@@ -242,6 +255,17 @@ describe("applyEvent", () => {
 });
 
 describe("restoredItem", () => {
+  it("restores a rejected tool call as rejected", () => {
+    const item = restoredItem({
+      role: "tool",
+      tool_name: "run_shell_command",
+      friendly_name: "Bash",
+      content: "Not run: the user rejected this call when asked to approve it.",
+      is_rejected: true,
+    });
+    expect(item).toMatchObject({ kind: "tool", status: "rejected" });
+  });
+
   it("strips injected system-context from user turns", () => {
     const item = restoredItem({
       role: "user",

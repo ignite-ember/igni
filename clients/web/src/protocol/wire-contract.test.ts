@@ -20,7 +20,7 @@ const MESSAGE_READS: Record<string, string[]> = {
   user_message_received: ["text", "client_id"],
   content_delta: ["text", "is_thinking"],
   tool_started: ["tool_name", "friendly_name", "args_summary", "run_id"],
-  tool_completed: ["summary", "full_result", "run_id", "has_markup", "diff_rows", "is_error"],
+  tool_completed: ["summary", "full_result", "run_id", "has_markup", "diff_rows", "is_error", "is_rejected"],
   stream_end: ["id"],
   run_completed: ["input_tokens", "output_tokens", "reasoning_tokens", "duration", "parent_run_id"],
   run_paused: ["requirements"],

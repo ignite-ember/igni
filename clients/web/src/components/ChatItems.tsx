@@ -1208,7 +1208,7 @@ export function ToolCardView({
 }: {
   name: string;
   args: string;
-  status: "running" | "done" | "error";
+  status: "running" | "done" | "error" | "rejected";
   result: string;
   diffRows?: DiffRow[] | null;
   agentName?: string;
@@ -1224,6 +1224,7 @@ export function ToolCardView({
         <span className={`tool-status ${status}`} />
         <span className="tool-name">{name}</span>
         <span className="tool-args">{args}</span>
+        {status === "rejected" && <span className="tool-rejected-tag">Not run</span>}
         {agentName && (
           <span
             className="tool-agent-badge"

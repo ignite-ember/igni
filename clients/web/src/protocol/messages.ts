@@ -43,6 +43,8 @@ export interface ToolCompleted extends BaseMessage {
   has_markup: boolean;
   diff_rows: DiffRow[] | null;
   is_error: boolean;
+  /** Never ran: rejected in the approval dialog, or nobody could be asked. */
+  is_rejected?: boolean;
 }
 
 export interface ToolError extends BaseMessage {

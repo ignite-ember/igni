@@ -69,6 +69,9 @@ class ToolCompleted(RunScopedMessage):
     # a green checkmark, the user assumed success, and only the LLM
     # saw the failure — and tried to retry silently.
     is_error: bool = False
+    # The call never ran: the person rejected it in the approval dialog,
+    # or nobody could be asked. The card shows "rejected", not ✓ or ✗.
+    is_rejected: bool = False
 
 
 class ToolError(RunScopedMessage):

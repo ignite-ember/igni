@@ -70,6 +70,11 @@ _DEFAULT_SHELL_BG_FAIL_RE = re.compile(r"^Background process exited with code (\
 _DEFAULT_SHELL_EXIT_FAIL_RE = re.compile(r"^\[Exited with code (\d+)")
 
 _DEFAULT_ERROR_PREFIXES: tuple[str, ...] = ("Error:",)
+
+# A call kept from running because the person said no, or because
+# nobody could be asked — ``bypass_guard.NOT_RUN``. Not a failure: the
+# card shows it as rejected, neither green nor red.
+_DEFAULT_REJECTED_PREFIXES: tuple[str, ...] = ("Not run:",)
 _DEFAULT_FAILURE_REGEXES: tuple[re.Pattern[str], ...] = (
     _DEFAULT_SHELL_EXEC_FAIL_RE,
     _DEFAULT_SHELL_BG_FAIL_RE,
@@ -97,7 +102,9 @@ class ToolResultErrorDetector:
         self,
         error_prefixes: Sequence[str] = _DEFAULT_ERROR_PREFIXES,
         failure_regexes: Sequence[re.Pattern[str]] = _DEFAULT_FAILURE_REGEXES,
+        rejected_prefixes: Sequence[str] = _DEFAULT_REJECTED_PREFIXES,
     ) -> None:
+        self._rejected_prefixes: tuple[str, ...] = tuple(rejected_prefixes)
         self._error_prefixes: tuple[str, ...] = tuple(error_prefixes)
         self._failure_regexes: tuple[re.Pattern[str], ...] = tuple(failure_regexes)
 
@@ -114,7 +121,13 @@ class ToolResultErrorDetector:
         return cls(
             error_prefixes=_DEFAULT_ERROR_PREFIXES,
             failure_regexes=_DEFAULT_FAILURE_REGEXES,
+            rejected_prefixes=_DEFAULT_REJECTED_PREFIXES,
         )
+
+    def is_rejected(self, result: str) -> bool:
+        """Return True when the call was kept from running rather than failed."""
+        stripped = (result or "").lstrip()
+        return any(stripped.startswith(prefix) for prefix in self._rejected_prefixes)
 
     def is_error(self, result: str) -> bool:
         """Return True when ``result`` matches any configured

@@ -90,6 +90,11 @@ QUESTIONS: dict[str, Any] = {
     },
 }
 
+#: How a call the guard kept from running is reported, to the model and
+#: on the tool card. ``protocol/tool_error_conventions.py`` recognises it
+#: to show the card as rejected; a test pins the two together.
+NOT_RUN = "Not run:"
+
 #: The reason when Laya could not run; the call is asked about, not let through.
 _UNCHECKED = "could not be checked for safety"
 
@@ -306,14 +311,14 @@ class BypassGuard:
                 "bypass guard: %s refused, nobody to ask (%s)", tool_name, verdict.reason
             )
             return (
-                f"Blocked: this call {verdict.reason}, and Bypass mode puts a call like that to a "
-                "person first — but this session has nobody to ask. Run it outside Bypass, or "
-                "allow it explicitly in settings."
+                f"{NOT_RUN} this call needed the user's approval because it {verdict.reason}, "
+                "and nobody was available to give it."
             )
         logger.info("bypass guard: %s declined by the user (%s)", tool_name, verdict.reason)
-        return (
-            f"Blocked: the user declined this call ({verdict.reason}). Do not retry it another way."
-        )
+        # Only what happened. The model writes the follow-up itself —
+        # an earlier "Blocked: … Do not retry it another way" had it
+        # telling the user a system policy had stopped the call.
+        return f"{NOT_RUN} the user rejected this call when asked to approve it."
 
     def _follow_up(self, tool_name: str, args: dict[str, Any], verdict: Verdict) -> FollowUp | None:
         explainer = self._explainer
