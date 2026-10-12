@@ -24,12 +24,23 @@ from ember_code.core.artifacts.models import ReconcilePlan, StaleDependent
 # so we truncate and say so rather than silently feeding it a wall.
 MAX_DIFF_LINES: int = 400
 
+# Lines are not a size. A wiki page keeps each paragraph on one line, so 186
+# diff lines came to 21,878 characters, and with the dependent's content the
+# reconcile result reached 35 kB — past the 30 kB igni gives any shell result.
+# The dependent's content is never cut (the model rewrites it whole and cannot
+# rewrite what it was not shown); the diff gives way instead, and says where
+# the rest is.
+MAX_DIFF_CHARS: int = 16_000
+
 
 class Reconciler:
     """Builds :class:`ReconcilePlan` objects from a stale edge."""
 
-    def __init__(self, *, max_diff_lines: int = MAX_DIFF_LINES) -> None:
+    def __init__(
+        self, *, max_diff_lines: int = MAX_DIFF_LINES, max_diff_chars: int = MAX_DIFF_CHARS
+    ) -> None:
         self._max_diff_lines = max_diff_lines
+        self._max_diff_chars = max_diff_chars
 
     def plan(
         self,
@@ -82,9 +93,26 @@ class Reconciler:
         )
         if not lines:
             return ""
-        if len(lines) <= self._max_diff_lines:
-            return "\n".join(lines)
-        kept = lines[: self._max_diff_lines]
-        dropped = len(lines) - self._max_diff_lines
-        kept.append(f"... diff truncated — {dropped} more line(s) not shown")
+        return self.cap(lines)
+
+    def cap(self, lines: list[str]) -> str:
+        """Join diff lines, stopping at the line or character budget.
+
+        Whole lines only: a cut mid-line would read as a change that was
+        never made. The marker says how many lines were held back and where
+        the full source is.
+        """
+        kept: list[str] = []
+        size = 0
+        for line in lines[: self._max_diff_lines]:
+            if kept and size + len(line) + 1 > self._max_diff_chars:
+                break
+            kept.append(line)
+            size += len(line) + 1
+        dropped = len(lines) - len(kept)
+        if dropped:
+            kept.append(
+                f"... diff truncated — {dropped} more line(s) not shown; "
+                "artifact_read the source to see its current text in full"
+            )
         return "\n".join(kept)

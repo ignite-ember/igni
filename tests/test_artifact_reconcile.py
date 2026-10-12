@@ -108,3 +108,23 @@ class TestStaleSummaries:
         text = stale().summary
         assert "Design" in text and "Schema" in text
         assert "@1" in text and "@3" in text
+
+
+class TestTheDiffFitsTheResultBudget:
+    """Long lines are not few characters: a wiki page keeps a paragraph per line."""
+
+    def test_a_diff_of_long_lines_stops_at_the_character_budget(self):
+        before = "\n".join(f"para {i} " + "x" * 300 for i in range(100))
+        after = "\n".join(f"para {i} " + "y" * 300 for i in range(100))
+        diff = Reconciler(max_diff_chars=5_000).diff(before, after)
+        assert len(diff) < 5_400
+        assert "diff truncated" in diff and "artifact_read the source" in diff
+
+    def test_whole_lines_only(self):
+        lines = ["+" + "a" * 100, "+" + "b" * 100, "+" + "c" * 100]
+        capped = Reconciler(max_diff_chars=250).cap(lines)
+        assert capped.splitlines()[:2] == lines[:2]
+        assert "1 more line(s) not shown" in capped
+
+    def test_a_short_diff_is_untouched(self):
+        assert "truncated" not in Reconciler().diff("one\ntwo", "one\nTWO")
