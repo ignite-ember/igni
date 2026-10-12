@@ -3,11 +3,11 @@
 A rule carried one hand-written reason ("force-pushes, rewriting shared
 history") and Laya only a category, so a command nobody wrote a rule
 for got "might delete or overwrite data" and nothing more. Once a call
-is stopped, the session's model now describes it, and the sentence
-replaces the stock text in the open dialog.
+is stopped, the dialog opens with a spinner and the session's model
+describes the call in one request; the sentence replaces the spinner.
 
 The explainer never decides — the call is already paused when it runs —
-and any failure keeps the stock text.
+and when it has nothing, the plain reason is shown instead.
 """
 
 from __future__ import annotations
@@ -15,8 +15,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
-
-import pytest
 
 from ember_code.backend.hitl_controller import HitlController
 from ember_code.backend.hitl_stream_mux import HITLStreamMultiplexer
@@ -114,7 +112,77 @@ class TestTheQuestionPutToTheModel:
         assert len(prompt) < 5_000 and "(truncated)" in prompt
 
 
-class TestNoSentenceKeepsTheStockText:
+class FakeCompletions:
+    def __init__(self, content):
+        self.content, self.calls = content, []
+
+    async def create(self, **kwargs):
+        self.calls.append(kwargs)
+        message = SimpleNamespace(content=self.content)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+
+class FakeClient:
+    def __init__(self, completions):
+        self.chat = SimpleNamespace(completions=completions)
+
+
+class FakeModel:
+    id = "MiniMax-M2.7"
+    extra_headers = {"X-Test": "1"}
+    extra_body = None
+
+    def __init__(self, client):
+        self.client = client
+
+    def get_async_client(self):
+        return self.client
+
+
+class TestOneRequestOneAnswer:
+    """A plain chat completion against the model's endpoint: no agent
+    run, no tools or function calling, nothing stored."""
+
+    def _explain(self, content="Pushes `main` over origin."):
+        completions = FakeCompletions(content)
+        client = FakeClient(completions)
+        answer = asyncio.run(
+            CallExplainer(lambda: FakeModel(client)).explain(
+                "run_shell_command", {"command": "git push --force origin main"}, "force-pushes"
+            )
+        )
+        return answer, completions.calls
+
+    def test_one_request_one_answer(self):
+        answer, calls = self._explain()
+        assert answer == "Pushes main over origin."
+        assert len(calls) == 1
+
+    def test_the_request_is_a_plain_system_and_user_turn(self):
+        _, [call] = self._explain()
+        assert call["model"] == "MiniMax-M2.7"
+        assert call["stream"] is False
+        assert [m["role"] for m in call["messages"]] == ["system", "user"]
+        assert "git push --force origin main" in call["messages"][1]["content"]
+        assert "tools" not in call and "tool_choice" not in call
+        assert call["extra_headers"] == {"X-Test": "1"}, "the gateway's headers ride along"
+
+    def test_no_agent_is_built(self, monkeypatch):
+        import agno.agent
+
+        def refuse(*a, **kw):
+            raise AssertionError("the explainer must not build an agent")
+
+        monkeypatch.setattr(agno.agent, "Agent", refuse)
+        answer, _ = self._explain()
+        assert answer
+
+    def test_a_model_that_is_not_openai_compatible_is_skipped(self):
+        explainer = CallExplainer(lambda: SimpleNamespace(id="gemini"))
+        assert asyncio.run(explainer.explain("bash", {}, "why")) is None
+
+
+class TestNoSentenceMeansThePlainReason:
     def test_no_model_configured(self):
         from ember_code.core.config.null_model import NoModelConfigured
 
@@ -217,61 +285,82 @@ class TestTheCoordinator:
 # ── end to end: the open dialog's text is replaced ──────────────────
 
 
-@pytest.mark.parametrize("delay", [0.0, 0.2])
-def test_the_open_dialog_receives_the_explanation(tmp_path, delay):
-    """The dialog goes up with the stock text; the model's sentence
-    follows as ``requirement_details`` for the same requirement. With
-    no delay the explanation can land before the relay surfaces the
-    question — then it simply goes out with it."""
+async def _through_the_relay(tmp_path, explainer):
+    """Run one guarded call through the real multiplexer; return what the UI was sent."""
+    session = SimpleNamespace(sub_agent_hitl=SubAgentHITLCoordinator(), project_dir=tmp_path)
+    guard = _guard(
+        tmp_path,
+        ask=lambda *a, **kw: Session._ask_about_tool_call(session, *a, **kw),
+        explainer=explainer,
+    )
+    outcome = {}
 
-    async def scenario():
-        session = SimpleNamespace(sub_agent_hitl=SubAgentHITLCoordinator(), project_dir=tmp_path)
-        guard = _guard(
-            tmp_path,
-            ask=lambda *a, **kw: Session._ask_about_tool_call(session, *a, **kw),
-            explainer=FakeExplainer(delay=delay),
+    async def team_stream():
+        outcome["block"] = await guard.check(
+            "run_shell_command", {"command": "git push --force origin main"}, ["main"]
         )
-        outcome = {}
+        if False:
+            yield None
 
-        async def team_stream():
-            outcome["block"] = await guard.check(
-                "run_shell_command", {"command": "git push --force origin main"}, ["main"]
-            )
-            if False:
-                yield None
-
-        store = PendingRequirementsStore()
-        mux = HITLStreamMultiplexer(
-            session=session,
-            store=store,
-            pause_handler=None,
-            tracer=SimpleNamespace(trace=lambda *_: None),
+    store = PendingRequirementsStore()
+    mux = HITLStreamMultiplexer(
+        session=session,
+        store=store,
+        pause_handler=None,
+        tracer=SimpleNamespace(trace=lambda *_: None),
+    )
+    controller = HitlController(session, store)
+    sent: list = []
+    async for message in mux.stream(team_stream()):
+        if isinstance(message, msg.RunPaused | msg.RequirementDetails):
+            sent.append(message)
+        filled = isinstance(message, msg.RequirementDetails) or (
+            isinstance(message, msg.RunPaused) and not message.requirements[0].details_pending
         )
-        controller = HitlController(session, store)
-        shown: dict[str, str] = {}
-        async for message in mux.stream(team_stream()):
-            if isinstance(message, msg.RunPaused):
-                req = message.requirements[0]
-                shown[req.requirement_id] = req.details
-                if _SENTENCE in req.details:
-                    pending = req.requirement_id
-                    break
-            if isinstance(message, msg.RequirementDetails):
-                assert message.requirement_id in shown, "an update for a dialog that is up"
-                shown[message.requirement_id] = message.details
-                pending = message.requirement_id
-                break
-        async for _ in controller.resolve_batch(
-            [msg.HITLDecision(requirement_id=pending, action="confirm")]
-        ):
-            pass
-        await asyncio.sleep(0.05)
-        return shown[pending], outcome.get("block", "not finished")
+        if filled:
+            break
+    req_id = sent[0].requirements[0].requirement_id
+    async for _ in controller.resolve_batch(
+        [msg.HITLDecision(requirement_id=req_id, action="confirm")]
+    ):
+        pass
+    await asyncio.sleep(0.05)
+    return sent, outcome.get("block", "not finished")
 
-    text, block = asyncio.run(asyncio.wait_for(scenario(), timeout=10))
-    assert text.startswith(_SENTENCE)
-    assert "a safety rule matched (force-pushes" in text
+
+def test_the_dialog_spins_then_shows_the_explanation(tmp_path):
+    sent, block = asyncio.run(
+        asyncio.wait_for(_through_the_relay(tmp_path, FakeExplainer(delay=0.2)), timeout=10)
+    )
+    paused, details = sent
+    assert isinstance(paused, msg.RunPaused)
+    first = paused.requirements[0]
+    assert first.details_pending is True and first.details == "", "no stock text, a spinner"
+    assert isinstance(details, msg.RequirementDetails)
+    assert details.requirement_id == first.requirement_id
+    assert details.details.startswith(_SENTENCE)
+    assert "a safety rule matched (force-pushes" in details.details
     assert block is None, "allowed, so the call runs"
+
+
+def test_an_explanation_ready_before_the_dialog_goes_out_with_it(tmp_path):
+    sent, _ = asyncio.run(
+        asyncio.wait_for(_through_the_relay(tmp_path, FakeExplainer(delay=0.0)), timeout=10)
+    )
+    last = sent[-1]
+    text = (
+        last.details if isinstance(last, msg.RequirementDetails) else last.requirements[0].details
+    )
+    assert text.startswith(_SENTENCE)
+
+
+def test_with_no_explanation_the_spinner_gives_way_to_the_plain_reason(tmp_path):
+    sent, _ = asyncio.run(
+        asyncio.wait_for(_through_the_relay(tmp_path, FakeExplainer(None, delay=0.1)), timeout=10)
+    )
+    details = sent[-1]
+    assert isinstance(details, msg.RequirementDetails)
+    assert details.details.startswith("This command force-pushes, rewriting shared history.")
 
 
 def test_answering_first_stops_the_explainer(tmp_path):

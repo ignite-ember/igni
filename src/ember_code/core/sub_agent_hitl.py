@@ -129,7 +129,7 @@ class SubAgentHITLCoordinator:
         return out
 
     def update_details(self, req_id: str, details: str) -> None:
-        """Replace why a pending question is being asked, on screen too.
+        """Set why a pending question is being asked, on screen too.
 
         Not yet surfaced: it goes out with the new text. Already
         surfaced: queued for the relay to send as an update. Answered or
@@ -139,6 +139,8 @@ class SubAgentHITLCoordinator:
         if entry is None or entry.event.is_set():
             return
         entry.requirement.details = details
+        if hasattr(entry.requirement, "details_pending"):
+            entry.requirement.details_pending = False
         if entry.surfaced:
             self._detail_updates.append((req_id, details))
             self.new_arrival.set()

@@ -181,7 +181,14 @@ export function HitlDialog({
             Requested by <span className="hitl-agent-path">{agentPath(req.agent_path)}</span>
           </div>
         )}
-        {req.details && <div className="dialog-sub">{req.details}</div>}
+        {req.details_pending ? (
+          <div className="dialog-sub hitl-explaining" role="status">
+            <span className="hitl-explaining-spinner" aria-hidden="true" />
+            Working out what this call would do…
+          </div>
+        ) : (
+          req.details && <div className="dialog-sub">{req.details}</div>
+        )}
         <HitlArgsView args={req.tool_args as Record<string, unknown> | undefined} />
         {/* Action rows are indented to align with col-2 of the
             ``.hitl-args`` grid above — that's where the args' value

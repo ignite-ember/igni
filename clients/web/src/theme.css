@@ -2313,6 +2313,31 @@ button {
   flex-shrink: 0;
 }
 
+/* The safety check's description of a call is being written. Same
+   spinner as the orchestrate card, in the dialog's muted ink. */
+.hitl-explaining {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hitl-explaining-spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--fg-muted) 30%, transparent);
+  border-top-color: var(--fg-muted);
+  animation: ember-spin 0.9s linear infinite;
+  flex-shrink: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hitl-explaining-spinner {
+    animation-duration: 2.4s;
+  }
+}
+
 @keyframes ember-spin {
   to {
     transform: rotate(360deg);

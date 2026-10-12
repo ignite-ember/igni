@@ -102,6 +102,9 @@ export interface HITLRequest extends BaseMessage {
   friendly_name: string;
   tool_args: Record<string, unknown>;
   details: string;
+  /** ``details`` is still being written (the safety check asks the
+   *  model to describe the call); a ``requirement_details`` follows. */
+  details_pending?: boolean;
   /** Parent → leaf, e.g. ["igni", "safety check"]. The BE sends a list
    *  (``HITLRequest.agent_path: list[str]``); typed ``string`` before,
    *  which let React concatenate it into "ignisafety check". */
@@ -253,8 +256,8 @@ export interface RequirementResolved extends BaseMessage {
   requirement_id: string;
 }
 
-/** The reason shown for an open approval improved — the safety check's
- *  model explanation, arriving after its dialog. Replace it in place. */
+/** The reason for an open approval, arriving after its dialog — the
+ *  safety check's description of the call. Replaces the spinner. */
 export interface RequirementDetails extends BaseMessage {
   type: "requirement_details";
   requirement_id: string;

@@ -6,6 +6,11 @@ rest. Neither can say what *this* call does — a rule carries one stock
 phrase, Laya a category and a probability. So once a call is stopped,
 this asks the session's model to describe it.
 
+One request, one answer: a plain chat completion against the model's
+endpoint with the configured credentials — no agent run, no tools or
+function calling, no session or history stored anywhere. The client's
+own retry on a transient failure is kept.
+
 It never decides. By the time it runs the call is already paused, and
 whatever it writes only replaces the text above the command, which the
 dialog shows regardless. That is what makes it safe to feed it the
@@ -85,26 +90,30 @@ class CallExplainer:
         return None
 
     async def _ask(self, tool_name: str, args: dict[str, Any], flagged_for: str) -> str | None:
-        from agno.agent import Agent  # noqa: PLC0415 — heavy, and rarely reached
-
         from ember_code.core.config.null_model import NoModelConfigured  # noqa: PLC0415
 
         model = self._model()
-        if isinstance(model, NoModelConfigured):
+        # Only OpenAI-compatible endpoints: that is the client built below.
+        if isinstance(model, NoModelConfigured) or not hasattr(model, "get_async_client"):
             return None
-        agent = Agent(
-            name="_bypass_call_explainer",
-            model=model,
-            instructions=_INSTRUCTIONS,
-            markdown=False,
+        # The model object only lends its endpoint, key and headers —
+        # the same ones the agent uses, so the cloud gateway's token
+        # rides along. Nothing of Agno's run machinery is involved.
+        client = model.get_async_client()
+        completion = await client.chat.completions.create(
+            model=model.id,
+            messages=[
+                {"role": "system", "content": _INSTRUCTIONS},
+                {"role": "user", "content": self.prompt_for(tool_name, args, flagged_for)},
+            ],
+            stream=False,
+            extra_headers=getattr(model, "extra_headers", None),
+            extra_body=getattr(model, "extra_body", None),
         )
-        response = await agent.arun(self.prompt_for(tool_name, args, flagged_for))
-        # Agno reports a provider failure as a normal return with
-        # status ERROR and the provider's message as ``content``.
-        status = getattr(response, "status", None)
-        if str(getattr(status, "value", status) or "").upper() == "ERROR":
+        choices = getattr(completion, "choices", None) or []
+        if not choices:
             return None
-        return clean(str(getattr(response, "content", "") or ""))
+        return clean(str(choices[0].message.content or ""))
 
     def prompt_for(self, tool_name: str, args: dict[str, Any], flagged_for: str) -> str:
         """The user turn: the project, why it was flagged, and the call itself."""

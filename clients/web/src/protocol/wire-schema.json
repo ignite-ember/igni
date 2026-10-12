@@ -71,6 +71,7 @@
     "hitl_request": [
       "agent_path",
       "details",
+      "details_pending",
       "event_seq",
       "friendly_name",
       "id",

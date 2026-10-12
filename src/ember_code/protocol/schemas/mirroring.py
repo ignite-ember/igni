@@ -60,9 +60,12 @@ class RequirementResolved(Message):
 
 
 class RequirementDetails(Message):
-    """Broadcast when the reason shown for an open HITL requirement
-    improves — the Bypass safety check's model explanation arriving
-    after its dialog — so every view replaces the text in place."""
+    """The reason for an open HITL requirement, sent after its dialog.
+
+    The Bypass safety check raises its dialog with ``details_pending``
+    and no text, then sends this once the model has described the call
+    (or with the plain reason when it could not). Views swap the
+    spinner for ``details`` in place."""
 
     type: Literal["requirement_details"] = "requirement_details"
     requirement_id: str = ""

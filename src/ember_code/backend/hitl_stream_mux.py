@@ -485,6 +485,7 @@ class HITLStreamMultiplexer:
                     # Why the call is being put to the person, when the
                     # requirement says — the Bypass guard always does.
                     details=str(getattr(req, "details", "") or ""),
+                    details_pending=bool(getattr(req, "details_pending", False)),
                 )
             )
         # ``run_id`` here is the sub-agent's id; the FE doesn't

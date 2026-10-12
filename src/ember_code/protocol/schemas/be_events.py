@@ -157,6 +157,10 @@ class HITLRequest(Message):
     # and depends on a closed Agno tool-arg surface — deferred).
     tool_args: dict[str, Any] = Field(default_factory=dict)
     details: str = ""
+    # ``details`` is still being written — the Bypass safety check asks
+    # the model to describe the call — and arrives as a
+    # ``RequirementDetails``. The dialog shows a spinner until then.
+    details_pending: bool = False
     # Chain of agents that produced this request, parent → leaf.
     # Empty / single-entry means it's from the main agent. For sub-agent
     # HITL it's the dispatch path, e.g. ["architect"] when the main agent

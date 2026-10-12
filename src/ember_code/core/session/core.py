@@ -1164,13 +1164,19 @@ class Session:
         running — a headless run — there is nobody to ask, and waiting
         would hang the run for ever.
 
-        ``follow_up`` runs while the dialog is up; its sentence replaces
-        ``reason`` in every open view. Answering first cancels it.
+        With ``follow_up`` the dialog opens with a spinner instead of
+        text, and shows the model's description when it comes — or
+        ``reason`` when it does not. Answering first cancels it.
         """
         coordinator = self.sub_agent_hitl
         if coordinator.listeners <= 0:
             return None
-        requirement = _GuardRequirement(tool_name=tool_name, tool_args=args, details=reason)
+        requirement = _GuardRequirement(
+            tool_name=tool_name,
+            tool_args=args,
+            details="" if follow_up else reason,
+            details_pending=follow_up is not None,
+        )
         req_id = await coordinator.push_requirement(
             requirement,  # type: ignore[arg-type]
             run_id=f"bypass-guard-{tool_name}",
@@ -1179,9 +1185,7 @@ class Session:
 
         async def explain_on_screen() -> None:
             assert follow_up is not None
-            better = await follow_up()
-            if better:
-                coordinator.update_details(req_id, better)
+            coordinator.update_details(req_id, await follow_up() or reason)
 
         explaining = asyncio.create_task(explain_on_screen()) if follow_up else None
         try:
@@ -2120,9 +2124,18 @@ class _GuardRequirement:
     ``details``, ``confirm()`` and ``reject()``.
     """
 
-    def __init__(self, *, tool_name: str, tool_args: dict[str, Any], details: str) -> None:
+    def __init__(
+        self,
+        *,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        details: str,
+        details_pending: bool = False,
+    ) -> None:
         self.tool_execution = _GuardToolExecution(tool_name, tool_args)
         self.details = details
+        #: The model is still describing the call; the dialog spins.
+        self.details_pending = details_pending
         self.confirmed = False
 
     def confirm(self) -> None:

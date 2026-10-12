@@ -7,10 +7,11 @@ const req = (id: string, details: string): HITLRequest =>
   ({ type: "hitl_request", requirement_id: id, tool_name: "bash", details }) as HITLRequest;
 
 describe("withDetails", () => {
-  it("replaces the reason of the matching requirement only", () => {
-    const open = [req("a", "stock"), req("b", "other")];
+  it("fills in the matching requirement only and stops its spinner", () => {
+    const open = [{ ...req("a", ""), details_pending: true }, req("b", "other")];
     const next = withDetails(open, { requirement_id: "a", details: "Overwrites main." });
     expect(next?.map((r) => r.details)).toEqual(["Overwrites main.", "other"]);
+    expect(next?.[0].details_pending).toBe(false);
   });
 
   it("leaves the list alone for a requirement that is no longer open", () => {

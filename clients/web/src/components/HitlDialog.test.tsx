@@ -107,6 +107,24 @@ describe("HitlDialog — single requirement", () => {
     expect(screen.queryByText(/Requested by/)).toBeNull();
   });
 
+  it("spins while the safety check is still describing the call", () => {
+    const { rerender } = render(
+      <HitlDialog
+        requirements={[req({ details: "", details_pending: true })]}
+        onResolve={() => undefined}
+      />,
+    );
+    expect(screen.getByRole("status").textContent).toMatch(/Working out what this call would do/);
+    rerender(
+      <HitlDialog
+        requirements={[req({ details: "Overwrites main on origin.", details_pending: false })]}
+        onResolve={() => undefined}
+      />,
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByText("Overwrites main on origin.")).toBeTruthy();
+  });
+
   it("renders the details sub-line when set", () => {
     render(
       <HitlDialog
