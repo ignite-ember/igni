@@ -380,3 +380,41 @@ def test_the_dialog_pops_up_and_its_answer_decides(tmp_path, action, expect_ran)
 
     block = asyncio.run(scenario())
     assert (block is None) is expect_ran
+
+
+def test_a_nested_resume_takes_over_the_relay():
+    """In Bypass every shell call is auto-resumed inside a nested
+    multiplexer stream. The outer stream's relay used to keep competing
+    for coordinator requests and won about half of them, putting the
+    guard's question in a queue nobody read — a deadlock and no dialog,
+    found clicking through Bypass in the real UI. The outer relay now
+    stands down and hands back whatever it had taken."""
+    from ember_code.backend.schemas_pause import SubagentPause, TeamStreamEvent
+    from ember_code.core.sub_agent_hitl import _PendingEntry
+
+    async def scenario():
+        coordinator = SubAgentHITLCoordinator()
+        session = SimpleNamespace(sub_agent_hitl=coordinator)
+        mux = HITLStreamMultiplexer(
+            session=session,
+            store=None,
+            pause_handler=None,
+            tracer=SimpleNamespace(trace=lambda *_: None),
+        )
+        relay = asyncio.create_task(asyncio.sleep(3600))
+        queue: asyncio.Queue = asyncio.Queue()
+        entry = _PendingEntry(requirement=object(), run_id="r", surfaced=True)
+        other = TeamStreamEvent(event="keep me")
+        queue.put_nowait(SubagentPause(entries=[("req1", entry)]))
+        queue.put_nowait(other)
+        mux._sub_task, mux._queue = relay, queue
+
+        mux._hand_relay_to_nested()
+        await asyncio.sleep(0)
+
+        assert relay.cancelled()
+        assert entry.surfaced is False, "handed back for the nested relay to surface"
+        assert coordinator.new_arrival.is_set()
+        assert queue.get_nowait() is other and queue.empty()
+
+    asyncio.run(scenario())

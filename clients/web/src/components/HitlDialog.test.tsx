@@ -89,6 +89,24 @@ describe("HitlDialog — single requirement", () => {
     expect(screen.getByText(/Requested by/)).toBeTruthy();
   });
 
+  it("joins the path the backend sends as a list", () => {
+    // The BE sends ``agent_path`` as a list; rendered raw, React ran
+    // the names together — the Bypass safety check read as
+    // "Requested by ignisafety check".
+    render(
+      <HitlDialog
+        requirements={[req({ agent_path: ["igni", "safety check"] })]}
+        onResolve={() => undefined}
+      />,
+    );
+    expect(screen.getByText("igni → safety check")).toBeTruthy();
+  });
+
+  it("shows no requester line for an empty path", () => {
+    render(<HitlDialog requirements={[req({ agent_path: [] })]} onResolve={() => undefined} />);
+    expect(screen.queryByText(/Requested by/)).toBeNull();
+  });
+
   it("renders the details sub-line when set", () => {
     render(
       <HitlDialog

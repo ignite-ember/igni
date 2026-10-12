@@ -128,6 +128,9 @@ class HITLStreamMultiplexer:
         sub_hitl.listeners = getattr(sub_hitl, "listeners", 0) + 1
         team_task = asyncio.create_task(self._drain_team(team_stream, agno_queue))
         sub_task = asyncio.create_task(self._drain_subagent_hitl(sub_hitl, agno_queue))
+        # Kept so a nested resume can stand this relay down — see
+        # :meth:`_hand_relay_to_nested`.
+        self._sub_task, self._queue = sub_task, agno_queue
 
         try:
             while True:
@@ -246,6 +249,42 @@ class HITLStreamMultiplexer:
             except Exception as exc:
                 logger.debug("post-run broadcast drain raised: %s", exc)
 
+    def _hand_relay_to_nested(self) -> None:
+        """Stand this stream's relay down before a nested resume stream starts.
+
+        The resume runs *inside* this stream's loop, so until it ends this
+        loop reads nothing from its own queue. Its relay kept waiting on
+        the shared coordinator all the same, and won the race for the next
+        approval request about half the time — putting it in a queue
+        nobody would read until the resumed run finished, which was itself
+        waiting for that answer. A deadlock, and no dialog: found clicking
+        through Bypass in the real UI, where every shell call is
+        auto-resumed this way.
+
+        Anything already taken is handed back unsurfaced, so the nested
+        stream's relay picks it up.
+        """
+        sub_task = getattr(self, "_sub_task", None)
+        queue = getattr(self, "_queue", None)
+        if sub_task is not None:
+            sub_task.cancel()
+        if queue is None:
+            return
+        handed_back = False
+        kept: list[MuxEvent] = []
+        while not queue.empty():
+            event = queue.get_nowait()
+            if isinstance(event, SubagentPause):
+                for _req_id, entry in event.entries:
+                    entry.surfaced = False
+                handed_back = True
+            else:
+                kept.append(event)
+        for event in kept:
+            queue.put_nowait(event)
+        if handed_back:
+            self._session.sub_agent_hitl.new_arrival.set()
+
     async def _handle_paused(self, event: Any) -> AsyncIterator[msg.Message]:
         """Route a paused team event through the evaluator and
         either resume or forward to the FE."""
@@ -271,6 +310,7 @@ class HITLStreamMultiplexer:
                 result.run_id,
                 len(result.auto_resolved),
             )
+            self._hand_relay_to_nested()
             resume_mux = HITLStreamMultiplexer(
                 session=self._session,
                 store=self._store,

@@ -176,9 +176,9 @@ export function HitlDialog({
             the word "main" floating under the heading, which reads as
             debris; on a team run the path is the point — a sub-agent
             the user never saw is asking to run something. F136. */}
-        {req.agent_path && (
+        {agentPath(req.agent_path) && (
           <div className="dialog-sub">
-            Requested by <span className="hitl-agent-path">{req.agent_path}</span>
+            Requested by <span className="hitl-agent-path">{agentPath(req.agent_path)}</span>
           </div>
         )}
         {req.details && <div className="dialog-sub">{req.details}</div>}
@@ -241,4 +241,10 @@ export function HitlDialog({
       </div>
     </div>
   );
+}
+
+/** "igni → safety check" from the path the BE sends; "" when there is none. */
+function agentPath(path: string[] | string | undefined): string {
+  if (!path) return "";
+  return Array.isArray(path) ? path.filter(Boolean).join(" → ") : path;
 }

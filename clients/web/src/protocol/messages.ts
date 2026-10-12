@@ -102,7 +102,10 @@ export interface HITLRequest extends BaseMessage {
   friendly_name: string;
   tool_args: Record<string, unknown>;
   details: string;
-  agent_path: string;
+  /** Parent → leaf, e.g. ["igni", "safety check"]. The BE sends a list
+   *  (``HITLRequest.agent_path: list[str]``); typed ``string`` before,
+   *  which let React concatenate it into "ignisafety check". */
+  agent_path: string[] | string;
 }
 
 export interface RunPaused extends BaseMessage {
