@@ -120,6 +120,12 @@ class HITLStreamMultiplexer:
         # the team's stream may still have a paused tool we want to
         # drive to completion via ``resolve_hitl``; it naturally
         # exits when the team's stream ends or errors.
+        # Counted before either task exists. The team task starts first,
+        # and a tool call that asks for approval at once would otherwise
+        # look for a relay that has not been scheduled yet, find none, and
+        # be refused as "nobody to ask" — a race the model's thinking time
+        # usually hides and a fast tool call does not.
+        sub_hitl.listeners = getattr(sub_hitl, "listeners", 0) + 1
         team_task = asyncio.create_task(self._drain_team(team_stream, agno_queue))
         sub_task = asyncio.create_task(self._drain_subagent_hitl(sub_hitl, agno_queue))
 
@@ -160,6 +166,7 @@ class HITLStreamMultiplexer:
             # sees a message rather than a stranded stream.
             yield msg.Error(text=str(e))
         finally:
+            sub_hitl.listeners = getattr(sub_hitl, "listeners", 1) - 1
             sub_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await sub_task
@@ -186,7 +193,6 @@ class HITLStreamMultiplexer:
     async def _drain_subagent_hitl(self, sub_hitl: Any, queue: asyncio.Queue[MuxEvent]) -> None:
         """Pump sub-agent coordinator pauses into the queue."""
         self._tracer.trace(f"_stream_mux: drain STARTED (coord_id={id(sub_hitl)})")
-        sub_hitl.listeners += 1
         try:
             while True:
                 await sub_hitl.new_arrival.wait()
@@ -198,8 +204,6 @@ class HITLStreamMultiplexer:
         except asyncio.CancelledError:
             self._tracer.trace("_stream_mux: drain cancelled")
             return
-        finally:
-            sub_hitl.listeners -= 1
 
     # ── Team event dispatch ────────────────────────────────────────
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -307,3 +308,75 @@ def test_the_real_model_separates_a_harmful_call_from_an_ordinary_one():
     ordinary, _ = asyncio.run(judge.score("Bash: ls -la src/"))
     assert harmful > ordinary
     assert ordinary < 0.75
+
+
+# ── the dialog, end to end through the real multiplexer and controller ──
+#
+# The team stream stands in for Agno running a tool: mid-stream it calls
+# the real guard, which asks through the real coordinator. What leaves
+# the multiplexer is what the UI receives. This caught a race: the relay
+# counted itself from inside its own task, so a tool call that asked at
+# once found no relay and was refused as "nobody to ask".
+
+from ember_code.backend.hitl_controller import HitlController  # noqa: E402
+from ember_code.backend.hitl_stream_mux import HITLStreamMultiplexer  # noqa: E402
+from ember_code.backend.pending_requirements_store import PendingRequirementsStore  # noqa: E402
+from ember_code.core.session.core import Session  # noqa: E402
+from ember_code.core.sub_agent_hitl import SubAgentHITLCoordinator  # noqa: E402
+from ember_code.protocol import messages as msg  # noqa: E402
+
+
+class NoJudge:
+    async def score(self, text):
+        return 0.0, "destructive"
+
+
+@pytest.mark.parametrize("action,expect_ran", [("confirm", True), ("reject", False)])
+def test_the_dialog_pops_up_and_its_answer_decides(tmp_path, action, expect_ran):
+    async def scenario():
+        session = SimpleNamespace(sub_agent_hitl=SubAgentHITLCoordinator(), project_dir=tmp_path)
+        guard = BypassGuard(
+            config=BypassGuardConfig(),
+            project_dir=tmp_path,
+            in_bypass=lambda: True,
+            ask=lambda *a: Session._ask_about_tool_call(session, *a),
+            judge=NoJudge(),
+        )
+        outcome = {}
+
+        async def team_stream():
+            # Agno is executing a tool call: the permission pipeline runs the guard.
+            outcome["block"] = await guard.check(
+                "run_shell_command", {"command": "git push --force origin main"}, ["main"]
+            )
+            if False:
+                yield None
+
+        store = PendingRequirementsStore()
+        mux = HITLStreamMultiplexer(
+            session=session,
+            store=store,
+            pause_handler=None,
+            tracer=SimpleNamespace(trace=lambda *_: None),
+        )
+        controller = HitlController(session, store)
+        seen = []
+        async for message in mux.stream(team_stream()):
+            seen.append(message)
+            if isinstance(message, msg.RunPaused):
+                req = message.requirements[0]
+                # What the dialog shows:
+                assert req.tool_name == "run_shell_command"
+                assert req.tool_args == {"command": "git push --force origin main"}
+                assert "force-pushes" in req.details
+                assert req.agent_path == ["main", "safety check"]
+                # The user clicks Allow / Deny:
+                async for _ in controller.resolve_batch(
+                    [msg.HITLDecision(requirement_id=req.requirement_id, action=action)]
+                ):
+                    pass
+        assert any(isinstance(m, msg.RunPaused) for m in seen), "no dialog was sent to the UI"
+        return outcome["block"]
+
+    block = asyncio.run(scenario())
+    assert (block is None) is expect_ran
