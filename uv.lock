@@ -752,6 +752,7 @@ dependencies = [
     { name = "google-genai" },
     { name = "greenlet" },
     { name = "httpx" },
+    { name = "laya" },
     { name = "neo4j" },
     { name = "openpyxl" },
     { name = "pydantic" },
@@ -807,6 +808,7 @@ requires-dist = [
     { name = "google-genai", marker = "extra == 'gemini'", specifier = "~=2.8.0" },
     { name = "greenlet", specifier = "~=3.5.1" },
     { name = "httpx", specifier = "~=0.28.1" },
+    { name = "laya", specifier = "~=0.4.4" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = "~=1.28.1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "~=1.19.1" },
     { name = "neo4j", specifier = "~=5.27.0" },
@@ -915,6 +917,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/19/74/a633ee74eb36c44aa6d1095e7cc5569bebf04342ee146178e2d36600708b/jsonschema_specifications-2025.9.1.tar.gz", hash = "sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d", size = 32855, upload-time = "2025-09-08T01:34:59.186Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl", hash = "sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe", size = 18437, upload-time = "2025-09-08T01:34:57.871Z" },
+]
+
+[[package]]
+name = "laya"
+version = "0.4.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "safetensors" },
+    { name = "torch" },
+    { name = "transformers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e2/07/b715fd4674423e357692167ef3696deac734745e6ef39a31bc3e691ad614/laya-0.4.5.tar.gz", hash = "sha256:730f24a4a7d76d0032cedb8f19ea2254643025e1cfcfe59c1e056e9b533f78c7", size = 1162154, upload-time = "2026-10-12T08:59:10.862Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bd/9f/bd7cccfecd7c95dd289cc41475b398e5b8257bf30a00d3ab510f55d67225/laya-0.4.5-py3-none-any.whl", hash = "sha256:042e97e9ca36a8c806f1fe5389814f3b2f015fe2a6e0ae7e83769a6427f8dba4", size = 391998, upload-time = "2026-10-12T08:59:09.085Z" },
 ]
 
 [[package]]

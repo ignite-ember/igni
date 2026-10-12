@@ -74,6 +74,9 @@ dependencies = [
     "wikipedia~=1.4.0",
     "dateparser~=1.4.0",
     "sentence-transformers~=5.5.1",
+    # Bypass mode's last check (core/hooks/bypass_guard.py). Runs locally
+    # beside the embedder; needs nothing torch/transformers do not already.
+    "laya~=0.4.4",
     "websockets~=16.0",
     "neo4j~=5.27.0",
     "weasyprint>=70.0",

@@ -549,6 +549,25 @@ def _denial_message(
 # ── PermissionPipeline coordinator ─────────────────────────────────
 
 
+class BypassGuardStage(PermissionStage):
+    """Bypass mode's last check — see :mod:`~ember_code.core.hooks.bypass_guard`.
+
+    Runs only after every other stage let the call through, so an
+    explicit deny, a protected path or a blocked command still wins
+    first, and only in Bypass does it do anything.
+    """
+
+    def __init__(self, guard: Any | None) -> None:
+        self._guard = guard
+
+    async def evaluate(self, ctx: ToolCallContext) -> StageOutcome:
+        if self._guard is None:
+            return Continue()
+        agent = getattr(ctx.agent, "name", None)
+        message = await self._guard.check(ctx.name, ctx.args, [agent] if agent else [])
+        return Block(message) if message else Continue()
+
+
 class PermissionPipeline:
     """Ordered runner over :class:`PermissionStage` instances.
 
@@ -559,6 +578,8 @@ class PermissionPipeline:
     3. :class:`BlockedCommandStage` — defense-in-depth, always runs.
     4. :class:`PermissionEvaluatorStage` — 6-mode rules; skipped
        when stage 1 returned :class:`AllowSkip`.
+    5. :class:`BypassGuardStage` — in Bypass only, puts a possibly
+       harmful call to the person before it runs.
 
     :meth:`evaluate` returns the block message on the first
     :class:`Block`, or ``None`` if every stage says continue /
@@ -571,11 +592,13 @@ class PermissionPipeline:
         protected_paths: list[str],
         blocked_commands: list[str],
         permission_evaluator: PermissionEvaluator | None,
+        bypass_guard: Any | None = None,
     ) -> None:
         self._pre = PreToolUseHookStage(firer)
         self._protected = ProtectedPathStage(protected_paths)
         self._blocked = BlockedCommandStage(blocked_commands)
         self._evaluator_stage = PermissionEvaluatorStage(permission_evaluator, firer)
+        self._bypass_guard = BypassGuardStage(bypass_guard)
 
     async def evaluate(self, ctx: ToolCallContext) -> str | None:
         """Run every stage in order. Return the first
@@ -603,4 +626,8 @@ class PermissionPipeline:
         evaluator_outcome = await self._evaluator_stage.evaluate(ctx)
         if isinstance(evaluator_outcome, Block):
             return evaluator_outcome.message
+
+        guard_outcome = await self._bypass_guard.evaluate(ctx)
+        if isinstance(guard_outcome, Block):
+            return guard_outcome.message
         return None

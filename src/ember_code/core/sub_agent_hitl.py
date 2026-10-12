@@ -72,6 +72,10 @@ class SubAgentHITLCoordinator:
         # Set whenever a NEW requirement arrives. Backend awaits this to
         # know when to forward to FE without busy-polling.
         self.new_arrival = asyncio.Event()
+        #: Forwarders currently relaying requirements to a person. Zero
+        #: means a requirement pushed now would wait for ever — headless
+        #: ``-p``, CI — so a caller that needs a yes must refuse instead.
+        self.listeners = 0
 
     async def push_requirement(
         self,

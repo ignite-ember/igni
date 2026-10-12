@@ -66,6 +66,8 @@ class ToolEventHookFactory:
         # silently dropping a user out of plan mode, i.e. out of "do not
         # touch my tree", because they installed a plugin.
         self._permission_evaluator: PermissionEvaluator | None = permission_evaluator
+        #: Bypass mode's last check; set by the session once it can ask.
+        self.bypass_guard: Any = None
 
     @property
     def permission_evaluator(self) -> PermissionEvaluator:
@@ -113,6 +115,7 @@ class ToolEventHookFactory:
             rules_index=self._rules_index,
             project_dir=self._project_dir,
             permission_evaluator=self.permission_evaluator,
+            bypass_guard=self.bypass_guard,
         )
 
     def evaluator_for_session(self, session: Any) -> PermissionEvaluator:

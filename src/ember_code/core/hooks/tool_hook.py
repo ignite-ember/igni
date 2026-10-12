@@ -69,6 +69,7 @@ class ToolEventHook:
         rules_index: RulesIndex | None = None,
         project_dir: Path | None = None,
         permission_evaluator: PermissionEvaluator | None = None,
+        bypass_guard: Any | None = None,
     ):
         # Agno's ``aexecute`` checks ``inspect.iscoroutinefunction``
         # — mark this callable-instance so the async path is used.
@@ -80,6 +81,7 @@ class ToolEventHook:
             protected_paths=protected_paths or [],
             blocked_commands=blocked_commands or [],
             permission_evaluator=permission_evaluator,
+            bypass_guard=bypass_guard,
         )
         self._invoker = ToolCallInvoker(firer)
         self._suffixer = RulesSuffixer(

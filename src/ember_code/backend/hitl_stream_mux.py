@@ -186,6 +186,7 @@ class HITLStreamMultiplexer:
     async def _drain_subagent_hitl(self, sub_hitl: Any, queue: asyncio.Queue[MuxEvent]) -> None:
         """Pump sub-agent coordinator pauses into the queue."""
         self._tracer.trace(f"_stream_mux: drain STARTED (coord_id={id(sub_hitl)})")
+        sub_hitl.listeners += 1
         try:
             while True:
                 await sub_hitl.new_arrival.wait()
@@ -197,6 +198,8 @@ class HITLStreamMultiplexer:
         except asyncio.CancelledError:
             self._tracer.trace("_stream_mux: drain cancelled")
             return
+        finally:
+            sub_hitl.listeners -= 1
 
     # ── Team event dispatch ────────────────────────────────────────
 
@@ -422,6 +425,9 @@ class HITLStreamMultiplexer:
                     friendly_name=registry.friendly_name(raw_name),
                     tool_args=dict(getattr(tool_exec, "tool_args", {}) if tool_exec else {}),
                     agent_path=list(getattr(entry, "agent_path", []) or []),
+                    # Why the call is being put to the person, when the
+                    # requirement says — the Bypass guard always does.
+                    details=str(getattr(req, "details", "") or ""),
                 )
             )
         # ``run_id`` here is the sub-agent's id; the FE doesn't

@@ -1106,6 +1106,57 @@ class Session:
                 _prev_hook_factory.permission_evaluator if _prev_hook_factory is not None else None
             ),
         )
+        self._tool_hook_factory.bypass_guard = self._build_bypass_guard(settings)
+
+    def _build_bypass_guard(self, settings: Settings) -> Any:
+        """Bypass mode's last check, asking through the session's approval channel.
+
+        See ``core/hooks/bypass_guard.py``. The mode is read live from
+        the evaluator on every call, so toggling Bypass mid-session
+        takes effect on the next tool call.
+        """
+        from ember_code.core.config.permission_eval.schemas import PermissionMode  # noqa: PLC0415
+        from ember_code.core.hooks.bypass_guard import BypassGuard  # noqa: PLC0415
+
+        factory = self._tool_hook_factory
+
+        def in_bypass() -> bool:
+            evaluator = factory.permission_evaluator
+            return evaluator is not None and evaluator.mode is PermissionMode.BYPASS_PERMISSIONS
+
+        return BypassGuard(
+            config=settings.safety.bypass_guard,
+            project_dir=self.project_dir,
+            in_bypass=in_bypass,
+            ask=self._ask_about_tool_call,
+        )
+
+    async def _ask_about_tool_call(
+        self, tool_name: str, args: dict[str, Any], reason: str, agent_path: list[str]
+    ) -> bool | None:
+        """Put one tool call to the person; True / False, or None if nobody can answer.
+
+        Rides the channel sub-agent approvals already use: the
+        requirement is pushed to the coordinator, the backend's stream
+        relays it to the UI as an ordinary approval dialog, and the
+        answer comes back through ``HitlController``. With no relay
+        running — a headless run — there is nobody to ask, and waiting
+        would hang the run for ever.
+        """
+        coordinator = self.sub_agent_hitl
+        if coordinator.listeners <= 0:
+            return None
+        requirement = _GuardRequirement(tool_name=tool_name, tool_args=args, details=reason)
+        req_id = await coordinator.push_requirement(
+            requirement,  # type: ignore[arg-type]
+            run_id=f"bypass-guard-{tool_name}",
+            agent_path=[*agent_path, "safety check"],
+        )
+        try:
+            await coordinator.wait_resolved(req_id)
+        finally:
+            coordinator.cleanup(req_id)
+        return requirement.confirmed
 
     # ── Cloud auth accessors (forward to SessionCloudAuth) ─────
 
@@ -2018,3 +2069,30 @@ class Session:
         with contextlib.suppress(Exception):
             _log_run_messages_debug(self.main_team)
         return result
+
+
+class _GuardToolExecution:
+    """The two fields the approval dialog reads from a requirement's tool execution."""
+
+    def __init__(self, tool_name: str, tool_args: dict[str, Any]) -> None:
+        self.tool_name = tool_name
+        self.tool_args = tool_args
+
+
+class _GuardRequirement:
+    """A Bypass-guard question shaped like an Agno ``RunRequirement``.
+
+    Only what the coordinator and the dialog touch: ``tool_execution``,
+    ``details``, ``confirm()`` and ``reject()``.
+    """
+
+    def __init__(self, *, tool_name: str, tool_args: dict[str, Any], details: str) -> None:
+        self.tool_execution = _GuardToolExecution(tool_name, tool_args)
+        self.details = details
+        self.confirmed = False
+
+    def confirm(self) -> None:
+        self.confirmed = True
+
+    def reject(self, note: str = "") -> None:
+        self.confirmed = False
