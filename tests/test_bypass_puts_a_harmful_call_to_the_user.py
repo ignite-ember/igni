@@ -116,8 +116,9 @@ class Asker:
     def __init__(self, answer):
         self.answer, self.asked = answer, []
 
-    async def __call__(self, tool_name, args, reason, agent_path):
+    async def __call__(self, tool_name, args, reason, agent_path, *, follow_up=None):
         self.asked.append((tool_name, reason, agent_path))
+        self.follow_up = follow_up
         return self.answer
 
 
@@ -339,7 +340,7 @@ def test_the_dialog_pops_up_and_its_answer_decides(tmp_path, action, expect_ran)
             config=BypassGuardConfig(),
             project_dir=tmp_path,
             in_bypass=lambda: True,
-            ask=lambda *a: Session._ask_about_tool_call(session, *a),
+            ask=lambda *a, **kw: Session._ask_about_tool_call(session, *a, **kw),
             judge=NoJudge(),
         )
         outcome = {}

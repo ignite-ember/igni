@@ -25,6 +25,7 @@ from ember_code.backend.schemas_pause import (
     MuxDone,
     MuxError,
     MuxEvent,
+    SubagentDetails,
     SubagentPause,
     TeamStreamEvent,
 )
@@ -150,6 +151,10 @@ class HITLStreamMultiplexer:
                     )
                     yield rp
                     continue
+                if isinstance(event, SubagentDetails):
+                    for requirement_id, details in event.updates:
+                        yield msg.RequirementDetails(requirement_id=requirement_id, details=details)
+                    continue
                 # ``TeamStreamEvent`` — the common path.
                 async for m in self._forward_team_event(event.event):
                     yield m
@@ -204,6 +209,10 @@ class HITLStreamMultiplexer:
                 if entries:
                     await queue.put(SubagentPause(entries=entries))
                     self._tracer.trace(f"_stream_mux: drain enqueued {[rid for rid, _ in entries]}")
+                take_updates = getattr(sub_hitl, "take_detail_updates", None)
+                updates = take_updates() if take_updates else []
+                if updates:
+                    await queue.put(SubagentDetails(updates=updates))
         except asyncio.CancelledError:
             self._tracer.trace("_stream_mux: drain cancelled")
             return
@@ -277,6 +286,10 @@ class HITLStreamMultiplexer:
             if isinstance(event, SubagentPause):
                 for _req_id, entry in event.entries:
                     entry.surfaced = False
+                handed_back = True
+            elif isinstance(event, SubagentDetails):
+                for req_id, details in event.updates:
+                    self._session.sub_agent_hitl.update_details(req_id, details)
                 handed_back = True
             else:
                 kept.append(event)

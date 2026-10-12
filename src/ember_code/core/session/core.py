@@ -48,6 +48,7 @@ and all its members receive the same ``db`` and ``session_id``,
 so all turns are automatically persisted and restored.
 """
 
+import asyncio
 import contextlib
 import getpass
 import logging
@@ -1116,23 +1117,43 @@ class Session:
         takes effect on the next tool call.
         """
         from ember_code.core.config.permission_eval.schemas import PermissionMode  # noqa: PLC0415
+        from ember_code.core.hooks.bypass_explainer import CallExplainer  # noqa: PLC0415
         from ember_code.core.hooks.bypass_guard import BypassGuard  # noqa: PLC0415
 
         factory = self._tool_hook_factory
+        config = settings.safety.bypass_guard
+
+        def session_model() -> Any:
+            from ember_code.core.config.models import ModelRegistry  # noqa: PLC0415
+
+            return ModelRegistry(self.settings).get_model()
 
         def in_bypass() -> bool:
             evaluator = factory.permission_evaluator
             return evaluator is not None and evaluator.mode is PermissionMode.BYPASS_PERMISSIONS
 
         return BypassGuard(
-            config=settings.safety.bypass_guard,
+            config=config,
             project_dir=self.project_dir,
             in_bypass=in_bypass,
             ask=self._ask_about_tool_call,
+            explainer=(
+                CallExplainer(
+                    session_model, project_dir=self.project_dir, timeout=config.explain_timeout
+                )
+                if config.explain
+                else None
+            ),
         )
 
     async def _ask_about_tool_call(
-        self, tool_name: str, args: dict[str, Any], reason: str, agent_path: list[str]
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        reason: str,
+        agent_path: list[str],
+        *,
+        follow_up: Callable[[], Awaitable[str | None]] | None = None,
     ) -> bool | None:
         """Put one tool call to the person; True / False, or None if nobody can answer.
 
@@ -1142,6 +1163,9 @@ class Session:
         answer comes back through ``HitlController``. With no relay
         running — a headless run — there is nobody to ask, and waiting
         would hang the run for ever.
+
+        ``follow_up`` runs while the dialog is up; its sentence replaces
+        ``reason`` in every open view. Answering first cancels it.
         """
         coordinator = self.sub_agent_hitl
         if coordinator.listeners <= 0:
@@ -1152,9 +1176,19 @@ class Session:
             run_id=f"bypass-guard-{tool_name}",
             agent_path=[*agent_path, "safety check"],
         )
+
+        async def explain_on_screen() -> None:
+            assert follow_up is not None
+            better = await follow_up()
+            if better:
+                coordinator.update_details(req_id, better)
+
+        explaining = asyncio.create_task(explain_on_screen()) if follow_up else None
         try:
             await coordinator.wait_resolved(req_id)
         finally:
+            if explaining is not None:
+                explaining.cancel()
             coordinator.cleanup(req_id)
         return requirement.confirmed
 

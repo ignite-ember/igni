@@ -152,6 +152,14 @@
       "session_id",
       "type"
     ],
+    "requirement_details": [
+      "details",
+      "event_seq",
+      "id",
+      "requirement_id",
+      "session_id",
+      "type"
+    ],
     "requirement_resolved": [
       "event_seq",
       "id",

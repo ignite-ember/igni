@@ -44,6 +44,11 @@ class BypassGuardConfig(BaseModel):
     threshold: float = 0.75
     #: Off: rules only, no model loaded.
     use_model: bool = True
+    #: Ask the session's model what a stopped call would do, and show that
+    #: in the dialog once it answers. Off: the stock reason only.
+    explain: bool = True
+    #: Seconds to wait for that answer before keeping the stock reason.
+    explain_timeout: float = 30.0
 
 
 class SafetyConfig(BaseModel):

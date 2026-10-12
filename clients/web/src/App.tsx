@@ -104,6 +104,7 @@ import { WatcherPanel } from "./components/panels/WatcherPanel";
 import { SchedulePanel } from "./components/panels/SchedulePanel";
 import { IgniClient, pickNativeDirectory, type ConnectionState } from "./protocol/client";
 import type { HITLRequest, ServerMessage, StatusUpdate } from "./protocol/messages";
+import { withDetails } from "./chat/hitlDetails";
 import { countOf } from "./lib/plural";
 
 /**
@@ -854,6 +855,12 @@ export default function App() {
         setHitl(m.requirements);
         return;
       }
+      if (m.type === "requirement_details") {
+        // Arrives on the run stream, where the safety check's question
+        // was raised — not as a broadcast.
+        setHitl((prev) => withDetails(prev, m));
+        return;
+      }
       if (m.type === "status_update") {
         setStatus(m);
         return;
@@ -1242,6 +1249,11 @@ export default function App() {
           );
           return left.length ? left : null;
         });
+        return;
+      }
+
+      if (m.type === "requirement_details") {
+        setHitl((prev) => withDetails(prev, m));
         return;
       }
 

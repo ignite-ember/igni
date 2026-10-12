@@ -9,7 +9,7 @@ grouped by concern:
   free-string fields).
 * :mod:`.be_events` — BE → FE run / tool / task / status events.
 * :mod:`.mirroring` — multi-client session broadcasts (Welcome,
-  Typing, UserMessageReceived, RequirementResolved).
+  Typing, UserMessageReceived, RequirementResolved, RequirementDetails).
 * :mod:`.fe_actions` — FE → BE actions (UserMessage, HITLResponse,
   slash Command, Cancel, session/model switch, …).
 * :mod:`.rpc` — process-split RPC (RPCRequest, RPCResponse with
@@ -87,6 +87,7 @@ from ember_code.protocol.schemas.fe_actions import (
 )
 from ember_code.protocol.schemas.internal import ToolResultData
 from ember_code.protocol.schemas.mirroring import (
+    RequirementDetails,
     RequirementResolved,
     Typing,
     UserMessageReceived,
@@ -152,6 +153,7 @@ __all__ = [
     "ToolStarted",
     # Mirroring
     "RequirementResolved",
+    "RequirementDetails",
     "Typing",
     "UserMessageReceived",
     "Welcome",

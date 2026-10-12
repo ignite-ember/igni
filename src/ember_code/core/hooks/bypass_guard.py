@@ -52,6 +52,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from ember_code.core.config.schemas.safety import BypassGuardConfig
+from ember_code.core.hooks.bypass_explainer import CallExplainer
 from ember_code.core.hooks.bypass_rules import flag_shell, flag_url, flag_write
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,9 @@ QUESTIONS: dict[str, Any] = {
         ],
     },
 }
+
+#: The reason when Laya could not run; the call is asked about, not let through.
+_UNCHECKED = "could not be checked for safety"
 
 _PLAIN = {
     "destructive": "might delete or overwrite data",
@@ -151,8 +155,16 @@ class Verdict(BaseModel):
     judged: bool = False
 
 
-Ask = Callable[[str, dict[str, Any], str, list[str]], Awaitable[bool | None]]
-"""``(tool_name, args, reason, agent_path) -> True | False | None`` — None means nobody can answer."""
+FollowUp = Callable[[], Awaitable[str | None]]
+"""A better explanation, fetched after the question is already on screen; None keeps the first."""
+
+Ask = Callable[..., Awaitable[bool | None]]
+"""``(tool_name, args, reason, agent_path, *, follow_up=None) -> True | False | None``.
+
+None means nobody can answer. ``follow_up``, when given, is awaited
+while the person reads the question; a string it returns replaces
+``reason`` on screen.
+"""
 
 
 class HarmJudge:
@@ -254,11 +266,13 @@ class BypassGuard:
         in_bypass: Callable[[], bool],
         ask: Ask | None,
         judge: HarmJudge | None = None,
+        explainer: CallExplainer | None = None,
     ) -> None:
         self._config = config
         self._project_dir = project_dir
         self._in_bypass = in_bypass
         self._ask = ask
+        self._explainer = explainer
         self._judge = (
             judge if judge is not None else (HarmJudge.shared() if config.use_model else None)
         )
@@ -274,7 +288,13 @@ class BypassGuard:
             return None
 
         answer = (
-            await self._ask(tool_name, args, explain(tool_name, verdict), list(agent_path or []))
+            await self._ask(
+                tool_name,
+                args,
+                explain(tool_name, verdict),
+                list(agent_path or []),
+                follow_up=self._follow_up(tool_name, args, verdict),
+            )
             if self._ask
             else None
         )
@@ -295,6 +315,17 @@ class BypassGuard:
             f"Blocked: the user declined this call ({verdict.reason}). Do not retry it another way."
         )
 
+    def _follow_up(self, tool_name: str, args: dict[str, Any], verdict: Verdict) -> FollowUp | None:
+        explainer = self._explainer
+        if explainer is None:
+            return None
+
+        async def described() -> str | None:
+            sentence = await explainer.explain(tool_name, args, verdict.reason)
+            return explained(verdict, sentence) if sentence else None
+
+        return described
+
     async def verdict(self, tool_name: str, args: dict[str, Any]) -> Verdict:
         """Rules first; Laya for what no rule names; ask on any failure to judge."""
         rule = self._rule(tool_name, args)
@@ -308,7 +339,7 @@ class BypassGuard:
             logger.warning(
                 "bypass guard: could not judge %s (%s); asking", tool_name, type(exc).__name__
             )
-            return Verdict(needs_approval=True, reason="could not be checked for safety")
+            return Verdict(needs_approval=True, reason=_UNCHECKED)
         if probability >= self._config.threshold:
             return Verdict(
                 needs_approval=True,
@@ -353,6 +384,22 @@ def explain(tool_name: str, verdict: Verdict) -> str:
     else:
         grounds = f"{subject} {verdict.reason}."
     return f"{grounds} Bypass mode skips approvals, but the safety check stops here so you decide."
+
+
+def explained(verdict: Verdict, sentence: str) -> str:
+    """The model's description of the call, then what stopped it.
+
+    The description says what *this* call does; the basis keeps the
+    person able to tell a rule's certainty from a model's guess.
+    """
+    if verdict.judged and verdict.score is not None:
+        basis = f"the safety model rated it {verdict.score:.2f} of 1 ({verdict.reason})"
+    elif verdict.reason == _UNCHECKED:
+        basis = "the call could not be checked for safety"
+    else:
+        basis = f"a safety rule matched ({verdict.reason})"
+    sentence = sentence if sentence.endswith((".", "!", "?")) else f"{sentence}."
+    return f"{sentence} Bypass paused here because {basis}."
 
 
 def _describe(tool_name: str, args: dict[str, Any]) -> str:

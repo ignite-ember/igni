@@ -59,9 +59,20 @@ class RequirementResolved(Message):
     requirement_id: str = ""
 
 
+class RequirementDetails(Message):
+    """Broadcast when the reason shown for an open HITL requirement
+    improves — the Bypass safety check's model explanation arriving
+    after its dialog — so every view replaces the text in place."""
+
+    type: Literal["requirement_details"] = "requirement_details"
+    requirement_id: str = ""
+    details: str = ""
+
+
 __all__ = [
     "Welcome",
     "Typing",
     "UserMessageReceived",
     "RequirementResolved",
+    "RequirementDetails",
 ]

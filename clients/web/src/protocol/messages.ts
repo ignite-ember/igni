@@ -253,6 +253,14 @@ export interface RequirementResolved extends BaseMessage {
   requirement_id: string;
 }
 
+/** The reason shown for an open approval improved — the safety check's
+ *  model explanation, arriving after its dialog. Replace it in place. */
+export interface RequirementDetails extends BaseMessage {
+  type: "requirement_details";
+  requirement_id: string;
+  details: string;
+}
+
 export type ServerMessage =
   | ContentDelta
   | ToolStarted
@@ -276,7 +284,8 @@ export type ServerMessage =
   | Welcome
   | Typing
   | UserMessageReceived
-  | RequirementResolved;
+  | RequirementResolved
+  | RequirementDetails;
 
 // ── FE → BE messages ────────────────────────────────────────────────
 

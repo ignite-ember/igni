@@ -72,6 +72,9 @@ class SubAgentHITLCoordinator:
         # Set whenever a NEW requirement arrives. Backend awaits this to
         # know when to forward to FE without busy-polling.
         self.new_arrival = asyncio.Event()
+        #: ``(req_id, details)`` for questions already on screen whose
+        #: explanation improved — relayed by the same drain as new ones.
+        self._detail_updates: list[tuple[str, str]] = []
         #: Forwarders currently relaying requirements to a person. Zero
         #: means a requirement pushed now would wait for ever — headless
         #: ``-p``, CI — so a caller that needs a yes must refuse instead.
@@ -124,6 +127,31 @@ class SubAgentHITLCoordinator:
         # The arrival event is one-shot — caller resets after consuming.
         self.new_arrival.clear()
         return out
+
+    def update_details(self, req_id: str, details: str) -> None:
+        """Replace why a pending question is being asked, on screen too.
+
+        Not yet surfaced: it goes out with the new text. Already
+        surfaced: queued for the relay to send as an update. Answered or
+        gone: nothing to do.
+        """
+        entry = self._pending.get(req_id)
+        if entry is None or entry.event.is_set():
+            return
+        entry.requirement.details = details
+        if entry.surfaced:
+            self._detail_updates.append((req_id, details))
+            self.new_arrival.set()
+
+    def take_detail_updates(self) -> list[tuple[str, str]]:
+        """Updates for still-open questions; each is returned once."""
+        updates = [
+            (req_id, details)
+            for req_id, details in self._detail_updates
+            if req_id in self._pending and not self._pending[req_id].event.is_set()
+        ]
+        self._detail_updates.clear()
+        return updates
 
     def has_unresolved(self) -> bool:
         return any(not e.event.is_set() for e in self._pending.values())
