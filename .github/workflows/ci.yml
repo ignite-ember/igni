@@ -102,7 +102,15 @@ jobs:
       NEO4J_TEST_PASSWORD: testtest
 
     steps:
+      # Full history, because one test in this suite is *about* the history.
+      # ``actions/checkout`` fetches depth 1 by default, which leaves the merge
+      # commit with no parents — and ``test_the_commit_convention_is_followed``
+      # skips itself rather than draw conclusions from a window of one. It had
+      # therefore never run anywhere it was enforced, which is the state that
+      # test's own docstring calls worse than having no rule at all.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:

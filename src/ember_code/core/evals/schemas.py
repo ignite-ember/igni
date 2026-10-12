@@ -224,18 +224,33 @@ class EvalSuite(BaseModel):
     # changeset to chroma so the agent sees a populated index when
     # it starts. Suite passes if the import path is empty / missing.
     setup_module: str | None = None
+    # Agno's ReliabilityEval reads ``expected_tool_calls`` as two
+    # things at once: every listed tool must be called, and no tool
+    # outside the list may be. That second meaning makes the separate
+    # ``unexpected_tool_calls`` blocklist redundant, and it fails an
+    # agent for looking something up on the way to the right answer.
+    #
+    # Opt in here and the list means only "these must be called";
+    # prohibition then lives in ``unexpected_tool_calls``, where it
+    # reads as a deliberate choice. Default is off so the 30-odd
+    # suites written against the stricter reading keep their scores.
+    allow_additional_tool_calls: bool = False
     cases: list[EvalCase] = Field(default_factory=list)
 
     @classmethod
-    def load_all(cls, project_dir: Path) -> list[EvalSuite]:
+    def load_all(cls, project_dir: Path, defaults: Any | None = None) -> list[EvalSuite]:
         """Discover and load all eval suites.
 
         Delegates to :func:`ember_code.core.evals.loader.load_all_suites`
         to avoid importing YAML parsing code from this pure-schema module.
+        ``defaults`` is an
+        :class:`~ember_code.core.config.schemas.llm_behavior.EvalsConfig`
+        (typed loosely here for the same import-cycle reason); ``None``
+        means "use the EvalsConfig field defaults".
         """
         from ember_code.core.evals.loader import load_all_suites
 
-        return load_all_suites(project_dir)
+        return load_all_suites(project_dir, defaults)
 
 
 class CaseResult(BaseModel):

@@ -88,7 +88,7 @@ def warn_if_unsupported_python(emit: Callable[..., None] = logger.warning) -> bo
     The reason this is worth a check rather than a note in a README: the
     failure is silent. On 3.14 the Neo4j sidecar exits without writing
     stderr, without a Neo4j log, and without raising through the attach
-    — the knowledge base simply never comes up, and the panel says
+    — the artifact store simply never comes up, and the panel says
     "disabled" as though someone had configured it that way. Two hours
     went into that before the interpreter turned out to be the variable.
 
@@ -104,7 +104,7 @@ def warn_if_unsupported_python(emit: Callable[..., None] = logger.warning) -> bo
     emit(
         "running on Python %d.%d; this backend is supported on %d.%d only. "
         "Some subsystems fail silently off-version — the Neo4j sidecar behind "
-        "the knowledge base is the known one.",
+        "the artifact store is the known one.",
         *actual,
         *SUPPORTED_PYTHON,
     )

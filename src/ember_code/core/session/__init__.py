@@ -1,5 +1,6 @@
 """Session package — interactive conversation loop with full subsystem integration."""
 
+from ember_code.core.session.artifact_ops import SessionArtifactManager
 from ember_code.core.session.cloud_auth import SessionCloudAuth
 from ember_code.core.session.cloud_catalog import CloudModelCatalog
 from ember_code.core.session.codeindex_availability import (
@@ -14,7 +15,6 @@ from ember_code.core.session.core import Session
 from ember_code.core.session.event_log import SessionEventLog
 from ember_code.core.session.identity import SessionIdentity
 from ember_code.core.session.interactive import run_session_interactive
-from ember_code.core.session.knowledge_ops import SessionKnowledgeManager
 from ember_code.core.session.learning_ops import SessionLearningManager
 from ember_code.core.session.loop_ops import LoopController
 from ember_code.core.session.mcp_ops import McpLifecycleCoordinator, McpLifecycleDeps
@@ -94,7 +94,7 @@ __all__ = [
     "SessionCloudAuth",
     "SessionEventLog",
     "SessionIdentity",
-    "SessionKnowledgeManager",
+    "SessionArtifactManager",
     "SessionLearningManager",
     "SessionLifecyclePayload",
     "SessionMemoryManager",

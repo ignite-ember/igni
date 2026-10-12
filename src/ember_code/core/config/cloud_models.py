@@ -1,4 +1,4 @@
-"""Discover models available in the Ember Cloud key pool.
+"""Discover models available in the igni server's key pool.
 
 The operator adds AI keys on the portal (per-org overrides or the
 global pool); the server exposes the catalogue at
@@ -122,7 +122,7 @@ class MergeResult(BaseModel):
 
 
 class CloudModelCatalogClient:
-    """Fetch and merge the Ember Cloud key-pool catalogue.
+    """Fetch and merge the igni server key-pool catalogue.
 
     Owns the two implicit subject arguments — ``api_url`` and the
     cloud token — as instance state so the fetch and merge steps
@@ -233,7 +233,7 @@ class CloudModelCatalogClient:
         re-fetching.
 
         Every entry is a :class:`ModelRegistryEntry` already wired to
-        route through ``{api_url}/v1`` (the Ember Cloud chat proxy)
+        route through ``{api_url}/v1`` (the igni server chat proxy)
         via :meth:`ModelRegistryEntry.from_cloud_discovery`. Same-name
         entries are skipped — user/project config always wins.
         """

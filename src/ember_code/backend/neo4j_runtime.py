@@ -630,7 +630,7 @@ class Neo4jRuntime:
             popped = self._processes.pop(key)
         return await self._shutdown_one(popped, project_hash, commit_sha)
 
-    async def start_for_knowledge(self, project_hash: str) -> Neo4jEndpoints:
+    async def start_for_artifacts(self, project_hash: str) -> Neo4jEndpoints:
         """Ensure a Neo4j process exists for ``(project, knowledge)``.
 
         Knowledge is per-project (not per-commit) — the process
@@ -638,7 +638,7 @@ class Neo4jRuntime:
         commit switches. Refcount bumps on every call; the
         process dies only when no BE is using it.
         """
-        key = (project_hash, "knowledge")
+        key = (project_hash, "artifacts")
         async with self._lock:
             state = self._processes.get(key)
             if state is not None and state.proc.returncode is None:
@@ -684,13 +684,13 @@ class Neo4jRuntime:
             self._save_runtime(state)
             return state.endpoints
 
-    def driver_for_knowledge(self, project_hash: str) -> AsyncDriver:
+    def driver_for_artifacts(self, project_hash: str) -> AsyncDriver:
         """Return the per-``(project, knowledge)`` driver."""
-        state = self._processes.get((project_hash, "knowledge"))
+        state = self._processes.get((project_hash, "artifacts"))
         if state is None:
             raise RuntimeError(
-                f"Neo4jRuntime.start_for_knowledge({project_hash!r}) must be "
-                f"called before driver_for_knowledge(...)"
+                f"Neo4jRuntime.start_for_artifacts({project_hash!r}) must be "
+                f"called before driver_for_artifacts(...)"
             )
         if state.driver is None:
             password = state.auth_file.read_text(encoding="utf-8").strip()
@@ -710,7 +710,7 @@ class Neo4jRuntime:
         Knowledge processes are per-project, so the
         refcount-to-zero typically only happens at BE shutdown.
         """
-        key = (project_hash, "knowledge")
+        key = (project_hash, "artifacts")
         async with self._lock:
             state = self._processes.get(key)
             if state is None:
@@ -719,10 +719,10 @@ class Neo4jRuntime:
             if state.refcount > 0:
                 return False
             popped = self._processes.pop(key)
-        return await self._shutdown_one(popped, project_hash, "knowledge")
+        return await self._shutdown_one(popped, project_hash, "artifacts")
 
     def endpoints_for_knowledge(self, project_hash: str) -> Neo4jEndpoints | None:
-        state = self._processes.get((project_hash, "knowledge"))
+        state = self._processes.get((project_hash, "artifacts"))
         return state.endpoints if state is not None else None
 
     def _discover_knowledge(self, project_hash: str) -> Neo4jEndpoints | None:
@@ -1057,7 +1057,22 @@ class Neo4jRuntime:
             f"# resolves against NEO4J_HOME, which is shared.\n"
             f"server.directories.data={data_dir}\n"
             f"server.directories.logs={logs_dir}\n"
+            # The run directory holds the pid file, and was the one path
+            # left at its default — $NEO4J_HOME/run, shared by every
+            # instance. The launcher reads that pid file before starting,
+            # so whichever Neo4j started second refused with "Neo4j is
+            # already running": a session could not hold a code index and
+            # an artifact store at once, and two windows could not both
+            # have a store.
+            f"server.directories.run={self._run_dir_for(data_dir)}\n"
         )
+
+    @staticmethod
+    def _run_dir_for(data_dir: Path) -> Path:
+        """Per instance, beside its data, so pid files never collide."""
+        run_dir = data_dir.parent / "run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        return run_dir
 
     def _jdk_cache_root(self) -> Path:
         """Root of the JDK cache (under the neo4j data dir)."""
@@ -1313,10 +1328,40 @@ class _ExternalProcessHandle:
     awaiting. The :class:`Neo4jRuntime` shutdown path only needs
     ``.pid`` and ``.send_signal``/``.terminate``; the ``wait`` path
     is gated on a duck-typed check.
+
+    It also needs ``returncode``, which this used not to have. Three
+    liveness checks read ``state.proc.returncode`` — including the one
+    in :meth:`Neo4jRuntime.start_for_artifacts` — so adopting a
+    process rather than spawning it raised ``AttributeError`` there
+    and the caller logged "neo4j attach failed; continuing without
+    it". The visible symptom was a session whose artifacts were
+    silently disabled: the store was running and reachable, every
+    artifact RPC answered "Artifacts are disabled", and nothing said
+    why. Reproduced by starting a Neo4j for a project and then
+    opening the app on it.
     """
 
     def __init__(self, pid: int) -> None:
         self.pid = pid
+
+    @property
+    def returncode(self) -> int | None:
+        """``None`` while the process lives, mirroring ``Popen``.
+
+        A real exit code is not recoverable for a process we did not
+        spawn — only the kernel's parent gets that — so a dead process
+        reports ``-1``. Every caller asks the same question, ``is
+        returncode None``, and that answer is exact.
+        """
+        try:
+            os.kill(self.pid, 0)
+        except ProcessLookupError:
+            return -1
+        except PermissionError:
+            # Alive, but owned by another user. Still running, which
+            # is what the liveness checks are asking.
+            return None
+        return None
 
     def send_signal(self, sig: int) -> None:
         """Send a signal to the process group (Neo4j's children)."""

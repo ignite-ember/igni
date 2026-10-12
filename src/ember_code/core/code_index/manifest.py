@@ -26,6 +26,7 @@ import logging
 import os
 import uuid
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ember_code.core.code_index.paths import code_index_dir, manifest_path
@@ -115,11 +116,45 @@ class ManifestStore:
         ``set_head`` / ``remove_commit`` / ``update_branch_refs``.
         Each of those becomes a one-liner that delegates to a
         :class:`ManifestState` method through this chokepoint.
+
+        A manifest we could not read is **never** overwritten in place.
+        ``load()`` answers an unreadable file with a fresh empty state, so
+        one ``touch()`` after a truncated write used to persist
+        ``{"head": null, "commits": []}`` over the real file — losing the
+        head sha every session prompt reads, the commit list retention
+        walks, and the branch pins that exempt commits from it. The bytes
+        are moved aside first, and if they cannot be moved aside the write
+        does not happen at all.
         """
-        state = self.load()
+        result = self.load_result()
+        if result.reason == "corrupt":
+            self._quarantine_unreadable()
+        state = result.state
         fn(state)
         self.save(state)
         return state
+
+    def _quarantine_unreadable(self) -> Path:
+        """Move an unparseable manifest aside so the next save can't erase it.
+
+        ``os.replace`` raises if the file cannot be moved (permissions, a
+        read-only or failing volume — the same conditions that make a read
+        fail transiently). That raise is the point: it aborts
+        :meth:`mutate` before ``save()``, so the only outcomes are "the old
+        bytes are preserved under a ``.corrupt.`` name" or "nothing was
+        written".
+        """
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        quarantined = self.path.with_suffix(
+            f"{self.path.suffix}.corrupt.{stamp}.{uuid.uuid4().hex[:8]}"
+        )
+        os.replace(self.path, quarantined)
+        logger.error(
+            "manifest at %s was unreadable; moved to %s and starting a fresh one",
+            self.path,
+            quarantined,
+        )
+        return quarantined
 
     def upsert_commit(
         self,

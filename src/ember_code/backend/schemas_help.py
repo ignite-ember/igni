@@ -194,17 +194,16 @@ class HelpTopicCatalog(BaseModel):
                     ),
                 ),
                 HelpTopic(
-                    name="knowledge",
+                    name="artifacts",
                     markdown=(
                         "## Knowledge Base\n\n"
                         "Store and search project knowledge with embeddings.\n\n"
                         "**Commands:**\n"
-                        "- `/knowledge` — show status (collection, doc count, embedder)\n"
-                        "- `/knowledge add <url>` — add a URL\n"
-                        "- `/knowledge add <path>` — add a file or directory\n"
-                        "- `/knowledge add <text>` — add inline text\n"
-                        "- `/knowledge search <query>` — search the knowledge base\n"
-                        "- `/sync-knowledge` — sync between git file and vector DB"
+                        "- `/artifacts` — show status (collection, doc count, embedder)\n"
+                        "- `/artifacts add <url>` — add a URL\n"
+                        "- `/artifacts add <path>` — add a file or directory\n"
+                        "- `/artifacts add <text>` — add inline text\n"
+                        "- `/artifacts search <query>` — search the artifact store\n"
                     ),
                 ),
                 HelpTopic(

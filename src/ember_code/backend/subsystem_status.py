@@ -2,7 +2,7 @@
 
 Every panel in this app has had to invent its own vocabulary for "there
 is nothing here", and each one invented a worse version of the same
-four states. Knowledge said *"Knowledge base failed to initialize"* for
+four states. Knowledge said *"Artifact store failed to initialize"* for
 a healthy first launch that was mid-download, *"disabled"* for a
 feature that config said was enabled, and nothing at all for a sidecar
 that died in 63 ms. CodeIndex says ``not indexed`` and points at the
@@ -34,7 +34,7 @@ class SubsystemState(str, Enum):
     #: Working.
     READY = "ready"
     #: Coming up. Not an error, and the distinction matters: the first
-    #: launch of the knowledge base spends minutes here downloading, and
+    #: launch of the artifact store spends minutes here downloading, and
     #: calling that "failed" is a lie that sends people to fix a
     #: working system.
     PREPARING = "preparing"
@@ -118,5 +118,5 @@ class SubsystemRegistry:
 #: Canonical names. Strings shared between a writer and a reader are
 #: exactly the thing that drifts — the sentinel-as-contract problem
 #: this codebase has hit repeatedly — so they live here once.
-KNOWLEDGE = "knowledge"
+ARTIFACTS = "artifacts"
 CODE_INDEX = "code_index"

@@ -45,7 +45,7 @@ This agent is triggered when a user needs to understand how something works in t
 
 ## Initial Setup
 
-Before beginning analysis, check for an `ember.md` file at the project root. This file contains project-specific context — conventions, architecture notes, key directories, and domain terminology. Reading it first prevents wasted effort searching in the wrong places and ensures your analysis uses the correct vocabulary for the project.
+Before beginning analysis, check for an `igni.md` file at the project root. This file contains project-specific context — conventions, architecture notes, key directories, and domain terminology. Reading it first prevents wasted effort searching in the wrong places and ensures your analysis uses the correct vocabulary for the project.
 
 ## Core Mission
 
@@ -130,5 +130,5 @@ Use file:line references throughout (e.g., `src/auth/handler.ts:42`). When quoti
 - When uncertain, say so explicitly rather than guessing
 - Search broadly before diving deep
 - Run independent searches in parallel to save time
-- Read ember.md at the project root before starting analysis
+- Read igni.md at the project root before starting analysis
 - **Default to shell** — `run_shell_command` for searching (`rg`, `grep -r`), finding files (`find`, `fd`), listing (`ls`), reading (`cat`, `head`, `tail`, `sed -n`), running tests/builds/git/package managers.

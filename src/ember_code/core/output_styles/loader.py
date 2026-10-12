@@ -5,7 +5,8 @@ YAML frontmatter for ``name`` / ``description``, body becomes the
 text appended to the agent's instructions when the style is
 active. Last-write-wins precedence so a project style overrides a
 user style of the same name, and plugin-shipped styles override
-user but not project (matches markdown commands).
+user but not org or project (see :func:`_style_dirs` for the load
+order that enforces it).
 """
 
 from __future__ import annotations
@@ -90,19 +91,25 @@ def _style_dirs(
     project's, so a style the project declares under the same name is
     the one that applies. Read from the policy cache rather than copied
     into the project — the ordering is what makes the local one win.
+
+    Plugin roots sit above the user's globals and below the org's and
+    the project's. They used to be appended last, i.e. highest: an
+    installed plugin shipping ``output-styles/terse.md`` silently
+    replaced the project's own ``terse`` — the text that shapes every
+    assistant response — with no namespace making the collision visible.
     """
     home = Path.home()
     roots: list[Path] = []
     if read_claude:
         roots.append(home / ".claude" / "output-styles")
     roots.append(home / CONFIG_DIR / "output-styles")
+    for plugin_root, _ in plugin_roots or []:
+        roots.append(plugin_root / "output-styles")
     if group_dir is not None:
         roots.append(group_dir)
     if read_claude:
         roots.append(project_dir / ".claude" / "output-styles")
     roots.append(project_dir / CONFIG_DIR / "output-styles")
-    for plugin_root, _ in plugin_roots or []:
-        roots.append(plugin_root / "output-styles")
     return roots
 
 

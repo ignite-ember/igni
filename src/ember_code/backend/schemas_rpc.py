@@ -119,13 +119,24 @@ class CloudPlan(BaseModel):
 
     tier: str | None
     org_name: str | None
+    #: Who is signed in. On this payload because the account
+    #: popover is the one place that asks the cloud anything, and
+    #: a second round trip for two strings it already fetched is
+    #: a second thing to fail.
+    email: str | None = None
+    full_name: str | None = None
 
     @classmethod
     def from_user_info(cls, info: UserInfo) -> CloudPlan:
         """Map a :class:`UserInfo` (portal ``/me`` response) into the
         FE-facing plan payload. Wire-mapping lives on the model so
         :meth:`AuthController.get_cloud_plan` stays a two-liner."""
-        return cls(tier=info.tier, org_name=info.org_display_name)
+        return cls(
+            tier=info.tier,
+            org_name=info.org_display_name,
+            email=info.email or None,
+            full_name=info.full_name,
+        )
 
 
 class GroupPolicyPackResult(BaseModel):

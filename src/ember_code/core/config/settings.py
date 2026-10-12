@@ -38,9 +38,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from ember_code.core.config.group_policy import GroupPolicyPack
     from ember_code.core.config.models import CliOverrides
 
 from ember_code.core.config.model_entry import CLOUD_TOKEN_SENTINEL, ModelRegistryEntry
@@ -54,6 +57,7 @@ from ember_code.core.config.model_entry import CLOUD_TOKEN_SENTINEL, ModelRegist
 # callers updating their import path.
 from ember_code.core.config.schemas import (
     AgentsConfig,
+    ArtifactsConfig,
     AuthConfig,
     CodeIndexConfig,
     ContextConfig,
@@ -62,7 +66,6 @@ from ember_code.core.config.schemas import (
     GroupPolicyConfig,
     GuardrailsConfig,
     HooksConfig,
-    KnowledgeConfig,
     LearningConfig,
     MemoryConfig,
     ModelsConfig,
@@ -97,6 +100,24 @@ class Settings(BaseModel):
     # and igni's routing disappears, at which point there is nothing to
     # default to.
     api_url: str = ""
+    # Where a **person** goes: the portal that serves the sign-in page
+    # and the repository list. Empty means "work it out from
+    # ``api_url``", which is right for the deployments that run both
+    # under one name and tell them apart by a label —
+    # ``api.acme.example`` and ``acme.example``.
+    #
+    # It is not right for the deployments that tell them apart by
+    # **port**, and that includes the one this repository ships: the
+    # API on 7777 and the portal on 3000. The derivation only ever
+    # rewrote host labels, so it handed back the API host unchanged,
+    # and signing in sent people to ``:7777/cli-auth`` — a 404 on a
+    # server that has no such page, with no setting anywhere that
+    # could have corrected it. ``PortalClient`` has accepted a
+    # ``portal_url`` argument the whole time; nothing ever passed one.
+    #
+    # DEC-14 made the wrong *default* configurable. This is the other
+    # half: a way to say so when the guess is wrong.
+    portal_url: str = ""
     # Seconds between update checks. ``0`` disables them entirely, and
     # is what an air-gapped deployment should set. See DP-5 in
     # ember-server's docs/COMPLIANCE_TRACKER.md.
@@ -135,7 +156,7 @@ class Settings(BaseModel):
     context: ContextConfig = Field(default_factory=ContextConfig)
     orchestration: OrchestrationConfig = Field(default_factory=OrchestrationConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
-    knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
+    artifacts: ArtifactsConfig = Field(default_factory=ArtifactsConfig)
     learning: LearningConfig = Field(default_factory=LearningConfig)
     reasoning: ReasoningConfig = Field(default_factory=ReasoningConfig)
     guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig)
@@ -150,7 +171,24 @@ class Settings(BaseModel):
 
     # TODO: Add telemetry config so users can wire their own Agno server or
     #       compatible telemetry endpoint (e.g. telemetry.enabled, telemetry.endpoint).
-    #       Ember Cloud does not collect CLI telemetry — usage is tracked server-side.
+    #       igni server does not collect CLI telemetry — usage is tracked server-side.
+
+    @model_validator(mode="after")
+    def _carry_confirm_commands_into_permissions(self) -> Settings:
+        """Hand ``safety.require_confirmation`` to the block that is read.
+
+        The list is documented in MIGRATION.md as where a Claude Code
+        ``"ask": ["Bash(git push *)"]`` rule goes, and no code in ``src`` read
+        it — the live permission path builds its evaluator from
+        ``settings.permissions`` alone, so the eight commands there (including
+        ``git push --force``, ``terraform apply`` and ``kubectl delete``) were
+        inert. Copied rather than merged into ``permissions.ask`` so the user's
+        own ask list stays exactly what the user wrote, and so the two can
+        still be told apart when something asks why a call prompted. See
+        ``PermissionsConfig._confirmation_ask_rules``.
+        """
+        self.permissions.confirm_commands = list(self.safety.require_confirmation)
+        return self
 
     @classmethod
     def defaults(cls) -> Settings:
@@ -233,6 +271,7 @@ class Settings(BaseModel):
 def load_settings(
     cli_overrides: CliOverrides | dict[str, Any] | None = None,
     project_dir: Path | None = None,
+    group_policy_fetcher: Callable[[], GroupPolicyPack | None] | None = None,
 ) -> Settings:
     """Load settings by merging the 5-tier precedence stack.
 
@@ -256,8 +295,23 @@ def load_settings(
     the entry point onto the class only would break those tests
     silently. This is the ONLY surviving module-level function; every
     other former shim now lives as a method on a class.
+
+    ``group_policy_fetcher`` returns the org's
+    :class:`~ember_code.core.config.group_policy.GroupPolicyPack`, whose
+    ``settings`` entries become the tier between CLI and managed policy.
+    :meth:`SettingsLoader.load` has taken one since the tier was written; this
+    facade dropped it, and this facade is what production calls — so an admin
+    publishing ``{"code_index": {"enabled": false}}`` could not have it applied
+    even by a caller that wanted to. Production now passes
+    :class:`~ember_code.core.config.group_policy.CachedSettingsFetcher` from
+    ``BackendApp.run`` and ``load_settings_from_options``; callers that want no
+    org policy (tests, tooling) simply leave it ``None``.
     """
-    return SettingsLoader.load(cli_overrides=cli_overrides, project_dir=project_dir)
+    return SettingsLoader.load(
+        cli_overrides=cli_overrides,
+        project_dir=project_dir,
+        group_policy_fetcher=group_policy_fetcher,
+    )
 
 
 __all__ = [
@@ -270,7 +324,7 @@ __all__ = [
     "EvalsConfig",
     "GuardrailsConfig",
     "HooksConfig",
-    "KnowledgeConfig",
+    "ArtifactsConfig",
     "LearningConfig",
     "MemoryConfig",
     "ModelsConfig",

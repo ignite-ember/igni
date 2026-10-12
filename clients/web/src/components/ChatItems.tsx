@@ -1,6 +1,8 @@
 import { Component, memo, useEffect, useRef, useState, isValidElement, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+import { MermaidBlock } from "./markdown/RichFences";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark-dimmed.css";
 import { formatStats, type AssistantInterrupted, ASSISTANT_INTERRUPTED_LABELS, type ChatItem } from "../chat/model";
@@ -325,112 +327,6 @@ function CodeBlock({ children }: { children?: ReactNode }) {
         </button>
       ) : null}
     </div>
-  );
-}
-
-/** Lazy-loaded mermaid renderer. Mermaid is ~700KB so we import it
- *  on first use rather than always — the dynamic import is cached
- *  by the module system, so the second block on the page reuses
- *  the already-loaded library. SVG is re-rendered on every theme
- *  flip via a ``data-theme`` observer (the page-level mutation
- *  isn't worth listening for here; React re-mounts on theme change
- *  via a key further up). */
-type MermaidLib = { initialize: (opts: Record<string, unknown>) => void; render: (id: string, src: string) => Promise<{ svg: string }> };
-let mermaidPromise: Promise<MermaidLib> | null = null;
-/** Pick a mermaid built-in theme that matches the current igni
- *  theme. ``default`` = the colored light palette (purples / teals
- *  / pinks); ``dark`` = a colored dark palette. Both run in colour;
- *  the previous ``neutral`` choice was the cause of the all-grey
- *  diagrams. */
-function mermaidThemeForDocument(): "default" | "dark" {
-  if (typeof document === "undefined") return "default";
-  const explicit = document.documentElement.dataset.theme;
-  if (explicit === "dark") return "dark";
-  if (explicit === "light") return "default";
-  // ``auto`` (or unset) — defer to the OS.
-  if (typeof window !== "undefined" && window.matchMedia) {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches
-      ? "dark"
-      : "default";
-  }
-  return "default";
-}
-
-function loadMermaid(): Promise<MermaidLib> {
-  if (!mermaidPromise) {
-    mermaidPromise = import("mermaid").then((m) => {
-      const lib = m.default as unknown as MermaidLib;
-      lib.initialize({
-        startOnLoad: false,
-        securityLevel: "strict",
-        theme: mermaidThemeForDocument(),
-        themeVariables: {
-          fontFamily: "var(--font-ui)",
-          // Let our container's ``--bg-inset`` show through instead
-          // of mermaid's stark white panel.
-          background: "transparent",
-        },
-      });
-      return lib;
-    });
-  }
-  return mermaidPromise;
-}
-
-let mermaidId = 0;
-function MermaidBlock({ source }: { source: string }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    setError(null);
-    void loadMermaid()
-      .then((lib) => lib.render(`mermaid-${++mermaidId}`, source))
-      .then(({ svg }) => {
-        if (cancelled || !ref.current) return;
-        ref.current.innerHTML = svg;
-      })
-      .catch((e: unknown) => {
-        if (cancelled) return;
-        setError(e instanceof Error ? e.message : String(e));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [source]);
-  if (error) {
-    // Fall back to showing the raw source if the diagram doesn't
-    // parse — better than a blank box. Same look as a plain pre.
-    return (
-      <pre className="mermaid-error" title={`Mermaid render failed: ${error}`}>
-        {source}
-      </pre>
-    );
-  }
-  return (
-    <div className="mermaid-diagram">
-      <DiagramCopyButton source={source} />
-      <div ref={ref} />
-    </div>
-  );
-}
-
-/** Copy-source button used by ``MermaidBlock``. Sits top-right of
- *  the diagram frame and copies the original fenced-source string,
- *  not the rendered SVG markup — the user typically wants what the
- *  model emitted, not what the renderer produced. */
-function DiagramCopyButton({ source }: { source: string }) {
-  const [copied, copy] = useCopiedFlag();
-  return (
-    <button
-      type="button"
-      className="diagram-copy"
-      title={copied ? "Copied!" : "Copy source"}
-      aria-label={copied ? "Copied" : "Copy source"}
-      onClick={() => copy(source)}
-    >
-      {copied ? <CheckIcon /> : <CopyIcon />}
-    </button>
   );
 }
 
@@ -1312,7 +1208,7 @@ export function ToolCardView({
 }: {
   name: string;
   args: string;
-  status: "running" | "done" | "error";
+  status: "running" | "done" | "error" | "rejected";
   result: string;
   diffRows?: DiffRow[] | null;
   agentName?: string;
@@ -1328,6 +1224,7 @@ export function ToolCardView({
         <span className={`tool-status ${status}`} />
         <span className="tool-name">{name}</span>
         <span className="tool-args">{args}</span>
+        {status === "rejected" && <span className="tool-rejected-tag">Not run</span>}
         {agentName && (
           <span
             className="tool-agent-badge"

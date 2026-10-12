@@ -34,12 +34,12 @@ from ember_code.backend.pending_requirements_store import PendingRequirementsSto
 from ember_code.backend.plan_snapshot_builder import PlanSnapshotBuilder
 from ember_code.backend.plugin_controller import PluginController
 from ember_code.backend.run_controller import RunController
+from ember_code.backend.server_artifacts import ArtifactController
 from ember_code.backend.server_auth import AuthController
 from ember_code.backend.server_codeindex import CodeIndexController
 from ember_code.backend.server_context import ContextController
 from ember_code.backend.server_files import FilesController
 from ember_code.backend.server_history import ChatHistoryRebuilder
-from ember_code.backend.server_knowledge import KnowledgeController
 from ember_code.backend.server_lifecycle import LifecycleController
 from ember_code.backend.server_loop import LoopController
 from ember_code.backend.server_mcp import McpController
@@ -77,7 +77,7 @@ class Controllers:
         hitl: HitlController,
         context: ContextController,
         auth: AuthController,
-        knowledge: KnowledgeController,
+        artifacts: ArtifactController,
         files: FilesController,
         search: SearchController,
         panels: PanelsController,
@@ -100,7 +100,7 @@ class Controllers:
         self.hitl = hitl
         self.context = context
         self.auth = auth
-        self.knowledge = knowledge
+        self.artifacts = artifacts
         self.files = files
         self.search = search
         self.panels = panels
@@ -144,7 +144,7 @@ class ControllerRegistry:
         """Full production wiring — every controller built eagerly."""
         # ── Foundation controllers (session-only deps) ──────────────
         mcp = McpController(session)
-        knowledge = KnowledgeController(session)
+        artifacts = ArtifactController(session)
         files = FilesController(session)
         search = SearchController(session)
         panels = PanelsController(session)
@@ -227,7 +227,7 @@ class ControllerRegistry:
             hitl=hitl,
             context=context,
             auth=auth,
-            knowledge=knowledge,
+            artifacts=artifacts,
             files=files,
             search=search,
             panels=panels,

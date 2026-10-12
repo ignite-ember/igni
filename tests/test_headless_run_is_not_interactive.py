@@ -160,7 +160,7 @@ def test_agent_builder_passes_settings_permissions_to_the_registry() -> None:
         settings: Any
         base_dir: str | None = None
         mcp_clients: dict[str, Any] | None = None
-        knowledge_mgr: Any = None
+        artifact_mgr: Any = None
         db: Any = None
         broadcast: Any = None
         code_index_provider: Any = None

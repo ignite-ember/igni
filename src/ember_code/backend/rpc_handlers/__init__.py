@@ -9,11 +9,11 @@ table the receive loop calls through.
 
 from __future__ import annotations
 
+from ember_code.backend.rpc_handlers.artifacts import ArtifactRpcHandler
 from ember_code.backend.rpc_handlers.auth import AuthRpcHandler
 from ember_code.backend.rpc_handlers.base import RpcHandler, RpcHandlerContext, rpc
 from ember_code.backend.rpc_handlers.codeindex import CodeIndexRpcHandler
 from ember_code.backend.rpc_handlers.hooks import HooksRpcHandler
-from ember_code.backend.rpc_handlers.knowledge import KnowledgeRpcHandler
 from ember_code.backend.rpc_handlers.loop import LoopRpcHandler
 from ember_code.backend.rpc_handlers.mcp import McpRpcHandler
 from ember_code.backend.rpc_handlers.models import ModelsRpcHandler
@@ -35,7 +35,7 @@ __all__ = [
     "AuthRpcHandler",
     "CodeIndexRpcHandler",
     "HooksRpcHandler",
-    "KnowledgeRpcHandler",
+    "ArtifactRpcHandler",
     "LoopRpcHandler",
     "McpRpcHandler",
     "ModelsRpcHandler",

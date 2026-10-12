@@ -247,3 +247,64 @@ class TestPathsThatDegradeRatherThanRefuse:
         from ember_code.core.code_index.sync.schemas import SyncResult
 
         assert SyncResult.no_server_configured().reason != SyncResult.not_authenticated().reason
+
+
+class TestAPortalThatDiffersByPort:
+    """The half DEC-14 left out: saying so when the guess is wrong.
+
+    The derivation rewrites host *labels* — ``api.acme.example`` →
+    ``acme.example``. It has nothing to say about a deployment that
+    tells the two apart by **port**, which is the shape this project
+    ships: the API on 7777 and the portal on 3000. So the guess handed
+    back the API host unchanged, signing in sent people to
+    ``:7777/cli-auth``, and that is a 404 on a server that has no such
+    page. There was no setting anywhere that could correct it —
+    ``PortalClient`` had taken a ``portal_url`` argument the whole
+    time and nothing ever passed one.
+    """
+
+    def test_the_derivation_cannot_express_a_port_change(self):
+        # Not a bug in the rule — a limit of it, and the reason the
+        # setting has to exist.
+        assert portal_url_for("http://127.0.0.1:7777") == "http://127.0.0.1:7777"
+
+    def test_a_configured_portal_wins(self):
+        from ember_code.core.auth.portal_client import PortalClient
+
+        portal = PortalClient(api_url="http://127.0.0.1:7777", portal_url="http://127.0.0.1:3000")
+
+        assert portal.login_url(62721) == "http://127.0.0.1:3000/cli-auth?port=62721"
+
+    def test_without_one_the_guess_still_applies(self):
+        from ember_code.core.auth.portal_client import PortalClient
+
+        portal = PortalClient(api_url="https://api.acme.example")
+
+        assert portal.login_url(1) == "https://acme.example/cli-auth?port=1"
+
+    def test_the_api_is_still_addressed_by_api_url(self):
+        # The portal moving must not take the API with it: the
+        # callback redeems its one-time code against the API, and a
+        # setting that moved both would trade one 404 for another.
+        from ember_code.core.auth.portal_client import PortalClient
+
+        portal = PortalClient(api_url="http://127.0.0.1:7777", portal_url="http://127.0.0.1:3000")
+
+        assert portal.api_url == "http://127.0.0.1:7777"
+
+    def test_the_install_hint_honours_it_too(self):
+        # One setting, every portal link. A deployment that had to say
+        # where its portal is should not watch one link go to the right
+        # place and the other to a 404.
+        from ember_code.backend.schemas_codeindex_rpc import CodeIndexInstallResult
+
+        hint = CodeIndexInstallResult.from_api_url("http://127.0.0.1:7777", "http://127.0.0.1:3000")
+
+        assert hint.install_url == "http://127.0.0.1:3000/repositories"
+
+    def test_the_setting_has_no_default(self):
+        # Empty means "guess", which is what every deployment that was
+        # working before relies on.
+        from ember_code.core.config.settings import Settings
+
+        assert Settings().portal_url == ""

@@ -34,12 +34,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import threading
 import time
 from typing import Any
 
 from ember_code.core.tools.async_fire_and_forget import AsyncFireAndForget
+from ember_code.core.tools.managed_process import process_group_of
 from ember_code.core.tools.process_bus import ProcessEventBus
 from ember_code.core.tools.process_events import (
     ProcessExitEvent,
@@ -353,10 +353,14 @@ class ProcessRegistry:
         store = self._persistence
         if store is None:
             return
-        try:
-            pgid = os.getpgid(pid)
-        except (ProcessLookupError, OSError):
-            pgid = None
+        # ``os.getpgid`` does not exist on Windows, so the inline
+        # ``try: os.getpgid(pid) except (ProcessLookupError, OSError)``
+        # that used to live here raised AttributeError straight out of
+        # ``announce_start`` and took the whole background spawn with
+        # it. ``process_group_of`` asks for the name and returns None
+        # where there are no process groups; the orphan-recovery row
+        # then carries ``pgid=None``, which is the honest value.
+        pgid = process_group_of(pid)
         # Row stamps its own ``started_at`` — the former
         # module-level ``now_epoch`` helper moved onto the model
         # with :meth:`BackgroundProcessRow.new`.

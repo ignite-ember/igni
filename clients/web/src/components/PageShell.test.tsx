@@ -107,6 +107,19 @@ describe("Esc", () => {
     expect(props.onBack).toHaveBeenCalled();
   });
 
+  it("defers to an open overflow menu that owns Esc", () => {
+    // This listener is on the capture phase, so without the check it
+    // would navigate away before the menu ever saw the key that was
+    // meant to close it — one keypress doing two things.
+    const props = setup();
+    const menu = document.createElement("div");
+    menu.className = "overflow-list";
+    document.body.appendChild(menu);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(props.onBack).not.toHaveBeenCalled();
+    menu.remove();
+  });
+
   it("defers to an overlay that owns Esc", () => {
     // A file preview sits on top and closes first — same rule
     // ``Drawer`` documents.
@@ -117,5 +130,53 @@ describe("Esc", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     expect(props.onBack).not.toHaveBeenCalled();
     overlay.remove();
+  });
+});
+
+describe("the head", () => {
+  it("names the page by default", () => {
+    setup();
+    expect(document.querySelector(".page-title")?.textContent).toBe("Plugins");
+  });
+
+  it("draws no title when the body carries its own", () => {
+    // A document page opens with the document's name. Saying it again
+    // in the bar above put it on screen twice, four lines apart.
+    setup({ titleInBody: true });
+    expect(document.querySelector(".page-title")).toBeNull();
+  });
+
+  it("drops the bar entirely when it would hold nothing", () => {
+    // No title and no actions leaves a rule across an empty row.
+    setup({ titleInBody: true });
+    expect(document.querySelector(".page-head")).toBeNull();
+  });
+
+  it("keeps the bar for actions even with the title in the body", () => {
+    setup({ titleInBody: true, headerExtras: <button>Sync</button> });
+    expect(document.querySelector(".page-head")).toBeTruthy();
+    expect(document.querySelector(".page-title")).toBeNull();
+    expect(screen.getByRole("button", { name: "Sync" })).toBeTruthy();
+  });
+
+  it("leaves the trail alone — it is what still says where you are", () => {
+    setup({ titleInBody: true });
+    expect(crumbText()).toEqual(["Chat", "Plugins"]);
+  });
+});
+
+describe("the body", () => {
+  it("separates the element that scrolls from the one that holds the measure", () => {
+    // Two elements, not one. They used to be a single centred box
+    // that also scrolled, which put its scrollbar against the text
+    // instead of at the window's edge. The CSS that widens a
+    // comparison keys off this split too, so a collapse back to one
+    // element takes the width with it.
+    setup();
+    const body = document.querySelector(".page-body");
+    const measure = body?.querySelector(".page-measure");
+    expect(body).toBeTruthy();
+    expect(measure).toBeTruthy();
+    expect(measure?.textContent).toBe("body");
   });
 });

@@ -47,9 +47,9 @@ from ember_code.core.agents.plugin_policy import PluginRestrictionPolicy
 from ember_code.core.agents.schemas import (
     AgentBuildContext,
     AgentDefinition,
+    ArtifactManager,
     Broadcast,
     DbHandle,
-    KnowledgeManager,
     McpClient,
 )
 
@@ -130,7 +130,7 @@ class PoolCompatShim:
         settings: Settings,
         base_dir: str | None = None,
         mcp_clients: dict[str, McpClient] | None = None,
-        knowledge_mgr: KnowledgeManager | None = None,
+        artifact_mgr: ArtifactManager | None = None,
         db: DbHandle | None = None,
         broadcast: Broadcast | None = None,
     ) -> Agent:
@@ -139,7 +139,7 @@ class PoolCompatShim:
         Wraps the six loose params into an
         :class:`AgentBuildContext` and delegates to
         :meth:`AgentBuilder.build`. The typed :class:`Broadcast`,
-        :class:`KnowledgeManager`, :class:`DbHandle`, and
+        :class:`ArtifactManager`, :class:`DbHandle`, and
         :class:`McpClient` protocols close the audit AP5 ``Any``
         holes on the public surface.
 
@@ -156,7 +156,7 @@ class PoolCompatShim:
             settings=settings,
             base_dir=base_dir,
             mcp_clients=mcp_clients,
-            knowledge_mgr=knowledge_mgr,
+            artifact_mgr=artifact_mgr,
             db=db,
             broadcast=broadcast,
         )

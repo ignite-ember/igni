@@ -75,8 +75,15 @@ class HttpFetcher:
         """Expose the frozen config for callers that need to read it."""
         return self._config
 
-    async def fetch_text(self, url: str, max_length: int) -> FetchResult:
+    async def fetch_text(self, url: str, max_length: int | None = None) -> FetchResult:
         """GET ``url``, extract body text, truncate to ``max_length``.
+
+        ``max_length=None`` falls back to
+        :attr:`HttpFetcherConfig.max_html_chars`. The parameter was
+        required and the config field was read by nothing, so the only
+        limit that ever applied was the literal default on
+        :meth:`WebTools.fetch_url` — a config injected by a test or a
+        caller changed nothing.
 
         Sniffs the response's ``Content-Type`` header:
 
@@ -88,6 +95,7 @@ class HttpFetcher:
           :meth:`WebTools.fetch_url`.
         * anything else — return the raw response text truncated.
         """
+        limit = self._config.max_html_chars if max_length is None else max_length
         try:
             response = await self._get(url, headers={"User-Agent": self._config.user_agent})
         except httpx.HTTPError as e:
@@ -96,10 +104,10 @@ class HttpFetcher:
         content_type = response.headers.get("content-type", "")
         text = response.text
         if "json" in content_type:
-            return FetchResult.success(text[:max_length])
+            return FetchResult.success(text[:limit])
         if "html" in content_type:
             text = self.html_to_text(text)
-        return FetchResult.success(text[:max_length])
+        return FetchResult.success(text[:limit])
 
     async def fetch_json_text(self, url: str) -> FetchResult:
         """GET ``url`` with an ``Accept: application/json`` header.

@@ -27,7 +27,7 @@ should be true, and what breaks on the way.
 |---|---|---|
 | **Secrets** | `config.local.yaml` — a live provider `api_key` sits at line 19 in this repo right now | `~/.igni` |
 | **State** | `sessions.db`, `data.db`, `state.db` (conversation history, so code and prompts), `attachments/` (34 pasted files here), `process_logs/`, `.checksums.json` | `~/.igni` |
-| **Shareable config** | `agents/`, `skills/`, `commands/`, `rules/`, `output-styles/`, `workflows/`, `hooks/`, `settings.json`, `knowledge.yaml` | committed |
+| **Shareable config** | `agents/`, `skills/`, `commands/`, `rules/`, `output-styles/`, `workflows/`, `hooks/`, `settings.json`, `artifacts.yaml` | committed |
 
 `.gitignore` has `/.ember`, and **zero files are tracked** — which is
 correct, because you cannot commit that directory as it stands. The
@@ -165,7 +165,7 @@ retains the final veto. Nothing to change here.
 
 **Stays in the project.** `agents/`, `skills/`, `commands/`, `rules/`,
 `output-styles/`, `workflows/`, `hooks/`, `settings.json`,
-`knowledge.yaml`.
+`artifacts.yaml`.
 
 ### The awkward part: `config.yaml` has to split
 

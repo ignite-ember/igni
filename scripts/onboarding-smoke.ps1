@@ -62,20 +62,63 @@ if (-not $Version) {
 }
 Write-Host "-> Targeting ignite-ember version: $Version (local source: $Local)"
 
+# ── Log dir ─────────────────────────────────────────────────────────
+# Same arrangement as the bash script: backend logs live OUTSIDE the
+# temp cache, at a fixed workspace-relative path, and survive a failing
+# run. Cleanup below wipes $CacheDir on every exit including failures,
+# so logs kept in there were gone before CI's failure-only upload step
+# ran; and ``[System.IO.Path]::GetTempPath()`` resolves to $env:TEMP,
+# which is NOT ``runner.temp`` on a GitHub Windows runner — so the
+# workflow's old glob could not have matched even if the files had
+# survived. Reporting the path (below) removes the guesswork.
+$LogDir = if ($env:SMOKE_LOG_DIR) { $env:SMOKE_LOG_DIR } else { Join-Path $RepoRoot ".smoke-logs" }
+New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+# A stale be-stdout.log from an earlier run still holding a ready line
+# would satisfy step 6's poll instantly, so clear it first.
+Get-ChildItem -Path $LogDir -Filter "be-*.log" -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+# Publish the real path for the CI job. Written before anything that
+# can fail, so the failure-only upload step always has a value.
+if ($env:GITHUB_OUTPUT) {
+    Add-Content -Path $env:GITHUB_OUTPUT -Value "log-dir=$LogDir"
+}
+Write-Host "-> Backend logs: $LogDir"
+
 # ── Temp cache ──────────────────────────────────────────────────────
 $CacheDir = Join-Path ([System.IO.Path]::GetTempPath()) "ember-onboarding-$(Get-Random)"
 New-Item -ItemType Directory -Path $CacheDir | Out-Null
 Write-Host "-> Using temp cache: $CacheDir"
 
+# Declared before the try block so Cleanup can see it whether or not
+# step 6 was ever reached.
+$ProjectDir = $null
+# Flipped to $true only on the very last line of the happy path, so
+# Cleanup can tell a pass from a failure. ``$LASTEXITCODE`` is no use
+# here — every failure in this script goes out as a thrown exception.
+$script:Succeeded = $false
+
 # Cleanup hooks: trap Ctrl-C + normal exit so the cache is always
 # removed unless ``-Keep`` was passed. ``trap`` in PowerShell fires
-# on unhandled exceptions; ``finally`` is the normal-flow hook.
+# on unhandled exceptions; ``finally`` is the normal-flow hook. Both
+# call this one function, and it is idempotent, because on a thrown
+# exception both hooks fire.
 $keepFlag = $Keep
 function Cleanup {
     if ($keepFlag) {
         Write-Host " Keeping cache at $CacheDir (-Keep)"
+        if ($ProjectDir) { Write-Host " Keeping project dir at $ProjectDir (-Keep)" }
     } else {
         Remove-Item -Recurse -Force $CacheDir -ErrorAction SilentlyContinue
+        if ($ProjectDir) { Remove-Item -Recurse -Force $ProjectDir -ErrorAction SilentlyContinue }
+    }
+
+    # Logs outlive a failure — the only run anyone wants them from.
+    if (-not $script:Succeeded) {
+        Write-Host " Backend logs kept for diagnosis: $LogDir"
+    } elseif ($keepFlag) {
+        Write-Host " Keeping backend logs at $LogDir (-Keep)"
+    } else {
+        Remove-Item -Recurse -Force $LogDir -ErrorAction SilentlyContinue
     }
 }
 trap { Cleanup; break }
@@ -147,8 +190,10 @@ Write-Host "-> Step 6: launching backend and waiting for ready line"
 $ProjectDir = Join-Path ([System.IO.Path]::GetTempPath()) "ember-be-test-$(Get-Random)"
 New-Item -ItemType Directory -Path $ProjectDir | Out-Null
 
-$BeStdout = Join-Path $CacheDir "be-stdout.log"
-$BeStderr = Join-Path $CacheDir "be-stderr.log"
+# In $LogDir, not $CacheDir, so Cleanup can drop the cache on a failing
+# run while still handing these to CI.
+$BeStdout = Join-Path $LogDir "be-stdout.log"
+$BeStderr = Join-Path $LogDir "be-stderr.log"
 $BeProc = Start-Process -FilePath $VenvPython `
     -ArgumentList @("-m", "ember_code.backend", "--ws-port", "0", "--project-dir", $ProjectDir) `
     -RedirectStandardOutput $BeStdout `
@@ -195,6 +240,7 @@ Stop-Process -Id $BeProc.Id -Force -ErrorAction SilentlyContinue
 
 Write-Host ""
 Write-Host "OK Onboarding smoke passed. A fresh user reaches a running backend through this exact path." -ForegroundColor Green
+$script:Succeeded = $true
 
 } finally {
     Cleanup

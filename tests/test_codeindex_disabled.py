@@ -249,7 +249,7 @@ class TestTheSidecarIsNotAttached:
 
         settings = Settings()
         object.__setattr__(settings.code_index, "enabled", code_index)
-        object.__setattr__(settings.knowledge, "enabled", knowledge)
+        object.__setattr__(settings.artifacts, "enabled", knowledge)
 
         orchestrator = module.SessionOrchestrator.__new__(module.SessionOrchestrator)
         orchestrator._settings = settings
@@ -297,7 +297,7 @@ class TestTheSidecarIsNotAttached:
 
         settings = Settings()
         object.__setattr__(settings.code_index, "enabled", code_index)
-        object.__setattr__(settings.knowledge, "enabled", knowledge)
+        object.__setattr__(settings.artifacts, "enabled", knowledge)
 
         orchestrator = module.SessionOrchestrator.__new__(module.SessionOrchestrator)
         orchestrator._settings = settings

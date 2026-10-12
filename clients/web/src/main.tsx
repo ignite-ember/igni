@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import { ChatScrollDemo } from "./dev/ChatScrollDemo";
 import { HitlDemo } from "./dev/HitlDemo";
+import { ArtifactsDemo } from "./dev/ArtifactsDemo";
 import { InterruptedBannerDemo } from "./dev/InterruptedBannerDemo";
 import { OrchestrateDemo } from "./dev/OrchestrateDemo";
 import { PlanModeDemo } from "./dev/PlanModeDemo";
@@ -28,6 +29,9 @@ document.documentElement.dataset.host = host.kind;
 //   ?demo=workflow       — workflow live-progress card sandbox
 //                          (replays a canned event tape through
 //                          reduceWorkflowEvent + <WorkflowRun/>)
+//   ?demo=artifacts      — the artifact surfaces: share, stale
+//                          review, ask-the-graph, lineage with
+//                          unreviewed captures. Canned data, no BE.
 //   ?demo=interrupted    — interrupted-assistant banner states
 //                          (cancelled / errored / abandoned /
 //                          control) with click + keyboard event
@@ -49,6 +53,7 @@ function pickRoot() {
   if (demo === "viz-stream") return <VisualizerStreamDemo />;
   if (demo === "workflow") return <WorkflowDemo />;
   if (demo === "interrupted") return <InterruptedBannerDemo />;
+  if (demo === "artifacts") return <ArtifactsDemo />;
   return <App />;
 }
 

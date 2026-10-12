@@ -49,6 +49,42 @@ logger = logging.getLogger(__name__)
 _MAX_BUFFER = 1_048_576
 
 
+def process_group_of(pid: int) -> int | None:
+    """Process-group id of ``pid``, or ``None`` where there isn't one.
+
+    ``os.getpgid`` and ``os.killpg`` are POSIX-only *names*: on Windows
+    the attributes are absent from ``os`` entirely, so the call raises
+    ``AttributeError`` while its arguments are being evaluated. Every
+    call site here had wrapped those calls in
+    ``ProcessLookupError, OSError`` handling, which does not name
+    ``AttributeError`` and — for the ``suppress`` form — could not have
+    caught it anyway, because the name resolves outside the ``with``
+    body. Exactly the shape of the ``signal.SIGUSR1`` start-up crash
+    fixed in e8ce739.
+
+    Both holes were load-bearing on Windows: :meth:`ManagedProcess.kill`
+    raised before reaching ``proc.kill()``, so ESC stopped cancelling
+    and BE shutdown killed nothing at all, and
+    ``ProcessRegistry._persist_add`` raised out of ``announce_start``,
+    so backgrounding — the documented required path for any
+    long-running command — failed outright.
+
+    Asking for the name instead of assuming it keeps the POSIX
+    behaviour identical and degrades to "this platform has no process
+    groups" everywhere else. NOTE: a Windows kill therefore reaches the
+    direct child only; killing its descendants needs
+    ``taskkill /F /T /PID`` (or ``CREATE_NEW_PROCESS_GROUP`` at spawn),
+    which is a separate change that needs a Windows host to validate.
+    """
+    getpgid = getattr(os, "getpgid", None)
+    if getpgid is None:
+        return None
+    try:
+        return int(getpgid(pid))
+    except (ProcessLookupError, OSError):
+        return None
+
+
 class ManagedProcess:
     """Tracks a running asyncio subprocess and its output.
 
@@ -253,8 +289,16 @@ class ManagedProcess:
         this is safe to call from the sync ``cancel_foreground`` path
         as well as from async code. Use ``await proc.wait()`` after
         if you need to confirm the process is reaped.
+
+        The process-group leg is best-effort and platform-conditional
+        (see :func:`process_group_of`); ``proc.kill()`` always runs, so
+        a platform without process groups still stops the child rather
+        than raising past both suppressions and killing nothing.
         """
-        with contextlib.suppress(ProcessLookupError, OSError):
-            os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
+        pgid = process_group_of(self.proc.pid)
+        killpg = getattr(os, "killpg", None)
+        if pgid is not None and killpg is not None:
+            with contextlib.suppress(ProcessLookupError, OSError):
+                killpg(pgid, signal.SIGTERM)
         with contextlib.suppress(ProcessLookupError, OSError):
             self.proc.kill()

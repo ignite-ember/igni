@@ -25,7 +25,7 @@
 | **MCP client** | MCP client fully wired (consume external servers via `/mcp`). |
 | **Output styles** | `default` / `explanatory` / `learning` markdown-defined styles; `/output-style` slash command hot-patches the live team. |
 | **Plan mode** | Read-only sandbox plus user approval workflow; both `/plan` slash command and `enter_plan_mode(reason)` agent tool; agent cannot exit on its own (security invariant). |
-| **Knowledge base** | Local Neo4j (BE-spawned, per-commit DB) + EmberEmbedder (384d) with `/knowledge add/search/sync-knowledge`. Per-project `.igni/knowledge.yaml` file for git-shareable knowledge sharing. |
+| **Knowledge base** | Local Neo4j (BE-spawned, per-commit DB) + EmberEmbedder (384d) with `/knowledge add/search/sync-knowledge`. Per-project `.igni/artifacts.yaml` file for git-shareable knowledge sharing. |
 | **Auto-memory** | Per-project `~/.igni/projects/<slug>/memory/MEMORY.md` (200 lines / 25KB cap), with cross-tool fallback to `~/.claude/.../memory/MEMORY.md` — Claude Code users don't need to migrate their memory bank. |
 | **Scheduling, looping, forking** | `/schedule` (cron + one-shot), `/loop` (recurring), `/fork [name]` (clone history under new id). Claude Code now ships `/loop` and `/fork` and a `CronCreate`/`CronList`/`CronDelete` cron toolkit — igni's differentiator is the **explicit user-facing `/schedule` slash command + a `scheduler_tasks` SQLite table** that surfaces scheduled work as a first-class UI concept, rather than relying on the model picking up the agent-loop Tools. |
 | **In-session chat search** | SQLite-backed `search_chat` RPC + UI bar (BE 23 cases, FE 24 cases — snippet windowing, case-insensitive, scroll formatting). |

@@ -188,7 +188,7 @@ class CredentialsStore:
 
 
 class CloudCredentials:
-    """Read-only view of the user's Ember Cloud credentials.
+    """Read-only view of the user's igni server credentials.
 
     One file read + one JWT decode per instance, cached for the
     instance's lifetime.

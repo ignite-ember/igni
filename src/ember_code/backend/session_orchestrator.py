@@ -27,10 +27,10 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from ember_code.backend.knowledge_gate import (
+from ember_code.backend.artifact_gate import (
     _FALSEY,
     ENV_OVERRIDE,
-    knowledge_runtime_enabled,
+    artifacts_runtime_enabled,
 )
 from ember_code.backend.login_coordinator import LoginCoordinator
 from ember_code.backend.message_dispatcher import MessageDispatcher
@@ -44,7 +44,7 @@ from ember_code.backend.schemas_rpc import (
 )
 from ember_code.backend.session_pool import SessionPool, SessionRuntime
 from ember_code.backend.session_stamping_transport import SessionStampingTransport
-from ember_code.backend.subsystem_status import KNOWLEDGE, SubsystemState
+from ember_code.backend.subsystem_status import ARTIFACTS, SubsystemState
 from ember_code.core.paths import DEFAULT_DATA_DIR
 from ember_code.core.session.client_state import ClientStateStore
 from ember_code.core.session.session_directories import SessionDirectoryStore
@@ -54,7 +54,7 @@ from ember_code.protocol.rpc import RpcMethod
 logger = logging.getLogger(__name__)
 
 
-#: What to tell someone whose knowledge base will not start. Every
+#: What to tell someone whose artifact store will not start. Every
 #: recovery we have actually used for a wedged sidecar comes down to
 #: this, and a reason without a remedy is only half an answer.
 _KNOWLEDGE_FIX = (
@@ -89,7 +89,7 @@ def _record(
         return
     try:
         if only_if_preparing:
-            current = registry.get(KNOWLEDGE)
+            current = registry.get(ARTIFACTS)
             # FAILED and DISABLED are both deliberate and both specific. The
             # name says "preparing" and the check only knew about FAILED, so a
             # DISABLED knowledge panel was overwritten with READY the moment
@@ -99,7 +99,7 @@ def _record(
                 SubsystemState.DISABLED,
             ):
                 return
-        registry.set(KNOWLEDGE, state, reason=reason, fix=fix)
+        registry.set(ARTIFACTS, state, reason=reason, fix=fix)
     except Exception:  # pragma: no cover — defensive
         logger.exception("knowledge: could not record subsystem state %s", state)
 
@@ -107,8 +107,8 @@ def _record(
 def _neo4j_runtime_wanted(settings: Any) -> bool:
     """Whether to build the Neo4j runtime at all.
 
-    Neo4j backs TWO features. Gating on ``knowledge.enabled`` alone meant
-    ``knowledge.enabled=false`` with ``code_index.enabled=true`` skipped the
+    Neo4j backs TWO features. Gating on ``artifacts.enabled`` alone meant
+    ``artifacts.enabled=false`` with ``code_index.enabled=true`` skipped the
     runtime entirely and left CodeIndex with no backend — ``codeindex_cypher``
     answering ``no_backend`` for a feature the user had switched on.
 
@@ -120,14 +120,14 @@ def _neo4j_runtime_wanted(settings: Any) -> bool:
     override = os.environ.get(ENV_OVERRIDE)
     if override is not None:
         return override.strip().lower() not in _FALSEY
-    return knowledge_runtime_enabled(settings) or _codeindex_wants_neo4j(settings)
+    return artifacts_runtime_enabled(settings) or _codeindex_wants_neo4j(settings)
 
 
 def _codeindex_wants_neo4j(settings: Any) -> bool:
     """Whether CodeIndex needs the Neo4j runtime.
 
     Deliberately as forgiving about the settings shape as
-    :func:`knowledge_runtime_enabled` — this runs on the boot path, and a
+    :func:`artifacts_runtime_enabled` — this runs on the boot path, and a
     config that fails to produce a ``code_index`` section should cost the
     user their index, not their backend.
     """
@@ -179,11 +179,11 @@ class SessionOrchestrator:
         # each orchestrator has its own lifetime.
         self._in_flight: set[asyncio.Task] = set()
         # Optional Neo4j runtime. Constructed lazily when
-        # ``knowledge.enabled`` says so (see
-        # :mod:`ember_code.backend.knowledge_gate`) — the
+        # ``artifacts.enabled`` says so (see
+        # :mod:`ember_code.backend.artifact_gate`) — the
         # runtime's heavy work (downloading the JDK + Neo4j
         # distribution, spawning the per-process subprocess) is
-        # triggered on first use via ``start_for_knowledge`` /
+        # triggered on first use via ``start_for_artifacts`` /
         # ``start_for_commit``, not at construction. The
         # construction itself is cheap (path resolution only).
         self._neo4j_runtime: Any = None
@@ -239,19 +239,19 @@ class SessionOrchestrator:
 
     async def attach_neo4j(self) -> Any | None:
         """Wire the optional :class:`Neo4jRuntime` into the default
-        session's knowledge index.
+        session's artifact store.
 
-        No-op when :func:`knowledge_runtime_enabled` says no —
-        ``knowledge.enabled`` in config, with ``IGNI_NEO4J_RUNTIME``
+        No-op when :func:`artifacts_runtime_enabled` says no —
+        ``artifacts.enabled`` in config, with ``IGNI_NEO4J_RUNTIME``
         as a process-level override. It used to be the env var alone,
         which meant the config setting the rest of the codebase reads
         was overridden here by a switch a desktop user could not set
-        at all; see :mod:`ember_code.backend.knowledge_gate`.
+        at all; see :mod:`ember_code.backend.artifact_gate`.
 
         When enabled, builds a :class:`Neo4jRuntime` (one per BE —
         the runtime is refcounted across sessions via the
         per-(project, commit) subprocess map) and calls
-        :meth:`Session.attach_knowledge_neo4j` to swap the
+        :meth:`Session.attach_artifacts_neo4j` to swap the
         default session's knowledge backend. Returns the runtime
         for tests + the supervisor; ``None`` when skipped.
 
@@ -290,7 +290,7 @@ class SessionOrchestrator:
 
         Boot used to await the attach directly. That was survivable
         only because the env gate meant it never ran: with config as
-        the switch and ``knowledge.enabled`` defaulting to true, the
+        the switch and ``artifacts.enabled`` defaulting to true, the
         first launch on a cold machine would have sat on the loading
         screen for a ~500 MB download before the backend reported
         ready — and reported nothing at all if the download failed.
@@ -305,17 +305,17 @@ class SessionOrchestrator:
         """
         session = getattr(self._backend, "_session", None)
         # Two questions, and conflating them is what made the knowledge panel
-        # lie. What the KNOWLEDGE subsystem reports depends on
-        # ``knowledge.enabled`` alone — "disabled" and "broken" are the two
+        # lie. What the ARTIFACTS subsystem reports depends on
+        # ``artifacts.enabled`` alone — "disabled" and "broken" are the two
         # states this panel used to run together, and a user who switched
         # knowledge off should not see "preparing" forever because CodeIndex
         # happens to want the same sidecar.
-        if not knowledge_runtime_enabled(self._settings):
+        if not artifacts_runtime_enabled(self._settings):
             _record(
                 session,
                 SubsystemState.DISABLED,
-                reason="knowledge.enabled is false in config",
-                fix=f"Set knowledge.enabled to true in {DEFAULT_DATA_DIR}/config.yaml and reopen the app.",
+                reason="artifacts.enabled is false in config",
+                fix=f"Set artifacts.enabled to true in {DEFAULT_DATA_DIR}/config.yaml and reopen the app.",
             )
         else:
             _record(
@@ -366,7 +366,7 @@ class SessionOrchestrator:
         both: the boot session is the only one the BE makes for itself,
         and every session the user actually opens comes from the
         factory. Attaching only the first one left the rest with no
-        index at all, which reads as "Knowledge base failed to
+        index at all, which reads as "Artifact store failed to
         initialize" in the panel — for what is otherwise a perfectly
         healthy session.
 
@@ -374,7 +374,7 @@ class SessionOrchestrator:
         already being present. That used to be the check, back when the
         constructor installed a chroma index and this only had to swap
         the backend for it. Removing that fallback made
-        ``Session.knowledge`` ``None`` until precisely this call
+        ``Session.artifacts`` ``None`` until precisely this call
         installs it, so "attach only if an index exists" could never
         fire.
 
@@ -395,7 +395,7 @@ class SessionOrchestrator:
                 "present" if session is not None else "absent",
             )
             return
-        if getattr(self._settings.knowledge, "enabled", True):
+        if getattr(self._settings.artifacts, "enabled", True):
             # A knowledge backend that will not come up must not take
             # the whole BE with it. This is awaited from ``BackendApp.run``
             # during boot, so an exception here is the difference
@@ -405,10 +405,10 @@ class SessionOrchestrator:
             #
             # The reason is recorded where the panel already looks for
             # it (``Session.knowledge_error``, read by
-            # ``cmd_knowledge.panel``), so the failure arrives as a
+            # ``cmd_artifacts.panel``), so the failure arrives as a
             # sentence rather than as an empty panel.
             try:
-                await session.attach_knowledge_neo4j(runtime)
+                await session.attach_artifacts_neo4j(runtime)
             except Exception as exc:  # noqa: BLE001 — see above
                 _record(
                     session,
@@ -475,7 +475,10 @@ class SessionOrchestrator:
         rt_queue: list[str] = []
         rt_backend.wire_queue_hook(rt_queue)
         stamped = SessionStampingTransport(self._transport, rt_backend)
-        rt_bridge = self._push_bridge.for_transport(stamped)
+        # The runtime's own queue, not the boot bridge's — anything a
+        # bridge appends is injected as a synthetic user message in
+        # the session it belongs to.
+        rt_bridge = self._push_bridge.for_transport(stamped, queue=rt_queue)
         # Per-runtime RPC router. Login is anchored to the boot
         # bridge (there is one login flow per BE process), but the
         # rest of the router hangs off this runtime's backend +

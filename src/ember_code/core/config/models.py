@@ -60,11 +60,34 @@ class PermissionOverrides(BaseModel):
     ``mode`` is typed via :class:`PermissionMode` (the same enum the
     :class:`PermissionEvaluator` reads) so the strictest-wins policy
     is enforced by the type layer rather than free-form strings.
-    The legacy per-category ``file_write`` / ``shell_execute`` / ...
-    fields are kept for third-party code that reads
-    ``Settings.permissions.file_write`` etc.; new code should look
-    at ``mode`` instead. Marked TODO(v0.10) for removal — the
-    ``PermissionGuard`` that used them is dead code today.
+
+    The per-category fields — ``file_write``, ``shell_execute``,
+    ``git_push``, ``git_destructive``, ``web_search``, ``web_fetch``
+    — are not legacy and are not inert. They travel through
+    :meth:`to_payload` into ``Settings.permissions``, where
+    :meth:`PermissionsConfig.category_rules
+    <ember_code.core.config.schemas.permissions.PermissionsConfig.category_rules>`
+    turns every level that differs from its schema default into
+    ``deny``/``ask``/``allow`` rule strings, and
+    ``ToolHookFactory.permission_evaluator``
+    (:mod:`ember_code.core.session.tool_hook_factory`) appends those
+    behind the explicit lists when it builds the live
+    :class:`PermissionEvaluator`. ``backend/schemas_config.py`` reads
+    ``file_write`` / ``shell_execute`` a second time, for the
+    ``/config`` summary.
+
+    So they carry the half of each flag that ``mode`` alone cannot
+    express. ``--read-only`` is the clearest case. Its
+    ``PermissionMode.PLAN`` stops the file-edit tools and the shell
+    commands ``BashCommand``'s mutation heuristic recognises — but
+    the heuristic is a heuristic: measured on this tree, plan mode
+    alone returns ALLOW for ``git checkout -- .``, which discards the
+    working tree. The ``shell_execute = "deny"`` set below is what
+    closes the shell outright, heuristic or no heuristic. Drop these
+    fields and ``--read-only`` degrades from a guarantee to a list of
+    command shapes somebody remembered. ``--no-web`` is starker
+    still: it sets no mode at all, so those two web fields are the
+    entire flag.
     """
 
     mode: PermissionMode | None = None

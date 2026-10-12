@@ -53,12 +53,12 @@ from ember_code.backend.schemas_hitl import ToolCallArgs
 from ember_code.backend.schemas_pause import PauseHandleResult
 from ember_code.backend.schemas_run import CancelAgentRunResult, MediaAttachments
 from ember_code.backend.schemas_sessions import AutoNameResult
+from ember_code.backend.server_artifacts import ArtifactController
 from ember_code.backend.server_auth import AuthController
 from ember_code.backend.server_codeindex import CodeIndexController
 from ember_code.backend.server_context import ContextController
 from ember_code.backend.server_files import FilesController
 from ember_code.backend.server_history import ChatHistoryRebuilder
-from ember_code.backend.server_knowledge import KnowledgeController
 from ember_code.backend.server_lifecycle import LifecycleController
 from ember_code.backend.server_loop import LoopController
 from ember_code.backend.server_mcp import McpController
@@ -73,6 +73,43 @@ from ember_code.core.config.user_config_store import UserConfigStore
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
+    from ember_code.backend.schemas_artifacts import (
+        ArtifactAccessAsked,
+        ArtifactAccessAsks,
+        ArtifactCandidateEvidence,
+        ArtifactCandidateVerdict,
+        ArtifactColleagues,
+        ArtifactCommentAnchor,
+        ArtifactCommentPosted,
+        ArtifactCommentRelevance,
+        ArtifactCommentReplied,
+        ArtifactCommentResolved,
+        ArtifactCommentRow,
+        ArtifactDraft,
+        ArtifactDraftPublished,
+        ArtifactDraftSaved,
+        ArtifactDrift,
+        ArtifactDriftApplied,
+        ArtifactExportResult,
+        ArtifactLineageView,
+        ArtifactLocked,
+        ArtifactMentions,
+        ArtifactNotifications,
+        ArtifactOpened,
+        ArtifactOpenResult,
+        ArtifactPeople,
+        ArtifactProvenance,
+        ArtifactQueryResult,
+        ArtifactRoom,
+        ArtifactShareResult,
+        ArtifactStaleRow,
+        ArtifactStatus,
+        ArtifactTree,
+        ArtifactTreeChanged,
+        ArtifactVersionRow,
+        ArtifactViewGranted,
+        ArtifactWaiting,
+    )
     from ember_code.backend.schemas_codeindex_rpc import (
         CodeIndexActivityEntry,
         CodeIndexCleanResult,
@@ -89,7 +126,6 @@ if TYPE_CHECKING:
     )
     from ember_code.backend.schemas_history import ChatSearchHit
     from ember_code.backend.schemas_hitl import RunRequirement
-    from ember_code.backend.schemas_knowledge import KnowledgeStatus
     from ember_code.backend.schemas_lifecycle import RehydrateOutcome
     from ember_code.backend.schemas_loop import LoopStatusSnapshot
     from ember_code.backend.schemas_mcp import (
@@ -112,17 +148,18 @@ if TYPE_CHECKING:
     )
     from ember_code.backend.schemas_search import SearchCodeResult
     from ember_code.backend.schemas_visualization import VisualizationActionResult
+    from ember_code.backend.server_artifacts import (
+        ArtifactGetResult,
+        ArtifactHit,
+        ArtifactListEntry,
+        ArtifactRemoveResult,
+    )
     from ember_code.backend.server_files import (
         ReadFileResult,
         UploadAttachmentResult,
     )
-    from ember_code.backend.server_knowledge import (
-        KnowledgeGetResult,
-        KnowledgeHit,
-        KnowledgeListEntry,
-        KnowledgeRemoveResult,
-    )
     from ember_code.core.agents import AgentInfo
+    from ember_code.core.artifacts.side_by_side import VersionDiff
     from ember_code.core.config.settings import Settings
     from ember_code.core.config.tool_permissions import PermissionLevel
     from ember_code.core.plugins.models import MarketplaceInfo, PluginInfo
@@ -308,15 +345,15 @@ class BackendServer:
         return cached
 
     @property
-    def knowledge(self) -> KnowledgeController:
-        """Knowledge-base controller."""
+    def artifacts(self) -> ArtifactController:
+        """Artifact controller."""
         ctrl = self._controllers_or_partial()
         if ctrl is not None:
-            return ctrl.knowledge
-        cached = getattr(self, "_knowledge_ctrl", None)
+            return ctrl.artifacts
+        cached = getattr(self, "_artifacts_ctrl", None)
         if cached is None:
-            cached = KnowledgeController(self._session)
-            self._knowledge_ctrl = cached
+            cached = ArtifactController(self._session)
+            self._artifacts_ctrl = cached
         return cached
 
     @property
@@ -839,6 +876,14 @@ class BackendServer:
         """See :meth:`AuthController.clear_cloud_credentials`."""
         return self.auth.clear_cloud_credentials()
 
+    async def discover_server(self, email: str) -> dict[str, str]:
+        """See :meth:`AuthController.discover_server`."""
+        return await self.auth.discover_server(email)
+
+    def set_server(self, api_url: str, portal_url: str = "") -> dict[str, str]:
+        """See :meth:`AuthController.set_server`."""
+        return self.auth.set_server(api_url, portal_url)
+
     async def get_cloud_plan(self) -> CloudPlan | None:
         """See :meth:`AuthController.get_cloud_plan`."""
         return await self.auth.get_cloud_plan()
@@ -940,33 +985,293 @@ class BackendServer:
         """See :meth:`SearchController.search_code`."""
         return self.search.search_code(snippet, max_results)
 
-    async def get_knowledge_status(self) -> KnowledgeStatus:
-        """See :meth:`KnowledgeController.status`."""
-        return await self.knowledge.status()
+    async def get_artifact_status(self) -> ArtifactStatus:
+        """See :meth:`ArtifactController.status`."""
+        return await self.artifacts.status()
 
-    async def knowledge_search(self, query: str) -> list[KnowledgeHit]:
-        """See :meth:`KnowledgeController.search`."""
-        return await self.knowledge.search(query)
+    async def artifact_search(self, query: str) -> list[ArtifactHit]:
+        """See :meth:`ArtifactController.search`."""
+        return await self.artifacts.search(query)
 
-    async def knowledge_add(self, source: str) -> msg.Info:
-        """See :meth:`KnowledgeController.add`."""
-        return await self.knowledge.add(source)
+    async def artifact_add(
+        self, source: str, parent_id: str = "", kind: str = ""
+    ) -> msg.Info | msg.Error:
+        """See :meth:`ArtifactController.add`."""
+        return await self.artifacts.add(source, parent_id=parent_id, kind=kind)
 
-    async def knowledge_list(self) -> list[KnowledgeListEntry]:
-        """See :meth:`KnowledgeController.list`."""
-        return await self.knowledge.list()
+    async def public_document(self, slug: str) -> dict[str, str]:
+        """See :meth:`ArtifactController.public_document`."""
+        return await self.artifacts.public_document(slug)
 
-    async def knowledge_get(self, entry_id: str) -> KnowledgeGetResult:
-        """See :meth:`KnowledgeController.get`."""
-        return await self.knowledge.get(entry_id)
+    async def artifact_revise(self, entry_id: str, content: str) -> Any:
+        """See :meth:`ArtifactController.revise`."""
+        return await self.artifacts.revise(entry_id=entry_id, content=content)
 
-    async def knowledge_remove(self, entry_id: str) -> KnowledgeRemoveResult:
-        """See :meth:`KnowledgeController.remove`."""
-        return await self.knowledge.remove(entry_id)
+    async def artifact_list(self) -> list[ArtifactListEntry]:
+        """See :meth:`ArtifactController.list`."""
+        return await self.artifacts.list()
 
-    async def auto_sync_knowledge(self) -> str | None:
-        """See :meth:`KnowledgeController.auto_sync`."""
-        return await self.knowledge.auto_sync()
+    async def artifact_get(self, entry_id: str, version: int = 0) -> ArtifactGetResult:
+        """See :meth:`ArtifactController.get`."""
+        return await self.artifacts.get(entry_id, version)
+
+    async def artifact_versions(self, entry_id: str) -> list[ArtifactVersionRow]:
+        """See :meth:`ArtifactController.versions`."""
+        return await self.artifacts.versions(entry_id)
+
+    async def artifact_lineage(self, entry_id: str, version: int = 0) -> ArtifactLineageView:
+        """See :meth:`ArtifactController.lineage`."""
+        return await self.artifacts.lineage(entry_id, version)
+
+    async def artifact_stale(self) -> list[ArtifactStaleRow]:
+        """See :meth:`ArtifactController.stale`."""
+        return await self.artifacts.stale()
+
+    async def artifact_compare(self, entry_id: str, from_n: int, to_n: int) -> VersionDiff:
+        """See :meth:`ArtifactController.compare`."""
+        return await self.artifacts.compare(entry_id, from_n, to_n)
+
+    async def artifact_comments(
+        self, *, artifact_id: str = "", open_only: bool = True
+    ) -> list[ArtifactCommentRow]:
+        """See :meth:`ArtifactController.comments`."""
+        return await self.artifacts.comments(artifact_id=artifact_id, open_only=open_only)
+
+    async def artifact_resolve_comment(
+        self, *, comment_id: str, status: str, content: str = ""
+    ) -> ArtifactCommentResolved:
+        """See :meth:`ArtifactController.resolve_comment`."""
+        return await self.artifacts.resolve_comment(
+            comment_id=comment_id, status=status, content=content
+        )
+
+    async def artifact_mentions(self, *, artifact_id: str, query: str = "") -> ArtifactMentions:
+        """See :meth:`ArtifactController.mentions`."""
+        return await self.artifacts.mentions(artifact_id=artifact_id, query=query)
+
+    async def artifact_grant_view(self, *, artifact_id: str, identity: str) -> ArtifactViewGranted:
+        """See :meth:`ArtifactController.grant_view`."""
+        return await self.artifacts.grant_view(artifact_id=artifact_id, identity=identity)
+
+    async def artifact_people(self, *, artifact_id: str) -> ArtifactPeople:
+        """See :meth:`ArtifactController.people`."""
+        return await self.artifacts.people(artifact_id=artifact_id)
+
+    async def artifact_open_shared(self, *, slug: str) -> ArtifactOpened:
+        """See :meth:`ArtifactController.open_shared`."""
+        return await self.artifacts.open_shared(slug=slug)
+
+    async def artifact_colleagues(self, *, query: str = "") -> ArtifactColleagues:
+        """See :meth:`ArtifactController.colleagues`."""
+        return await self.artifacts.colleagues(query=query)
+
+    async def artifact_draft(self, *, artifact_id: str) -> ArtifactDraft:
+        """See :meth:`ArtifactController.draft`."""
+        return await self.artifacts.draft(artifact_id=artifact_id)
+
+    async def artifact_room_send(self, *, artifact_id: str, frame: dict) -> ArtifactRoom:
+        """See :meth:`ArtifactController.send_to_room`."""
+        return await self.artifacts.send_to_room(artifact_id=artifact_id, frame=frame)
+
+    async def artifact_save_draft(self, *, artifact_id: str, content: str) -> ArtifactDraftSaved:
+        """See :meth:`ArtifactController.save_draft`."""
+        return await self.artifacts.save_draft(artifact_id=artifact_id, content=content)
+
+    async def artifact_publish_draft(self, *, artifact_id: str) -> ArtifactDraftPublished:
+        """See :meth:`ArtifactController.publish_draft`."""
+        return await self.artifacts.publish_draft(artifact_id=artifact_id)
+
+    async def artifact_locked(self, *, artifact_id: str) -> ArtifactLocked:
+        """See :meth:`ArtifactController.locked`."""
+        return await self.artifacts.locked(artifact_id=artifact_id)
+
+    async def artifact_ask_access(
+        self, *, artifact_id: str = "", slug: str = "", identity: str = "", note: str = ""
+    ) -> ArtifactAccessAsked:
+        """See :meth:`ArtifactController.ask_access`."""
+        return await self.artifacts.ask_access(
+            artifact_id=artifact_id, slug=slug, identity=identity, note=note
+        )
+
+    async def artifact_access_asks(self, *, artifact_id: str) -> ArtifactAccessAsks:
+        """See :meth:`ArtifactController.access_asks`."""
+        return await self.artifacts.access_asks(artifact_id=artifact_id)
+
+    async def artifact_settle_access_ask(
+        self, *, artifact_id: str, request_id: str, granted: bool
+    ) -> ArtifactViewGranted:
+        """See :meth:`ArtifactController.settle_access_ask`."""
+        return await self.artifacts.settle_access_ask(
+            artifact_id=artifact_id, request_id=request_id, granted=granted
+        )
+
+    async def artifact_watch_room(self, *, artifact_id: str, watcher: str = "") -> ArtifactRoom:
+        """See :meth:`ArtifactController.watch_room`."""
+        return await self.artifacts.watch_room(artifact_id=artifact_id, watcher=watcher)
+
+    async def artifact_room_state(self, *, artifact_id: str) -> ArtifactRoom:
+        """See :meth:`ArtifactController.room_state`."""
+        return await self.artifacts.room_state(artifact_id=artifact_id)
+
+    async def artifact_leave_room(self, *, artifact_id: str = "", watcher: str = "") -> None:
+        """See :meth:`ArtifactController.leave_room`."""
+        await self.artifacts.leave_room(artifact_id=artifact_id, watcher=watcher)
+
+    async def artifact_notifications(self, *, unread_only: bool = True) -> ArtifactNotifications:
+        """See :meth:`ArtifactController.waiting`."""
+        return await self.artifacts.waiting(unread_only=unread_only)
+
+    async def artifact_mark_seen(self, *, notification_id: str = "") -> ArtifactNotifications:
+        """See :meth:`ArtifactController.mark_seen`."""
+        return await self.artifacts.mark_seen(notification_id=notification_id)
+
+    async def artifact_watch_comments(self) -> ArtifactWaiting:
+        """See :meth:`ArtifactController.watch_comments`."""
+        return await self.artifacts.watch_comments()
+
+    async def artifact_sync_comments(self) -> int:
+        """See :meth:`ArtifactController.sync_comments`."""
+        return await self.artifacts.sync_comments()
+
+    async def artifact_confirm_source(self, entry_id: str, source_id: str) -> bool:
+        """See :meth:`ArtifactController.confirm_source`."""
+        return await self.artifacts.confirm_source(entry_id, source_id)
+
+    async def artifact_dismiss_source(self, entry_id: str, source_id: str) -> bool:
+        """See :meth:`ArtifactController.dismiss_source`."""
+        return await self.artifacts.dismiss_source(entry_id, source_id)
+
+    async def artifact_reconcile_diff(self, entry_id: str, source_id: str) -> str:
+        """See :meth:`ArtifactController.reconcile_diff`."""
+        return await self.artifacts.reconcile_diff(entry_id, source_id)
+
+    async def artifact_preview(self, entry_id: str, version: int = 0) -> str:
+        """See :meth:`ArtifactController.preview`."""
+        return await self.artifacts.preview(entry_id, version)
+
+    async def artifact_export(
+        self, entry_id: str, version: int = 0, destination: str = "", fmt: str = "html"
+    ) -> ArtifactExportResult:
+        """See :meth:`ArtifactController.export`."""
+        return await self.artifacts.export(entry_id, version, destination, fmt)
+
+    async def artifact_drift_apply(self, entry_id: str, source_id: str) -> ArtifactDriftApplied:
+        """See :meth:`ArtifactController.apply_drift`."""
+        return await self.artifacts.apply_drift(artifact_id=entry_id, source_id=source_id)
+
+    async def artifact_drift(self, entry_id: str, source_id: str) -> ArtifactDrift:
+        """See :meth:`ArtifactController.drift`."""
+        return await self.artifacts.drift(artifact_id=entry_id, source_id=source_id)
+
+    async def artifact_provenance(self, entry_id: str, n: int = 0) -> ArtifactProvenance:
+        """See :meth:`ArtifactController.provenance`."""
+        return await self.artifacts.provenance(artifact_id=entry_id, n=n)
+
+    async def artifact_candidate_evidence(
+        self, entry_id: str, source_id: str
+    ) -> ArtifactCandidateEvidence:
+        """See :meth:`ArtifactController.candidate_evidence`."""
+        return await self.artifacts.candidate_evidence(artifact_id=entry_id, source_id=source_id)
+
+    async def artifact_candidate_verdict(
+        self, entry_id: str, source_id: str
+    ) -> ArtifactCandidateVerdict:
+        """See :meth:`ArtifactController.candidate_verdict`."""
+        return await self.artifacts.candidate_verdict(artifact_id=entry_id, source_id=source_id)
+
+    async def artifact_comment_anchor(self, comment_id: str) -> ArtifactCommentAnchor:
+        """See :meth:`ArtifactController.comment_anchor`."""
+        return await self.artifacts.comment_anchor(comment_id=comment_id)
+
+    async def artifact_comment_relevance(self, comment_id: str) -> ArtifactCommentRelevance:
+        """See :meth:`ArtifactController.comment_relevance`."""
+        return await self.artifacts.comment_relevance(comment_id=comment_id)
+
+    async def artifact_reply_comment(self, comment_id: str, body: str) -> ArtifactCommentReplied:
+        """See :meth:`ArtifactController.reply_comment`."""
+        return await self.artifacts.reply_comment(comment_id=comment_id, body=body)
+
+    async def artifact_tree(self, include_archived: bool = False) -> ArtifactTree:
+        """See :meth:`ArtifactController.tree`."""
+        return await self.artifacts.tree(include_archived=include_archived)
+
+    async def artifact_create_folder(self, name: str, parent_id: str = "") -> ArtifactTreeChanged:
+        """See :meth:`ArtifactController.create_folder`."""
+        return await self.artifacts.create_folder(name=name, parent_id=parent_id)
+
+    async def artifact_rename_folder(self, folder_id: str, name: str) -> ArtifactTreeChanged:
+        """See :meth:`ArtifactController.rename_folder`."""
+        return await self.artifacts.rename_folder(folder_id=folder_id, name=name)
+
+    async def artifact_delete_folder(self, folder_id: str) -> ArtifactTreeChanged:
+        """See :meth:`ArtifactController.delete_folder`."""
+        return await self.artifacts.delete_folder(folder_id=folder_id)
+
+    async def artifact_move_node(self, node_id: str, parent_id: str = "") -> ArtifactTreeChanged:
+        """See :meth:`ArtifactController.move_node`."""
+        return await self.artifacts.move_node(node_id=node_id, parent_id=parent_id)
+
+    async def artifact_archive_node(
+        self, node_id: str, archived: bool = True
+    ) -> ArtifactTreeChanged:
+        """See :meth:`ArtifactController.archive_node`."""
+        return await self.artifacts.archive_node(node_id=node_id, archived=archived)
+
+    async def artifact_delete_node(self, node_id: str) -> ArtifactTreeChanged:
+        """See :meth:`ArtifactController.delete_node`."""
+        return await self.artifacts.delete_node(node_id=node_id)
+
+    async def artifact_comment(
+        self,
+        entry_id: str,
+        n: int = 0,
+        body: str = "",
+        quote: str = "",
+        quote_start: int = -1,
+        quote_end: int = -1,
+        thread_id: str = "",
+        parent_id: str = "",
+        origin: str = "local",
+    ) -> ArtifactCommentPosted:
+        """See :meth:`ArtifactController.comment`."""
+        return await self.artifacts.comment(
+            artifact_id=entry_id,
+            n=n,
+            body=body,
+            quote=quote,
+            quote_start=quote_start,
+            quote_end=quote_end,
+            thread_id=thread_id,
+            parent_id=parent_id,
+            origin=origin,
+        )
+
+    async def artifact_open_export(self, path: str) -> ArtifactOpenResult:
+        """See :meth:`ArtifactController.open_export`."""
+        return await self.artifacts.open_export(path)
+
+    async def artifact_share(
+        self,
+        entry_id: str,
+        version: int = 0,
+        visibility: str = "private",
+        audience: list[str] | None = None,
+        together_with: list[str] | None = None,
+    ) -> ArtifactShareResult:
+        """See :meth:`ArtifactController.share`."""
+        return await self.artifacts.share(entry_id, version, visibility, audience, together_with)
+
+    async def artifact_ask(self, question: str) -> ArtifactQueryResult:
+        """See :meth:`ArtifactController.ask`."""
+        return await self.artifacts.ask(question)
+
+    async def artifact_run_cypher(self, cypher: str) -> ArtifactQueryResult:
+        """See :meth:`ArtifactController.run_cypher`."""
+        return await self.artifacts.run_cypher(cypher)
+
+    async def artifact_remove(self, entry_id: str) -> ArtifactRemoveResult:
+        """See :meth:`ArtifactController.remove`."""
+        return await self.artifacts.remove(entry_id)
 
     # ── Chat history ──────────────────────────────────────────────
 

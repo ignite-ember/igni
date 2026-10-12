@@ -106,6 +106,7 @@ class PromptBuilder:
         if interrupted_summary:
             info.append(msg.Info(text="(continuing from an interrupted previous run)"))
         message = self._compose_message(text, interrupted_summary)
+        message = self._prepend_reminders(message)
 
         return PromptBuildResult(message=message, media=media, info_messages=info)
 
@@ -137,6 +138,13 @@ class PromptBuilder:
         models. Non-vision models get a text-only "Resolved" line.
         Returns a :class:`_FileAttachStep` bundle — the caller
         merges ``info_messages`` into its running list.
+
+        The resolved files are *merged* into whatever the caller
+        already had, never substituted for it: ``media`` here is the
+        bundle the FE sent with the message (a pasted image), and
+        returning only the filename-resolved bundle dropped it on the
+        floor whenever the same message also named a resolvable file.
+        Same rule as :meth:`_attach_url_media` one method below.
         """
         resolved = self._resolver.resolve_text_references(text)
         text = resolved.text
@@ -146,9 +154,13 @@ class PromptBuilder:
         if model_cfg.vision:
             parsed_media = self._resolver.attach_local_paths(resolved_files)
             if parsed_media is not None:
+                if media is None:
+                    media = parsed_media
+                else:
+                    media.merge(parsed_media)
                 return _FileAttachStep(
                     text=text,
-                    media=parsed_media,
+                    media=media,
                     info_messages=[msg.Info(text=f"Attached: {len(resolved_files)} file(s)")],
                 )
         return _FileAttachStep(
@@ -181,6 +193,27 @@ class PromptBuilder:
             media=media,
             info_messages=[msg.Info(text=f"Attached {url_media.total()} URL(s)")],
         )
+
+    def _prepend_reminders(self, message: str) -> str:
+        """Drain the session's queued ``asyncRewake`` reminders and
+        prepend them as a ``<system-reminder>`` block.
+
+        An ``asyncRewake`` hook (exit code 2) pushes its stderr onto
+        :class:`~ember_code.core.session.reminders.PendingReminderQueue`
+        expecting the next turn to show it to the model. The only
+        drain site was ``SessionMessageHandler._build_effective_message``
+        — the CLI path. The portal/BE path is ``RunController`` →
+        this builder → ``team.arun``, which never touched the queue:
+        every reminder fired on the live path accumulated in memory
+        and was never seen by anyone. Same block shape and same
+        position (ahead of ``<system-context>``) as the CLI so the
+        two paths compose an identical prompt.
+        """
+        reminders = self._session._drain_pending_reminders()
+        if not reminders:
+            return message
+        joined = "\n".join(reminders)
+        return f"<system-reminder>{joined}</system-reminder>\n{message}"
 
     @staticmethod
     def _compose_message(text: str, interrupted_summary: str | None) -> str:

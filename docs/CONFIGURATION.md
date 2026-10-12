@@ -374,14 +374,14 @@ skills:
 # setting exists, and `Settings` drops unknown keys in silence — so a
 # config file written from that documentation did nothing at all, with
 # no error to say so.
-knowledge:
+artifacts:
   enabled: true                    # Enable ChromaDB knowledge base
   collection_name: "ember_knowledge"  # ChromaDB collection name
   chroma_db_path: "~/.igni/chromadb" # Path to ChromaDB storage
   max_results: 10                  # Max search results returned
   embedder: "local"                # Embedder registry name (or provider:model_id)
   share: true                      # Sync knowledge to a git-friendly YAML file
-  share_file: ".igni/knowledge.yaml"  # Knowledge file path (relative to project)
+  share_file: ".igni/artifacts.yaml"  # Knowledge file path (relative to project)
   auto_sync: true                  # Auto-sync on session start/end
 
 # Learning
@@ -410,7 +410,7 @@ evals:
   judge_model: "MiniMax-M2.7"       # Model for AccuracyEval LLM-as-judge
   num_iterations: 3                  # Default AccuracyEval iterations per case
   accuracy_threshold: 7.0            # Default passing score (0-10 scale)
-  timeout_per_case: 30               # Seconds per eval case
+  timeout_per_case: 600              # Seconds per eval case; 0 disables
 
 # Display
 display:

@@ -7,7 +7,7 @@ the file stays a single-concern composition point rather than a
 300-line implementation.
 
 The phases themselves live in sibling modules
-(:mod:`~.knowledge`, :mod:`~.codeindex`, :mod:`~.marketplace`,
+(:mod:`~.artifacts`, :mod:`~.codeindex`, :mod:`~.marketplace`,
 :mod:`~.mcp`); each is a subclass of
 :class:`~.base.SessionStartupPhase` so shared loop-scheduling
 and log-swallowing behaviour lives in one place.
@@ -18,8 +18,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ember_code.core.session.schemas import McpInitResult
+from ember_code.core.session.startup.artifacts import KnowledgeWarmupPhase
 from ember_code.core.session.startup.codeindex import CodeIndexWarmupPhase
-from ember_code.core.session.startup.knowledge import KnowledgeWarmupPhase
 from ember_code.core.session.startup.marketplace import MarketplaceWarmupPhase
 from ember_code.core.session.startup.mcp import McpInitPhase
 
@@ -42,7 +42,7 @@ class SessionStartupCoordinator:
 
     def __init__(self, session: Session) -> None:
         self._session = session
-        self.knowledge = KnowledgeWarmupPhase(session)
+        self.artifacts = KnowledgeWarmupPhase(session)
         self.codeindex = CodeIndexWarmupPhase(session)
         self.marketplace = MarketplaceWarmupPhase(session)
         self.mcp = McpInitPhase(session)
@@ -64,11 +64,11 @@ class SessionStartupCoordinator:
 
     def start_knowledge_background(self) -> None:
         """See :meth:`KnowledgeWarmupPhase.start_background`."""
-        self.knowledge.start_background()
+        self.artifacts.start_background()
 
     async def ensure_knowledge_started(self) -> None:
         """See :meth:`KnowledgeWarmupPhase.ensure_started`."""
-        await self.knowledge.ensure_started()
+        await self.artifacts.ensure_started()
 
     def start_codeindex_background(self) -> None:
         """See :meth:`CodeIndexWarmupPhase.start_background`."""

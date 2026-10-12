@@ -161,7 +161,7 @@ class ManagedTier(Tier):
 
 
 class CloudMigrationTier(Tier):
-    """Override Ember Cloud rows with the shipping defaults so users
+    """Override igni server rows with the shipping defaults so users
     always get the latest model after upgrading. Runs after the
     other tiers so a fresh migration is visible in the final
     :class:`Settings`.
@@ -212,6 +212,31 @@ class GroupPolicyTier(Tier):
     Everything else a group sets still wins over the CLI. This is a
     ratchet on ``permissions`` denies specifically, not a general
     reversal of precedence.
+
+    ## Where the fetcher comes from
+
+    :meth:`SettingsMergePlan.default` only appends the tier when it is handed
+    a ``group_policy_fetcher``, and for a long time no production caller
+    passed one — the tier was written, correct, and unreached, so an admin
+    publishing ``{"code_index": {"enabled": false}}`` believed it was enforced
+    and it was not.
+
+    Production now passes
+    :class:`~ember_code.core.config.group_policy.CachedSettingsFetcher`, from
+    the two places that build a real ``Settings``: ``BackendApp.run`` (the
+    backend process every window talks to) and ``load_settings_from_options``
+    (the ``igni -m`` / pipe path, which runs a session in-process). Both build
+    exactly one per process.
+
+    That fetcher reads the pack the last refresh left on disk rather than
+    calling the portal, because a settings load runs before this process holds
+    a bearer token. The fetch lives in ``AuthController._hydrate_group_policy``
+    — cold start, login, and every ``group_policy.poll_seconds`` — and the read
+    lives here; see :class:`CachedSettingsFetcher` for what that split buys and
+    what it costs.
+
+    Tests and one-off migrations still pass their own fetcher, and a plan built
+    without one skips the tier entirely.
     """
 
     def __init__(

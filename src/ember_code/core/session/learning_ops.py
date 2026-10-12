@@ -8,7 +8,7 @@ learning-machine accessors (``learning``, ``learning_machine``)
 migrate to one class here.
 
 Mirrors the sibling shape of :class:`SessionMemoryManager` and
-:class:`SessionKnowledgeManager` — the three "context" managers
+:class:`SessionArtifactManager` — the three "context" managers
 now all live next to each other in ``core/session/`` and share
 the same "narrow constructor + one-line forwarder from Session"
 contract.
@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
 
 from agno.models.message import Message as AgnoMessage
 
@@ -42,12 +42,22 @@ class SessionLearningManager:
     live team + ids, and closures let the manager tolerate the
     team being rebuilt under plugin-reload / compact / MCP-refresh.
 
+    The injected context block is wrapped in a heading this class
+    owns (:attr:`_CONTEXT_HEADING`) — see :meth:`inject` for why
+    the prune cannot key off the context text itself.
+
     The learning machine itself is built by :class:`Session`
     (calling :func:`create_learning_machine` from its own module
     namespace) so test-patches at
     ``ember_code.core.session.core.create_learning_machine``
     still intercept.
     """
+
+    #: Heading prefixed to every injected learning-context block.
+    #: Owned here precisely so the prune in :meth:`inject` has a
+    #: marker that cannot drift when Agno changes how it formats
+    #: the context body.
+    _CONTEXT_HEADING: ClassVar[str] = "## What I Know About You"
 
     def __init__(
         self,
@@ -122,14 +132,22 @@ class SessionLearningManager:
             return
         main_team = self._main_team_ref()
         if ctx and main_team.instructions:
-            # Remove old learning context and add fresh
+            # Remove old learning context and add fresh. The prune has to
+            # key off a marker WE write: the block used to be appended as
+            # Agno handed it over, and Agno's stores open with
+            # ``<user_memory>`` / ``<session_context>`` — never with the
+            # markdown headings this filter looked for. Nothing ever
+            # matched, so a 500-2000 token block was appended on every
+            # turn and the model was handed N redundant copies of its own
+            # memory. Wrapping the body in our own heading makes the
+            # match independent of how Agno formats the context.
+            block = f"{self._CONTEXT_HEADING}\n\n{ctx}"
             main_team.instructions = [
                 i
                 for i in main_team.instructions
-                if not i.startswith("## What I Know About You")
-                and not i.startswith("## User Profile")
+                if not (isinstance(i, str) and i.startswith(self._CONTEXT_HEADING))
             ]
-            main_team.instructions.append(ctx)
+            main_team.instructions.append(block)
 
     async def extract(self, user_msg: str, assistant_msg: str) -> None:
         """Push a completed turn into the learning pipeline as a

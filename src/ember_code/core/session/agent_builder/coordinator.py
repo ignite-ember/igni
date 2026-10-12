@@ -79,8 +79,8 @@ class MainAgentBuilder:
             mcp_manager=s.mcp_manager,
             lsp_manager=s.lsp_manager,
             monitor_manager=s.monitor_manager,
-            knowledge=s.knowledge,
-            knowledge_mgr=s.knowledge_mgr,
+            artifacts=s.artifacts,
+            artifact_mgr=s.artifact_mgr,
             skill_pool=s.skill_pool,
             pool=s.pool,
             hook_executor=s.hook_executor,
@@ -98,6 +98,20 @@ class MainAgentBuilder:
             project_dir=s.project_dir,
             settings=s.settings,
             codeindex_available=s.codeindex_available,
+            # ``s.artifacts`` is the store itself and is ``None``
+            # whenever the subsystem is off or failed to come up — the
+            # same value ``attach_artifact_manager`` is gated on, so the
+            # prompt and the toolkit cannot disagree about whether the
+            # archivist can do anything.
+            artifacts_available=s.artifacts is not None,
+            # The exact condition under which ``update_user_memory`` is
+            # attached: agno adds the learning-store tools only when
+            # ``agent._learning is not None`` (``agno/agent/_tools.py``),
+            # and the user-memory store only contributes that tool when
+            # ``learning.user_memory`` is on (``to_user_memory_input``
+            # returns ``False`` otherwise). ``learning.enabled=false`` or a
+            # session with no db both leave ``s.learning`` None.
+            user_memory_available=s.learning is not None and s.settings.learning.user_memory,
             agent_catalog=s.build_agent_catalog(),
             skill_descriptions=s.skill_pool.describe(),
             prompt_loader=self._prompt_loader,
@@ -176,7 +190,7 @@ class MainAgentBuilder:
             add_session_summary_to_context=True,
             stream=True,
             stream_events=True,
-            # Agents reach the index via ``KnowledgeTools``, not
+            # Agents reach the index via ``ArtifactTools``, not
             # Agno's built-in ``search_knowledge`` — pass nothing.
             knowledge=None,
             search_knowledge=False,

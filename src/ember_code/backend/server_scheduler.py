@@ -31,6 +31,7 @@ from ember_code.backend.schemas_scheduler import (
 )
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
+from ember_code.core.scheduler.prompt import wrap_scheduled_prompt
 from ember_code.core.scheduler.runner import SchedulerRunner
 from ember_code.core.scheduler.store import TaskStore
 from ember_code.core.utils.response import extract_response_text
@@ -89,9 +90,17 @@ class SchedulerController:
     # ── Per-task RPCs ─────────────────────────────────────────────
 
     async def execute(self, description: str) -> str:
-        """Run one scheduled task through the agent. Returns result text."""
+        """Run one scheduled task through the agent. Returns result text.
+
+        The description is wrapped before it reaches the model. Passed raw it
+        is indistinguishable from a message somebody just typed, so the agent
+        could answer it by asking a clarifying question — and a scheduled run
+        has nobody to answer. Wrapping here rather than in
+        :class:`SchedulerRunner` covers both callers: the poller and the
+        "run it now" RPC. Both are a stored task firing, not a live turn.
+        """
         team = self._session.main_team
-        response = await team.arun(description, stream=False)
+        response = await team.arun(wrap_scheduled_prompt(description), stream=False)
         return extract_response_text(response)
 
     async def cancel(self, task_id: str) -> msg.Info:

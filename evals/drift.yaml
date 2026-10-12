@@ -1,0 +1,221 @@
+# Bringing a document up to date when its source has moved.
+#
+# Graded against ground truth rather than by a judge. "Does the
+# updated document still say ``X-RateLimit-Remaining``" is a fact, and
+# a fact is worth more than an opinion about one — especially for the
+# question these cases exist to answer, which is whether the update
+# *misses* things.
+#
+# Each case seeds a source at two versions and a document written
+# against the first, then asks for the document brought up to date.
+# Three lists grade the result:
+#
+# ``removed``    statements the upstream change made false. Every one
+#                that survives is a fact the update missed.
+#
+#                Each must be a *claim*, not a keyword. A bare phrase
+#                can appear in a correct sentence that negates it —
+#                "Unix timestamp" failed a document that said "seconds
+#                remaining, not a Unix timestamp", which is exactly
+#                right. Write the wrong instruction, which a correct
+#                document has no reason to contain.
+# ``present``    what it should say instead.
+# ``preserved``  passages the change does not touch. These catch the
+#                opposite failure — a rewrite that fixes the document
+#                by replacing it, losing everything it also said.
+#
+# Run:  .venv/bin/python tests/evals/drift/run_live.py
+
+cases:
+  - name: renamed_headers_and_changed_semantics
+    why: |
+      Four independent facts break at once, in four different
+      sections. A pass needs all four; the interesting failure is
+      catching three.
+    source_name: Rate limiting
+    source_before: |
+      # Rate limiting
+
+      ## Headers
+
+      ```
+      X-RateLimit-Limit: 600
+      X-RateLimit-Remaining: 412
+      X-RateLimit-Reset: 1730000460
+      ```
+
+      `X-RateLimit-Reset` is a Unix timestamp in seconds.
+
+      ## Limits
+
+      Authenticated callers get 600 requests per minute with a burst
+      allowance of 100. Anonymous callers get 60 per minute.
+
+      The window is a fixed 60 seconds, reset on the minute boundary.
+
+      ## When the limit is hit
+
+      The edge returns `429 Too Many Requests` with an empty body and a
+      `Retry-After` header in seconds.
+
+      ## Exemptions
+
+      Health checks on `/healthz` and `/readyz` are never counted.
+    source_after: |
+      # Rate limiting
+
+      ## Headers
+
+      ```
+      RateLimit-Limit: 300
+      RateLimit-Remaining: 212
+      RateLimit-Reset: 34
+      ```
+
+      The `X-` prefix is gone; the headers follow the IETF draft names.
+      `RateLimit-Reset` is seconds remaining, not a Unix timestamp.
+
+      ## Limits
+
+      Authenticated callers get 300 requests per minute. Burst
+      allowance has been withdrawn. Anonymous callers get 30 per minute.
+
+      The window is a sliding 60 seconds — there is no shared reset
+      boundary.
+
+      ## When the limit is hit
+
+      The edge returns `429 Too Many Requests` with a JSON body:
+
+      ```json
+      {"error": "rate_limited", "retry_after": 12}
+      ```
+
+      `Retry-After` is still sent as a header, in seconds.
+
+      ## Exemptions
+
+      Health checks on `/healthz` and `/readyz` are never counted.
+    document_name: Client retry guide
+    document: |
+      # Client retry guide
+
+      ## Reading your budget
+
+      Before retrying, read `X-RateLimit-Remaining`. If it is above
+      zero the failure was not a rate limit.
+
+      `X-RateLimit-Reset` is a Unix timestamp in seconds — subtract the
+      current time to get the wait, do not treat it as a duration.
+
+      ## Backing off
+
+      On `429 Too Many Requests`, honour `Retry-After` exactly. The
+      window resets on the minute boundary for every caller, so add
+      jitter or the whole fleet retries together.
+
+      The response body is empty, so do not attempt to parse it for a
+      reason code.
+
+      ## Budgeting
+
+      An authenticated client has 600 requests per minute with a burst
+      allowance of 100. Anonymous callers get 60 per minute.
+
+      ## What is never limited
+
+      `/healthz` and `/readyz` are exempt, so a health check that
+      returns 429 is a bug in the edge.
+    expect:
+      removed:
+        # Instructions, not keywords — a correct document may well
+        # name the old header while explaining the rename.
+        - "Before retrying, read `X-RateLimit-Remaining`"
+        - "subtract the current time to get the wait"
+        - "burst allowance of 100"
+        - "600 requests per minute"
+        - "do not attempt to parse it"
+        - "resets on the minute boundary"
+      present:
+        - "RateLimit-Remaining"
+        - "300"
+      preserved:
+        - "/healthz"
+        - "Retry-After"
+
+  - name: nothing_here_is_affected
+    why: |
+      The upstream change is real but touches nothing this document
+      claims. The failure to catch is an invented edit — a model asked
+      to update something will update something.
+    source_name: Rate limiting
+    source_before: |
+      # Rate limiting
+
+      Authenticated callers get 600 requests per minute.
+
+      Health checks on `/healthz` are never counted.
+    source_after: |
+      # Rate limiting
+
+      Authenticated callers get 600 requests per minute.
+
+      Health checks on `/healthz` are never counted. Service accounts
+      are additionally exempt from the search-endpoint sublimit, which
+      is a new restriction on everybody else at 60 searches a minute.
+    document_name: Deploy checklist
+    document: |
+      # Deploy checklist
+
+      Before cutting a tag:
+
+      - confirm migrations have run on staging
+      - confirm the edge is reachable and not returning 429s
+      - confirm the signing key was rotated this quarter
+    expect:
+      removed: []
+      present: []
+      preserved:
+        - "confirm migrations have run on staging"
+        - "confirm the edge is reachable"
+        - "confirm the signing key was rotated this quarter"
+
+  - name: a_removed_guarantee
+    why: |
+      The source did not change a value, it withdrew a promise. The
+      document's sentence is not merely stale, it tells the reader to
+      rely on something that no longer exists — the hardest kind to
+      notice, because nothing in it looks numerically wrong.
+    source_name: Session handling
+    source_before: |
+      # Session handling
+
+      Sessions are sticky: a caller reaching one node continues to
+      reach that node for the life of the session, so per-node caches
+      can be relied upon.
+
+      Sessions expire after 24 hours.
+    source_after: |
+      # Session handling
+
+      Sessions are no longer sticky. Any node may serve any request,
+      and per-node caches must not be relied upon for correctness.
+
+      Sessions expire after 24 hours.
+    document_name: Cache guide
+    document: |
+      # Cache guide
+
+      Because sessions are sticky, a per-node in-memory cache is safe
+      for session-scoped data: the same caller always reaches the same
+      node, so the cache cannot go stale between requests.
+
+      Sessions expire after 24 hours, so entries can use that as a TTL.
+    expect:
+      removed:
+        - "Because sessions are sticky"
+        - "the same caller always reaches the same"
+      present:
+        - "24 hours"
+      preserved:
+        - "24 hours"

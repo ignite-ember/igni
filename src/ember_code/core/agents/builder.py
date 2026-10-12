@@ -20,7 +20,7 @@ from ember_code.core.agents.schemas import (
 )
 from ember_code.core.config.models import ModelRegistry
 from ember_code.core.config.tool_permissions import ToolPermissions
-from ember_code.core.tools.knowledge import KnowledgeTools
+from ember_code.core.tools.artifacts import ARCHIVIST, ArtifactTools
 from ember_code.core.tools.registry import ToolRegistry
 from ember_code.core.tools.schedule import ScheduleTools
 
@@ -34,7 +34,7 @@ class AgentBuilder:
 
     Constructor takes an :class:`AgentBuildContext` bundle so the
     six shared-state params (``settings``, ``base_dir``,
-    ``mcp_clients``, ``knowledge_mgr``, ``db``, ``broadcast``)
+    ``mcp_clients``, ``artifact_mgr``, ``db``, ``broadcast``)
     live on ``self`` — the public :meth:`build` method then takes
     only the definition (what varies per agent).
     """
@@ -104,7 +104,7 @@ class AgentBuilder:
 
     def replace_context(self, new_context: AgentBuildContext) -> None:
         """Swap the shared context. Used by :class:`AgentPool` after
-        MCP connects or when the knowledge manager attaches."""
+        MCP connects or when the artifact manager attaches."""
         self._context = new_context
 
     def build(self, definition: AgentDefinition) -> Agent:
@@ -192,8 +192,17 @@ class AgentBuilder:
 
         if tools:
             tools.append(ScheduleTools(project_dir=ctx.base_dir))
-        if tools and ctx.knowledge_mgr is not None:
-            tools.append(KnowledgeTools(ctx.knowledge_mgr))
+        if tools and ctx.artifact_mgr is not None and definition.name == ARCHIVIST:
+            # One toolkit, one agent — reads included. Not a safety
+            # rule: a specialist that holds exactly the toolkit it was
+            # granted is the only shape whose traces can be attributed
+            # to it afterwards, and a capability spread across every
+            # agent makes every agent's manifest wrong.
+            #
+            # Keyed on the definition's name rather than a frontmatter
+            # flag, because an agent that could grant itself the
+            # capability is the same as having no rule.
+            tools.append(ArtifactTools(ctx.artifact_mgr))
 
         agent_mcp: dict[str, Any] = {}
         if tools and ctx.mcp_clients:

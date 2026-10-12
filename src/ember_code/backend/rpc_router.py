@@ -37,10 +37,10 @@ from ember_code.backend.login_coordinator import LoginCoordinator
 from ember_code.backend.push_bridge import PushNotificationBridge
 from ember_code.backend.rpc_handlers import (
     POOL_LEVEL_RPCS,
+    ArtifactRpcHandler,
     AuthRpcHandler,
     CodeIndexRpcHandler,
     HooksRpcHandler,
-    KnowledgeRpcHandler,
     LoopRpcHandler,
     McpRpcHandler,
     ModelsRpcHandler,
@@ -121,7 +121,7 @@ class RpcRouter:
             SkillsRpcHandler(ctx),
             ModelsRpcHandler(ctx),
             HooksRpcHandler(ctx),
-            KnowledgeRpcHandler(ctx),
+            ArtifactRpcHandler(ctx),
             CodeIndexRpcHandler(ctx),
             PluginsRpcHandler(ctx),
             PlanRpcHandler(ctx),

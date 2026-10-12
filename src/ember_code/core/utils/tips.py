@@ -100,23 +100,21 @@ class NoProjectContextTip(ContextualTip):
 
 
 class KnowledgeDisabledTip(ContextualTip):
-    id: str = "knowledge_disabled"
+    id: str = "artifacts_disabled"
     message: str = (
-        'Enable the knowledge base with "knowledge.enabled: true" to store and search documents.'
+        'Enable the artifact store with "artifacts.enabled: true" to store and search documents.'
     )
 
     def matches(self, ctx: TipContext) -> bool:
-        return not ctx.settings.knowledge.enabled
+        return not ctx.settings.artifacts.enabled
 
 
 class KnowledgeNoShareTip(ContextualTip):
-    id: str = "knowledge_no_share"
-    message: str = (
-        'Turn on "knowledge.share: true" to sync knowledge to git so your team gets it too.'
-    )
+    id: str = "artifacts_no_share"
+    message: str = ()
 
     def matches(self, ctx: TipContext) -> bool:
-        k = ctx.settings.knowledge
+        k = ctx.settings.artifacts
         return k.enabled and not k.share
 
 
@@ -190,8 +188,7 @@ class TipRegistry(BaseModel):
         'Use "/agents" to see all loaded agents and their tools.',
         "The Orchestrator picks the best team mode automatically. Just describe your task.",
         'Use "--verbose" to see which agents and team mode the Orchestrator picks.',
-        'Use "/knowledge add <url|path|text>" to add content to your knowledge base.',
-        'Use "/sync-knowledge" to manually sync knowledge between git and the vector DB.',
+        'Use "/artifacts add <url|path|text>" to add content to your artifact store.',
         "Agents can spawn sub-teams on the fly — no depth limit.",
         'Resume a previous session with "ignite-ember --resume".',
         'Use "/sessions" to browse and resume past sessions.',

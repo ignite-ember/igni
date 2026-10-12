@@ -71,6 +71,7 @@
     "hitl_request": [
       "agent_path",
       "details",
+      "details_pending",
       "event_seq",
       "friendly_name",
       "id",
@@ -149,6 +150,14 @@
       "id",
       "parent_run_id",
       "run_id",
+      "session_id",
+      "type"
+    ],
+    "requirement_details": [
+      "details",
+      "event_seq",
+      "id",
+      "requirement_id",
       "session_id",
       "type"
     ],
@@ -258,6 +267,8 @@
     ],
     "status_update": [
       "cloud_connected",
+      "cloud_email",
+      "cloud_name",
       "cloud_org",
       "context_tokens",
       "event_seq",
@@ -327,6 +338,7 @@
       "has_markup",
       "id",
       "is_error",
+      "is_rejected",
       "parent_run_id",
       "run_id",
       "session_id",
@@ -421,6 +433,7 @@
       "resources",
       "tool_descriptions",
       "tool_names",
+      "tools_disabled",
       "transport"
     ],
     "pending_message": [

@@ -43,6 +43,7 @@ export function PageShell({
   title,
   headerExtras,
   toolbar,
+  titleInBody,
   onCrumb,
   onBack,
   onClose,
@@ -58,6 +59,9 @@ export function PageShell({
   /** Non-scrolling row under the header, outside the scroll area so
    *  list items cannot peek above it. Same slot `Drawer` offers. */
   toolbar?: ReactNode;
+  /** The body opens with its own heading, so this bar must not draw
+   *  one too. See where it is read, below. */
+  titleInBody?: boolean;
   /** Depth inside the rendered panel, if it has any. */
   levels?: PanelLevels;
   /** A crumb was clicked: truncate to `index`. */
@@ -68,13 +72,13 @@ export function PageShell({
   onClose: () => void;
   children: ReactNode;
 }) {
-  // Depth the rendered panel owns — `KnowledgePanel` selecting a
+  // Depth the rendered panel owns — `ArtifactPanel` selecting a
   // document, `PluginsPanel` opening a plugin — so there is one trail
   // rather than the chrome's and the panel's stacked on top of it.
   const panelCrumbs = levels?.labels ?? [];
 
   // Back goes up one *crumb*, wherever that crumb came from: out of a
-  // document before out of Knowledge. Without this, Esc inside a
+  // document before out of Artifacts. Without this, Esc inside a
   // document would leave the destination entirely and skip the level
   // the user was actually in.
   const back = () => {
@@ -88,11 +92,25 @@ export function PageShell({
   // Capture phase and `stopPropagation` for the reason `Drawer`
   // documents: the app-level Esc cancels the running turn, and it must
   // not also fire while a page is open. The overlay check is the same
-  // deal — a file preview sits on top and owns Esc while it is there.
+  // deal — a file preview sits on top and owns Esc while it is there,
+  // and so does an open overflow menu: this listener is on the capture
+  // phase, so without the check it would navigate away before the menu
+  // ever saw the key that was meant to close it.
+  //
+  // Every overlay has to be in that list, which is the cost of
+  // catching the key first. The notifications panel was not, and the
+  // symptom was not "Escape does nothing" — it was Escape closing
+  // the *page underneath* while the panel stayed open, because this
+  // handler ran, navigated, and swallowed the key.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (document.querySelector(".file-preview, .modal-overlay")) return;
+      if (
+        document.querySelector(
+          ".file-preview, .modal-overlay, .overflow-list, .notify-panel",
+        )
+      )
+        return;
       e.stopPropagation();
       back();
     };
@@ -144,12 +162,24 @@ export function PageShell({
               <span className="page-crumb-sep" aria-hidden="true">
                 /
               </span>
+              {/* ``title`` on both: these are document names, which
+                  are the one crumb that can be any length and so the
+                  one that gets cut. The whole of it stays a hover
+                  away. */}
               {last ? (
-                <span className="page-crumb current" aria-current="page">
+                <span
+                  className="page-crumb page-crumb-name current"
+                  aria-current="page"
+                  title={label}
+                >
                   {label}
                 </span>
               ) : (
-                <button className="page-crumb" onClick={() => levels?.onTruncate(i)}>
+                <button
+                  className="page-crumb page-crumb-name"
+                  title={label}
+                  onClick={() => levels?.onTruncate(i)}
+                >
                   {label}
                 </button>
               )}
@@ -158,17 +188,31 @@ export function PageShell({
         })}
       </nav>
 
-      <div className="page-head">
-        <h2 className="page-title">{title ?? leaf}</h2>
-        {headerExtras ? (
-          <div className="page-head-extras">{headerExtras}</div>
-        ) : (
-          <div className="header-spacer" />
-        )}
-      </div>
+      {/* A page whose body opens with its own heading — a document —
+          would otherwise show its name twice: once in this bar, and
+          again four lines below it. The trail above still says where
+          you are, so the bar is not carrying that on its own. With
+          the title gone and no actions left, it holds nothing, and a
+          rule across an empty row is just a rule. */}
+      {(!titleInBody || headerExtras) && (
+        <div className="page-head">
+          {titleInBody ? null : <h2 className="page-title">{title ?? leaf}</h2>}
+          {headerExtras ? (
+            <div className="page-head-extras">{headerExtras}</div>
+          ) : (
+            <div className="header-spacer" />
+          )}
+        </div>
+      )}
 
       {toolbar && <div className="page-toolbar">{toolbar}</div>}
-      <div className="page-body">{children}</div>
+      {/* Two elements, not one: the outer scrolls full-bleed so the
+          scrollbar sits at the window's edge, the inner holds the
+          measure. Together they were a centred box that scrolled,
+          and its bar landed in the middle of the page. */}
+      <div className="page-body">
+        <div className="page-measure">{children}</div>
+      </div>
     </section>
   );
 }

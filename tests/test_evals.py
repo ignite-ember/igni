@@ -101,8 +101,12 @@ class TestLoadEvalFile:
 
         suite = load_eval_file(f)
         case = suite.cases[0]
+        # Defaults now come from EvalsConfig rather than literals in the
+        # loader — see tests/test_evals_config_and_timeout.py. The
+        # documented default for num_iterations has always been 3; the
+        # loader just wasn't reading it.
         assert case.accuracy_threshold == 7.0
-        assert case.num_iterations == 1
+        assert case.num_iterations == 3
         assert case.expected_tool_calls is None
         assert case.unexpected_tool_calls is None
         assert case.file_assertions is None

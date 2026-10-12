@@ -186,8 +186,12 @@ class PlanConfidenceValidator:
             "`project_hash: $proj`, multi-angle searches the typed "
             "queries can't yet express. confirm_raw_cypher=True is "
             "required.\n"
-            "2. `file_read` one or two of the most central files to see "
-            "exact source.\n"
+            # `file_read` is a permission category, not a function — PRD-12.
+            # That fix reached the two plan *prompts* and missed the two plan
+            # *tool results*, which is why 267 corpus tool results still carry
+            # the retired name: the corpus was faithful and the product was not.
+            '2. `run_shell_command "cat <path>"` on one or two of the most '
+            "central files to see exact source.\n"
             "3. Submit `exit_plan_mode(plan, tasks=[...])` again with "
             f"specific file paths cited. {task_count} task(s) currently."
         )

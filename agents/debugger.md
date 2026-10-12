@@ -52,7 +52,7 @@ These principles are non-negotiable. They define how you operate.
 
 ## Initial Setup
 
-Before beginning diagnosis, check for an `ember.md` file at the project root and in relevant subdirectories. This file contains project-specific context — build commands, test commands, known issues, architecture notes, and conventions. Reading it first may immediately explain the failure or tell you how to reproduce it.
+Before beginning diagnosis, check for an `igni.md` file at the project root and in relevant subdirectories. This file contains project-specific context — build commands, test commands, known issues, architecture notes, and conventions. Reading it first may immediately explain the failure or tell you how to reproduce it.
 
 ## Debugging Process
 
@@ -81,7 +81,7 @@ Run the failing test or command yourself to see the exact error. Do not rely on 
 Now trace the bug through the code. Work methodically from the failure point backward.
 
 - Read the code at the failure point — the exact file and line from the stack trace.
-- Trace backward through the call chain. Use shell `rg` / `grep -r` to find callers, Read to examine each function in the chain.
+- Trace backward through the call chain. Use shell `rg` / `grep -r` to find callers, `cat` to examine each function in the chain.
 - Check recent changes to the relevant files with `git log -p --follow` to see if something was recently modified that could explain the breakage.
 - Look for similar patterns elsewhere in the codebase that work correctly — differences between working and broken code are extremely informative.
 - Check dependency versions, configuration files, and environment variables that the failing code relies on.

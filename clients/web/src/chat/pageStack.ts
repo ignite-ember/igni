@@ -1,12 +1,12 @@
 /**
  * Where a window is, as a stack.
  *
- * The thirteen browsable destinations — plugins, knowledge, codeindex,
+ * The thirteen browsable destinations — plugins, artifacts, codeindex,
  * mcp, watcher, hooks, schedule, agents, skills, workflows, and the
  * three that came later: loop, help, context. They used to share one
  * slot of `PanelState` and render as a centre-screen modal. One slot
  * means no
- * history: `KnowledgePanel` walks collections into documents and had no
+ * history: `ArtifactPanel` walks collections into documents and had no
  * way to say where you were or to go back one level, because there was
  * nowhere to put the trail.
  *
@@ -27,7 +27,7 @@
 /** The destinations that are pages. Dialogs stay in `PanelState`. */
 export type PageKind =
   | "plugins"
-  | "knowledge"
+  | "artifacts"
   | "codeindex"
   | "mcp"
   | "watcher"
@@ -42,7 +42,7 @@ export type PageKind =
 
 const PAGE_KINDS: ReadonlySet<string> = new Set<PageKind>([
   "plugins",
-  "knowledge",
+  "artifacts",
   "codeindex",
   "mcp",
   "watcher",
@@ -78,7 +78,7 @@ export function current(stack: readonly PageRoute[]): PageRoute | null {
  * Go to a destination — a header link, or a tools-menu entry.
  *
  * Always a fresh trail. Destinations are siblings, not nested: a
- * breadcrumb reading `Plugins / Knowledge` would claim Knowledge lives
+ * breadcrumb reading `Plugins / Artifacts` would claim Artifacts lives
  * inside Plugins, and clicking "Plugins" while three levels deep in
  * Plugins should land at the top of Plugins rather than add a fourth
  * level to it.
