@@ -68,11 +68,15 @@ Contract in [EXTENSIBILITY.md](EXTENSIBILITY.md). A3 is the go/no-go: if the pan
 
 ### A1 — the static origin (≈2 days)
 
-The backend has **no HTTP server today** — `transport/websocket.py` is a raw `websockets` server. Add `ExtensionOrigin`: one `asyncio` HTTP listener per extension on `127.0.0.1:0`, serving `~/.igni/extensions/<id>/ui/` read-only.
+**Done** — `src/ember_code/extensions/origin.py`, 21 tests.
 
-GET and HEAD only. Resolve-and-contain every path against the root. Per-response CSP that permits the extension's own origin plus nothing. No directory listing. Port reported to the frontend through the existing extension-status RPC.
+`ExtensionOrigin` / `ExtensionOrigins`: one `asyncio` HTTP listener per extension on `127.0.0.1:0`, serving that extension's `ui/` read-only. GET and HEAD, one request per connection, no keep-alive, no body, a capped head with a deadline. Paths resolved and then checked against the resolved root, so a symlink out of the tree is refused like a `..`. Missing and forbidden answer alike. A directory is its index or a 404.
 
-*Done when:* an extension origin serves only its own files — a `..` escape, a symlink out of the root and a POST are each refused, and two installed extensions get different ports.
+Two things beyond the brief: `frame-ancestors 'none'` until A2 names a host, and the `Host` header must name the bound port — without that, a page on a domain pointed at `127.0.0.1` reaches these ports with the browser's own credentials.
+
+**This reversed a decision recorded above.** The plan said to serve over the existing WS port via the `websockets` library's `process_request` hook, since that was the only HTTP parser in the tree. It does not fit: `websockets` parses only what a handshake can be, so a `POST` never reaches the hook — it is refused by closing the connection with no response and a traceback per attempt, `HEAD` the same way, and anything that can reach the port can fill the log by asking. The replacement is a small HTTP/1.1 server of its own.
+
+Still to wire: the port has to reach the frontend through the extension-status RPC, which does not exist until A6.
 
 ### A2 — the bridge (≈3 days)
 
@@ -80,7 +84,7 @@ Host side: `ExtensionFrame.tsx` — sandboxed iframe, versioned `postMessage` en
 
 Guest side: a new bridge package under `clients/`, which an extension imports to get an object satisfying `IgniClient`: `rpc()`, event subscription, plus `navigate`, `identity`, `params`, `theme`, `close`.
 
-Both host CSPs need `frame-src` for the loopback origins: `clients/vscode/src/extension.ts:304` (`default-src 'none'`) and `clients/tauri/src-tauri/tauri.conf.json:16` (`default-src 'self'`).
+One host CSP needs `frame-src` for the loopback origins: `clients/tauri/src-tauri/tauri.conf.json:16` (`default-src 'self'`). **Not the IDE clients** — D16 freezes them at context-handoff scope and extensions render in the igni app only, so `clients/vscode/src/extension.ts:304` keeps its `default-src 'none'` and the JetBrains panel is untouched. An extension that wanted an IDE surface would be asking for the decision to be reopened, not for a CSP line.
 
 *Done when:* the bridge refuses a method the manifest did not ask for, and the same call is refused again at the backend with the frame's check removed.
 
