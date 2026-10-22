@@ -2026,7 +2026,11 @@ describe("what the document is marked for, once the rail is narrowed", () => {
     const highlights = stubHighlights();
     await withTwo();
 
-    expect(marked(highlights)).toBe(2);
+    // ``waitFor``, like both tests below it. ``withTwo`` waits for the
+    // comment text to render; the marking happens in an effect after
+    // that, so a synchronous read here is a race the Windows runner
+    // loses about one run in ten — it saw nothing marked at all.
+    await waitFor(() => expect(marked(highlights)).toBe(2));
   });
 
   it("stops marking the passage whose comment was filtered away", async () => {
