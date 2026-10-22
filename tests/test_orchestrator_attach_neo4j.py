@@ -63,11 +63,11 @@ def _make_orchestrator(tmp_path: Path) -> SessionOrchestrator:
     """
     # Real Session is heavy to construct (it spins up the
     # workspace, db, plugins, etc.). Use a minimal stub whose
-    # ``knowledge`` field is a real ``None`` (we test the
+    # ``artifacts`` field is a real ``None`` (we test the
     # swap-to-neo4j path; the chroma default is exercised by
     # the existing session tests).
     session = MagicMock()
-    session.knowledge = None  # the swap target
+    session.artifacts = None  # the swap target
 
     backend = MagicMock()
     backend._session = session
@@ -113,8 +113,11 @@ async def test_orchestrator_attach_neo4j_no_op_when_knowledge_disabled(tmp_path,
     result = await orch.attach_neo4j()
     assert result is None
     assert orch._neo4j_runtime is None
-    # The session's knowledge is still ``None`` (the stub value).
-    assert orch._backend._session.knowledge is None
+    # The session's artifact store is still ``None`` (the stub value).
+    # Watched under its real name: the field was renamed from
+    # ``knowledge`` and this assertion was not, so it stood for a
+    # while checking an attribute nothing writes.
+    assert orch._backend._session.artifacts is None
 
 
 async def test_orchestrator_attach_neo4j_swaps_knowledge_when_enabled(
@@ -175,12 +178,12 @@ async def test_orchestrator_attach_neo4j_swaps_knowledge_when_enabled(
     assert runtime is not None
     # The runtime was cached on the orchestrator.
     assert orch._neo4j_runtime is runtime
-    # The session received the runtime for BOTH the knowledge and
+    # The session received the runtime for BOTH the artifact and
     # the code_index attach calls.
     assert session.attached_runtimes == [runtime]
     assert session.codeindex_attach_calls == 1
-    # The session's knowledge + code_index were updated.
-    assert session.knowledge == "neo4j-True"
+    # The session's artifact store + code_index were updated.
+    assert session.artifacts == "neo4j-True"
     assert session.code_index == "neo4j-codeindex-True"
 
 

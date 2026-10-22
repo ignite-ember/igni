@@ -90,44 +90,45 @@ async def test_session_attach_artifacts_neo4j_routes_through_neo4j(tmp_path, dri
     await session.attach_artifacts_neo4j(runtime)
 
     # After attach: artifacts is the neo4j-backed index, the
-    # ``_neo4j_client`` is the same instance we built inside
+    # ``client`` is the same instance we built inside
     # attach (so the idempotency check works), and the
     # artifact_mgr holds the same reference.
     assert session.artifacts is not None
-    assert getattr(session.artifacts, "_neo4j_client", None) is not None
+    assert session.artifacts.client is not None
     assert session.artifact_mgr.artifacts is session.artifacts
     # The runtime saw exactly one driver_for_artifacts call (for
     # the project's hash).
     assert runtime.driver_calls, "driver_for_artifacts was never called"
 
-    # Add a artifacts entry through the new backend. The
-    # ``ArtifactIndex`` constructor wires a ``LiveEmbedder`` which
-    # Add a artifacts entry through the public seam. The
-    # ``LiveEmbedder`` wired in by ``attach_artifacts_neo4j``
-    # uses the project's model loader (multi-second download on
-    # first call) — exercise the underlying client directly to
-    # avoid that cost in the test. The on-the-wire embedding path
-    # is covered by ``test_artifacts_neo4j_backend.py``.
+    # Write through the client the attach installed, not through
+    # ``ArtifactIndex.create``: the index refuses a write with no
+    # shared server attached, and the ``LiveEmbedder`` that
+    # ``attach_artifacts_neo4j`` wires in loads the project's model
+    # (a multi-second download on first call). What this test is
+    # about is that the index the session now holds points at the
+    # live driver, so the cheapest write that proves it is the right
+    # one. ``test_artifact_writes_reach_the_server`` covers the
+    # server-first ordering, and ``test_artifact_index_neo4j_seam``
+    # covers the index's own round trip.
     from ember_code.core.code_index.embedder import HashEmbedder
 
-    client = session.artifacts._neo4j_client
+    client = session.artifacts.client
     embedder = HashEmbedder()
     content = "test entry"
-    await client.add_entry(
-        entry_id="session-seam",
+    outcome = await client.append_version(
+        artifact_id="session-seam",
         name="Test",
-        source="unit",
         content=content,
         embedding=embedder.embed([content])[0],
-        chunks=[],
     )
+    assert outcome.n == 1
 
-    # count + has_entry through the seam: must hit neo4j.
+    # Counting and deleting go through the same seam, so they are
+    # answered by neo4j or not at all.
     assert await session.artifacts.count() == 1
-    entries = await session.artifacts.list_entries()
-    assert len(entries) == 1
-    # Clean up
-    assert await session.artifacts.delete_entry(entries[0].id) is True
+    listed = await client.list_artifacts()
+    assert [a.artifact_id for a in listed] == ["session-seam"]
+    assert await client.delete_artifact("session-seam") is True
     assert await session.artifacts.count() == 0
 
 
@@ -141,7 +142,7 @@ async def test_session_attach_artifacts_neo4j_idempotent(tmp_path, driver, proje
 
     await session.attach_artifacts_neo4j(runtime)
     first = session.artifacts
-    first_client = first._neo4j_client
+    first_client = first.client
 
     await session.attach_artifacts_neo4j(runtime)
     second = session.artifacts
@@ -149,7 +150,7 @@ async def test_session_attach_artifacts_neo4j_idempotent(tmp_path, driver, proje
     # The reference is unchanged — the idempotency guard
     # detected the same client and skipped the rebuild.
     assert second is first
-    assert second._neo4j_client is first_client
+    assert second.client is first_client
 
 
 async def test_session_attach_artifacts_neo4j_overrides_disabled(tmp_path, driver, project_id):
@@ -174,5 +175,5 @@ async def test_session_attach_artifacts_neo4j_overrides_disabled(tmp_path, drive
     # The explicit attach succeeds — the flag is for the
     # constructor default, not a hard block.
     assert session.artifacts is not None
-    assert getattr(session.artifacts, "_neo4j_client", None) is not None
+    assert session.artifacts.client is not None
     assert runtime.driver_calls == [session.artifacts.project_id]
