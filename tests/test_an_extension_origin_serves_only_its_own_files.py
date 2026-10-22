@@ -31,9 +31,13 @@ async def _request(
 ) -> tuple[int, dict[str, str], bytes]:
     """One HTTP/1.1 request, parsed just enough to assert on.
 
-    ``expect_body=False`` is HEAD: the reply still declares the length
+    ``expect_body=False`` is HEAD. The reply still declares the length
     of the body it is not sending, so reading that many bytes would
-    wait for bytes that are never coming.
+    wait for bytes that never come — but reading *nothing* cannot tell
+    an empty body from one that was never looked at, which is how the
+    first version of this passed against a server that wrongly sent
+    one. So it reads to EOF instead, and what comes back is whatever
+    the server actually sent.
     """
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
     try:
@@ -48,7 +52,12 @@ async def _request(
                 name, _, value = line.partition(":")
                 headers[name.strip().lower()] = value.strip()
         length = int(headers.get("content-length", "0"))
-        body = await reader.readexactly(length) if length and expect_body else b""
+        body = b""
+        if expect_body and length:
+            body = await reader.readexactly(length)
+        elif not expect_body:
+            with contextlib.suppress(TimeoutError):
+                body = await asyncio.wait_for(reader.read(), timeout=2)
         return status, headers, body
     finally:
         writer.close()
@@ -172,6 +181,70 @@ class TestItRefusesEverythingElse:
         missing, _, _ = await _get(origin.port, "/nope.js")
         forbidden, _, _ = await _get(origin.port, "/../../secret.txt")
         assert missing == forbidden == 404
+
+
+class TestTheThingsThatOnlyShowUnderLoad:
+    """Four that the first pass got wrong, each cheap to get wrong again."""
+
+    async def test_a_large_file_is_not_held_in_memory_to_send_it(self, origin, bundle):
+        # Eight megabytes, which the first version read with read_bytes
+        # into one buffer per concurrent request. The assertion a test
+        # can make is that it arrives intact; the reason it matters is
+        # that the sender no longer scales with the file.
+        payload = (b"igni" * 64 + b"\n") * 32_000
+        (bundle / "big.wasm").write_bytes(payload)
+
+        status, headers, body = await _get(origin.port, "/big.wasm")
+
+        assert status == 200
+        assert headers["content-type"] == "application/wasm"
+        assert int(headers["content-length"]) == len(payload)
+        assert body == payload
+
+    # There was a test here for a POST carrying a body. It asserted
+    # that the 405 still arrives, and it failed about one run in five:
+    # whether the reply survives depends on how much of the body the
+    # kernel has buffered when the socket closes, which is a race, not
+    # a behaviour. The module docstring records the measurement that
+    # settled what this server does with a large refused body. A POST
+    # with no body is covered above, deterministically.
+
+    async def test_a_head_that_is_refused_still_sends_no_body(self, origin):
+        # The 404 path got this right from the start and the 421 path
+        # did not, which is the sort of asymmetry that survives because
+        # the common case is tested and the other one is not.
+        status, headers, body = await _request(
+            origin.port,
+            f"HEAD / HTTP/1.1\r\nHost: evil.example:{origin.port}\r\nConnection: close\r\n\r\n",
+            expect_body=False,
+        )
+        assert status == 421
+        assert body == b""
+        # The length still describes what a GET would have returned.
+        assert int(headers["content-length"]) > 0
+
+    async def test_a_scheme_relative_target_is_not_read_as_a_host(self, origin):
+        # ``urlsplit`` parses ``//x/index.html`` as host ``x`` with path
+        # ``/index.html``, so the first segment vanishes and the request
+        # is answered with the root's index — a file it did not name.
+        status, _, body = await _get(origin.port, "//anything/index.html")
+        assert status == 404
+        assert b"CodeIndex" not in body
+
+    async def test_two_callers_racing_on_one_id_leave_one_listener(self, tmp_path):
+        origins = ExtensionOrigins()
+        root = tmp_path / "one"
+        root.mkdir()
+        (root / "index.html").write_text("one")
+        try:
+            first, second = await asyncio.gather(
+                origins.serve("igni.codeindex", root),
+                origins.serve("igni.codeindex", root),
+            )
+            assert first is second
+            assert len(origins) == 1
+        finally:
+            await origins.stop_all()
 
 
 class TestWhatTheHeadersSay:

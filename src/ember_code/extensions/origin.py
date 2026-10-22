@@ -33,6 +33,15 @@ connection and then close, no keep-alive, no pipelining, no chunked
 anything, no request body, a cap on how much head it will read and a
 deadline for reading it. What is left is a request line, some headers,
 and a file.
+
+One consequence worth stating. A refused request that is still sending
+a large body gets a connection reset rather than the refusal, because
+closing a socket with unread data in its receive buffer is what TCP
+does. A draining read was written to avoid that and then measured: a
+4 KB and a 256 KB body get their 405 with or without it, and a 4 MB one
+fails either way. It bought nothing, so it is gone. No browser posts
+megabytes to a port that serves two methods, and a client that does is
+not owed a tidy answer.
 """
 
 from __future__ import annotations
@@ -59,6 +68,10 @@ MAX_HEAD_BYTES = 16 * 1024
 #: client that opens a socket and says nothing holds it open for as
 #: long as the backend runs.
 HEAD_TIMEOUT = 10.0
+
+#: How much of a file to hold in memory at once while sending it.
+FILE_CHUNK_BYTES = 64 * 1024
+
 
 #: What a file's extension is allowed to be served as.
 #:
@@ -107,32 +120,42 @@ class HttpReply:
         reason: str,
         *,
         body: bytes = b"",
+        file: Path | None = None,
+        length: int | None = None,
         content_type: str = "text/plain; charset=utf-8",
         extra: Mapping[str, str] | None = None,
     ) -> None:
+        """
+        Args:
+            body: The whole response, for the short ones this module
+                writes itself.
+            file: A file to stream instead, for the ones it does not.
+                The first version of this called ``read_bytes`` and held
+                the answer in memory: a bundle with one large asset in
+                it then cost that much resident memory per concurrent
+                request, chosen by whoever is making the requests.
+            length: ``file``'s size, taken once with ``stat`` so the
+                header can be written before the file is opened.
+        """
         self.status = status
         self.reason = reason
         self.body = body
+        self.file = file
+        self.length = length if length is not None else len(body)
         self.content_type = content_type
         self.extra = dict(extra or {})
 
-    def encode(self, *, headers_only: bool) -> bytes:
-        """The bytes of this reply.
-
-        ``headers_only`` is HEAD: the same headers as the GET, including
-        the ``Content-Length`` of the body that is not being sent, which
-        is what makes HEAD useful rather than a different request.
-        """
+    def encode_head(self) -> bytes:
+        """The status line and headers. The body follows separately."""
         lines = [f"HTTP/1.1 {self.status} {self.reason}"]
         for name, value in self.headers().items():
             lines.append(f"{name}: {value}")
-        head = ("\r\n".join(lines) + "\r\n\r\n").encode("latin-1")
-        return head if headers_only else head + self.body
+        return ("\r\n".join(lines) + "\r\n\r\n").encode("latin-1")
 
     def headers(self) -> dict[str, str]:
         headers = {
             "Content-Type": self.content_type,
-            "Content-Length": str(len(self.body)),
+            "Content-Length": str(self.length),
             # One request per connection. Keep-alive would mean framing
             # a second request out of whatever follows, and the parsing
             # this module deliberately does not do.
@@ -259,7 +282,9 @@ class ExtensionOrigin:
         """
         try:
             reply, headers_only = await self._reply_to(reader)
-            writer.write(reply.encode(headers_only=headers_only))
+            writer.write(reply.encode_head())
+            if not headers_only:
+                await self._write_body(reply, writer)
             await writer.drain()
         except (ConnectionResetError, BrokenPipeError):
             pass  # the client left; nothing to say and no one to say it to
@@ -271,6 +296,34 @@ class ExtensionOrigin:
             writer.close()
             with contextlib.suppress(OSError, asyncio.CancelledError):
                 await writer.wait_closed()
+
+    async def _write_body(self, reply: HttpReply, writer: asyncio.StreamWriter) -> None:
+        """Put the body on the wire, a chunk at a time if it is a file.
+
+        ``drain`` between chunks is what bounds memory: without it the
+        whole file lands in the transport's write buffer, which is the
+        problem this avoids rather than a different one.
+        """
+        if reply.file is None:
+            writer.write(reply.body)
+            return
+        sent = 0
+        with reply.file.open("rb") as handle:
+            while chunk := handle.read(FILE_CHUNK_BYTES):
+                writer.write(chunk)
+                await writer.drain()
+                sent += len(chunk)
+        if sent != reply.length:
+            # The file changed between the stat and the read. The client
+            # is getting a response that does not match its declared
+            # length and will notice; say so on this side too.
+            logger.warning(
+                "extension origin %s sent %d bytes of %s, declared %d",
+                self._extension_id,
+                sent,
+                reply.file,
+                reply.length,
+            )
 
     async def _reply_to(self, reader: asyncio.StreamReader) -> tuple[HttpReply, bool]:
         """Parse one request head and decide the answer.
@@ -296,6 +349,12 @@ class ExtensionOrigin:
         if method not in ("GET", "HEAD"):
             return self._error(405, "Method Not Allowed", allow="GET, HEAD"), False
 
+        # From here the method is known, and HEAD means headers only
+        # whatever the answer turns out to be. Getting this wrong on the
+        # refusals is a protocol violation nobody notices until a client
+        # waits for a body that a HEAD may not have.
+        headers_only = method == "HEAD"
+
         # DNS rebinding: a page on an attacker's domain whose name has
         # been pointed at 127.0.0.1 reaches this port with the browser's
         # own credentials and its own Host header. Requiring the Host we
@@ -306,31 +365,32 @@ class ExtensionOrigin:
                 self._extension_id,
                 headers.get("host", ""),
             )
-            return self._error(421, "Misdirected Request"), False
+            return self._error(421, "Misdirected Request"), headers_only
 
         target_path = self._resolve(target)
         if target_path is None:
-            return self._error(404, "Not Found"), method == "HEAD"
+            return self._error(404, "Not Found"), headers_only
 
         try:
-            body = target_path.read_bytes()
+            length = target_path.stat().st_size
         except OSError as exc:
             logger.debug(
-                "extension origin %s could not read %s: %s",
+                "extension origin %s could not stat %s: %s",
                 self._extension_id,
                 target_path,
                 exc,
             )
-            return self._error(404, "Not Found"), method == "HEAD"
+            return self._error(404, "Not Found"), headers_only
 
         reply = HttpReply(
             200,
             "OK",
-            body=body,
+            file=target_path,
+            length=length,
             content_type=self._content_type(target_path),
             extra={"Content-Security-Policy": self._csp()},
         )
-        return reply, method == "HEAD"
+        return reply, headers_only
 
     def _request_line(self, line: str) -> tuple[str, str, HttpReply | None]:
         """``method``, ``target`` — or the reply explaining why not."""
@@ -379,6 +439,14 @@ class ExtensionOrigin:
         difference between "not here" and "here but not yours" is
         exactly what a prober is asking for.
         """
+        # A target starting with ``//`` is parsed by ``urlsplit`` as
+        # scheme-relative, so the first segment becomes a hostname and
+        # disappears: ``//assets/icon.svg`` would quietly serve
+        # ``icon.svg`` from the root. Nothing escapes the root that way,
+        # but a request answered with a file it did not name is its own
+        # kind of wrong.
+        if target.startswith("//"):
+            return None
         # The query and fragment belong to the page, not to us.
         path = unquote(urlsplit(target).path)
         if "\x00" in path:
@@ -472,6 +540,10 @@ class ExtensionOrigins:
     def __init__(self, *, frame_ancestors: Iterable[str] = ()) -> None:
         self._frame_ancestors = tuple(frame_ancestors)
         self._origins: dict[str, ExtensionOrigin] = {}
+        # ``serve`` awaits between deciding to start a listener and
+        # recording it, so two callers racing on one id both started one
+        # and the first was dropped on the floor still listening.
+        self._lock = asyncio.Lock()
 
     def __contains__(self, extension_id: object) -> bool:
         return extension_id in self._origins
@@ -487,16 +559,17 @@ class ExtensionOrigins:
         is a caller bug, and the loud version of it is the one that does
         not leave a stale port answering with the old files.
         """
-        existing = self._origins.get(extension_id)
-        if existing is not None:
-            if existing.root == root.resolve():
-                return existing
-            await self.drop(extension_id)
+        async with self._lock:
+            existing = self._origins.get(extension_id)
+            if existing is not None:
+                if existing.root == root.resolve():
+                    return existing
+                await self._drop_locked(extension_id)
 
-        origin = ExtensionOrigin(extension_id, root, frame_ancestors=self._frame_ancestors)
-        await origin.start()
-        self._origins[extension_id] = origin
-        return origin
+            origin = ExtensionOrigin(extension_id, root, frame_ancestors=self._frame_ancestors)
+            await origin.start()
+            self._origins[extension_id] = origin
+            return origin
 
     def url_for(self, extension_id: str) -> str | None:
         """Where this extension's UI is, or ``None`` if it has none."""
@@ -509,11 +582,17 @@ class ExtensionOrigins:
 
     async def drop(self, extension_id: str) -> None:
         """Stop one extension's origin. Unknown ids are not an error."""
+        async with self._lock:
+            await self._drop_locked(extension_id)
+
+    async def _drop_locked(self, extension_id: str) -> None:
+        """:meth:`drop` for callers already holding the lock."""
         origin = self._origins.pop(extension_id, None)
         if origin is not None:
             await origin.stop()
 
     async def stop_all(self) -> None:
         """Stop every origin. Called on backend shutdown."""
-        for extension_id in list(self._origins):
-            await self.drop(extension_id)
+        async with self._lock:
+            for extension_id in list(self._origins):
+                await self._drop_locked(extension_id)
