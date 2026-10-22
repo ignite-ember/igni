@@ -124,7 +124,23 @@ async def _seed(index: ArtifactIndex) -> None:
     it — but a fixture meant to contain *one* unadjudicated candidate
     arrived with ten, and the case that asks the agent to review them
     would have been grading it on the fixture's own noise.
+
+    Refuses an unattached index, and counts what it wrote. Artifacts
+    are a cloud service, so an index with no server refuses every
+    write and answers with a result object — which this function used
+    to drop on the floor. A caller that built its own index rather
+    than going through :func:`build_index` got five silent refusals
+    and an empty store, and the comparison suite then failed five
+    tests deep with ``NoneType has no attribute 'sources'`` instead of
+    saying the fixture was never written.
     """
+    if index.shared is None:
+        raise RuntimeError(
+            "_seed needs an index with a shared server attached — every "
+            "write refuses without one. Use build_index(), or call "
+            "index.attach_shared(FakeSharedServer()) first."
+        )
+
     none = SourceDeclaration()
 
     await index.create(name="Auth model", content=AUTH_V1, sources=none, kind="design")
@@ -203,6 +219,13 @@ async def _seed(index: ArtifactIndex) -> None:
     # Each case starts from what the *agent* has read, not from what
     # seeding touched.
     index.ledger.clear()
+
+    # Five documents, or this fixture is not the one every case was
+    # written against. Checked here rather than trusted, because a
+    # refused write answers with a result rather than raising.
+    written = await index.count()
+    if written != 5:
+        raise RuntimeError(f"_seed wrote {written} artifacts, expected 5")
 
 
 def _patch_session(index: ArtifactIndex) -> None:

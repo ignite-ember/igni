@@ -456,8 +456,16 @@ class Comment(BaseModel):
 
 
 class StaleDependent(BaseModel):
-    """A confirmed derivation whose source has moved since it was pinned."""
+    """A confirmed derivation whose source has moved since it was pinned.
 
+    ``edge_id`` is the server's handle for the edge, and the only way
+    to resolve the row where staleness is actually computed — these
+    rows come from the server, so a decision written only to the local
+    graph leaves the row standing for everyone, including the person
+    who made it.
+    """
+
+    edge_id: str = ""
     dependent_artifact_id: str
     dependent_name: str = ""
     dependent_n: int = 0
@@ -489,6 +497,7 @@ class ReconcilePlan(BaseModel):
     means the reviewer sees the evidence next to the suggestion.
     """
 
+    edge_id: str = ""
     dependent_artifact_id: str
     dependent_name: str = ""
     dependent_n: int = 0

@@ -362,7 +362,16 @@ class FakeArtifactStore:
             if e.state is EdgeState.CANDIDATE
         )
 
-    async def list_artifacts(self, *, limit: int = 1000) -> list[ArtifactSummary]:
+    async def list_artifacts(
+        self, *, limit: int = 1000, include_archived: bool = False
+    ) -> list[ArtifactSummary]:
+        # Nothing here is ever archived, so the flag changes nothing —
+        # but the signature has to match ``Neo4jArtifactClient``, because
+        # the whole point of this store is that the two answer the same
+        # questions the same way. It did not, and every test in
+        # ``test_eval_fake_store_matches_neo4j`` failed on the TypeError
+        # before reaching anything it meant to compare.
+        _ = include_archived
         return [self._summary(a) for a in self._artifacts.values()][:limit]
 
     async def get_artifact(self, artifact_id: str) -> ArtifactSummary | None:
@@ -571,7 +580,6 @@ class FakeSharedServer:
         #: server — see :meth:`push_content`.
         self.edges: dict[tuple[str, int], list[dict[str, Any]]] = {}
 
-
     async def ensure_shared(self, **kwargs: Any) -> str:
         artifact_id = kwargs["artifact_id"]
         if artifact_id in self.known:
@@ -582,7 +590,9 @@ class FakeSharedServer:
         # is not once lineage is: every document's edges landed on the
         # same key and overwrote each other. The first keeps the
         # configured value so single-document tests still read `s1`.
-        self.known[artifact_id] = self._slug if not self.known else f"{self._slug}-{len(self.known)}"
+        self.known[artifact_id] = (
+            self._slug if not self.known else f"{self._slug}-{len(self.known)}"
+        )
         # The real server answers lineage with *titles*, because that
         # is what gets rendered. Returning an id here would have made
         # every assertion about a document's name pass or fail on the
@@ -641,6 +651,24 @@ class FakeSharedServer:
             raise ConnectionError("the server is not reachable")
         return self.known.get(artifact_id, "")
 
+    async def revoke(self, *, artifact_id: str) -> bool:
+        """Take the server's copy away. Answer whether there was one.
+
+        ``ArtifactIndex.delete`` revokes here before touching the
+        graph, and raises ``DeleteRefused`` on anything that is not a
+        clean ``True`` — including the ``AttributeError`` from this
+        method not existing, which is how a store that cannot delete
+        looked exactly like a server that refused.
+        """
+        slug = self.known.pop(artifact_id, "")
+        if not slug:
+            return False
+        self.titles.pop(artifact_id, None)
+        head = self.heads.pop(slug, 0)
+        for n in range(1, head + 1):
+            self.edges.pop((slug, n), None)
+        return True
+
     def _head_of(self, artifact_id: str, fallback: int) -> int:
         """Where a source has got to, from what has been pushed.
 
@@ -685,7 +713,8 @@ class FakeSharedServer:
                 "pinned_n": pin["n"],
                 "source_head_n": self._head_of(pin["artifact_id"], pin["n"]),
                 "state": pin["state"],
-                "is_stale": pin["state"] == "confirmed" and pin["n"] < self._head_of(pin["artifact_id"], pin["n"]),
+                "is_stale": pin["state"] == "confirmed"
+                and pin["n"] < self._head_of(pin["artifact_id"], pin["n"]),
             }
             for pin in self.edges.get((slug, asked), [])
         ]

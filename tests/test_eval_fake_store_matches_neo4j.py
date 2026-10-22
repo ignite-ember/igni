@@ -30,7 +30,7 @@ from ember_code.core.artifacts.models import EdgeState, SourceDeclaration, Versi
 from ember_code.core.artifacts.neo4j_client import Neo4jArtifactClient
 from ember_code.core.code_index.embedder import HashEmbedder
 from evals.archivist.setup import _seed
-from evals.archivist.store import FakeArtifactStore
+from evals.archivist.store import FakeArtifactStore, FakeSharedServer
 
 _REQUIRED = "NEO4J_TEST_URI"
 
@@ -52,6 +52,11 @@ async def real_index(tmp_path):
     client = Neo4jArtifactClient(driver, project_id)
     await client.apply_schema()
     index = ArtifactIndex(project=tmp_path, neo4j_client=client, embedder=HashEmbedder())
+    # Signed in. Artifacts are a cloud service, so an unattached index
+    # refuses every write — which is what left both fixtures empty and
+    # this whole file failing on an absent document rather than on a
+    # disagreement between the two stores.
+    index.attach_shared(FakeSharedServer())
     await _seed(index)
     try:
         yield index
@@ -68,6 +73,7 @@ async def fake_index(tmp_path):
         neo4j_client=FakeArtifactStore(),  # type: ignore[arg-type]
         embedder=HashEmbedder(),
     )
+    index.attach_shared(FakeSharedServer())
     await _seed(index)
     return index
 

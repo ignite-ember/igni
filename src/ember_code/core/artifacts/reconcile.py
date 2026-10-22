@@ -52,6 +52,7 @@ class Reconciler:
     ) -> ReconcilePlan:
         """Assemble the diff and the context a patch needs."""
         return ReconcilePlan(
+            edge_id=stale.edge_id,
             dependent_artifact_id=stale.dependent_artifact_id,
             dependent_name=stale.dependent_name,
             dependent_n=stale.dependent_n,

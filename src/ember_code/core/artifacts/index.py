@@ -886,6 +886,7 @@ class ArtifactIndex:
         rows = await shared.stale(limit=limit)
         return [
             StaleDependent(
+                edge_id=str(row.get("edge_id") or ""),
                 dependent_artifact_id=str(row.get("dependent_artifact_id") or ""),
                 dependent_name=str(row.get("dependent_title") or ""),
                 dependent_n=int(row.get("dependent_n") or 0),
@@ -989,8 +990,25 @@ class ArtifactIndex:
         decided nothing needs changing — the edge is re-pinned in
         place so the same decision isn't asked for again. Both are
         resolutions; only one is an edit.
+
+        The re-pin goes to the server first, for the same reason every
+        other write does: :meth:`stale` is the server's answer, so an
+        edge moved only in the local graph leaves the row standing on
+        every client — including the one that just resolved it. It
+        reported success and the row came straight back, which reads
+        as the product ignoring the decision.
         """
         if content is None or not content.strip():
+            shared = self._shared
+            if plan.edge_id and shared is not None and getattr(shared, "is_configured", False):
+                moved_shared = await shared.repin_edge(
+                    edge_id=plan.edge_id, to_n=plan.source_head_n
+                )
+                if moved_shared is None:
+                    return ArtifactWriteResult.fail(
+                        "The server does not know that source any more, so the "
+                        "re-pin was not recorded. Refresh the list and try again."
+                    )
             moved = await self._client.repin(
                 artifact_id=plan.dependent_artifact_id,
                 n=plan.dependent_n,
