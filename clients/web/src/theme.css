@@ -54,6 +54,26 @@
   --accent-orange-text: #fb9c5a;
   --danger-text: #f28376;
 
+  /* ── Spacing scale ──────────────────────────────────────────────
+     Introduced because there was not one. gap had 20 distinct values
+     and padding 161, every one hardcoded, so each feature picked its
+     own numbers and none of them agreed. These steps are the ones
+     already in use: 85% of gaps and 83% of margins landed on them
+     exactly, which is why adopting them changed nothing on screen.
+     What stayed a literal is now visible as a deviation, which is
+     the point of having a scale at all. */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-7: 14px;
+  --space-8: 16px;
+  --space-10: 20px;
+  --space-12: 24px;
+  --space-16: 32px;
+
   --radius-sm: 8px;
   --radius: 12px;
   --radius-lg: 18px;
@@ -208,7 +228,7 @@ button {
 .sidebar-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 14px 14px 8px;
 }
 
@@ -418,7 +438,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 5px 14px;
   font-size: 12.5px;
   background: var(--ember-gradient-soft);
@@ -457,7 +477,7 @@ button {
 .update-prompt-title {
   font-size: 16px;
   font-weight: 600;
-  margin-bottom: 10px;
+  margin-bottom: var(--space-5);
 }
 .update-prompt-body {
   font-size: 13.5px;
@@ -475,11 +495,11 @@ button {
   border: 1px solid color-mix(in srgb, var(--danger, #d73a49) 35%, transparent);
   border-radius: 6px;
   padding: 6px 10px;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-6);
 }
 .update-prompt-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   justify-content: flex-end;
 }
 
@@ -491,7 +511,7 @@ button {
   appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   height: 22px;
   padding: 0 10px;
   border-radius: 9999px;
@@ -516,7 +536,7 @@ button {
 .app-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 10px 16px;
   /* Pulled out of the flex flow so it can float over the top of
      ``.conversation`` — messages scroll up *behind* the header and
@@ -751,7 +771,7 @@ button {
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   /* Fixed height + uniform padding so every header bubble is the
      same shape regardless of content (text, icons, or just a dot). */
   height: 30px;
@@ -937,7 +957,7 @@ button {
   content: "▍";
   color: var(--accent-orange-text, #fb9c5a);
   animation: caret-blink 1s steps(2) infinite;
-  margin-left: 2px;
+  margin-left: var(--space-1);
 }
 
 /* ── Virtualized chat row ──────────────────────────────────────────
@@ -1126,7 +1146,7 @@ button {
 .chat-search-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 8px 10px;
 }
 .chat-search-icon {
@@ -1189,7 +1209,7 @@ button {
 .chat-search-result {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 6px 14px;
   cursor: pointer;
   font-size: 12.5px;
@@ -1293,7 +1313,7 @@ button {
 
 .welcome-setup-actions {
   display: flex;
-  gap: 10px;
+  gap: var(--space-5);
   justify-content: center;
   flex-wrap: wrap;
 }
@@ -1309,7 +1329,7 @@ button {
   margin: 28px auto 0;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
+  gap: var(--space-5);
   text-align: left;
 }
 
@@ -1415,7 +1435,7 @@ button {
   top: -10px;
   right: 8px;
   display: flex;
-  gap: 4px;
+  gap: var(--space-2);
   background: var(--bg-surface);
   border: 1px solid var(--border-soft);
   border-radius: 999px;
@@ -1509,7 +1529,7 @@ button {
 .msg-user-edit-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   border-top: 1px solid var(--border-soft);
   padding-top: 8px;
 }
@@ -1591,7 +1611,7 @@ button {
 .agent-dispatch--with-copy {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .msg-stats-copy {
@@ -1638,7 +1658,7 @@ button {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 10px;
-  margin-top: 10px;
+  margin-top: var(--space-5);
   padding: 8px 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-soft);
@@ -1671,12 +1691,12 @@ button {
   color: var(--fg-muted);
   flex: 1 1 auto;
   min-width: 0;
-  margin-right: 4px;
+  margin-right: var(--space-2);
 }
 
 .msg-assistant-interrupted-actions {
   display: inline-flex;
-  gap: 6px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
@@ -2335,7 +2355,7 @@ button {
 .hitl-explaining {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .hitl-explaining-spinner {
@@ -2410,7 +2430,7 @@ button {
 .orch-agent-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   width: 100%;
   background: transparent;
   border: none;
@@ -2455,7 +2475,7 @@ button {
 .orch-agent-id {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   flex: 1;
   min-width: 0;
 }
@@ -2528,7 +2548,7 @@ button {
 .orch-agent-counts {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   flex-shrink: 0;
 }
 
@@ -2612,7 +2632,7 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin-left: 8px;
+  margin-left: var(--space-4);
   padding: 4px 10px;
   font-family: var(--font-ui);
   font-size: 11.5px;
@@ -2651,7 +2671,7 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin-left: 6px;
+  margin-left: var(--space-3);
   padding: 3px 8px;
   font-family: var(--font-ui);
   font-size: 11px;
@@ -2684,7 +2704,7 @@ button {
   border-top: 1px solid color-mix(in srgb, var(--ember-orange) 25%, transparent);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .orch-retry-label {
@@ -2721,7 +2741,7 @@ button {
 .orch-retry-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .orch-retry-hint {
@@ -2736,7 +2756,7 @@ button {
 .orchestrate-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   width: 100%;
   background: transparent;
   border: none;
@@ -2793,7 +2813,7 @@ button {
 
 .orch-preview-line {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: baseline;
   font-family: var(--font-ui);
   font-size: 12px;
@@ -2846,7 +2866,7 @@ button {
 .orch-agent-body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   padding: 10px 12px 12px;
   border-top: 1px solid var(--border-soft);
   /* Cap the tool list so an agent with 20+ tool calls doesn't
@@ -2927,8 +2947,8 @@ button {
 .demo-nav {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 12px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
 }
 
 .demo-nav-btn {
@@ -2968,7 +2988,7 @@ button {
 .demo-stage .col {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 /* ── /loop iteration card ───────────────────────────────────────── */
@@ -2981,19 +3001,19 @@ button {
   padding: 10px 14px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .loop-iteration-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .loop-iteration-badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   padding: 2px 9px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--ember-orange) 18%, transparent);
@@ -3018,7 +3038,7 @@ button {
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   padding: 0;
 }
 
@@ -3050,7 +3070,7 @@ button {
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 /* Plan-mode demo (``?demo=plan``) — each scenario gets a thin
@@ -3059,7 +3079,7 @@ button {
 .demo-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 14px 16px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
@@ -3098,7 +3118,7 @@ button {
 .plan-badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   height: 22px;
   padding: 0 10px;
   border-radius: 999px;
@@ -3175,7 +3195,7 @@ button {
 .auto-approve-switch {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   height: 22px;
   padding: 0 10px 0 4px;
   border-radius: 999px;
@@ -3249,7 +3269,7 @@ button {
   padding: 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-6);
 }
 
 .plan-card--approved {
@@ -3264,7 +3284,7 @@ button {
 .plan-card-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .plan-card-badge {
@@ -3322,7 +3342,7 @@ button {
   padding: 8px 0 0 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   border-top: 1px dashed color-mix(in srgb, var(--accent-orange, #f59e0b) 30%, var(--border-soft));
 }
 
@@ -3333,7 +3353,7 @@ button {
 .plan-card-task {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--space-5);
   font-size: 13px;
   line-height: 1.5;
   color: var(--fg);
@@ -3350,7 +3370,7 @@ button {
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 700;
-  margin-top: 2px;
+  margin-top: var(--space-1);
 }
 
 .plan-card-task--pending .plan-card-task-marker {
@@ -3384,7 +3404,7 @@ button {
 .plan-card-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   flex-wrap: wrap;
 }
 
@@ -3440,7 +3460,7 @@ button {
 .compact-card-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   flex-wrap: wrap;
 }
 
@@ -3499,7 +3519,7 @@ button {
   z-index: 60;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
   pointer-events: none;
   max-width: min(360px, calc(100vw - 32px));
 }
@@ -3541,7 +3561,7 @@ button {
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   font: inherit;
 }
 
@@ -3645,14 +3665,14 @@ button {
 .composer-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 /* ── Panel forms (knowledge search, plugin install…) ───────────── */
 
 .panel-form-row {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: center;
 }
 
@@ -3672,7 +3692,7 @@ button {
 }
 
 .panel-results {
-  margin-top: 8px;
+  margin-top: var(--space-4);
   max-height: 220px;
   overflow-y: auto;
 }
@@ -3686,9 +3706,9 @@ button {
 
 .dir-pathbar {
   display: flex;
-  gap: 6px;
+  gap: var(--space-3);
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: var(--space-5);
 }
 
 .dir-path-input {
@@ -3726,7 +3746,7 @@ button {
 .dir-hidden-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: 12px;
   color: var(--fg-faint);
   cursor: pointer;
@@ -3891,7 +3911,7 @@ button {
   padding: 0 10px 0 14px;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   border-right: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: 9999px 0 0 9999px;
   white-space: nowrap;
@@ -4038,7 +4058,7 @@ button {
 .send-mode-menu .popup-item {
   flex-direction: column;
   align-items: stretch;
-  gap: 2px;
+  gap: var(--space-1);
   padding: 9px 12px;
 }
 
@@ -4070,7 +4090,7 @@ button {
   max-width: var(--col);
   margin: 8px auto 0;
   display: flex;
-  gap: 14px;
+  gap: var(--space-7);
   justify-content: center;
   color: var(--fg-faint);
   font-size: 11.5px;
@@ -4110,7 +4130,7 @@ button {
 
 .popup-item {
   display: flex;
-  gap: 10px;
+  gap: var(--space-5);
   align-items: baseline;
   padding: 7px 11px;
   border-radius: var(--radius-sm);
@@ -4253,10 +4273,10 @@ button {
 .dialog-title {
   font-weight: 700;
   font-size: 16px;
-  margin-bottom: 4px;
+  margin-bottom: var(--space-2);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* Present for a screen reader, absent on screen.
@@ -4281,7 +4301,7 @@ button {
 .dialog-sub {
   color: var(--fg-muted);
   font-size: 13px;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-6);
 }
 
 /* The agent path inside that sub-line. Monospace because it is an
@@ -4305,12 +4325,12 @@ button {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-8);
 }
 
 .dialog-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 
@@ -4429,7 +4449,7 @@ button {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 2px;
+  gap: var(--space-1);
   /* Was 10px of air above a 12.5px line, under a header that
      already supplies its own. The band read as a gap rather than as
      a row, and everything docked below it — the tree, the document,
@@ -4459,7 +4479,7 @@ button {
 .page-crumb-group {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 /* A document's name, which is the only crumb that can be any
@@ -4516,7 +4536,7 @@ button {
 .page-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 6px 18px 12px;
   border-bottom: 1px solid var(--border-soft);
   /* Air below the rule, not above the thing under it.
@@ -4531,7 +4551,7 @@ button {
      Here rather than on each view, because all four of them — the
      list, the comments queue, Ask and Add — sit under this same
      header and were all one pixel clear of it. */
-  margin-bottom: 12px;
+  margin-bottom: var(--space-6);
 }
 
 .page-title {
@@ -4807,7 +4827,7 @@ button {
 .notify-head {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 14px 12px 12px 16px;
   border-bottom: 1px solid var(--border);
 }
@@ -4857,7 +4877,7 @@ button {
 
 .notify-open {
   display: flex;
-  gap: 10px;
+  gap: var(--space-5);
   width: 100%;
   padding: 11px 8px;
   text-align: left;
@@ -4910,7 +4930,7 @@ button {
 .notify-said {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
@@ -4988,7 +5008,7 @@ button {
 .drawer-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 14px 18px;
   border-bottom: 1px solid var(--border-soft);
   font-weight: 700;
@@ -5010,7 +5030,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 9px 0;
   border-bottom: 1px solid var(--border-soft);
 }
@@ -5087,7 +5107,7 @@ button {
    * fires. Tighten the gap and let items wrap onto a second row when
    * they don't fit; don't hide them. */
   .statusline {
-    gap: 8px;
+    gap: var(--space-4);
   }
 
   .brand span {
@@ -5110,7 +5130,7 @@ button {
 .agent-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 11px 8px;
   border-bottom: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
@@ -5130,7 +5150,7 @@ button {
 .breadcrumb {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   font-size: 14px;
   margin: 2px 0 8px;
 }
@@ -5156,7 +5176,7 @@ button {
 
 .mini-tag {
   display: inline-block;
-  margin-left: 6px;
+  margin-left: var(--space-3);
   padding: 1px 7px;
   border-radius: 9999px;
   border: 1px solid var(--border-soft);
@@ -5183,7 +5203,7 @@ button {
 
 .agent-kv {
   display: flex;
-  gap: 10px;
+  gap: var(--space-5);
   align-items: baseline;
   margin: 4px 0;
 }
@@ -5241,7 +5261,7 @@ button {
   height: 24px;
   padding: 0 9px;
   font-size: 11.5px;
-  gap: 4px;
+  gap: var(--space-2);
   max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5274,7 +5294,7 @@ button {
 .session-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .session-item .session-name {
@@ -5333,7 +5353,7 @@ button {
 /* The consequence of each answer, under the question. Nobody should
  * have to guess whether "Take the group's" discards their work. */
 .group-conflict-note {
-  margin-top: 4px;
+  margin-top: var(--space-2);
   font-size: 11.5px;
   color: var(--fg-muted);
   line-height: 1.4;
@@ -5341,8 +5361,8 @@ button {
 
 .group-conflict-actions {
   display: flex;
-  gap: 6px;
-  margin-top: 8px;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
 }
 
 .group-conflict-actions button {
@@ -5374,7 +5394,7 @@ button {
   appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   height: 22px;
   padding: 0 9px;
   border-radius: 9999px;
@@ -5447,7 +5467,7 @@ button {
   appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   height: 22px;
   padding: 0 9px;
   border-radius: 9999px;
@@ -5481,7 +5501,7 @@ button {
 .codeindex-hero {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: var(--space-8);
   padding: 4px 4px 16px;
 }
 
@@ -5504,14 +5524,14 @@ button {
 .codeindex-hint {
   font-size: 12.5px;
   color: var(--fg-muted);
-  margin-top: 2px;
+  margin-top: var(--space-1);
 }
 
 .codeindex-hero-meta {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: baseline;
-  margin-top: 6px;
+  margin-top: var(--space-3);
   font-size: 11.5px;
   color: var(--fg-faint);
 }
@@ -5529,10 +5549,10 @@ button {
 .codeindex-banner {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-6);
   padding: 10px 12px;
   border-radius: 10px;
-  margin-bottom: 14px;
+  margin-bottom: var(--space-7);
   font-size: 12.5px;
 }
 
@@ -5575,14 +5595,14 @@ button {
   background: var(--bg-surface);
   border: 1px solid var(--border-soft);
   display: grid;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .codeindex-facts > div {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 12px;
+  gap: var(--space-6);
 }
 
 .codeindex-facts dt {
@@ -5615,7 +5635,7 @@ button {
 .codeindex-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-4);
   margin-bottom: 18px;
 }
 
@@ -5626,7 +5646,7 @@ button {
 /* Top action row, rendered inside the drawer header via headerExtras */
 .codeindex-toolbar {
   display: flex;
-  gap: 6px;
+  gap: var(--space-3);
   justify-content: flex-end;
   width: 100%;
 }
@@ -5644,7 +5664,7 @@ button {
   border-radius: 4px;
   background: var(--bg-raised);
   color: var(--fg-faint);
-  margin-left: 4px;
+  margin-left: var(--space-2);
 }
 
 .codeindex-donut-cov.tone-good {
@@ -5664,7 +5684,7 @@ button {
 .codeindex-stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+  gap: var(--space-4);
   margin: 0 0 16px;
 }
 
@@ -5682,13 +5702,13 @@ button {
   min-height: 64px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .codeindex-tile-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   color: var(--fg-faint);
 }
 
@@ -5735,7 +5755,7 @@ button {
 .codeindex-head-grid {
   display: grid;
   grid-template-columns: minmax(160px, 1fr) minmax(0, 1.4fr);
-  gap: 16px;
+  gap: var(--space-8);
   align-items: start;
 }
 
@@ -5748,7 +5768,7 @@ button {
 /* ── Donut ──────────────────────────────────────────────────── */
 .codeindex-donut-wrap {
   display: flex;
-  gap: 12px;
+  gap: var(--space-6);
   align-items: center;
 }
 
@@ -5769,7 +5789,7 @@ button {
 .codeindex-donut-legend li {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   padding: 2px 4px;
   border-radius: 4px;
   cursor: pointer;
@@ -5809,7 +5829,7 @@ button {
 
 .codeindex-timeline-row {
   display: flex;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 2px 0;
 }
 
@@ -5856,7 +5876,7 @@ button {
 
 .codeindex-timeline-top {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: baseline;
 }
 
@@ -5881,7 +5901,7 @@ button {
 
 .codeindex-timeline-tag {
   display: inline-block;
-  margin-top: 2px;
+  margin-top: var(--space-1);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.05em;
@@ -5905,8 +5925,8 @@ button {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: var(--space-5);
+  margin-bottom: var(--space-5);
 }
 
 .codeindex-section-title {
@@ -5966,8 +5986,8 @@ button {
 .codeindex-spark-detail {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 8px;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
   padding: 8px 10px;
   border-radius: 6px;
   background: var(--bg-raised);
@@ -6009,8 +6029,8 @@ button {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: var(--space-5);
+  margin-bottom: var(--space-5);
 }
 
 .codeindex-section-title {
@@ -6031,14 +6051,14 @@ button {
   display: flex;
   flex-direction: column;
   gap: 5px;
-  margin-bottom: 14px;
+  margin-bottom: var(--space-7);
 }
 
 .codeindex-lang {
   display: grid;
   grid-template-columns: 64px 1fr 56px;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .codeindex-lang-ext {
@@ -6071,13 +6091,13 @@ button {
 .codeindex-commits {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .codeindex-commit {
   display: grid;
   grid-template-columns: 10px 64px 1fr auto;
-  gap: 10px;
+  gap: var(--space-5);
   align-items: center;
   padding: 6px 0;
   font-size: 12.5px;
@@ -6120,13 +6140,13 @@ button {
 .codeindex-branches {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .codeindex-branch {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   flex-wrap: wrap;
   padding: 6px 10px;
   border-radius: 8px;
@@ -6185,13 +6205,13 @@ button {
 .codeindex-activity {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .codeindex-activity-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 5px 0;
   font-size: 12px;
   flex-wrap: wrap;
@@ -6254,7 +6274,7 @@ button {
   border-radius: 9999px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   color: var(--fg-faint);
   font-family: var(--font-ui);
   font-size: 11.5px;
@@ -6291,7 +6311,7 @@ button {
 .session-chip-toast {
   font-size: 10.5px;
   color: var(--success);
-  margin-left: 2px;
+  margin-left: var(--space-1);
 }
 
 /* Backend-version chip — inline monospace pill sized to match the
@@ -6435,7 +6455,7 @@ button {
 .task-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 10px 8px;
   cursor: pointer;
   border-radius: var(--radius-sm);
@@ -6449,12 +6469,12 @@ button {
   font-family: var(--font-mono);
   font-size: 10.5px;
   color: var(--fg-faint);
-  margin-left: 8px;
+  margin-left: var(--space-4);
 }
 
 .task-status {
   display: inline-block;
-  margin-left: 8px;
+  margin-left: var(--space-4);
   padding: 1px 7px;
   border-radius: 9999px;
   font-size: 10.5px;
@@ -6484,7 +6504,7 @@ button {
 .task-body {
   padding: 2px 8px 14px 32px;
   display: grid;
-  gap: 12px;
+  gap: var(--space-6);
 }
 
 .task-block-label {
@@ -6516,7 +6536,7 @@ button {
 .drawer-toolbar {
   display: flex;
   justify-content: center;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 10px 18px;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-soft);
@@ -6549,7 +6569,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 4px;
+  gap: var(--space-2);
   background: var(--bg-raised);
   padding: 3px;
   border-radius: 14px;
@@ -6569,7 +6589,7 @@ button {
   font-family: var(--font-ui);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .task-filter:hover {
@@ -6649,14 +6669,14 @@ button {
 .composer-attachments {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-3);
   padding: 4px 0 8px;
 }
 
 .composer-chip-attach {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   max-width: 240px;
   padding: 3px 4px 3px 10px;
   border-radius: 9999px;
@@ -6718,7 +6738,7 @@ button {
 .paste-ctx-foot {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 6px 10px;
   background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
   border-top: 1px solid color-mix(in srgb, var(--accent-blue) 25%, transparent);
@@ -6737,7 +6757,7 @@ button {
 .paste-ctx-refs {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
   flex: 1;
   min-width: 0;
 }
@@ -6800,7 +6820,7 @@ button {
   align-self: flex-start;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 4px 0;
   color: var(--fg-muted);
   font-size: 12.5px;
@@ -6808,7 +6828,7 @@ button {
 
 .typing-dots {
   display: inline-flex;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .typing-dots > span {
@@ -6834,7 +6854,7 @@ button {
 .msg-attachments {
   align-self: flex-end;
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   flex-wrap: wrap;
   max-width: 85%;
 }
@@ -6842,7 +6862,7 @@ button {
 .attach-card {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   max-width: 320px;
   min-width: 0;
   padding: 6px 12px 6px 6px;
@@ -6976,7 +6996,7 @@ button {
   appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   padding: 2px 8px 2px 4px;
   border-radius: 9999px;
   border: 1px solid color-mix(in srgb, var(--accent-blue) 55%, transparent);
@@ -7032,7 +7052,7 @@ button {
   color: var(--fg-faint);
   padding: 6px 10px 4px;
   border-bottom: 1px solid var(--border-soft);
-  margin-bottom: 4px;
+  margin-bottom: var(--space-2);
   word-break: break-all;
   white-space: normal;
   text-align: left;
@@ -7130,7 +7150,7 @@ button {
 .hitl-card {
   padding: 12px 4px 10px;
   border-bottom: 1px solid var(--border-soft);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
   display: flex;
   flex-direction: column;
   max-height: min(70vh, 620px);
@@ -7227,14 +7247,14 @@ button {
 .hitl-arg-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
   padding-top: 3px;
 }
 
 .hitl-file {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   padding: 4px 8px;
   border-radius: 8px;
   background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
@@ -7332,19 +7352,19 @@ button {
   padding: 4px 0 14px 26px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-6);
 }
 
 .mcp-section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .mcp-section-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -7371,12 +7391,12 @@ button {
 .mcp-tool-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .mcp-tool-row {
   display: flex;
-  gap: 10px;
+  gap: var(--space-5);
   align-items: flex-start;
   padding: 8px 10px;
   border: 1px solid var(--border-soft);
@@ -7410,7 +7430,7 @@ button {
 .mcp-tool-name {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 
@@ -7497,7 +7517,7 @@ button {
   align-items: center;
   cursor: pointer;
   flex-shrink: 0;
-  margin-top: 2px;
+  margin-top: var(--space-1);
 }
 
 .mcp-tool-switch-track {
@@ -7585,7 +7605,7 @@ button {
 /* ── Plugins panel ─────────────────────────────────────────────── */
 .plugins-tabs {
   display: flex;
-  gap: 4px;
+  gap: var(--space-2);
   margin-left: auto;
 }
 
@@ -7601,7 +7621,7 @@ button {
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .plugins-tab:hover {
@@ -7629,8 +7649,8 @@ button {
 
 .plugins-toolbar {
   display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
   width: 100%;
 }
 
@@ -7656,7 +7676,7 @@ button {
 .plugins-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .plugins-card {
@@ -7674,13 +7694,13 @@ button {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .plugins-card-title {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-4);
   flex-wrap: wrap;
   min-width: 0;
 }
@@ -7734,18 +7754,18 @@ button {
 }
 
 .plugins-desc {
-  margin-top: 6px;
+  margin-top: var(--space-3);
   font-size: 12.5px;
   color: var(--fg-muted);
   line-height: 1.4;
 }
 
 .plugins-source-line {
-  margin-top: 4px;
+  margin-top: var(--space-2);
   font-size: 11px;
   color: var(--fg-faint);
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: baseline;
 }
 
@@ -7760,14 +7780,14 @@ button {
 
 .plugins-actions {
   display: flex;
-  gap: 6px;
+  gap: var(--space-3);
   flex-shrink: 0;
 }
 
 .plugins-caps {
-  margin-top: 6px;
+  margin-top: var(--space-3);
   display: flex;
-  gap: 4px;
+  gap: var(--space-2);
   flex-wrap: wrap;
 }
 
@@ -7801,7 +7821,7 @@ button {
 }
 
 .plugins-empty-hint {
-  margin-top: 4px;
+  margin-top: var(--space-2);
   font-size: 12.5px;
 }
 
@@ -7817,24 +7837,24 @@ button {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--fg-faint);
-  margin-bottom: 6px;
+  margin-bottom: var(--space-3);
 }
 
 .plugins-markets {
-  margin-top: 4px;
+  margin-top: var(--space-2);
 }
 
 /* Dedicated marketplaces-management page */
 .plugins-markets-page {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-7);
 }
 
 .plugins-markets-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   border-top: 1px solid var(--border-soft);
   padding-top: 12px;
 }
@@ -7848,7 +7868,7 @@ button {
   letter-spacing: 0.06em;
   color: var(--fg-faint);
   font-weight: 700;
-  margin-bottom: 4px;
+  margin-bottom: var(--space-2);
 }
 
 .plugins-markets-page .plugins-market {
@@ -7862,7 +7882,7 @@ button {
 .plugins-market-main {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   flex: 1;
   min-width: 0;
 }
@@ -7887,7 +7907,7 @@ button {
 }
 
 .plugins-install-direct--top {
-  margin-top: 4px;
+  margin-top: var(--space-2);
   padding-top: 0;
   border-top: none;
 }
@@ -7899,9 +7919,9 @@ button {
    depending on flex alignment. Lock both. */
 .plugins-install-row {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: stretch;
-  margin-bottom: 14px;
+  margin-bottom: var(--space-7);
 }
 
 .plugins-install-row .panel-input,
@@ -7920,12 +7940,12 @@ button {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--fg-faint);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
 }
 
 .plugins-market {
   display: flex;
-  gap: 10px;
+  gap: var(--space-5);
   align-items: center;
   padding: 6px 0;
   font-size: 12px;
@@ -7939,7 +7959,7 @@ button {
 }
 
 .plugins-add-market {
-  margin-top: 8px;
+  margin-top: var(--space-4);
 }
 
 .plugins-section-hint {
@@ -7972,7 +7992,7 @@ button {
   color: var(--fg-faint);
   font-size: 16px;
   font-weight: 600;
-  margin-left: 8px;
+  margin-left: var(--space-4);
 }
 
 /* Detail page (post-routing) */
@@ -7984,14 +8004,14 @@ button {
 
 .plugin-detail-hero {
   padding-bottom: 14px;
-  margin-bottom: 4px;
+  margin-bottom: var(--space-2);
   border-bottom: 1px solid var(--border-soft);
 }
 
 .plugin-detail-title-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   flex-wrap: wrap;
 }
 
@@ -8011,7 +8031,7 @@ button {
 
 .plugin-detail-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .plugins-chevron {
@@ -8027,17 +8047,17 @@ button {
 }
 
 .plugins-contents {
-  margin-top: 10px;
+  margin-top: var(--space-5);
   padding-top: 10px;
   border-top: 1px dashed var(--border-soft);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .plugins-content-path {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: baseline;
   font-size: 11.5px;
 }
@@ -8060,7 +8080,7 @@ button {
 .plugins-source-link {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
@@ -8092,7 +8112,7 @@ button {
 /* ── Knowledge panel ───────────────────────────────────────────── */
 .kb-toolbar {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   width: 100%;
   align-items: center;
 }
@@ -8103,7 +8123,7 @@ button {
 
 .kb-head-actions {
   display: flex;
-  gap: 6px;
+  gap: var(--space-3);
   align-items: center;
   margin-left: auto;
 }
@@ -8117,7 +8137,7 @@ button {
    the thing a menu entry could never give. */
 .doc-views {
   display: flex;
-  gap: 2px;
+  gap: var(--space-1);
   align-items: center;
 }
 
@@ -8135,7 +8155,7 @@ button {
 .doc-acts {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .doc-act {
@@ -8200,7 +8220,7 @@ button {
    something everybody else will read, so it is the only one drawn
    as a decision; Done is an ordinary way out and looks like one. */
 .doc-acts-edit {
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .doc-edit-state {
@@ -8295,7 +8315,7 @@ button {
 .kb-search-chip {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 6px 10px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -8332,7 +8352,7 @@ button {
 .kb-results {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .kb-result {
@@ -8351,7 +8371,7 @@ button {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .kb-result-head.is-clickable {
@@ -8362,7 +8382,7 @@ button {
 .kb-result-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   min-width: 0;
   flex: 1;
 }
@@ -8397,7 +8417,7 @@ button {
 }
 
 .kb-result-body {
-  margin-top: 6px;
+  margin-top: var(--space-3);
   font-size: 12.5px;
   color: var(--fg-muted);
   line-height: 1.5;
@@ -8410,16 +8430,16 @@ button {
 }
 
 .kb-result-meta {
-  margin-top: 8px;
+  margin-top: var(--space-4);
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .kb-meta-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   font-size: 11px;
   padding: 1px 6px;
   border-radius: 4px;
@@ -8441,7 +8461,7 @@ button {
 
 .kb-add-row {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: center;
 }
 
@@ -8473,7 +8493,7 @@ button {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-6);
   padding: 12px 4px;
   border-bottom: 1px solid var(--border-soft);
 }
@@ -8507,7 +8527,7 @@ button {
 }
 
 .kb-row-preview {
-  margin-top: 4px;
+  margin-top: var(--space-2);
   font-size: 12px;
   color: var(--fg-muted);
   line-height: 1.45;
@@ -8575,7 +8595,7 @@ button {
 .kb-empty-icon {
   color: var(--fg-faint);
   opacity: 0.5;
-  margin-bottom: 14px;
+  margin-bottom: var(--space-7);
 }
 
 .kb-empty-title {
@@ -8585,7 +8605,7 @@ button {
 }
 
 .kb-empty-hint {
-  margin-top: 4px;
+  margin-top: var(--space-2);
   font-size: 13px;
   max-width: 360px;
   line-height: 1.5;
@@ -8607,7 +8627,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-4);
   margin-top: 18px;
 }
 
@@ -8615,7 +8635,7 @@ button {
 .kb-add-page {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-6);
   padding: 8px 0;
   min-height: 100%;
 }
@@ -8629,7 +8649,7 @@ button {
   background: var(--bg-raised);
   border-radius: 8px;
   padding: 3px;
-  gap: 2px;
+  gap: var(--space-1);
   align-self: flex-start;
 }
 
@@ -8674,7 +8694,7 @@ button {
 .kb-add-bottom {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   justify-content: space-between;
   margin-top: auto;
   padding-top: 14px;
@@ -8689,7 +8709,7 @@ button {
 
 .kb-detail-hero {
   padding-bottom: 14px;
-  margin-bottom: 14px;
+  margin-bottom: var(--space-7);
   border-bottom: 1px solid var(--border-soft);
 }
 
@@ -8702,7 +8722,7 @@ button {
 }
 
 .kb-detail-source {
-  margin-top: 4px;
+  margin-top: var(--space-2);
   font-size: 12px;
   font-family: var(--font-mono);
   color: var(--fg-muted);
@@ -8719,17 +8739,17 @@ button {
 }
 
 .kb-detail-actions {
-  margin-top: 10px;
+  margin-top: var(--space-5);
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: center;
 }
 
 .kb-detail-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 14px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-7);
 }
 
 .kb-detail-content {
@@ -8774,7 +8794,7 @@ button {
 
 .kb-row {
   display: flex;
-  gap: 10px;
+  gap: var(--space-5);
   align-items: baseline;
   padding: 5px 0;
   border-bottom: 1px solid var(--border-soft);
@@ -8834,7 +8854,7 @@ button {
 .collaboration-carets__label {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   position: absolute;
   top: -1.4em;
   left: -1px;
@@ -8973,7 +8993,7 @@ button {
 .kb-add {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .kb-add-modes {
@@ -8981,7 +9001,7 @@ button {
   background: var(--bg-raised);
   border-radius: 8px;
   padding: 3px;
-  gap: 2px;
+  gap: var(--space-1);
   align-self: flex-start;
 }
 
@@ -9021,7 +9041,7 @@ button {
 .kb-add-bottom {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .kb-add-error {
@@ -9032,19 +9052,19 @@ button {
 .plugins-content-section {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .plugins-content-head {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-4);
   font-size: 10.5px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--fg-faint);
-  margin-bottom: 2px;
+  margin-bottom: var(--space-1);
 }
 
 .plugins-content-count {
@@ -9058,7 +9078,7 @@ button {
 
 .plugins-content-row {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: baseline;
   padding: 3px 0;
   font-size: 12.5px;
@@ -9246,8 +9266,8 @@ button {
 .hooks-group-head {
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  margin-bottom: 4px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-2);
 }
 
 .hooks-event-name {
@@ -9269,20 +9289,20 @@ button {
 .hooks-event-blurb {
   font-size: 11.5px;
   color: var(--fg-faint);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
   line-height: 1.45;
 }
 
 .hooks-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .hooks-row {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 8px 10px;
   border: 1px solid var(--border-soft);
   border-radius: 8px;
@@ -9304,7 +9324,7 @@ button {
 .hooks-row-main {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   min-width: 0;
   flex: 1;
 }
@@ -9323,7 +9343,7 @@ button {
 .hooks-row-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .hooks-tag {
@@ -9390,7 +9410,7 @@ button {
 .watcher-layout {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-6);
   height: 100%;
   min-height: 0;
 }
@@ -9401,7 +9421,7 @@ button {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   overflow-y: auto;
   flex-shrink: 0;
 }
@@ -9421,7 +9441,7 @@ button {
 .watcher-row {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   padding: 8px 10px;
   border: 1px solid var(--border-soft);
   border-radius: 6px;
@@ -9446,7 +9466,7 @@ button {
 .watcher-row-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .watcher-status {
@@ -9515,13 +9535,13 @@ button {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .watcher-tail-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .watcher-filter {
@@ -9636,7 +9656,7 @@ button {
 }
 
 .demo-page-header {
-  margin-bottom: 32px;
+  margin-bottom: var(--space-16);
 }
 
 .demo-page-header h1 {
@@ -9656,8 +9676,8 @@ button {
 .demo-page-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 24px;
-  margin-bottom: 24px;
+  gap: var(--space-12);
+  margin-bottom: var(--space-12);
 }
 
 @media (max-width: 920px) {
@@ -9746,7 +9766,7 @@ button {
 
 .demo-page-console-ts {
   color: var(--fg-faint);
-  margin-right: 8px;
+  margin-right: var(--space-4);
 }
 
 /* Faux Composer — used by ``?demo=interrupted`` to show the
@@ -9758,7 +9778,7 @@ button {
   border: 1px solid var(--border-subtle);
   border-radius: 12px;
   padding: 16px 24px;
-  margin-bottom: 24px;
+  margin-bottom: var(--space-12);
 }
 
 .demo-page-composer h3 {
@@ -9788,7 +9808,7 @@ button {
   display: block;
   font-size: 12px;
   color: var(--fg-muted);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
 }
 
 .demo-page-composer-label code {
@@ -9817,7 +9837,7 @@ button {
 .demo-page-composer-actions {
   display: flex;
   justify-content: flex-end;
-  margin-top: 12px;
+  margin-top: var(--space-6);
 }
 
 .demo-page-composer-send {
@@ -9844,7 +9864,7 @@ button {
   color: var(--fg-muted);
   padding-bottom: 14px;
   border-bottom: 1px solid var(--border-soft);
-  margin-bottom: 16px;
+  margin-bottom: var(--space-8);
 }
 
 .help-group {
@@ -9866,13 +9886,13 @@ button {
 .help-commands {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .help-command {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: var(--space-5);
   text-align: left;
   background: none;
   border: 1px solid transparent;
@@ -9906,9 +9926,9 @@ button {
 .ctx-total {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-4);
   flex-wrap: wrap;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-6);
 }
 
 .ctx-total-n {
@@ -9932,7 +9952,7 @@ button {
   border-radius: 999px;
   overflow: hidden;
   background: var(--bg-inset);
-  margin-bottom: 14px;
+  margin-bottom: var(--space-7);
 }
 
 .ctx-bar-runs {
@@ -9960,7 +9980,7 @@ button {
 }
 
 .ctx-rows {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-8);
 }
 
 .ctx-note {
@@ -9998,14 +10018,14 @@ button {
 .codeindex-empty-langs {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 20px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-10);
 }
 
 .codeindex-empty-lang {
   display: inline-flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--space-3);
   padding: 4px 9px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
@@ -10038,14 +10058,14 @@ button {
 .workflow-card {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   width: 100%;
   text-align: left;
   background: none;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-md, 8px);
   padding: 12px 14px;
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
   font: inherit;
   cursor: pointer;
 }
@@ -10058,7 +10078,7 @@ button {
 .workflow-head {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .workflow-name {
@@ -10086,8 +10106,8 @@ button {
 .workflow-phase-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 
 .workflow-phase {
@@ -10108,13 +10128,13 @@ button {
 .ag-search {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-8);
   padding-top: 4px;
 }
 
 .ag-ask {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: flex-start;
 }
 
@@ -10165,7 +10185,7 @@ button {
   padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .ag-example {
@@ -10186,7 +10206,7 @@ button {
 .ag-cypher-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   margin-bottom: 5px;
   font-size: 10px;
   font-weight: 600;
@@ -10227,7 +10247,7 @@ button {
 }
 
 .ag-error .ag-note {
-  margin-top: 4px;
+  margin-top: var(--space-2);
   font-size: 11px;
 }
 
@@ -10264,7 +10284,7 @@ button {
 
 .lin-node {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: baseline;
   box-sizing: border-box;
   width: 188px;
@@ -10442,7 +10462,7 @@ button {
    widest two audiences in the product get chosen. */
 
 .kb-notice {
-  margin-bottom: 12px;
+  margin-bottom: var(--space-6);
   padding: 7px 10px;
   font-size: 11.5px;
   color: var(--fg);
@@ -10479,7 +10499,7 @@ button {
 }
 
 .kb-row-candidate {
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* ── Share dialog ── */
@@ -10502,7 +10522,7 @@ button {
   width: 340px;
   max-width: calc(100vw - 24px);
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-6);
   padding: 14px;
   background: var(--bg-surface);
   border: 1px solid var(--border);
@@ -10526,7 +10546,7 @@ button {
 .kb-share-options {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   margin: 0;
   padding: 0;
   border: 0;
@@ -10548,7 +10568,7 @@ button {
 }
 
 .kb-share-opt input {
-  margin-top: 2px;
+  margin-top: var(--space-1);
 }
 
 .kb-share-opt-body {
@@ -10569,7 +10589,7 @@ button {
 .kb-share-audience {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   font-size: 11.5px;
 }
 
@@ -10601,7 +10621,7 @@ button {
 
 .kb-share-link-row {
   display: flex;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .kb-share-link-row input {
@@ -10619,7 +10639,7 @@ button {
 .kb-share-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* ── Stale review ── */
@@ -10627,7 +10647,7 @@ button {
 .kb-stale-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .kb-stale-row {
@@ -10638,7 +10658,7 @@ button {
 
 .kb-stale-head {
   display: flex;
-  gap: 10px;
+  gap: var(--space-5);
   align-items: center;
   padding: 8px 10px;
   font-size: 12px;
@@ -10685,8 +10705,8 @@ button {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 20px;
+  gap: var(--space-6);
+  margin-bottom: var(--space-10);
   padding: 12px 14px;
   border: 1px solid var(--warning);
   border-left-width: 3px;
@@ -10710,12 +10730,12 @@ button {
 
 .kb-drift-banner-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   flex: 0 0 auto;
 }
 
 .kb-drift-comparison {
-  margin-bottom: 20px;
+  margin-bottom: var(--space-10);
 }
 
 /* The rail column holds the drift panel above the comment threads. */
@@ -10735,7 +10755,7 @@ button {
   padding: 0 0 0 28px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-7);
   min-width: 0;
   /* The same rule as the one between the hierarchy and the document,
      on the other side of the text. Both say "a different kind of
@@ -10751,7 +10771,7 @@ button {
 .kb-doc-aside-pin {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-7);
   min-height: 0;
   /* Everything here is inset from the window's edge… */
   padding-right: 18px;
@@ -10802,7 +10822,7 @@ button {
     position: static;
     width: auto;
     padding: 0;
-    margin-top: 24px;
+    margin-top: var(--space-12);
     border-left: 0;
     border-top: 1px solid var(--border-soft);
     padding-top: 20px;
@@ -10862,7 +10882,7 @@ button {
 /* The way from the truncated history to all of it. */
 .kb-lineage-more {
   align-self: flex-start;
-  margin-top: 8px;
+  margin-top: var(--space-4);
   padding: 0;
   font: inherit;
   font-size: 11.5px;
@@ -10934,7 +10954,7 @@ button {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
   min-width: 210px;
   /* Bounded, or the version pills lay themselves out on one line and
      a document with fifty of them opens a chooser the width of the
@@ -10966,7 +10986,7 @@ button {
 }
 
 .doc-filter-section + .doc-filter-section {
-  margin-top: 4px;
+  margin-top: var(--space-2);
   padding-top: 8px;
   border-top: 1px solid var(--border-soft);
 }
@@ -11017,7 +11037,7 @@ button {
 .doc-filter-versions {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .doc-filter-version {
@@ -11078,7 +11098,7 @@ button {
 }
 
 .doc-conv-group > .doc-conv-item + .doc-conv-item {
-  margin-top: 10px;
+  margin-top: var(--space-5);
   padding-top: 10px;
   border-top: 1px solid var(--border-soft);
 }
@@ -11097,7 +11117,7 @@ button {
 
 /* Who said it, for threads read back out of the store. */
 .doc-conv-by {
-  margin-right: 6px;
+  margin-right: var(--space-3);
   font-weight: 600;
   color: var(--fg-muted);
 }
@@ -11116,15 +11136,15 @@ button {
    so the stamp belongs beside the name rather than after several
    paragraphs of answer. */
 .doc-conv-reply > .doc-conv-when {
-  margin-left: 6px;
+  margin-left: var(--space-3);
 }
 
 /* Which version, and where the thread got to. */
 .doc-conv-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
   font-size: 10.5px;
   color: var(--fg-muted);
 }
@@ -11170,7 +11190,7 @@ button {
 .kb-drift-panel-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 12px;
 }
 
@@ -11233,7 +11253,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-6);
   padding-bottom: 14px;
   border-bottom: 1px solid var(--border-soft);
 }
@@ -11264,7 +11284,7 @@ button {
 .drift-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .drift-section-head {
@@ -11272,7 +11292,7 @@ button {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .drift-section-title {
@@ -11291,14 +11311,14 @@ button {
   border-left: 2px solid var(--warning);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
   font-size: 12.5px;
 }
 
 .drift-page-affected li {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 /* What the update did. Stated rather than left to the version list:
@@ -11308,7 +11328,7 @@ button {
 .drift-applied {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   padding: 12px 14px;
   border: 1px solid var(--accent-green, var(--success));
   border-left-width: 3px;
@@ -11332,7 +11352,7 @@ button {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   font-size: 12px;
 }
 
@@ -11365,7 +11385,7 @@ button {
 }
 
 .kb-drift-verdict {
-  margin-top: 12px;
+  margin-top: var(--space-6);
   padding: 10px 12px;
   border: 1px solid var(--border-soft);
   border-left: 3px solid var(--accent-blue, var(--border));
@@ -11553,7 +11573,7 @@ button {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-8);
   /* Wraps rather than squeezing: the remove confirmation swaps the
      menu for a question and two buttons, which will not share a line
      with a long title. */
@@ -11575,7 +11595,7 @@ button {
   flex: 0 0 auto;
   /* Nudged onto the title's cap-height. Aligning the boxes puts a
      23px button against a 25px line and reads as half a pixel high. */
-  margin-top: 2px;
+  margin-top: var(--space-1);
 }
 
 .kb-doc-title {
@@ -11625,7 +11645,7 @@ button {
 .doc-people {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   margin: 0;
 }
 
@@ -11765,7 +11785,7 @@ button {
 .doc-cite {
   position: absolute;
   left: 100%;
-  margin-left: 8px;
+  margin-left: var(--space-4);
   min-width: 15px;
   height: 15px;
   padding: 0 3px;
@@ -12025,7 +12045,7 @@ button {
 .kb-cand-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .kb-cand-toggle {
@@ -12033,7 +12053,7 @@ button {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 0;
   font: inherit;
   text-align: left;
@@ -12056,8 +12076,8 @@ button {
 .kb-cand-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 10px;
+  gap: var(--space-5);
+  margin-top: var(--space-5);
   padding: 12px 14px;
   border-radius: var(--radius);
   background: var(--bg-inset);
@@ -12127,7 +12147,7 @@ button {
 .kb-cand-overlaps {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -12136,7 +12156,7 @@ button {
 .kb-cand-overlaps > li {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   padding: 9px 11px;
   border-radius: 6px;
   background: var(--bg);
@@ -12148,7 +12168,7 @@ button {
 .kb-cand-pair {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: var(--space-6);
 }
 
 @media (max-width: 52rem) {
@@ -12270,7 +12290,7 @@ button {
 .afs {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-6);
   /* Level with a document's title, by its *text* rather than by its
      box. The field is a 37px bordered rectangle and a title is 25px
      of letters; started at the same pixel, the rectangle's edge sits
@@ -12283,7 +12303,7 @@ button {
 .afs-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* The collection's own actions, at the end of the bar. Separated
@@ -12293,8 +12313,8 @@ button {
 .afs-actions {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-left: 10px;
+  gap: var(--space-3);
+  margin-left: var(--space-5);
 }
 
 /* The field and the button it belongs to are one control split in
@@ -12367,7 +12387,7 @@ button {
 
 .afs-mode {
   display: flex;
-  gap: 10px;
+  gap: var(--space-5);
   align-items: baseline;
   font-size: 11.5px;
   color: var(--fg-muted);
@@ -12426,7 +12446,7 @@ button {
 
 .afs-row-head {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: baseline;
 }
 
@@ -12542,7 +12562,7 @@ button {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 22px 14px;
   border: 1px dashed var(--border);
   border-radius: 8px;
@@ -12577,7 +12597,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-6);
 }
 
 /* ── The navigation tree ──────────────────────────────────────────
@@ -12687,7 +12707,7 @@ button {
   z-index: 60;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   max-width: min(34rem, calc(100vw - 48px));
   padding: 9px 10px 9px 14px;
   font-size: 12.5px;
@@ -12808,7 +12828,7 @@ button {
   max-height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* Narrower, never elsewhere.
@@ -12851,7 +12871,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   flex: none;
 }
 
@@ -12862,7 +12882,7 @@ button {
 .doc-editor {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 /* A rendered view inside a document, from a ``json-render`` fence.
@@ -12896,7 +12916,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   padding: 4px 6px;
   border: 1px solid var(--border-soft);
   border-radius: 8px;
@@ -12909,7 +12929,7 @@ button {
 .doc-tool-group {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .doc-bar-gap {
@@ -12986,7 +13006,7 @@ button {
 .doc-bubble {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   padding: 3px;
   border: 1px solid var(--border-soft);
   border-radius: 8px;
@@ -13010,7 +13030,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-right: 4px;
+  margin-right: var(--space-2);
   font-size: 13px;
   line-height: 1;
   color: var(--fg-faint);
@@ -13047,7 +13067,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--space-5);
   width: 100%;
   padding: 5px 8px;
   font: inherit;
@@ -13090,7 +13110,7 @@ button {
 .kb-pick {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .kb-pick-search {
@@ -13121,7 +13141,7 @@ button {
   display: flex;
   width: 100%;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 5px 8px;
   font: inherit;
   text-align: left;
@@ -13236,7 +13256,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-6);
   width: 100%;
   padding: 5px 8px;
   font: inherit;
@@ -13313,14 +13333,14 @@ button {
 .doc-mention-access {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   margin: 6px 0 0;
 }
 
 .doc-mention-locked {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   margin: 0;
   font-size: 11.5px;
   line-height: 1.45;
@@ -13391,7 +13411,7 @@ button {
    asked for, and the page is the asking. */
 
 .doc-locked-body {
-  margin-top: 20px;
+  margin-top: var(--space-10);
   padding: 20px;
   background: var(--bg-inset);
   border: 1px solid var(--border-soft);
@@ -13413,7 +13433,7 @@ button {
 .doc-locked-ask {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .doc-locked-label {
@@ -13423,14 +13443,14 @@ button {
 
 .doc-locked-actions {
   display: flex;
-  margin-top: 2px;
+  margin-top: var(--space-1);
 }
 
 /* The padlock on the byline, at the byline's size. */
 .kb-doc-locked .kb-doc-attribution {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .kb-doc-locked .kb-doc-attribution svg {
@@ -13488,7 +13508,7 @@ button {
 .doc-editor-foot {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   padding-top: 4px;
   border-top: 1px solid var(--border-soft);
 }
@@ -13813,7 +13833,7 @@ button {
    Move, and the gap is what stops a hurried pointer landing on one
    while reaching for the other. */
 .kb-tree-menu-sep {
-  margin-top: 4px;
+  margin-top: var(--space-2);
   padding-top: 4px;
   border-top: 1px solid var(--border-soft);
 }
@@ -13933,7 +13953,7 @@ button {
 
 .kb-tree-blocked-do {
   display: flex;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 /* The way back to the top level. Without it, a document dragged into
@@ -13953,7 +13973,7 @@ button {
 .comment-reply {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   margin: 10px 0 12px;
 }
 
@@ -14000,7 +14020,7 @@ button {
 .comment-reply-pick {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-4);
   width: 100%;
   padding: 5px 7px;
   font: inherit;
@@ -14036,7 +14056,7 @@ button {
 .comment-reply-foot {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .comment-reply-hint,
@@ -14055,7 +14075,7 @@ button {
   z-index: 60;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -14068,7 +14088,7 @@ button {
 .comment-peek-head {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-4);
   flex: none;
 }
 
@@ -14140,7 +14160,7 @@ button {
 .comment-review-doc {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .comment-review-doc-name {
@@ -14166,7 +14186,7 @@ button {
 .comment-review-item {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 12px;
   border: 1px solid var(--border-soft);
   border-radius: 6px;
@@ -14226,7 +14246,7 @@ button {
 .comment-review-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* ── Overflow menu ───────────────────────────────────────────────────
@@ -14373,7 +14393,7 @@ button {
 .prov-legend {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
   padding-bottom: 14px;
   border-bottom: 1px solid var(--border-soft);
 }
@@ -14381,7 +14401,7 @@ button {
 .prov-legend-sources {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .prov-legend-empty {
@@ -14511,7 +14531,7 @@ button {
 }
 
 .prov-marker {
-  margin-left: 4px;
+  margin-left: var(--space-2);
   padding: 0 5px;
   border-radius: 999px;
   background: hsl(var(--prov-hue, 210) 58% 52% / 0.16);
@@ -14560,7 +14580,7 @@ button {
 .prov-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 10px 12px;
   border: 1px solid var(--border-soft);
   border-left: 3px solid hsl(var(--prov-hue, 210) 58% 52% / 0.6);
@@ -14691,7 +14711,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   font-size: 11px;
 }
 
@@ -14721,10 +14741,10 @@ button {
 }
 
 .prov-other {
-  margin-top: 8px;
+  margin-top: var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 /* A gap left blank reads as "nothing to see". Named, it reads as a
@@ -14801,7 +14821,7 @@ button {
 .doc-rail-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 0 18px 8px 0;
 }
 
@@ -14929,7 +14949,7 @@ button {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-8);
   /* The rail reaches past the window edge so its scrollbar sits
      against it; the content takes that inset back here, so a card's
      right border stops short of the edge instead of being sliced off
@@ -14955,7 +14975,7 @@ button {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-8);
 }
 
 /* No box of its own. The passage it belongs to has one, and a frame
@@ -14964,7 +14984,7 @@ button {
 .doc-conv-item {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 8px 0 0;
   border-radius: var(--radius-sm);
 }
@@ -14988,7 +15008,7 @@ button {
 .doc-conv-anchor {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   width: 100%;
   padding: 0 0 0 10px;
   border: 0;
@@ -15107,7 +15127,7 @@ button {
   display: inline-block;
   width: 6px;
   height: 12px;
-  margin-left: 2px;
+  margin-left: var(--space-1);
   background: var(--fg-muted);
   vertical-align: text-bottom;
   animation: doc-conv-blink 1s steps(2, start) infinite;
@@ -15136,8 +15156,8 @@ button {
 .doc-thread-compose {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-left: 10px;
+  gap: var(--space-3);
+  margin-left: var(--space-5);
 }
 
 .doc-thread-compose .doc-comment-input {
@@ -15151,7 +15171,7 @@ button {
 .doc-thread-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .doc-thread-send {
@@ -15178,7 +15198,7 @@ button {
 .doc-thread-foot {
   display: flex;
   align-items: center;
-  margin-left: 10px;
+  margin-left: var(--space-5);
 }
 
 .doc-thread-reply {
@@ -15206,7 +15226,7 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin-left: 10px;
+  margin-left: var(--space-5);
   padding: 3px 6px;
   font: inherit;
   font-size: 11.5px;
@@ -15311,7 +15331,7 @@ button {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 12px 18px 16px 0;
   border-top: 1px solid var(--border-soft);
   background: var(--bg);
@@ -15325,7 +15345,7 @@ button {
 .doc-comment-compose {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
   margin-top: 28px;
   padding: 14px;
   border: 1px solid var(--border);
@@ -15423,7 +15443,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* Pushed to the end of the row: it is a statement about where this
@@ -15447,7 +15467,7 @@ button {
   z-index: 45;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-6);
   max-width: min(420px, calc(100vw - 36px));
   padding: 12px 14px;
   background: var(--bg-surface);
@@ -15468,7 +15488,7 @@ button {
 .export-banner-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
   font-size: 12px;
 }
@@ -15563,20 +15583,20 @@ button {
 .artifact-compare {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-6);
 }
 
 .artifact-compare-head {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-6);
   flex-wrap: wrap;
 }
 
 .artifact-compare-head label {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .artifact-compare-head select {
@@ -15591,7 +15611,7 @@ button {
 
 .artifact-compare-tally {
   display: inline-flex;
-  gap: 8px;
+  gap: var(--space-4);
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -15766,7 +15786,7 @@ button {
 /* "Compare" sits in the Versions heading, not on a row: comparing
    takes two versions, and a per-row button has to invent the other. */
 .kb-compare-btn {
-  margin-left: 10px;
+  margin-left: var(--space-5);
   padding: 1px 8px;
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -15945,7 +15965,7 @@ button {
 .wall-form {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .wall-input {
@@ -15973,7 +15993,7 @@ button {
 /* Quieter than the action above it, and still a real control: this
    is the way back out of a wrong guess. */
 .wall-back {
-  margin-top: 14px;
+  margin-top: var(--space-7);
   padding: 4px 8px;
   font-size: 12.5px;
   color: var(--fg-faint);
@@ -16022,7 +16042,7 @@ button {
 .pubdoc-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 10px 16px;
   border-bottom: 1px solid var(--border-soft);
   background: var(--bg-surface);

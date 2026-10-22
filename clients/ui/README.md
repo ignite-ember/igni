@@ -70,3 +70,21 @@ Until it does: write your own against these tokens. That is the honest answer, a
 ## Versioning
 
 This package follows the extension contract version, not igni's. See [EXTENSIBILITY.md](../../docs/EXTENSIBILITY.md) §8 for what counts as breaking and the deprecation window.
+
+## The spacing scale
+
+`--space-1` through `--space-16` — 2, 4, 6, 8, 10, 12, 14, 16, 20, 24, 32.
+
+Use them for `gap`, `margin` and `padding` and your layout sits on the same rhythm as the app around it, rather than next to it.
+
+They are not an invention. They are the steps igni already used, written as literals in 375 places. 85% of gaps and 83% of margins landed on them exactly, which is why adopting them changed nothing on screen — and why the ~60 that stayed literal (`5px`, `3px`, `7px`, `18px`) are now visible as deviations rather than hidden among the rest.
+
+## What still needs deciding
+
+**There is no type scale.** `font-size` has 22 distinct values and every one is hardcoded: every half-step from 9px to 15px, with `11.5px` used 99 times, `12.5px` 79 and `10.5px` 38. Only 45% would land on any sane scale.
+
+Collapsing that changes text size across the whole app, which is a design decision rather than a refactor. Until it is made, write font sizes as literals and expect to migrate once.
+
+**There is no padding scale.** 161 distinct values, 157 of them hardcoded. Padding is two axes, so it needs the vertical and horizontal rhythms decided together — not one list.
+
+**Primitives beyond the controls above.** See the inventory earlier: 14 patterns are each reimplemented per feature, but they share far less than the names suggest. `*-row` agrees only on `display: flex`; `*-card` has 4 of 10 sharing a core. They do not duplicate so much as diverge, so there is nothing to extract — the design has to be decided, then features migrated to it. That changes pixels, so it is yours to call.

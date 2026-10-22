@@ -68,6 +68,27 @@ export const PUBLISHED_TOKENS = {
     "--font-mono",
     "--shadow-pop",
   ],
+  /**
+   * The spacing scale. Published so an extension's layout sits on the
+   * same rhythm as the app around it rather than next to it.
+   *
+   * These steps are the ones igni already used — they were written as
+   * literals in three hundred and seventy-five places, which is why
+   * adopting them changed nothing on screen.
+   */
+  space: [
+    "--space-1",
+    "--space-2",
+    "--space-3",
+    "--space-4",
+    "--space-5",
+    "--space-6",
+    "--space-7",
+    "--space-8",
+    "--space-10",
+    "--space-12",
+    "--space-16",
+  ],
 } as const;
 
 /** Every published token name, flat. */

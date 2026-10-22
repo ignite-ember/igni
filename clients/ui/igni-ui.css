@@ -51,6 +51,18 @@
   --ember-red: #dc2626;
   --ember-gradient: linear-gradient(135deg, #f97316, #dc2626);
 
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-7: 14px;
+  --space-8: 16px;
+  --space-10: 20px;
+  --space-12: 24px;
+  --space-16: 32px;
+
   --radius-sm: 6px;
   --radius: 10px;
   --radius-lg: 14px;
@@ -151,7 +163,7 @@
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   padding: 3px 9px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -201,7 +213,7 @@
 
 .panel-form-row {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: center;
 }
 
@@ -269,7 +281,7 @@
 
 .dialog-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   justify-content: flex-end;
   margin-top: 16px;
 }
