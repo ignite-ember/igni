@@ -80,13 +80,17 @@ Still to wire: the port has to reach the frontend through the extension-status R
 
 ### A2 — the bridge (≈3 days)
 
-Host side: `ExtensionFrame.tsx` — sandboxed iframe, versioned `postMessage` envelope, origin check on every inbound message, RPC methods filtered against the manifest allow-list.
+**Done** — `clients/web/src/extensions/`, 31 tests.
 
-Guest side: a new bridge package under `clients/`, which an extension imports to get an object satisfying `IgniClient`: `rpc()`, event subscription, plus `navigate`, `identity`, `params`, `theme`, `close`.
+`protocol.ts` is the envelope both sides read. `ExtensionFrame.tsx` is the host: it checks the window, the origin, a per-mount nonce and the granted method, in that order, and nothing else is let through. `bridge.ts` is the guest — the file that becomes a published package — presenting `rpc(method, args, timeoutMs)` plus `navigate`, `close`, `params` and `theme`.
+
+`CodeIndexPanel` turned out to use exactly one thing, `client.rpc`, four times. So the bridge's job is narrower than the plan assumed, and A3's gate will turn on a type rather than on behaviour: the panel's prop is the concrete `IgniClient` class, and no bridge can satisfy that without being one. Narrowing the prop to what the panel actually uses is a one-line change — which means the "empty diff" gate cannot be met literally, and the honest form of it is "one line, and that line documents what the panel needed all along".
 
 One host CSP needs `frame-src` for the loopback origins: `clients/tauri/src-tauri/tauri.conf.json:16` (`default-src 'self'`). **Not the IDE clients** — D16 freezes them at context-handoff scope and extensions render in the igni app only, so `clients/vscode/src/extension.ts:304` keeps its `default-src 'none'` and the JetBrains panel is untouched. An extension that wanted an IDE surface would be asking for the decision to be reopened, not for a CSP line.
 
-*Done when:* the bridge refuses a method the manifest did not ask for, and the same call is refused again at the backend with the frame's check removed.
+*Done when:* the bridge refuses a method the manifest did not ask for — **met, host-side**.
+
+The second half, the backend refusing the same call independently, is **split out as A2b** rather than quietly dropped. It cannot be built yet: the backend has no way to tell that an RPC came from an extension, because everything arrives on one connection as the user. Doing it properly means the host stamping `origin_extension` on calls it forwards — the host is trusted, the frame is not — and the backend checking that against the grant. That needs the manifest (A6) for the grant and a protocol field for the stamp. Until A2b lands, the host-side check is the only one, and a frame that got past it would be calling as the user.
 
 ### A3 — port `CodeIndexPanel` (≈2 days) — **gate**
 
