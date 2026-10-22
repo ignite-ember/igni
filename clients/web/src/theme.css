@@ -517,8 +517,6 @@ button {
   margin-bottom: var(--space-6);
 }
 .update-prompt-actions {
-  display: flex;
-  gap: var(--space-4);
   justify-content: flex-end;
 }
 
@@ -992,7 +990,6 @@ button {
   max-width: var(--col);
   margin: 0 auto;
   padding: 0 20px 18px;
-  display: flex;
   flex-direction: column;
 }
 /* New-item ease-in animation, ported from the ``.col > *`` rule. */
@@ -1163,9 +1160,6 @@ button {
   40% { opacity: 1; }
 }
 .chat-search-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
   padding: var(--space-4) var(--space-5);
 }
 .chat-search-icon {
@@ -1331,7 +1325,6 @@ button {
 }
 
 .welcome-setup-actions {
-  display: flex;
   gap: var(--space-5);
   justify-content: center;
   flex-wrap: wrap;
@@ -1453,7 +1446,6 @@ button {
   position: absolute;
   top: -10px;
   right: 8px;
-  display: flex;
   gap: var(--space-2);
   background: var(--bg-surface);
   border: 1px solid var(--border-soft);
@@ -2291,10 +2283,7 @@ button {
 }
 
 .diff-table {
-  width: 100%;
-  border-collapse: collapse;
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
   line-height: 1.55;
 }
 
@@ -2414,8 +2403,6 @@ button {
 
 .orchestrate-empty {
   padding: var(--space-6) var(--space-7);
-  color: var(--fg-muted);
-  font-size: var(--text-sm);
   font-style: italic;
 }
 
@@ -3421,8 +3408,6 @@ button {
 }
 
 .plan-card-actions {
-  display: flex;
-  align-items: center;
   gap: var(--space-5);
   flex-wrap: wrap;
 }
@@ -3525,8 +3510,6 @@ button {
 }
 
 .compact-card-empty {
-  color: var(--fg-muted);
-  font-size: var(--text-sm);
 }
 
 /* ── Toasts (top-right) ─────────────────────────────────────────── */
@@ -3690,9 +3673,6 @@ button {
 /* ── Panel forms (knowledge search, plugin install…) ───────────── */
 
 .panel-form-row {
-  display: flex;
-  gap: var(--space-4);
-  align-items: center;
 }
 
 .panel-input {
@@ -4207,25 +4187,90 @@ button {
    type steps and that variation is the design — a heading level, not
    drift. Use the type scale and a weight. */
 
-.ui-row {
+.ui-row,
+.afs-row,
+.chat-row,
+.chat-search-row,
+.codeindex-activity-row,
+.codeindex-timeline-row,
+.doc-filter-row,
+.hitl-arg-row,
+.hooks-row,
+.kb-add-row,
+.kb-doc-head-row,
+.kb-pick-row,
+.kb-share-link-row,
+.kb-stale-row,
+.kb-tree-row,
+.mcp-tool-row,
+.notify-row,
+.panel-form-row,
+.plugin-detail-title-row,
+.plugins-content-row,
+.plugins-install-row,
+.prov-row,
+.watcher-row {
   display: flex;
   align-items: center;
   gap: var(--space-4);
 }
 
-.ui-actions {
+.ui-actions,
+.afs-actions,
+.codeindex-actions,
+.comment-review-actions,
+.demo-page-composer-actions,
+.dialog-actions,
+.doc-comment-actions,
+.doc-locked-actions,
+.doc-thread-actions,
+.group-conflict-actions,
+.kb-detail-actions,
+.kb-drift-banner-actions,
+.kb-empty-actions,
+.kb-head-actions,
+.kb-share-actions,
+.kb-tree-actions,
+.mcp-head-actions,
+.msg-assistant-interrupted-actions,
+.msg-user-actions,
+.plan-card-actions,
+.plugin-detail-actions,
+.plugins-actions,
+.update-prompt-actions,
+.welcome-setup-actions {
   display: flex;
   align-items: center;
   gap: var(--space-4);
 }
 
-.ui-list {
+.ui-list,
+.dir-list,
+.doc-conv-list,
+.file-ref-list,
+.hooks-list,
+.kb-list,
+.kb-pick-list,
+.kb-stale-list,
+.mcp-tool-list,
+.overflow-list,
+.plugins-list,
+.plugins-markets-list,
+.sidebar-list,
+.watcher-list,
+.workflow-phase-list {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
 }
 
-.ui-toolbar {
+.ui-toolbar,
+.codeindex-toolbar,
+.drawer-toolbar,
+.kb-toolbar,
+.page-toolbar,
+.plugins-toolbar,
+.watcher-tail-toolbar {
   display: flex;
   align-items: center;
   gap: var(--space-4);
@@ -4268,12 +4313,33 @@ button {
    existing uses split exactly eight and eight between --fg-faint and
    --fg-muted; both clear WCAG AA since F138, so the tie is broken on
    meaning rather than contrast. */
-.ui-empty {
+.ui-empty,
+.afs-empty,
+.ag-empty,
+.codeindex-empty,
+.compact-card-empty,
+.ctx-empty,
+.demo-page-composer-empty,
+.demo-page-console-empty,
+.doc-rail-empty,
+.kb-empty,
+.kb-pick-empty,
+.mention-empty,
+.notify-empty,
+.orchestrate-empty,
+.plugins-empty,
+.prov-legend-empty,
+.slash-empty,
+.watcher-log-empty,
+.watcher-tail-empty {
   color: var(--fg-muted);
   font-size: var(--text-sm);
 }
 
-.ui-table {
+.ui-table,
+.ag-table,
+.diff-row-table,
+.diff-table {
   width: 100%;
   border-collapse: collapse;
   font-size: var(--text-sm);
@@ -4439,8 +4505,6 @@ button {
 }
 
 .dialog-actions {
-  display: flex;
-  gap: var(--space-4);
   flex-wrap: wrap;
 }
 
@@ -4959,8 +5023,6 @@ button {
 
 .notify-empty {
   margin: 20px 4px;
-  font-size: var(--text-sm);
-  color: var(--fg-muted);
 }
 
 .notify-rows {
@@ -5470,7 +5532,6 @@ button {
 }
 
 .group-conflict-actions {
-  display: flex;
   gap: var(--space-3);
   margin-top: var(--space-4);
 }
@@ -5743,9 +5804,7 @@ button {
 }
 
 .codeindex-actions {
-  display: flex;
   flex-wrap: wrap;
-  gap: var(--space-4);
   margin-bottom: 18px;
 }
 
@@ -5755,7 +5814,6 @@ button {
 
 /* Top action row, rendered inside the drawer header via headerExtras */
 .codeindex-toolbar {
-  display: flex;
   gap: var(--space-3);
   justify-content: flex-end;
   width: 100%;
@@ -5938,7 +5996,6 @@ button {
 }
 
 .codeindex-timeline-row {
-  display: flex;
   gap: var(--space-5);
   padding: var(--space-1) 0;
 }
@@ -6319,9 +6376,6 @@ button {
 }
 
 .codeindex-activity-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
   padding: 5px 0;
   font-size: var(--text-sm);
   flex-wrap: wrap;
@@ -6644,7 +6698,6 @@ button {
    the filter pill bar sits in the middle, like a segmented tab
    strip in iOS apps. */
 .drawer-toolbar {
-  display: flex;
   justify-content: center;
   gap: var(--space-5);
   padding: 10px 18px;
@@ -7452,7 +7505,6 @@ button {
 
 /* ── MCP: header action ───────────────────────────────────────── */
 .mcp-head-actions {
-  display: flex;
   justify-content: flex-end;
   width: 100%;
 }
@@ -7499,13 +7551,9 @@ button {
 }
 
 .mcp-tool-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
 }
 
 .mcp-tool-row {
-  display: flex;
   gap: var(--space-5);
   align-items: flex-start;
   padding: var(--space-4) var(--space-5);
@@ -7758,8 +7806,6 @@ button {
 }
 
 .plugins-toolbar {
-  display: flex;
-  gap: var(--space-4);
   margin-bottom: var(--space-6);
   width: 100%;
 }
@@ -7784,8 +7830,6 @@ button {
 }
 
 .plugins-list {
-  display: flex;
-  flex-direction: column;
   gap: var(--space-4);
 }
 
@@ -7889,7 +7933,6 @@ button {
 }
 
 .plugins-actions {
-  display: flex;
   gap: var(--space-3);
   flex-shrink: 0;
 }
@@ -7921,7 +7964,6 @@ button {
 .plugins-empty {
   padding: var(--space-12) var(--space-4);
   text-align: center;
-  color: var(--fg-muted);
 }
 
 .plugins-empty-title {
@@ -7962,8 +8004,6 @@ button {
 }
 
 .plugins-markets-list {
-  display: flex;
-  flex-direction: column;
   gap: var(--space-3);
   border-top: 1px solid var(--border-soft);
   padding-top: var(--space-6);
@@ -8028,8 +8068,6 @@ button {
    and .btn-primary without an explicit height would render at ~22-30px
    depending on flex alignment. Lock both. */
 .plugins-install-row {
-  display: flex;
-  gap: var(--space-4);
   align-items: stretch;
   margin-bottom: var(--space-7);
 }
@@ -8119,8 +8157,6 @@ button {
 }
 
 .plugin-detail-title-row {
-  display: flex;
-  align-items: center;
   gap: var(--space-5);
   flex-wrap: wrap;
 }
@@ -8140,8 +8176,6 @@ button {
 }
 
 .plugin-detail-actions {
-  display: flex;
-  gap: var(--space-4);
 }
 
 .plugins-chevron {
@@ -8221,10 +8255,7 @@ button {
 
 /* ── Knowledge panel ───────────────────────────────────────────── */
 .kb-toolbar {
-  display: flex;
-  gap: var(--space-4);
   width: 100%;
-  align-items: center;
 }
 
 .kb-toolbar .panel-input {
@@ -8232,9 +8263,7 @@ button {
 }
 
 .kb-head-actions {
-  display: flex;
   gap: var(--space-3);
-  align-items: center;
   margin-left: auto;
 }
 
@@ -8570,9 +8599,6 @@ button {
 }
 
 .kb-add-row {
-  display: flex;
-  gap: var(--space-4);
-  align-items: center;
 }
 
 .kb-add-row .panel-input {
@@ -8595,8 +8621,6 @@ button {
 
 /* ── Knowledge: list rows (flat, list-first) ──────────────────── */
 .kb-list {
-  display: flex;
-  flex-direction: column;
 }
 
 .kb-row {
@@ -8695,7 +8719,6 @@ button {
   align-items: center;
   text-align: center;
   padding: 48px 24px 32px;
-  color: var(--fg-muted);
 }
 
 .kb-empty-inline {
@@ -8734,10 +8757,8 @@ button {
    from somewhere else. They wrap rather than squeeze, because this
    panel is a column somebody can drag narrow. */
 .kb-empty-actions {
-  display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: var(--space-4);
   margin-top: 18px;
 }
 
@@ -8850,9 +8871,6 @@ button {
 
 .kb-detail-actions {
   margin-top: var(--space-5);
-  display: flex;
-  gap: var(--space-4);
-  align-items: center;
 }
 
 .kb-detail-meta {
@@ -9190,8 +9208,6 @@ button {
 }
 
 .plugins-content-row {
-  display: flex;
-  gap: var(--space-4);
   align-items: baseline;
   padding: 3px 0;
   font-size: var(--text-sm);
@@ -9407,13 +9423,10 @@ button {
 }
 
 .hooks-list {
-  display: flex;
-  flex-direction: column;
   gap: var(--space-3);
 }
 
 .hooks-row {
-  display: flex;
   align-items: flex-start;
   gap: var(--space-5);
   padding: var(--space-4) var(--space-5);
@@ -9532,8 +9545,6 @@ button {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
   gap: var(--space-3);
   overflow-y: auto;
   flex-shrink: 0;
@@ -9552,7 +9563,6 @@ button {
 }
 
 .watcher-row {
-  display: flex;
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-4) var(--space-5);
@@ -9652,9 +9662,6 @@ button {
 }
 
 .watcher-tail-toolbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
 }
 
 .watcher-filter {
@@ -9690,14 +9697,12 @@ button {
 }
 
 .watcher-log-empty {
-  color: var(--fg-muted);
   font-style: italic;
 }
 
 .watcher-tail-empty {
   padding: var(--space-10);
   text-align: center;
-  color: var(--fg-muted);
   font-size: var(--text-md);
   border: 1px dashed var(--border-soft);
   border-radius: var(--radius-sm);
@@ -9854,7 +9859,6 @@ button {
 }
 
 .demo-page-console-empty {
-  color: var(--fg-muted);
   font-size: var(--text-md);
   margin: 0;
 }
@@ -9943,12 +9947,10 @@ button {
 
 .demo-page-composer-empty {
   font-size: var(--text-md);
-  color: var(--fg-muted);
   font-style: italic;
 }
 
 .demo-page-composer-actions {
-  display: flex;
   justify-content: flex-end;
   margin-top: var(--space-6);
 }
@@ -10108,7 +10110,6 @@ button {
 }
 
 .ctx-empty {
-  color: var(--fg-muted);
 }
 
 /* ── CodeIndex: nothing indexed yet ──────────────────────────────
@@ -10217,9 +10218,7 @@ button {
 }
 
 .workflow-phase-list {
-  display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2);
   margin-top: var(--space-1);
 }
 
@@ -10525,9 +10524,6 @@ button {
 }
 
 .ag-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--text-sm);
 }
 
 .ag-table th {
@@ -10561,8 +10557,6 @@ button {
 
 .ag-empty {
   padding: var(--space-7);
-  font-size: var(--text-sm);
-  color: var(--fg-muted);
   text-align: center;
   border: 1px dashed var(--border);
   border-radius: var(--radius-sm);
@@ -10733,7 +10727,6 @@ button {
 }
 
 .kb-share-link-row {
-  display: flex;
   gap: var(--space-3);
 }
 
@@ -10750,16 +10743,12 @@ button {
 }
 
 .kb-share-actions {
-  display: flex;
   justify-content: flex-end;
-  gap: var(--space-4);
 }
 
 /* ── Stale review ── */
 
 .kb-stale-list {
-  display: flex;
-  flex-direction: column;
   gap: var(--space-5);
 }
 
@@ -10842,8 +10831,6 @@ button {
 }
 
 .kb-drift-banner-actions {
-  display: flex;
-  gap: var(--space-4);
   flex: 0 0 auto;
 }
 
@@ -11082,8 +11069,6 @@ button {
 }
 
 .doc-filter-row {
-  display: flex;
-  align-items: center;
   gap: 7px;
   font-size: var(--text-sm);
   color: var(--fg);
@@ -11683,7 +11668,6 @@ button {
    lines below — and the actions sat against the window rather than
    against what they act on. */
 .kb-doc-head-row {
-  display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-8);
@@ -12425,7 +12409,6 @@ button {
    evenly spaced they read as four buttons that all might. */
 .afs-actions {
   display: inline-flex;
-  align-items: center;
   gap: var(--space-3);
   margin-left: var(--space-5);
 }
@@ -12533,7 +12516,6 @@ button {
    get it for free, and a result you cannot reach by tab is a result
    half the people cannot open. */
 .afs-row {
-  display: flex;
   flex-direction: column;
   gap: 3px;
   width: 100%;
@@ -13207,8 +13189,6 @@ button {
 
 .slash-empty {
   padding: var(--space-3) var(--space-4);
-  font-size: var(--text-sm);
-  color: var(--fg-muted);
 }
 
 /* ── Choosing who can open a document ──────────────────────────────
@@ -13251,10 +13231,7 @@ button {
 }
 
 .kb-pick-row {
-  display: flex;
   width: 100%;
-  align-items: center;
-  gap: var(--space-4);
   padding: 5px 8px;
   font: inherit;
   text-align: left;
@@ -13332,9 +13309,7 @@ button {
 
 .kb-pick-empty {
   padding: 10px 9px;
-  font-size: var(--text-sm);
   line-height: 1.5;
-  color: var(--fg-muted);
 }
 
 .kb-pick-count {
@@ -13437,8 +13412,6 @@ button {
 
 .mention-empty {
   padding: var(--space-3) var(--space-4);
-  font-size: var(--text-sm);
-  color: var(--fg-muted);
 }
 
 /* Between the box and the buttons: it is about what is in the box and
@@ -13555,7 +13528,6 @@ button {
 }
 
 .doc-locked-actions {
-  display: flex;
   margin-top: var(--space-1);
 }
 
@@ -13722,8 +13694,6 @@ button {
 }
 
 .kb-tree-row {
-  display: flex;
-  align-items: center;
   gap: 5px;
   /* The indent is the structure, and it has to be big enough to read
      at a glance — 22px, near Confluence's own. */
@@ -13873,8 +13843,6 @@ button {
    for. */
 .kb-tree-actions {
   flex: none;
-  display: flex;
-  align-items: center;
   gap: 1px;
   margin-left: auto;
   visibility: hidden;
@@ -14357,9 +14325,7 @@ button {
 }
 
 .comment-review-actions {
-  display: flex;
   flex-wrap: wrap;
-  gap: var(--space-4);
 }
 
 /* ── Overflow menu ───────────────────────────────────────────────────
@@ -14387,8 +14353,6 @@ button {
   right: 0;
   z-index: 40;
   min-width: 180px;
-  display: flex;
-  flex-direction: column;
   padding: 5px;
   background: var(--bg-surface);
   border: 1px solid var(--border);
@@ -14518,8 +14482,6 @@ button {
 }
 
 .prov-legend-empty {
-  color: var(--fg-muted);
-  font-size: var(--text-sm);
 }
 
 /* A source, with how much of the document it accounts for. Naming
@@ -15077,8 +15039,6 @@ button {
 
 .doc-rail-empty {
   margin: 0;
-  color: var(--fg-muted);
-  font-size: var(--text-sm);
   line-height: 1.55;
 }
 
@@ -15086,8 +15046,6 @@ button {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
   gap: var(--space-8);
 }
 
@@ -15282,9 +15240,6 @@ button {
 }
 
 .doc-thread-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
 }
 
 .doc-thread-send {
@@ -15553,10 +15508,7 @@ button {
 }
 
 .doc-comment-actions {
-  display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-4);
 }
 
 /* Pushed to the end of the row: it is a statement about where this
@@ -16016,9 +15968,6 @@ button {
    cell — so a row never arrives with the header and separator that
    markdown needs to recognise a table. */
 .diff-row-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--text-sm);
 }
 
 .diff-row-table td {
