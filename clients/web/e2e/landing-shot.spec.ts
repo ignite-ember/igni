@@ -15,6 +15,7 @@
 
 import { test, expect } from "./fixtures/embed";
 import type { FixtureBackend } from "./fixtures/backend";
+import { signedInStatus } from "./fixtures/backend";
 
 const OUT = process.env.LANDING_SHOT_DIR || "landing-shots";
 
@@ -30,14 +31,13 @@ const PROJECT = "/Users/dev/acme/payments-api";
 
 /** Status the header + footer read from. */
 function status(contextTokens: number) {
-  return {
-    type: "status_update",
+  return signedInStatus({
     model: MODEL,
     context_tokens: contextTokens,
     max_context: 200_000,
     cloud_connected: true,
     cloud_org: "Acme Engineering",
-  };
+  });
 }
 
 /** Push a tool call that renders as a completed tool card. */
@@ -74,7 +74,6 @@ function tool(
 test.use({ viewport: LOGICAL, deviceScaleFactor: SCALE });
 
 test("capture landing product shot", async ({ page, backend, appUrl }) => {
-
   // Seat the session in a believable project before first paint so
   // the header shows a real folder rather than /tmp/test-project.
   backend.onRpc("attach_session", () => ({
@@ -192,7 +191,9 @@ test("capture landing product shot", async ({ page, backend, appUrl }) => {
   await editor.press("Enter");
 
   await expect
-    .poll(() => backend.received().filter((m) => m.type === "user_message").length)
+    .poll(
+      () => backend.received().filter((m) => m.type === "user_message").length,
+    )
     .toBe(2);
   const run2 = String(
     backend.received().filter((m) => m.type === "user_message")[1].id,
@@ -217,9 +218,12 @@ test("capture landing product shot", async ({ page, backend, appUrl }) => {
       ["  44   def downgrade_plan(org_id: str, tier: str) -> Plan:", "dim"],
       ["  45       session = validate_session(request)", "dim"],
       ["- 46       org = Org.get(org_id)", "del"],
-      ["+ 46       require_role(session, \"admin\")", "add"],
+      ['+ 46       require_role(session, "admin")', "add"],
       ["+ 47       org = Org.get(org_id)", "add"],
-      ["+ 48       audit.record(\"plan.downgrade\", session.user_id, org_id)", "add"],
+      [
+        '+ 48       audit.record("plan.downgrade", session.user_id, org_id)',
+        "add",
+      ],
       ["  49       return org.set_tier(tier)", "dim"],
     ],
   );
@@ -235,7 +239,7 @@ test("capture landing product shot", async ({ page, backend, appUrl }) => {
     [
       ["  80   async def stripe_webhook(request: Request) -> Response:", "dim"],
       ["  81       verify_stripe_signature(request)", "dim"],
-      ["+ 82       event_id = request.json[\"id\"]", "add"],
+      ['+ 82       event_id = request.json["id"]', "add"],
       ["+ 83       if await replay_cache.seen(event_id):", "add"],
       ["+ 84           return Response(status=200)  # idempotent no-op", "add"],
       ["+ 85       await replay_cache.mark(event_id)", "add"],
@@ -269,7 +273,9 @@ test("capture landing product shot", async ({ page, backend, appUrl }) => {
   backend.onRpc("count_context_tokens", () => 31_800);
 
   // Let markdown, highlighting, and the tool cards settle.
-  await expect(page.locator(".msg-assistant").last()).toContainText("open a PR");
+  await expect(page.locator(".msg-assistant").last()).toContainText(
+    "open a PR",
+  );
   await expect(page.locator(".tool-card")).toHaveCount(5);
 
   // Expand the first Edit card so the diff table is on screen — a
@@ -295,7 +301,9 @@ test("capture landing product shot", async ({ page, backend, appUrl }) => {
   // It is correct behaviour and wrong for a still image — it floats
   // over the transcript and reads as a stray artifact. Hide it for
   // the capture only.
-  await page.addStyleTag({ content: ".scroll-to-bottom { display: none !important; }" });
+  await page.addStyleTag({
+    content: ".scroll-to-bottom { display: none !important; }",
+  });
   await page.waitForTimeout(1200);
 
   for (const scheme of ["dark", "light"] as const) {
