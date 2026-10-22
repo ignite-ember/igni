@@ -79,12 +79,22 @@ Use them for `gap`, `margin` and `padding` and your layout sits on the same rhyt
 
 They are not an invention. They are the steps igni already used, written as literals in 375 places. 85% of gaps and 83% of margins landed on them exactly, which is why adopting them changed nothing on screen — and why the ~60 that stayed literal (`5px`, `3px`, `7px`, `18px`) are now visible as deviations rather than hidden among the rest.
 
-## What still needs deciding
+## The type scale
 
-**There is no type scale.** `font-size` has 22 distinct values and every one is hardcoded: every half-step from 9px to 15px, with `11.5px` used 99 times, `12.5px` 79 and `10.5px` 38. Only 45% would land on any sane scale.
+`--text-2xs` through `--text-4xl` — 10, 11, 12, 13, 14, 17, 20, 30, 42.
 
-Collapsing that changes text size across the whole app, which is a design decision rather than a refactor. Until it is made, write font sizes as literals and expect to migrate once.
+Nine steps, down from twenty-two hardcoded sizes that included every half-step from 9px to 15px. `11.5px`, `12px` and `12.5px` between them accounted for 272 declarations: one size written three ways, not three sizes.
 
-**There is no padding scale.** 161 distinct values, 157 of them hardcoded. Padding is two axes, so it needs the vertical and horizontal rhythms decided together — not one list.
+Collapsed by role rather than by ratio, because the clusters were already there. No value moved by more than 1px, and 98% of font sizes now name a step.
+
+One deliberate exception survives, labelled where it lives: a digit inside a 12px circle stays at 7px, because 10px overflows it. A constrained space is a real exception. The half-pixel sizes were not.
+
+## Shape
+
+`--radius-sm` 6, `--radius` 10, `--radius-lg` 14, plus `--radius-pill` and `--radius-circle` for the two shapes that are not sizes.
+
+`9999px` and `999px` were both in use for pills — identical to a renderer, two things to a reader. Now one.
+
+**Padding is 62% on the scale, and the rest is probably right.** The values that stayed literal are overwhelmingly *odd* — 1, 3, 5, 7, 9, 11, 13px — which is the signature of optical correction against a 1px border rather than drift. Forcing them onto even steps would move things by a pixel for no reason. They are visible as literals now, which is the right state for a deliberate exception.
 
 **Primitives beyond the controls above.** See the inventory earlier: 14 patterns are each reimplemented per feature, but they share far less than the names suggest. `*-row` agrees only on `display: flex`; `*-card` has 4 of 10 sharing a core. They do not duplicate so much as diverge, so there is nothing to extract — the design has to be decided, then features migrated to it. That changes pixels, so it is yours to call.

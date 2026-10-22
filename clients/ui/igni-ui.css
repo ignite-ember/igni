@@ -66,6 +66,18 @@
   --radius-sm: 6px;
   --radius: 10px;
   --radius-lg: 14px;
+  --radius-pill: 999px;
+  --radius-circle: 50%;
+
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 14px;
+  --text-xl: 17px;
+  --text-2xl: 20px;
+  --text-3xl: 30px;
+  --text-4xl: 42px;
   --font-ui:
     ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -78,7 +90,7 @@
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: var(--text-md);
   line-height: 1.5;
 }
 
@@ -90,9 +102,9 @@
   border-radius: var(--radius-sm);
   background: var(--bg-surface);
   color: var(--fg);
-  padding: 7px 14px;
+  padding: 7px var(--space-7);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--text-md);
   font-weight: 600;
   cursor: pointer;
 }
@@ -140,13 +152,13 @@
 }
 
 .btn-sm {
-  padding: 4px 10px;
-  font-size: 12px;
+  padding: var(--space-2) var(--space-5);
+  font-size: var(--text-sm);
 }
 
 .btn-xs {
-  padding: 2px 8px;
-  font-size: 11px;
+  padding: var(--space-1) var(--space-4);
+  font-size: var(--text-xs);
 }
 
 .btn-quiet {
@@ -166,10 +178,10 @@
   gap: var(--space-3);
   padding: 3px 9px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-surface);
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   cursor: default;
 }
 
@@ -193,19 +205,19 @@
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: var(--space-7) var(--space-8);
 }
 
 .panel-title {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--text-md);
   font-weight: 700;
   color: var(--fg);
 }
 
 .panel-sub {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--fg-muted);
 }
 
@@ -224,8 +236,8 @@
   border-radius: var(--radius-sm);
   color: var(--fg);
   font-family: inherit;
-  font-size: 13px;
-  padding: 7px 10px;
+  font-size: var(--text-md);
+  padding: 7px var(--space-5);
 }
 
 .panel-input::placeholder {
@@ -253,29 +265,29 @@
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 18px 20px;
+  padding: 18px var(--space-10);
   max-width: 520px;
   width: calc(100% - 32px);
 }
 
 .dialog-title {
   margin: 0 0 6px;
-  font-size: 15px;
+  font-size: var(--text-lg);
   font-weight: 700;
 }
 
 .dialog-sub {
   margin: 0 0 14px;
-  font-size: 13px;
+  font-size: var(--text-md);
   color: var(--fg-muted);
 }
 
 .dialog-pre {
   background: var(--bg-inset);
   border-radius: var(--radius-sm);
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   overflow-x: auto;
 }
 

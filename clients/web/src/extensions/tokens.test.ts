@@ -158,3 +158,31 @@ describe("the published list and the stylesheet agree", () => {
     expect([...used].filter((name) => !declared.has(name))).toEqual([]);
   });
 });
+
+describe("the groups themselves", () => {
+  it("has no group that silently shadows another", () => {
+    // `PUBLISHED_TOKENS` is an object literal, so a repeated key keeps
+    // only the last one and says nothing. That happened: the type
+    // scale went in as `text`, which was already the foreground
+    // colours, and `--fg` vanished. The flat list is derived, so this
+    // catches it — a shadowed group's tokens simply stop appearing.
+    for (const name of [
+      "--fg",
+      "--bg",
+      "--border",
+      "--danger",
+      "--radius-sm",
+      "--space-4",
+    ]) {
+      expect(TOKEN_NAMES).toContain(name);
+    }
+  });
+
+  it("publishes every group it declares", () => {
+    const declared = Object.values(PUBLISHED_TOKENS).reduce(
+      (n, g) => n + g.length,
+      0,
+    );
+    expect(TOKEN_NAMES.length).toBe(declared);
+  });
+});

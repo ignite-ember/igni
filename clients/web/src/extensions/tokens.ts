@@ -59,14 +59,35 @@ export const PUBLISHED_TOKENS = {
     "--ember-red",
     "--ember-gradient",
   ],
-  /** Shape and type. */
+  /** Shape. */
   form: [
     "--radius-sm",
     "--radius",
     "--radius-lg",
+    "--radius-pill",
+    "--radius-circle",
     "--font-ui",
     "--font-mono",
     "--shadow-pop",
+  ],
+  /**
+   * The type scale. Nine steps, by role rather than by ratio.
+   *
+   * It replaced twenty-two hardcoded sizes that included every
+   * half-step from 9px to 15px — 11.5px, 12px and 12.5px between
+   * them accounted for 272 declarations, which is one size written
+   * three ways. Build against the role, not the pixel.
+   */
+  type: [
+    "--text-2xs",
+    "--text-xs",
+    "--text-sm",
+    "--text-md",
+    "--text-lg",
+    "--text-xl",
+    "--text-2xl",
+    "--text-3xl",
+    "--text-4xl",
   ],
   /**
    * The spacing scale. Published so an extension's layout sits on the
@@ -91,7 +112,15 @@ export const PUBLISHED_TOKENS = {
   ],
 } as const;
 
-/** Every published token name, flat. */
+/**
+ * Every published token name, flat.
+ *
+ * Derived rather than listed. A second list would be a second place
+ * to forget — and the groups above are an object literal, where a
+ * repeated key silently keeps only the last one. That happened: the
+ * type scale was added as `text`, which was already the foreground
+ * colours, and `--fg` disappeared without a word.
+ */
 export const TOKEN_NAMES: readonly string[] =
   Object.values(PUBLISHED_TOKENS).flat();
 
