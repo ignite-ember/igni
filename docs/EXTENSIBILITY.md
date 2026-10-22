@@ -2,7 +2,7 @@
 
 How CodeIndex, Artifacts and third-party capabilities attach to igni — and what igni promises not to break underneath them.
 
-> **Status: proposed.** Nothing below is implemented yet. [Milestones](#milestones) says what exists today.
+> **Status: specification.** Parts are built; [Milestones](#milestones) is the only statement of which. This banner used to read "nothing below is implemented yet" while that table listed eight rows as shipped — believe the table.
 >
 > **"Remote" always means inside the customer's own network.** igni hosts nothing. A laptop talking to an on-prem Artifacts service is still fully air-gapped.
 
@@ -20,7 +20,11 @@ An **extension** is a capability with a service behind it. It arrives one of two
 | Blast radius | one user; single instance | whatever their service does about it |
 | Example | **CodeIndex** — repo-coupled, cannot be remote | **Artifacts** — a service with a URL |
 
-**Any backend can attach either kind.** A single-user local backend can register a remote extension; a shared backend serving everyone can too. CodeIndex is sidecar-only because it is bound to a checkout, not because of where the backend runs.
+**Any backend can attach a remote extension.** A single-user local backend can register one; a shared backend serving everyone can too. CodeIndex is sidecar-only because it is bound to a checkout, not because of where the backend runs.
+
+**A sidecar is single-user only.** The profile refuses to install one on a shared backend: a sidecar is one supervised process, so on a backend serving many principals it is one instance shared by all of them, which is neither the isolation nor the blast radius described below.
+
+**UI is a single-user contribution.** A remote extension attached to a local backend may contribute a surface, and the local backend serves its bundle. A shared backend serves no extension UI — the frame is hosted by the igni app next to the user, and a shared backend has no such app.
 
 **Tools are always MCP.** We do not invent a second tool transport. What an extension needs *beyond* tools is what this document specifies.
 
@@ -103,7 +107,7 @@ Packaging is one axis; how many people a backend serves is another. A **single-u
 | Session / scheduler / loop / memory state | SQLite (`state.db`) | **Postgres** |
 | Migrations | alembic, per process | alembic, one migrator |
 | Concurrency | one process, WAL | connection pool |
-| Extensions | usually sidecar, may register remote ones | usually remote; a sidecar would be shared by everyone |
+| Extensions | sidecar and remote | **remote only** — a sidecar is one process on one machine, so on a shared backend it is one instance shared by every principal on it |
 
 Most of it is already portable: every SQLAlchemy-backed store — scheduler, loop, agno sessions and memory, background processes, code-index models — goes through one URL builder and alembic.
 
@@ -152,11 +156,13 @@ Entitlement can change mid-session (packs poll on a short TTL). A revocation mov
 
 ## 5. The UI surface
 
-Optional, and packaging-independent: the client is the same either way. The bundle is served by whichever backend the client is talking to — from the sidecar, or proxied from the registered endpoint. A headless extension contributes none of this.
+Optional, and packaging-independent *within a single-user backend*: the client is the same whether the capability behind it is a sidecar on this machine or an endpoint elsewhere, and the local backend serves the bundle either way — from the sidecar, or proxied from the registered endpoint. A shared backend contributes no UI at all (see above). A headless extension contributes none of this.
 
-- **Served** at `/ext/<id>/` by the backend. One origin means one place to enforce entitlement and the contract check before a byte is served.
-- **Framed** with `sandbox="allow-scripts allow-forms"` and **without** `allow-same-origin` — opaque origin, no host storage, no top-navigation, postMessage only.
-- **Per-extension CSP**, no `connect-src` beyond the bridge. The bundle cannot open its own socket, which is what makes egress auditable.
+- **Served on a loopback port of its own**, one listener per extension, by the backend the client is talking to. Not `/ext/<id>/` under one port, which is what this said first: a path prefix is a naming convention the browser has never heard of, so every extension would share `localStorage`, `IndexedDB` and the right to reach into the next one's frame. A port is part of an origin; a path is not. Entitlement and the contract check are enforced before the listener starts rather than before each byte.
+- **Framed** with `sandbox="allow-scripts allow-forms allow-same-origin"`. The frame gets a real origin — its own port — and `allow-same-origin` is safe here precisely because that origin is not the host's: the frame cannot reach the embedder's document, storage or cookies, and the familiar "allow-scripts plus allow-same-origin lets a frame drop its own sandbox" applies to a frame that is same-origin *with its embedder*, which this never is.
+- **Per-extension CSP**: `default-src 'self'`, and `connect-src` widened only by declared egress. The bundle cannot open an undeclared socket, which is what makes egress auditable. The bridge is `postMessage` and is not governed by CSP at all, so "no `connect-src` beyond the bridge" — the earlier wording — meant `'none'` and would have blocked the extension from loading its own data files.
+
+> **Why `allow-same-origin` is now present.** The two bullets above used to specify an opaque origin *and* `default-src 'self'`. CSP's `'self'` never matches an opaque origin, so together they block the extension's own scripts, styles and images: a blank frame. They were coherent only while every extension shared one port, where an opaque origin was the only isolation available. With a port each, the origin can be real and the port does the isolating. **To be confirmed in a browser during the bridge work** — it is a claim about CSP semantics, and the suite has Playwright.
 - **Bridge API**: `rpc`, `subscribe`, `identity`, `params`/`onParams`, `navigate`, `setTitle`/`setStatus`/`notify`, `theme`, `storage` — all namespaced, budgeted, cancellable. Origin and per-session nonce checked on every message.
 
 **A capability UI never holds a credential and never opens a socket.** Every privileged call goes through the backend, where credentials already live.
@@ -271,7 +277,8 @@ Every call into a capability carries a **deadline and a cancellation token** —
 | Capability services as separate images | **shipped** (`igni__code-index`, `igni__artifacts`) |
 | Prompt fragments / variants as contributions | not started |
 | Manifest + validation + signature | not started |
-| Backend static origin + sandboxed iframe + bridge | not started |
+| Backend static origin, one port per extension | **shipped** (`extensions/origin.py`) |
+| Sandboxed iframe + bridge | not started |
 | Policy cache keyed by `group_id` | not started |
 | Remote extension registration in group packs | not started |
 | Requirement resolver (local only) | not started |

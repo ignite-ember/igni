@@ -118,7 +118,7 @@ Pydantic model of the manifest in EXTENSIBILITY §2. Install verifies the signat
 
 ### A7 — remote extension registration (≈3 days)
 
-A manifest with `endpoint` instead of `sidecar` registers against any backend, local or shared. No UI contribution in `shared`.
+A manifest with `endpoint` instead of `sidecar` registers against any backend, local or shared. No UI contribution in `shared` — the frame is hosted by the igni app next to the user, and a shared backend has no such app.
 
 *Done when:* Artifacts attaches to a local backend as a remote extension and the tool surface is identical to the sidecar path.
 

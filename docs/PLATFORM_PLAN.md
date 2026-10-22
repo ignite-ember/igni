@@ -37,7 +37,7 @@ Independent of direction. Days, not weeks.
 
 Contract in [EXTENSIBILITY.md](EXTENSIBILITY.md). Order matters; step 3 is the go/no-go.
 
-1. **Backend static origin** serving `/ext/<id>/`. Smallest change, proves the path with no extension involved.
+1. **Backend static origin**, one loopback listener per extension. Smallest change, proves the path with no extension involved. Not `/ext/<id>/` under one port: a path prefix does not separate origins, so every extension would share storage and could reach into the next one's frame.
 2. **CSP `frame-src` + bridge** in the web host and Tauri. Only the calls `CodeIndexPanel` needs: rpc, navigate, identity, params, theme.
 3. **Port `CodeIndexPanel` behind the bridge, unchanged.** If a two-prop panel hosts without modification, the contract is real. If not, we learn it in days.
 4. **Contribution points** replacing the closed unions — `PageKind` (`chat/pageStack.ts:28`), `SIDEBAR_LINKS` / `TOOLS_MENU` (`App.tsx:143`).
